@@ -2942,8 +2942,11 @@ pub fn capture_snapshot(
         header.campaign_label = Some(label.to_snapshot());
     }
 
+    // **The VIEWER's start.** `StartMarkerState` is a single `{x, y}` on the wire and stays one: a
+    // frame is captured for one viewer, so the marker it carries is that viewer's own opening
+    // ground. A world with one faction publishes exactly what it always has.
     let start_marker_state = start_location
-        .position()
+        .position_for(viewer_faction.0)
         .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
     drop(header_scope);
 

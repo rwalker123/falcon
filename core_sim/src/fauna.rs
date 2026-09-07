@@ -2029,8 +2029,11 @@ pub fn spawn_initial_herds(
     let width = config.grid_size.x.max(4);
     let height = config.grid_size.y.max(4);
     let wrap = config.map_topology.wrap_horizontal;
+    // **The migratory anchor is a property of the MAP, not of a people.** Long-range herds range
+    // across the whole world, so their anchor asks where the best ground turned out to be — the
+    // lowest-id faction's start, which in a one-faction world is the only one there is.
     let base = start_location
-        .position()
+        .anchor_position()
         .unwrap_or(UVec2::new(width / 2, height / 2));
 
     let mut herds = Vec::new();

@@ -101,7 +101,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 4 | the transfer counters on `PopulationCohort` and `LaborAllocation` became `TransferLedger` structs, and each gained a fodder twin — two `f32` totals per account replaced by four magnitudes split by link |
 /// | 5 | `SimState.starting_loadout` became a **map of per-band windows** — one `open`/budget triple replaced by a `BandId`-keyed table carrying each band's supply and its standing take |
 /// | 6 | `WorldStatics.factions` (`FactionRegistry`) gained `control` — the roster now carries how each faction is driven, and that map has no serde default, so without the bump a version-5 blob dies on the missing field inside the decoder and reads as `unreadable` rather than as the wrong version |
-pub const SAVE_FORMAT_VERSION: u32 = 6;
+/// | 7 | `WorldStatics.start_location` (`StartLocation`) became a **per-faction map** — one `Option<UVec2>` replaced by a `FactionId`-keyed table, because worldgen now places every registered faction at its own start, and a rival founding a settlement must not move your marker |
+pub const SAVE_FORMAT_VERSION: u32 = 7;
 
 /// gzip level for the payload document.
 ///
@@ -213,7 +214,7 @@ pub fn capture_world_statics(world: &World) -> WorldStatics {
         provinces: world.resource::<ProvinceMap>().clone(),
         food_sites: world.resource::<FoodSiteRegistry>().clone(),
         food_site_water_bias: world.resource::<FoodSiteWaterBiasReport>().clone(),
-        start_location: *world.resource::<StartLocation>(),
+        start_location: world.resource::<StartLocation>().clone(),
         world_seed: *world.resource::<WorldGenSeed>(),
         factions: world.resource::<FactionRegistry>().clone(),
     }
@@ -375,7 +376,7 @@ pub fn apply_save(world: &mut World, header: &SaveHeader, payload: &SavePayload)
     world.insert_resource(statics.provinces.clone());
     world.insert_resource(statics.food_sites.clone());
     world.insert_resource(statics.food_site_water_bias.clone());
-    world.insert_resource(statics.start_location);
+    world.insert_resource(statics.start_location.clone());
     world.insert_resource(statics.world_seed);
     world.insert_resource(statics.factions.clone());
     // ⛔ **The queue is rebuilt from the RESTORED roster, here rather than in the caller.**

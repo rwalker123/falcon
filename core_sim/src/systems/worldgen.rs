@@ -56,6 +56,26 @@ fn compare_food_site(a: &FoodSiteCandidate, b: &FoodSiteCandidate) -> Ordering {
 /// The guard cannot collide with map regeneration: `rebuild_world_from_config` — the shared path
 /// for both `new_game` and `ResetMap` — starts from `build_headless_app()`, i.e. a brand-new
 /// `World` with no `TileRegistry`, rather than re-running Startup on the existing one.
+/// **The four config handles a spawned band's opening kit is resolved from**, bundled into one
+/// [`SystemParam`].
+///
+/// Bundled rather than listed: Bevy caps a system at 16 parameters and `spawn_initial_world` reached
+/// that ceiling when the faction roster arrived, and these four are the natural group — every one of
+/// them exists only to answer *"what is this band stocked with, and at what grade"*.
+///
+/// **Every field is `Option`, like `tile_registry` beside them.** A handle only decides which items a
+/// spawned band carries and the grade they are stamped with, and a hand-rolled test `World` that
+/// never installs one must not panic worldgen outright. Absent reads as the builtin table — the very
+/// table each handle's `default()` installs.
+#[derive(SystemParam)]
+pub struct StartKitHandles<'w> {
+    pub equipment: Option<Res<'w, crate::equipment_config::EquipmentConfigHandle>>,
+    pub recipes: Option<Res<'w, crate::recipes_config::RecipesConfigHandle>>,
+    pub materials: Option<Res<'w, crate::materials_config::MaterialsConfigHandle>>,
+    /// The working-age share a spawn's stock is sized against (see [`StartKit::working_fraction`]).
+    pub demographics: Option<Res<'w, crate::demographics_config::DemographicsConfigHandle>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_world(
     mut commands: Commands,
@@ -68,23 +88,19 @@ pub fn spawn_initial_world(
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut faction_inventory: ResMut<FactionInventory>,
     snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
-    // **`Option`, like `tile_registry` beside it**: the handle only decides which items a spawned
-    // band is stocked with, and a hand-rolled test `World` that never installs it would otherwise
-    // panic worldgen outright. Absent reads as the builtin table — the same table
-    // `EquipmentConfigHandle::default()` installs.
-    equipment: Option<Res<crate::equipment_config::EquipmentConfigHandle>>,
-    // **The other two halves of the start kit** — `Option` for the same reason `equipment` is: they
-    // only decide the *grade* a spawned band's gear is stamped with, and a hand-rolled test `World`
-    // that installs neither must not panic worldgen.
-    recipes: Option<Res<crate::recipes_config::RecipesConfigHandle>>,
-    materials: Option<Res<crate::materials_config::MaterialsConfigHandle>>,
-    // **The fourth half of the start kit** — the working-age share a spawn's stock is sized against
-    // (see [`StartKit::working_fraction`]). `Option` for the same reason the three above are.
-    demographics: Option<Res<crate::demographics_config::DemographicsConfigHandle>>,
+    // The four config handles the opening kit is resolved from — see [`StartKitHandles`].
+    start_kit_handles: StartKitHandles,
     // The pool a founded band's name is drawn from. `Option` for the same reason the start-kit
     // handles above are: a hand-rolled test `World` that never installs it must not panic worldgen,
     // and absent reads as the builtin pool - the very list `include_str!` baked in.
     band_names: Option<Res<crate::band_names::BandNameCatalogHandle>>,
+    // **Who this world is being generated for.** Every registered faction is placed, stocked and
+    // seeded with knowledge, so the roster decides how many starts are picked. `Option` for the same
+    // reason the start-kit handles above are: `build_headless_app` inserts the registry before
+    // Startup, but 44 hand-rolled test `World`s do not, and worldgen must not panic on them —
+    // absent reads as [`FactionRegistry::default`], which is the one human faction those worlds have
+    // always had.
+    faction_registry: Option<Res<crate::orders::FactionRegistry>>,
     tile_registry: Option<Res<TileRegistry>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
@@ -106,29 +122,46 @@ pub fn spawn_initial_world(
     let knowledge_catalog = knowledge_tags.get();
     let knowledge_fragments =
         starting_knowledge_fragments(&config.start_profile_overrides, knowledge_catalog.as_ref());
-    let inventory_summary = seed_starting_inventory(
-        PLAYER_FACTION,
-        &config.start_profile_overrides,
-        &mut faction_inventory,
-    );
-    let knowledge_seeded =
-        seed_starting_knowledge(PLAYER_FACTION, &knowledge_fragments, &mut discovery);
+    // Resolved once and reused for the placement below, so the roster that is stocked and the roster
+    // that is placed cannot differ.
+    let faction_roster: Vec<FactionId> = faction_registry
+        .as_ref()
+        .map(|registry| registry.factions().to_vec())
+        .unwrap_or_else(|| {
+            crate::orders::FactionRegistry::default()
+                .factions()
+                .to_vec()
+        });
+    // **The profile's opening grants are what a PEOPLE starts with, so every faction gets them.**
+    // The profile declares one roster of units, one stockpile and one knowledge set; each registered
+    // faction opens the campaign with its own copy, around its own start.
+    for &faction in &faction_roster {
+        let inventory_summary = seed_starting_inventory(
+            faction,
+            &config.start_profile_overrides,
+            &mut faction_inventory,
+        );
+        let knowledge_seeded =
+            seed_starting_knowledge(faction, &knowledge_fragments, &mut discovery);
 
-    if let Some((entries, total_quantity)) = inventory_summary {
-        info!(
-            target: "shadow_scale::campaign",
-            "start_profile.inventory.seeded entries={} total_quantity={}",
-            entries,
-            total_quantity
-        );
-    }
-    if knowledge_seeded > 0 {
-        info!(
-            target: "shadow_scale::campaign",
-            "start_profile.knowledge.seeded grants={} tags={}",
-            knowledge_seeded,
-            config.start_profile_overrides.starting_knowledge_tags.len()
-        );
+        if let Some((entries, total_quantity)) = inventory_summary {
+            info!(
+                target: "shadow_scale::campaign",
+                "start_profile.inventory.seeded faction={} entries={} total_quantity={}",
+                faction.0,
+                entries,
+                total_quantity
+            );
+        }
+        if knowledge_seeded > 0 {
+            info!(
+                target: "shadow_scale::campaign",
+                "start_profile.knowledge.seeded faction={} grants={} tags={}",
+                faction.0,
+                knowledge_seeded,
+                config.start_profile_overrides.starting_knowledge_tags.len()
+            );
+        }
     }
 
     let _global_id = culture.ensure_global();
@@ -782,15 +815,24 @@ pub fn spawn_initial_world(
     }
 
     let food_radius = food_overlay_cfg.default_radius().max(4);
-    let (start_x, start_y) = best_start_tile(
-        width as u32,
-        height as u32,
-        &tags_grid,
-        &food_module_grid,
-        &config.start_profile_overrides.food_modules,
-        &curated_entries,
-        food_radius,
-    );
+    // **One start per registered faction, and the first of them is the tile a one-faction world has
+    // always opened on** — see [`faction_start_tiles`]. Paired with the roster here so every reader
+    // below asks by faction rather than by position in a list.
+    let faction_starts: Vec<(FactionId, (u32, u32))> = faction_roster
+        .iter()
+        .copied()
+        .zip(faction_start_tiles(
+            faction_roster.len(),
+            config.faction_start_min_separation,
+            width as u32,
+            height as u32,
+            &tags_grid,
+            &food_module_grid,
+            &config.start_profile_overrides.food_modules,
+            &curated_entries,
+            food_radius,
+        ))
+        .collect();
 
     let mut cohort_index = 0usize;
     // Worldgen creates the world, so it creates the band id space: the allocator is built here and
@@ -812,15 +854,18 @@ pub fn spawn_initial_world(
         map_seed: config.map_seed,
     };
     // Resolved once for both arms: which arm spawns the band does not change what it is stocked with.
-    let start_kit_equipment = equipment
+    let start_kit_equipment = start_kit_handles
+        .equipment
         .as_ref()
         .map(|handle| handle.get())
         .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin);
-    let start_kit_recipes = recipes
+    let start_kit_recipes = start_kit_handles
+        .recipes
         .as_ref()
         .map(|handle| handle.get())
         .unwrap_or_else(crate::recipes_config::RecipesConfig::builtin);
-    let start_kit_materials = materials
+    let start_kit_materials = start_kit_handles
+        .materials
         .as_ref()
         .map(|handle| handle.get())
         .unwrap_or_else(crate::materials_config::MaterialsConfig::builtin);
@@ -828,7 +873,8 @@ pub fn spawn_initial_world(
         equipment: &start_kit_equipment,
         recipes: &start_kit_recipes,
         materials: &start_kit_materials,
-        working_fraction: demographics
+        working_fraction: start_kit_handles
+            .demographics
             .as_ref()
             .map(|handle| handle.get().initial_distribution.working)
             .unwrap_or_else(|| {
@@ -838,10 +884,20 @@ pub fn spawn_initial_world(
             }),
     };
     if config.start_profile_overrides.starting_units.is_empty() {
+        // **The no-`starting_units` fallback stays faction 0's alone, deliberately.** It is the
+        // degenerate/debug path — a lattice of 1,000-person clusters around one point, which no
+        // campaign profile takes — so giving every faction a copy would multiply a scaffold, not
+        // place a people. `FactionId(0)` is stated here rather than inherited from a constant so the
+        // narrowing is visible at the call site.
+        let (start_x, start_y) = faction_starts
+            .first()
+            .map(|(_, start)| *start)
+            .unwrap_or((width as u32 / 2, height as u32 / 2));
         spawn_default_population_clusters(
             &mut commands,
             &registry,
             &mut identity,
+            FactionId(0),
             &tiles,
             &tags_grid,
             width,
@@ -854,20 +910,24 @@ pub fn spawn_initial_world(
             &start_kit,
         );
     } else {
-        spawn_profile_population(
-            &mut commands,
-            &registry,
-            &mut identity,
-            &tiles,
-            &tags_grid,
-            width,
-            height,
-            (start_x, start_y),
-            &config.start_profile_overrides,
-            &mut cohort_index,
-            &knowledge_fragments,
-            &start_kit,
-        );
+        // Every faction spawns the profile's roster once, around its own start.
+        for &(faction, start) in &faction_starts {
+            spawn_profile_population(
+                &mut commands,
+                &registry,
+                &mut identity,
+                faction,
+                &tiles,
+                &tags_grid,
+                width,
+                height,
+                start,
+                &config.start_profile_overrides,
+                &mut cohort_index,
+                &knowledge_fragments,
+                &start_kit,
+            );
+        }
     }
 
     // Publish the counters with the ids and names they just handed out, so the next band spawned (an
@@ -876,7 +936,12 @@ pub fn spawn_initial_world(
     let BandIdentitySource { .. } = identity;
     commands.insert_resource(band_ids);
     commands.insert_resource(band_names_alloc);
-    commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
+    commands.insert_resource(StartLocation::new(
+        faction_starts
+            .iter()
+            .map(|(faction, (x, y))| (*faction, UVec2::new(*x, *y)))
+            .collect(),
+    ));
     commands.insert_resource(FoodSiteRegistry::new(curated_entries));
 
     // If we produced bands, use their restamped elevation field resource now
@@ -2690,7 +2755,23 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
     modifiers
 }
 
-fn best_start_tile(
+/// **One start tile per faction, scored once and picked greedily.**
+///
+/// Scoring is [`score_start_tiles`] and is untouched by the arrival of a second faction: the first
+/// pick is the argmax over every land tile, exactly the tile a one-faction world has always opened
+/// on. Each later faction takes the best *remaining* tile that is at least `min_separation` from
+/// every start already picked.
+///
+/// **Distance is Euclidean, compared squared** — the metric the curated food-site pass already
+/// spaces markers by (`min_spacing_sq`), so the file has one notion of "far enough apart".
+///
+/// **Relaxation, never failure.** If no remaining tile clears the separation, the best remaining
+/// tile is taken anyway and the shortfall is warned. A cramped map is a worse world, not a dead one:
+/// a faction left unplaced would have no land, no band and nobody to play it.
+#[allow(clippy::too_many_arguments)] // the scoring inputs, plus how many starts to pick and how far apart
+fn faction_start_tiles(
+    faction_count: usize,
+    min_separation: u32,
     width: u32,
     height: u32,
     tags_grid: &[sim_runtime::TerrainTags],
@@ -2698,9 +2779,89 @@ fn best_start_tile(
     preference: &FoodModulePreference,
     food_sites: &[FoodSiteEntry],
     food_radius: u32,
-) -> (u32, u32) {
-    let mut best_score: i32 = i32::MIN;
-    let mut best_pos: (u32, u32) = (width / 2, height / 2);
+) -> Vec<(u32, u32)> {
+    let scored = score_start_tiles(
+        width,
+        height,
+        tags_grid,
+        food_modules,
+        preference,
+        food_sites,
+        food_radius,
+    );
+    // What an all-water map (or a map with fewer land tiles than factions) falls back to — the same
+    // centre `best_start_tile` has always returned when it found nothing to score.
+    let fallback = (width / 2, height / 2);
+    let min_separation_sq = (min_separation as i64) * (min_separation as i64);
+    let far_enough = |candidate: (u32, u32), picked: &[(u32, u32)]| -> Option<i64> {
+        let mut nearest = i64::MAX;
+        for other in picked {
+            let dx = candidate.0 as i64 - other.0 as i64;
+            let dy = candidate.1 as i64 - other.1 as i64;
+            nearest = nearest.min(dx * dx + dy * dy);
+        }
+        (nearest != i64::MAX).then_some(nearest)
+    };
+
+    let mut picked: Vec<(u32, u32)> = Vec::with_capacity(faction_count);
+    for index in 0..faction_count {
+        // **Strict `>`, over the tiles in scan order** — the lowest `(y, then x)` maximum wins, which
+        // is what makes a one-faction world's pick byte-identical to the argmax it always was.
+        let mut best_separated: Option<(i32, (u32, u32))> = None;
+        let mut best_any: Option<(i32, (u32, u32), i64)> = None;
+        for &(score, pos) in &scored {
+            if picked.contains(&pos) {
+                continue;
+            }
+            let nearest_sq = far_enough(pos, &picked);
+            if best_any.is_none_or(|(best, _, _)| score > best) {
+                best_any = Some((score, pos, nearest_sq.unwrap_or(0)));
+            }
+            if nearest_sq.is_none_or(|nearest| nearest >= min_separation_sq)
+                && best_separated.is_none_or(|(best, _)| score > best)
+            {
+                best_separated = Some((score, pos));
+            }
+        }
+        match (best_separated, best_any) {
+            (Some((_, pos)), _) => picked.push(pos),
+            (None, Some((_, pos, nearest_sq))) => {
+                warn!(
+                    target: "shadow_scale::worldgen",
+                    "worldgen.start_separation_relaxed faction={} min_separation={} achieved={:.2}",
+                    index,
+                    min_separation,
+                    (nearest_sq as f64).sqrt()
+                );
+                picked.push(pos);
+            }
+            (None, None) => {
+                warn!(
+                    target: "shadow_scale::worldgen",
+                    "worldgen.start_separation_relaxed=no_land_left faction={}",
+                    index
+                );
+                picked.push(fallback);
+            }
+        }
+    }
+    picked
+}
+
+/// Every land tile and what it is worth as a start, in row-major scan order.
+///
+/// **The scoring is the selection's only input and is deliberately faction-blind** — a tile is good
+/// ground or it is not, regardless of who is looking at it.
+fn score_start_tiles(
+    width: u32,
+    height: u32,
+    tags_grid: &[sim_runtime::TerrainTags],
+    food_modules: &[Option<FoodModule>],
+    preference: &FoodModulePreference,
+    food_sites: &[FoodSiteEntry],
+    food_radius: u32,
+) -> Vec<(i32, (u32, u32))> {
+    let mut scored: Vec<(i32, (u32, u32))> = Vec::new();
     let idx_of = |x: u32, y: u32| -> usize { (y * width + x) as usize };
     for y in 0..height {
         for x in 0..width {
@@ -2765,13 +2926,10 @@ fn best_start_tile(
             }
             score += (food_score * 2.5).round() as i32;
             score += module_preference_bonus(x, y, width, height, food_modules, preference);
-            if score > best_score {
-                best_score = score;
-                best_pos = (x, y);
-            }
+            scored.push((score, (x, y)));
         }
     }
-    best_pos
+    scored
 }
 
 fn module_preference_bonus(
@@ -2899,6 +3057,7 @@ fn spawn_default_population_clusters(
     commands: &mut Commands,
     registry: &GenerationRegistry,
     identity: &mut BandIdentitySource<'_>,
+    faction: FactionId,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2929,6 +3088,7 @@ fn spawn_default_population_clusters(
                     commands,
                     registry,
                     identity,
+                    faction,
                     tiles[idx],
                     1_000,
                     cohort_index,
@@ -2946,6 +3106,7 @@ fn spawn_profile_population(
     commands: &mut Commands,
     registry: &GenerationRegistry,
     identity: &mut BandIdentitySource<'_>,
+    faction: FactionId,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2969,6 +3130,7 @@ fn spawn_profile_population(
                     commands,
                     registry,
                     identity,
+                    faction,
                     tiles[idx],
                     spec.band_size(),
                     cohort_index,
@@ -2985,6 +3147,7 @@ fn spawn_profile_population(
             commands,
             registry,
             identity,
+            faction,
             tiles,
             tags_grid,
             width,
@@ -2999,7 +3162,8 @@ fn spawn_profile_population(
     } else {
         info!(
             target: "shadow_scale::campaign",
-            "start_profile.units.spawned units={}",
+            "start_profile.units.spawned faction={} units={}",
+            faction.0,
             spawned_total
         );
     }
@@ -3022,6 +3186,10 @@ fn spawn_population_entity(
     commands: &mut Commands,
     registry: &GenerationRegistry,
     identity: &mut BandIdentitySource<'_>,
+    // **One parameter, because the cohort's own field and the name mint must not drift.** A name is
+    // unique within a *faction*, so minting against a different faction than the band is filed under
+    // would break the guarantee silently.
+    faction: FactionId,
     tile_entity: Entity,
     size: u32,
     cohort_index: &mut usize,
@@ -3031,10 +3199,6 @@ fn spawn_population_entity(
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
-    // **Resolved once, because the cohort's own field and the name mint must not drift.** A name is
-    // unique within a *faction*, so minting against a different faction than the band is filed under
-    // would break the guarantee silently.
-    let faction = PLAYER_FACTION;
     // The flooring rationale and the one-home rule live on [`party_workers`] itself — this branch
     // extracted the expression because the KIT BUDGET is sized against it too, so an inlined copy
     // here would be a second answer to *"how many hands has this band"*.
@@ -3268,6 +3432,117 @@ pub(crate) fn climate_temperature(
     let lapse = elevation_lapse(above_sea_normalized, climate.elevation_lapse_span);
     let jitter = element.thermal_bias().to_f32() * climate.element_jitter_scale;
     scalar_from_f32(base - lapse + jitter)
+}
+
+#[cfg(test)]
+mod start_tile_selection_tests {
+    use super::*;
+
+    /// A grid of ordinary land: no water, no fertile ground, no fresh water, no hazards and no
+    /// curated sites. Every tile therefore scores identically, which is exactly what the tie-break
+    /// and the separation need in order to be observable — on a real map the winner is a wide,
+    /// unique maximum and a tie never arises.
+    fn flat_land(width: u32, height: u32) -> Vec<sim_runtime::TerrainTags> {
+        vec![sim_runtime::TerrainTags::empty(); (width * height) as usize]
+    }
+
+    fn pick(
+        faction_count: usize,
+        min_separation: u32,
+        width: u32,
+        height: u32,
+        tags: &[sim_runtime::TerrainTags],
+    ) -> Vec<(u32, u32)> {
+        faction_start_tiles(
+            faction_count,
+            min_separation,
+            width,
+            height,
+            tags,
+            &[],
+            &FoodModulePreference::default(),
+            &[],
+            1,
+        )
+    }
+
+    /// ⛔ **THE TIE-BREAK.** Every tile of this grid scores the same, so the winner is decided
+    /// entirely by the strict `>` walking the tiles in row-major order: the lowest `(y, then x)`.
+    /// Determinism is load-bearing — a replay that picked a different maximum would generate a
+    /// different world from the same seed.
+    #[test]
+    fn a_tie_is_broken_by_the_lowest_y_then_x() {
+        let (width, height) = (8u32, 6u32);
+        let picked = pick(1, 1, width, height, &flat_land(width, height));
+        assert_eq!(picked, vec![(0, 0)]);
+    }
+
+    /// The whole point of the greedy pass: each later faction is at least the separation from every
+    /// start already taken.
+    #[test]
+    fn each_later_faction_clears_the_separation_from_every_earlier_one() {
+        let (width, height) = (20u32, 20u32);
+        let separation = 6u32;
+        let picked = pick(3, separation, width, height, &flat_land(width, height));
+        assert_eq!(picked.len(), 3);
+        for (index, a) in picked.iter().enumerate() {
+            for b in picked.iter().skip(index + 1) {
+                let dx = a.0 as i64 - b.0 as i64;
+                let dy = a.1 as i64 - b.1 as i64;
+                assert!(
+                    dx * dx + dy * dy >= (separation as i64) * (separation as i64),
+                    "{a:?} and {b:?} are closer than {separation}"
+                );
+            }
+        }
+    }
+
+    /// **Relaxation, not failure.** A separation no pair of tiles on this grid can satisfy must
+    /// still place everybody, on distinct tiles.
+    #[test]
+    fn a_separation_nothing_can_satisfy_still_places_every_faction() {
+        let (width, height) = (4u32, 4u32);
+        let picked = pick(3, 100, width, height, &flat_land(width, height));
+        assert_eq!(picked.len(), 3, "every faction is placed");
+        let mut unique = picked.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            3,
+            "and no two of them share a tile: {picked:?}"
+        );
+    }
+
+    /// Water is not ground. An all-water map has nothing to score, and the picker falls back to the
+    /// grid centre rather than indexing into an empty list.
+    #[test]
+    fn an_all_water_map_falls_back_to_the_grid_centre() {
+        let (width, height) = (8u32, 6u32);
+        let tags = vec![sim_runtime::TerrainTags::WATER; (width * height) as usize];
+        assert_eq!(
+            pick(1, 1, width, height, &tags),
+            vec![(width / 2, height / 2)]
+        );
+    }
+
+    /// The good ground still wins: separation reorders *which* tile each later faction gets, it
+    /// never overrides the score.
+    #[test]
+    fn the_first_pick_is_the_argmax_regardless_of_how_many_factions_follow() {
+        let (width, height) = (12u32, 12u32);
+        let mut tags = flat_land(width, height);
+        let prize = (7u32, 9u32);
+        tags[(prize.1 * width + prize.0) as usize] =
+            sim_runtime::TerrainTags::FERTILE | sim_runtime::TerrainTags::FRESHWATER;
+        for factions in 1..=3usize {
+            let picked = pick(factions, 4, width, height, &tags);
+            assert_eq!(
+                picked[0], prize,
+                "with {factions} factions the best ground must still go first"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3957,6 +4232,10 @@ mod inventory_effect_tests {
     use bevy::prelude::World;
     use bevy_ecs::system::RunSystemOnce;
 
+    /// The one faction a hand-rolled test `World` has: worldgen with no `FactionRegistry` installed
+    /// reads as [`crate::orders::FactionRegistry::default`], which is `FactionId(0)` alone.
+    const TEST_FACTION: FactionId = FactionId(0);
+
     fn configured_world(provisions: i64) -> World {
         let mut config = SimulationConfig::builtin();
         config.start_profile_overrides.inventory = vec![InventoryEntry {
@@ -3992,7 +4271,7 @@ mod inventory_effect_tests {
         let mut query = world.query::<&PopulationCohort>();
         let mut seeded = false;
         for cohort in query.iter(&world) {
-            if cohort.faction != PLAYER_FACTION {
+            if cohort.faction != TEST_FACTION {
                 continue;
             }
             // Well-fed morale bonus lifts the 0.6 spawn baseline, and the band carries food.
@@ -4008,7 +4287,7 @@ mod inventory_effect_tests {
         // The faction provisions pool stays empty — food lives in the bands' larders.
         let provisions = world
             .resource::<FactionInventory>()
-            .stockpile(PLAYER_FACTION)
+            .stockpile(TEST_FACTION)
             .and_then(|s| s.get("provisions").copied())
             .unwrap_or(0);
         assert_eq!(

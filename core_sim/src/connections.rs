@@ -59,6 +59,7 @@ use crate::{
     components::BandId,
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
     metrics::SimulationMetrics,
+    orders::FactionId,
     resources::SimulationTick,
     scalar::Scalar,
 };
@@ -137,6 +138,59 @@ impl ConnectionLedger {
 
     pub fn is_empty(&self) -> bool {
         self.edges.is_empty()
+    }
+
+    /// **Is there a live tie between these two bands, in EITHER direction?**
+    ///
+    /// A connection is directed — *who found whom* — and whether a rider requires mutuality is the
+    /// rider's business (see the module docs). Neither rider that asks this does: contact is one
+    /// undirected fact, and requiring both edges would make it depend on two independent sight
+    /// sweeps agreeing on the same turn.
+    ///
+    /// **A parked tie is not live.** `strength == NO_TIE` is the keystone's *"at zero nothing
+    /// flows"*: the edge still exists — we know such a people exist — and it carries nothing.
+    ///
+    /// It lives on the ledger rather than in a rider because two riders now ask it (the supply
+    /// network's link rule and the knowledge migration's contact gate), and a second copy of *"what
+    /// counts as a live tie"* is a second answer free to drift.
+    pub fn tie_is_live(&self, a: BandId, b: BandId) -> bool {
+        [ConnectionKey::new(a, b), ConnectionKey::new(b, a)]
+            .iter()
+            .any(|key| {
+                self.get(key)
+                    .is_some_and(|connection| connection.strength > NO_TIE)
+            })
+    }
+
+    /// **Have these two factions actually met?** — does any live tie join a band of `a` to a band of
+    /// `b`.
+    ///
+    /// **Faction is a property of the ENDPOINT**, so the caller supplies the `BandId -> FactionId`
+    /// resolution and the edge stays faction-free (the module docs' rule, and the same shape
+    /// `snapshot::capture` resolves connections with). An edge whose endpoint is not in the map
+    /// belongs to a band that is gone and joins nobody, rather than being guessed at.
+    ///
+    /// A faction is trivially in contact with itself only if some pair of its own bands is tied, so
+    /// callers that mean *"another people"* must exclude their own faction themselves — this answers
+    /// the question it is asked.
+    pub fn factions_in_contact(
+        &self,
+        band_factions: &BTreeMap<BandId, FactionId>,
+        a: FactionId,
+        b: FactionId,
+    ) -> bool {
+        self.edges.iter().any(|(key, connection)| {
+            if connection.strength <= NO_TIE {
+                return false;
+            }
+            let (Some(&observer), Some(&subject)) = (
+                band_factions.get(&key.observer),
+                band_factions.get(&key.subject),
+            ) else {
+                return false;
+            };
+            (observer == a && subject == b) || (observer == b && subject == a)
+        })
     }
 
     /// Refresh (or form) the tie `key` from a report that the subject was at `position` on

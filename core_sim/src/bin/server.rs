@@ -2339,7 +2339,9 @@ fn handle_found_settlement(
         );
         return;
     };
-    start_location.relocate(target);
+    // **Only the founding faction's marker moves.** The marker is per-faction, so a settlement one
+    // people founds says nothing about where another people began.
+    start_location.relocate(faction, target);
 
     push_command_event(
         app,

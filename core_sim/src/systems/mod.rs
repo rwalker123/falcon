@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     cmp::{max, min, Ordering},
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
 };
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
@@ -30,6 +30,7 @@ use crate::{
         SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
         TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
+    connections::ConnectionLedger,
     creatures_config::CreaturesConfigHandle,
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -91,7 +92,6 @@ use crate::{
 };
 use sim_runtime::{merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem};
 
-const PLAYER_FACTION: FactionId = FactionId(0);
 const BUCKET_COLS: u32 = 6;
 const BUCKET_ROWS: u32 = 6;
 const LATITUDE_BANDS: usize = 3;

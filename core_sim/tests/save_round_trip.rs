@@ -81,6 +81,26 @@ fn sim_tree(app: &App) -> ciborium::value::Value {
     canonical_tree(&capture_sim_state(&app.world))
 }
 
+/// [`spawn_world`], but generated for an explicit roster.
+///
+/// The registry is installed **before** the first `update()`, which is when `Startup` — and
+/// therefore `spawn_initial_world` — runs, so worldgen places every faction in it.
+fn spawn_world_with_factions(factions: &[FactionSpec]) -> App {
+    let mut app = build_test_app();
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
+    let mut config = app.world.resource::<SimulationConfig>().clone();
+    config.map_preset_id = "earthlike".to_string();
+    config.map_seed = core_sim::HARNESS_MAP_SEED;
+    app.world.insert_resource(config);
+    let registry = FactionRegistry::new(factions);
+    app.world
+        .insert_resource(TurnQueue::new(registry.factions().to_vec()));
+    app.world.insert_resource(registry);
+    app.update();
+    app
+}
+
 fn live_tiles(app: &mut App) -> usize {
     app.world.query::<&Tile>().iter(&app.world).count()
 }
@@ -135,8 +155,8 @@ fn a_saved_world_loads_into_a_fresh_app() {
         b.resource::<FoodSiteRegistry>().sites().len()
     );
     assert_eq!(
-        a.resource::<StartLocation>().position(),
-        b.resource::<StartLocation>().position()
+        a.resource::<StartLocation>().iter().collect::<Vec<_>>(),
+        b.resource::<StartLocation>().iter().collect::<Vec<_>>()
     );
 
     // `FoodSiteRegistry::positions` is not encoded — it is rebuilt from `sites` on decode. If that
@@ -632,6 +652,51 @@ fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
         *loaded.world.resource::<core_sim::StartingLoadout>(),
         live,
         "the restored world's windows must be the ones that were written - open, same budgets"
+    );
+}
+
+/// **A TWO-FACTION START LOCATION SURVIVES THE ROUND TRIP.**
+///
+/// `StartLocation` is a per-faction map, and a save is the only place it can be silently truncated:
+/// a rollback restores into the live world that already holds it. `a_saved_world_loads_into_a_fresh_app`
+/// asserts the whole map survives, but on the shipped one-faction profile that map has one entry, so
+/// a bug that carried only the first would pass it. This world is generated with two factions so the
+/// assertion has a second entry to lose.
+#[test]
+fn a_two_faction_start_location_survives_the_round_trip() {
+    let mut original = spawn_world_with_factions(&[
+        FactionSpec {
+            control: FactionControl::Human,
+        },
+        FactionSpec {
+            control: FactionControl::Ai,
+        },
+    ]);
+    for _ in 0..TURNS_BEFORE_SAVE {
+        run_turn(&mut original);
+    }
+
+    let saved: Vec<_> = original.world.resource::<StartLocation>().iter().collect();
+    assert_eq!(
+        saved.len(),
+        2,
+        "worldgen must place both factions, or there is nothing here to lose"
+    );
+    assert_ne!(
+        saved[0].1, saved[1].1,
+        "the two starts are distinct, so a truncation cannot hide behind equal values"
+    );
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (loaded, _) = load_save(&blob).expect("the save loads");
+    assert_eq!(
+        loaded
+            .world
+            .resource::<StartLocation>()
+            .iter()
+            .collect::<Vec<_>>(),
+        saved,
+        "every faction's start must come back, filed under the same faction"
     );
 }
 

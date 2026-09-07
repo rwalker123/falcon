@@ -110,6 +110,16 @@ pub struct SimulationConfig {
     pub temperature_morale_tolerance: Scalar,
     pub population_cluster_stride: u32,
     pub population_cap: u32,
+    /// **How far apart worldgen tries to put two factions' start tiles, in tiles.**
+    ///
+    /// Measured the way the curated food-site pass measures spacing — Euclidean distance on tile
+    /// coordinates, compared squared — so the file has one notion of "far enough apart".
+    ///
+    /// It is a *target*, not a guarantee: on a map with no land pair that far apart, worldgen takes
+    /// the best remaining tile and warns rather than failing to place a faction (see
+    /// `systems::worldgen`). Validated `> 0` at parse, because a separation of zero would let two
+    /// peoples open the campaign on the same hex.
+    pub faction_start_min_separation: u32,
     pub power_adjust_rate: Scalar,
     pub max_power_generation: Scalar,
     pub max_power_efficiency: Scalar,
@@ -243,6 +253,12 @@ pub enum SimulationConfigError {
          sim and the event dock silently running different windows"
     )]
     ZeroCommandEventsRetentionTurns,
+    #[error(
+        "`faction_start_min_separation` must be at least 1: it is the distance worldgen holds \
+         between two factions' start tiles, and 0 would let two peoples open the campaign standing \
+         on the same hex — which is not a cramped map, it is no placement at all"
+    )]
+    ZeroFactionStartMinSeparation,
 }
 
 impl ConfigLoadError for SimulationConfigError {
@@ -284,6 +300,8 @@ struct SimulationConfigData {
     temperature_morale_tolerance: f32,
     population_cluster_stride: u32,
     population_cap: u32,
+    #[serde(default = "default_faction_start_min_separation")]
+    faction_start_min_separation: u32,
     power_adjust_rate: f32,
     max_power_generation: f32,
     max_power_efficiency: f32,
@@ -457,6 +475,9 @@ impl SimulationConfigData {
         if self.command_events_retention_turns == 0 {
             return Err(SimulationConfigError::ZeroCommandEventsRetentionTurns);
         }
+        if self.faction_start_min_separation == 0 {
+            return Err(SimulationConfigError::ZeroFactionStartMinSeparation);
+        }
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_topology: MapTopology {
@@ -479,6 +500,7 @@ impl SimulationConfigData {
             temperature_morale_tolerance: scalar_from_f32(self.temperature_morale_tolerance),
             population_cluster_stride: self.population_cluster_stride,
             population_cap: self.population_cap,
+            faction_start_min_separation: self.faction_start_min_separation,
             power_adjust_rate: scalar_from_f32(self.power_adjust_rate),
             max_power_generation: scalar_from_f32(self.max_power_generation),
             max_power_efficiency: scalar_from_f32(self.max_power_efficiency),
@@ -509,6 +531,16 @@ impl SimulationConfigData {
 
 fn default_fog_enabled() -> bool {
     true
+}
+
+/// 20 tiles — a quarter of the shipped map's width (`grid_size.x = 80`).
+///
+/// Far enough that two peoples do not open the campaign sharing one food shed and have to travel to
+/// meet each other, close enough that the greedy placement can still satisfy it on a map whose land
+/// is a fraction of the grid. The single source of the number, so an untouched config and an absent
+/// key cannot disagree.
+fn default_faction_start_min_separation() -> u32 {
+    20
 }
 
 /// 20 turns of world events: long enough that a player returning from a few quick turns can read
@@ -858,22 +890,60 @@ impl Default for CapabilityFlags {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default, Serialize, Deserialize)]
+/// **Where each faction's campaign began** — one tile per faction, filed under the faction it
+/// belongs to.
+///
+/// Per-faction rather than global because worldgen places every registered faction, at its own
+/// start (`systems::worldgen`): a single marker would name one people's ground and leave the rest
+/// homeless, and [`Self::relocate`] would let a rival's new settlement move your marker.
+///
+/// **`BTreeMap`, not `HashMap`** — this is checkpointed state (`WorldStatics`), so the iteration
+/// order has to be an order and not an accident.
+///
+/// `Default` is the **empty** map, which is what a hand-rolled test `World` inserts as scaffolding:
+/// no faction has a start until worldgen picks one.
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StartLocation {
-    position: Option<UVec2>,
+    positions: BTreeMap<FactionId, UVec2>,
 }
 
 impl StartLocation {
-    pub fn new(position: Option<UVec2>) -> Self {
-        Self { position }
+    pub fn new(positions: BTreeMap<FactionId, UVec2>) -> Self {
+        Self { positions }
     }
 
-    pub fn position(&self) -> Option<UVec2> {
-        self.position
+    /// Where `faction` started, or `None` if this world never placed it.
+    pub fn position_for(&self, faction: FactionId) -> Option<UVec2> {
+        self.positions.get(&faction).copied()
     }
 
-    pub fn relocate(&mut self, position: UVec2) {
-        self.position = Some(position);
+    /// **The map's anchor start — the lowest-id faction's.**
+    ///
+    /// For readers that are asking about *the world* rather than about a people, and so have no
+    /// faction to ask with: where the first people were put is a property of the terrain that
+    /// scored best, and a one-faction world's anchor is its only start. Used by the migratory-herd
+    /// anchor (`fauna::spawn_initial_herds`) and by the worldgen suites that assert on the map.
+    pub fn anchor_position(&self) -> Option<UVec2> {
+        self.positions.values().next().copied()
+    }
+
+    /// Move `faction`'s marker — and only that faction's. A settlement founded by one people says
+    /// nothing about where another people began.
+    pub fn relocate(&mut self, faction: FactionId, position: UVec2) {
+        self.positions.insert(faction, position);
+    }
+
+    /// Every placed start, in faction-id order.
+    pub fn iter(&self) -> impl Iterator<Item = (FactionId, UVec2)> + '_ {
+        self.positions.iter().map(|(faction, pos)| (*faction, *pos))
+    }
+
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
     }
 }
 

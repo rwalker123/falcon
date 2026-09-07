@@ -835,6 +835,7 @@ pub fn simulate_population(
     mut event_log: ResMut<CommandEventLog>,
     mut trade_events: EventWriter<TradeDiffusionEvent>,
     mut migration_events: EventWriter<MigrationKnowledgeEvent>,
+    connections: Res<ConnectionLedger>,
     tick: Res<SimulationTick>,
 ) {
     // `TradeTelemetry` is a PER-TURN accumulator, so someone has to clear it before the turn's
@@ -844,6 +845,14 @@ pub fn simulate_population(
     // writer, so the reset moves here — still ahead of every write, and still ahead of
     // `publish_trade_telemetry`, which is ordered after this system.
     telemetry.reset_turn();
+    // **Faction is a property of the ENDPOINT** — resolved once, from the same query the loop below
+    // mutates, so the connection ledger itself never carries a faction (`connections.rs`). Taken
+    // BEFORE the loop, so a band that changes sides part-way through this turn cannot make the
+    // contact answer depend on iteration order.
+    let band_factions: BTreeMap<BandId, FactionId> = cohorts
+        .iter()
+        .filter_map(|(cohort, _, band_id, _)| band_id.map(|band| (*band, cohort.faction)))
+        .collect();
     let population_cfg = pipeline_config.config().population();
     let demo = demographics.get();
     let wellbeing = wellbeing_config.get();
@@ -948,11 +957,18 @@ pub fn simulate_population(
             && cohort.morale > population_cfg.migration_morale_threshold()
             && !cohort.knowledge.is_empty()
         {
-            if let Some(&destination) = registry
-                .factions()
-                .iter()
-                .find(|&&faction| faction != cohort.faction)
-            {
+            // **A band may only defect to a people its own people has actually MET.** The
+            // destination used to be the first id that was not the cohort's own, which on a
+            // two-faction map hands a player's strongest, happiest, most knowledgeable band to
+            // strangers on the far side of the world. Contact is the connection ledger's to answer:
+            // a live tie, in either direction, between a band of ours and a band of theirs
+            // (`ConnectionLedger::factions_in_contact`). No contact, no destination, no defection —
+            // the band simply stays. Whether the destination is *better off* is a separate design
+            // and is deliberately not asked here.
+            if let Some(&destination) = registry.factions().iter().find(|&&faction| {
+                faction != cohort.faction
+                    && connections.factions_in_contact(&band_factions, cohort.faction, faction)
+            }) {
                 let migration_eta = population_cfg.migration_eta_ticks();
                 let source_contract = fragments_to_contract(&cohort.knowledge);
                 let scaled = scale_migration_fragments(

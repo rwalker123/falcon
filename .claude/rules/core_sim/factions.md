@@ -5,6 +5,12 @@ paths:
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/src/bin/server.rs"
   - "core_sim/src/systems/mod.rs"
+  - "core_sim/src/systems/worldgen.rs"
+  - "core_sim/src/systems/population.rs"
+  - "core_sim/src/starting_loadout.rs"
+  - "core_sim/tests/faction_support/mod.rs"
+  - "core_sim/tests/multi_faction_start.rs"
+  - "core_sim/tests/defection_contact_gate.rs"
 ---
 
 # Factions — who plays the world, and who is allowed to command
@@ -154,42 +160,124 @@ Two gates, at two different distances from the player.
 legitimately name another faction as owner or target, and `resolve_shipment` deliberately never asks
 faction at all — a cross-faction trade destination works by construction.
 
+## Every faction gets land, people and an opening
+
+Worldgen places **every registered faction**, not faction 0. `spawn_initial_world` takes the
+`FactionRegistry` and loops the roster over the four things a people needs to exist: a start tile, a
+spawned roster of bands around it, the profile's seeded stockpile, and the profile's seeded
+knowledge. There is no `PLAYER_FACTION` constant any more — it was the single place the whole
+opening was hard-wired to `FactionId(0)`, and every one of its readers now asks the roster.
+
+**The registry is an `Option<Res<..>>` in that system**, like the start-kit handles beside it:
+`build_headless_app` inserts it before Startup, but 44 hand-rolled test `World`s do not, and worldgen
+must not panic on them. Absent reads as `FactionRegistry::default()` — the one human faction those
+worlds have always had.
+
+### The starts are scored once and picked greedily, a minimum distance apart
+
+`faction_start_tiles` scores every land tile with `score_start_tiles` — **the same per-tile scoring as
+before, unchanged**, because this arc changed *selection*, not what makes ground good — and then
+picks one start per faction:
+
+- The **first** pick is the argmax over every land tile, so a one-faction world opens on exactly the
+  tile it always has. Pinned by `multi_faction_start::a_one_faction_world_opens_on_the_tile_it_has_always_opened_on`.
+- Each **later** faction takes the highest-scoring remaining tile that is at least
+  `faction_start_min_separation` from every start already picked.
+- **Ties keep the strict `>` over the row-major scan**, so the lowest `(y, then x)` maximum wins.
+  Determinism is load-bearing: a replay that picked a different maximum would build a different world
+  from the same seed. A real map's winner is a wide *unique* maximum, so the tie-break is only
+  observable on a synthetic grid — which is where `start_tile_selection_tests` guards it.
+- **Distance is Euclidean, compared squared**, matching the curated food-site pass's `min_spacing`
+  idiom, so the file has one notion of "far enough apart".
+
+> #### Relaxation, never failure
+>
+> If no remaining tile clears the separation, worldgen takes the best remaining tile anyway and
+> warns `worldgen.start_separation_relaxed` with the faction and the distance it achieved. **A
+> cramped map is a worse world, not a dead one** — a faction left unplaced has no land, no band and
+> nobody to play it, which is a strictly worse outcome than two peoples starting near each other.
+
+### `spawn_default_population_clusters` stays faction 0's alone
+
+The no-`starting_units` fallback — a lattice of 1,000-person clusters around one point — is the
+degenerate/debug path, and no campaign profile takes it. Giving every faction a copy would multiply a
+scaffold, not place a people, so the call site passes `FactionId(0)` explicitly.
+
+## `StartLocation` is per-faction, and two readers ask it faction-blind
+
+`StartLocation` is a `BTreeMap<FactionId, UVec2>`. `position_for(faction)` is the ordinary read;
+`anchor_position()` is the **map's** anchor — the lowest-id faction's start — for readers asking
+about the world rather than about a people:
+
+| Reader | Asks | Why |
+|---|---|---|
+| `snapshot/capture.rs` | `position_for(viewer_faction.0)` | a frame is captured for one viewer, so the wire's single `StartMarkerState` carries **that viewer's** opening ground. The `.fbs` is unchanged — there is no per-faction marker table |
+| `bin/server.rs` `found_settlement` | `relocate(faction, target)` | only the **founding** faction's marker moves. It used to move the one global marker with no faction check, which on a two-faction map is a rival re-homing your start |
+| `fauna.rs` `spawn_initial_herds` | `anchor_position()` | the migratory-herd anchor is a property of the **map**, not of a people: long-range herds range across the whole world |
+| the worldgen suites (`food_site_water_bias`, `graze_distribution`) | `anchor_position()` | they assert about the terrain, and have no faction to ask with |
+
+`Default` is the **empty** map, which is what ~20 integration fixtures insert as scaffolding, so none
+of them needed an edit. **`SAVE_FORMAT_VERSION` is 7** for the shape change — see the changelog table
+on that constant.
+
+## One opening-loadout window PER FACTION
+
+`stamp_starting_loadout` opens a window for the lowest `BandId` **within each faction**. It used to
+take the globally lowest `BandId` carrying `StartingUnit` with no faction filter, justified by
+worldgen hard-coding every cohort to `FactionId(0)`; that premise is gone. A globally-lowest pick
+would hand the whole opening allocation to whichever faction happened to be placed first and leave
+every other people unoutfitted — no kits, no material, and nothing on screen to say why.
+
+## A band defects only to a people it has MET
+
+The knowledge migration's trigger is unchanged — a settled band (`age_turns >=
+migration_min_settled_turns`), with knowledge, and **HIGH** morale (`> migration_morale_threshold`).
+What changed is the destination: it is now the first registered faction that is not the cohort's own
+**and that the cohort's own faction has actually made contact with**. No contact, no destination, no
+defection.
+
+Contact is `ConnectionLedger::factions_in_contact(band_factions, a, b)`: does any live tie
+(`strength > NO_TIE`), in either direction, join a band of `a` to a band of `b`. **Faction stays a
+property of the ENDPOINT** — the caller supplies the `BandId -> FactionId` map, resolved in
+`simulate_population` from the same query it then mutates and taken *before* the loop, so a band that
+changes sides part-way through a turn cannot make the answer depend on iteration order. The edge
+itself carries no faction, which is `connections.md`'s rule.
+
+`ConnectionLedger::tie_is_live` moved onto the ledger for this: `supply.rs` had the only copy, and
+two riders asking *"what counts as a live tie"* must not each own an answer free to drift. Supply's
+private `tie_is_live` survives as a one-line delegation, because its doc comment is where the
+logistics link rule is stated.
+
+**Distance and prosperity are not asked.** The designed end state is scouts defecting to a
+*better-off* faction; contact is the half this arc landed, and it is the half that stops a band
+walking to strangers on the far side of the world.
+
 ## The single-faction assumptions that are still live
 
-Raising a profile's faction count above one puts weight on these four places. They are the
-tripwires; each is correct today only because there is exactly one faction.
+Two places still read a one-faction world into a roster that may hold more.
 
 | Site | What it assumes |
 |---|---|
-| `systems/mod.rs` `const PLAYER_FACTION: FactionId = FactionId(0)` | Worldgen's starting spawn is hard-wired to faction 0 (`systems/worldgen.rs` — starting units, seeded knowledge, the start location, the cohort filter and the stockpile). **Only faction 0 gets land.** |
 | `telling/mod.rs` (signal sampling) | Takes the registry's **lowest id** as "the player" and filters every band view to it; its own comment says there is no `player_faction` accessor. |
-| `systems/population.rs` (knowledge migration) | Picks a migration destination as *the first faction that is not the cohort's own*, and the band then **changes sides permanently**. Dead at one faction. See below — this one is not a curiosity. |
 | `visibility.rs` `ViewerFaction` | A single **global** resource read by `snapshot/capture.rs`, so one snapshot is captured and broadcast to every connected client. |
 
-### ⛔ The migration picker hands your best bands to a stranger
+## The two-faction fixture
 
-Of the four, this is the one that changes the game rather than merely limiting it, so it is worth
-stating at length. The trigger is a settled band with knowledge and **high** morale:
+`core_sim/tests/faction_support/mod.rs` builds both arms of every comparison — `one_faction_world()`
+and `two_faction_world()`, plus `world_with(roster, tune)` for a world that also needs a config edit.
+**The roster is installed before the first `update()`**, which is when `Startup` and therefore
+`spawn_initial_world` run; that is what makes worldgen place two factions without editing a shipped
+config file or setting a process-global env var a parallel test would race on. It rebuilds the
+`TurnQueue` from the roster too, for the reason the roster-derived-set table above gives.
 
-```rust
-cohort.age_turns >= migration_min_settled_turns
-    && cohort.morale > migration_morale_threshold      // HIGH, not low
-    && !cohort.knowledge.is_empty()
-```
+The control arm is not optional: it is what distinguishes *"the second faction got its own"* from
+*"the first faction got it twice"* and from *"nothing changed at all"*.
 
-and the destination is `registry.factions().iter().find(|&&f| f != cohort.faction)` — the first id
-that is not yours. On arrival the knowledge transfers **and `cohort.faction = migration.destination`**:
-the band is gone for good.
+## Config files
 
-There is **no check on distance, on contact, or on whether the destination is better off**. So the
-first two-faction world takes a player's strongest, happiest, most knowledgeable bands and defects
-them to a people that player has never met, from anywhere on the map. It reads as correct today only
-because `find` is searching a one-element list and can never return `Some`.
-
-Nothing here is a guard that broke — the behaviour was written this way and has never been
-reachable. Whatever puts a second faction on the map owns fixing it in the same change, because
-placement is what wakes it. The designed replacement is scouts defecting to a *better-off* faction
-they have actually met; the contact tie a gate would need already exists in `ConnectionLedger`.
+| File | Key | Default | Purpose |
+|---|---|---|---|
+| `src/data/simulation_config.json` | `faction_start_min_separation` | **20** tiles | How far apart worldgen tries to put two factions' start tiles — a quarter of the shipped map's width, far enough that two peoples do not open sharing one food shed. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes and warns rather than failing to place a faction. Validated `> 0` at parse (`ZeroFactionStartMinSeparation`), because zero would let two peoples open on the same hex |
 
 ## Saves win over profile edits
 
