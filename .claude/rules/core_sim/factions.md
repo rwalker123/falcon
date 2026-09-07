@@ -110,8 +110,33 @@ tripwires; each is correct today only because there is exactly one faction.
 |---|---|
 | `systems/mod.rs` `const PLAYER_FACTION: FactionId = FactionId(0)` | Worldgen's starting spawn is hard-wired to faction 0 (`systems/worldgen.rs` — starting units, seeded knowledge, the start location, the cohort filter and the stockpile). **Only faction 0 gets land.** |
 | `telling/mod.rs` (signal sampling) | Takes the registry's **lowest id** as "the player" and filters every band view to it; its own comment says there is no `player_faction` accessor. |
-| `systems/population.rs` (knowledge migration) | Picks a migration destination as *the first faction that is not the cohort's own*. Dead at one faction; live — and arbitrary — at two. |
+| `systems/population.rs` (knowledge migration) | Picks a migration destination as *the first faction that is not the cohort's own*, and the band then **changes sides permanently**. Dead at one faction. See below — this one is not a curiosity. |
 | `visibility.rs` `ViewerFaction` | A single **global** resource read by `snapshot/capture.rs`, so one snapshot is captured and broadcast to every connected client. |
+
+### ⛔ The migration picker hands your best bands to a stranger
+
+Of the four, this is the one that changes the game rather than merely limiting it, so it is worth
+stating at length. The trigger is a settled band with knowledge and **high** morale:
+
+```rust
+cohort.age_turns >= migration_min_settled_turns
+    && cohort.morale > migration_morale_threshold      // HIGH, not low
+    && !cohort.knowledge.is_empty()
+```
+
+and the destination is `registry.factions.iter().find(|&&f| f != cohort.faction)` — the first id
+that is not yours. On arrival the knowledge transfers **and `cohort.faction = migration.destination`**:
+the band is gone for good.
+
+There is **no check on distance, on contact, or on whether the destination is better off**. So the
+first two-faction world takes a player's strongest, happiest, most knowledgeable bands and defects
+them to a people that player has never met, from anywhere on the map. It reads as correct today only
+because `find` is searching a one-element list and can never return `Some`.
+
+Nothing here is a guard that broke — the behaviour was written this way and has never been
+reachable. Whatever puts a second faction on the map owns fixing it in the same change, because
+placement is what wakes it. The designed replacement is scouts defecting to a *better-off* faction
+they have actually met; the contact tie a gate would need already exists in `ConnectionLedger`.
 
 ## Saves win over profile edits
 
