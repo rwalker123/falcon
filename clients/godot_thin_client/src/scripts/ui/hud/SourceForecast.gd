@@ -1526,6 +1526,22 @@ const HUNT_PEAK_DROP_BANK_BONUS := 1
 const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
 const MAX_USEFUL_NOUN_ONE := "worker"
 const MAX_USEFUL_NOUN_MANY := "workers"
+# **THE SAME CAP, WHEN THE WEAPONS ARE WHAT BINDS IT.** A plateau has two causes and the curve cannot
+# tell them apart — the herd ran out of room, or the band ran out of spears — so on a band armed for
+# four "more would be idle" blames the herd for a shortage of gear while thirteen hands stand idle.
+# The reply's `armed_crew` is what separates the two, and this wording is earned only where the cap
+# EQUALS it (see `DrawerComposeController._forecast_worker_cap`, which holds the whole gate).
+# The third `%s` is the reply's `weapon_item_id` VERBATIM. `DetailFormat.kit_item_label` would name
+# it — that table is real and already carries `spears` and `traps` — and it is deliberately not read
+# here, because it answers in a kit ROW's voice ("Spears", capitalised) while this position is
+# mid-sentence, where a capital reads as a proper noun. The ids the hunt kits name their weapon by
+# are lowercase English plurals, so raw is the spelling that finishes "the rest have no …" as
+# English.
+# **WHAT THAT COSTS, STATED RATHER THAN DENIED**: a hunt weapon whose id is not a lowercase plural
+# would reach the player exactly as the wire spells it. Three items on the roster already carry ids
+# of that shape — `stone_dressing`, `tanning_frame`, `bone_awl` — and none of them is the attack item
+# of any hunt kit, so it is the CURRENT roster, not this format, that keeps the sentence English.
+const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no %s"
 # The CONFIRMED-row twin of MAX_USEFUL_NOTE_FORMAT: a worked source's `+` explaining why it is dead
 # (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
 # the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
@@ -2955,6 +2971,17 @@ static func animals_stayed(engaged: float, stay: float) -> float:
 # stepping at integer boundaries); on Wild Aurochs the binding term flips from the fight to the
 # engagement inside the stepper's own range and back again. A row is the WHOLE crew's take per turn:
 # **never multiply it by the crew size.**
+# **THE REPLY'S TWO CREW-WIDE ANSWERS, beside the rows.** How many of the asked crew carry something
+# that can hurt THIS quarry, and the id of the item supplying that attack. They are the reply's, not a
+# row's: one party is described by the whole curve, and the client MAY NOT derive either of them —
+# `KitRoster.kit_item_ids` says what a kit carries, never what each item is for.
+const CREW_TAKE_ARMED_KEY := "armed_crew"
+const CREW_TAKE_WEAPON_KEY := "weapon_item_id"
+# Nothing the party holds can hurt the quarry — the wire's own `0`, and also what a surface with no
+# crew-take answer in hand passes for it (the plant web asks no attack-vs-defense question, and a hunt
+# sheet renders before its first reply lands). Both mean the same thing to the gear note: it cannot be
+# earned here. Distinct from `NO_CREW_ANSWER`, which is an unpriceable crew rather than an unarmed one.
+const CREW_TAKE_NO_ARMED_CREW := 0
 const CREW_TAKE_WORKERS_KEY := "workers"
 const CREW_TAKE_LOW_KEY := "animals_low"
 const CREW_TAKE_LIKELY_KEY := "animals_likely"

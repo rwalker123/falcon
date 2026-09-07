@@ -2655,3 +2655,46 @@ Sabotage-verified by restoring `nearest_unit.get("id", "")`: exactly the two lab
 naming `got "634"`, and the distance precondition correctly stays green.
 
 **A clean run is 413 frames / 1885 `PASS`, exit 0 — RE-MEASURED.**
+
+## The cap that is a shortage of spears (`chapters/hunt.gd`)
+
+Two frames and six assertions, appended LAST in the hunt chapter, plus a stand-in server of their own.
+The behaviour is `labor-ui.md`'s — "THE CAP'S NOTE NAMES THE SPEARS WHERE THE SPEARS ARE WHAT BOUND
+IT"; what belongs here is the shape of the drive. `EXPECTED_CHECKPOINTS` 369 → **377**.
+
+**THE THREE STATES ARE THE GATE READ OUT LOUD, and no one of them is worth anything alone**: the cap
+IS the armed crew (`herd_hunt_short_of_spears`), the cap is the herd's own room with every hand armed
+(`herd_hunt_plateau_is_the_herd`), and a PEN, which answers `armed_crew == max_workers` because there
+is no attack-vs-defense gate behind a fence. The first two are one A/B on ONE aurochs with only the
+reply's two numbers moving.
+
+**TWO of the three falsify a `cap <= armed_crew` gate, and they falsify it DIFFERENTLY** — which is why
+neither is the redundant one a later reader may drop. The herd-bound state is a fully armed band whose
+cap the **herd** set (`6` against `26` armed), so `<=` holds, prints the gear note, and fails that
+state's own refusal of it. The **pen** is a band whose gear is irrelevant because there is no fight to
+gate (`26` armed against a cap of `5`), so `<=` blames spears for a bound that is the room. The pen's
+precondition is asserted as a relation between the fixture and the render, since the `<=` reading has
+nothing to get wrong on a pen whose cap is larger.
+
+**THE CURVE IS COMPOSED, NOT TAKEN FROM `ForecastFx.crew_take_rows`** — rows that rise once per armed
+hunter and then go flat, which is the shape a plateau of EITHER kind has and so the reason the reply
+has to say which kind this one is. The PEN's rows still come from that helper (a pen has no engagement
+stage, so its rows are the unbounded ones the whole plant web answers with), which is what puts the pen
+on a cap of its own rather than on the curve's.
+
+**THE FIXTURE HERD HAS ROOM TO SPARE** — 540 biomass, 4.5 aurochs, above the food peak — so nothing
+about the herd caps a crew at four and the rendered cap is attributable to the band's gear alone.
+
+**THE SENTENCE IS ASSERTED LITERALLY AND THE FORMAT IS TIED TO IT.** `SPEAR_SHORT_SENTENCE` is spelled
+out, because a needle composed from `MAX_USEFUL_NOTE_GEAR_FORMAT` restates that constant against itself
+and would follow any rewording of it, including back to blaming the herd; a second claim asserts the
+shipped format at the fixture's own terms EQUALS that spelling, which is what stops the literal drifting
+away from the constant it quotes. The two negatives (`SPEAR_SHORT_CLAUSE`, and the idle wording at the
+same cap) are literal for the same reason.
+
+**ONE EXISTING FRAME MOVED, AND IT MOVED TIGHTER.** `tile_panel_compose_forage` — the first compose
+sheet of the chapter that runs after `hunt` — renders its card ~300px SHORTER, ending under its
+`Harvest` button instead of trailing dead space, every glyph unchanged. That is `ComposeSheet.refit`'s
+documented fit sensitivity to the sheet rendered before it, and the new frame is the correctly fitted
+one. Measured by disabling the block's one call and diffing the whole set: **421 of 422 frames
+byte-identical**, that frame the only mover.

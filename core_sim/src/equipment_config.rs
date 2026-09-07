@@ -2067,6 +2067,46 @@ impl EquipmentConfig {
         self.hunter_profile_for(intrinsic, kit, wear, Quarry::Any)
     }
 
+    /// **WHICH ITEM IN THIS KIT IS THE WEAPON** — the id of the live item supplying the kit's
+    /// [`EquipmentStat::Attack`], `"spears"` on `big_game` and `"traps"` on `trapping`. `None` when
+    /// nothing the party still holds declares an attack at all (the bare `none` kit, or a kit whose
+    /// only weapon has worn out).
+    ///
+    /// **It exists because no consumer may infer it.** A kit is a set of item ids and nothing in it
+    /// says which of `{spears, sled}` is the thing you kill with — that knowledge is the effects
+    /// table's, which is exactly what keeps it out of call sites ([`Self::hunter_profile_for`]).
+    /// A readout that has to *name* the weapon (*"the rest have no spears"*) therefore asks here.
+    ///
+    /// # It is asked WITHOUT a quarry, and that is the point
+    ///
+    /// The best equipped attack among the kit's live items, at [`Quarry::Any`] — the same fold
+    /// [`KitChoice::declares_equipped`] runs, kept to the item rather than the value. So a trapping
+    /// party against an aurochs still answers `"traps"`: the kit carries a weapon, it simply cannot
+    /// use it on that body. *Whether* it reaches this quarry is a different question, answered by
+    /// the party's own resolved attack (`fauna::hunt_armed_crew`), and folding the two together here
+    /// would leave a party with no name for the gear it is holding.
+    ///
+    /// Ties go to the kit's own `uses` order, which is the only order there is.
+    pub fn attack_item_id<'k>(
+        &self,
+        kit: &'k KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> Option<&'k str> {
+        kit.uses()
+            .filter_map(|item| {
+                let live = self.live_item(item, wear)?;
+                match live.effect(EquipmentStat::Attack)? {
+                    EffectTier::Equipped(value) => Some((item, value)),
+                    EffectTier::Unequipped(_) => None,
+                }
+            })
+            .fold(None::<(&str, f32)>, |best, (item, value)| match best {
+                Some((_, best_value)) if best_value >= value => best,
+                _ => Some((item, value)),
+            })
+            .map(|(item, _)| item)
+    }
+
     fn hunter_profile_for(
         &self,
         intrinsic: CombatStats,

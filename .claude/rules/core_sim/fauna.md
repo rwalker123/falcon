@@ -749,6 +749,33 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > crew-take curve is the **room**, which does not grow with the crew at all, and gear coverage
 > re-resolved per crew size. `hunt_useful_crew` still reads the **last rise** for those.
 >
+> **AND THE REPLY SAYS WHICH OF THE TWO STOPPED IT.** A plateau is either the **herd** out of room or
+> the **band** out of weapons, and the rows cannot tell them apart: on a band short of spears the
+> curve rises once per armed hunter and then goes flat, so a sheet reading the rows alone blames the
+> herd for a shortage of gear. `HuntCrewTakeReply` therefore carries two more fields beside
+> `per_crew`, both answered in `forecast_query::answer_hunt_crew_take` off inputs it already holds:
+>
+> - **`armed_crew`** (`fauna::hunt_armed_crew`) — how many of `max_workers` carry something that can
+>   hurt **this** quarry, in whole hands. It re-reads the coverage and the `next_turns_quarry` the
+>   curve's **last row** was built from, so the count and the plateau it explains cannot describe two
+>   different parties. `0` where nothing the party holds reaches the quarry (a trapping party's
+>   mass-bounded `attack` against a 120 kg aurochs falls back to the bare hand's `attack 1`), and
+>   `max_workers` at a **pen**, which has no attack-vs-defense gate for a weapon to clear — so a
+>   penned row's plateau is never a story about spears.
+> - **`weapon_item_id`** (`EquipmentConfig::attack_item_id`) — the id of the item in the resolved kit
+>   supplying that attack, empty when no live item in it does. It is published **because the client
+>   may not infer it**: a kit roster says what a kit *carries*, never what each item is *for*, so
+>   nothing on that side can pick the weapon out of `{spears, sled}`. It names the weapon the kit
+>   holds rather than one that works here — the trapping kit reads `traps` beside an `armed_crew` of
+>   `0`, because *which item is the weapon* is a fact about the kit and *whether it reaches this
+>   quarry* is a fact about the party.
+>
+> **The gate both readings run on is one function**, `fauna::crew_can_wound` — a positive
+> `combat::strike_damage`, which `resolve_hunt_fight`'s one-sided arm reads too, so the count of armed
+> hands and the fight that pays them cannot disagree about who lands anything. It is deliberately not
+> `attack_clears_defense`, the predator's `attack >= defense` prey rule: the two differ at equality,
+> where a hunter does no damage.
+>
 > **Quantisation never divides by a food number it has not established is positive.** The old
 > "flooring in provisions and in biomass agree, a positive linear factor cancels" note is **false** for
 > an inedible species: `provisions_per_biomass == 0` makes `floor(food_ceiling / food_per_animal)` a

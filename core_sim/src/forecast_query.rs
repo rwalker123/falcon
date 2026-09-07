@@ -556,6 +556,14 @@ fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery)
 /// shipped `hit_chance = 1.0` it collapses to a point and no test would notice the difference — which
 /// is exactly why it must not be published in a shape that is only correct at today's tuning.
 ///
+/// # The reply also says WHY the rows stop rising
+///
+/// A plateau is either the **herd** out of room or the **band** out of weapons, and the rows cannot
+/// tell them apart — on a band short of spears the curve rises once per armed hunter and then goes
+/// flat. So the reply carries [`crate::fauna::hunt_armed_crew`] beside them, plus the id of the item
+/// in the resolved kit that supplies the attack, which the client may not infer for itself: a kit
+/// roster says what a kit *carries*, never what each item is *for*.
+///
 /// # It is the RESIDENT band's answer, at the base tuning
 ///
 /// [`answer_hunt_trip_forecast`] prices a **detached** party at
@@ -601,7 +609,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
     // **THE ONE PRODUCER** ([`crate::fauna::hunt_crew_take_curve`]) — the same call the capture makes
     // to publish an assigned row's `hunt_useful_workers`, so the rows this reply ships and the cap
     // the Work board reads cannot be two different arithmetics. This half is only the transport.
-    let curve = crate::fauna::hunt_crew_take_curve(&crate::fauna::HuntCrewCurveInputs {
+    let inputs = crate::fauna::HuntCrewCurveInputs {
         herd: &herd,
         fauna: &fauna,
         equipment: &equipment,
@@ -623,7 +631,20 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             .hunt
             .per_worker_biomass_capacity,
         max_workers: ask.max_workers,
-    });
+    };
+    let curve = crate::fauna::hunt_crew_take_curve(&inputs);
+    // **WHY THE CURVE STOPS WHERE IT DOES** — the rows say *that* another hand buys nothing, never
+    // *why*, and on a band short of spears the plateau is the count of armed hunters rather than
+    // anything about the herd. Both halves of that sentence are read off the inputs already in
+    // hand: the count from the same coverage the curve's last row was built from
+    // ([`crate::fauna::hunt_armed_crew`]), and the weapon's name from the resolved kit — which the
+    // client may not infer, because a kit roster says what a kit carries and never what each item
+    // is for.
+    let armed_crew = crate::fauna::hunt_armed_crew(&inputs);
+    let weapon_item_id = equipment
+        .attack_item_id(&kit, &wear)
+        .unwrap_or_default()
+        .to_string();
     let per_crew = curve
         .into_iter()
         .map(|row| HuntCrewTakeRow {
@@ -633,7 +654,11 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             animals_high: row.high,
         })
         .collect();
-    QueryReply::HuntCrewTake(HuntCrewTakeReply { per_crew })
+    QueryReply::HuntCrewTake(HuntCrewTakeReply {
+        per_crew,
+        armed_crew,
+        weapon_item_id,
+    })
 }
 
 /// **THE LARGEST CREW A TAKE CURVE MAY BE ASKED ABOUT.** The reply is one row per crew over

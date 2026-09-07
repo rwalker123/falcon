@@ -34,7 +34,7 @@ use core_sim::{
     LaborAssignment, LaborTarget, LocalStore, MoraleCause, PartyResolution, PopulationCohort,
     ResidentBand, SizeClass, SnapshotHistory, SourcePriority, TileRegistry, NO_USEFUL_CREW,
 };
-use sim_runtime::commands::{HuntCrewTakeQuery, QueryPayload, QueryReply};
+use sim_runtime::commands::{HuntCrewTakeQuery, HuntCrewTakeReply, QueryPayload, QueryReply};
 
 /// The shipped big-game quarry the **fight** binds on: `defense 6`, `durability 150` against the
 /// stalking kit's `attack 20`, so one hunter's blow lands under a tenth of a body a turn while the
@@ -235,23 +235,30 @@ fn published_useful_workers(app: &App) -> u32 {
 /// **The curve as it crosses the SOCKET** — one `(workers, likely)` pair per row, asked at the same
 /// band, herd, kit, floor and crew pool the assigned row was priced at.
 fn crew_take_curve(app: &mut App) -> Vec<(u32, f32)> {
+    crew_take_reply(app, default_hunt_kit())
+        .per_crew
+        .iter()
+        .map(|row| (row.workers, row.animals_likely))
+        .collect()
+}
+
+/// **THE WHOLE REPLY, at a stated kit** — the rows *and* the two fields that say why they stop
+/// rising. One query shape for both readings, so a fixture asking about the armed count cannot
+/// quietly ask about a different band, herd, floor or crew pool than the curve it compares with.
+fn crew_take_reply(app: &mut App, kit_id: String) -> HuntCrewTakeReply {
     let reply = core_sim::forecast_query::answer_forecast_query(
         &mut app.world,
         &QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
             faction_id: FACTION.0,
             band_id: BAND,
             herd_id: HERD_ID.to_string(),
-            kit_id: default_hunt_kit(),
+            kit_id,
             floor: FLOOR,
             max_workers: POOL,
         }),
     );
     match reply {
-        QueryReply::HuntCrewTake(answer) => answer
-            .per_crew
-            .iter()
-            .map(|row| (row.workers, row.animals_likely))
-            .collect(),
+        QueryReply::HuntCrewTake(answer) => answer,
         other => panic!("the crew-take query must answer with a curve, got {other:?}"),
     }
 }
@@ -1567,8 +1574,8 @@ fn a_wild_row_is_still_gated_by_the_fight() {
     );
 }
 
-/// **The spear id the strike quantum is charged against** — named so the wear assertion reads as the
-/// claim rather than as a string.
+/// **The spear id** — the item the strike quantum is charged against, and the one the stalking kit's
+/// `attack` comes from. Named so an assertion reads as the claim rather than as a string.
 const SPEARS: &str = "spears";
 
 /// **What the band has left of `item`**, off its live [`BandEquipment`] ledger.
@@ -1969,5 +1976,195 @@ fn a_penned_rows_workers_needed_is_its_handling_crew_and_never_a_haul_count() {
         bare_needed, sled_needed,
         "carry does not bind a larder pen, so its crew count must not move with the band's sled: \
          {bare_needed} at {bare_carry}/worker vs {sled_needed} at {sled_carry}/worker"
+    );
+}
+
+// =============================================================================================
+// WHY THE CURVE STOPPED — the armed crew and the weapon's name
+// =============================================================================================
+//
+// The compose sheet caps its hunt-crew stepper at the curve's plateau and has to explain it. A
+// plateau has two quite different causes and the rows cannot tell them apart: the **herd** ran out
+// of room to give, or the **band** ran out of weapons. On a band short of spears the curve rises
+// once per armed hunter and then goes flat, so *"more would be idle"* blames the herd for a
+// shortage of gear.
+//
+// The client cannot resolve it either: the published kit roster says what a kit *carries*, never
+// what each item is *for*, so nothing on that side can pick the weapon out of `{spears, sled}`. So
+// the reply carries both numbers — `armed_crew` and `weapon_item_id` — and the assertions below are
+// about the pair the sentence rests on: **the armed count must equal the curve's own plateau** when
+// the gear is what stopped it.
+
+/// The item that carries `attack` in the shipped **trapping** kit, whose `attack 20` is bounded to bodies
+/// of at most `1.0`: a weapon by any reading of the kit, and no weapon at all against an aurochs.
+const TRAPS: &str = "traps";
+/// The roster id of that second hunt kit.
+const TRAPPING_KIT: &str = "trapping";
+/// **A KIT WHOSE WEAPON THE BAND NO LONGER HOLDS HAS NO WEAPON TO NAME.** The wire spells that as
+/// the empty string.
+const NO_WEAPON_NAMED: &str = "";
+
+/// **HOW MANY HUNTERS THIS FIXTURE ARMS.** Well under [`POOL`], so the hands the band cannot arm
+/// are the majority — a count equal to the pool would be indistinguishable from *"everybody is
+/// armed"*, which is a different test below.
+const SPEARS_OWNED: u32 = 4;
+
+/// **A band holding exactly `spears` spears and nothing else.** [`stocked`] sizes every item on the
+/// roster to a head count at once, which is the wrong instrument for a fixture whose whole subject
+/// is a band short of ONE item.
+fn stocked_with_spears(spears: u32) -> BandEquipment {
+    let equipment = EquipmentConfig::builtin();
+    let tier = equipment
+        .item(SPEARS)
+        .expect("the shipped roster carries spears")
+        .default_tier()
+        .id
+        .clone();
+    let mut wear = BandEquipment::default();
+    wear.stock(SPEARS, spears, &tier, None);
+    wear
+}
+
+/// **THE ARMED COUNT IS THE CURVE'S OWN PLATEAU, ON A BAND SHORT OF SPEARS.**
+///
+/// Four spears against a `defense 6` quarry: hunters five and up are `attack 1` bare hands and land
+/// exactly nothing, so the curve rises once per spear and then goes flat. The two readings are
+/// asserted **against each other** rather than each against a literal, because that agreement is
+/// the whole of the sentence the sheet draws — an armed count that did not land on the plateau
+/// would be explaining a stop that happened somewhere else.
+#[test]
+fn a_band_short_of_spears_is_capped_at_the_hunters_it_armed() {
+    let mut app = world_hunting(AUROCHS, stocked_with_spears(SPEARS_OWNED));
+    let reply = crew_take_reply(&mut app, default_hunt_kit());
+    let curve: Vec<(u32, f32)> = reply
+        .per_crew
+        .iter()
+        .map(|row| (row.workers, row.animals_likely))
+        .collect();
+
+    // PRECONDITION: the fixture is gear-bound rather than herd-bound. Without it the curve could
+    // stop for a reason this test does not name and the equality below would still hold.
+    let plateau = plateau_of(&curve);
+    assert!(
+        plateau < POOL,
+        "PRECONDITION: this band must run out of spears before it runs out of hands — the curve \
+         plateaued at {plateau} of a {POOL}-hand pool"
+    );
+
+    assert_eq!(
+        reply.armed_crew, SPEARS_OWNED,
+        "a band holding {SPEARS_OWNED} spears arms {SPEARS_OWNED} of its {POOL} hands against a \
+         quarry bare hands cannot scratch"
+    );
+    assert_eq!(
+        reply.armed_crew, plateau,
+        "the armed count ({}) and the curve's own plateau ({plateau}) are the two halves of \
+         'max N workers useful here — the rest have no spears'; halves that disagree describe a \
+         stop that did not happen",
+        reply.armed_crew
+    );
+    assert_eq!(
+        reply.weapon_item_id, SPEARS,
+        "the sheet has to NAME what the rest of the band is short of, and it may not infer that \
+         from the kit's item list"
+    );
+}
+
+/// **A FULLY COVERED BAND ARMS EVERY HAND.** The other end of the same axis: with a spear for
+/// everybody the armed count is the whole crew asked about, so whatever stops the curve there is
+/// the herd and never the gear.
+#[test]
+fn a_band_stocked_for_the_pool_arms_every_hand() {
+    let mut app = world_hunting(AUROCHS, stocked());
+    let reply = crew_take_reply(&mut app, default_hunt_kit());
+    assert_eq!(
+        reply.armed_crew, POOL,
+        "every hand in a {POOL}-hand pool is holding a spear, so the count is the crew asked about"
+    );
+    assert_eq!(reply.weapon_item_id, SPEARS);
+}
+
+/// **THE KIT CARRIES A WEAPON IT CANNOT USE HERE — and the reply says both.**
+///
+/// The trap's `attack 20` is bounded to bodies of at most `1.0`, so against a 120 kg aurochs the
+/// party falls back to the bare hand's `attack 1` and arms nobody. The **name** is still `traps`:
+/// *which item is the weapon* is a fact about the kit, *whether it reaches this quarry* is a fact
+/// about the party, and folding the two into one field would leave a trapping party with no name
+/// for the gear it is holding.
+#[test]
+fn the_trapping_kit_names_its_weapon_and_still_arms_nobody() {
+    let mut app = world_hunting(AUROCHS, stocked());
+    let reply = crew_take_reply(&mut app, TRAPPING_KIT.to_string());
+    assert_eq!(
+        reply.armed_crew, NO_USEFUL_CREW,
+        "a mass-bounded weapon is no weapon against a {} kg body, at any head count",
+        AUROCHS_STATS.body_mass
+    );
+    assert_eq!(
+        reply.weapon_item_id, TRAPS,
+        "the kit carries a weapon — it simply cannot use it on this animal"
+    );
+}
+
+/// **A BARE BAND ARMS NOBODY, AND HAS NOTHING TO NAME.** Bare hands are `attack 1` against
+/// `defense 6`, so the count is zero for the same reason the whole curve is
+/// ([`a_crew_that_cannot_hurt_the_quarry_is_capped_at_nothing`]) — and with no live spears in the
+/// ledger nothing in the kit supplies the attack, so the name is empty rather than a weapon the
+/// band does not own.
+#[test]
+fn a_bare_band_arms_nobody_and_names_no_weapon() {
+    let mut app = world_hunting(AUROCHS, bare());
+    let reply = crew_take_reply(&mut app, default_hunt_kit());
+    assert_eq!(
+        reply.armed_crew, NO_USEFUL_CREW,
+        "an empty ledger arms nobody, whatever the kit says it uses"
+    );
+    assert_eq!(
+        reply.weapon_item_id, NO_WEAPON_NAMED,
+        "a kit whose weapon the band no longer holds names nothing"
+    );
+}
+
+/// **A PEN ARMS EVERY HAND, BECAUSE A SLAUGHTER HAS NO GATE — and the same hands out on the range
+/// arm nobody.**
+///
+/// [`core_sim::hunt_armed_crew`] answers `max_workers` outright when `fauna::herd_fight_stage`
+/// answers `None`, which is what a corralled herd does: there is no attack-vs-defense gate behind a
+/// fence for a weapon to clear, so a penned row's armed count is never a story about spears. That
+/// early return is the premise the client's `useful == armed_crew` gate rests on, and it is
+/// restated on [`sim_runtime::commands::HuntCrewTakeReply::armed_crew`] — which is why it is worth
+/// an assertion on this side of the wire rather than four prose copies.
+///
+/// # ⛔ THE PAIR IS THE TEST, and each arm catches its own sabotage
+///
+/// One band, one species, one kit, one crew pool: **the fence is the only thing that differs**, so
+/// the two answers differing is attributable to it and to nothing else.
+///
+/// 1. **The penned arm** catches deleting that early return. Without it a bare-handed keeper is
+///    `attack 1` against the aurochs' `defense 6`, and a player standing at a room-bound pen whose
+///    keepers are collecting fine would be told *"the rest have no spears"*.
+/// 2. **The wild arm** catches the opposite sabotage — a `hunt_armed_crew` that answers
+///    `max_workers` unconditionally — and it is what makes the penned arm say anything at all: a
+///    pen arming everybody is only a claim about the fence if the same hands are gated without one.
+///
+/// Both counts are stated against the pool the reply was **asked** at ([`POOL`], the query's own
+/// `max_workers`) rather than a literal, so a fixture that resized its band could not turn a full
+/// count into a coincidence.
+#[test]
+fn a_pen_arms_every_hand_because_a_slaughter_has_no_gate() {
+    let mut pen = world_keeping_a_pen(AUROCHS, bare());
+    assert_eq!(
+        crew_take_reply(&mut pen, default_hunt_kit()).armed_crew,
+        POOL,
+        "a pen is slaughtered rather than fought, so every hand in the asked pool of {POOL} is \
+         armed for the job — bare hands included"
+    );
+
+    let mut range = world_hunting(AUROCHS, bare());
+    assert_eq!(
+        crew_take_reply(&mut range, default_hunt_kit()).armed_crew,
+        NO_USEFUL_CREW,
+        "…and the SAME bare hands on the SAME aurochs OUT ON THE RANGE arm nobody — `attack 1` \
+         against `defense 6` lands exactly nothing, at any head count"
     );
 }

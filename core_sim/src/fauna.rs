@@ -7566,7 +7566,7 @@ pub fn resolve_hunt_fight(
             .map(|crew| {
                 // A crew whose attack the quarry's defence swallows lands nothing, exactly as the
                 // resolver's gate would have it — so it is charged nothing below.
-                if combat::strike_damage(crew.hunter.attack, quarry.profile.defense) <= 0.0 {
+                if !crew_can_wound(&crew.hunter, &quarry.profile) {
                     return 0.0;
                 }
                 combat::landed_strikes_seeded(hunters * crew.share, &tuning, draw.seed())
@@ -9054,6 +9054,90 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
 // ([`herd_engage_rate`], the pen gain folded in) — so folding the pen back into the one curve
 // applies neither of them twice. The **carry** bound is what genuinely differs, and it survives as a
 // `.min()` above.
+
+/// **CAN THIS HUNTER HURT THIS QUARRY AT ALL** — the fight's own gate, named so the two readings of
+/// it cannot drift.
+///
+/// It is [`combat::strike_damage`] `> 0`, the single primitive every damage on this web is struck
+/// from, and it has exactly two readers: [`resolve_hunt_fight`]'s one-sided arm, where a crew the
+/// quarry's defence swallows lands nothing, and [`hunt_armed_crew`], which counts the hands on the
+/// other side of it. A second spelling of `attack > defense` beside those is how the take and the
+/// readout describing it come to disagree.
+///
+/// **Not `attack ≥ defense`** — that is [`attack_clears_defense`], the *predator's prey* rule, and
+/// the two are deliberately different at equality: a wolf counts a herd it exactly matches as prey,
+/// while a hunter who exactly matches a quarry's defence does it no damage and takes nothing.
+fn crew_can_wound(hunter: &CombatStats, quarry: &CombatStats) -> bool {
+    combat::strike_damage(hunter.attack, quarry.defense) > 0.0
+}
+
+/// **HOW MANY OF THE LARGEST ASKED CREW CARRY SOMETHING THAT CAN HURT THIS QUARRY** — the count
+/// behind *"max N workers useful here — the rest have no spears"*, in whole hands.
+///
+/// # Why the sim owes the client this number
+///
+/// A plateau in [`hunt_crew_take_curve`] has two quite different causes and the rows cannot tell
+/// them apart: the **herd** ran out of room to give, or the **band** ran out of weapons. On a band
+/// short of spears the curve rises once per armed hunter and then stops flat, and a sheet reading
+/// the rows alone blames the herd for a shortage of gear. The client may not resolve it either —
+/// the published kit roster says what a kit *carries*, never what each item is *for*, so nothing on
+/// that side can pick the weapon out of `{spears, sled}` — which is why this is answered here and
+/// shipped on [`sim_runtime::commands::HuntCrewTakeReply`] beside the rows.
+///
+/// # It is the CURVE'S OWN last row, re-read
+///
+/// The coverage is resolved at `max_workers` off the same ledger, and the party against the same
+/// [`next_turns_quarry`], so the crews counted here are literally the crews the curve's top row was
+/// built from — the count and the plateau it explains cannot describe two different parties.
+///
+/// # A PEN arms everybody, because a slaughter has no gate
+///
+/// [`herd_fight_stage`] answers `None` at `animal:pen` and [`slaughter`] takes everything that
+/// stayed, so a bare-handed keeper brings down an aurochs (`husbandry.md` → *"bare hands now work
+/// behind a fence"*). Every hand is therefore armed for the job, and a penned row's plateau — which
+/// is its room and its keepers' handling rate — is never a story about spears.
+///
+/// **`0` when nothing the party holds can hurt the quarry**: a trapping party against a 120 kg
+/// aurochs falls back to the bare hand's `attack 1`, because the trap's `attack` is mass-bounded to
+/// animals it can hold. **`max_workers` when everybody is armed.**
+///
+/// Coverage counts hands in `f32` (a forecast counts hunters in fractions), and this is a **head
+/// count**, so the sum is floored: a hunter with most of a spear has no spear.
+pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
+    let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
+    let Some(fight) = herd_fight_stage(&quarry, inputs.fauna) else {
+        return inputs.max_workers;
+    };
+    let coverage = inputs
+        .equipment
+        .coverage(inputs.kit, inputs.max_workers as f32, inputs.wear);
+    let party = PartyResolution {
+        equipment: inputs.equipment,
+        coverage: &coverage,
+        wear: inputs.wear,
+        intrinsic: inputs.intrinsic,
+        tuning: inputs.tuning,
+        hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+    }
+    .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass));
+    // **The zip is exact, not an alignment assumption**: [`PartyResolution::party_against`] emits one
+    // [`HuntCrew`] per coverage crew, in coverage order, so the head count and the profile it
+    // resolved to are the same run. Reading the head back out of [`HuntCrew::share`] instead would
+    // multiply a division by its own denominator, and a float that lands a hair under the whole hand
+    // it stands for would floor a spear away.
+    //
+    // A coverage with **no** crews is a party of nobody (`max_workers == 0`), where the party falls
+    // back to one uniform crew and the zip yields nothing — which is the same `0` either reading
+    // gives.
+    let armed: f32 = coverage
+        .crews()
+        .iter()
+        .zip(&party.crews)
+        .filter(|(_, crew)| crew_can_wound(&crew.hunter, &fight.profile))
+        .map(|(crew, _)| crew.workers)
+        .sum();
+    armed.floor() as u32
+}
 
 /// **THE SMALLEST TAKE A CREW THAT TAKES ANYTHING PUTS ON THE GROUND** — one animal, because an
 /// animal is indivisible even when the hands that killed it cannot carry it home. It is

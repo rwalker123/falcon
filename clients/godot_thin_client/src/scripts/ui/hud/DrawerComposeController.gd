@@ -1583,7 +1583,14 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
 ## > clamp — `forage_cash_crop_field` pins that the staged count reaches the committed crew on a
 ## > source paying into any account — and a real cap regression fails there rather than being papered
 ## > over here.
-func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
+##
+## **`armed_crew` / `weapon_item_id` ARE THE HUNT REPLY'S, AND ONLY EVER EXPLAIN THE NOTE'S WORDING**
+## — never the cap, which the curve has already resolved. They default to the unarmed pair so the
+## FORAGE caller can pass neither: a patch has no attack-vs-defense question to answer, so there is
+## no gear sentence for it to earn. See `SourceForecast.MAX_USEFUL_NOTE_GEAR_FORMAT`.
+func _forecast_worker_cap(forecast: Dictionary, assignable: int,
+        armed_crew: int = SourceForecast.CREW_TAKE_NO_ARMED_CREW,
+        weapon_item_id: String = "") -> Dictionary:
     # **NO KEEPER FLOOR UNDER THE TAKE CAP** (`docs/plan_standing_upkeep.md` §2.2). This used to be
     # raised to a managed herd's `herdersNeeded`, because one crew both hunted the animals and held
     # them: a cap sized on the take alone went dead below the count the sim asked for. Those keepers
@@ -1599,6 +1606,30 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
             labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
         return {"cap": assignable, "note": labor_note}
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
+    # **THE WEAPONS ARE THE BINDING TERM — say so instead of blaming the herd.** Every conjunct earns
+    # its place, and dropping any one of them prints a false sentence:
+    #
+    # - **EQUALITY, never `<=`.** A pen answers `armed_crew == max_workers` because there is no
+    #   attack-vs-defense gate behind a fence, so `<=` would tell a player whose pen cap is ROOM-bound
+    #   that the rest have no spears. Equality is the whole of what says the gear is what binds. It is
+    #   also what keeps a fully-armed band on the old wording: its `armed_crew` sits ABOVE a cap the
+    #   herd set, and the herd is then the honest culprit.
+    # - **`> CREW_TAKE_NO_ARMED_CREW`.** With nothing that can hurt this quarry the cap is
+    #   `MAX_USEFUL_BARREN` from a different branch entirely, the kit row already says the party
+    #   carries nothing that brings this animal down, and the weapon id is legitimately empty.
+    # - **IDLE HANDS.** With `assignable` at the cap there is nobody the sentence could be about. The
+    #   labor-bound return above already guarantees it here; it is written out anyway, because the gate
+    #   has to read as the whole condition for the wording and a change to that branch must not earn
+    #   this sentence silently.
+    # - **A NAMED WEAPON.** The band holding no live weapon publishes an empty id, and "the rest have
+    #   no " is not a sentence.
+    #
+    # The herd-bound and reach-bound caps keep `MAX_USEFUL_NOTE_FORMAT` unchanged: the reply says which
+    # of them binds nothing, and a sentence we cannot source is a sentence we would have to keep true.
+    if useful == armed_crew and armed_crew > SourceForecast.CREW_TAKE_NO_ARMED_CREW \
+            and assignable > useful and weapon_item_id != "":
+        return {"cap": useful,
+            "note": SourceForecast.MAX_USEFUL_NOTE_GEAR_FORMAT % [useful, noun, weapon_item_id]}
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
 ## **THE ROAD LADDER'S GEAR TERM, ONE ANSWER PER RUNG** — `{rung_key: build_gear}`, which
@@ -2709,7 +2740,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         capped = SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_floor(),
             int(raid_answer.get("useful_cap", 0)), assignable)
     elif not is_expedition:
-        capped = _forecast_worker_cap(forecast, assignable)
+        # **THE REPLY'S ARMED COUNT RIDES ALONG SO THE NOTE CAN NAME THE SHORTAGE.** It changes no cap
+        # — the curve has already resolved that — only whether the cap's sentence blames the herd's
+        # room or the band's weapons. Absent (pending, failed, expedition) it reads as the unarmed
+        # pair, which is the old wording.
+        var crew_take_answer: Dictionary = crew_take_view["answer"]
+        capped = _forecast_worker_cap(forecast, assignable,
+            int(crew_take_answer.get(SourceForecast.CREW_TAKE_ARMED_KEY,
+                SourceForecast.CREW_TAKE_NO_ARMED_CREW)),
+            String(crew_take_answer.get(SourceForecast.CREW_TAKE_WEAPON_KEY, "")))
     var cap := int(capped["cap"])
     # Auto-max on a FLOOR click — "give me everything this herd can spare at this floor": the
     # max-useful for that floor (clamped to idle below), which guarantees zero waste + the full rate.

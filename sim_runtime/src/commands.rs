@@ -981,6 +981,26 @@ pub struct HuntCrewTakeReply {
     /// `max_workers` is `0`. Index `i` is the crew of `i + 1`, and each row echoes its own
     /// `workers` so a client never has to trust that.
     pub per_crew: Vec<HuntCrewTakeRow>,
+    /// **WHY THE CURVE STOPPED RISING** — how many of `max_workers` carry something that can hurt
+    /// **this** quarry, in whole hands.
+    ///
+    /// A plateau has two quite different causes and [`Self::per_crew`] cannot tell them apart: the
+    /// **herd** ran out of room, or the **band** ran out of weapons. On a band short of spears the
+    /// curve rises once per armed hunter and then goes flat, so `armed_crew` equalling the rows'
+    /// own plateau is what turns *"more would be idle"* into *"the rest have no spears"*.
+    ///
+    /// `0` when nothing the party holds can hurt the quarry — a trapping party against a 120 kg
+    /// aurochs falls back to the bare hand's `attack 1`. `max_workers` when everybody is armed, and
+    /// at a **pen**, which has no attack-vs-defense gate for a weapon to clear.
+    pub armed_crew: u32,
+    /// **WHICH ITEM IS THE WEAPON** — the id of the item in the resolved kit supplying the attack
+    /// (`"spears"` for `big_game`, `"traps"` for `trapping`), **empty** when no item in it supplies
+    /// one.
+    ///
+    /// Published because a client may not derive it: the kit roster says what a kit *carries*,
+    /// never what each item is *for*. It names the weapon the kit holds rather than one that works
+    /// here — against an aurochs the trapping kit reads `"traps"` beside an `armed_crew` of `0`.
+    pub weapon_item_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2402,6 +2422,8 @@ impl QueryReplyEnvelope {
                             animals_high: row.animals_high,
                         })
                         .collect(),
+                    armed_crew: answer.armed_crew,
+                    weapon_item_id: answer.weapon_item_id.clone(),
                 })
             }
             QueryReply::ListSaves(slots) => {
@@ -2461,6 +2483,8 @@ impl QueryReplyEnvelope {
                             animals_high: row.animals_high,
                         })
                         .collect(),
+                    armed_crew: answer.armed_crew,
+                    weapon_item_id: answer.weapon_item_id,
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -2734,6 +2758,11 @@ mod tests {
                         animals_high: workers as f32 * 0.75,
                     })
                     .collect(),
+                // **Short of the crew asked about, and named** — the shape the sheet's
+                // *"the rest have no spears"* rests on, so the pair has to survive the envelope
+                // together with the rows.
+                armed_crew: 2,
+                weapon_item_id: "spears".to_string(),
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");

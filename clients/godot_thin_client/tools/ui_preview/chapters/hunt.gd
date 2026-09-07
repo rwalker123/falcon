@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 369
+const EXPECTED_CHECKPOINTS := 377
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -2000,6 +2000,9 @@ func run(harness) -> void:
 
 	# ---- …AND IT IS RE-ASKED AS THE HARVEST FLOOR MOVES, RATE-LIMITED -----------------------------
 	await _crew_take_follows_the_drag_assertions()
+
+	# ---- …AND WHERE THE CURVE STOPPED FOR WANT OF WEAPONS, THE CAP SAYS SO ------------------------
+	await _armed_crew_note_states()
 
 
 # =====================================================================================
@@ -5224,3 +5227,214 @@ func _drag_wait_out_the_interval() -> void:
 	var until := Time.get_ticks_msec() + HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC
 	while Time.get_ticks_msec() < until:
 		await h._settle()
+
+
+# =====================================================================================
+#  THE CAP THAT IS A SHORTAGE OF SPEARS, NOT A SHORTAGE OF HERD
+# =====================================================================================
+# A take curve plateaus for one of TWO reasons — the herd ran out of room, or the band ran out of
+# weapons — and the rows alone cannot say which. On a band short of spears the curve rises once per
+# armed hunter and then goes flat, so the stepper's `max 4 workers useful here — more would be idle`
+# blamed the herd for a shortage of gear while thirteen hands stood idle beside it. The reply carries
+# `armed_crew` and `weapon_item_id` for exactly this sentence (`HuntCrewTakeReply`), and the whole of
+# the change is WHICH WORDING the cap earns — never the cap itself, which the curve already resolved.
+#
+# The three states are the gate read out loud: the shortage, a plateau that is genuinely the herd's,
+# and the pen that answers `armed_crew == max_workers` because there is no attack-vs-defense gate
+# behind a fence. Only the first may carry the gear sentence.
+
+## The hunters in the asked crew carrying something that can hurt an aurochs — the reply's
+## `armed_crew`, and the crew the stand-in's curve stops rising at. Four out of a pool of twenty-six,
+## which is the reported shape: room to spare on the herd, four spears in the band.
+const SPEAR_SHORT_ARMED_CREW := 4
+
+## The plateau of the A/B partner, where every hand IS armed and the herd's own room is what stops
+## the curve. Below the pool, so the cap is still a cap — and above nothing else, since the only
+## thing this number has to be is DIFFERENT from the armed count the same state publishes.
+const SPEAR_SHORT_HERD_PLATEAU := 6
+
+## The item supplying the attack, as the wire spells it. The sheet renders the id verbatim, so this
+## is also what the sentence reads.
+const SPEAR_SHORT_WEAPON_ID := "spears"
+
+## What one armed hunter adds to the take, in animals per turn, for as long as the spears last. Only
+## the SHAPE is load-bearing (a rise per armed hand, then flat); the magnitude keeps the plateau's own
+## take under the ~4.5 animals standing above this herd's floor, so the curve is one a live sim could
+## have published rather than a table.
+const SPEAR_SHORT_TAKE_PER_ARMED_HUNTER := 0.25
+
+## What one hunter hauls home in a turn, matching `_delivered_oracle_band`'s own
+## `hunt_per_worker_provisions` so the herd and the band cannot describe two different hunters.
+const SPEAR_SHORT_PER_WORKER_YIELD := 0.8
+
+## **THE SENTENCE THIS ARC EXISTS TO PRODUCE, WRITTEN OUT.** Composed from
+## `MAX_USEFUL_NOTE_GEAR_FORMAT` it would only restate that constant against itself and would follow
+## any rewording of it — including back to blaming the herd — so the claim about what the wording SAYS
+## is made literally. The claim about its CONTENT (which crew, which weapon) is made against the
+## shipped format beside it, which is what ties this spelling to the fixture's own numbers.
+const SPEAR_SHORT_SENTENCE := "max 4 workers useful here — the rest have no spears"
+
+## The gear sentence's own clause, for the two states that must NOT carry it. Literal for the same
+## reason, and short enough to catch the sentence at any cap or any weapon.
+const SPEAR_SHORT_CLAUSE := "the rest have no"
+
+## The stand-in's answer, held across a state's re-renders: how far its curve climbs before going
+## flat, and the armed count it publishes beside it. Members rather than parameters because the sender
+## is installed once and every claim is made against a re-render of it — the same shape
+## `_crew_take_readout_assertions` uses for `_crew_take_band_is_real`.
+var _spear_short_plateau := 0
+var _spear_short_armed := 0
+
+## **THE HERD WITH ROOM TO SPARE.** `room = 1200 − 0.5 × 1320 = 540` biomass, i.e. 4.5 aurochs above
+## the food peak, so nothing about this herd caps a crew at four — which is what makes the cap this
+## block renders attributable to the band's gear and to nothing else.
+func _spear_short_aurochs() -> Dictionary:
+	return {
+		"id": "game_aurochs_09", "label": "Wild Aurochs (game_aurochs_09)", "species": "Wild Aurochs",
+		"size_class": "big", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10,
+		"husbandry_ceiling": "wild",
+		"biomass": AUROCHS_BIOMASS,
+		"carrying_capacity": AUROCHS_CAPACITY,
+		"body_mass": AUROCHS_BODY_MASS,
+		# The sim's own identity rather than a second free number:
+		# `food_per_animal = body_mass × provisions_per_biomass`.
+		"food_per_animal": AUROCHS_BODY_MASS * AUROCHS_PROVISIONS_PER_BIOMASS,
+		"provisions_per_biomass": AUROCHS_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": SPEAR_SHORT_PER_WORKER_YIELD,
+		# The same haul in BIOMASS — the unit the projection walks — stated so the adapter cannot
+		# re-seed it underneath the two states that read it.
+		"per_worker_biomass": SPEAR_SHORT_PER_WORKER_YIELD / AUROCHS_PROVISIONS_PER_BIOMASS,
+		"engage_rate": AUROCHS_ENGAGE_RATE,
+		"stay_fraction": BOAR_STAY_FRACTION,
+		# The two defensive axes an aurochs is short of spears AGAINST. Nothing on the sheet resolves
+		# the fight here — the reply does — but a quarry with no defence is not the one the sentence
+		# is about.
+		"defense": AUROCHS_DEFENSE,
+		"durability": AUROCHS_DURABILITY,
+		"tile_info": HerdFx.compact_herd_tile_fixture(),
+	}
+
+## A curve that rises once per armed hunter and then goes flat — the shape a plateau of EITHER kind
+## has, which is the whole reason the reply has to say which kind this one is.
+func _spear_short_rows(max_workers: int) -> Array:
+	var rows: Array = []
+	for workers in range(1, max_workers + 1):
+		var take := float(mini(workers, _spear_short_plateau)) * SPEAR_SHORT_TAKE_PER_ARMED_HUNTER
+		rows.append({
+			SourceForecast.CREW_TAKE_WORKERS_KEY: workers,
+			SourceForecast.CREW_TAKE_LOW_KEY: take,
+			SourceForecast.CREW_TAKE_LIKELY_KEY: take,
+			SourceForecast.CREW_TAKE_HIGH_KEY: take,
+		})
+	return rows
+
+## The stand-in server for this block. The ROWS come from the quarry the ask names — a pen is not
+## fought, so its rows are the unbounded ones every pen and the whole plant web answer with — while
+## the armed pair is the state's, since that is the thing being varied.
+func _spear_short_reply(request_id: int, ask: Dictionary) -> Dictionary:
+	var max_workers := int(ask.get("max_workers", 0))
+	var pen := HerdFx.domesticated_herd_fixture()
+	var rows: Array = _spear_short_rows(max_workers)
+	if String(ask.get("herd_id", "")) == String(pen["id"]):
+		rows = ForecastFx.crew_take_rows(pen, max_workers, float(ask.get("floor", 0.0)))
+	return {"request_id": request_id, "ok": true,
+		"kind": ForecastQuery.KIND_HUNT_CREW_TAKE, "per_crew": rows,
+		SourceForecast.CREW_TAKE_ARMED_KEY: _spear_short_armed,
+		SourceForecast.CREW_TAKE_WEAPON_KEY: SPEAR_SHORT_WEAPON_ID}
+
+## Open a sheet on `herd` with the whole pool dialled in, having reset the seam first: the three
+## states restage the same band and kit with a DIFFERENT answer, which is exactly the collision
+## `ForecastQuery` is keyed to ignore. Asking for the pool means the stepper lands on the cap itself,
+## so the count on screen and the sentence under it are the same number.
+func _open_spear_short_sheet(herd: Dictionary, pool: int) -> void:
+	h._hud.forecast_query().reset()
+	h._hud._compose.reset_hunt_source()
+	h._show_herd(herd)
+	h._compose_herd(herd, pool, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+
+func _armed_crew_note_states() -> void:
+	var prior_band = h._hud._band_labor.player_band()
+	var prior_bands: Array = h._hud._band_labor._player_bands
+	var band := _delivered_oracle_band()
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	var pool := int(band["idle_workers"])
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		# Anything that is not the crew take falls through to the harness's ordinary answerer, so this
+		# block cannot starve another readout of its reply.
+		if String(ask.get("kind", "")) != ForecastQuery.KIND_HUNT_CREW_TAKE:
+			query.deliver.call_deferred([ForecastFx.answer(h._hud, request_id, ask)])
+			return true
+		query.deliver.call_deferred([_spear_short_reply(request_id, ask)])
+		return true)
+
+	# State a — FOUR SPEARS, TWENTY-SIX HANDS. The cap and the armed count are the same number, the
+	# pool is far above both, and the reply names the item that ran out.
+	var aurochs := _spear_short_aurochs()
+	_spear_short_plateau = SPEAR_SHORT_ARMED_CREW
+	_spear_short_armed = SPEAR_SHORT_ARMED_CREW
+	await _open_spear_short_sheet(aurochs, pool)
+	await h._save("herd_hunt_short_of_spears")
+	var sheet: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a cap that IS the armed crew names the missing gear — \"%s\"" % SPEAR_SHORT_SENTENCE,
+		Q.has_label_containing(sheet, SPEAR_SHORT_SENTENCE))
+	# …and that spelling is the SHIPPED format at this fixture's own terms, which is what stops the
+	# literal above drifting away from the constant it is quoting.
+	h._assert_hud("…and that is the shipped gear format at %d %s and \"%s\""
+			% [SPEAR_SHORT_ARMED_CREW, SourceForecast.MAX_USEFUL_NOUN_MANY, SPEAR_SHORT_WEAPON_ID],
+		SourceForecast.MAX_USEFUL_NOTE_GEAR_FORMAT % [SPEAR_SHORT_ARMED_CREW,
+			SourceForecast.MAX_USEFUL_NOUN_MANY, SPEAR_SHORT_WEAPON_ID] == SPEAR_SHORT_SENTENCE)
+	# **AND THE SENTENCE IT REPLACES IS GONE.** Both halves are the claim: a sheet that printed the
+	# gear note beside the old one would blame the herd and the spears in two lines for one cap.
+	h._assert_hud("…and no longer says the rest would be IDLE at the same cap",
+		not Q.has_label_containing(sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
+			SPEAR_SHORT_ARMED_CREW, SourceForecast.MAX_USEFUL_NOUN_MANY]))
+
+	# State b — THE SAME HERD, EVERY HAND ARMED. The curve stops at the herd's room instead, so the
+	# armed count sits ABOVE the cap and the gear sentence is not earned: the idle wording is the true
+	# one. **AND THIS STATE FALSIFIES `cap <= armed_crew` TOO** — the cap is the herd's plateau while
+	# the armed count is the whole pool, so `<=` HOLDS here, a gate written that way prints the gear
+	# note, and the assertion below is exactly the refusal of it. It falsifies the `<=` reading
+	# DIFFERENTLY from the pen, which is why both states are kept: here a fully armed band is held by
+	# the HERD's room, where state c's band is held by its pen's own production and its gear never
+	# entered the question at all. Two ways one wrong comparison goes wrong.
+	_spear_short_plateau = SPEAR_SHORT_HERD_PLATEAU
+	_spear_short_armed = pool
+	await _open_spear_short_sheet(aurochs, pool)
+	await h._save("herd_hunt_plateau_is_the_herd")
+	sheet = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a fully armed band at a herd-bound plateau still reads \"more would be idle\"",
+		Q.has_label_containing(sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
+			SPEAR_SHORT_HERD_PLATEAU, SourceForecast.MAX_USEFUL_NOUN_MANY])
+			and not Q.has_label_containing(sheet, SPEAR_SHORT_CLAUSE))
+
+	# State c — THE PEN, AND THE TRAP THE EQUALITY EXISTS FOR. A corralled quarry has no
+	# attack-vs-defense gate, so the sim answers `armed_crew == max_workers` there — every keeper
+	# counts as armed — while the cap comes from the pen's own production. A gate written `cap <=
+	# armed_crew` fires HERE, telling a player whose pen cap is room-bound that the rest have no
+	# spears; equality is what refuses it.
+	var pen := HerdFx.domesticated_herd_fixture()
+	_spear_short_armed = pool
+	await _open_spear_short_sheet(pen, pool)
+	sheet = h._hud._drawercompose._compose_sheet
+	var pen_cap := Readout.stepper_value(sheet)
+	# The precondition, stated as a relation between the fixture and the render rather than restated
+	# from the line above: the pen really does answer more armed hands than its cap, which is the only
+	# arrangement in which the `<=` reading has something to get wrong.
+	h._assert_hud("precondition: the pen answers %d armed hands against a cap of %d"
+			% [pool, pen_cap], pool > pen_cap)
+	h._assert_hud("…and a pen whose cap is its OWN, not its keepers' gear, keeps the idle wording",
+		Q.has_label_containing(sheet, SourceForecast.MAX_USEFUL_NOTE_FORMAT % [pen_cap,
+			SourceForecast.MAX_USEFUL_NOUN_ONE if pen_cap == 1 \
+				else SourceForecast.MAX_USEFUL_NOUN_MANY])
+			and not Q.has_label_containing(sheet, SPEAR_SHORT_CLAUSE))
+
+	# Back to the seam every other chapter runs on: an empty seam with the canned answerer installed.
+	h._hud.forecast_query().reset()
+	ForecastFx.install(h._hud)
+	h._hud._compose.reset_hunt_source()
+	h._hud._band_labor._player_band = prior_band
+	h._hud._band_labor._player_bands = prior_bands
