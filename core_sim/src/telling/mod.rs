@@ -871,7 +871,7 @@ pub fn telling_tick(
     // Signals sample for the *player* faction. There is no `player_faction` accessor; the
     // registry's first entry (`FactionId(0)` in practice) is effectively the player, so take it
     // in a stable sorted order rather than inventing one.
-    let mut factions: Vec<FactionId> = sources.factions.factions.clone();
+    let mut factions: Vec<FactionId> = sources.factions.factions().to_vec();
     factions.sort_by_key(|f| f.0);
     let Some(faction) = factions.first().copied() else {
         return;

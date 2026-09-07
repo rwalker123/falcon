@@ -60,7 +60,7 @@ use crate::{
     hydrology::HydrologyState,
     map_preset::MapPresetsHandle,
     mapgen::WorldGenSeed,
-    orders::FactionRegistry,
+    orders::{FactionRegistry, TurnQueue},
     power::PowerTopology,
     provinces::ProvinceMap,
     resources::{
@@ -100,7 +100,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 3 | `WorldStatics.start_profile` removed — written into every payload and never read back |
 /// | 4 | the transfer counters on `PopulationCohort` and `LaborAllocation` became `TransferLedger` structs, and each gained a fodder twin — two `f32` totals per account replaced by four magnitudes split by link |
 /// | 5 | `SimState.starting_loadout` became a **map of per-band windows** — one `open`/budget triple replaced by a `BandId`-keyed table carrying each band's supply and its standing take |
-pub const SAVE_FORMAT_VERSION: u32 = 5;
+/// | 6 | `WorldStatics.factions` (`FactionRegistry`) gained `control` — the roster now carries how each faction is driven, and that map has no serde default, so without the bump a version-5 blob dies on the missing field inside the decoder and reads as `unreadable` rather than as the wrong version |
+pub const SAVE_FORMAT_VERSION: u32 = 6;
 
 /// gzip level for the payload document.
 ///
@@ -377,6 +378,15 @@ pub fn apply_save(world: &mut World, header: &SaveHeader, payload: &SavePayload)
     world.insert_resource(statics.start_location);
     world.insert_resource(statics.world_seed);
     world.insert_resource(statics.factions.clone());
+    // ⛔ **The queue is rebuilt from the RESTORED roster, here rather than in the caller.**
+    // `TurnQueue` is server-side order intake, so it is not checkpoint state and no payload carries
+    // it — but the app a load is applied into was built from whatever start profile the *file*
+    // named, and its queue awaits that profile's factions. A two-faction save opened on a
+    // one-faction profile would then resolve turns without ever awaiting faction 1. The rollback
+    // path rebuilds it from the registry for the same reason; putting it beside the registry
+    // restore is what keeps the next caller of `apply_save` from having to remember.
+    let factions = world.resource::<FactionRegistry>().factions().to_vec();
+    world.insert_resource(TurnQueue::new(factions));
 
     // --- 4: the palette, re-derived rather than carried ---------------------------------------
     let tile_count = (header.world.width * header.world.height).max(1);

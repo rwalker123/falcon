@@ -337,10 +337,11 @@ pub use snapshot_overlays_config::{
     SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
 pub use start_profile::{
-    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, InventoryEntry,
-    OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides, StartProfiles,
-    StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
+    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, FactionControl,
+    FactionSpec, InventoryEntry, OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartProfileKnowledgeTagsMetadata, StartProfileLookup,
+    StartProfileOverrides, StartProfiles, StartProfilesHandle, StartProfilesMetadata,
+    StartingUnitSpec,
 };
 pub use starting_loadout::{
     apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
@@ -504,8 +505,14 @@ pub fn build_headless_app() -> App {
     let active_profile_resource = ActiveStartProfile::new(active_profile.clone());
     let profile_lookup = StartProfileLookup::new(active_profile.id.clone());
 
-    let faction_registry = orders::FactionRegistry::default();
-    let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
+    // **Who plays this world comes from the start profile**, and the turn queue awaits exactly the
+    // roster the registry was seeded with. Validated first so a broken roster stops the boot here,
+    // rather than producing a world with no player in it.
+    active_profile
+        .overrides
+        .validate_factions(&active_profile.id);
+    let faction_registry = orders::FactionRegistry::new(&active_profile.overrides.factions);
+    let turn_queue = orders::TurnQueue::new(faction_registry.factions().to_vec());
     // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
     // `capture_snapshot` no longer has to re-assert every turn.
     let snapshot_history = SnapshotHistory::with_capacity(snapshot::PUBLICATION_RING_DEPTH);
@@ -649,13 +656,13 @@ pub fn build_headless_app() -> App {
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
     let mut espionage_roster = espionage::EspionageRoster::default();
-    espionage_roster.seed_from_catalog(&faction_registry.factions, &espionage_catalog);
+    espionage_roster.seed_from_catalog(faction_registry.factions(), &espionage_catalog);
     let counter_intel_budgets = espionage::CounterIntelBudgets::new(
-        &faction_registry.factions,
+        faction_registry.factions(),
         espionage_catalog.config().counter_intel_budget(),
     );
     let security_policies = espionage::FactionSecurityPolicies::new(
-        &faction_registry.factions,
+        faction_registry.factions(),
         espionage::SecurityPolicy::Standard,
     );
 

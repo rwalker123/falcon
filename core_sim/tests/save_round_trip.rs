@@ -24,10 +24,10 @@ mod common;
 use common::{canonical_tree, differing_paths};
 use core_sim::{
     build_test_app, publish_baseline_snapshot, run_turn, scalar_one, BiomePalette,
-    DiscoveryProgressLedger, FactionId, FoodSiteRegistry, HydrologyState, MoistureRaster,
-    PowerTopology, ProvinceMap, SimulationConfig, SnapshotHistory, StartLocation, Tile,
-    TileRegistry, WorldGenSeed, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
-    SEED_SELECTION_DISCOVERY_ID,
+    DiscoveryProgressLedger, FactionControl, FactionId, FactionRegistry, FactionSpec,
+    FoodSiteRegistry, HydrologyState, MoistureRaster, PowerTopology, ProvinceMap, SimulationConfig,
+    SnapshotHistory, StartLocation, Tile, TileRegistry, TurnQueue, WorldGenSeed,
+    CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -632,5 +632,49 @@ fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
         *loaded.world.resource::<core_sim::StartingLoadout>(),
         live,
         "the restored world's windows must be the ones that were written - open, same budgets"
+    );
+}
+
+/// ⛔ **A LOADED WORLD AWAITS THE ROSTER IN THE SAVE, not the one the boot profile named.**
+///
+/// `load_save` builds its app with `build_headless_app`, whose `TurnQueue` is seeded from whatever
+/// profile `simulation_config.json` points at — one human faction, as shipped. `apply_save` then
+/// restores the *save's* `FactionRegistry` over the top. Before the queue was rebuilt beside that
+/// restore, a two-faction save opened on the shipped profile came back with a registry holding both
+/// factions and a queue awaiting only faction 0, so the world resolved turns without ever waiting
+/// for faction 1's orders — and nothing about the loaded world looked wrong.
+#[test]
+fn a_two_faction_save_comes_back_awaiting_both_factions() {
+    let mut original = spawn_world();
+    original.world.insert_resource(FactionRegistry::new(&[
+        FactionSpec {
+            control: FactionControl::Human,
+        },
+        FactionSpec {
+            control: FactionControl::Ai,
+        },
+    ]));
+    run_turn(&mut original);
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (loaded, _) = load_save(&blob).expect("the save loads");
+
+    let registry = loaded.world.resource::<FactionRegistry>();
+    assert_eq!(
+        registry.factions(),
+        [FactionId(0), FactionId(1)],
+        "the save's roster is what the loaded world has"
+    );
+    assert!(
+        registry.contains(FactionId(1)),
+        "and the second faction is controlled, not merely listed"
+    );
+
+    let mut awaiting = loaded.world.resource::<TurnQueue>().awaiting();
+    awaiting.sort();
+    assert_eq!(
+        awaiting,
+        vec![FactionId(0), FactionId(1)],
+        "the queue awaits every faction the restored registry holds"
     );
 }

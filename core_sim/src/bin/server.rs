@@ -1750,6 +1750,18 @@ fn handle_new_game(
         );
         return;
     }
+    // The roster is checked BEFORE the outgoing world is torn down, for the same reason the id is:
+    // `apply_start_profile` runs inside the rebuild, where refusing would leave the player in a
+    // half-built world. Same refusal as an id we cannot resolve — warn, return, nothing changes.
+    if let Some(reason) = profile.overrides.faction_roster_error() {
+        warn!(
+            target: "shadow_scale::server",
+            requested = %profile_id,
+            %reason,
+            "new_game.rejected=unusable_roster"
+        );
+        return;
+    }
 
     let command_sender = {
         let res = app.world.resource::<CommandSenderResource>();
@@ -1791,7 +1803,13 @@ fn handle_new_game(
         &watch_paths,
         snapshot_server_flat,
         world_epoch,
-        move |new_app| apply_start_profile(new_app, &profile),
+        move |new_app| {
+            let applied = apply_start_profile(new_app, &profile);
+            debug_assert!(
+                applied,
+                "the roster was checked before the rebuild, so it cannot be refused inside it"
+            );
+        },
     );
     *world_active = true;
 
@@ -2115,9 +2133,30 @@ fn write_autosave(app: &bevy::prelude::App) {
 }
 
 /// Apply a resolved start profile to the app's campaign resources (config overrides,
-/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`). Shared by `handle_set_start_profile`
-/// and the `new_game` rebuild — it does NOT regenerate the world; the caller runs Startup afterward.
-fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
+/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`) **and to the roster those resources
+/// describe** — `FactionRegistry`, then the `TurnQueue` built from it. Shared by
+/// `handle_set_start_profile` and the `new_game` rebuild — it does NOT regenerate the world; the
+/// caller runs Startup afterward.
+///
+/// ⛔ **The roster has to be re-seeded here, because `build_headless_app` seeded it from the BOOT
+/// profile.** `rebuild_world_from_config` builds the replacement app first and applies the chosen
+/// profile second, so without this a `new_game` onto a two-faction profile produced a one-faction
+/// world — the chosen roster reached `SimulationConfig` and nothing else.
+///
+/// Returns `false` when the profile's roster is unusable, in which case **nothing is written**: a
+/// mid-session profile is a player's pick, so this refuses it the way both callers already refuse a
+/// profile id they cannot resolve, rather than taking the server down the way boot does.
+#[must_use]
+fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> bool {
+    if let Some(reason) = profile.overrides.faction_roster_error() {
+        warn!(
+            target: "shadow_scale::campaign",
+            profile = %profile.id,
+            %reason,
+            "start_profile.rejected=unusable_roster"
+        );
+        return false;
+    }
     {
         let mut config = app.world.resource_mut::<SimulationConfig>();
         config.start_profile_id = profile.id.clone();
@@ -2135,13 +2174,45 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
         let mut label = app.world.resource_mut::<CampaignLabel>();
         *label = CampaignLabel::from_profile(profile);
     }
+    let registry = FactionRegistry::new(&profile.overrides.factions);
+    let factions = registry.factions().to_vec();
+    app.world.insert_resource(registry);
+    app.world.insert_resource(TurnQueue::new(factions.clone()));
+    // ⛔ **EVERY resource `build_headless_app` seeds from the boot roster is re-seeded here.** The
+    // list is `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets` and
+    // `FactionSecurityPolicies` — the five constructions taken from `faction_registry.factions()`
+    // in `lib.rs`, and re-seeding only some of them is the same defect one resource further along.
+    // They are built through the boot path's own constructors so a fresh faction's starting state
+    // has one definition rather than two.
+    //
+    // **`EspionageRoster` is deliberately not among them**: `initialise_espionage_roster` is a
+    // `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
+    // this — so re-seeding it here would be a second, earlier copy of a job the schedule already
+    // does against the same roster.
+    let budget_config = app
+        .world
+        .resource::<EspionageCatalog>()
+        .config()
+        .counter_intel_budget()
+        .clone();
+    app.world
+        .insert_resource(CounterIntelBudgets::new(&factions, &budget_config));
+    app.world.insert_resource(FactionSecurityPolicies::new(
+        &factions,
+        SecurityPolicy::Standard,
+    ));
+    true
 }
 
 fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
     let handle = app.world.resource::<StartProfilesHandle>().clone();
     let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
 
-    apply_start_profile(app, &profile);
+    if !apply_start_profile(app, &profile) {
+        // The campaign the player was on is untouched — `apply_start_profile` writes nothing when it
+        // refuses, and the warning it logged names the rule that was broken.
+        return;
+    }
 
     info!(
         target: "shadow_scale::campaign",
@@ -6146,11 +6217,21 @@ fn rung_beneath(rung: RungKey) -> Option<RungKey> {
 
 /// **A band by its durable id, and the tile it is standing on** — the pair the road verbs need, so
 /// the lookup and the position cannot come from two different frames.
-fn band_entity_and_tile(app: &mut bevy::prelude::App, band: BandId) -> Option<(Entity, UVec2)> {
+///
+/// **Resolves only the commanding faction's own bands.** A band id is a durable, guessable handle,
+/// so a resolver that matches on the id alone hands another faction's band to whatever asked. The
+/// road verbs already refuse a foreign band by name in [`road_verb_refusal`] — that refusal stays,
+/// because it is the message the player reads; this gate is the seam that makes the *next* caller
+/// safe without having to remember.
+fn band_entity_and_tile(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band: BandId,
+) -> Option<(Entity, UVec2)> {
     let mut query = app.world.query::<(Entity, &PopulationCohort, &BandId)>();
     let (entity, current_tile) = query
         .iter(&app.world)
-        .find(|(_, _, id)| **id == band)
+        .find(|(_, cohort, id)| **id == band && cohort.faction == faction)
         .map(|(entity, cohort, _)| (entity, cohort.current_tile))?;
     let position = app.world.get::<Tile>(current_tile)?.position;
     Some((entity, position))
@@ -6222,7 +6303,7 @@ fn handle_road_verb(
     // **The keeper and the remoteness quote, written together**, because the price is a fact about
     // the moment the band took the road on — `ForagePatch::field_cost_multiplier`'s discipline.
     let band = BandId(band_id);
-    let Some((entity, band_tile)) = band_entity_and_tile(app, band) else {
+    let Some((entity, band_tile)) = band_entity_and_tile(app, faction, band) else {
         emit_command_failure(
             app,
             CommandEventKind::Road,
@@ -7521,7 +7602,9 @@ fn release_roads_at(
             _ => return 0,
         }
     };
-    if let Some((entity, _)) = band_entity_and_tile(app, keeper.band) {
+    // `keeper.faction == faction` was just checked above, so the resolver's gate is a no-op here
+    // rather than a change of behaviour.
+    if let Some((entity, _)) = band_entity_and_tile(app, keeper.faction, keeper.band) {
         let mut allocation = band_allocation_mut(app, entity);
         allocation.unqueue_build(&BuildSource::Road(tile));
     }
@@ -9645,7 +9728,104 @@ fn is_replayable(command: &Command) -> bool {
     )
 }
 
+/// **The faction ISSUING a command, and what to call it in the log** — `None` for the commands that
+/// are not issued on any faction's behalf (world/server verbs, and the espionage queue verbs, whose
+/// faction lives in a payload rather than on the envelope).
+///
+/// ⛔ **Deliberately exhaustive, with no `_` arm.** A new command variant must state whether it is
+/// somebody's order or the server's own business; a wildcard would silently answer "nobody's" and
+/// take the new verb out of the membership gate below.
+///
+/// A faction named *inside* a payload is not a commanding faction and is not returned here:
+/// espionage verbs legitimately name another faction as owner or target
+/// ([`Command::QueueEspionageMission`]), and a shipment's destination is cross-faction by
+/// construction ([`resolve_shipment`]).
+fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
+    match command {
+        Command::Orders { faction, .. } => Some((*faction, "orders")),
+        Command::UpdateCounterIntelPolicy { faction, .. } => {
+            Some((*faction, "counter_intel_policy"))
+        }
+        Command::AdjustCounterIntelBudget { faction, .. } => {
+            Some((*faction, "counter_intel_budget"))
+        }
+        Command::SpawnCrisis { faction, .. } => Some((*faction, "spawn_crisis")),
+        Command::AssignLabor { faction, .. } => Some((*faction, "assign_labor")),
+        Command::MoveBand { faction, .. } => Some((*faction, "move_band")),
+        Command::SendExpedition { faction, .. } => Some((*faction, "send_expedition")),
+        Command::RecallExpedition { faction, .. } => Some((*faction, "recall_expedition")),
+        Command::SplitBand { faction, .. } => Some((*faction, "split_band")),
+        Command::SendHuntExpedition { faction, .. } => Some((*faction, "send_hunt_expedition")),
+        Command::SendDenialRaid { faction, .. } => Some((*faction, "send_denial_raid")),
+        Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
+        Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
+        Command::Tame { faction, .. } => Some((*faction, "tame")),
+        Command::AnswerFork { faction, .. } => Some((*faction, "answer_fork")),
+        Command::Cultivate { faction, .. } => Some((*faction, "cultivate")),
+        Command::Sow { faction, .. } => Some((*faction, "sow")),
+        Command::Corral { faction, .. } => Some((*faction, "corral")),
+        Command::Grade { faction, .. } => Some((*faction, "grade")),
+        Command::Pave { faction, .. } => Some((*faction, "pave")),
+        Command::Abandon { faction, .. } => Some((*faction, "abandon")),
+        Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
+        Command::BuildOrder { faction, .. } => Some((*faction, "build_order")),
+        Command::BuildKit { faction, .. } => Some((*faction, "build_kit")),
+        Command::UpkeepKit { faction, .. } => Some((*faction, "upkeep_kit")),
+        Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
+        Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
+        Command::UpkeepMode { faction, .. } => Some((*faction, "upkeep_mode")),
+        Command::ExtendPen { faction, .. } => Some((*faction, "extend_pen")),
+        Command::SetHerdOutput { faction, .. } => Some((*faction, "set_herd_output")),
+        Command::SetBench { faction, .. } => Some((*faction, "set_bench")),
+        Command::ClearBench { faction, .. } => Some((*faction, "clear_bench")),
+        Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
+        Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
+        Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
+        Command::Turn(_)
+        | Command::ResetMap { .. }
+        | Command::Rollback { .. }
+        | Command::UpdateEspionageGenerators { .. }
+        | Command::QueueEspionageMission { .. }
+        | Command::UpdateEspionageQueueDefaults { .. }
+        | Command::ReloadConfig { .. }
+        | Command::SetCrisisAutoSeed { .. }
+        | Command::SetFogEnabled { .. }
+        | Command::SetStartProfile { .. }
+        | Command::ExportMap { .. }
+        | Command::Resync
+        | Command::NewGame { .. }
+        | Command::SetConfigOverride { .. }
+        | Command::ClearConfigOverrides
+        | Command::Query { .. }
+        | Command::SaveGame { .. }
+        | Command::LoadGame { .. }
+        | Command::DeleteSave { .. } => None,
+    }
+}
+
 fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &SnapshotServer) {
+    // **Membership is checked ONCE, here, where a command enters the world with a faction on it.**
+    // Without it a command from an unregistered faction still reaches its handler and is refused
+    // downstream by `no_such_band` / `wrong_faction` — which reads as a legitimate faction that
+    // owns nothing, and writes a command-failure event *tagged with a faction that does not
+    // exist*. There is deliberately no `emit_command_failure` on this path for the same reason:
+    // the feed is per-faction, and there is no faction to file it under.
+    if let Some((faction, label)) = commanding_faction(&command) {
+        let registered = app
+            .world
+            .get_resource::<FactionRegistry>()
+            .map(|registry| registry.contains(faction))
+            .unwrap_or(false);
+        if !registered {
+            warn!(
+                target: "shadow_scale::command",
+                command = label,
+                faction = %faction.0,
+                "command.rejected=unknown_faction"
+            );
+            return;
+        }
+    }
     match command {
         Command::ExportMap { path } => {
             write_map_export(app, path);
@@ -10150,7 +10330,7 @@ fn handle_update_espionage_generators(
 
     let factions: Vec<FactionId> = {
         let registry = app.world.resource::<FactionRegistry>();
-        registry.factions.clone()
+        registry.factions().to_vec()
     };
 
     let mut catalog = app.world.resource_mut::<EspionageCatalog>();
@@ -10536,7 +10716,7 @@ fn handle_rollback(
     // the origin leaves whatever the *discarded* future put in it. The log's `Orders` entries are
     // what refill it, so it starts empty exactly as it was at the origin — without this a replayed
     // turn can see orders that had not been submitted yet.
-    let factions = app.world.resource::<FactionRegistry>().factions.clone();
+    let factions = app.world.resource::<FactionRegistry>().factions().to_vec();
     app.world.insert_resource(TurnQueue::new(factions));
     app.world.resource_mut::<Replaying>().0 = true;
     let entries: Vec<LogEntry> = log.entries[..prefix].to_vec();
@@ -11587,6 +11767,150 @@ mod tests {
                 .world_epoch,
             2,
             "the rebuilt world's snapshot header carries the incremented epoch"
+        );
+    }
+
+    /// A `start_profiles.json` holding one profile, whose roster is whatever `factions` names.
+    ///
+    /// The two roster tests below drive real profiles rather than hand-built structs because the
+    /// path under test starts at `resolve_active_profile`: a profile the *handle* does not carry is
+    /// a different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able
+    /// to tell the two apart.
+    fn profiles_declaring(id: &str, factions: &str) -> StartProfilesHandle {
+        let json = format!(
+            "{{\"profiles\": [{{\"id\": \"{id}\", \"factions\": {factions}, \
+             \"opening_loadout\": {{\"material_points\": 1, \"pickable_materials\": \
+             [\"bone\"]}}}}]}}"
+        );
+        StartProfilesHandle::new(std::sync::Arc::new(
+            core_sim::StartProfiles::from_json_str(&json).expect("the fixture profiles parse"),
+        ))
+    }
+
+    /// ⛔ **`new_game <profile>` SEEDS THE ROSTER THAT PROFILE NAMES**, not the boot profile's.
+    ///
+    /// `rebuild_world_from_config` builds the replacement app first — `build_headless_app` seeds
+    /// `FactionRegistry` and `TurnQueue` from whatever `simulation_config.json` points at — and
+    /// applies the chosen profile second. Before `apply_start_profile` re-seeded them, a profile
+    /// declaring two factions produced a one-faction world: the chosen roster reached
+    /// `SimulationConfig` and nothing that resolves a turn ever heard about it.
+    #[test]
+    fn new_game_onto_a_two_faction_profile_seeds_that_roster_and_its_queue() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        app.world.insert_resource(profiles_declaring(
+            "two_sided",
+            "[{\"control\": \"human\"}, {\"control\": \"ai\"}]",
+        ));
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().factions(),
+            [FactionId(0)],
+            "fixture: the boot world is the shipped single-faction one"
+        );
+
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "two_sided".to_string(),
+            &flat,
+        );
+
+        assert!(world_active, "the profile is usable, so the world is built");
+        let registry = app.world.resource::<FactionRegistry>();
+        assert_eq!(
+            registry.factions(),
+            [FactionId(0), FactionId(1)],
+            "the chosen profile's roster is the world's roster"
+        );
+        assert!(
+            registry.contains(FactionId(1)),
+            "and the second faction is controlled, so its commands are not dropped at the door"
+        );
+        let mut awaiting = app.world.resource::<TurnQueue>().awaiting();
+        awaiting.sort();
+        assert_eq!(
+            awaiting,
+            vec![FactionId(0), FactionId(1)],
+            "the queue awaits every faction the chosen profile declared"
+        );
+
+        // **And every other resource the boot path seeds from the roster.** A registry entry with no
+        // counter-intel reserve and no security-policy row is the same defect one resource further
+        // along, and both readers hide it: `available` answers zero and `policy` answers the default,
+        // so nothing in play distinguishes a faction that was seeded from one that was forgotten.
+        let budgets = app.world.resource::<CounterIntelBudgets>();
+        let player_reserve = budgets.available(FactionId(0));
+        // Against faction 0 rather than against `initial_reserve`, because the rebuild resolves a
+        // turn and `regenerate` has already moved both rows off their opening value. A faction with
+        // no row of its own reads `scalar_zero`, so this still tells seeded from forgotten — and the
+        // liveness assertion is what keeps it from passing on two zeroes.
+        assert!(
+            player_reserve > core_sim::scalar_zero(),
+            "fixture: a seeded faction must hold a non-zero reserve, or the comparison below \
+             cannot tell a seeded faction from a missing one"
+        );
+        assert_eq!(
+            budgets.available(FactionId(1)),
+            player_reserve,
+            "the second faction holds the reserve the boot path gives faction 0"
+        );
+        assert!(
+            app.world
+                .resource::<FactionSecurityPolicies>()
+                .contains(FactionId(1)),
+            "and a security policy row of its own, not `policy`'s fallback"
+        );
+    }
+
+    /// **A runtime profile with an unusable roster is REFUSED, never a panic.** It gets the same
+    /// refusal as a profile id we cannot resolve — warn, return, and the world the player was on is
+    /// untouched. `validate_factions`' panic is right at boot, where there is no earlier world to
+    /// decline back to, and wrong on a command a player issued.
+    #[test]
+    fn new_game_onto_a_profile_with_no_human_faction_is_refused_without_building() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        app.world
+            .insert_resource(profiles_declaring("all_ai", "[{\"control\": \"ai\"}]"));
+
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "all_ai".to_string(),
+            &flat,
+        );
+
+        assert!(!world_active, "a world nobody plays must not be built");
+        assert!(
+            app.world.get_resource::<TileRegistry>().is_none(),
+            "no world after a refused new_game"
+        );
+        assert_eq!(
+            world_epoch, 0,
+            "a refused new_game does not advance the epoch"
+        );
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().factions(),
+            [FactionId(0)],
+            "and the roster the server had is the roster it still has"
         );
     }
 
@@ -19178,6 +19502,104 @@ mod tests {
         assert!(
             queued_road_tiles(&app, other).is_empty(),
             "the refused band queues nothing, so its builders never touch that tile"
+        );
+    }
+
+    /// ⛔ **A BAND ID RESOLVES ONLY FOR THE FACTION THAT OWNS THE BAND.**
+    ///
+    /// [`band_entity_and_tile`] used to match on the id alone, which made it the one production
+    /// band resolver that would hand a caller another faction's band. Both of its callers happened
+    /// to be behind an ownership check already, so nothing was exploitable — the point of the gate
+    /// is that the *next* caller does not have to know that.
+    ///
+    /// The player-facing refusal in `road_verb_refusal` is asserted here too, because the gate is
+    /// defence in depth and must not have quietly replaced the message a player reads.
+    #[test]
+    fn a_band_resolves_only_for_the_faction_that_owns_it() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, _band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        let stranger = FactionId(1);
+        grant_roadbuilding(&mut app, faction);
+        grant_roadbuilding(&mut app, stranger);
+
+        assert!(
+            band_entity_and_tile(&mut app, faction, BandId(ROAD_BAND_ID)).is_some(),
+            "the band's own faction resolves it"
+        );
+        assert!(
+            band_entity_and_tile(&mut app, stranger, BandId(ROAD_BAND_ID)).is_none(),
+            "another faction naming the same id resolves nothing"
+        );
+
+        handle_road_verb(&mut app, stranger, ROAD_BAND_ID, COORD, Improvement::Grade);
+        assert!(
+            road_failure_detail_contains(&app, "is not one of your people"),
+            "and the refusal a player reads is unchanged"
+        );
+        assert_eq!(
+            keeper_of(&app, COORD),
+            None,
+            "nobody keeps a road a foreign faction was refused"
+        );
+    }
+
+    /// ⛔ **A COMMAND FROM A FACTION THIS WORLD DOES NOT HAVE IS DROPPED AT THE DOOR.**
+    ///
+    /// Before the membership gate, such a command ran all the way into its handler and was refused
+    /// downstream by the ownership checks — which reads as *a real faction that happens to own
+    /// nothing*, and files a command-failure event **tagged with a faction that does not exist**.
+    /// The assertion is therefore on both halves: the world is untouched, and nothing was filed
+    /// under the stranger.
+    ///
+    /// Asserting the observable effect (no keeper) rather than that a resolver returned `None`,
+    /// per the precedent above: "resolved nothing" was never the symptom.
+    #[test]
+    fn a_command_from_an_unregistered_faction_never_reaches_its_handler() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, _band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        // The stranger is knowledgeable and addresses a real band, so membership is the ONLY thing
+        // standing between it and the handler.
+        let stranger = FactionId(7);
+        grant_roadbuilding(&mut app, faction);
+        grant_roadbuilding(&mut app, stranger);
+        assert!(
+            !app.world.resource::<FactionRegistry>().contains(stranger),
+            "the fixture world is the shipped single-faction one"
+        );
+
+        let snapshot_server = loopback_snapshot_server();
+        let grade = |faction: FactionId| Command::Grade {
+            faction,
+            band_id: ROAD_BAND_ID,
+            target_x: COORD.x,
+            target_y: COORD.y,
+        };
+
+        apply_command(&mut app, grade(stranger), &snapshot_server);
+        assert_eq!(
+            keeper_of(&app, COORD),
+            None,
+            "the stranger's command never reached the road handler"
+        );
+        assert!(
+            app.world
+                .resource::<CommandEventLog>()
+                .iter()
+                .all(|entry| entry.faction != stranger),
+            "and nothing is filed in the feed under a faction that does not exist"
+        );
+
+        // The same command from the registered faction lands, so the refusal above is membership
+        // and not a fixture that could never have worked.
+        apply_command(&mut app, grade(faction), &snapshot_server);
+        assert_eq!(
+            keeper_of(&app, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "a registered faction takes the same road on"
         );
     }
 

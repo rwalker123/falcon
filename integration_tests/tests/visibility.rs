@@ -2,9 +2,33 @@ mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_test_app, FactionId, FactionRegistry, PopulationCohort, Settlement, SnapshotHistory,
-    StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger, VisibilityState,
+    build_test_app, FactionControl, FactionId, FactionRegistry, FactionSpec, PopulationCohort,
+    Settlement, SnapshotHistory, StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger,
+    VisibilityState,
 };
+
+/// **Seat a real two-faction roster**: faction 0 the player's, faction 1 AI-driven.
+///
+/// `FactionRegistry::new` is the only way to say this. These fixtures used to assign the id vector
+/// directly, which left the default one-entry control map behind — so `FactionId(1)` was in
+/// `factions` while `contains(FactionId(1))` was false, and the server's membership gate would have
+/// dropped its commands. The registry's fields are private now, and this is the shape that replaced
+/// it.
+fn seat_two_factions(app: &mut bevy::prelude::App) {
+    let registry = FactionRegistry::new(&[
+        FactionSpec {
+            control: FactionControl::Human,
+        },
+        FactionSpec {
+            control: FactionControl::Ai,
+        },
+    ]);
+    assert!(
+        registry.contains(FactionId(1)),
+        "the second faction is registered, not merely listed"
+    );
+    app.world.insert_resource(registry);
+}
 
 /// Test that visibility is isolated per-faction - one faction's visibility
 /// doesn't affect another faction's view.
@@ -14,10 +38,7 @@ fn multi_faction_visibility_isolation() {
     let mut app = build_test_app();
 
     // Set up two factions
-    {
-        let mut factions = app.world.resource_mut::<FactionRegistry>();
-        factions.factions = vec![FactionId(0), FactionId(1)];
-    }
+    seat_two_factions(&mut app);
 
     app.update();
 
@@ -245,10 +266,7 @@ fn viewer_faction_controls_snapshot_visibility() {
     let mut app = build_test_app();
 
     // Set up two factions
-    {
-        let mut factions = app.world.resource_mut::<FactionRegistry>();
-        factions.factions = vec![FactionId(0), FactionId(1)];
-    }
+    seat_two_factions(&mut app);
 
     app.update();
 
