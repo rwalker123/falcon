@@ -398,6 +398,18 @@ const KIT_SCOUT_VANTAGE_EQUIPPED := 2.0
 
 const KIT_SCOUT_VANTAGE_BARE := 1.0
 
+## **AND WHAT A DETACHED PARTY MAPS THE GROUND AT — a SECOND sight axis on the same `wayfinding`
+## item, with a bare reading of its own.** `expedition_config.observe_sight_range` is the equipped 9;
+## the item declares the bare 6, which is what a band standing still already sees with nothing at all.
+##
+## **THE TWO BARE READINGS ARE DELIBERATELY UNLIKE EACH OTHER (1 against 6)**, exactly as the shipped
+## config has them: a fixture that gave one item one bare number would pass a client that read the
+## vantage's tier at a ranging party — which prints `1-tile` at a party that sees six, and is the
+## whole reason the sim declares two stats rather than one.
+const KIT_EXPEDITION_SIGHT_EQUIPPED := 9.0
+
+const KIT_EXPEDITION_SIGHT_BARE := 6.0
+
 # The three conditions a kitted band ships with. **DELIBERATELY THREE DIFFERENT NUMBERS** on the
 # 0-100 scale: a fixture that gave two kits one value would pass every assertion with their accessors
 # swapped, which is the exact defect class this arc keeps reproducing.
@@ -571,8 +583,8 @@ const KIT_ID_TILLAGE := "tillage"
 ## **THE RANGING KIT — the only entry on the `expedition` job** (`equipment.json`). It lists that job
 ## alone, so it appears in no hunt, forage, scout, warrior or builders picker in either harness; the
 ## one surface that lists it is the SCOUT launch sheet. It is the roster's only kit that equips
-## THREE items across BOTH food webs, which is the whole reason the job exists — see the scout
-## sheet's own comment in `BandPanelController._build_compose_sheet`.
+## FOUR items across BOTH food webs and the party's own sight, which is the whole reason the job
+## exists — see the scout sheet's own comment in `BandPanelController._build_compose_sheet`.
 const KIT_ID_RANGING := "ranging"
 ## Its display name, named because the shortfall sentence quotes it — `4 of 9 Ranging kits available`
 ## — and a chapter composing that expectation from a literal would drift from the roster silently.
@@ -620,6 +632,7 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
 			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED],
@@ -630,6 +643,7 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
 			"item_ids": [KIT_ITEM_BASKETS],
@@ -640,6 +654,7 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_EQUIPPED,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
 			"item_ids": [KIT_ITEM_WAYFINDING],
@@ -650,6 +665,7 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
 			"item_ids": [KIT_ITEM_CLUBS],
@@ -667,6 +683,7 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_HANDLING,
 			"build_work_branch": KitRoster.BUILD_BRANCH_ANIMAL,
 			"item_ids": [KIT_ITEM_CROOK],
@@ -689,26 +706,39 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_HANDLING,
 			"build_work_branch": KitRoster.BUILD_BRANCH_PLANT,
 			"item_ids": [KIT_ITEM_HOES],
 		},
 		{
-			# **THE RANGING KIT — three items, two food webs, ONE crew** (`equipment.json`). It is the
+			# **THE RANGING KIT — FOUR items, two food webs, ONE crew** (`equipment.json`). It is the
 			# `expedition` job's default and the only kit on this roster that lifts the attack, the
-			# hunt's carry AND the forage web's carry above bare at once, which is exactly what the
-			# scout sheet's gear line has to be able to state. It equips no axis to a value the roster
-			# does not already carry, so it moves neither `unequipped_tier` nor `equipped_tier` and no
-			# frame rendered before it existed changes.
+			# hunt's carry, the forage web's carry AND the marching party's sight above bare at once,
+			# which is exactly what the scout sheet's gear line has to be able to state.
+			#
+			# **`wayfinding` IS THE FOURTH ITEM AND IT WAS NOT ALWAYS**: it was left out while the
+			# party's observation radius read no kit, and joined once that radius became the equipped
+			# tier of `expedition_sight_range`. It is the SCARCEST of the four in the condition rows
+			# (`KIT_SCOUT_HEADCOUNT` sets against the baskets' `KIT_FORAGE_HEADCOUNT`), so it — not
+			# the baskets — is what the shortfall clause counts complete outfits by now.
+			#
+			# **IT IS THE ONE ENTRY THAT MOVES `equipped_tier` ON AN AXIS**: nothing else on the roster
+			# lifts `expedition_sight_range` above bare, which is the point — a sight clause reading
+			# the same for this kit and for `none` would present the fourth item as decoration. The
+			# other four axes it equips to values the roster already carries, so no frame rendered
+			# before it existed changes.
 			"id": KIT_ID_RANGING, "display_name": KIT_RANGING_DISPLAY_NAME,
 			"jobs": [KitRoster.JOB_EXPEDITION],
 			"attack": KIT_ATTACK_EQUIPPED,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_EQUIPPED,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_EQUIPPED,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_EQUIPPED,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
-			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED, KIT_ITEM_BASKETS],
+			"item_ids": [KIT_ITEM_SPEARS, KIT_ITEM_SLED, KIT_ITEM_BASKETS,
+				KIT_ITEM_WAYFINDING],
 		},
 		{
 			"id": KIT_ID_NONE, "display_name": "No kit",
@@ -731,6 +761,7 @@ static func kit_roster_fixture() -> Array:
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
 			"scout_vantage_range": KIT_SCOUT_VANTAGE_BARE,
+			"expedition_sight_range": KIT_EXPEDITION_SIGHT_BARE,
 			"build_work_per_worker": KIT_BUILD_WORK_NEUTRAL,
 			"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
 			"item_ids": [],

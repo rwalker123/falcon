@@ -1802,16 +1802,20 @@ func _lines_any_contain(lines: Array[String], needle: String) -> bool:
 ## has a ceiling to move under and the compose footer opens at all.
 const EXPEDITION_KIT_IDLE_WORKERS := 12
 
-## A party the band's SCARCEST ranging item covers completely, and one it does not. The kit is spears
-## + sled + baskets and the fixture band holds 4 baskets (`BandFx.KIT_FORAGE_HEADCOUNT`), so a party
-## of 4 is fully outfitted and a party of 9 leaves five people short — which is the shortfall clause's
-## own arithmetic, stated here from the harness's side rather than read back off the line.
-const EXPEDITION_KIT_COVERED_PARTY := 4
+## A party the band's SCARCEST ranging item covers completely, and one it does not. **The kit is FOUR
+## items now** — spears + sled + baskets + wayfinding — and the scarcest moved with the fourth: the
+## fixture band holds 2 sets of wayfinding gear (`BandFx.KIT_SCOUT_HEADCOUNT`) against 4 baskets, so a
+## complete ranging outfit is what the wayfinding gear can cover. A party of 2 is fully outfitted and
+## a party of 9 leaves seven people short — the shortfall clause's own arithmetic, stated here from
+## the harness's side rather than read back off the line.
+const EXPEDITION_KIT_COVERED_PARTY := 2
 const EXPEDITION_KIT_SHORT_PARTY := 9
 
 ## What the shortfall sentence must read at the short party — composed from the vocabulary's own
-## format, so a copy edit moves the claim with the line rather than breaking it.
-const EXPEDITION_KIT_SHORTFALL_COVERED := 4
+## format, so a copy edit moves the claim with the line rather than breaking it. It is the SCARCEST
+## item's count and not the baskets': `shortfall_line` takes the `min` over the kit's whole item list,
+## which is what makes a complete outfit the unit it counts in.
+const EXPEDITION_KIT_SHORTFALL_COVERED := 2
 
 ## The destination the command claim sends the party to; any land tile does, the assertion being about
 ## the TAIL and not the target.
@@ -1854,8 +1858,9 @@ func _expedition_kit_states() -> void:
 	await h._settle()
 
 	# State exp-kit-a — **THE SHEET AS IT OPENS**: party stepper, then the Kit row on the ranging kit
-	# (its `(default)` mark), then the gear line stating BOTH feeding paths, then the hint and the
-	# send. A party of 4 is inside the band's basket count, so no shortfall run renders.
+	# (its `(default)` mark), then the gear line stating BOTH feeding paths AND how far the party
+	# sees, then the hint and the send. A party of 2 is inside the band's wayfinding sets, so no
+	# shortfall run renders.
 	await h._save("expedition_kit_ranging")
 	var sheet: Control = h._hud._bandpanel._party_compose_sheet
 	h._assert_hud("the scout launch sheet mounts a kit picker at all",
@@ -1880,6 +1885,12 @@ func _expedition_kit_states() -> void:
 		and hint.contains(HudComposeVocab.KIT_EXPEDITION_HAUL_EQUIPPED))
 	h._assert_hud("…and the GATHER path in the same line, which is the half a hunt-only line hides",
 		hint.contains(HudComposeVocab.KIT_EXPEDITION_GATHER_EQUIPPED))
+	# **AND THE SIGHT CLAUSE, THE ONE THAT CARRIES A NUMBER.** `wayfinding` is the kit's fourth item
+	# and what it buys is reach, so this clause must read the EQUIPPED radius here and the bare one on
+	# the null kit below. The PAIR is the claim: a clause reading the same at both ends teaches the
+	# player the fourth item does nothing, which is exactly what a launch sheet must not do.
+	h._assert_hud("…and how far the party sees, at the kitted radius — \"%s\"" % hint,
+		hint.contains(_expedition_sight_clause(BandFx.KIT_EXPEDITION_SIGHT_EQUIPPED)))
 	h._assert_hud("…and no shortfall run, this party being inside the band's outfits",
 		not hint.contains(HudComposeVocab.KIT_SHORTFALL_FORMAT % [
 			EXPEDITION_KIT_SHORTFALL_COVERED, EXPEDITION_KIT_COVERED_PARTY, ""]))
@@ -1914,6 +1925,13 @@ func _expedition_kit_states() -> void:
 		bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_HUNT_BARE)
 		and bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_HAUL_BARE)
 		and bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_GATHER_BARE))
+	# **AND THE SIGHT NUMBER MOVES** — the bare radius, and NOT the kitted one. A bare party still sees
+	# what a band standing still sees, so this is a step DOWN from 9 rather than a loss of sight, and
+	# the negative half is what fails a builder that prints one radius whatever is picked.
+	h._assert_hud("…and the sight clause steps down to the party's bare radius — \"%s\"" % bare_hint,
+		bare_hint.contains(_expedition_sight_clause(BandFx.KIT_EXPEDITION_SIGHT_BARE))
+		and not bare_hint.contains(
+			_expedition_sight_clause(BandFx.KIT_EXPEDITION_SIGHT_EQUIPPED)))
 
 	# **AND THE PICK REACHES THE COMMAND — PNG-LESS, because a tail is not a picture.** The send is
 	# driven through the REAL path (the sheet's confirm arms the targeting; the targeting's tile click
@@ -1944,6 +1962,13 @@ func _expedition_kit_states() -> void:
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud.clear_selection()
 	await h._settle()
+
+## The gear line's SIGHT clause at a given radius, composed from the vocabulary's own format and its
+## own rounding — so a copy edit or a decimals change moves the expectation with the line instead of
+## breaking it, the idiom the shortfall expectation above already uses.
+func _expedition_sight_clause(tiles: float) -> String:
+	return HudComposeVocab.KIT_EXPEDITION_SIGHT_FORMAT % String.num(
+		tiles, HudComposeVocab.KIT_EXPEDITION_SIGHT_DECIMALS)
 
 ## Every entry the mounted kit picker is showing, as `{text, disabled}` in roster order — read off the
 ## LIVE `OptionButton` the sheet mounted, never off `KitRoster.build_kit_row` called a second time: an

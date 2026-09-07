@@ -98,6 +98,21 @@ const JOB_SATURATING_CREW_AXES := {
 ## its live wear (`BAND_KIT_TIERS_KEY`), never the roster's fresh vantage.
 const KIT_SCOUT_VANTAGE_KEY := "scout_vantage_range"
 
+## **THE RANGING PARTY'S OWN SIGHT AXIS — and it is NOT `KIT_SCOUT_VANTAGE_KEY` read a second time.**
+## A posted vantage is one or two people on a hilltop; a detached party is the whole crew walking,
+## and the two observers have DIFFERENT bare readings off the SAME `wayfinding` gear — the vantage's
+## bare is 1 tile, the party's is 6, because a band standing still already sees that far carrying
+## nothing (`.claude/rules/core_sim/equipment.md`). So a launch sheet quoting the vantage's number
+## would tell a bare-handed party it sees ONE tile when it sees six, which is why the sim declares two
+## stats on one item and `KitOption` publishes both.
+##
+## **IT IS READ OFF THE ROSTER'S FRESH TIER, NOT OFF A `BandKitTiers` ROW** — unlike the vantage
+## above, whose role card prices the SELECTED kit at this band's live wear. No band row states this
+## axis (`snapshot.fbs` → `BandKitTiers`), and it is the right shape for the surface that wants it:
+## the launch sheet's gear line states what a KIT arms a party with, and how far the band's gear
+## reaches into the party is the shortfall clause's separate business.
+const KIT_EXPEDITION_SIGHT_KEY := "expedition_sight_range"
+
 ## **THE BUILD AXIS — the WORK UNITS one equipped worker DELIVERS per turn, over and above its bare
 ## hands.** Neutral `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off
 ## the `none` kit and `kit_uses` reads *"declares more than neutral"* with no special case. The value
@@ -351,6 +366,12 @@ const JOB_WARRIOR := "warrior"
 ## party in the game that has to REPLACE what it eats while out of contact with its band — which it
 ## does by gathering off the stands it passes and, only if that was not enough, by taking the game it
 ## meets. One kit arms both halves, which is why this is its own job rather than `JOB_HUNT`.
+##
+## **AND IT CARRIES THE PARTY'S EYES TOO — the kit is FOUR items now, not three.** `wayfinding` was
+## deliberately left out while the party's observation radius was a flat `observe_sight_range` that
+## read no kit at all; that radius is the EQUIPPED tier of `KIT_EXPEDITION_SIGHT_KEY` since, so the
+## item buys real reach and joined the kit. Anything counting this kit's items or its complete
+## outfits counts four.
 ##
 ## ⛔ **A HUNT OR DENIAL PARTY IS NOT ON IT.** Those live off their kills, draw no provisions, and
 ## resolve their kit off the QUARRY's derived default (`HERD_DEFAULT_KIT_KEY`) — so they stay on
@@ -1695,15 +1716,22 @@ static func role_hint_markup(kits: Array, kit: Dictionary, band: Dictionary, job
 ##
 ## **BOTH PATHS OR NEITHER, and that is the whole reason the line exists.** `KitJob::Expedition` is
 ## the one job whose kit arms two food webs at once (`equipment.json` → the ranging kit: spears and a
-## sled for the roadside kill, baskets for what it gathers), and a hint quoting only the hunt axis
-## would present half a choice as the whole of it — the player would read "Armed" and never learn
-## that the same pick decided whether the party can gather at all.
+## sled for the roadside kill, baskets for what it gathers, wayfinding gear for how far ahead it can
+## read the ground), and a hint quoting only the hunt axis would present half a choice as the whole
+## of it — the player would read "Armed" and never learn that the same pick decided whether the party
+## can gather at all.
 ##
-## **IT NAMES NO TIER AND NO NUMBER**, exactly as the source jobs' line no longer does: a rate is
-## what ONE equipped worker gets, and quoting it beside a party of nine describes nobody on the sheet
-## (see `tier_hint`'s headstone). What it states instead is which of the three axes this kit lifts
-## above the roster's bare-handed tier, which is a fact about the KIT and answerable for any crew
-## size.
+## **IT NAMES NO RATE**, exactly as the source jobs' line no longer does: a rate is what ONE equipped
+## worker gets, and quoting it beside a party of nine describes nobody on the sheet (see
+## `tier_hint`'s headstone). What the three feeding clauses state instead is which axes this kit
+## lifts above the roster's bare-handed tier, which is a fact about the KIT and answerable for any
+## crew size.
+##
+## **THE SIGHT CLAUSE QUOTES ITS TILES, AND THAT IS NOT THE RETIRED TIER LINE COMING BACK.** A
+## distance is not a rate: the party's observation radius is ONE number for the whole marching crew,
+## it needs no denominator, and it is the only axis on this line whose reading differs between the
+## kits on offer — a sight clause that read the same for `ranging` and for `none` would present the
+## kit's fourth item as decoration.
 ##
 ## **IT NAMES NO ITEM EITHER.** This file may not map an axis to the component behind it — `big_game`
 ## takes its attack from `spears` and `trapping` from `traps`, and guessing that is what once printed
@@ -1727,10 +1755,22 @@ static func expedition_hint_markup(kits: Array, kit: Dictionary, band: Dictionar
 	return _shortfall_tinted(expedition_hint(kits, kit, band, crew),
 		shortfall_line(kits, kit, band, JOB_EXPEDITION, crew))
 
-## **THE THREE CLAUSES, ONE PER AXIS THIS JOB READS** — the weapon, the hunt's haul, the gather's
-## haul — each resolved off the ROSTER's fresh tier against the roster's own bare-handed tier, never
-## off the band's worn row. Which paths a kit arms is a property of the kit; how far the band's gear
-## reaches into the party is the shortfall clause's business, and the two must not be run together.
+## **THE FOUR CLAUSES, ONE PER AXIS THIS JOB READS** — the weapon, the hunt's haul, the gather's
+## haul, and how far the party sees — each resolved off the ROSTER's fresh tier against the roster's
+## own bare-handed tier, never off the band's worn row. Which paths a kit arms is a property of the
+## kit; how far the band's gear reaches into the party is the shortfall clause's business, and the
+## two must not be run together.
+##
+## **THE SIGHT CLAUSE IS APPENDED LAST AND IS THE ONE THAT CARRIES A NUMBER.** The three before it
+## are binary — the kit lifts the axis above bare or it does not — so `kit_uses` answers each and a
+## word says the whole of it. Sight is a DISTANCE the gear extends, and the reading has to MOVE
+## between the kits on offer or the picker teaches the player that the `ranging` kit's fourth item
+## does nothing; so this one is read as a value rather than as a predicate. It goes last because the
+## three feeding clauses are one thought and a travel axis wedged into them splits it.
+##
+## **`TIER_ABSENT` WITHHOLDS IT RATHER THAN PRINTING `0-tile`.** `snapshot.fbs` says `0` on this axis
+## is the absent/unknown reading, so a roster row that predates the field states nothing here — the
+## same under-promise every other axis makes.
 ##
 ## `""` for a kit the roster does not carry, which the caller renders as no line at all.
 static func expedition_gear_clause(kits: Array, kit: Dictionary) -> String:
@@ -1746,6 +1786,10 @@ static func expedition_gear_clause(kits: Array, kit: Dictionary) -> String:
 			if kit_uses(kits, kit, KIT_FORAGE_CARRY_KEY) \
 			else HudComposeVocab.KIT_EXPEDITION_GATHER_BARE,
 	]
+	var sight := float(kit.get(KIT_EXPEDITION_SIGHT_KEY, TIER_ABSENT))
+	if sight > TIER_ABSENT:
+		parts.append(HudComposeVocab.KIT_EXPEDITION_SIGHT_FORMAT % String.num(
+			sight, HudComposeVocab.KIT_EXPEDITION_SIGHT_DECIMALS))
 	return HudComposeVocab.KIT_HINT_SEPARATOR.join(parts)
 
 ## Tint the shortfall RUN of an already-composed line, leaving every other run to the label's default

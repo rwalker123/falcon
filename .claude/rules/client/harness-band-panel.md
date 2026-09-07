@@ -2370,9 +2370,9 @@ before the countdown is read) is unchanged by the correction.
 ## The scout launch sheet's kit picker (`chapters/band_expedition.gd`, the ranging-kit arc)
 
 Three frames — `expedition_kit_ranging` / `_short` / `_none` — appended LAST in the chapter's frame
-walk, plus nine claims. **The three frames are the three things the gear line has to be able to say**:
-fully outfitted, short of outfits, and bare-handed on both webs. One frame would pass on a builder
-that printed one clause and never reached the others.
+walk, plus eleven claims. **The three frames are the three things the gear line has to be able to
+say**: fully outfitted, short of outfits, and bare-handed on both webs. One frame would pass on a
+builder that printed one clause and never reached the others.
 
 - **The picker's CONTENTS are the claim no frame can carry.** A scouting party is never told a kit
   cannot be used, so the block asserts both `expedition` kits are listed AND that NONE is greyed —
@@ -2380,6 +2380,12 @@ that printed one clause and never reached the others.
   thumbnail with the popup shut.
 - **The gear line is asserted for BOTH webs on the SAME line.** `hint.contains(GATHER_EQUIPPED)` is
   the load-bearing one: a hunt-only line renders a perfectly ordinary hint.
+- **THE SIGHT CLAUSE IS ASSERTED AS A PAIR ACROSS TWO FRAMES, which is the only shape that can catch
+  it.** `expedition_kit_ranging` must read the EQUIPPED radius and `expedition_kit_none` the bare one
+  — and the second claim carries a NEGATIVE half (`not … contains` the equipped clause), because a
+  builder that printed one radius whatever is picked satisfies either half alone. The expectation is
+  composed through `_expedition_sight_clause`, off `HudComposeVocab.KIT_EXPEDITION_SIGHT_FORMAT` and
+  its decimals, so a copy edit moves the claim rather than breaking it.
 - **The command claim is a PAIR and PNG-less** — a tail is not a picture. The null pick must emit
   ` kit none` and the DEFAULT pick must emit no tail at all: a builder that always appended satisfies
   the first alone, one that never did satisfies the second. It is driven through the REAL path (the
@@ -2398,13 +2404,23 @@ met again here:**
   calls `render_band` explicitly.
 - ⛔ **`shortfall_line` IS SILENT ON A BAND THAT STATES NO GEAR LEDGER**, and silence is also what a
   fully-covered party produces. The bare `BandFx.band_fixture()` states no `kit_item_conditions`, so
-  the short state photographed a covered party; the block stages `BandFx.with_equipped_kit` and the
-  band's four baskets against a party of nine are what make `4 of 9 Ranging kits available` reachable.
+  the short state photographed a covered party; the block stages `BandFx.with_equipped_kit`, and the
+  band's SCARCEST ranging item against a party of nine is what makes the shortfall sentence reachable.
+
+**THE SHORTFALL ARITHMETIC MOVED WHEN THE KIT GAINED ITS FOURTH ITEM, and it moved for a reason that
+is not a bug.** `wayfinding` joined `ranging` once the party's observation radius became kit-aware,
+and `shortfall_line` counts COMPLETE OUTFITS — the `min` over the kit's whole item list. The harness
+band holds 2 sets of wayfinding gear (`BandFx.KIT_SCOUT_HEADCOUNT`) against 4 baskets, so the
+wayfinding gear is now the binding item: the covered party is 2 rather than 4, and the short frame
+reads `2 of 9 Ranging kits available` where it read `4 of 9`.
 
 **`BandFx.kit_roster_fixture()` gained the `ranging` entry and `none` gained the `expedition` job.**
-The ranging kit lists that job ALONE and equips no axis to a value the roster does not already carry,
-so it moves neither `unequipped_tier` nor `equipped_tier` and appears in no hunt, forage, scout,
-warrior or builders picker in either harness — **no frame rendered before it existed changes.**
+The ranging kit lists that job ALONE and appears in no hunt, forage, scout, warrior or builders picker
+in either harness. It equips exactly ONE axis to a value the roster does not already carry —
+`expedition_sight_range`, which no other entry lifts, and which is the point: a sight clause reading
+the same for this kit and for `none` would present the fourth item as decoration. Every other axis it
+equips is one the roster already reaches, and no reader outside the `expedition` job's own gear line
+consults the sight axis — **no frame rendered before it existed changes.**
 
 **`command_guard` drives `send_expedition` with a NON-DEFAULT kit** (`BandFx.KIT_ID_NONE` against
 `KIT_DEFAULT_EXPEDITION`), and the verb joined `KIT_BEARING_KINDS`; `xtask/src/command_guard.rs`'s

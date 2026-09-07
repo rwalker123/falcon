@@ -2360,9 +2360,18 @@ the face carries the job glyph the list deliberately omits.
 PROVISIONED detached party (Scout and Trade, never a hunt or a denial raid) walks out with a larder,
 drains it every turn, and is the only party in the game that has to REPLACE what it eats while out of
 contact with its band — by gathering off the stands it passes and, only if that was not enough, by
-taking the game it meets. The `ranging` kit (spears + sled + baskets) arms both halves, which is why
-this is its own job rather than `hunt`; the wire names its default as `defaultExpeditionKitId`
-(`HudBandLaborState.default_kit_id`, the fifth arm of that `match`).
+taking the game it meets. The `ranging` kit (spears + sled + baskets + wayfinding) arms both halves
+AND carries the party's eyes, which is why this is its own job rather than `hunt`; the wire names its
+default as `defaultExpeditionKitId` (`HudBandLaborState.default_kit_id`, the fifth arm of that
+`match`).
+
+**`wayfinding` IS THE KIT'S FOURTH ITEM AND WAS NOT ALWAYS.** It was deliberately excluded while a
+detached party's observation radius was a flat `expedition_config.observe_sight_range` reading no kit
+at all — an item in the party's hands that did nothing. That radius is the EQUIPPED tier of
+`EquipmentStat::ExpeditionSightRange` now and the item declares the bare one, so it joined the kit.
+Anything counting this kit's items or its COMPLETE OUTFITS counts four: the shortfall clause takes the
+`min` over the whole list, and on the harness band the wayfinding sets (2) are scarcer than the
+baskets (4), so they are what a complete ranging outfit is limited by.
 
 **NO KIT IS EVER WITHHELD ON THIS JOB, and that is a design decision rather than an omission.**
 `kit_offer`'s weapon rule is asked of a NAMED quarry, and a scouting party does not know what it will
@@ -2373,11 +2382,29 @@ sheet passes NO quarry and every kit the roster lists for the job is selectable.
 **ITS HINT LINE STATES BOTH FEEDING PATHS, which is the whole reason the job exists.** A line quoting
 only the hunt axis would present half a choice as the whole of it — the player would read *Armed* and
 never learn the same pick decided whether the party can gather at all. `KitRoster.expedition_hint`
-composes three clauses, one per axis the job reads (the weapon, the hunt's haul, the forage web's
-haul), then the ordinary shortfall clause where somebody is going without.
+composes FOUR clauses, one per axis the job reads (the weapon, the hunt's haul, the forage web's haul,
+and how far the party sees), then the ordinary shortfall clause where somebody is going without.
 
-- **It names NO tier and NO number**, the source jobs' own rule (see the headstone above): a rate is
-  what ONE equipped worker gets and describes nobody on a nine-person sheet.
+- **It names NO rate**, the source jobs' own rule (see the headstone above): a rate is what ONE
+  equipped worker gets and describes nobody on a nine-person sheet.
+- **The SIGHT clause is the exception that proves it, and it is the only clause carrying a number.**
+  A distance is not a rate — the party's observation radius is one figure for the whole marching crew,
+  needing no denominator — and it is the only axis on the line whose reading DIFFERS between the kits
+  on offer. A sight clause identical for `ranging` and for `none` would present the kit's fourth item
+  as decoration, which is the failure the clause exists to prevent. It is read as a VALUE off
+  `KitRoster.KIT_EXPEDITION_SIGHT_KEY` on the kit under the cursor, not as a `kit_uses` predicate like
+  the three before it, and it is appended LAST so the three feeding clauses stay one thought.
+  `HudComposeVocab.KIT_EXPEDITION_SIGHT_FORMAT` is hyphenated (`9-tile sight on the march`) for the
+  vantage's own reason: the axis bottoms out at a small whole number and `sees 1 tiles` is the row
+  every value-plus-unit phrasing prints down there. `0` on the axis is the wire's absent reading, and
+  `TIER_ABSENT` withholds the clause rather than printing `0-tile`.
+- **It is NOT the Scout role card's vantage read twice.** The same `wayfinding` item lifts two sight
+  stats with two different BARE readings — the posted vantage's is 1 tile, the marching party's is 6,
+  because a band standing still already sees that far carrying nothing — so a launch sheet borrowing
+  `DetailFormat.KIT_ROLE_SCOUT_VANTAGE_FORMAT` would tell a bare party it sees ONE tile when it sees
+  six. `on the march` names the observer the way `per vantage` names the other, and the two axes are
+  two dictionary keys (`expedition_sight_range` / `scout_vantage_range`) decoded side by side off one
+  `KitOption` row.
 - **It names NO item either.** `KitRoster` may not map an axis to the component behind it — `big_game`
   takes its attack from `spears` and `trapping` from `traps` — so each clause says what the party can
   DO. The shortfall clause beneath names the KIT, which is the thing the player picked.
