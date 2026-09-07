@@ -26,12 +26,12 @@ Two things open a window and nothing else does:
 | opener | when | the window it opens |
 |---|---|---|
 | `stamp_starting_loadout` | Startup, chained after the spawn | the spawned band's, carrying the campaign's **grant** |
-| `split_band_from_parent` | every split, every turn | the splinter's, **carrying the default take as its accepted allocation** |
+| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or the share of the grant re-fitted off the parent |
 
 **Turn one is not special — only the PARENT's state differs.** On turn one the parent still holds an
-unspent grant, so its splinter takes a slice of that grant and its picks **mint**. From turn two
-nobody holds a grant, so a splinter's window is a take on the parent and its picks **move** gear out
-of the parent's own ledger. There is no `if turn == 1` anywhere in the arc, and there must not be: the
+unspent grant, so its splinter takes a slice of that grant, its picks **mint**, and the split moves no
+gear at all. From turn two nobody holds a grant, so a splinter's window is a take on the parent, its
+picks **move** gear out of the parent's own ledger, and the split moves the default take across. There is no `if turn == 1` anywhere in the arc, and there must not be: the
 question the code asks is *"does this band's parent still have a grant"*, which is a fact about the
 world rather than about the clock.
 
@@ -60,12 +60,57 @@ what another band is standing on right now.
 
 ### What a SPLIT gives the splinter
 
-| the parent's window | the splinter's window |
-|---|---|
-| still **grants** (`LoadoutWindow::grants()` — open, and a `Grant`) | a `Grant` of its own: `min(asked, the parent's remaining kit budget)` kit slots, and `floor(share × the parent's remaining material points)`. **Both are deducted from the parent's**, so no slot and no point is minted twice or lost. |
-| does not (closed, or already a take) | a `Parent` take: no budgets, and the cap is what the parent can supply — see below. |
+| the parent's window | what the split does | the splinter's window |
+|---|---|---|
+| still **grants** (`LoadoutWindow::grants()` — open, and a `Grant`) | **partitions the grant, and moves NOTHING physical** | a `Grant` of its own: `min(asked, the parent's remaining kit budget)` kit slots, and `floor(share × the parent's remaining material points)`. Both are deducted from the parent's, so no slot and no point is minted twice or lost. |
+| does not (closed, or already a take) | **moves goods** — there is no grant left to partition | a `Parent` take: no budgets, and the cap is what the parent can supply — see below. |
 
 Both caps are the numbers the split has just resolved (`asked`, `share`), not literals.
+
+> #### ⛔ A GRANT SPLIT PAYS **ONCE** — IT PARTITIONS OR IT MOVES, NEVER BOTH
+>
+> A split used to walk the proportional manifest out of the parent's ledger **and** deduct the
+> splinter's slots and points from the parent's budget. Those are two ways of paying for one
+> splinter, and doing both charges the parent twice.
+>
+> **What a player saw** (reported from a live run): a band of 17 hands with 30 material points, the
+> shipped pre-fill committed as `bone 3 / fibre 17 / hide 8` = 28 units, split 5 workers off on turn
+> one. Its resources meter read **`-6 / 22 left`**. The kit meter escaped only because the 4/4/4
+> pre-fill happened to sum to exactly the reduced budget; a player who had spent all 17 slots would
+> have seen that go negative too.
+>
+> **The negative meter was the visible edge of a duplication bug.** The parent's standing allocation
+> was never re-fitted, so it still claimed 28 units against a 22-point budget — and an apply is a
+> *replacement built from empty*, so the parent's next revision **re-minted all 28** while the units
+> that had walked stayed with the splinter. Material out of nothing, on every turn-one split.
+>
+> **On turn one the budget is the currency and a ledger is a draft against it**, which is why the
+> grant arm moves nothing: the splinter mints from slots carved out of the parent's grant, and that
+> *is* the payment. The people and the larder dowry are untouched by this — they are not loadout
+> goods, and the food-ledger transfer booking is unchanged.
+
+#### The re-fit: what the parent gives up reaches the splinter
+
+`fission::rebalance_partitioned_grant` closes the loop, and it runs **only when the parent no longer
+fits its reduced budget**:
+
+1. the parent's standing allocation is re-fitted by `clamp_allocation`'s proportional-floored rule —
+   the same rule the profile's kit pre-fill is fitted by;
+2. the parent is **re-materialized from the clamped allocation** through `apply_starting_loadout`, the
+   path a player's own commit takes, so its ledger, its store and its meter state one thing and the
+   meter can never read negative;
+3. **what the clamp took off is offered to the splinter**, bounded by the splinter's own budget by the
+   same rule, and materialized the same way. Those units are not deleted — they are taken away from
+   the main band and given to the new one, which is the model.
+
+**A parent that still fits gives up nothing and the re-fit returns without touching either band.**
+That is load-bearing rather than an optimisation: re-materializing rebuilds a ledger from *empty*, so
+running it on a parent with no standing allocation would destroy gear that never came from one.
+
+The invariant is over the **grant**, not over the ledgers: `held + unspent` across both bands comes
+back to what the parent alone had. Pinned by
+`split_loadout::a_grant_split_conserves_the_material_grant`, which also re-applies the parent's own
+clamped allocation afterwards — the exact move the duplication rode in on.
 
 ### ⛔ THE WINDOW OPENS AT THE ALLOCATION, NOT AT ZERO
 
@@ -79,6 +124,10 @@ The default take is now **denominated in kits** (`fission::default_take_kits`) a
 re-sending it unchanged is an exact no-op. `items` and `kits` are two readings of one move —
 `items == expand_kits(kits)` by construction — which is what makes the round trip exact rather than
 approximately right.
+
+**A splinter of a still-granting parent gets its rows the other way round**: nothing was moved, so its
+allocation is what the parent's re-fit shed, materialized on it by the same `apply_starting_loadout`
+call. Either way the rows describe the band standing beside them, which is the whole property.
 
 > **An empty tail is still a real order** — *take nothing* — on a take exactly as it is on a grant.
 > Nothing special-cases the commit; the card is simply no longer empty when the take is not. A

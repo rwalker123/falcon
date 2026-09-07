@@ -1700,9 +1700,9 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Ten frames and
-eighty-nine assertions (`EXPECTED_CHECKPOINTS` **99**, RE-MEASURED by raising the const to an
-impossible number and reading `reached 99` back — frames count too). It ends by publishing SHUT
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Twelve frames and
+one hundred assertions (`EXPECTED_CHECKPOINTS` **112**, RE-MEASURED by raising the const to an
+impossible number and reading `reached` back — frames count too). It ends by publishing SHUT
 windows, so the surface it stands up is gone before anything appended after it could inherit it.
 
 ⛔ **THE WINDOW RIDES THE COHORT NOW, so the chapter pushes TWO seams in `Main`'s own order**:
@@ -1740,7 +1740,7 @@ somebody else's row.
 | `starting_loadout_take` | a split's splinter stands its OWN card up; the subtitle names the home band; the meters read `left at home` and never the grant's `/ 30 left`; the resources column lists what the HOME BAND holds — `clay` included, which the profile never offered — so a card drawing the pick list fails on the row list alone; and ⛔ **the card opens on the split's DEFAULT TAKE rather than at zero**, asserted row by row (a kit the take does not name still opens at 0, or "opens on the standing take" passes on a column that put one number on every row) |
 | — (PNG-less, on the same card) | ⛔ **an untouched `Set out` re-sends exactly what is shown.** The claim is the composed ORDER, read off the HUD's own `set_starting_loadout_requested`, because the card showing the right numbers and the commit sending them are two different things. While the card opened EMPTY this same press ordered *take nothing* and handed the splinter's dowry back, an apply being a replacement. The card is then reopened through its pill with the picks intact, which is what the cap walk moves |
 | `starting_loadout_take_capped` | ⛔ **the cap is the EXPANDED item list.** `big_game` stops at the SLED (five) rather than at its own six spears, `trapping` is then capped at zero with four traps still at home, and giving two sleds back frees it again — the one claim a per-row cap passes every other assertion on |
-| `starting_loadout_bands` | two open windows, two orb rows, two tabs — and pressing the HOME band's tab renders its GRANT again, meters and all, which is the only way to a second band's card (an orb row carries a KIND and no band) |
+| `starting_loadout_bands` | two open windows, two orb rows, two tabs — and pressing the HOME band's tab renders its GRANT again, meters and all. It is one of the two ways to a second band's card; the row's own `Open ▸` is the other, and has its own claim below |
 
 **THE SUPPLY IS AIMED AT THE SHARED ITEM.** Sleds are the scarcest line on purpose, so the failure
 worth catching — two kit rows capped independently — is the one the fixture produces; and the walk
@@ -1762,10 +1762,37 @@ rather than failing a claim. It cost a run: the tab claims came back `[]` with t
 above them. The panel stamps the id as text and the chapter's two finders use `str()`.
 
 **THE TAKE'S ORB ROW IS ASSERTED ON ITS DETAIL, not its label.** Both arms carry the same two labels
-whatever the wording is, and the claim is that a take names the home band and NEVER says `unspent` —
-what a grant leaves unspent is gone on the advance and what a take leaves is not.
+whatever the wording is, and the claim is that a take leads with its OWN band and NEVER says
+`unspent` — what a grant leaves unspent is gone on the advance and what a take leaves is not.
 
-**A clean run is 423 frames / 1997 `PASS`, exit 0 — MEASURED, with the pre-arc client MEASURED beside
+### The orb's three live defects (the same reported screen)
+
+Two frames and eleven claims appended after the switcher block, before the shut.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout_orb_bands` | **the reported popover, fixed** — two loadout rows LEADING with different bands (`Brackwater — everything is picked` / `Thornhollow — 3 kits, 4 resources`) where the report showed the same sentence twice, both still wearing `Open ▸` |
+| `starting_loadout_over_budget` | the reported CARD — `-2 / 12 left` and `-6 / 22 left` on one band, which is what the row beside it must not call done |
+
+- **The `Open ▸` claim is a PRESS, not a reading.** Both rows wear the affordance whatever it reaches,
+  so the row's own button is pressed (`Q.turn_orb_popover_rows` hands the `button` back for exactly
+  this) and the SUBJECT is read off the card. The block runs with the card left on the HOME band by
+  the switcher block, asserted as a precondition — a press that ignored the row's subject would leave
+  it there and pass every wording claim on the screen.
+- **The over-budget state is staged the only way a client can reach it**: the SIM publishes an
+  allocation over the band's budget. The card draws a published allocation as-is (a second clamp here
+  would disagree with the sim's own), so the meter goes negative exactly as it did on the reported
+  screen — and the frame's first claim is that it really does read `-6 / 22 left`, without which the
+  row's claim is about a band that is merely unspent.
+- **The two overspends are different sizes in different currencies** (2 kits, 6 resources), so a
+  detail reporting one for the other lands on the wrong number rather than on a coincidence.
+
+**Sabotage-verified** by returning `_over_allowance` to `false` (the `remaining <= 0` regime): exactly
+**four** claims fail, and the detail comes back reading `Windmere — everything is picked` at `ready`
+— the reported defect, in its own words — while the card's meter precondition and the auto-open claim
+correctly stay green, being about a different layer.
+
+**A clean run is 425 frames / 2008 `PASS`, exit 0 — MEASURED, with the pre-arc client MEASURED beside
 it at 420 / 1968** in the same environment (the swap-the-changed-files-to-the-merge-base method above):
 three frames and twenty-three claims, which is this chapter's whole delta. That baseline is also what
 attributed `starting_loadout.png`'s top-left placement to a race that predates the arc.

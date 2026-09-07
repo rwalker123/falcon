@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 99
+const EXPECTED_CHECKPOINTS := 112
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -107,6 +107,26 @@ const KIT_STALKING := "big_game"
 const KIT_PRESSES := 3
 ## The roster entry that must NEVER be offered — it grants nothing, which is how the picker knows.
 const KIT_NONE := "none"
+
+# ---- the OVER-BUDGET band (the reported screen) --------------------------------------------------
+
+const OVER_BAND_ENTITY := 6203
+## Its budgets are the ones the split left it with; its accepted rows are what it still claims. The
+## two overspends are DIFFERENT sizes and in different currencies, so a detail that reported one for
+## the other lands on the wrong number rather than on a coincidence.
+const OVER_KIT_BUDGET := 12
+const OVER_KITS_HELD := 14
+const OVER_MATERIAL_BUDGET := 22
+const OVER_UNITS_HELD := 28
+## What the card's own material meter must read — the reported `-6 / 22 left`, spelled as a LITERAL
+## rather than composed through `BUDGET_REMAINING_FORMAT`, since an expectation built from the format
+## under test can only agree with itself.
+const OVER_METER_NEEDLE := "-6 / 22 left"
+## …and the row's whole detail, by equality: the band leads, then both overspends.
+const OVER_DETAIL := "Windmere — 2 kits, 6 resources over budget"
+## The words the READY arm uses, asserted ABSENT from an over-budget row — the defect was those exact
+## words on this exact band.
+const ORB_DETAIL_READY_NEEDLE := "everything is picked"
 
 ## A stepper loop's ceiling. It is a GUARD, not the expected count: a `+` that stopped working would
 ## otherwise spin this chapter until the watchdog killed the whole run.
@@ -212,8 +232,8 @@ const ORB_OPEN_AFFORDANCE := "Open ▸"
 ## the const under test moves with it, so both sides of the comparison change together and the claim
 ## passes on the very rename it exists to catch; measured, sabotaging the const failed this claim not
 ## at all. These are literals for the same reason `_assert_horizon_floor_is_the_whole_trip`'s are.
-const ORB_DETAIL_ONE_RESOURCE := "1 resource unspent"
-const ORB_DETAIL_EVERYTHING_PICKED := "everything is picked"
+const ORB_DETAIL_ONE_RESOURCE := "Brackwater — 1 resource unspent"
+const ORB_DETAIL_EVERYTHING_PICKED := "Brackwater — everything is picked"
 ## …and the noun it must never go back to, asserted ABSENT so the rename cannot quietly revert.
 const ORB_DETAIL_RETIRED_NOUN := "unit"
 
@@ -277,6 +297,8 @@ func run(harness) -> void:
 	await _an_untouched_commit_re_sends_the_standing_take()
 	await _the_take_cap_is_the_expanded_item_list()
 	await _the_switcher_reaches_the_other_band()
+	await _every_row_names_its_band_and_opens_it()
+	await _an_over_budget_band_is_not_outfitted()
 	_assert_window_shuts()
 
 # ---- the opening state ------------------------------------------------------
@@ -495,6 +517,104 @@ func _commit_is_revisable() -> void:
 	h._assert_hud("loadout — a revised allocation re-sends and survives the send (%d units)" % revised,
 		_controller().materials_spent() == revised and _controller().is_open())
 
+## ⛔ **EVERY ROW NAMES ITS OWN BAND, AND ITS `Open ▸` REACHES THAT BAND.**
+##
+## Reported from a live run: two windows, two orb rows, both reading *"Band outfitted / everything is
+## picked"* — identical and unattributable, directly beneath two idle-worker rows that DID name their
+## bands. And the affordance was worse than the wording: a row carried a KIND and no band, so pressing
+## either one opened whichever band the card happened to be showing.
+##
+## **The press is the half a rendered claim cannot make.** Both rows wear `Open ▸` whatever it reaches,
+## so the row is PRESSED — through the real button, which runs `_on_reason_pressed` →
+## `panel_requested` → `TurnOrbController` → `open_band` — and the SUBJECT is read back off the card.
+## The card is left on the HOME band by the block above, so a press that ignored the row's subject
+## would leave it there and pass every wording claim on this screen.
+func _every_row_names_its_band_and_opens_it() -> void:
+	await _open_orb_popover()
+	var rendered := Q.turn_orb_popover_rows(h._hud.turn_orb)
+	var home_row := _popover_row_for(rendered, _band_name(HOME_BAND_ENTITY))
+	var take_row := _popover_row_for(rendered, _band_name(SPLINTER_BAND_ENTITY))
+	h._assert_hud("loadout — each open window's row LEADS with its own band (%d rows drawn)"
+			% rendered.size(),
+		not home_row.is_empty() and not take_row.is_empty()
+			and String(home_row["detail"]) != String(take_row["detail"]))
+	h._assert_hud("loadout — …and both still wear `%s` (`%s` / `%s`)"
+			% [ORB_OPEN_AFFORDANCE, home_row.get("jump", ""), take_row.get("jump", "")],
+		String(home_row.get("jump", "")) == ORB_OPEN_AFFORDANCE
+			and String(take_row.get("jump", "")) == ORB_OPEN_AFFORDANCE)
+	# **THE PICTURE OF THE REPORTED SCREEN, FIXED.** Two windows, two rows, each leading with its own
+	# band — where the report showed two rows reading `Band outfitted / everything is picked`, twice.
+	# The orb's own accent is not this frame's claim (the band producers' rows are up beside these).
+	await h._save("starting_loadout_orb_bands")
+	# The precondition without which the press below proves nothing: the card is on the OTHER band.
+	h._assert_hud("loadout — the card is on the home band before the press (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().subject_band_id() == _band_id(HOME_BAND_ENTITY))
+	(take_row["button"] as Button).pressed.emit()
+	await h._settle()
+	h._assert_hud("loadout — pressing the SPLINTER's row opens the SPLINTER's card (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().is_expanded()
+			and _controller().subject_band_id() == _band_id(SPLINTER_BAND_ENTITY))
+	_close_orb_popover()
+
+## One popover row by the band its detail leads with. `begins_with`, because the band LEADS — a
+## `contains` would also match a row that merely mentioned the band somewhere in its fact.
+func _popover_row_for(rendered: Array, band_name: String) -> Dictionary:
+	for row_variant in rendered:
+		var row: Dictionary = row_variant
+		if String(row.get("detail", "")).begins_with(band_name):
+			return row
+	return {}
+
+## ⛔ **OVER BUDGET IS NOT FULLY SPENT, AND THE ORB MUST NOT PAINT IT GREEN.**
+##
+## The completeness test was `remaining <= 0` over a remainder clamped at zero, so a band holding MORE
+## than its budget allows passed it: a live run showed a card reading `-6 / 22 left` beside a row
+## calling that band outfitted. The sim bug behind the `-6` is fixed and **nothing here relies on
+## that** — a state the row cannot word is exactly the state it must not paint as done.
+##
+## The state is staged the only way a client can reach it: the SIM publishes an allocation over the
+## band's budget. The card draws a published allocation as-is (a second clamp here would disagree with
+## the sim's own), so the meter goes negative exactly as it did on the screen that was reported.
+func _an_over_budget_band_is_not_outfitted() -> void:
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band()])
+	await h._settle()
+	h._assert_hud("loadout/over — the over-budget band's card opens (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().is_expanded()
+			and _controller().subject_band_id() == _band_id(OVER_BAND_ENTITY))
+	# **THE CARD REALLY DOES READ NEGATIVE.** Without this the row's claim is about a band that is
+	# merely unspent, which the `warn` arm has always handled.
+	h._assert_hud("loadout/over — the card's meter reads `%s`" % OVER_METER_NEEDLE,
+		Q.has_label_containing(_panel(), OVER_METER_NEEDLE))
+	var row := _band_attention_row(_band_id(OVER_BAND_ENTITY))
+	h._assert_hud("loadout/over — the row is `%s`, not `%s` (got `%s`)"
+			% [HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+				HudAttentionVocab.ATTENTION_SEVERITY_READY, row.get("severity", "")],
+		String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_WARN)
+	h._assert_hud("loadout/over — …and it reads `%s`, never `%s` (got `%s`)"
+			% [HudLoadoutVocab.ATTENTION_LABEL_OVER, HudLoadoutVocab.ATTENTION_LABEL_READY,
+				row.get("label", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_OVER)
+	# …and its detail says which way it is wrong, in both currencies, behind its own band's name.
+	h._assert_hud("loadout/over — the detail names the band and both overspends (`%s`)"
+			% row.get("detail", ""),
+		String(row.get("detail", "")) == OVER_DETAIL)
+	h._assert_hud("loadout/over — …and never claims everything is picked",
+		not String(row.get("detail", "")).contains(ORB_DETAIL_READY_NEEDLE))
+	_assert_no_dead_space("over")
+	await h._save("starting_loadout_over_budget")
+
+## One producer row by the band it is about, read off the CONTROLLER — the popover holds every
+## producer's rows and this claim is about which one this band got.
+func _band_attention_row(band_id: int) -> Dictionary:
+	for row_variant in _controller().attention_rows():
+		var row: Dictionary = row_variant
+		if int(row.get(HudAttentionVocab.ATTENTION_PANEL_SUBJECT, HudConst.NO_BAND_ID)) == band_id:
+			return row
+	return {}
+
 ## The turn advanced: the sim says every window has shut, and the whole surface goes with it. **The
 ## BANDS are still there** — it is their windows that closed, which is the frame the sim really sends
 ## and not the same thing as a roster going empty.
@@ -503,7 +623,9 @@ func _assert_window_shuts() -> void:
 	(home[HudLoadoutVocab.WINDOW_KEY] as Dictionary)[HudLoadoutVocab.OPEN_KEY] = false
 	var splinter := _splinter_band()
 	(splinter[HudLoadoutVocab.WINDOW_KEY] as Dictionary)[HudLoadoutVocab.OPEN_KEY] = false
-	h._hud.update_band_alerts([home, splinter])
+	var over := _over_budget_band()
+	(over[HudLoadoutVocab.WINDOW_KEY] as Dictionary)[HudLoadoutVocab.OPEN_KEY] = false
+	h._hud.update_band_alerts([home, splinter, over])
 	h._assert_hud("loadout — a shut window takes the whole surface off screen",
 		not _controller().is_open())
 	h._assert_hud("loadout — …and the orb's rows go with it",
@@ -670,9 +792,9 @@ func _the_take_cap_is_the_expanded_item_list() -> void:
 			% [TAKE_HIDE, _stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[0])],
 		_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[0]) == TAKE_HIDE)
 
-## **TWO OPEN WINDOWS, TWO ORB ROWS, AND A SWITCHER — which is the only way to the other card.** An
-## orb row carries a KIND and no band, so its `Open ▸` brings back whichever band the card is already
-## on; without the switcher the second window would be unreachable once dismissed.
+## **TWO OPEN WINDOWS, TWO ORB ROWS, AND A SWITCHER — the way to the other card for a player who never
+## opens the popover.** The row's own `Open ▸` is the other, and it is asserted by the block below;
+## while a row carried a KIND and no band this switcher was the only one.
 func _the_switcher_reaches_the_other_band() -> void:
 	var rows := _controller().attention_rows()
 	h._assert_hud("loadout — the orb carries one row per open window (%d)" % rows.size(),
@@ -680,11 +802,11 @@ func _the_switcher_reaches_the_other_band() -> void:
 	var take_row: Dictionary = {}
 	for row_variant in rows:
 		var row: Dictionary = row_variant
-		if String(row.get("detail", "")).contains(_band_name(HOME_BAND_ENTITY)):
+		if String(row.get("detail", "")).begins_with(_band_name(SPLINTER_BAND_ENTITY)):
 			take_row = row
 	# ⛔ **A TAKE'S ROW NEVER SAYS `unspent`.** That word is on the orb because a grant's remainder is
 	# GONE on the turn advance; a take's supply simply stays with the home band.
-	h._assert_hud("loadout/take — the orb row names the home band and never says `%s` (`%s`)"
+	h._assert_hud("loadout/take — the orb row names its OWN band and never says `%s` (`%s`)"
 			% [TAKE_FORBIDDEN_NOUN, take_row.get("detail", "")],
 		not take_row.is_empty()
 			and not String(take_row.get("detail", "")).contains(TAKE_FORBIDDEN_NOUN))
@@ -1063,6 +1185,26 @@ func _splinter_band() -> Dictionary:
 		HudLoadoutVocab.PARENT_MATERIAL_SUPPLY_KEY: [
 			_supply(TAKE_MATERIALS[0], TAKE_HIDE), _supply(TAKE_MATERIALS[1], TAKE_FIBRE),
 			_supply(TAKE_MATERIALS[2], TAKE_CLAY),
+		],
+	})
+
+## **A BAND WHOSE PUBLISHED ALLOCATION IS OVER ITS BUDGET** — the reported screen, staged the one way
+## a client can reach it. Its grant budgets are the post-split ones and its accepted rows are the
+## pre-split allocation, which is the shape the duplication bug left behind; the card draws a
+## published allocation as-is, so both meters read negative.
+func _over_budget_band() -> Dictionary:
+	return _band(OVER_BAND_ENTITY, {
+		HudLoadoutVocab.OPEN_KEY: true,
+		HudLoadoutVocab.KIT_BUDGET_KEY: OVER_KIT_BUDGET,
+		HudLoadoutVocab.MATERIAL_BUDGET_KEY: OVER_MATERIAL_BUDGET,
+		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
+		HudLoadoutVocab.WINDOW_KITS_KEY: [
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: OVER_KITS_HELD},
+		],
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: PICKABLE[0],
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: OVER_UNITS_HELD},
 		],
 	})
 

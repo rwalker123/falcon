@@ -99,6 +99,11 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 
 - **A proportional share of the larder** — not a reserve calculation and not a new number. The new band
   starts stocked because its people were already sitting on that food.
+> ⛔ **THE TWO GOODS BULLETS BELOW ARE THE *TAKE* ARM — a split whose parent still holds an unspent
+> grant moves NEITHER.** It partitions the grant instead, and moving goods on top of that charged the
+> parent twice (`.claude/rules/core_sim/starting-loadout.md` → "A grant split pays ONCE"). The people,
+> the larder and the culture below are unconditional.
+
 - **A proportional share of the KIT, DENOMINATED IN KITS, moved and inherited WORN.**
   `fission::default_take_kits` resolves a kit allocation and `expand_kits` turns it into the item list
   that crosses, taken with `BandEquipment::take_units` and debited from the parent by exactly what
@@ -250,11 +255,16 @@ refusal sentences and does no gate of its own.
 
 ## The splinter opens its own outfitting window
 
-A split ends by opening a `starting_loadout` window on the new band, **carrying the default take as
-its accepted allocation** — the kit and material rows the card draws itself from — and it stays open
-until the turn advances. What bounds that take is a fact about the
-**parent's** state rather than about the turn — a grant carved off the parent's on turn one, the
-parent's own holdings from turn two. The whole model, the caps table and the onward-take refusal live
+A split ends by opening a `starting_loadout` window on the new band, **carrying its accepted
+allocation** — the kit and material rows the card draws itself from — and it stays open until the turn
+advances. What the split does to get there is a fact about the **parent's** state rather than about
+the turn:
+
+- the parent still **grants** → the split **partitions the grant** and moves nothing; the parent is
+  re-fitted to its reduced budget and what that takes off becomes the splinter's allocation;
+- the parent **does not** → the split **moves** the default take and publishes it.
+
+Doing both is what charged the parent twice and let its next revision mint material out of nothing. The whole model, the caps table and the onward-take refusal live
 in `.claude/rules/core_sim/starting-loadout.md`; what belongs here is that **the split is one of the
 two things in the game that opens a window**, and that the proportional manifest above is that
 window's *starting point* and not its verdict.

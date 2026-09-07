@@ -47,14 +47,21 @@ signal focus_requested(x: int, y: int)
 signal advance_requested
 ## A NON-LOCATING row was activated: the thing it names lives in a panel, not on the map.
 ## Carries the entry's `kind` so the orb stays producer-agnostic — the Hud decides which
-## panel a kind opens, and a new non-locating producer needs no orb change.
-signal panel_requested(kind: String)
+## panel a kind opens, and a new non-locating producer needs no orb change — and its
+## `HudAttentionVocab.ATTENTION_PANEL_SUBJECT`, which the orb passes through WITHOUT reading: a
+## producer whose panel has more than one subject (the outfitting picker has one window per BAND)
+## needs the row to say which, or the press opens whichever subject the panel was already on.
+signal panel_requested(kind: String, subject: int)
 
 # ---- severity model --------------------------------------------------------
 ## **SATISFIED, and it is the BOTTOM of the ladder rather than a kind of `info`.** `info` means
 ## *neutral news* — a build finished, a discovery landed — which is a statement about something that
 ## HAPPENED. This one says a standing requirement is now MET, so it must lose the orb's accent to any
 ## real news and to every warning, while still painting the orb when it is all there is.
+## What a row carries when its producer named no subject — every producer but the outfitting picker,
+## whose panel has one window per band. `0` is "no band" throughout this client.
+const PANEL_SUBJECT_NONE := 0
+
 const SEVERITY_READY := "ready"
 const SEVERITY_INFO := "info"
 const SEVERITY_WARN := "warn"
@@ -1205,7 +1212,8 @@ func _reason_row(entry: Variant) -> Button:
 	row.add_child(jump)
 
 	button.add_child(row)
-	button.pressed.connect(_on_reason_pressed.bind(x, y, locates, String(entry.get("kind", ""))))
+	button.pressed.connect(_on_reason_pressed.bind(x, y, locates, String(entry.get("kind", "")),
+		int(entry.get(HudAttentionVocab.ATTENTION_PANEL_SUBJECT, PANEL_SUBJECT_NONE))))
 	return button
 
 ## Is any entry holding the turn? The orb does not know WHAT blocks — only that something does.
@@ -1246,13 +1254,14 @@ func _popover_footer() -> Control:
 	margin.add_child(advance)
 	return margin
 
-func _on_reason_pressed(x: int, y: int, locates: bool, kind: String) -> void:
+func _on_reason_pressed(x: int, y: int, locates: bool, kind: String, subject: int) -> void:
 	if locates:
 		emit_signal("focus_requested", x, y)
 	else:
 		# The thing this row names lives in a panel, not on the map. The orb only says WHICH
-		# kind was activated; the Hud owns the kind → panel mapping.
-		emit_signal("panel_requested", kind)
+		# kind was activated and, where the producer said so, which SUBJECT within it; the Hud owns
+		# the kind → panel mapping and what the subject means.
+		emit_signal("panel_requested", kind, subject)
 	_close_popover()
 
 func _on_advance_pressed() -> void:

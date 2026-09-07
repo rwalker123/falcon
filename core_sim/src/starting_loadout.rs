@@ -456,11 +456,39 @@ pub fn clamped_kit_defaults(
     declared: &BTreeMap<String, u32>,
     kit_budget: u32,
 ) -> (Vec<(String, u32)>, bool) {
+    clamp_allocation(declared, kit_budget)
+}
+
+/// **PROPORTIONAL, FLOORED, remainder unspent — the one implementation of that rule.**
+///
+/// Returns the rows to keep, in id order, and whether the clamp bound. A row that floors to zero is
+/// **dropped**: an allocation of nothing is what an absent row already says.
+///
+/// Three callers, all asking the same question — *"this allocation is bigger than the budget it is
+/// measured against; which of it survives?"*:
+///
+/// - [`clamped_kit_defaults`], fitting a profile's kit pre-fill to the spawned band's head count;
+/// - the **parent's** standing allocation, re-fitted to the budget a grant split just reduced;
+/// - the **remainder** that clamp took off the parent, fitted to the splinter's own budget.
+///
+/// **Proportional rather than first-come, and the floor's remainder goes nowhere.** These are
+/// `BTreeMap`s, so there is no author's order to consume in — "declaration order" would really be
+/// *id* order, making `gathering` beat `trapping` because `g` sorts first, which is an arbitrary
+/// winner dressed as a rule. Scaling preserves the shape the allocation expressed, and handing the
+/// leftover point or two to whichever id sorts first would put that arbitrary tiebreak back. Leaving
+/// it unspent is strictly better: the budget is still there and the player can spend it deliberately.
+///
+/// **A zero budget keeps nothing**, which needs no special case: every scaled row floors to 0.
+pub(crate) fn clamp_allocation(
+    declared: &BTreeMap<String, u32>,
+    budget: u32,
+) -> (Vec<(String, u32)>, bool) {
     let total: u32 = declared.values().copied().sum();
-    if total <= kit_budget {
+    if total <= budget {
         return (
             declared
                 .iter()
+                .filter(|(_, count)| **count > 0)
                 .map(|(id, count)| (id.clone(), *count))
                 .collect(),
             false,
@@ -471,7 +499,7 @@ pub fn clamped_kit_defaults(
         .filter_map(|(id, count)| {
             // `u64` because `count × budget` overflows a `u32` for counts a config could plausibly
             // typo (65_536 × 65_536), and a wrapped product would clamp *upward*.
-            let scaled = (u64::from(*count) * u64::from(kit_budget) / u64::from(total)) as u32;
+            let scaled = (u64::from(*count) * u64::from(budget) / u64::from(total)) as u32;
             (scaled > 0).then(|| (id.clone(), scaled))
         })
         .collect();

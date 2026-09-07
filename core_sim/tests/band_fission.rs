@@ -44,6 +44,12 @@ const FINE_READING: f32 = 0.8;
 
 /// Build a headless world on a pinned earthlike map — one `update()` runs the whole Startup worldgen
 /// chain and resolves turn 1, so there is a real resident band standing on real terrain.
+///
+/// ⛔ **AND THEN ONE TURN, WHICH SHUTS THE OUTFITTING WINDOWS.** This suite is about the **dowry a
+/// split MOVES**, and goods only move when the parent has no grant left: while the opening window is
+/// still open a split *partitions the grant* instead and moves nothing at all
+/// (`.claude/rules/core_sim/starting-loadout.md`, and `split_loadout.rs` for that arm). Splitting on
+/// the world-build turn would leave every conservation assertion below measuring an empty move.
 fn spawn_world() -> App {
     let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
@@ -51,6 +57,15 @@ fn spawn_world() -> App {
     config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
     app.update();
+    core_sim::run_turn(&mut app);
+    assert_eq!(
+        app.world
+            .resource::<core_sim::StartingLoadout>()
+            .open_count(),
+        0,
+        "fixture: the turn advance must shut every window, or these splits partition a grant \
+         instead of moving goods and every assertion below is vacuous"
+    );
     app
 }
 

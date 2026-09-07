@@ -146,6 +146,11 @@ static func turn_orb_popover_rows(orb: Node) -> Array:
 				"label": String((cell.get_child(0) as Label).text),
 				"detail": String((cell.get_child(1) as Label).text),
 				"jump": jump,
+				# **AND THE ROW ITSELF**, so a caller can PRESS the row it just read rather than fake
+				# the orb's signal — the affordance and what the press actually reaches are two
+				# different claims, and a producer with more than one subject can get the second one
+				# wrong while every rendered word is right.
+				"button": row_node,
 			})
 			break
 	return rows

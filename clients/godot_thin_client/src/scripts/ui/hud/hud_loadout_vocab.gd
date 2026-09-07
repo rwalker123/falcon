@@ -210,9 +210,10 @@ const COMMIT_CLEAR_LABEL := "Set out"
 const COMMIT_TOOLTIP := "You can change this until you end the turn."
 
 ## **THE BAND SWITCHER, drawn ONLY while more than one window is open.** One button per band with an
-## open window; the subject's is pressed. It earns no row in the ordinary single-window case, and it
-## is the only way to reach a second band's card — the turn orb's row carries a KIND and no band, so
-## its `Open ▸` can only ever bring back whichever band the card is already on.
+## open window; the subject's is pressed. It earns no row in the ordinary single-window case, and it is
+## ONE of the two ways to a second band's card — that band's own orb row is the other, carrying its
+## subject (`HudAttentionVocab.ATTENTION_PANEL_SUBJECT`). This was the only one while a row carried a
+## KIND and no band.
 const BAND_TAB_TOOLTIP_FORMAT := "Outfit %s."
 const BAND_TAB_SEPARATION := 6
 const BAND_TAB_FONT_SIZE := 11
@@ -240,6 +241,12 @@ const EMPTY_NOTICE := "Waiting for the world's kit roster."
 ## `READY`, an unfinished one reads as a warning and paints it `WARN`.
 const ATTENTION_LABEL_UNSPENT := "Band not outfitted"
 const ATTENTION_LABEL_READY := "Band outfitted"
+## ⛔ **A THIRD RUNG, BECAUSE OVER-BUDGET AND FULLY-SPENT ARE NOT THE SAME ANSWER.** The completeness
+## test was `remaining <= 0`, so a band holding MORE than its budget allows passed it and the orb
+## called it done — reported from a live run as a card reading `-6 / 22 left` beside a row saying
+## *everything is picked*. A state this row cannot word is exactly the state it must not paint green,
+## so a negative remainder reads `warn` and says which way it is wrong.
+const ATTENTION_LABEL_OVER := "Band over budget"
 ## Both remainders in one line, because the two budgets are one decision. A budget already clear is
 ## dropped from it rather than printed as a zero.
 const ATTENTION_DETAIL_SEPARATOR := ", "
@@ -250,23 +257,34 @@ const ATTENTION_DETAIL_KITS_MANY := "%d kits unspent"
 ## whatever the control that spends it is called.
 const ATTENTION_DETAIL_UNITS_ONE := "1 resource unspent"
 const ATTENTION_DETAIL_UNITS_MANY := "%d resources unspent"
+## …and the over-budget arm's own tail, built from the bare counts below so the two nouns are typed
+## once. `2 kits, 6 resources over budget`.
+const ATTENTION_DETAIL_OVER_FORMAT := "%s over budget"
 ## Both budgets are clear. It reads as a statement of fact rather than as an instruction, because at
 ## this point there is nothing the player still has to do.
 const ATTENTION_DETAIL_READY := "everything is picked"
 
+## ⛔ **THE ROW NAMES ITS OWN BAND, and the band leads.** Every window is one band's, so with two open
+## the rows were identical and unattributable — *"Band outfitted / everything is picked"*, twice. The
+## band rides the DETAIL, which is where the idle-worker rows directly above these put theirs, rather
+## than in a label this arc would have had to invent a fourth spelling of.
+const ATTENTION_DETAIL_BAND_FORMAT := "%s — %s"
+
+## **THE BARE COUNT PHRASES, typed once and used by two arms** — a take's *what is taken* and a
+## grant's *what is over budget*. They carry the noun and nothing else, so the arm supplies the verb.
+const ATTENTION_COUNT_KITS_ONE := "1 kit"
+const ATTENTION_COUNT_KITS_MANY := "%d kits"
+const ATTENTION_COUNT_RESOURCES_ONE := "1 resource"
+const ATTENTION_COUNT_RESOURCES_MANY := "%d resources"
 ## ⛔ **A TAKE FORFEITS NOTHING, SO ITS ROW NEVER SAYS `unspent`.** What a grant leaves unspent is
 ## gone on the turn advance, which is the whole reason that word is on the orb; supply a take leaves
-## behind just stays with the home band. So the take's arms report what IS taken, and the empty one
-## says nothing has been yet — both naming the home band, since two open windows otherwise put two
-## identically-worded rows on one popover.
-const ATTENTION_DETAIL_TAKE_KITS_ONE := "1 kit"
-const ATTENTION_DETAIL_TAKE_KITS_MANY := "%d kits"
-const ATTENTION_DETAIL_TAKE_RESOURCES_ONE := "1 resource"
-const ATTENTION_DETAIL_TAKE_RESOURCES_MANY := "%d resources"
-## `3 kits, 12 resources from Ash Hollow`.
-const ATTENTION_DETAIL_TAKE_FROM_FORMAT := "%s from %s"
-## …and the arm with no order standing yet.
-const ATTENTION_DETAIL_TAKE_NONE_FORMAT := "nothing from %s yet"
+## behind just stays with the home band. So the take's arms report what IS taken, and this is the arm
+## with no order standing yet.
+##
+## **It no longer names the home band.** It did, because two open windows put two identically-worded
+## rows on one popover — and the row names its OWN band now, which is both the fix for that and the
+## convention every other producer already follows.
+const ATTENTION_DETAIL_TAKE_NONE := "nothing taken yet"
 
 # ---- geometry (measured, not guessed — every number here is read back off a rendered frame) ------
 

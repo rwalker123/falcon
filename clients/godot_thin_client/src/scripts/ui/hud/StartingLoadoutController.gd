@@ -125,6 +125,10 @@ const BAND_KIT_PICKS := "kit_picks"
 const BAND_MATERIAL_PICKS := "material_picks"
 ## Seeded once per band, so a delta re-stating the accepted rows cannot overwrite a later pick.
 const BAND_SEEDED := "seeded"
+## ⛔ **THE PUBLISHED ALLOCATION AS LAST SEEN**, `{kits, materials}` of `id -> amount`. It is what
+## makes "seeded once" mean *do not clobber a draft* rather than *never look again*: a re-published
+## allocation that DIFFERS is the sim having moved this band's holdings, and the card must adopt it.
+const BAND_PUBLISHED := "published"
 
 ## A recipe with no inputs at all cannot be priced against a pile, so the column reads it as
 ## unreachable rather than as infinitely makeable. Nothing in the shipped book is such a recipe; this
@@ -237,12 +241,51 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	state[BAND_MATERIAL_SUPPLY] = material_supply
 	state[BAND_MATERIAL_ORDER] = _pickable if parent == HudLoadoutVocab.GRANT_PARENT_BAND_ID \
 		else _supply_order(window.get(HudLoadoutVocab.PARENT_MATERIAL_SUPPLY_KEY, []))
+	var published := {
+		HudLoadoutVocab.WINDOW_KITS_KEY: _allocation_map(
+			window.get(HudLoadoutVocab.WINDOW_KITS_KEY, []),
+			HudLoadoutVocab.KIT_DEFAULT_ID_KEY, HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY),
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: _allocation_map(
+			window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
+			HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY),
+	}
 	if not bool(state.get(BAND_SEEDED, false)):
 		state[BAND_SEEDED] = true
 		state[BAND_KIT_PICKS] = {}
 		state[BAND_MATERIAL_PICKS] = {}
+		state[BAND_PUBLISHED] = published
 		_seed_band(state, window)
+	elif published != state.get(BAND_PUBLISHED, {}):
+		# ⛔ **THE SIM MOVED THIS BAND'S ALLOCATION, SO THE CARD ADOPTS IT.** A split re-fits the
+		# PARENT's standing allocation down to its reduced budget (`fission::
+		# rebalance_partitioned_grant`) and re-materializes the band from it — so a card that treated
+		# a band it had already stood up as settled would keep drawing the pre-split rows against the
+		# post-split budget, which is a negative meter reproduced client-side out of stale state.
+		#
+		# **A draft is still safe.** This fires only when the PUBLISHED rows differ from the ones this
+		# card last saw, so a delta merely re-stating the same allocation leaves an uncommitted pick
+		# exactly where the player left it — which is the whole reason the seed is once-per-band.
+		state[BAND_PUBLISHED] = published
+		state[BAND_KIT_PICKS] = {}
+		state[BAND_MATERIAL_PICKS] = {}
+		_seed_rows(state, window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
+			window.get(HudLoadoutVocab.WINDOW_KITS_KEY, []))
 	_bands[band_id] = state
+
+## An accepted-allocation half as `id -> amount`, for the comparison above — a DICT rather than the
+## published array, so a re-ordered but identical allocation is not read as a change.
+func _allocation_map(rows: Variant, id_key: String, amount_key: String) -> Dictionary:
+	var map: Dictionary = {}
+	if not (rows is Array):
+		return map
+	for row_variant in rows:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		var id := String(row.get(id_key, ""))
+		if not id.is_empty():
+			map[id] = int(row.get(amount_key, 0))
+	return map
 
 ## `[{id, units}]` → `id -> units`. A row the sim publishes twice cannot happen (both supplies are
 ## keyed maps sim-side), so the later row simply wins rather than summing.
@@ -396,8 +439,10 @@ func open() -> void:
 		return
 	_open_card()
 
-## Render a DIFFERENT band's window. The card's band switcher is the only caller — the orb's row
-## carries a KIND and no band, so its `Open ▸` can only ever bring back the band already subject.
+## Render a DIFFERENT band's window. Two callers: the card's band switcher, and the turn orb's row for
+## that band (through `TurnOrbController`, off the row's own
+## `HudAttentionVocab.ATTENTION_PANEL_SUBJECT`). It declines a band with no open window, so a stale
+## subject on a row the registry has not caught up with opens nothing rather than the wrong card.
 func open_band(band_id: int) -> void:
 	if not _bands.has(band_id):
 		return
@@ -807,27 +852,73 @@ func attention_rows() -> Array:
 		var band: Dictionary = _bands.get(band_id, {})
 		if band.is_empty():
 			continue
-		rows.append(_attention_row(band))
+		rows.append(_attention_row(band_id, band))
 	return rows
 
-func _attention_row(band: Dictionary) -> Dictionary:
+## ⛔ **THREE ARMS, AND THE THIRD ONE IS A FLOOR UNDER THE OTHER TWO.** A window whose meter reads
+## NEGATIVE — the band holding more than its budget or its home band's supply allows — is a state
+## this row has no true wording for, so it must not take the wording that says *done*. It reads
+## `warn` and says which way it is wrong.
+##
+## The completeness test was `remaining <= 0` over a remainder clamped at zero, so over-budget and
+## fully-spent were literally the same answer; a live run showed a card reading `-6 / 22 left` beside
+## a row calling it outfitted. The sim bug behind that `-6` is fixed and nothing here relies on it.
+func _attention_row(band_id: int, band: Dictionary) -> Dictionary:
 	var take := _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
+	var over := _over_allowance(band)
 	# A grant is DONE when both budgets are clear — there is nothing left to mint. A take is done as
 	# soon as an order stands: it forfeits nothing by leaving supply at home, so "everything drawn"
 	# is not a state the player is working towards.
-	var complete := _take_is_ordered(band) if take else _grant_is_complete(band)
+	var complete := not over and (_take_is_ordered(band) if take else _grant_is_complete(band))
+	var label := HudLoadoutVocab.ATTENTION_LABEL_UNSPENT
+	if over:
+		label = HudLoadoutVocab.ATTENTION_LABEL_OVER
+	elif complete:
+		label = HudLoadoutVocab.ATTENTION_LABEL_READY
+	var fact := _over_detail(band)
+	if not over:
+		fact = _take_detail(band) if take else _grant_detail(band)
 	return {
 		"kind": HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT,
+		# **THE BAND THIS ROW'S `Open ▸` MUST REACH.** The orb carries it and never reads it — see
+		# `HudAttentionVocab.ATTENTION_PANEL_SUBJECT`. Without it the press opened whichever band the
+		# card happened to be showing, which with two windows is a button that goes somewhere else.
+		HudAttentionVocab.ATTENTION_PANEL_SUBJECT: band_id,
 		# Never `critical` on the unfinished arm either: nothing is being lost yet, and the row shares
 		# the popover with starvation rows that genuinely are.
 		"severity": HudAttentionVocab.ATTENTION_SEVERITY_READY if complete \
 			else HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-		"label": HudLoadoutVocab.ATTENTION_LABEL_READY if complete \
-			else HudLoadoutVocab.ATTENTION_LABEL_UNSPENT,
-		"detail": _take_detail(band) if take else _grant_detail(band),
+		"label": label,
+		# **THE BAND LEADS THE DETAIL**, the idle-worker rows' own convention — see
+		# `HudLoadoutVocab.ATTENTION_DETAIL_BAND_FORMAT`.
+		"detail": HudLoadoutVocab.ATTENTION_DETAIL_BAND_FORMAT % [_band_label(band_id, band), fact],
 		"x": HudAttentionVocab.ATTENTION_NON_LOCATING,
 		"y": HudAttentionVocab.ATTENTION_NON_LOCATING,
 	}
+
+## **Is either meter NEGATIVE** — is this band holding more than its window allows? Asked of the
+## SIGNED remainder, because `kits_left` / `materials_left` clamp at zero for the meter's sake and a
+## clamp is precisely what hid this state.
+func _over_allowance(band: Dictionary) -> bool:
+	return _signed_kits(band) < 0 or _signed_materials(band) < 0
+
+## …and by how much, in the bare count nouns the take arm already uses. `2 kits, 6 resources over
+## budget`. **A take's "budget" is the home band's supply**, which is the same sentence one currency
+## over: the band is standing on more than the window says it may have.
+func _over_detail(band: Dictionary) -> String:
+	var parts: Array[String] = []
+	var kits := -_signed_kits(band)
+	if kits == 1:
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_ONE)
+	elif kits > 1:
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_MANY % kits)
+	var units := -_signed_materials(band)
+	if units == 1:
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_RESOURCES_ONE)
+	elif units > 1:
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_RESOURCES_MANY % units)
+	return HudLoadoutVocab.ATTENTION_DETAIL_OVER_FORMAT \
+		% HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
 
 func _grant_is_complete(band: Dictionary) -> bool:
 	return _remaining_kits(band) <= 0 and _remaining_materials(band) <= 0
@@ -857,46 +948,61 @@ func _grant_detail(band: Dictionary) -> String:
 		return HudLoadoutVocab.ATTENTION_DETAIL_READY
 	return HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
 
-## A TAKE's detail: what has been taken, and from whom.
+## A TAKE's detail: what has been taken. **It named the home band until the row named its OWN**, which
+## was the only way two identically-worded rows could be told apart; the subject's name does that job
+## properly now, and the card's subtitle is where the home band belongs.
 func _take_detail(band: Dictionary) -> String:
-	var home := String(band.get(BAND_PARENT_NAME, ""))
-	if home.is_empty():
-		home = HudFormat.band_name({HudLoadoutVocab.BAND_ID_KEY: _parent_of(band)})
 	var parts: Array[String] = []
 	var kits := 0
 	for count in band.get(BAND_KIT_PICKS, {}).values():
 		kits += int(count)
 	if kits == 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_TAKE_KITS_ONE)
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_ONE)
 	elif kits > 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_TAKE_KITS_MANY % kits)
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_MANY % kits)
 	var units := 0
 	for held in band.get(BAND_MATERIAL_PICKS, {}).values():
 		units += int(held)
 	if units == 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_TAKE_RESOURCES_ONE)
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_RESOURCES_ONE)
 	elif units > 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_TAKE_RESOURCES_MANY % units)
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_RESOURCES_MANY % units)
 	if parts.is_empty():
-		return HudLoadoutVocab.ATTENTION_DETAIL_TAKE_NONE_FORMAT % home
-	return HudLoadoutVocab.ATTENTION_DETAIL_TAKE_FROM_FORMAT % [
-		HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts), home]
+		return HudLoadoutVocab.ATTENTION_DETAIL_TAKE_NONE
+	return HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
 
-## The subject's own accessors answer for the SUBJECT; the orb has to ask about every band, so the
-## two GRANT remainders are computed per band here rather than through `kits_left` / `materials_left`.
-## Both read zero on a take, whose budgets are `0` and mean nothing — which is why nothing but
-## `_grant_detail` and `_grant_is_complete` calls them.
+## The subject's own accessors answer for the SUBJECT; the orb has to ask about every band, so the two
+## remainders are computed per band here rather than through `kits_left` / `materials_left`.
 func _remaining_kits(band: Dictionary) -> int:
-	var spent := 0
-	for count in band.get(BAND_KIT_PICKS, {}).values():
-		spent += int(count)
-	return maxi(int(band.get(BAND_KIT_BUDGET, 0)) - spent, 0)
+	return maxi(_signed_kits(band), 0)
 
 func _remaining_materials(band: Dictionary) -> int:
+	return maxi(_signed_materials(band), 0)
+
+## ⛔ **THE UNCLAMPED REMAINDERS — what the card's own meter draws, negative included.** Every clamped
+## reader above is written in terms of these, so the one place a negative can be seen is the one place
+## it is asked about; a clamp applied before the question is what made an over-budget band read as
+## finished.
+##
+## They are the whole window's currency, so they answer for a take as well as a grant: on a take the
+## denominator is the home band's supply rather than a point budget, and the sign means the same
+## thing either way.
+func _signed_kits(band: Dictionary) -> int:
+	var take := _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
+	var spent := 0
+	if take:
+		for units in _expanded_items(band, "").values():
+			spent += int(units)
+	else:
+		for count in band.get(BAND_KIT_PICKS, {}).values():
+			spent += int(count)
+	return _kit_total(band, take) - spent
+
+func _signed_materials(band: Dictionary) -> int:
 	var spent := 0
 	for units in band.get(BAND_MATERIAL_PICKS, {}).values():
 		spent += int(units)
-	return maxi(int(band.get(BAND_MATERIAL_BUDGET, 0)) - spent, 0)
+	return _material_total(band, _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID) - spent
 
 func _push_attention() -> void:
 	var rows := attention_rows()

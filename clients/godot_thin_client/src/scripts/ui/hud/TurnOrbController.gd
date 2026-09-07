@@ -34,9 +34,9 @@ var _telling: TellingPanel = null
 ## constructor argument would force one of the two to move for no reason but the wiring. The same
 ## late hand-over `_bandpanel.set_attention(_attention)` makes, for the same shape of reason.
 var _knowledge: KnowledgePanelController = null
-## The outfitting picker, for the loadout rows' `Open ▸`. **It brings back whichever band the card is
-## already on**: an orb row carries a KIND and no band, so with two windows open the card's own band
-## switcher is what reaches the second one.
+## The outfitting picker, for the loadout rows' `Open ▸` — which reaches **that row's own band**, the
+## row carrying it as `HudAttentionVocab.ATTENTION_PANEL_SUBJECT`. The card's band switcher is the
+## other way to a second window, for a player who never opened the popover.
 var _loadout: StartingLoadoutController = null
 ## Where a client-side note goes. It was the retired left-dock command feed; it is
 ## `HudLayer.note_system_event` now (→ `system_note_requested` → the event dock's System channel),
@@ -285,13 +285,21 @@ func _open_fork_panel() -> void:
 ##
 ## **THE KNOWLEDGE ROW OPENS ITS SCREEN ON `New this turn`** — the list holding the discovery it just
 ## named. A row that opened on whatever filter the player last set would make them hunt for it.
-func _on_turn_orb_panel_requested(kind: String) -> void:
+func _on_turn_orb_panel_requested(kind: String, subject: int) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
 		return
 	if kind == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT:
 		if _loadout != null:
-			_loadout.open()
+			# ⛔ **THE ROW'S OWN BAND, not whichever the card is showing.** Every band has an
+			# outfitting window of its own, so a press that ignored the subject would answer the
+			# wrong row — and with two rows reading alike, invisibly. `open_band` declines a band
+			# with no open window, and a `0` subject (a producer that named none) falls through to
+			# the plain open, which is what every other panel kind wants.
+			if subject != TurnOrb.PANEL_SUBJECT_NONE:
+				_loadout.open_band(subject)
+			else:
+				_loadout.open()
 		return
 	if _knowledge == null:
 		return

@@ -34,7 +34,19 @@ back on the next snapshot. Every pending band is marked in one pass, so two spli
 queue two pop-ups on two consecutive frames.
 
 **Every window opens on its OWN accepted rows** (`loadout_window.kits` / `.materials`) — what this
-band's last accepted order named. The campaign pre-fill is the fallback and belongs to **ONE band, the
+band's last accepted order named, **re-read whenever they CHANGE**.
+
+> ### ⛔ SEEDED ONCE MEANS *DO NOT CLOBBER A DRAFT*, NOT *NEVER LOOK AGAIN*
+>
+> A split re-fits the PARENT's standing allocation down to its reduced budget and re-materializes the
+> band from it (`fission::rebalance_partitioned_grant`). A card that treated a band it had already
+> stood up as settled would keep drawing the pre-split rows against the post-split budget — the
+> negative meter above, reproduced client-side out of stale state.
+>
+> `_ingest_window` therefore holds the published allocation as last seen (`BAND_PUBLISHED`, compared
+> as `id -> amount` DICTS so a re-ordered but identical list is not read as a change) and re-seeds the
+> picks when it differs. **A delta merely re-stating the same allocation leaves an uncommitted pick
+> exactly where the player left it**, which is what the once-per-band seed was for. The campaign pre-fill is the fallback and belongs to **ONE band, the
 first grant window this world opens**: `openingLoadout`'s kit spread arrives already clamped to *that*
 band's budget, so handing it to a second, smaller grant window would compose an order over its budget,
 and re-clamping it here would be the second clamp the wire's rule forbids (`_prefill_claimed`).
@@ -61,7 +73,7 @@ and re-clamping it here would be the second clamp the wire's rule forbids (`_pre
 | `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two meters, a **band switcher** drawn only while two or more windows are open, an **unconditional** commit control and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits six intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed` / `commit_requested`) and holds no allocation of its own. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — on a take the cap is per ITEM, so one kit row can be exhausted while the next is free. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
 | `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND, every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list, the pre-fills, the craftable ids), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`); relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — ten frames and ninety-nine checkpoints, including the orb's two colours, the no-dead-space bound and the TAKE arc appended after them. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — twelve frames and one hundred and twelve checkpoints, including the orb's two colours, the no-dead-space bound and the TAKE arc appended after them. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## What the client owns, and what it must not decide
 
@@ -147,9 +159,8 @@ should be:
 
 **The card carries one tab per open window, drawn only for two or more** (`BAND_TABS_MIN_ROWS`) —
 one window is the ordinary case and a tab naming the only band there is says nothing the title does
-not. **It is the ONLY way to a second band's card**: an orb row carries a KIND and no band, so its
-`Open ▸` can only ever bring back whichever band the card is already on, and without the switcher a
-second window would be unreachable once dismissed.
+not. It is one of TWO ways to a second band's card, the other being that band's own orb row (see the
+orb section below); it was the only one while a row carried no subject.
 
 **The card names its band** (`PANEL_TITLE_FORMAT`, resolved through `HudFormat.band_name` — the
 client's one naming rule). A split can leave two windows open at once, and a card headed only *"the
@@ -311,17 +322,49 @@ before ending the turn. What moves is the SEVERITY and the WORDING:
 
 | window | state | severity | reads |
 |---|---|---|---|
-| GRANT | anything unspent | `warn` → `HudStyle.WARN` | `Band not outfitted` / `1 kit unspent, 2 resources unspent` |
-| GRANT | both budgets clear | `ready` → `HudStyle.READY` | `Band outfitted` / `everything is picked` |
-| TAKE | nothing ordered — reachable only by CLEARING the card, a fresh splinter opening on its default take | `warn` → `HudStyle.WARN` | `Band not outfitted` / `nothing from Brackwater yet` |
-| TAKE | an order standing | `ready` → `HudStyle.READY` | `Band outfitted` / `3 kits, 4 resources from Brackwater` |
+| either | **a meter reading NEGATIVE** | `warn` → `HudStyle.WARN` | `Band over budget` / `Windmere — 2 kits, 6 resources over budget` |
+| GRANT | anything unspent | `warn` → `HudStyle.WARN` | `Band not outfitted` / `Brackwater — 1 kit unspent, 2 resources unspent` |
+| GRANT | both budgets clear | `ready` → `HudStyle.READY` | `Band outfitted` / `Brackwater — everything is picked` |
+| TAKE | nothing ordered — reachable only by CLEARING the card, a fresh splinter opening on its default take | `warn` → `HudStyle.WARN` | `Band not outfitted` / `Thornhollow — nothing taken yet` |
+| TAKE | an order standing | `ready` → `HudStyle.READY` | `Band outfitted` / `Thornhollow — 3 kits, 4 resources` |
 
 ⛔ **A TAKE NEVER SAYS `unspent`.** That word is on the orb because a grant's remainder is GONE on the
 turn advance; supply a take leaves behind stays with the home band and is lost by nobody. So a take's
-arms report what IS taken — and **name the home band**, since two open windows would otherwise put
-two identically-worded rows on one popover. A take is *outfitted* as soon as an order stands: it
-forfeits nothing by leaving supply at home, so "everything drawn" is not a state anyone is working
-towards.
+arms report what IS taken. A take is *outfitted* as soon as an order stands: it forfeits nothing by
+leaving supply at home, so "everything drawn" is not a state anyone is working towards.
+
+> ### ⛔ OVER BUDGET IS NOT FULLY SPENT, AND IT IS THE FIRST ARM FOR THAT REASON
+>
+> The completeness test was `remaining <= 0` over a remainder **clamped at zero**, so a band holding
+> more than its window allows passed it and the orb called it done. Reported from a live run: a card
+> reading **`-6 / 22 left`** beside a row saying *everything is picked*. `<=` was doing double duty
+> for *nothing left* and *less than nothing*, and the clamp is what hid the difference.
+>
+> `_over_allowance` asks the **unclamped** remainder (`_signed_kits` / `_signed_materials`, which are
+> what the card's own meter draws), and every clamped reader is written in terms of those two — so the
+> one place a negative can be seen is the one place it is asked about. **A state this row cannot word
+> is exactly the state it must not paint green.**
+>
+> It covers a TAKE as well as a grant: a take's denominator is the home band's supply rather than a
+> point budget, and a supply that shrank under a standing take (an onward split) puts the meter
+> negative the same way. The sim bug that produced the reported `-6` is fixed and **nothing here
+> relies on that**.
+
+### The row names its BAND, and `Open ▸` reaches it
+
+Every window is one band's, so with two open the rows were identical and unattributable — *"Band
+outfitted / everything is picked"*, twice, directly beneath two idle-worker rows that DID name their
+bands. Two fixes, and they are separate failures:
+
+- **The band leads the DETAIL** (`ATTENTION_DETAIL_BAND_FORMAT`), which is where the idle rows put
+  theirs. The take arm dropped its own `from <home band>` clause with this: it was there only because
+  two rows needed telling apart, and the subject's name does that properly. The home band is still
+  named on the card, in the subtitle, which is where it belongs.
+- **The row carries `HudAttentionVocab.ATTENTION_PANEL_SUBJECT`** — its band id — and
+  `TurnOrbController` opens THAT band (`open_band`). Before, a row carried a kind and no band, so the
+  press opened whichever band the card was already showing: both rows wear `Open ▸` whatever it
+  reaches, so only pressing one can tell. The card's band switcher remains the other way in, for a
+  player who never opens the popover.
 
 It is **NOT `blocking` in either state**: closing the window is the sim's business, so the
 `Advance ▸` footer stays live and this row only ever warns. It is NON-LOCATING and on

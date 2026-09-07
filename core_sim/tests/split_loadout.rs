@@ -35,6 +35,9 @@ const BIG_GAME: &str = "big_game";
 const SPEARS: &str = "spears";
 const SLED: &str = "sled";
 
+/// A material the shipped profile offers, so a grant window may spend points on it.
+const BANKED_MATERIAL: &str = "hide";
+
 /// The working-age head count the fixture parents are set to, chosen so a 12-worker split leaves a
 /// half that can itself split 6 off — the three-band chain the onward-take refusal exists for.
 const CHAIN_WORKERS: f32 = 24.0;
@@ -699,5 +702,294 @@ fn a_bench_tool_does_not_walk_out_with_a_splinter() {
         !standing_take(&app, split.band).contains_key(&bench_tools[0]),
         "and it is not recorded as taken either — the take is composed of kits, which name no bench \
          tool"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// A grant split PARTITIONS THE GRANT — it moves nothing, and it charges the parent once
+// -------------------------------------------------------------------------------------------
+
+/// Spend the whole of the spawned band's material budget, the way the shipped pre-fill invites, and
+/// return `(band, kit rows, material rows, budgets)` for the assertions to measure against.
+///
+/// The pre-fill is `bone 3 / fibre 17 / hide 8` against 30 points — the composition the reported
+/// defect was found on — so the fixture spends it and then splits.
+fn a_fully_outfitted_parent() -> (App, Entity, BandId) {
+    let mut app = world_on_the_build_turn();
+    let (parent, parent_band) = home_band(&mut app);
+    let (kit_budget, material_budget) = grant_of(&app, parent_band);
+    let pre_fill: Vec<MaterialAllocation> = {
+        let profile = app.world.resource::<core_sim::ActiveStartProfile>();
+        profile
+            .profile()
+            .overrides()
+            .opening_loadout
+            .material_defaults
+            .iter()
+            .map(|(material_id, units)| MaterialAllocation {
+                material_id: material_id.clone(),
+                units: *units,
+            })
+            .collect()
+    };
+    let spent: u32 = pre_fill.iter().map(|row| row.units).sum();
+    assert!(
+        spent > 0 && spent <= material_budget,
+        "fixture: the profile's pre-fill must fit the budget it is drawn against ({spent} of \
+         {material_budget})"
+    );
+    // Fill the kit column to the brim too, so a kit meter can go negative if the arithmetic is wrong.
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        parent_band,
+        &kits(&[(BIG_GAME, kit_budget)]),
+        &pre_fill,
+    )
+    .expect("the pre-fill and a full kit column both fit the opening grant");
+    (app, parent, parent_band)
+}
+
+/// This band's standing allocation, summed per half — what its two meters read as *spent*.
+fn allocated(app: &App, band: BandId) -> (u32, u32) {
+    let window = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band)
+        .expect("the band has a window");
+    (
+        window.kits.iter().map(|row| row.count).sum(),
+        window.materials.iter().map(|row| row.units).sum(),
+    )
+}
+
+/// Every material this band holds, summed — in whole units, which is the currency the meter counts.
+fn material_units_held(app: &App, entity: Entity) -> u32 {
+    let store = &app
+        .world
+        .get::<PopulationCohort>(entity)
+        .expect("the band keeps a cohort")
+        .stores;
+    store
+        .materials()
+        .map(|(id, _)| store.material_total(id).to_f32().round() as u32)
+        .sum()
+}
+
+/// ⛔ **A GRANT SPLIT MOVES NOTHING PHYSICAL — a parent with room to spare gives up NOTHING.**
+///
+/// It used to do **both** things at once: walk the proportional manifest out of the parent's ledger
+/// *and* deduct the splinter's slots and points from the parent's budget. Two ways of paying for one
+/// splinter, so the parent was charged twice.
+///
+/// **The fixture deliberately leaves the parent inside its reduced budget**, because that is the case
+/// where "moves nothing" is observable end to end: the re-fit does not bite, so a split that still
+/// moved a manifest would show up as a changed ledger on either side. The re-fit's own behaviour is
+/// the three tests below.
+#[test]
+fn a_grant_split_moves_nothing_when_the_parent_still_fits_its_reduced_budget() {
+    let mut app = world_on_the_build_turn();
+    let (parent, parent_band) = home_band(&mut app);
+    let (kit_budget, material_budget) = grant_of(&app, parent_band);
+    const ASKED: u32 = 5;
+    // Spend well inside what the split will leave, so the re-fit has nothing to do.
+    let modest_kits = (kit_budget - ASKED) / 2;
+    let modest_units = (material_budget - ASKED) / 2;
+    assert!(
+        modest_kits > 0 && modest_units > 0,
+        "fixture: the parent must spend something, or the assertions below are trivially true"
+    );
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        parent_band,
+        &kits(&[(BIG_GAME, modest_kits)]),
+        &[MaterialAllocation {
+            material_id: BANKED_MATERIAL.to_string(),
+            units: modest_units,
+        }],
+    )
+    .expect("a modest allocation fits the opening grant");
+
+    let gear_before = ledger_of(&app, parent);
+    let materials_before = material_units_held(&app, parent);
+    let allocation_before = allocated(&app, parent_band);
+    assert!(gear_before.values().sum::<u32>() > 0 && materials_before > 0);
+
+    let split = split_band_from_parent(&mut app.world, parent, ASKED, &permissive_settle())
+        .expect("the split is admitted");
+    let child = entity_for_band(&mut app, split.band);
+
+    assert_eq!(
+        ledger_of(&app, parent),
+        gear_before,
+        "no manifest walked out of the parent's ledger"
+    );
+    assert_eq!(
+        material_units_held(&app, parent),
+        materials_before,
+        "and no material batch did either"
+    );
+    assert_eq!(
+        allocated(&app, parent_band),
+        allocation_before,
+        "the parent's standing allocation still fits, so the re-fit left it alone"
+    );
+    assert_eq!(
+        ledger_of(&app, child).values().sum::<u32>(),
+        0,
+        "the splinter opens holding nothing and spends its own slots"
+    );
+    assert_eq!(
+        material_units_held(&app, child),
+        0,
+        "and holding no material either"
+    );
+}
+
+/// ⛔ **THE METERS CANNOT READ NEGATIVE.**
+///
+/// The reported symptom: 17 hands and 30 points, `bone 3 / fibre 17 / hide 8` committed, split 5
+/// workers — and the parent's resources meter read **`-6 / 22 left`**. The budget had been reduced
+/// and the standing allocation had not, so the card subtracted 28 from 22.
+#[test]
+fn a_grant_split_leaves_both_of_the_parents_meters_non_negative() {
+    let (mut app, parent, parent_band) = a_fully_outfitted_parent();
+    let (kits_before, materials_before) = allocated(&app, parent_band);
+    let (kit_budget_before, material_budget_before) = grant_of(&app, parent_band);
+    assert_eq!(
+        kits_before, kit_budget_before,
+        "fixture: the parent must have spent its whole kit column, or a negative KIT meter is \
+         unreachable and half this test proves nothing"
+    );
+    assert!(
+        materials_before > material_budget_before - 5,
+        "fixture: the parent must have spent enough of its {material_budget_before} points that \
+         losing a splinter's share leaves it over budget ({materials_before} spent), or a negative \
+         resources meter is unreachable"
+    );
+
+    let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
+        .expect("the split is admitted");
+
+    let (kit_budget, material_budget) = grant_of(&app, parent_band);
+    let (kits_after, materials_after) = allocated(&app, parent_band);
+    assert!(
+        kits_after <= kit_budget,
+        "the parent claims {kits_after} kits against a budget of {kit_budget}"
+    );
+    assert!(
+        materials_after <= material_budget,
+        "the parent claims {materials_after} units against a budget of {material_budget}"
+    );
+
+    let (child_kits, child_materials) = allocated(&app, split.band);
+    let (child_kit_budget, child_material_budget) = grant_of(&app, split.band);
+    assert!(child_kits <= child_kit_budget && child_materials <= child_material_budget);
+}
+
+/// ⛔ **MATERIAL IS CONSERVED ACROSS A GRANT SPLIT** — the assertion that would have caught the
+/// duplication.
+///
+/// The parent's standing allocation was never re-fitted, so it still claimed 28 units against a
+/// 22-point budget. An apply is a **replacement built from empty**, so the parent's next revision
+/// re-minted all 28 while the ~8 that had walked to the splinter stayed with it: material out of
+/// nothing, on every turn-one split.
+///
+/// **The invariant is over the GRANT, not over the ledgers**, because on turn one the budget is the
+/// currency and a ledger is a draft against it: `held + unspent` on both bands must come back to what
+/// the parent alone had. A ledger-only sum would pass against a world that had merely lost the
+/// difference.
+#[test]
+fn a_grant_split_conserves_the_material_grant() {
+    let (mut app, parent, parent_band) = a_fully_outfitted_parent();
+    let (_, budget_before) = grant_of(&app, parent_band);
+    let held_before = material_units_held(&app, parent);
+
+    let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
+        .expect("the split is admitted");
+    let child = entity_for_band(&mut app, split.band);
+
+    let (_, parent_budget) = grant_of(&app, parent_band);
+    let (_, child_budget) = grant_of(&app, split.band);
+    assert_eq!(
+        parent_budget + child_budget,
+        budget_before,
+        "the two budgets partition the one grant - no point is minted twice or lost"
+    );
+
+    let parent_held = material_units_held(&app, parent);
+    let child_held = material_units_held(&app, child);
+    let (_, parent_spent) = allocated(&app, parent_band);
+    let (_, child_spent) = allocated(&app, split.band);
+    assert_eq!(
+        parent_held, parent_spent,
+        "the parent holds what its card claims"
+    );
+    assert_eq!(child_held, child_spent, "and so does the splinter");
+    assert!(
+        parent_held + child_held <= held_before,
+        "nothing is minted out of nothing: {parent_held} + {child_held} against {held_before}"
+    );
+    assert_eq!(
+        parent_held + child_held + (parent_budget - parent_spent) + (child_budget - child_spent),
+        budget_before,
+        "held plus unspent, on both bands, is the grant the parent started with"
+    );
+
+    // ⛔ **AND IT SURVIVES THE PARENT'S NEXT REVISION**, which is where the duplication actually
+    // landed: a replacement rebuilt from empty re-minted the whole pre-split allocation.
+    let (revised_kits, revised_materials) = {
+        let window = app
+            .world
+            .resource::<StartingLoadout>()
+            .window(parent_band)
+            .expect("the parent's window is still open");
+        (window.kits.clone(), window.materials.clone())
+    };
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        parent_band,
+        &revised_kits,
+        &revised_materials,
+    )
+    .expect("re-sending the parent's own clamped allocation always fits");
+    assert_eq!(
+        material_units_held(&app, parent) + material_units_held(&app, child),
+        parent_held + child_held,
+        "the parent's next revision re-mints its CLAMPED allocation, not the one it had before the \
+         split"
+    );
+}
+
+/// ⛔ **WHAT THE CLAMP TAKES OFF THE PARENT REACHES THE SPLINTER, NOT THE VOID.**
+///
+/// That is the point of the partition: those units are not deleted, they are taken away from the main
+/// band and offered to the new one, inside its own budget.
+#[test]
+fn the_clamped_remainder_reaches_the_splinter() {
+    let (mut app, parent, parent_band) = a_fully_outfitted_parent();
+    let (_, spent_before) = allocated(&app, parent_band);
+
+    let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
+        .expect("the split is admitted");
+    let child = entity_for_band(&mut app, split.band);
+
+    let (_, parent_spent) = allocated(&app, parent_band);
+    let shed = spent_before - parent_spent;
+    assert!(
+        shed > 0,
+        "**LIVENESS**: the re-fit must actually bite, or there is no remainder to follow"
+    );
+    let (_, child_spent) = allocated(&app, split.band);
+    assert_eq!(
+        child_spent, shed,
+        "every unit the clamp took off the parent opens on the splinter's card"
+    );
+    assert_eq!(
+        material_units_held(&app, child),
+        shed,
+        "and the splinter is actually holding them"
     );
 }

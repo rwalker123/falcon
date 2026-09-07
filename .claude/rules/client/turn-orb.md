@@ -49,7 +49,15 @@ paths:
   colour it mapped to — the ladder was shifted up rather than the new rung taking that 0. The seed
   change also means an UNKNOWN severity now paints in the fallback ink instead of leaving the orb on a
   colour no entry asked for. Where
-  `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Kind→icon (in `TurnOrb.gd`):
+  `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now), and a non-locating row may carry
+  one more optional field — **`panel_subject`, WHICH SUBJECT WITHIN THAT PANEL** (`HudAttentionVocab.
+  ATTENTION_PANEL_SUBJECT`). `panel_requested` used to say only which KIND was pressed, which is all a
+  producer whose panel has ONE subject needs; the outfitting picker has a window per BAND, so a row
+  pressed without its own subject opened whichever band the card happened to be showing — a button
+  that goes somewhere else, invisibly, because two rows of one kind read alike. **The orb carries the
+  value and never reads it** (`TurnOrb.PANEL_SUBJECT_NONE` for the producers that name none);
+  `TurnOrbController` is what interprets it, so a future multi-subject panel needs no orb change.
+  Kind→icon (in `TurnOrb.gd`):
   since issue #249 the PICTOGRAPHIC kinds draw bundled art (`starving`, `idle_workers` and
   `crew_handoff` — the last two share ONE file, both rows being about the HANDS; see
   `KIND_ICON_SPRITE` below), and what stays in `KIND_ICON` is the SYMBOLIC set plus the art's own

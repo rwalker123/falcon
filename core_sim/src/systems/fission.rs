@@ -21,6 +21,7 @@ use crate::components::{
 use crate::culture::CultureManager;
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
 use crate::expedition_config::SettleConfig;
+use crate::orders::FactionId;
 use crate::provinces::ProvinceMap;
 use crate::resources::{BandIdAllocator, BandNameAllocator, SimulationConfig};
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
@@ -309,6 +310,30 @@ pub fn split_band_from_parent(
         parent_cohort.sync_size();
     }
 
+    // ---- WHICH WAY THIS SPLIT PAYS FOR THE SPLINTER ----
+    //
+    // ⛔ **A GRANT SPLIT PARTITIONS THE GRANT AND MOVES NOTHING; A TAKE SPLIT MOVES GOODS.** They are
+    // two ways of paying for one splinter and doing **both** charges the parent twice — which is what
+    // shipped: the manifest walked out of the parent's ledger *and* the splinter's slots and points
+    // came off the parent's budget. A player who had spent 28 of 30 points and split 5 hands off 17
+    // watched their card read **`-6 / 22 left`**, and the negative meter was only the visible edge:
+    // the parent's standing allocation was never re-fitted, so its next revision — an apply is a
+    // replacement built from empty — **re-minted all 28 units** while the 8 that had walked stayed
+    // with the splinter. Material out of nothing, on every turn-one split.
+    //
+    // The rule is decided **before anything moves**, because it decides whether anything moves at
+    // all. `grants()` is *open, and still holding an unspent grant*; see
+    // [`open_splinter_loadout_window`] for what each arm then does.
+    let parent_grants = world
+        .get::<BandId>(parent)
+        .copied()
+        .and_then(|id| {
+            world
+                .get_resource::<StartingLoadout>()
+                .and_then(|loadout| loadout.window(id).map(LoadoutWindow::grants))
+        })
+        .unwrap_or(false);
+
     // ---- Divide the MATERIALS ----
     // **A second account, and it was never divided at all until now.** `LocalStore::iter` walks the
     // commodity bag only, so a splinter of a band sitting on twenty hides used to open with none of
@@ -320,13 +345,19 @@ pub fn split_band_from_parent(
     // splinter's outfitting card, and a card states `units:u32` — so a fractional `share × total`
     // could not be shown, and re-sending what the card showed would hand the remainder back. A whole
     // floored share is what makes an untouched *"Set out"* an exact no-op.
-    let default_materials = default_take_materials(
-        world
-            .get::<PopulationCohort>(parent)
-            .map(|cohort| &cohort.stores),
-        asked,
-        cohort_working,
-    );
+    //
+    // **Skipped entirely when the parent still grants** — see the callout above.
+    let default_materials = if parent_grants {
+        Vec::new()
+    } else {
+        default_take_materials(
+            world
+                .get::<PopulationCohort>(parent)
+                .map(|cohort| &cohort.stores),
+            asked,
+            cohort_working,
+        )
+    };
     let mut moved_materials: Vec<(String, Vec<MaterialDraw>)> = Vec::new();
     {
         let Some(mut parent_cohort) = world.get_mut::<PopulationCohort>(parent) else {
@@ -398,16 +429,24 @@ pub fn split_band_from_parent(
     // *"Set out"* then ordered *take nothing* and handed the whole dowry straight back. What moves
     // here is `expand_kits(default_kits)` — the **one** expansion rule, shared with every take a
     // player composes — so what the card shows and what the band holds are the same object.
+    //
+    // ⛔ **AND NOTHING MOVES AT ALL WHEN THE PARENT STILL GRANTS** — the splinter mints from slots
+    // carved out of the parent's budget instead, and moving gear on top of that charged the parent
+    // twice. See the callout above the material divide.
     let equipment_config = world
         .get_resource::<EquipmentConfigHandle>()
         .map(|handle| handle.get())
         .unwrap_or_else(EquipmentConfig::builtin);
-    let default_kits = default_take_kits(
-        &equipment_config,
-        world.get::<BandEquipment>(parent),
-        asked,
-        cohort_working,
-    );
+    let default_kits = if parent_grants {
+        Vec::new()
+    } else {
+        default_take_kits(
+            &equipment_config,
+            world.get::<BandEquipment>(parent),
+            asked,
+            cohort_working,
+        )
+    };
     let mut equipment = BandEquipment::default();
     let mut taken_items: BTreeMap<String, u32> = BTreeMap::new();
     if let Some(mut parent_equipment) = world.get_mut::<BandEquipment>(parent) {
@@ -495,7 +534,7 @@ pub fn split_band_from_parent(
         let parent_region = culture.upsert_regional(region_id);
         culture.attach_band_from_source(band, parent_region, parent_band);
     }
-    open_splinter_loadout_window(
+    let partitioned_a_grant = open_splinter_loadout_window(
         world,
         parent,
         band,
@@ -508,6 +547,11 @@ pub fn split_band_from_parent(
             material_amounts: taken_materials,
         },
     );
+    if partitioned_a_grant {
+        if let Some(parent_band) = world.get::<BandId>(parent).copied() {
+            rebalance_partitioned_grant(world, child_faction, parent_band, band);
+        }
+    }
     debug_assert!(world.get::<PopulationCohort>(child_entity).is_some());
 
     Ok(SplitBand {
@@ -543,10 +587,13 @@ fn whole_share(held: u32, asked: u32, workers: Scalar) -> u32 {
 ///
 /// | the parent's window | the splinter's window |
 /// |---|---|
-/// | still holds an unspent **grant** (turn one) | a grant of its own: `min(asked, the parent's remaining kit budget)` kit slots and `floor(share × the parent's remaining material points)`, **both deducted from the parent's** — so no slot and no point is minted twice or lost. Its picks MINT. |
+/// | still holds an unspent **grant** (turn one) | a grant of its own: `min(asked, the parent's remaining kit budget)` kit slots and `floor(share × the parent's remaining material points)`, **both deducted from the parent's** — so no slot and no point is minted twice or lost. Its picks MINT, and **nothing physical moved**: [`rebalance_partitioned_grant`] re-fits the parent to its reduced budget and hands what that takes off to the splinter. |
 /// | holds no grant (every later turn) | a **take** on the parent: the cap is what the parent can supply, and the kit allocation just moved is the window's **accepted allocation**, so the card opens on it. Its picks MOVE. |
 ///
 /// Nothing here is a literal: both caps are the numbers the split itself just resolved.
+///
+/// Returns **whether it partitioned a grant**, which is what the caller needs to know to run the
+/// re-fit — the budgets have moved by then, so *"did the parent grant"* is no longer answerable.
 fn open_splinter_loadout_window(
     world: &mut World,
     parent: Entity,
@@ -554,12 +601,12 @@ fn open_splinter_loadout_window(
     asked: u32,
     share: Scalar,
     take: SplinterTake,
-) {
+) -> bool {
     let Some(parent_band) = world.get::<BandId>(parent).copied() else {
-        return;
+        return false;
     };
     let Some(mut loadout) = world.get_resource_mut::<StartingLoadout>() else {
-        return;
+        return false;
     };
     let parent_grant = loadout
         .window(parent_band)
@@ -596,10 +643,123 @@ fn open_splinter_loadout_window(
     // *"Set out"* re-sent an empty order — which is a **real** order (*take nothing*, the same as it
     // is on a grant) and handed the lot back. The card is no longer empty when the take is not, and
     // an empty tail keeps its meaning.
+    let partitioned_a_grant = matches!(supply, LoadoutSupply::Grant { .. });
     let mut window = LoadoutWindow::opened(supply);
     window.kits = take.kits;
     window.materials = take.materials;
     loadout.open(band, window);
+    partitioned_a_grant
+}
+
+/// **Re-fit the parent to the budget the split just took off it, and hand the splinter what that
+/// takes away.**
+///
+/// # ⛔ THE METER MUST NEVER BE ABLE TO READ NEGATIVE
+///
+/// A grant split reduces the parent's two budgets. Its **standing allocation** is not automatically
+/// smaller, so a parent that had spent 28 of 30 points sat at 28 against a budget of 22 — the card
+/// read `-6 / 22 left`, and its next revision would have re-minted all 28. This closes both: the
+/// allocation is re-fitted to the reduced budget by
+/// [`crate::starting_loadout::clamp_allocation`]'s proportional-floored rule, and the parent is
+/// **re-materialized from it** so its ledger, its store and its meter state one thing.
+///
+/// **What the clamp takes off the parent is not deleted — it is OFFERED TO THE SPLINTER**, bounded by
+/// the splinter's own budget by the same rule. That is the model: those units are taken away from the
+/// main band and given to the new one.
+///
+/// **A parent that still fits its reduced budget gives up nothing**, and this returns without
+/// touching either band. That is not merely an optimisation: re-materializing rebuilds a ledger from
+/// **empty** (an apply is a replacement), so running it on a parent with no standing allocation would
+/// destroy gear that never came from one.
+///
+/// Both halves are re-materialized through **`apply_starting_loadout`**, the same path a player's own
+/// commit takes, so there is one materialization rule and the refusals it enforces are the ones that
+/// apply here too. A refusal is structurally impossible — a clamped allocation fits by construction
+/// and its ids came from an order that was already accepted — so one is logged rather than handled.
+fn rebalance_partitioned_grant(
+    world: &mut World,
+    faction: FactionId,
+    parent_band: BandId,
+    child_band: BandId,
+) {
+    let Some(loadout) = world.get_resource::<StartingLoadout>() else {
+        return;
+    };
+    let Some(parent_window) = loadout.window(parent_band) else {
+        return;
+    };
+    let parent_kits: BTreeMap<String, u32> = parent_window
+        .kits
+        .iter()
+        .map(|row| (row.kit_id.clone(), row.count))
+        .collect();
+    let parent_materials: BTreeMap<String, u32> = parent_window
+        .materials
+        .iter()
+        .map(|row| (row.material_id.clone(), row.units))
+        .collect();
+    let (parent_kit_budget, parent_material_budget) = (
+        parent_window.supply.kit_budget(),
+        parent_window.supply.material_budget(),
+    );
+    let (child_kit_budget, child_material_budget) = loadout
+        .window(child_band)
+        .map(|window| (window.supply.kit_budget(), window.supply.material_budget()))
+        .unwrap_or_default();
+
+    let (kept_kits, kits_bound) =
+        crate::starting_loadout::clamp_allocation(&parent_kits, parent_kit_budget);
+    let (kept_materials, materials_bound) =
+        crate::starting_loadout::clamp_allocation(&parent_materials, parent_material_budget);
+    if !kits_bound && !materials_bound {
+        return;
+    }
+
+    // What the clamp took off the parent, fitted to the splinter's own budget by the same rule.
+    let shed_kits = shed(&parent_kits, &kept_kits);
+    let shed_materials = shed(&parent_materials, &kept_materials);
+    let child_kits = crate::starting_loadout::clamp_allocation(&shed_kits, child_kit_budget).0;
+    let child_materials =
+        crate::starting_loadout::clamp_allocation(&shed_materials, child_material_budget).0;
+
+    for (band, kits, materials) in [
+        (parent_band, kept_kits, kept_materials),
+        (child_band, child_kits, child_materials),
+    ] {
+        let kits: Vec<KitAllocation> = kits
+            .into_iter()
+            .map(|(kit_id, count)| KitAllocation { kit_id, count })
+            .collect();
+        let materials: Vec<MaterialAllocation> = materials
+            .into_iter()
+            .map(|(material_id, units)| MaterialAllocation { material_id, units })
+            .collect();
+        if band == child_band && kits.is_empty() && materials.is_empty() {
+            continue;
+        }
+        if let Err(reason) =
+            crate::starting_loadout::apply_starting_loadout(world, faction, band, &kits, &materials)
+        {
+            warn!(
+                target: "shadow_scale::campaign",
+                band = band.0,
+                %reason,
+                "starting_loadout.grant_partition.refused=a clamped allocation must always fit"
+            );
+        }
+    }
+}
+
+/// What a clamp took away: `before − kept`, per row, dropping the rows it left alone.
+fn shed(before: &BTreeMap<String, u32>, kept: &[(String, u32)]) -> BTreeMap<String, u32> {
+    let kept: BTreeMap<&str, u32> = kept.iter().map(|(id, n)| (id.as_str(), *n)).collect();
+    before
+        .iter()
+        .filter_map(|(id, count)| {
+            let left = count.saturating_sub(kept.get(id.as_str()).copied().unwrap_or(0));
+            (left > 0).then(|| (id.clone(), left))
+        })
+        .collect()
 }
 
 /// **The dowry a split hands its splinter, in both denominations at once.**

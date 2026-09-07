@@ -376,9 +376,12 @@ func _build_header() -> void:
 		HudLoadoutVocab.SUBTITLE_FONT_SIZE, true))
 	_build_band_tabs()
 
-## **THE SWITCHER, AND IT IS THE ONLY WAY TO A SECOND BAND'S CARD.** The turn orb's row carries a
-## KIND and no band, so its `Open ▸` can only bring back whichever band the card is already on — with
-## two windows open and no switcher, one of them would be unreachable once dismissed.
+## **THE SWITCHER — one of the two ways to a second band's card**, the other being that band's own turn
+## orb row, which carries its subject and opens on it
+## (`HudAttentionVocab.ATTENTION_PANEL_SUBJECT`). This was the only one while a row carried a KIND and
+## no band: its `Open ▸` could then bring back nothing but the band the card was already on, so with
+## two windows open one of them was unreachable once dismissed. It stays because it is the way in for
+## a player who never opens the popover.
 ##
 ## It draws nothing at all for a single window, which is every ordinary turn: a lone tab naming the
 ## only band there is would be a row of chrome saying what the title already says.
