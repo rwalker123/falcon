@@ -65,6 +65,17 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## `kit <id>` token this guard emits is the token those frames are read against.
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
+## **THE OUTFITTING ORDER THE CARD COMMITS.** The material half is a pick list of one and the kit half
+## a pre-fill of one, because what this guard reads off the line is the BAND TOKEN — a longer order
+## would be more tokens saying the same thing. Both budgets sit above the pre-fill, the client drawing
+## a published pre-fill as-is.
+const LOADOUT_MATERIALS := ["hide"]
+const LOADOUT_UNITS := 4
+const LOADOUT_KIT_ID := "big_game"
+const LOADOUT_KIT_COUNT := 2
+const LOADOUT_KIT_BUDGET := 12
+const LOADOUT_MATERIAL_BUDGET := 30
+
 ## Scratch prefs, never the player's real ones (the `band_panel_preview` rule).
 const GUARD_PREFS_PATH := "user://command_guard_prefs.cfg"
 const GUARD_DOCK_PREFS_PATH := "user://command_guard_dock.cfg"
@@ -240,6 +251,7 @@ func _ready() -> void:
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
 	await _drive_road_abandon()
+	await _drive_set_starting_loadout()
 
 	_assert_every_command_emitted()
 	_assert_every_role_is_emittable()
@@ -252,6 +264,48 @@ func _ready() -> void:
 # real mouse. Where a payload is built inside an inline `pressed` lambda (both hunting-expedition
 # sites) the REAL button is pressed, found by its `HudWidgets.SEND_HUNT_CONFIRM_META` — its face is
 # the raid verdict, so text is the one thing that cannot identify it.
+
+## ⛔ **`set_starting_loadout` NAMES A BAND NOW, WHICH IS WHY IT IS HERE AT ALL.** It used to address a
+## faction and default to its band; every band has an outfitting window of its own since the per-band
+## loadout arc — the spawned band's grant, and a take on the home band for every splinter a split
+## makes — so the band is positional and required, and this guard is what proves the client sends the
+## durable `BandId` down it rather than the ECS `entity` the picker also holds.
+##
+## **DRIVEN LAST, and through the REAL commit control.** Pushing an open window earlier would stand a
+## card up over every drive above it; and the payload is composed inside the controller (the picks,
+## the subject band), so pressing the button is the only way to reach the code a player reaches.
+##
+## The kit tail's ids come from the campaign PRE-FILL, which is what the controller seeds a fresh
+## grant window from — so a formatter that dropped the band token would still emit a parseable line,
+## which is exactly the substitution the Rust half refuses.
+func _drive_set_starting_loadout() -> void:
+	_hud.update_opening_loadout({
+		"pickable_materials": LOADOUT_MATERIALS,
+		"material_defaults": [{"material_id": LOADOUT_MATERIALS[0], "units": LOADOUT_UNITS}],
+		"kit_defaults": [{"kit_id": LOADOUT_KIT_ID, "count": LOADOUT_KIT_COUNT}],
+		"craftable_recipe_ids": [],
+	})
+	_hud.update_band_alerts([_outfitting_band_fixture(), _party_fixture()])
+	await _settle()
+	_press_meta_button(_hud, String(HudLoadoutVocab.COMMIT_BUTTON_META), "outfitting card")
+	await _settle()
+
+## The band fixture with an OPEN GRANT window on it — the turn-one shape, budgets large enough that
+## the pre-fill above is inside them (the client draws a published pre-fill as-is and the sim is what
+## clamps it, so a budget under it would be a fixture no server can send).
+func _outfitting_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["loadout_window"] = {
+		"open": true,
+		"kit_budget": LOADOUT_KIT_BUDGET,
+		"material_budget": LOADOUT_MATERIAL_BUDGET,
+		"parent_band_id": 0,
+		"kits": [],
+		"materials": [],
+		"parent_item_supply": [],
+		"parent_material_supply": [],
+	}
+	return band
 
 ## `assign_labor` — the map's double-click quick-hunt, which is fully public and resolves the band
 ## itself, so this is the whole chain: snapshot roster → `_resolve_assign_band` → `_emit_assign_labor`.
@@ -662,6 +716,8 @@ func _connect_recorders() -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 	_hud.abandon_requested.connect(func(p: Dictionary) -> void:
 		_record("abandon", p, MAIN_SCRIPT.format_abandon(p)))
+	_hud.set_starting_loadout_requested.connect(func(p: Dictionary) -> void:
+		_record("set_starting_loadout", p, MAIN_SCRIPT.format_set_starting_loadout(p)))
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
 	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
 	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
@@ -918,6 +974,9 @@ const EXPECTED_KINDS := {
 	# ONE — the roadwork roster's `✕`, the route branch's only `abandon` emitter and the only command
 	# here that names a PLACE rather than a band.
 	"abandon": 1,
+	# ONE — the outfitting card's commit, the only emitter of the verb. It names a band positionally
+	# since every band has a window of its own; see `_drive_set_starting_loadout`.
+	"set_starting_loadout": 1,
 }
 
 func _assert_every_command_emitted() -> void:

@@ -1,5 +1,6 @@
 //! Population-section state: cohorts, demographics, labor assignments, and tasks.
 
+use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState};
 use crate::state::economy::KnownTechFragment;
 use crate::state::subsistence::MaterialPayoff;
 use serde::{Deserialize, Serialize};
@@ -1496,6 +1497,14 @@ pub struct PopulationCohortState {
     /// fixture; a client renders that as its `Band #<id>` fallback.
     #[serde(default)]
     pub name: String,
+    /// **This band's outfitting window** — see [`BandLoadoutWindowState`]. Every band gets one; a
+    /// `None` (or a closed one) means there is nothing to outfit right now and the picker draws
+    /// nothing.
+    ///
+    /// It rides the cohort rather than the campaign section because the two things a picker draws
+    /// beside it — [`Self::equipment_batches`] and [`Self::material_batches`] — are already here.
+    #[serde(default)]
+    pub loadout_window: Option<BandLoadoutWindowState>,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
@@ -1853,4 +1862,63 @@ pub struct GenerationState {
     pub bias_trust: i64,
     pub bias_equity: i64,
     pub bias_agency: i64,
+}
+
+/// **One band's outfitting window** — [`PopulationCohortState::loadout_window`].
+///
+/// Every band gets one: the spawned band's opens at world build, and a band that splits hands its
+/// splinter a window of its own. A window stays open until the turn is finalized, so a pick is
+/// revised as often as the player likes; committing a loadout never closes one.
+///
+/// # The two supplies are mutually exclusive, and [`Self::parent_band_id`] says which
+///
+/// - **`0` — a GRANT window.** The picks *mint* gear, capped by [`Self::kit_budget`] (kits, summed
+///   over the order) and [`Self::material_budget`] (units). This is the spawned band's window, and a
+///   splinter's when it split off a band whose own grant was still unspent — that splinter's budgets
+///   were deducted from the parent's, so no slot and no point is minted twice or lost.
+/// - **non-zero — a TAKE on that band.** The picks *move* gear and material out of the parent's
+///   ledger, the two budgets are `0` and mean nothing, and the cap is [`Self::parent_item_supply`] /
+///   [`Self::parent_material_supply`].
+///
+/// **A kit row cannot be capped on its own.** The roster maps kits to items almost one-to-one, but
+/// `sled` is used by both `big_game` and `trapping`, so what the sim validates is the **expanded
+/// item list**, whole — a client drawing a take's cap has to expand the same way.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BandLoadoutWindowState {
+    /// False once this band's window has shut. It shuts on the turn advance and on nothing else.
+    pub open: bool,
+    /// Kit slots this window may **mint** against. `0` for a take, which mints nothing.
+    #[serde(default)]
+    pub kit_budget: u32,
+    /// Material points this window may **mint** against, one point per unit. `0` for a take.
+    #[serde(default)]
+    pub material_budget: u32,
+    /// **The accepted allocation** — the kit rows this band's last accepted `set_starting_loadout`
+    /// named. Empty only for a window nobody has ordered against yet; **a fresh splinter's is not
+    /// empty**, because the default take a split hands over is denominated in kits and published
+    /// here, so re-sending these rows untouched is an exact no-op. An empty tail is a real order —
+    /// *take nothing* — which on a splinter would hand the whole dowry back.
+    #[serde(default)]
+    pub kits: Vec<OpeningKitDefaultState>,
+    /// The material half of the accepted allocation, the twin of [`Self::kits`].
+    #[serde(default)]
+    pub materials: Vec<OpeningMaterialDefaultState>,
+    /// The band this take is drawn from, `0` for a grant window. See the type doc.
+    #[serde(default)]
+    pub parent_band_id: u64,
+    /// **A take's cap, per item**: what the parent still holds *plus* what this take already moved.
+    /// The standing take is priced as available on purpose — otherwise raising a take from 3 to 5
+    /// would be refused for the 3 already here. Empty for a grant window.
+    #[serde(default)]
+    pub parent_item_supply: Vec<BandLoadoutSupplyRowState>,
+    /// The material twin of [`Self::parent_item_supply`], in whole units.
+    #[serde(default)]
+    pub parent_material_supply: Vec<BandLoadoutSupplyRowState>,
+}
+
+/// One cap row of [`BandLoadoutWindowState`]: how many units of `id` this take may claim.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BandLoadoutSupplyRowState {
+    pub id: String,
+    pub units: u32,
 }

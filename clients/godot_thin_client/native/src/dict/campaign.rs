@@ -360,27 +360,28 @@ fn format_victory_label(raw: &str) -> String {
         .join(" ")
 }
 
-/// **THE TURN-ONE OUTFITTING WINDOW** (`CampaignSection.openingLoadout`, issue #629) — the two
-/// budgets the picker spends, the profile's pick list and its pre-fill, and the recipes the faction
-/// could put on a bench today.
+/// **THE CAMPAIGN-WIDE HALF OF THE OUTFITTING WINDOW** (`CampaignSection.openingLoadout`, issue
+/// #629) — the profile's pick list, its two pre-fills, and the recipes the faction could put on a
+/// bench today.
 ///
-/// **THE KIT ROSTER AND THE RECIPE COSTS ARE DELIBERATELY NOT IN HERE.** The roster rides
+/// ⛔ **A WINDOW IS A FACT ABOUT ONE BAND, AND IT IS NOT IN HERE.** `open`, `kitBudget` and
+/// `materialBudget` were DELETED from this table by the per-band loadout arc: every band gets a
+/// window of its own — the spawned band's grant, and a take on the parent for every band a split
+/// hands one to — so they ride `PopulationCohortState.loadoutWindow`
+/// (`dict::population::loadout_window_to_dict`). What is left here is one per WORLD and would be
+/// pure duplication on every cohort.
+///
+/// **THE KIT ROSTER AND THE RECIPE COSTS ARE DELIBERATELY NOT IN HERE EITHER.** The roster rides
 /// `SubsistenceSection.equipmentConfigJson` and a recipe's inputs ride `SubsistenceSection.recipes`,
 /// both already decoded on both paths, so the picker JOINS onto what is published rather than
 /// reading a second copy of it.
 ///
-/// Every field is inserted UNCONDITIONALLY, empty vectors included: this dict is the whole state of
-/// one window, so a client reading a missing key would have to invent the difference between *"the
-/// profile offers no materials"* and *"the frame did not say"*. Absence is decided one level up, by
-/// whether `openingLoadout` rode the section at all.
+/// Every field is inserted UNCONDITIONALLY, empty vectors included: this dict is the whole of the
+/// campaign's half, so a client reading a missing key would have to invent the difference between
+/// *"the profile offers no materials"* and *"the frame did not say"*. Absence is decided one level
+/// up, by whether `openingLoadout` rode the section at all.
 pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
-    // False once the window has shut — the picker draws nothing and the sim refuses the command.
-    let _ = dict.insert("open", state.open());
-    // One kit per working-age hand of the starting band; DERIVED sim-side, never configured.
-    let _ = dict.insert("kit_budget", state.kitBudget() as i64);
-    // `start_profiles.json` `opening_loadout.material_points`. One point buys one unit.
-    let _ = dict.insert("material_budget", state.materialBudget() as i64);
     // **THE PICK LIST IS ALSO THE DRAW ORDER** — the profile's own order, which the resources column
     // and the legend above the recipe list both render in, so the two cannot disagree.
     let _ = dict.insert(
@@ -410,13 +411,17 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
     dict
 }
 
-/// The KIT column's pre-fill, the material one's twin.
+/// The KIT column's pre-fill, the material one's twin — **and the same row shape a band's window
+/// publishes its ACCEPTED kit allocation in**, which is why this is `pub(crate)`:
+/// `dict::population::loadout_window_to_dict` decodes `BandLoadoutWindowState.kits` through it
+/// rather than through a second copy that could drift from this one.
 ///
-/// **ALREADY CLAMPED to `kitBudget` sim-side** — that budget is the spawned band's working-age head
-/// count rather than a config number, so the profile cannot sum-check its own pre-fill and the sim
-/// scales it proportionally at publish time. The client draws these counts as-is; re-fitting them
-/// against the budget here would be a second clamp to disagree with the first.
-fn opening_kit_defaults_to_array(
+/// **ALREADY CLAMPED to the spawned band's `loadoutWindow.kitBudget` sim-side** — that budget is
+/// that band's working-age head count rather than a config number, so the profile cannot sum-check
+/// its own pre-fill and the sim scales it proportionally at publish time. The client draws these
+/// counts as-is; re-fitting them against the budget here would be a second clamp to disagree with
+/// the first.
+pub(crate) fn opening_kit_defaults_to_array(
     defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningKitDefault<'_>>>>,
 ) -> VarArray {
     let mut array = VarArray::new();
@@ -433,8 +438,9 @@ fn opening_kit_defaults_to_array(
 }
 
 /// The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a
-/// `set_starting_loadout` arrives.
-fn opening_material_defaults_to_array(
+/// `set_starting_loadout` arrives. `pub(crate)` for its kit twin's reason: a band window's accepted
+/// material allocation is this same row shape and is decoded through this same function.
+pub(crate) fn opening_material_defaults_to_array(
     defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningMaterialDefault<'_>>>>,
 ) -> VarArray {
     let mut array = VarArray::new();

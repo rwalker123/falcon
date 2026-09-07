@@ -131,6 +131,14 @@ because there is no gap between the forecast and the act.
 
 ## Q3 — Who goes?
 
+> **The one-number premise is RETIRED for the band's GEAR.** A split now also opens an **outfitting
+> window** on the new band, standing at the proportional take below and revisable for the rest of the
+> turn — so the player picks a worker count *and* a take. Everything §Q3 argues about *people* stands
+> unchanged: the share still divides children, elders, the larder and the material batches by itself,
+> and there is still no per-bracket stepper. What changed is that the kit half became a decision the
+> player can revise rather than a consequence they only receive.
+> See `.claude/rules/core_sim/starting-loadout.md`.
+
 **The player picks one number — how many workers leave — and everything else divides on that same
 share.** Children and elders follow in proportion; so do the provisions. The new band is a smaller
 copy of the band it came from, not a party with a composition of its own.
@@ -165,11 +173,28 @@ and no leftover to reconcile. The player never sees it, because the display appo
 - **A proportional share of the larder.** Not a reserve calculation and not a new number: the new
   band starts stocked because its people were already sitting on that food. `share × parent larder`,
   the same fraction as everything else.
-- **The kit is inherited worn.** The new band takes a **copy of the parent's `BandEquipment` wear
-  ledger**, not `BandEquipment::default()`. Otherwise splitting mints a fresh kit out of nothing,
-  permanently, and the intended pull into the crafting economy (`plan_early_game_labor.md` §TOE —
-  running your kit dry *is* the pull) is trivially defeated by splitting. The splinter is exactly as
-  worn out as the people it came from.
+- **The gear and the material move only when there is no GRANT left to divide.** A splinter of a band
+  whose opening grant is still unspent takes a slice of that *grant* — slots and points, deducted
+  from the parent's — and nothing physical crosses at all; the child mints against its own budget.
+  Paying both ways was a duplication bug of its own. The two bullets below are the **take** arm: a
+  split after the outfitting window has shut, when a ledger is the only currency left.
+- **The kit is inherited worn, and MOVED rather than copied** — never `BandEquipment::default()`,
+  because that mints a fresh kit out of nothing, permanently, and trivially defeats the intended pull
+  into the crafting economy (`plan_early_game_labor.md` §TOE — running your kit dry *is* the pull).
+  **A copy of the whole ledger is what shipped, and it was a duplication bug**: the splinter is
+  exactly as worn out as the people it came from *and* it is a share of what they held.
+  **The take is denominated in KITS, not in items**, so what crosses is `expand_kits` of a
+  share-scaled kit allocation: a kit the parent cannot fully outfit contributes none of its share,
+  and the three bench tools no kit carries (`loom`, `tanning_frame`, `bone_awl`) never move — a
+  workshop's tools stay with the workshop.
+- **A proportional share of the material batches**, moved with their exact readings intact and
+  floored to whole units so the card can state them. They were never divided at all before the
+  per-band loadout arc.
+
+> **The take is a STARTING POINT, not a verdict.** A split opens an outfitting window on the new band
+> standing at exactly the manifest above, open until the turn advances; what bounds a revision is a
+> fact about the parent's state (an unspent grant on turn one, the parent's own holdings after), and
+> the whole model lives in `.claude/rules/core_sim/starting-loadout.md`.
 - **Knowledge is copied in full, not divided.** Knowledge is not a conserved quantity; people who
   know how to knap take that with them without the parent forgetting. Divergence afterwards is the
   Telling arc's business.

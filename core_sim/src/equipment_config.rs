@@ -1739,6 +1739,28 @@ impl EquipmentConfig {
         self.kits.iter().find(|kit| kit.id == id)
     }
 
+    /// **Does any kit put `item` in a hand?** — the test that separates a band's **gear** from the
+    /// workshop's **bench tools**, derived from the roster rather than listed anywhere.
+    ///
+    /// # ⛔ A BENCH TOOL DOES NOT WALK OUT WITH A SPLINTER
+    ///
+    /// Three items answer `false` on the shipped roster — `bone_awl`, `loom` and `tanning_frame`,
+    /// the knowledge-gated bench tools — and that is a **design statement, not a gap**: they are shop
+    /// equipment, not a pair of hands' gear, so they stay with the workshop that built them. Every
+    /// other item is reachable through some kit (`warrior` grants `clubs`, `tillage` grants `hoes`).
+    ///
+    /// The outfitting picker is **kit-denominated** — the player composes kits, never bare items
+    /// (`.claude/rules/core_sim/starting-loadout.md`) — so an item no kit carries is one that could
+    /// only move *invisibly*: it could not be seen on the card, adjusted, or deliberately kept. The
+    /// split's default take and every later take are therefore expressed in kits, which excludes
+    /// these three by construction, and this predicate is what lets a readout say so out loud rather
+    /// than leaving it an emergent property of the roster.
+    pub fn item_is_kit_carried(&self, item: &str) -> bool {
+        self.kits
+            .iter()
+            .any(|kit| kit.uses.iter().any(|used| used == item))
+    }
+
     /// Resolve a roster id into the mask it stands for. `None` for an id the roster does not carry.
     pub fn kit(&self, id: &str) -> Option<KitChoice> {
         self.kit_definition(id).map(Self::choice_from)

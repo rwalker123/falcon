@@ -1016,9 +1016,15 @@ const SPLIT_BAND_BUTTON := "Form the band"
 
 const SPLIT_BAND_HINT := "Split this band in two where it stands. The new band moves like any other."
 
-## What the player is told AFTER a viable split, under the button — the thing that is easy to miss
+## What the player is told AFTER a viable split, under the button — the things that are easy to miss
 ## about a verb whose result appears on the tile you are already looking at.
-const SPLIT_BAND_AFTER_NOTE := "It appears on this tile. Move it like any band."
+##
+## **THE THIRD SENTENCE IS THE OUTFIT, and it is a fact this sheet no longer settles.** The worker
+## count still divides the people and the stores, but the splinter's GEAR is decided in the
+## outfitting card the split opens on it, and that card stays open until the turn advances
+## (`.claude/rules/client/starting-loadout.md`). One short declarative naming the deadline: the card
+## opens itself, so what a player cannot otherwise learn here is that it can be revised and by when.
+const SPLIT_BAND_AFTER_NOTE := "It appears on this tile. Move it like any band. Outfit it before the turn ends."
 
 ## ---- WHY a split would be refused
 ##

@@ -343,8 +343,8 @@ pub use start_profile::{
     StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
 };
 pub use starting_loadout::{
-    apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection,
-    MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
+    apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
+    LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{

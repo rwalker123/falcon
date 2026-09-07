@@ -755,7 +755,8 @@ func _assert_opens_on_filter() -> void:
 	await h._settle()
 	# **THE FRESHLY-LEARNED ROW.** It named a discovery; it has to land the player on the list holding
 	# it, not on the `unused` the screen was last left on.
-	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED)
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED,
+		TurnOrb.PANEL_SUBJECT_NONE)
 	await h._settle()
 	h._assert_hud("knowledge route — the orb's knowledge row OPENS the screen", controller.is_open())
 	h._assert_hud("knowledge route — …on `%s`, overriding the `%s` it was left on (lit pill: `%s`)"
@@ -764,7 +765,8 @@ func _assert_opens_on_filter() -> void:
 	# **PRESSED AGAIN WHILE THE SCREEN IS ALREADY OPEN, it must not toggle shut.** The launcher glyph is
 	# a toggle because pressing it means *show me / hide it*; an attention row means *take me to this*,
 	# and a press that closed the thing it points at would answer a question nobody asked.
-	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED)
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED,
+		TurnOrb.PANEL_SUBJECT_NONE)
 	await h._settle()
 	h._assert_hud("knowledge route — a row pressed while the screen is open does NOT toggle it shut",
 		controller.is_open())

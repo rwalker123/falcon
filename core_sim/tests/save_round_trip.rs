@@ -593,20 +593,37 @@ fn a_large_map_save_is_measured() {
     );
 }
 
-/// ⛔ **THE OPENING WINDOW SURVIVES A ROUND TRIP, OPEN AND WITH ITS BUDGETS.**
+/// ⛔ **THE OUTFITTING WINDOWS SURVIVE A ROUND TRIP, OPEN AND WITH THEIR BUDGETS.**
 ///
-/// Nothing rebuilds it — a load skips worldgen entirely, so `stamp_starting_loadout` never runs —
-/// which means a checkpoint that dropped it would hand back a turn-one world the player could no
-/// longer outfit. Taken on the **world-build** turn, because that is the only moment the window is
+/// Nothing rebuilds them — a load skips worldgen entirely, so `stamp_starting_loadout` never runs —
+/// which means a checkpoint that dropped the map would hand back a turn-one world the player could
+/// no longer outfit. Taken on the **world-build** turn, because that is the only moment a window is
 /// open and therefore the only state worth losing.
+///
+/// **The whole map is compared, not a summary of it.** A window carries a supply (a grant, or a
+/// parent and the standing take against it) and the accepted allocation, and a round trip that
+/// dropped either would restore a world whose next revision priced itself against nothing.
 #[test]
 fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
     let original = spawn_world();
-    let live = *original.world.resource::<core_sim::StartingLoadout>();
+    let live = original
+        .world
+        .resource::<core_sim::StartingLoadout>()
+        .clone();
+    let grant = live
+        .iter()
+        .find(|(_, window)| window.grants())
+        .map(|(_, window)| window.supply.clone())
+        .expect("fixture: the spawned band must hold an open grant window");
     assert!(
-        live.open && live.kit_budget > 0 && live.material_budget > 0,
-        "fixture: the window must be open with real budgets, or the equality below is trivial: \
-         {live:?}"
+        matches!(
+            grant,
+            core_sim::LoadoutSupply::Grant {
+                kit_budget,
+                material_budget,
+            } if kit_budget > 0 && material_budget > 0
+        ),
+        "fixture: the grant must carry real budgets, or the equality below is trivial: {grant:?}"
     );
 
     let blob = encode_save(&original.world).expect("the world encodes");
@@ -614,6 +631,6 @@ fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
     assert_eq!(
         *loaded.world.resource::<core_sim::StartingLoadout>(),
         live,
-        "the restored world's window must be the one that was written - open, same budgets"
+        "the restored world's windows must be the ones that were written - open, same budgets"
     );
 }

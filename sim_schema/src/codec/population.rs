@@ -177,6 +177,72 @@ fn create_populations<'a>(
             // Always written, even when empty: a field the sim leaves out and a field the sim says
             // is blank must not be the same frame.
             let band_name = Some(builder.create_string(&cohort.name));
+            // **THIS BAND'S OUTFITTING WINDOW** — built before the parent table, like every other
+            // nested table above: FlatBuffers forbids writing a child while a parent is open.
+            // `None` for a band with nothing to outfit, which is the ordinary state after turn one.
+            let loadout_window = cohort.loadout_window.as_ref().map(|window| {
+                let kits: Vec<_> = window
+                    .kits
+                    .iter()
+                    .map(|row| {
+                        let kit_id = builder.create_string(&row.kit_id);
+                        fb::OpeningKitDefault::create(
+                            builder,
+                            &fb::OpeningKitDefaultArgs {
+                                kitId: Some(kit_id),
+                                count: row.count,
+                            },
+                        )
+                    })
+                    .collect();
+                let kits = builder.create_vector(&kits);
+                let materials: Vec<_> = window
+                    .materials
+                    .iter()
+                    .map(|row| {
+                        let material_id = builder.create_string(&row.material_id);
+                        fb::OpeningMaterialDefault::create(
+                            builder,
+                            &fb::OpeningMaterialDefaultArgs {
+                                materialId: Some(material_id),
+                                units: row.units,
+                            },
+                        )
+                    })
+                    .collect();
+                let materials = builder.create_vector(&materials);
+                let mut supply_row = |rows: &[crate::state::BandLoadoutSupplyRowState]| {
+                    let rows: Vec<_> = rows
+                        .iter()
+                        .map(|row| {
+                            let id = builder.create_string(&row.id);
+                            fb::BandLoadoutSupplyRow::create(
+                                builder,
+                                &fb::BandLoadoutSupplyRowArgs {
+                                    id: Some(id),
+                                    units: row.units,
+                                },
+                            )
+                        })
+                        .collect();
+                    builder.create_vector(&rows)
+                };
+                let parent_item_supply = supply_row(&window.parent_item_supply);
+                let parent_material_supply = supply_row(&window.parent_material_supply);
+                fb::BandLoadoutWindowState::create(
+                    builder,
+                    &fb::BandLoadoutWindowStateArgs {
+                        open: window.open,
+                        kitBudget: window.kit_budget,
+                        materialBudget: window.material_budget,
+                        kits: Some(kits),
+                        materials: Some(materials),
+                        parentBandId: window.parent_band_id,
+                        parentItemSupply: Some(parent_item_supply),
+                        parentMaterialSupply: Some(parent_material_supply),
+                    },
+                )
+            });
             let labor_assignments = if cohort.labor_assignments.is_empty() {
                 None
             } else {
@@ -907,6 +973,9 @@ fn create_populations<'a>(
                     // THE BAND'S NAME — appended last. The sim owns it; a client that counts rows
                     // instead disagrees with itself the moment two screens filter differently.
                     name: band_name,
+                    // THIS BAND'S OUTFITTING WINDOW — appended last. `None` is the ordinary state:
+                    // a window shuts on the turn advance, so most frames carry none at all.
+                    loadoutWindow: loadout_window,
                 },
             )
         })

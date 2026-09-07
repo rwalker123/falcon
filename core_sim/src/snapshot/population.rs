@@ -1,5 +1,9 @@
 use std::collections::BTreeMap;
 
+use sim_schema::state::{BandLoadoutSupplyRowState, BandLoadoutWindowState};
+
+use crate::components::LocalStore;
+
 use super::*;
 
 pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> PendingMigrationState {
@@ -457,6 +461,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// no arithmetic). A declaration answers only for a meter at **zero**, so the token a row
     /// publishes has to be resolved against the ground, not read off the entry.
     pub(crate) build_sources: &'a BuildSourceInputs<'a>,
+    /// **This band's outfitting window**, resolved once for the whole capture by
+    /// [`band_loadout_windows`] — `None` for a band with nothing to outfit, which is every band on
+    /// every turn after the windows shut.
+    pub(crate) loadout_window: Option<BandLoadoutWindowState>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -633,6 +641,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         bench,
         craft_inputs,
         build_sources,
+        loadout_window,
     } = inputs;
     // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
     // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
@@ -1212,6 +1221,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // The sim's own answer for what this band is called — see `BandName`. Empty only when the
         // entity carries no name component at all.
         name: band_name.map(|name| name.0.clone()).unwrap_or_default(),
+        // **This band's outfitting window** — appended last. `None` is the ordinary state: a window
+        // shuts on the turn advance, so most frames carry none at all.
+        loadout_window,
         home: cohort.home.to_bits(),
         current_x: current_position.map(|p| p.x).unwrap_or(0),
         current_y: current_position.map(|p| p.y).unwrap_or(0),
@@ -1684,6 +1696,126 @@ pub(crate) fn snapshot_demographics(
         .collect()
 }
 
+/// **Every open outfitting window, resolved once for the whole capture**, keyed by band id.
+///
+/// It is resolved here rather than per band because **a take's cap is a fact about its PARENT's
+/// ledger**: a per-band pass would look the same parent up once per splinter, and the cap has to be
+/// the parent's holdings *plus this take's standing units* — the bookkeeping the sim owns and a
+/// client cannot invert a ledger back to.
+///
+/// A band with no window, or a closed one, gets no entry: absent is what a closed window reads as.
+pub(crate) fn band_loadout_windows<'a>(
+    windows: &crate::starting_loadout::StartingLoadout,
+    equipment_config: &crate::equipment_config::EquipmentConfig,
+    bands: impl Iterator<Item = (BandId, Option<&'a BandEquipment>, &'a LocalStore)>,
+) -> std::collections::HashMap<u64, BandLoadoutWindowState> {
+    let held: std::collections::HashMap<u64, (Option<&BandEquipment>, &LocalStore)> = bands
+        .map(|(band, equipment, store)| (band.0, (equipment, store)))
+        .collect();
+    windows
+        .iter()
+        .filter(|(_, window)| window.open)
+        .map(|(band, window)| {
+            let kits = window
+                .kits
+                .iter()
+                .map(|row| OpeningKitDefaultState {
+                    kit_id: row.kit_id.clone(),
+                    count: row.count,
+                })
+                .collect();
+            let materials = window
+                .materials
+                .iter()
+                .map(|row| OpeningMaterialDefaultState {
+                    material_id: row.material_id.clone(),
+                    units: row.units,
+                })
+                .collect();
+            let mut state = BandLoadoutWindowState {
+                open: true,
+                kits,
+                materials,
+                ..BandLoadoutWindowState::default()
+            };
+            match &window.supply {
+                crate::starting_loadout::LoadoutSupply::Grant {
+                    kit_budget,
+                    material_budget,
+                } => {
+                    state.kit_budget = *kit_budget;
+                    state.material_budget = *material_budget;
+                }
+                crate::starting_loadout::LoadoutSupply::Parent {
+                    parent,
+                    items,
+                    materials,
+                } => {
+                    state.parent_band_id = parent.0;
+                    let (parent_equipment, parent_store) = held
+                        .get(&parent.0)
+                        .copied()
+                        .unwrap_or((None, EMPTY_PARENT_STORE.get_or_init(LocalStore::new)));
+                    // Every item either side names: what the parent still holds, and what this take
+                    // has already moved off it — **restricted to items some kit carries**.
+                    //
+                    // ⛔ **A BENCH TOOL IS NOT TAKEABLE, so it must not be published as a cap.** The
+                    // picker is kit-denominated, and `bone_awl` / `loom` / `tanning_frame` are used
+                    // by no kit (`EquipmentConfig::item_is_kit_carried`) — shop equipment stays with
+                    // the workshop. A row for one would tell a client it could be claimed and there
+                    // is no order that claims it.
+                    let mut item_ids: std::collections::BTreeSet<&str> =
+                        items.keys().map(String::as_str).collect();
+                    if let Some(ledger) = parent_equipment {
+                        item_ids.extend(ledger.batches().map(|(item, _)| item));
+                    }
+                    item_ids.retain(|item| equipment_config.item_is_kit_carried(item));
+                    state.parent_item_supply = item_ids
+                        .into_iter()
+                        .map(|item| BandLoadoutSupplyRowState {
+                            id: item.to_string(),
+                            units: parent_equipment
+                                .map(|ledger| ledger.count_of(item))
+                                .unwrap_or(0)
+                                .saturating_add(items.get(item).copied().unwrap_or(0)),
+                        })
+                        .filter(|row| row.units > 0)
+                        .collect();
+                    let mut material_ids: std::collections::BTreeSet<&str> =
+                        materials.keys().map(String::as_str).collect();
+                    material_ids.extend(parent_store.materials().map(|(id, _)| id));
+                    state.parent_material_supply = material_ids
+                        .into_iter()
+                        .map(|material| {
+                            let standing = materials
+                                .get(material)
+                                .copied()
+                                .unwrap_or_else(crate::scalar::scalar_zero);
+                            let available = parent_store.material_total(material) + standing;
+                            BandLoadoutSupplyRowState {
+                                id: material.to_string(),
+                                // Floored, because whole units are the currency the command spends
+                                // — and floored in **fixed point**, not through `f32`: past 1023
+                                // whole units the conversion is no longer exact, so roughly one
+                                // count in four would round just under its boundary and publish a
+                                // cap one unit below what the server will actually honour.
+                                units: available.raw().max(0).div_euclid(Scalar::SCALE) as u32,
+                            }
+                        })
+                        .filter(|row| row.units > 0)
+                        .collect();
+                }
+            }
+            (band.0, state)
+        })
+        .collect()
+}
+
+/// The store a take reads when its parent has vanished from the capture's own query — an empty one,
+/// so the cap falls back to *"nothing left to give"* rather than to a panic. A `OnceLock` because it
+/// is a constant with a non-`const` constructor.
+static EMPTY_PARENT_STORE: std::sync::OnceLock<LocalStore> = std::sync::OnceLock::new();
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1798,6 +1930,8 @@ mod tests {
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,
             band_name: None,
+            // No world, so no outfitting window either.
+            loadout_window: None,
             cohort,
             allocation,
             expedition,

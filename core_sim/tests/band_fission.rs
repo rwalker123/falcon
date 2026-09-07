@@ -16,8 +16,9 @@ use bevy::prelude::{Entity, With};
 
 use core_sim::{
     available_workers, split_band_from_parent, split_refusals, BandEquipment, BandId,
-    DemographicFlowAccumulator, ExpeditionConfigHandle, FactionId, PopulationCohort, ResidentBand,
-    Scalar, SettleConfig, SimulationConfig, Tile, FODDER, FOOD,
+    DemographicFlowAccumulator, EquipmentBatch, ExpeditionConfigHandle, FactionId,
+    MaterialsConfigHandle, PopulationCohort, ResidentBand, Scalar, SettleConfig, SimulationConfig,
+    Tile, FODDER, FOOD,
 };
 
 /// Tolerance for a fixed-point round trip through a fractional share. `Scalar` carries far more
@@ -34,8 +35,21 @@ const WORN_ITEM: &str = "spears";
 /// retired one, and comfortably under the flint tier's `starting_durability`.
 const WORN_CONDITION: f32 = 37.0;
 
+/// The material the conservation fixture banks on the parent. Any pickable one would do.
+const BANKED_MATERIAL: &str = "hide";
+/// Two readings a batch of [`BANKED_MATERIAL`] is banked at, far enough apart that an averaging move
+/// would land between them rather than on either.
+const COARSE_READING: f32 = 0.2;
+const FINE_READING: f32 = 0.8;
+
 /// Build a headless world on a pinned earthlike map — one `update()` runs the whole Startup worldgen
 /// chain and resolves turn 1, so there is a real resident band standing on real terrain.
+///
+/// ⛔ **AND THEN ONE TURN, WHICH SHUTS THE OUTFITTING WINDOWS.** This suite is about the **dowry a
+/// split MOVES**, and goods only move when the parent has no grant left: while the opening window is
+/// still open a split *partitions the grant* instead and moves nothing at all
+/// (`.claude/rules/core_sim/starting-loadout.md`, and `split_loadout.rs` for that arm). Splitting on
+/// the world-build turn would leave every conservation assertion below measuring an empty move.
 fn spawn_world() -> App {
     let mut app = core_sim::build_test_app();
     let mut config = app.world.resource::<SimulationConfig>().clone();
@@ -43,6 +57,15 @@ fn spawn_world() -> App {
     config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
     app.update();
+    core_sim::run_turn(&mut app);
+    assert_eq!(
+        app.world
+            .resource::<core_sim::StartingLoadout>()
+            .open_count(),
+        0,
+        "fixture: the turn advance must shut every window, or these splits partition a grant \
+         instead of moving goods and every assertion below is vacuous"
+    );
     app
 }
 
@@ -96,6 +119,55 @@ fn entity_for_band(app: &mut App, band_id: BandId) -> Entity {
         .find(|(_, id)| **id == band_id)
         .map(|(entity, _)| entity)
         .expect("the split allocated this id")
+}
+
+/// Everything a band owns, as `(item, units)` — summed over batches, because a stock call appends
+/// rather than merging.
+fn owned(app: &App, entity: Entity) -> Vec<(String, u32)> {
+    app.world
+        .get::<BandEquipment>(entity)
+        .map(|ledger| {
+            ledger
+                .batches()
+                .map(|(id, batches)| {
+                    (
+                        id.to_string(),
+                        batches.iter().map(|batch| batch.count).sum::<u32>(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whole units of `item` a band holds — `0` for a band with no ledger at all.
+fn count_of(app: &App, entity: Entity, item: &str) -> u32 {
+    app.world
+        .get::<BandEquipment>(entity)
+        .map(|ledger| ledger.count_of(item))
+        .unwrap_or(0)
+}
+
+/// How much of `material` a band's store holds, in real units.
+fn material_total(app: &App, entity: Entity, material: &str) -> f32 {
+    app.world
+        .get::<PopulationCohort>(entity)
+        .expect("the band keeps a cohort")
+        .stores
+        .material_total(material)
+        .to_f32()
+}
+
+/// The distinct per-axis readings a band's batches of `material` carry, in batch order — what a
+/// merge would collapse to one value.
+fn distinct_readings(app: &App, entity: Entity, material: &str) -> Vec<f32> {
+    app.world
+        .get::<PopulationCohort>(entity)
+        .expect("the band keeps a cohort")
+        .stores
+        .material_batches(material)
+        .filter_map(|(_, batch)| batch.characteristics.values().next().copied())
+        .collect()
 }
 
 /// Give the parent enough people that a meaningful split is possible on any seeded map, and a store
@@ -329,9 +401,26 @@ fn the_kit_is_inherited_worn_rather_than_minted_fresh() {
         .world
         .get::<BandEquipment>(child_entity)
         .expect("the new band carries a kit");
-    assert_eq!(
+
+    // **A SHARE of the worn ledger, never a copy of it** — see `gear_is_conserved_across_a_split`.
+    // What this pins is that the units that walked out carry the parent's real condition rather than
+    // a fresh `default()`.
+    let carried: Vec<f32> = inherited
+        .batches_of(WORN_ITEM)
+        .iter()
+        .map(|batch| batch.wear)
+        .collect();
+    assert!(
+        !carried.is_empty(),
+        "a share of the parent's {WORN_ITEM} walked out with the splinter"
+    );
+    assert!(
+        carried.iter().all(|wear| *wear == WORN_CONDITION),
+        "the splinter is exactly as worn out as the people it came from: {carried:?}"
+    );
+    assert_ne!(
         *inherited, worn,
-        "the splinter is exactly as worn out as the people it came from"
+        "and it is a SHARE, not a copy — a whole-ledger clone mints a second kit every split"
     );
 }
 
@@ -518,4 +607,264 @@ fn the_shipped_settle_config_carries_both_floors() {
         .clone();
     assert_eq!(settle.min_founding_workers, 4);
     assert_eq!(settle.parent_min_workers, 6);
+}
+
+// -------------------------------------------------------------------------------------------
+// The manifest: gear and material MOVE, they are never copied
+// -------------------------------------------------------------------------------------------
+
+/// ⛔ **GEAR IS CONSERVED ACROSS A SPLIT** — the assertion that would have caught the duplication.
+///
+/// `split_band_from_parent` used to `clone()` the whole `BandEquipment` onto the splinter and never
+/// debit the parent, so every split minted a second full kit out of nothing. A test that only looked
+/// at the new band passes against that; the sum over **both halves** does not.
+#[test]
+fn gear_is_conserved_across_a_split() {
+    let mut app = spawn_world();
+    let (parent, _, _) = home_band(&mut app);
+    stock_the_parent(&mut app, parent);
+
+    let before: Vec<(String, u32)> = owned(&app, parent);
+    assert!(
+        before.iter().any(|(_, units)| *units > 1),
+        "**LIVENESS**: the fixture band must own several units of something, or a proportional \
+         manifest has nothing to divide: {before:?}"
+    );
+
+    let split = split_band_from_parent(&mut app.world, parent, 6, &permissive_settle())
+        .expect("the split is admitted");
+    let child_entity = entity_for_band(&mut app, split.band);
+
+    for (item, whole) in &before {
+        let kept = count_of(&app, parent, item);
+        let taken = count_of(&app, child_entity, item);
+        assert_eq!(
+            kept + taken,
+            *whole,
+            "'{item}': the two halves hold {kept} + {taken} of what was one ledger of {whole}"
+        );
+    }
+    let moved: u32 = before
+        .iter()
+        .map(|(item, _)| count_of(&app, child_entity, item))
+        .sum();
+    assert!(
+        moved > 0,
+        "**LIVENESS**: a share of 6/16.5 must move something, or conservation is trivially true"
+    );
+}
+
+/// ⛔ **THE MANIFEST IS A KIT ALLOCATION, AND IT FITS THE SHARE.**
+///
+/// It was a bare per-item `floor(share × count)`, which no kit allocation can express — so the
+/// splinter's outfitting card opened empty while the band held the gear, and an untouched commit
+/// handed the whole dowry back (`split_loadout.rs`). What crosses now is the expansion of a kit
+/// allocation, and two properties follow:
+///
+/// - **no item exceeds its own share** of what the parent held; and
+/// - **the sled identity holds** — `big_game` grants a spear and a sled, `trapping` a trap and a
+///   sled, and `sled` is the roster's only shared item, so a kit-denominated take satisfies
+///   `sleds == spears + traps` exactly. A per-item manifest does not, which is what makes this the
+///   sharp statement of the denomination.
+#[test]
+fn the_manifest_is_a_kit_allocation_that_fits_the_share() {
+    let mut app = spawn_world();
+    let (parent, _, _) = home_band(&mut app);
+    let (_, working, _) = stock_the_parent(&mut app, parent);
+
+    let before: Vec<(String, u32)> = owned(&app, parent);
+    let asked = 6;
+    let split = split_band_from_parent(&mut app.world, parent, asked, &permissive_settle())
+        .expect("the split is admitted");
+    let child_entity = entity_for_band(&mut app, split.band);
+
+    for (item, whole) in &before {
+        let budget = ((*whole as f64) * (asked as f64) / (working as f64)).floor() as u32;
+        let taken = count_of(&app, child_entity, item);
+        assert!(
+            taken <= budget,
+            "'{item}': {taken} taken against a share budget of {budget} out of {whole}"
+        );
+    }
+
+    let spears = count_of(&app, child_entity, WORN_ITEM);
+    let traps = count_of(&app, child_entity, "traps");
+    let sleds = count_of(&app, child_entity, "sled");
+    assert!(
+        spears + traps > 0,
+        "**LIVENESS**: the hunting kits must have moved, or the identity below is 0 == 0"
+    );
+    assert_eq!(
+        sleds,
+        spears + traps,
+        "a kit-denominated take carries one sled per hunting hand, however the two kits split it"
+    );
+}
+
+/// ⛔ **MATERIALS ARE CONSERVED TOO, WITH EVERY BATCH'S READINGS INTACT.**
+///
+/// They were not divided at *all* before this: the child's store was rebuilt from `LocalStore::new()`
+/// plus the parent's `iter()`, which walks the **commodity** account only — so a splinter of a band
+/// sitting on twenty hides opened with none of them, and the parent kept the lot.
+#[test]
+fn materials_are_conserved_across_a_split_with_their_readings() {
+    let mut app = spawn_world();
+    let (parent, _, _) = home_band(&mut app);
+    let (_, working, _) = stock_the_parent(&mut app, parent);
+
+    // Two batches of one material at *different* readings, so an averaging move would be visible.
+    let table = app.world.resource::<MaterialsConfigHandle>().get();
+    let axes_of = |value: f32| -> std::collections::BTreeMap<String, f32> {
+        table
+            .material(BANKED_MATERIAL)
+            .expect("the roster carries the banked material")
+            .characteristics
+            .iter()
+            .map(|axis| (axis.clone(), value))
+            .collect()
+    };
+    let banked: Vec<_> = [(COARSE_READING, 12.0_f32), (FINE_READING, 8.0)]
+        .into_iter()
+        .map(|(value, amount)| {
+            let axes = axes_of(value);
+            let key = table
+                .band_key(BANKED_MATERIAL, &axes)
+                .expect("the reading resolves to a band");
+            (key, amount, axes)
+        })
+        .collect();
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(parent)
+            .expect("the home band exists");
+        for (key, amount, axes) in banked {
+            cohort
+                .stores
+                .deposit_material(BANKED_MATERIAL, key, Scalar::from_f32(amount), &axes);
+        }
+    }
+    let whole = 20.0_f32;
+
+    // **A share big enough to reach BOTH batches** — 11 of 16.5 floors to 13 units, so the take spans
+    // the 12-unit coarse batch and bites into the fine one. A smaller share would come entirely out
+    // of the first batch and the no-averaging claim below would be vacuous.
+    let asked = 11;
+    let split = split_band_from_parent(&mut app.world, parent, asked, &permissive_settle())
+        .expect("the split is admitted");
+    let child_entity = entity_for_band(&mut app, split.band);
+
+    let kept = material_total(&app, parent, BANKED_MATERIAL);
+    let taken = material_total(&app, child_entity, BANKED_MATERIAL);
+    assert!(
+        (kept + taken - whole).abs() < EPSILON,
+        "the material is conserved: {kept} kept + {taken} taken against {whole}"
+    );
+    // **Whole units, floored** — the take is published as an allocation and a card states `units:u32`,
+    // so a fractional share is one it could not show and re-sending what it showed would hand the
+    // remainder back (`split_loadout::re_sending_the_published_allocation_untouched_changes_nothing`).
+    // The remainder stays with the parent, where the player can take it deliberately.
+    let expected = ((whole as f64) * (asked as f64) / (working as f64)).floor() as f32;
+    assert!(
+        (taken - expected).abs() < EPSILON,
+        "the material divides on the same share as everything else, floored to whole units: \
+         {taken} against {expected}"
+    );
+
+    // **The readings survive.** A split is a move, not a merge, so the child holds batches at the
+    // parent's own two ratings rather than one averaged pile.
+    let child_readings = distinct_readings(&app, child_entity, BANKED_MATERIAL);
+    assert!(
+        child_readings.len() >= 2,
+        "the splinter holds batches at BOTH ratings, not one averaged pile: {child_readings:?}"
+    );
+    for reading in child_readings {
+        assert!(
+            (reading - COARSE_READING).abs() < EPSILON || (reading - FINE_READING).abs() < EPSILON,
+            "every rating that walked out is one the parent actually held, got {reading}"
+        );
+    }
+}
+
+/// ⛔ **THE FRESHEST UNITS LEAVE; THE PARENT KEEPS THE WORN STOCK.**
+///
+/// Ray's call, and it is the *opposite* of the ledger's internal wear order (`wear_item` spends the
+/// most worn batch first): a new venture is outfitted properly. The fixture gives the parent one
+/// worn batch and one fresh one and asserts on which side each ends up.
+#[test]
+fn the_freshest_units_leave_with_the_splinter() {
+    let mut app = spawn_world();
+    let (parent, _, _) = home_band(&mut app);
+    stock_the_parent(&mut app, parent);
+
+    // One worn batch and one fresh one, of equal size, so the share takes exactly one batch's worth
+    // and which one it took is unambiguous.
+    const BATCH_UNITS: u32 = 6;
+    let tier = {
+        let mut equipment = app
+            .world
+            .get_mut::<BandEquipment>(parent)
+            .expect("a band carries a kit");
+        let tier = equipment
+            .batches_of(WORN_ITEM)
+            .first()
+            .map(|batch| batch.tier.clone())
+            .expect("a start-stocked band carries the worn item");
+        equipment.restore_batches(
+            WORN_ITEM,
+            vec![
+                EquipmentBatch {
+                    count: BATCH_UNITS,
+                    tier: tier.clone(),
+                    grade: None,
+                    wear: WORN_CONDITION,
+                },
+                EquipmentBatch {
+                    count: BATCH_UNITS,
+                    tier: tier.clone(),
+                    grade: None,
+                    wear: 0.0,
+                },
+            ],
+        );
+        tier
+    };
+    let _ = tier;
+
+    // Half the workers, so exactly `BATCH_UNITS` of the twelve move.
+    let asked = {
+        let cohort = app
+            .world
+            .get::<PopulationCohort>(parent)
+            .expect("the home band exists");
+        (cohort.working.to_f32() / 2.0).floor() as u32
+    };
+    let split = split_band_from_parent(&mut app.world, parent, asked, &permissive_settle())
+        .expect("the split is admitted");
+    let child_entity = entity_for_band(&mut app, split.band);
+
+    let taken: Vec<f32> = app
+        .world
+        .get::<BandEquipment>(child_entity)
+        .expect("the splinter carries a kit")
+        .batches_of(WORN_ITEM)
+        .iter()
+        .map(|batch| batch.wear)
+        .collect();
+    assert!(
+        !taken.is_empty() && taken.iter().all(|wear| *wear == 0.0),
+        "the fresh units are the ones that walked out: {taken:?}"
+    );
+    let kept: Vec<f32> = app
+        .world
+        .get::<BandEquipment>(parent)
+        .expect("the parent still carries a kit")
+        .batches_of(WORN_ITEM)
+        .iter()
+        .map(|batch| batch.wear)
+        .collect();
+    assert!(
+        kept.contains(&WORN_CONDITION),
+        "the parent keeps the worn stock: {kept:?}"
+    );
 }

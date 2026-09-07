@@ -5493,7 +5493,23 @@ idle workers to spare" directly under a live `⌂ Split`.
 
 **THE SHEET SHOWS THE CONSEQUENCE, BECAUSE THE INPUT IS ONE NUMBER.** Workers stepper → the share it
 implies → what the new band would be (people, brackets, dependants/worker, provisions) → the home
-band beside its now → the verdict. Everything divides on that one share.
+band beside its now → the verdict. The people, the larder and the material all divide on that one
+share.
+
+> #### ⛔ THE GEAR NO LONGER DOES, AND THE SHEET SAYS SO IN ONE SENTENCE
+>
+> *"The player picks one number and everything else divides on the share it implies, so there is
+> nothing else to ask"* was the whole verb while a splinter's kit was a copy of the parent's. Since
+> the per-band loadout arc a split **opens an outfitting window on the splinter**, standing at the
+> proportional take it was just handed and revisable until the turn advances
+> (`.claude/rules/client/starting-loadout.md`) — so the player picks a worker count *here* and a take
+> *there*.
+>
+> The sheet keeps its single stepper: the take is not decided on it. What it gained is the third
+> sentence of `SPLIT_BAND_AFTER_NOTE` — *"Outfit it before the turn ends."* — on a row the sheet was
+> already spending, beside the two facts about where the new band appears. The card opens itself, so
+> what a player cannot otherwise learn from this sheet is that the outfit is theirs to revise and
+> that the turn is what ends it.
 
 > #### BOTH HALVES ARE APPORTIONED IN **ONE** PASS
 >

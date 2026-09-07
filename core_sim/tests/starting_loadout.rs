@@ -8,9 +8,10 @@
 use bevy::prelude::*;
 
 use core_sim::{
-    apply_starting_loadout, build_test_app, run_turn, BandEquipment, EquipmentConfigHandle,
-    FactionId, KitAllocation, LoadoutRejection, MaterialAllocation, MaterialsConfigHandle,
-    PopulationCohort, ResidentBand, StartingLoadout, OPENING_MATERIAL_READING,
+    apply_starting_loadout, build_test_app, run_turn, BandEquipment, BandId, EquipmentConfigHandle,
+    FactionId, KitAllocation, LoadoutRejection, LoadoutSupply, MaterialAllocation,
+    MaterialsConfigHandle, PopulationCohort, ResidentBand, StartingLoadout,
+    OPENING_MATERIAL_READING,
 };
 
 /// The faction every shipped profile spawns under.
@@ -39,21 +40,40 @@ const HURDLES: &str = "hurdles";
 /// **The SHIPPED equipment config, put back deliberately**: `build_test_app` installs
 /// `for_a_stocked_fixture` so unrelated fixtures get bands that own gear, and this suite's whole
 /// subject is the shipped opening (`equipment.md` → "A FIXTURE DECLARES THE STOCK").
-fn open_window() -> (App, Entity) {
+fn open_window() -> (App, Entity, BandId) {
     let mut app = build_test_app();
     app.world.insert_resource(EquipmentConfigHandle::default());
     app.update();
-    let band = app
+    let (band, band_id) = app
         .world
-        .query_filtered::<Entity, With<ResidentBand>>()
+        .query_filtered::<(Entity, &BandId), With<ResidentBand>>()
         .iter(&app.world)
         .next()
+        .map(|(entity, id)| (entity, *id))
         .expect("the campaign spawns a resident band");
     assert!(
-        app.world.resource::<StartingLoadout>().open,
+        app.world.resource::<StartingLoadout>().is_open(band_id),
         "fixture: the window must be open on the world-build turn, or every case here is vacuous"
     );
-    (app, band)
+    (app, band, band_id)
+}
+
+/// The spawned band's grant, as `(kit_budget, material_budget)`. Panics on a window that is not a
+/// grant, which is the whole subject of this suite.
+fn grant(app: &App, band: BandId) -> (u32, u32) {
+    match &app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band)
+        .expect("the band has a window")
+        .supply
+    {
+        LoadoutSupply::Grant {
+            kit_budget,
+            material_budget,
+        } => (*kit_budget, *material_budget),
+        other => panic!("the spawned band's window must carry a grant, got {other:?}"),
+    }
 }
 
 /// Everything the band owns, as `(item, units)` — summed over batches, because a stock call appends
@@ -110,14 +130,21 @@ fn materials(pairs: &[(&str, u32)]) -> Vec<MaterialAllocation> {
 fn refused(
     app: &mut App,
     band: Entity,
+    band_id: BandId,
     allocation: (Vec<KitAllocation>, Vec<MaterialAllocation>),
 ) -> LoadoutRejection {
     let before_gear = owned(app, band);
     let before_wood = held(app, band, WOOD);
     let before_bone = held(app, band, BONE);
-    let before_window = *app.world.resource::<StartingLoadout>();
-    let reason = apply_starting_loadout(&mut app.world, PLAYER, &allocation.0, &allocation.1)
-        .expect_err("this loadout must be refused");
+    let before_window = app.world.resource::<StartingLoadout>().clone();
+    let reason = apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &allocation.0,
+        &allocation.1,
+    )
+    .expect_err("this loadout must be refused");
     assert_eq!(owned(app, band), before_gear, "a refusal grants no gear");
     assert_eq!(
         held(app, band, WOOD),
@@ -144,7 +171,7 @@ fn refused(
 /// So this asserts the identity against the cohort's own workers rather than against a literal.
 #[test]
 fn the_kit_budget_is_the_starting_bands_own_worker_count() {
-    let (app, band) = open_window();
+    let (app, band, band_id) = open_window();
     let cohort = app
         .world
         .get::<PopulationCohort>(band)
@@ -160,13 +187,13 @@ fn the_kit_budget_is_the_starting_bands_own_worker_count() {
         expected > 0,
         "**LIVENESS**: the shipped band must field somebody, or the equality below is 0 == 0"
     );
+    let (kit_budget, material_budget) = grant(&app, band_id);
     assert_eq!(
-        app.world.resource::<StartingLoadout>().kit_budget,
-        expected,
+        kit_budget, expected,
         "one kit per working-age hand, off the band's own head count"
     );
     assert_eq!(
-        app.world.resource::<StartingLoadout>().material_budget,
+        material_budget,
         app.world
             .resource::<core_sim::ActiveStartProfile>()
             .profile()
@@ -187,7 +214,7 @@ fn the_kit_budget_is_the_starting_bands_own_worker_count() {
 /// ungraded batch publishes a bare `×1` beside rows reading `×3 good`.
 #[test]
 fn allocated_kits_stock_every_item_they_use_and_shared_items_add() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     assert!(
         owned(&app, band).is_empty(),
         "fixture: a spawning band owns nothing, or the counts below are not what the loadout bought"
@@ -195,6 +222,7 @@ fn allocated_kits_stock_every_item_they_use_and_shared_items_add() {
     apply_starting_loadout(
         &mut app.world,
         PLAYER,
+        band_id,
         &kits(&[(BIG_GAME, 6), (TRAPPING, 3)]),
         &[],
     )
@@ -241,10 +269,11 @@ fn allocated_kits_stock_every_item_they_use_and_shared_items_add() {
 /// before setting out is unremarkable, and a spread would be a claim nothing makes.
 #[test]
 fn allocated_materials_land_at_their_units_and_the_opening_reading() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     apply_starting_loadout(
         &mut app.world,
         PLAYER,
+        band_id,
         &[],
         &materials(&[(BONE, 3), (HIDE, 8), (WOOD, 19)]),
     )
@@ -297,20 +326,32 @@ fn allocated_materials_land_at_their_units_and_the_opening_reading() {
 /// *accepted*, not refused as an already-spent budget.
 #[test]
 fn applying_a_loadout_leaves_the_window_open_for_a_revision() {
-    let (mut app, _) = open_window();
-    let before = *app.world.resource::<StartingLoadout>();
-    apply_starting_loadout(&mut app.world, PLAYER, &kits(&[(BIG_GAME, 1)]), &[])
-        .expect("one kit is inside the budget");
+    let (mut app, _, band_id) = open_window();
+    let before = grant(&app, band_id);
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(BIG_GAME, 1)]),
+        &[],
+    )
+    .expect("one kit is inside the budget");
     assert!(
-        app.world.resource::<StartingLoadout>().open,
+        app.world.resource::<StartingLoadout>().is_open(band_id),
         "a commit is not a close - the turn advance is the only thing that shuts this"
     );
-    apply_starting_loadout(&mut app.world, PLAYER, &kits(&[(TRAPPING, 2)]), &[])
-        .expect("a revision inside the budget is accepted, not refused as already spent");
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(TRAPPING, 2)]),
+        &[],
+    )
+    .expect("a revision inside the budget is accepted, not refused as already spent");
     assert_eq!(
-        *app.world.resource::<StartingLoadout>(),
+        grant(&app, band_id),
         before,
-        "and the window is UNCHANGED - the budgets do not shrink as drafts are committed, because \
+        "and the grant is UNCHANGED - the budgets do not shrink as drafts are committed, because \
          each apply is measured against the whole budget it replaces rather than adds to"
     );
 }
@@ -323,10 +364,11 @@ fn applying_a_loadout_leaves_the_window_open_for_a_revision() {
 /// changed their mind.
 #[test]
 fn a_revised_loadout_replaces_the_one_before_it() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     apply_starting_loadout(
         &mut app.world,
         PLAYER,
+        band_id,
         &kits(&[(BIG_GAME, 6)]),
         &materials(&[(BONE, 20)]),
     )
@@ -334,6 +376,7 @@ fn a_revised_loadout_replaces_the_one_before_it() {
     apply_starting_loadout(
         &mut app.world,
         PLAYER,
+        band_id,
         &kits(&[(BIG_GAME, 4)]),
         &materials(&[(FIBRE, 10)]),
     )
@@ -369,7 +412,7 @@ fn a_revised_loadout_replaces_the_one_before_it() {
 /// site never has to name the commodities it means to spare.
 #[test]
 fn a_revised_loadout_does_not_touch_the_bands_provisions() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     let provisions = |app: &App| {
         app.world
             .get::<PopulationCohort>(band)
@@ -383,10 +426,22 @@ fn a_revised_loadout_does_not_touch_the_bands_provisions() {
         before > 0.0,
         "**LIVENESS**: the spawn seeds a food reserve, or this asserts 0.0 == 0.0"
     );
-    apply_starting_loadout(&mut app.world, PLAYER, &[], &materials(&[(BONE, 5)]))
-        .expect("the first draft is inside the budget");
-    apply_starting_loadout(&mut app.world, PLAYER, &[], &materials(&[(FIBRE, 5)]))
-        .expect("the revision is inside the budget");
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &[],
+        &materials(&[(BONE, 5)]),
+    )
+    .expect("the first draft is inside the budget");
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &[],
+        &materials(&[(FIBRE, 5)]),
+    )
+    .expect("the revision is inside the budget");
     assert_eq!(
         provisions(&app),
         before,
@@ -400,15 +455,16 @@ fn a_revised_loadout_does_not_touch_the_bands_provisions() {
 /// composed against.
 #[test]
 fn the_window_shuts_on_the_first_turn_advance_and_a_later_loadout_is_refused() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     run_turn(&mut app);
     assert!(
-        !app.world.resource::<StartingLoadout>().open,
+        !app.world.resource::<StartingLoadout>().is_open(band_id),
         "the first turn advance shuts the window"
     );
     let reason = refused(
         &mut app,
         band,
+        band_id,
         (kits(&[(BIG_GAME, 1)]), materials(&[(BONE, 1)])),
     );
     assert_eq!(reason, LoadoutRejection::WindowClosed);
@@ -420,9 +476,14 @@ fn the_window_shuts_on_the_first_turn_advance_and_a_later_loadout_is_refused() {
 
 #[test]
 fn an_unknown_kit_is_refused() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     assert_eq!(
-        refused(&mut app, band, (kits(&[("ballista", 1)]), Vec::new())),
+        refused(
+            &mut app,
+            band,
+            band_id,
+            (kits(&[("ballista", 1)]), Vec::new())
+        ),
         LoadoutRejection::UnknownKit("ballista".to_string())
     );
 }
@@ -431,9 +492,9 @@ fn an_unknown_kit_is_refused() {
 /// refused by **what makes it `none`** — an empty `uses` — rather than by its id.
 #[test]
 fn the_empty_kit_is_refused() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     assert_eq!(
-        refused(&mut app, band, (kits(&[("none", 1)]), Vec::new())),
+        refused(&mut app, band, band_id, (kits(&[("none", 1)]), Vec::new())),
         LoadoutRejection::KitBuysNothing("none".to_string())
     );
 }
@@ -442,7 +503,7 @@ fn the_empty_kit_is_refused() {
 /// this refusal is about the PICK LIST, not about the materials table.
 #[test]
 fn a_material_the_profile_does_not_offer_is_refused() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     assert!(
         app.world
             .resource::<MaterialsConfigHandle>()
@@ -452,18 +513,24 @@ fn a_material_the_profile_does_not_offer_is_refused() {
         "fixture: the refused material must EXIST, or this tests the wrong rule"
     );
     assert_eq!(
-        refused(&mut app, band, (Vec::new(), materials(&[(HURDLES, 1)]))),
+        refused(
+            &mut app,
+            band,
+            band_id,
+            (Vec::new(), materials(&[(HURDLES, 1)]))
+        ),
         LoadoutRejection::UnpickableMaterial(HURDLES.to_string())
     );
 }
 
 #[test]
 fn a_loadout_over_the_kit_budget_is_refused() {
-    let (mut app, band) = open_window();
-    let budget = app.world.resource::<StartingLoadout>().kit_budget;
+    let (mut app, band, band_id) = open_window();
+    let budget = grant(&app, band_id).0;
     let reason = refused(
         &mut app,
         band,
+        band_id,
         (kits(&[(BIG_GAME, budget), (TRAPPING, 1)]), Vec::new()),
     );
     assert_eq!(
@@ -478,11 +545,12 @@ fn a_loadout_over_the_kit_budget_is_refused() {
 
 #[test]
 fn a_loadout_over_the_material_budget_is_refused() {
-    let (mut app, band) = open_window();
-    let budget = app.world.resource::<StartingLoadout>().material_budget;
+    let (mut app, band, band_id) = open_window();
+    let budget = grant(&app, band_id).1;
     let reason = refused(
         &mut app,
         band,
+        band_id,
         (Vec::new(), materials(&[(BONE, budget), (HIDE, 1)])),
     );
     assert_eq!(
@@ -499,11 +567,12 @@ fn a_loadout_over_the_material_budget_is_refused() {
 /// refused rather than resolved by a summing or last-wins rule nobody stated.
 #[test]
 fn a_duplicate_kit_line_is_refused() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     assert_eq!(
         refused(
             &mut app,
             band,
+            band_id,
             (kits(&[(BIG_GAME, 1), (BIG_GAME, 1)]), Vec::new())
         ),
         LoadoutRejection::DuplicateAllocation(BIG_GAME.to_string())
@@ -512,11 +581,12 @@ fn a_duplicate_kit_line_is_refused() {
 
 #[test]
 fn a_duplicate_material_line_is_refused() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     assert_eq!(
         refused(
             &mut app,
             band,
+            band_id,
             (Vec::new(), materials(&[(BONE, 1), (BONE, 1)]))
         ),
         LoadoutRejection::DuplicateAllocation(BONE.to_string())
@@ -536,7 +606,7 @@ fn a_duplicate_material_line_is_refused() {
 fn the_opening_loadout_reaches_the_client() {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
-    let (mut app, _) = open_window();
+    let (mut app, _, band_id) = open_window();
     core_sim::recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
         .world
@@ -554,13 +624,32 @@ fn the_opening_loadout_reaches_the_client() {
         .openingLoadout()
         .expect("the campaign section carries the opening loadout");
 
-    let window = *app.world.resource::<StartingLoadout>();
+    // **THE PER-BAND HALF RIDES THE COHORT.** `open` and the two budgets left the campaign section
+    // when every band gained a window of its own — a splinter's budgets are not the spawned band's,
+    // so a campaign-wide reading of them could only be right for one band.
+    let cohort_window = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the snapshot carries a population section")
+        .iter()
+        .find(|cohort| cohort.bandId() == band_id.0)
+        .expect("the spawned band is published")
+        .loadoutWindow()
+        .expect("the spawned band carries its outfitting window");
+    let (kit_budget, material_budget) = grant(&app, band_id);
     assert!(
-        published.open(),
+        cohort_window.open(),
         "the window is open on the world-build turn"
     );
-    assert_eq!(published.kitBudget(), window.kit_budget);
-    assert_eq!(published.materialBudget(), window.material_budget);
+    assert_eq!(cohort_window.kitBudget(), kit_budget);
+    assert_eq!(cohort_window.materialBudget(), material_budget);
+    assert_eq!(
+        cohort_window.parentBandId(),
+        0,
+        "the spawned band's window is a GRANT, so it draws on no parent"
+    );
 
     let pickable: Vec<String> = published
         .pickableMaterials()
@@ -613,7 +702,7 @@ fn the_opening_loadout_reaches_the_client() {
         ]
     );
     assert!(
-        kit_defaults.iter().map(|(_, count)| count).sum::<u32>() <= published.kitBudget(),
+        kit_defaults.iter().map(|(_, count)| count).sum::<u32>() <= kit_budget,
         "a published pre-fill always fits the budget it is drawn against"
     );
 
@@ -654,10 +743,11 @@ fn the_opening_loadout_reaches_the_client() {
 /// is not; nothing lands, because a loadout is one composition against two budgets.
 #[test]
 fn a_legal_half_beside_an_illegal_half_lands_nothing() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     let reason = refused(
         &mut app,
         band,
+        band_id,
         (kits(&[(BIG_GAME, 2)]), materials(&[(HURDLES, 1)])),
     );
     assert_eq!(
@@ -674,7 +764,7 @@ fn a_legal_half_beside_an_illegal_half_lands_nothing() {
 /// while looking like a UI convenience.
 #[test]
 fn the_published_defaults_grant_the_band_nothing() {
-    let (mut app, band) = open_window();
+    let (mut app, band, band_id) = open_window();
     let (kit_defaults, material_defaults) = {
         let loadout = &app
             .world
@@ -691,7 +781,7 @@ fn the_published_defaults_grant_the_band_nothing() {
 
     // A turn passes and the window shuts with the defaults never committed.
     run_turn(&mut app);
-    assert!(!app.world.resource::<StartingLoadout>().open);
+    assert!(!app.world.resource::<StartingLoadout>().is_open(band_id));
 
     assert!(
         owned(&app, band).is_empty(),
@@ -762,8 +852,18 @@ fn the_published_pre_fill_is_the_clamped_one() {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     const FORCED_BUDGET: u32 = 6;
-    let (mut app, _) = open_window();
-    app.world.resource_mut::<StartingLoadout>().kit_budget = FORCED_BUDGET;
+    let (mut app, _, band_id) = open_window();
+    // Force the spawned band's grant below what the profile pre-fills, so the clamp binds.
+    match &mut app
+        .world
+        .resource_mut::<StartingLoadout>()
+        .window_mut(band_id)
+        .expect("the spawned band has a window")
+        .supply
+    {
+        LoadoutSupply::Grant { kit_budget, .. } => *kit_budget = FORCED_BUDGET,
+        other => panic!("the spawned band's window must carry a grant, got {other:?}"),
+    }
     core_sim::recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
         .world

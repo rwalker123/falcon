@@ -548,14 +548,20 @@ pub enum CommandPayload {
         request_id: u64,
         slot: String,
     },
-    /// **The opening loadout, composed on turn one.** Proto field 69, and the **one** source of a
-    /// faction's starting gear and material — a spawning band owns nothing.
+    /// **One band's outfitting loadout.** Proto field 69, and the **one** source of a faction's
+    /// starting gear and material — a spawning band owns nothing.
+    ///
+    /// **Addressed per band**, because every band has a window of its own: the spawned band's opens
+    /// at world build, and a band that splits hands its splinter one. `band_id` is the durable
+    /// [`crate`] band id, never an entity handle.
     ///
     /// World-mutating, so it rides the replay log like the other outfitting verbs. It fails
     /// **closed and whole**: the server refuses the entire command on a closed window, an unknown or
-    /// empty kit, an unpickable material, a duplicate line, or either budget overspent.
+    /// empty kit, an unpickable material, a duplicate line, a budget overspent, a pick the parent
+    /// cannot cover, or a revision that would strand a take a further split already moved.
     SetStartingLoadout {
         faction_id: u32,
+        band_id: u64,
         kits: Vec<StartingKitAllocation>,
         materials: Vec<StartingMaterialAllocation>,
     },
@@ -1778,10 +1784,12 @@ impl CommandEnvelope {
             }
             CommandPayload::SetStartingLoadout {
                 faction_id,
+                band_id,
                 kits,
                 materials,
             } => pb::command_envelope::Command::SetStartingLoadout(pb::SetStartingLoadoutCommand {
                 faction_id: *faction_id,
+                band_id: *band_id,
                 kits: kits
                     .iter()
                     .map(|allocation| pb::StartingKitAllocation {
@@ -1954,6 +1962,7 @@ impl CommandEnvelope {
             pb::command_envelope::Command::SetStartingLoadout(cmd) => {
                 CommandPayload::SetStartingLoadout {
                     faction_id: cmd.faction_id,
+                    band_id: cmd.band_id,
                     kits: cmd
                         .kits
                         .into_iter()
@@ -2836,6 +2845,7 @@ mod tests {
     fn the_opening_loadout_round_trips_through_the_envelope() {
         let payload = CommandPayload::SetStartingLoadout {
             faction_id: 0,
+            band_id: 7,
             kits: vec![
                 StartingKitAllocation {
                     kit_id: "big_game".to_string(),

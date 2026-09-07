@@ -1107,6 +1107,33 @@ fn seed_snapshot() -> WorldSnapshot {
             entries: rows(),
             ..Default::default()
         });
+        // **THIS BAND'S OUTFITTING WINDOW** — four repeated fields inside a table inside a repeated
+        // field, so each needs elements or the guard never decodes a row of it. The two supplies are
+        // the TAKE half and are spelled out for the reason every id-keyed list here is: a list keyed
+        // by id cannot carry the duplicate keys `rows()` would produce.
+        //
+        // `parent_band_id` is left at its `0` default, which is the GRANT reading — the take arm is
+        // covered by the supplies below carrying rows regardless, since the decoder emits both
+        // unconditionally and the golden records whichever it wrote.
+        cohort.loadout_window = Some(BandLoadoutWindowState {
+            kits: rows(),
+            materials: rows(),
+            parent_item_supply: ["spears", "sled"]
+                .iter()
+                .map(|item| BandLoadoutSupplyRowState {
+                    id: (*item).to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+            parent_material_supply: ["hide", "fibre"]
+                .iter()
+                .map(|material| BandLoadoutSupplyRowState {
+                    id: (*material).to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        });
     }
     s.generations = rows_of(blank_generation());
     s.demographics = rows();

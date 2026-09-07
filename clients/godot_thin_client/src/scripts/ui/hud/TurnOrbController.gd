@@ -34,7 +34,9 @@ var _telling: TellingPanel = null
 ## constructor argument would force one of the two to move for no reason but the wiring. The same
 ## late hand-over `_bandpanel.set_attention(_attention)` makes, for the same shape of reason.
 var _knowledge: KnowledgePanelController = null
-## The opening-loadout picker, for the loadout row's `Open ▸`.
+## The outfitting picker, for the loadout rows' `Open ▸` — which reaches **that row's own band**, the
+## row carrying it as `HudAttentionVocab.ATTENTION_PANEL_SUBJECT`. The card's band switcher is the
+## other way to a second window, for a player who never opened the popover.
 var _loadout: StartingLoadoutController = null
 ## Where a client-side note goes. It was the retired left-dock command feed; it is
 ## `HudLayer.note_system_event` now (→ `system_note_requested` → the event dock's System channel),
@@ -54,9 +56,11 @@ var _band_attention: Array = []
 ## half and for the same reason: `set_attention` is a full replace, so a fork arriving on its own
 ## delta has to be able to rebuild the whole registry without re-running the other producers.
 var _knowledge_attention: Array = []
-## The OPENING LOADOUT half (issue #629) — its own half for `_knowledge_attention`'s reason: it is
-## produced by a snapshot section the band loop never sees, and on a delta carrying only
-## `opening_loadout` that loop does not run at all.
+## The OUTFITTING half (issue #629) — its own half for `_knowledge_attention`'s reason: it is produced
+## by a cluster whose ingest is not this controller's, so a snapshot that moves a window without
+## moving the band alerts must still be able to replace it alone. **It carries ONE ROW PER BAND with
+## an open window**, so it is no longer empty from turn two onward: a split opens one on the splinter
+## on whatever turn it happens.
 var _loadout_attention: Array = []
 # Beats already auto-opened this session, so a fork the player dismissed does not re-open on every
 # subsequent snapshot. Keyed by beat_id.
@@ -181,10 +185,11 @@ func set_knowledge_attention(attention: Array) -> void:
 	_knowledge_attention = attention
 	_push_attention()
 
-## Store the OPENING LOADOUT half and push the whole registry — `set_knowledge_attention`'s seam, one
-## field over, guarded the same way and for the same measured reason. This half is EMPTY from turn
-## two onward (the window shuts on the first advance), so an unguarded push would cost a deep copy of
-## the band half and an orb redraw on every snapshot for the whole rest of a campaign.
+## Store the OUTFITTING half and push the whole registry — `set_knowledge_attention`'s seam, one field
+## over, guarded the same way and for the same measured reason. **The guard matters MORE now that
+## every band can have a window**, not less: this half is empty on every turn nobody is outfitting,
+## which is most of a campaign, and an unguarded push would cost a deep copy of the band half and an
+## orb redraw on every snapshot of it.
 func set_loadout_attention(attention: Array) -> void:
 	if _loadout_attention == attention:
 		return
@@ -280,13 +285,21 @@ func _open_fork_panel() -> void:
 ##
 ## **THE KNOWLEDGE ROW OPENS ITS SCREEN ON `New this turn`** — the list holding the discovery it just
 ## named. A row that opened on whatever filter the player last set would make them hunt for it.
-func _on_turn_orb_panel_requested(kind: String) -> void:
+func _on_turn_orb_panel_requested(kind: String, subject: int) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
 		return
 	if kind == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT:
 		if _loadout != null:
-			_loadout.open()
+			# ⛔ **THE ROW'S OWN BAND, not whichever the card is showing.** Every band has an
+			# outfitting window of its own, so a press that ignored the subject would answer the
+			# wrong row — and with two rows reading alike, invisibly. `open_band` declines a band
+			# with no open window, and a `0` subject (a producer that named none) falls through to
+			# the plain open, which is what every other panel kind wants.
+			if subject != TurnOrb.PANEL_SUBJECT_NONE:
+				_loadout.open_band(subject)
+			else:
+				_loadout.open()
 		return
 	if _knowledge == null:
 		return

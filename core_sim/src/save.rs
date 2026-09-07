@@ -99,7 +99,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 2 | `SimState.crisis_overlay` added — a load published an empty crisis heatmap |
 /// | 3 | `WorldStatics.start_profile` removed — written into every payload and never read back |
 /// | 4 | the transfer counters on `PopulationCohort` and `LaborAllocation` became `TransferLedger` structs, and each gained a fodder twin — two `f32` totals per account replaced by four magnitudes split by link |
-pub const SAVE_FORMAT_VERSION: u32 = 4;
+/// | 5 | `SimState.starting_loadout` became a **map of per-band windows** — one `open`/budget triple replaced by a `BandId`-keyed table carrying each band's supply and its standing take |
+pub const SAVE_FORMAT_VERSION: u32 = 5;
 
 /// gzip level for the payload document.
 ///

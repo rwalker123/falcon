@@ -224,6 +224,16 @@ const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 ## which is why the kind is on `ATTENTION_KINDS_WITH_A_PANEL` below.
 const ATTENTION_KIND_OPENING_LOADOUT := "opening_loadout"
 
+## ⛔ **WHICH SUBJECT A NON-LOCATING ROW'S PANEL MUST OPEN ON — carried by the orb and READ BY NOBODY
+## THERE.** `panel_requested` used to say only WHICH KIND was pressed, which is all a producer with
+## one panel-wide subject needs; the outfitting picker has one window PER BAND, so a row pressed
+## without its own subject opened whichever band the card happened to be showing. The value is opaque
+## to the orb — a durable `band_id` today — and `TurnOrbController` is what interprets it.
+##
+## A row that omits it is a producer whose panel has one subject, which is every other one; the orb
+## carries `0` for those and the panel opens on whatever it was already on.
+const ATTENTION_PANEL_SUBJECT := "panel_subject"
+
 
 ## **WHICH NON-LOCATING KINDS ACTUALLY OPEN SOMETHING.** A row with no `x`/`y` renders `Open ▸` and
 ## routes through `panel_requested`, and `TurnOrbController` decides what that opens — so a kind with

@@ -746,23 +746,32 @@ message DeleteSaveCommand {
   string slot = 2;
 }
 
-// THE OPENING LOADOUT, COMPOSED ON TURN ONE — the ONE source of a faction's starting gear and
+// THE OUTFITTING LOADOUT, COMPOSED PER BAND — the ONE source of a faction's starting gear and
 // material. A spawning band owns nothing (equipment.json ships `start_stock_fraction: 0.0` and no
-// material declares a start stock), so this command is where a campaign's opening kit comes from.
+// material declares a start stock), so this command is where a campaign's opening kit comes from -
+// and every band that splits off gets a window of its own, so it is also how a splinter is outfitted.
 //
-// TWO BUDGETS. `kits` spends one point per allocated kit against one kit per working-age hand of the
-// starting band (a model fact derived from the band, never configured); `materials` spends one point
-// per unit against `start_profiles.json` `opening_loadout.material_points`. Anything unspent when
-// the first turn advances is forfeited.
+// TWO SUPPLIES, and the named band's window decides which one applies. A GRANT window mints: `kits`
+// spends one point per allocated kit against one kit per working-age hand (derived from the band,
+// never configured), `materials` one point per unit against `start_profiles.json`
+// `opening_loadout.material_points`. A window a SPLIT opened on a parent with no grant left MOVES:
+// the picks come out of the parent's own ledger, and the cap is what the parent can supply.
+//
+// Anything unspent when the turn advances is forfeited; the window shuts then and on nothing else.
 //
 // IT FAILS CLOSED, WHOLE. A closed window, an unknown kit id, a kit that carries nothing, a material
-// the profile does not offer, a duplicate line, or either budget overspent rejects the ENTIRE
-// command and changes nothing — a loadout is one composition against two budgets, so honouring the
-// legal half would spend the player's points on something they did not choose.
+// the profile does not offer, a duplicate line, a budget overspent, a pick the parent cannot cover,
+// or a revision that would strand a take a further split already moved rejects the ENTIRE command
+// and changes nothing - a loadout is one composition against one supply, so honouring the legal half
+// would spend the player's points on something they did not choose.
 message SetStartingLoadoutCommand {
   uint32 faction_id = 1;
   repeated StartingKitAllocation kits = 2;
   repeated StartingMaterialAllocation materials = 3;
+  // WHICH BAND is being outfitted. Every band gets a window - the spawned band's opens at world
+  // build, and a band that splits hands its splinter one - so a loadout is addressed per band and
+  // never per faction. The durable `BandId`, never an entity handle.
+  uint64 band_id = 4;
 }
 
 // `count` of the `equipment.json` kit `kit_id`. Every item that kit `uses` lands in the band's

@@ -1698,11 +1698,20 @@ toggle fix added the two frames above and eleven claims net (four retired with t
 the crop-picker distinction it carried, fifteen added across the subtraction, the regression and the
 refusal).
 
-## `chapters/starting_loadout.gd` — the turn-one outfitting picker (issue #629)
+## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Seven frames and
-thirty-eight assertions (`EXPECTED_CHECKPOINTS` **45** — frames count too). It ends by publishing a SHUT
-window, so the surface it stands up is gone before anything appended after it could inherit it.
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Twelve frames and
+one hundred assertions (`EXPECTED_CHECKPOINTS` **112**, RE-MEASURED by raising the const to an
+impossible number and reading `reached` back — frames count too). It ends by publishing SHUT
+windows, so the surface it stands up is gone before anything appended after it could inherit it.
+
+⛔ **THE WINDOW RIDES THE COHORT NOW, so the chapter pushes TWO seams in `Main`'s own order**:
+`update_opening_loadout` (the campaign's half — the pick list and the two pre-fills) and then
+`update_band_alerts` (the bands, each carrying its own `loadout_window`). The campaign half has to
+land first or the pre-fill has no pick list to be filtered against. Every re-push that used to
+re-state the window — the *"a snapshot does not re-open a dismissed card"* claim, the still-open
+frame after a commit — is a roster push now, and the SHUT state pushes both bands with their windows
+closed rather than an empty roster: the bands are still there, it is their windows that shut.
 
 **MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
 plausible picture whatever it says — a row reading `×3`, a dash on a row that should read `×1`, a
@@ -1711,13 +1720,82 @@ meta, never by scraping a subtree's text) and the frames carry the layout.
 
 | frame | what only IT can say |
 |---|---|
-| `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF, kits at 0 and the pile on the profile's defaults |
+| `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF, kits at 0 and the pile on the profile's defaults. **The card is placed at the top-left of the room on this ONE frame** — a first-render placement race that predates the per-band arc, confirmed by rendering the pre-arc client in the same environment; every later frame centres |
 | `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter — and the commit control reads `Set out` with a budget still unspent, with the word `forfeit` absent from the whole card |
 | `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the commit control's face UNMOVED from the frame above |
 | `starting_loadout_dismissed` | the dismissed state leaves a live reopen control on screen rather than nothing at all |
 | `starting_loadout_resent` | ⛔ **a commit shuts nothing.** The still-open frame the sim really sends after an accepted order, reopened: the card comes back CLEAN — no refusal, no forfeiture claim, every pick intact — and the same control then re-sends a revised allocation |
 | `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not outfitted` / `1 unit unspent` and wearing `Open ▸` |
 | `starting_loadout_orb_ready` | the same orb BLUE with everything picked, reading `Band outfitted` / `everything is picked` — **still present, still `Open ▸`**, which is what says a dismissed card is reachable right up to the advance |
+
+### The TAKE arc is APPENDED, never interleaved
+
+The three take blocks run after the orb states and before the shut, and that order is load-bearing:
+every state above them renders with exactly ONE window open, and `_orb_states` asserts the loadout row
+is the orb's only entry — a second window opened earlier would make those two frames evidence of
+somebody else's row.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout_take` | a split's splinter stands its OWN card up; the subtitle names the home band; the meters read `left at home` and never the grant's `/ 30 left`; the resources column lists what the HOME BAND holds — `clay` included, which the profile never offered — so a card drawing the pick list fails on the row list alone; and ⛔ **the card opens on the split's DEFAULT TAKE rather than at zero**, asserted row by row (a kit the take does not name still opens at 0, or "opens on the standing take" passes on a column that put one number on every row) |
+| — (PNG-less, on the same card) | ⛔ **an untouched `Set out` re-sends exactly what is shown.** The claim is the composed ORDER, read off the HUD's own `set_starting_loadout_requested`, because the card showing the right numbers and the commit sending them are two different things. While the card opened EMPTY this same press ordered *take nothing* and handed the splinter's dowry back, an apply being a replacement. The card is then reopened through its pill with the picks intact, which is what the cap walk moves |
+| `starting_loadout_take_capped` | ⛔ **the cap is the EXPANDED item list.** `big_game` stops at the SLED (five) rather than at its own six spears, `trapping` is then capped at zero with four traps still at home, and giving two sleds back frees it again — the one claim a per-row cap passes every other assertion on |
+| `starting_loadout_bands` | two open windows, two orb rows, two tabs — and pressing the HOME band's tab renders its GRANT again, meters and all. It is one of the two ways to a second band's card; the row's own `Open ▸` is the other, and has its own claim below |
+
+**THE SUPPLY IS AIMED AT THE SHARED ITEM.** Sleds are the scarcest line on purpose, so the failure
+worth catching — two kit rows capped independently — is the one the fixture produces; and the walk
+takes it from BOTH sides, since a per-row cap gets the release wrong as well as the exhaustion.
+
+**THE FIXTURE'S DEFAULT TAKE IS INSIDE ITS OWN SUPPLY, by construction** — the sim publishes
+`holdings + this take's standing units`, so the two standing `big_game` kits are already counted in
+the six spears and five sleds, and the walk still reaches the same sled-bound ceiling of five. A
+fixture whose supply excluded its own standing take would be one no server can send.
+
+**Sabotage-verified**: with the take's accepted rows ignored at the seed (the card back to opening
+empty), exactly **seven** claims fail — both meter readings, both standing-row readings, both halves
+of the composed order (`({ })`, the forfeit order literally) and the reopen — while the band-id claim
+and every cap claim correctly stay green.
+
+⛔ **A ROW META IS READ BACK AS TEXT, so `str()` and never `String()`.** The band tab's meta is a band
+id, and `String(<int>)` is not a constructor GDScript offers — it RAISES, which ABORTS the chapter
+rather than failing a claim. It cost a run: the tab claims came back `[]` with two `SCRIPT ERROR`s
+above them. The panel stamps the id as text and the chapter's two finders use `str()`.
+
+**THE TAKE'S ORB ROW IS ASSERTED ON ITS DETAIL, not its label.** Both arms carry the same two labels
+whatever the wording is, and the claim is that a take leads with its OWN band and NEVER says
+`unspent` — what a grant leaves unspent is gone on the advance and what a take leaves is not.
+
+### The orb's three live defects (the same reported screen)
+
+Two frames and eleven claims appended after the switcher block, before the shut.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout_orb_bands` | **the reported popover, fixed** — two loadout rows LEADING with different bands (`Brackwater — everything is picked` / `Thornhollow — 3 kits, 4 resources`) where the report showed the same sentence twice, both still wearing `Open ▸` |
+| `starting_loadout_over_budget` | the reported CARD — `-2 / 12 left` and `-6 / 22 left` on one band, which is what the row beside it must not call done |
+
+- **The `Open ▸` claim is a PRESS, not a reading.** Both rows wear the affordance whatever it reaches,
+  so the row's own button is pressed (`Q.turn_orb_popover_rows` hands the `button` back for exactly
+  this) and the SUBJECT is read off the card. The block runs with the card left on the HOME band by
+  the switcher block, asserted as a precondition — a press that ignored the row's subject would leave
+  it there and pass every wording claim on the screen.
+- **The over-budget state is staged the only way a client can reach it**: the SIM publishes an
+  allocation over the band's budget. The card draws a published allocation as-is (a second clamp here
+  would disagree with the sim's own), so the meter goes negative exactly as it did on the reported
+  screen — and the frame's first claim is that it really does read `-6 / 22 left`, without which the
+  row's claim is about a band that is merely unspent.
+- **The two overspends are different sizes in different currencies** (2 kits, 6 resources), so a
+  detail reporting one for the other lands on the wrong number rather than on a coincidence.
+
+**Sabotage-verified** by returning `_over_allowance` to `false` (the `remaining <= 0` regime): exactly
+**four** claims fail, and the detail comes back reading `Windmere — everything is picked` at `ready`
+— the reported defect, in its own words — while the card's meter precondition and the auto-open claim
+correctly stay green, being about a different layer.
+
+**A clean run is 425 frames / 2008 `PASS`, exit 0 — MEASURED, with the pre-arc client MEASURED beside
+it at 420 / 1968** in the same environment (the swap-the-changed-files-to-the-merge-base method above):
+three frames and twenty-three claims, which is this chapter's whole delta. That baseline is also what
+attributed `starting_loadout.png`'s top-left placement to a race that predates the arc.
 
 **THE TWO ORB FRAMES ARE A PAIR TOO, and the same argument applies**: either alone passes on an orb
 whose accent never moves, so both are taken on one registry with only the allocation between them.

@@ -121,8 +121,12 @@ pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> 
         .collect()
 }
 
-/// **What the turn-one loadout picker needs to draw itself** — the window's two budgets, the
-/// profile's pick list and its pre-fill, and the recipes this faction could put on a bench today.
+/// **The CAMPAIGN-WIDE half of what a loadout picker needs** — the profile's pick list, its two
+/// pre-fills, and the recipes this faction could put on a bench today.
+///
+/// **The per-band half is `PopulationCohortState.loadoutWindow`**: whether *this* band's window is
+/// open, and what caps it. Every band gets a window and a splinter's budgets are not the spawned
+/// band's, so nothing here may be read as a statement about a particular band.
 ///
 /// The **kit roster is deliberately not here**: it already rides
 /// `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
@@ -130,16 +134,13 @@ pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> 
 /// alternative is sniffing a craft offer's *refusal sentence* — turning a player-facing string into
 /// a machine contract.
 pub(crate) fn snapshot_opening_loadout(
-    window: &crate::starting_loadout::StartingLoadout,
+    loadout_windows: &crate::starting_loadout::StartingLoadout,
     profile: &crate::start_profile::StartProfile,
     recipes: &crate::recipes_config::RecipesConfig,
     known_crafts: &BTreeMap<String, bool>,
 ) -> OpeningLoadoutState {
     let loadout = &profile.overrides().opening_loadout;
     OpeningLoadoutState {
-        open: window.open,
-        kit_budget: window.kit_budget,
-        material_budget: window.material_budget,
         pickable_materials: loadout.pickable_materials.clone(),
         material_defaults: loadout
             .material_defaults
@@ -168,11 +169,25 @@ pub(crate) fn snapshot_opening_loadout(
         // captured frame. One rule, one helper, two callers.
         kit_defaults: crate::starting_loadout::clamped_kit_defaults(
             &loadout.kit_defaults,
-            window.kit_budget,
+            opening_kit_budget(loadout_windows),
         )
         .0
         .into_iter()
         .map(|(kit_id, count)| OpeningKitDefaultState { kit_id, count })
         .collect(),
     }
+}
+
+/// **The budget the campaign's kit pre-fill is fitted to: the OPENING band's.**
+///
+/// The pre-fill is the *opening* suggestion, so it is drawn against the window the world build
+/// stamped — the lowest-id band still holding a grant. A world whose windows have all shut publishes
+/// nothing, which needs no special case: `clamped_kit_defaults` floors every row against a budget of
+/// zero, and a picker is only drawn while some window is open anyway.
+fn opening_kit_budget(loadout_windows: &crate::starting_loadout::StartingLoadout) -> u32 {
+    loadout_windows
+        .iter()
+        .find(|(_, window)| window.grants())
+        .map(|(_, window)| window.supply.kit_budget())
+        .unwrap_or_default()
 }

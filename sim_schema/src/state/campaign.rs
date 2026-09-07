@@ -352,20 +352,20 @@ pub struct VictorySnapshotState {
 
 /// **The turn-one outfitting window, as the picker draws it.**
 ///
-/// A spawning band owns nothing, so this window is the one source of a campaign's starting gear and
-/// material. It is open from world build until the first turn advance, and unspent budget is
-/// forfeited.
+/// A spawning band owns nothing, so the opening window is the one source of a campaign's starting
+/// gear and material. What lives here is the **campaign-wide** half — the profile's pick list, its
+/// two pre-fills, and what this faction could bench today.
+///
+/// **The per-band half is [`super::PopulationCohortState::loadout_window`]**: whether *this* band's
+/// window is open, and what caps it. Every band gets one, and a splinter's budgets are not the
+/// spawned band's, so `open` / `kit_budget` / `material_budget` were deleted from here rather than
+/// duplicated.
 ///
 /// **The kit roster is deliberately absent** — it already rides
 /// `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
 /// `craftOffers` rows. A second copy of either would be a second wire contract for one fact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct OpeningLoadoutState {
-    pub open: bool,
-    /// One per working-age hand of the starting band — **derived from the band, never configured**.
-    pub kit_budget: u32,
-    /// `start_profiles.json` `opening_loadout.material_points`. One point buys one unit.
-    pub material_budget: u32,
     #[serde(default)]
     pub pickable_materials: Vec<String>,
     #[serde(default)]
@@ -375,8 +375,8 @@ pub struct OpeningLoadoutState {
     /// a refusal string to work out which bench tools are still gated.
     #[serde(default)]
     pub craftable_recipe_ids: Vec<String>,
-    /// The kit column's pre-fill, **already clamped to [`Self::kit_budget`]** — that budget is the
-    /// spawned band's head count rather than a config number, so the sim fits the profile's
+    /// The kit column's pre-fill, **already clamped to the spawned band's kit budget** — that
+    /// budget is that band's head count rather than a config number, so the sim fits the profile's
     /// suggestion to it and a client draws these counts as they arrive.
     #[serde(default)]
     pub kit_defaults: Vec<OpeningKitDefaultState>,
