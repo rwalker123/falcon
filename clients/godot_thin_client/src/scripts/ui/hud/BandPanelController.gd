@@ -6977,9 +6977,13 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
 
 ## **The SPLIT form** (`docs/plan_band_fission.md` §Q6) — one stepper, two readouts and a verdict.
 ##
-## **THE PLAYER PICKS ONE NUMBER and everything else divides on the share it implies**, so there is
-## nothing else to ask. What the sheet spends its room on instead is the consequence: what the new
-## band would be, and what this one would be left as.
+## **THE PLAYER PICKS ONE NUMBER HERE, AND THE GEAR IS PICKED SOMEWHERE ELSE.** The share the worker
+## count implies still divides the people, the larder and the material by itself, which is what these
+## two readouts show. What it no longer settles is the new band's OUTFIT: since the per-band loadout
+## arc a split opens an outfitting window on the splinter, standing at the proportional take it was
+## just handed and revisable until the turn advances
+## (`.claude/rules/client/starting-loadout.md`). So this sheet asks its one question, and the note
+## under the button says where the other one is answered.
 func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
     var pool := _split_worker_pool(band)
     _split_workers = clampi(_split_workers, HudConst.WORKER_STEP, pool)

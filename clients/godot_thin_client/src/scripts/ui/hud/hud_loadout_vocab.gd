@@ -1,6 +1,6 @@
 class_name HudLoadoutVocab
 
-## The OPENING LOADOUT picker's vocabulary leaf (issue #629) — the wire keys it reads, the words it
+## The OUTFITTING picker's vocabulary leaf (issue #629) — the wire keys it reads, the words it
 ## says, and the geometry it is laid out on. A DECLARATION BLOCK exactly like `HudCraftingVocab` and
 ## its siblings: a new label, format or measurement goes HERE rather than as a fresh `const` on the
 ## panel, which is the rule that keeps a panel's const block from regrowing into a merge-conflict
@@ -20,16 +20,11 @@ class_name HudLoadoutVocab
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
-# ---- the wire's own keys ------------------------------------------------------------------------
+# ---- the wire's own keys: THE CAMPAIGN'S HALF ----------------------------------------------------
 # `CampaignSection.openingLoadout`, decoded onto the snapshot dict as `opening_loadout`
-# (`native/src/dict/campaign.rs`).
+# (`native/src/dict/campaign.rs`). It is one per WORLD: the pick list and the two pre-fills, and
+# nothing that is true of one band.
 
-## False once the window has shut. The picker draws nothing and the sim refuses the command.
-const OPEN_KEY := "open"
-## One kit per working-age hand of the starting band — derived sim-side, never configured.
-const KIT_BUDGET_KEY := "kit_budget"
-## `start_profiles.json` `opening_loadout.material_points`. One point buys one unit.
-const MATERIAL_BUDGET_KEY := "material_budget"
 ## The pick list, in the order the profile declares it — **and that order is also the draw order**,
 ## shared by the resources column and the legend, so the two cannot disagree.
 const PICKABLE_MATERIALS_KEY := "pickable_materials"
@@ -50,6 +45,59 @@ const KIT_DEFAULT_COUNT_KEY := "count"
 ## by sniffing a craft offer's refusal SENTENCE — that would make a player-facing string into a
 ## machine contract.
 const CRAFTABLE_RECIPE_IDS_KEY := "craftable_recipe_ids"
+
+# ---- the wire's own keys: ONE BAND'S WINDOW ------------------------------------------------------
+# `PopulationCohortState.loadoutWindow`, decoded onto each cohort dict as `loadout_window`
+# (`native/src/dict/population.rs`). **EVERY BAND GETS ONE** — the spawned band's, and one on every
+# splinter a split makes — so the budgets and the open flag are facts about a BAND and were deleted
+# from the campaign section above rather than deprecated in it.
+
+## The window, on the cohort dict. Absent means this band has nothing to outfit.
+const WINDOW_KEY := "loadout_window"
+## The band's DURABLE id, on the cohort dict — the handle `set_starting_loadout` names, never
+## `entity`, which is ECS allocation state a rollback renumbers.
+const BAND_ID_KEY := "band_id"
+## False once THIS band's window has shut. It shuts on the turn advance and on nothing else, so it is
+## never a success signal: a committed order leaves it open, which is what lets a pick be revised.
+const OPEN_KEY := "open"
+## One kit per working-age hand of the band — derived sim-side, never configured. `0` on a TAKE
+## window, which mints nothing.
+const KIT_BUDGET_KEY := "kit_budget"
+## `start_profiles.json` `opening_loadout.material_points`. One point buys one unit; `0` on a take.
+const MATERIAL_BUDGET_KEY := "material_budget"
+## ⛔ **WHICH OF THE TWO WINDOWS THIS IS, and it decides everything the card draws.**
+## `GRANT_PARENT_BAND_ID` means the picks MINT against the two budgets above. Anything else is the
+## id of the band this take is drawn FROM: the picks MOVE gear out of that band's ledger, the budgets
+## are `0` and mean nothing, and the cap is the two supplies below.
+const PARENT_BAND_ID_KEY := "parent_band_id"
+## The value of [PARENT_BAND_ID_KEY] on a grant window. `0` is "no band" throughout this client.
+const GRANT_PARENT_BAND_ID := 0
+## **THE ACCEPTED ALLOCATION** — the rows this band's last accepted order named, in the pre-fills' own
+## row shape, and **what the card opens on**. Empty only for a grant window nobody has ordered against
+## yet, which is what makes the campaign pre-fill that window's seed.
+##
+## ⛔ **A FRESH SPLINTER'S ARE NOT EMPTY.** The split's default take is kit-denominated and published
+## here, so the take card opens on the allocation the band is already standing on and an untouched
+## `Set out` re-sends it unchanged — an exact no-op. While these were empty on a splinter (the take
+## being a bare per-item manifest then), that same press ordered *take nothing* and handed the whole
+## dowry back to the parent, an apply being a REPLACEMENT.
+const WINDOW_KITS_KEY := "kits"
+const WINDOW_MATERIALS_KEY := "materials"
+## ⛔ **A TAKE'S CAP, PER ITEM — AND A KIT ROW CANNOT BE CAPPED ON ITS OWN AGAINST IT.** `sled` is
+## used by both `big_game` and `trapping`, so five of each needs TEN sleds: the order has to be
+## EXPANDED to items and the whole expansion checked against this, which is what the sim refuses on.
+## Each row is already `the parent's holdings + this take's standing units`, so a revision from 3 to
+## 5 is not refused for the 3 that already moved. Empty on a grant window.
+##
+## **It lists only items some kit carries.** `bone_awl`, `loom` and `tanning_frame` are the three no
+## kit `uses` — the knowledge-gated bench tools — and shop equipment stays with the workshop that
+## built it rather than walking out with a splinter, so a client is never told they are claimable and
+## never has to re-derive that filter.
+const PARENT_ITEM_SUPPLY_KEY := "parent_item_supply"
+## The material twin, in whole units — the currency the command spends.
+const PARENT_MATERIAL_SUPPLY_KEY := "parent_material_supply"
+const SUPPLY_ID_KEY := "id"
+const SUPPLY_UNITS_KEY := "units"
 
 # The KIT ROSTER rides `SubsistenceSection.equipmentConfigJson` and the RECIPE COSTS ride
 # `SubsistenceSection.recipes`; neither is copied into the loadout section, so the picker joins onto
@@ -75,12 +123,22 @@ const RECIPE_INPUT_AMOUNT_KEY := "amount"
 
 # ---- the words ----------------------------------------------------------------------------------
 
+## The title of a card whose band has no name (only reachable from a hand-built fixture — the sim
+## always names a band).
 const PANEL_TITLE := "Outfit the band"
+## **THE CARD NAMES ITS BAND, because there can be more than one window open at once.** A split opens
+## a window on the splinter while the parent's may still be open, and a title that said only
+## *"the band"* would leave the player composing an order for a band they cannot identify.
+const PANEL_TITLE_FORMAT := "Outfit %s"
 ## **THE CARD MAKES NO FORFEITURE CLAIM, and this line is where one used to be.** It read
 ## *"…and anything unspent is lost when the turn advances"*; the unspent warning lives on the TURN
 ## ORB, which is the surface that already counts down to the thing that causes it, and a second copy
 ## on the card was both a duplicate and the longest sentence on the screen.
 const PANEL_SUBTITLE := "What your people carry when they set out."
+## **THE TAKE'S SUBTITLE, and the one fact that separates it from a grant**: this gear is not minted,
+## it walks out of the home band's own ledger. Ray's register — one short declarative, one fact — and
+## it names the band so the sentence answers *whose* without a second clause.
+const PANEL_SUBTITLE_TAKE_FORMAT := "What they take from %s."
 
 const KITS_HEAD := "Kits"
 ## **THE NOTES SAY WHAT THE COLUMN IS FOR AND NOTHING ELSE.** Each of these three replaced a sentence
@@ -101,6 +159,11 @@ const BUILDS_NOTE := ""
 ## The budget meters say the REMAINDER and nothing else. A second clause ("28 of 30 packed") is the
 ## same fact subtracted from itself, and the bar beside it already draws the spent half.
 const BUDGET_REMAINING_FORMAT := "%d / %d left"
+## ⛔ **A TAKE HAS NO BUDGET, SO ITS METER READS THE HOME BAND'S SUPPLY** — and what is left of it is
+## not forfeited when the turn advances, it simply stays where it is. Hence *"left at home"* rather
+## than the grant's bare *"left"*: the grant's remainder is lost on the advance and the orb says so,
+## and reusing that wording here would state a loss that does not happen.
+const SUPPLY_REMAINING_FORMAT := "%d / %d left at home"
 
 ## `Hunt · Builders` over `Spears, Sled` — the jobs a kit may be sent on, then what it puts in hands.
 const KIT_JOBS_SEPARATOR := " · "
@@ -146,6 +209,14 @@ const FOOTER_NOTE := "The turn orb reopens this. Ending the turn closes it for g
 const COMMIT_CLEAR_LABEL := "Set out"
 const COMMIT_TOOLTIP := "You can change this until you end the turn."
 
+## **THE BAND SWITCHER, drawn ONLY while more than one window is open.** One button per band with an
+## open window; the subject's is pressed. It earns no row in the ordinary single-window case, and it
+## is the only way to reach a second band's card — the turn orb's row carries a KIND and no band, so
+## its `Open ▸` can only ever bring back whichever band the card is already on.
+const BAND_TAB_TOOLTIP_FORMAT := "Outfit %s."
+const BAND_TAB_SEPARATION := 6
+const BAND_TAB_FONT_SIZE := 11
+
 ## The window is dismissible so the player can pan, zoom and read tiles before committing — the sim
 ## keeps it open until the turn advances, and this control is how it comes back.
 const DISMISS_GLYPH := "✕"
@@ -182,6 +253,20 @@ const ATTENTION_DETAIL_UNITS_MANY := "%d resources unspent"
 ## Both budgets are clear. It reads as a statement of fact rather than as an instruction, because at
 ## this point there is nothing the player still has to do.
 const ATTENTION_DETAIL_READY := "everything is picked"
+
+## ⛔ **A TAKE FORFEITS NOTHING, SO ITS ROW NEVER SAYS `unspent`.** What a grant leaves unspent is
+## gone on the turn advance, which is the whole reason that word is on the orb; supply a take leaves
+## behind just stays with the home band. So the take's arms report what IS taken, and the empty one
+## says nothing has been yet — both naming the home band, since two open windows otherwise put two
+## identically-worded rows on one popover.
+const ATTENTION_DETAIL_TAKE_KITS_ONE := "1 kit"
+const ATTENTION_DETAIL_TAKE_KITS_MANY := "%d kits"
+const ATTENTION_DETAIL_TAKE_RESOURCES_ONE := "1 resource"
+const ATTENTION_DETAIL_TAKE_RESOURCES_MANY := "%d resources"
+## `3 kits, 12 resources from Ash Hollow`.
+const ATTENTION_DETAIL_TAKE_FROM_FORMAT := "%s from %s"
+## …and the arm with no order standing yet.
+const ATTENTION_DETAIL_TAKE_NONE_FORMAT := "nothing from %s yet"
 
 # ---- geometry (measured, not guessed — every number here is read back off a rendered frame) ------
 
@@ -245,6 +330,7 @@ const UNREACHABLE_ALPHA := 0.45
 
 # ---- meta handles (a harness asks a CONTROL, never a subtree's text) -----------------------------
 
+const BAND_TAB_META := &"loadout_band_tab"
 const KIT_ROW_META := &"loadout_kit_row"
 const MATERIAL_ROW_META := &"loadout_material_row"
 const RECIPE_ROW_META := &"loadout_recipe_row"

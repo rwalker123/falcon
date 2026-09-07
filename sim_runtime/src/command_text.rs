@@ -192,8 +192,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "set_starting_loadout",
         aliases: &[],
-        summary: "COMPOSE THE OPENING LOADOUT, the ONE source of a faction's starting gear and material - a spawning band owns nothing at all. Two budgets: one KIT per working-age hand of the starting band (derived from the band, never configured), and the start profile's material points, where one point buys one unit. Every item a named kit uses lands 'count' times, so two kits sharing an item ADD. Anything unspent when the first turn advances is forfeited. It fails CLOSED and WHOLE: a closed window, an unknown kit, a kit that carries nothing, a material the profile does not offer, a repeated line, or either budget overspent rejects the entire order and changes nothing.",
-        usage: "set_starting_loadout <faction_id> [kit <kit_id> <count>]... [material <material_id> <units>]...",
+        summary: "OUTFIT ONE BAND, the ONE source of gear and material - a spawning band owns nothing at all. EVERY BAND GETS A WINDOW, not just the one that spawned: a band that splits hands its splinter one, pre-filled with the proportional share the split already gives its people and food. A window stays open until the turn advances, and an order REPLACES the last one rather than adding to it. WHAT A PICK COSTS DEPENDS ON THE BAND'S WINDOW. A grant window MINTS: one KIT per working-age hand (derived from the band, never configured) and the start profile's material points, one point per unit. A window a split opened on a parent with no grant left MOVES: the gear comes out of the parent's own ledger and the cap is what the parent can supply. Every item a named kit uses lands 'count' times, so two kits sharing an item ADD. Anything unspent when the turn advances is forfeited. It fails CLOSED and WHOLE: a closed window, an unknown kit, a kit that carries nothing, a material the profile does not offer, a repeated line, a budget overspent, a pick the home band cannot cover, or a revision that would strand a take a further split already moved rejects the entire order and changes nothing.",
+        usage: "set_starting_loadout <faction_id> <band_id> [kit <kit_id> <count>]... [material <material_id> <units>]...",
     },
     CommandVerbHelp {
         verb: "clear_bench",
@@ -995,6 +995,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            // **The band is POSITIONAL and REQUIRED**, on `set_bench`'s shape: every band has a
+            // window of its own, so there is no "the faction's band" to default to.
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
             let mut kits: Vec<crate::StartingKitAllocation> = Vec::new();
             let mut materials: Vec<crate::StartingMaterialAllocation> = Vec::new();
             while let Some(token) = parts.next() {
@@ -1028,6 +1033,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             }
             Ok(CommandPayload::SetStartingLoadout {
                 faction_id: parse_u32(faction_str, "set_starting_loadout faction")?,
+                band_id: parse_u64(band_str, "set_starting_loadout band_id")?,
                 kits,
                 materials,
             })
@@ -3366,11 +3372,12 @@ mod tests {
     fn parse_set_starting_loadout_reads_kits_and_materials() {
         assert_eq!(
             parse_command_line(
-                "set_starting_loadout 0 kit big_game 6 kit trapping 3 material bone 3 material fibre 17"
+                "set_starting_loadout 0 4 kit big_game 6 kit trapping 3 material bone 3 material fibre 17"
             )
             .unwrap(),
             CommandPayload::SetStartingLoadout {
                 faction_id: 0,
+                band_id: 4,
                 kits: vec![
                     crate::StartingKitAllocation {
                         kit_id: "big_game".to_string(),
@@ -3400,9 +3407,10 @@ mod tests {
     #[test]
     fn parse_set_starting_loadout_accepts_an_empty_allocation() {
         assert_eq!(
-            parse_command_line("set_starting_loadout 0").unwrap(),
+            parse_command_line("set_starting_loadout 0 4").unwrap(),
             CommandPayload::SetStartingLoadout {
                 faction_id: 0,
+                band_id: 4,
                 kits: Vec::new(),
                 materials: Vec::new(),
             }
@@ -3412,11 +3420,11 @@ mod tests {
     #[test]
     fn parse_set_starting_loadout_refuses_a_token_it_does_not_know() {
         assert!(matches!(
-            parse_command_line("set_starting_loadout 0 gear big_game 1"),
+            parse_command_line("set_starting_loadout 0 4 gear big_game 1"),
             Err(CommandParseError::UnexpectedArgument(token)) if token == "gear"
         ));
         assert!(matches!(
-            parse_command_line("set_starting_loadout 0 kit big_game"),
+            parse_command_line("set_starting_loadout 0 4 kit big_game"),
             Err(CommandParseError::MissingArgument(
                 "set_starting_loadout kit count"
             ))

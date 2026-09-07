@@ -384,6 +384,13 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),
+        // ⛔ **AND THE OUTFITTING ORDER NAMES ONE TOO, positionally and REQUIRED.** Every band gets a
+        // window of its own — the spawned band's grant, and a take on the home band for every
+        // splinter a split makes — so there is no "the faction's band" to fall back on, and the
+        // handle is wrapped here rather than optional. It is the substitution this whole gate exists
+        // for: the picker holds the band's ECS `entity` beside its `band_id`, and a line carrying
+        // the wrong one parses perfectly and outfits nobody.
+        CommandPayload::SetStartingLoadout { band_id, .. } => Some(*band_id),
         // **THE QUEUE BELONGS TO A BAND, so its reorder names one** — and its handle is REQUIRED
         // rather than optional, which is why it is wrapped here (`docs/plan_standing_upkeep.md`
         // §4.7b ③).

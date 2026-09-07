@@ -1809,8 +1809,14 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
         "message": "Put %s on the bench." % recipe_id,
     }
 
-## **`set_starting_loadout <faction_id> [kit <kit_id> <n>]... [material <material_id> <n>]...`** —
-## compose the opening loadout, the ONE source of a faction's starting gear and material.
+## **`set_starting_loadout <faction_id> <band_id> [kit <kit_id> <n>]... [material <material_id>
+## <n>]...`** — compose ONE BAND's outfitting window, the ONE source of a campaign's starting gear
+## and material.
+##
+## **THE BAND IS POSITIONAL AND REQUIRED**, `set_bench`'s shape: every band gets a window of its own
+## — the spawned band's grant, and a take on the home band for every splinter a split makes — so
+## there is no "the faction's band" to default to. It is the durable `band_id`, never the ECS
+## `entity`, for the reason every band-addressed verb here names one (`cargo xtask command-guard`).
 ##
 ## **A NAMED TAIL, NOT A POSITIONAL LIST**, and that is the grammar's own shape: a loadout has no
 ## fixed arity, and kits and materials are two id namespaces sharing one token space, so a bare list
@@ -1824,7 +1830,8 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
 ## which is the one place this formatter deliberately departs from its neighbours above.
 static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
-    var parts: Array[String] = ["set_starting_loadout %d" % faction]
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var parts: Array[String] = ["set_starting_loadout %d %d" % [faction, band_id]]
     var kits := 0
     for entry_variant in payload.get("kits", []):
         if not (entry_variant is Dictionary):
@@ -2105,9 +2112,11 @@ func _on_hud_clear_bench(payload: Dictionary) -> void:
 func _on_hud_bench_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_priority(payload))
 
-## Compose the opening loadout. **No optimistic write**, deliberately: the verb fails CLOSED and
-## WHOLE, and the HUD already treats the next frame's `opening_loadout.open` as the answer — a local
-## write here would be a second, disagreeing one.
+## Compose one band's outfitting order. **No optimistic write**, deliberately: the verb fails CLOSED
+## and WHOLE, and what answers it is the band's own published state on the recapture this command
+## triggers — after a success that IS the allocation just sent. A local write here would be a second,
+## disagreeing one. (`loadout_window.open` is not that answer: a commit never closes a window, so it
+## reads true after a refusal and after a success alike.)
 func _on_hud_set_starting_loadout(payload: Dictionary) -> void:
     _send_formatted_command(format_set_starting_loadout(payload))
 

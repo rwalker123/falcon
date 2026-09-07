@@ -1,16 +1,23 @@
 extends AutoSizingPanel
 class_name StartingLoadoutPanel
 
-## **THE OPENING LOADOUT PICKER** (issue #629) — the turn-one outfitting screen, composed AFTER the
-## player has seen the generated map. A spawning band owns nothing at all (`equipment.json` ships
+## **THE OUTFITTING PICKER** (issue #629) — the screen a band is composed on, AFTER the player has
+## seen the generated map. A spawning band owns nothing at all (`equipment.json` ships
 ## `start_stock_fraction: 0.0` and no material declares a start stock), so this window is the ONE
 ## source of a campaign's starting gear and material.
+##
+## **IT DRAWS ONE BAND'S WINDOW, AND THERE CAN BE SEVERAL.** Every band gets one — the spawned band's
+## GRANT, whose picks mint against two budgets, and a TAKE on the home band for every splinter a
+## split makes, whose picks move gear out of that band's ledger. `PAYLOAD_IS_TAKE` is which, and the
+## only differences on screen are what the two meters read against and what the subtitle says; the
+## band switcher across the header is how the player reaches the other card.
 ##
 ## **IT IS A READOUT AND A WRITE SURFACE AT ONCE, AND THE READOUT IS THE POINT.** Two budgets sit
 ## side by side because they buy different things out of one decision — hands carrying gear, and a
 ## pile to build gear FROM — and the third column is the only place a player can see what the second
 ## budget is actually worth. Its counts answer *"how many could I make if I spent the whole pile on
-## this one thing"*, never a simultaneous build plan; `BUILDS_NOTE` is that sentence, on screen.
+## this one thing"*, never a simultaneous build plan — which the column's own head says by naming its
+## subject, the `×N` beside each row being the rest of the explanation.
 ##
 ## **NOTHING HERE IS BLOCKING.** The window closing is the SIM's business — it shuts on the first
 ## turn advance whether or not an order was sent — so this panel warns and never prevents. It is
@@ -43,6 +50,10 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 signal dismissed
 ## The reopen pill was pressed.
 signal reopened
+## A band tab was pressed: render THAT band's window instead. Emitted for the subject's own tab too —
+## the controller's `open_band` is idempotent, and suppressing it here would put the decision about
+## what a press means in the renderer.
+signal band_selected(band_id: int)
 ## A kit's stepper moved: the kit's id and the count it should now stand at. **The panel never
 ## clamps** — the controller owns the budget and answers with a fresh payload.
 signal kit_count_changed(kit_id: String, count: int)
@@ -53,11 +64,30 @@ signal commit_requested
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 
-## `[{id, display_name, jobs, uses, count}]` — the kit roster in the config's own order, `none`
-## already excluded, each row carrying the count it currently stands at.
+## The card's own head — `Outfit <band>`, composed by the controller so the words stay in the vocab
+## leaf and the band's NAME stays with the client's one naming rule.
+const PAYLOAD_TITLE := "title"
+## …and the line under it, which is where a take says the gear comes out of the home band.
+const PAYLOAD_SUBTITLE := "subtitle"
+## `[{band_id, label, subject}]` — every band with an open window, in the roster's own order. **The
+## switcher is drawn only for two or more**: naming the only band there is teaches nothing and costs
+## a row.
+const PAYLOAD_BANDS := "bands"
+## ⛔ **WHICH WINDOW THIS IS.** `false` is the GRANT — two point budgets, picks that mint. `true` is a
+## TAKE on the home band: the meters read against what that band can supply, and what is left of it
+## is not forfeited on the turn advance but simply stays there, which is why the two meters carry
+## different words.
+const PAYLOAD_IS_TAKE := "is_take"
+## `[{id, display_name, jobs, uses, count, can_add}]` — the kit roster in the config's own order,
+## `none` already excluded, each row carrying the count it currently stands at.
+##
+## ⛔ **`can_add` IS PER ROW BECAUSE A TAKE'S CAP IS PER ITEM.** `sled` is used by both `big_game` and
+## `trapping`, so one row can be exhausted while the next is still free — the panel never re-derives
+## it from the meter, which on a take is a sum over items no single row is bounded by.
 const PAYLOAD_KITS := "kits"
-## `[{id, label, color, units}]` — one row per pickable material, in the profile's own order, each
-## already carrying its swatch so the legend and the recipe rows cannot resolve a different one.
+## `[{id, label, color, units, can_add}]` — one row per material this window may pick, in the
+## published order, each already carrying its swatch so the legend and the recipe rows cannot resolve
+## a different one.
 const PAYLOAD_MATERIALS := "materials"
 ## `[{id, display_name, work, count, inputs}]` — the craftable recipes, reachable first, where
 ## `inputs` is `[{material_id, amount, color}]`.
@@ -67,6 +97,10 @@ const PAYLOAD_KIT_BUDGET := "kit_budget"
 const PAYLOAD_MATERIAL_BUDGET := "material_budget"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
+
+## How many open windows it takes before the band switcher earns its row. One window is the ordinary
+## case and a tab naming the only band there is says nothing the title does not.
+const BAND_TABS_MIN_ROWS := 2
 
 var _card: PanelContainer = null
 var _pill: Button = null
@@ -318,7 +352,7 @@ func _build_header() -> void:
 	var title_row := HBoxContainer.new()
 	title_row.add_theme_constant_override("separation", HudLoadoutVocab.HEADER_SEPARATION)
 	var title := Label.new()
-	title.text = HudLoadoutVocab.PANEL_TITLE.to_upper()
+	title.text = String(_payload.get(PAYLOAD_TITLE, HudLoadoutVocab.PANEL_TITLE)).to_upper()
 	title.add_theme_font_size_override("font_size", HudLoadoutVocab.TITLE_FONT_SIZE)
 	title.add_theme_color_override("font_color", HudStyle.INK)
 	title_row.add_child(title)
@@ -337,8 +371,44 @@ func _build_header() -> void:
 	title_row.add_child(dismiss)
 	_header.add_child(title_row)
 
-	_header.add_child(_caption(HudLoadoutVocab.PANEL_SUBTITLE, HudStyle.INK_DIM,
+	_header.add_child(_caption(String(_payload.get(PAYLOAD_SUBTITLE,
+		HudLoadoutVocab.PANEL_SUBTITLE)), HudStyle.INK_DIM,
 		HudLoadoutVocab.SUBTITLE_FONT_SIZE, true))
+	_build_band_tabs()
+
+## **THE SWITCHER, AND IT IS THE ONLY WAY TO A SECOND BAND'S CARD.** The turn orb's row carries a
+## KIND and no band, so its `Open ▸` can only bring back whichever band the card is already on — with
+## two windows open and no switcher, one of them would be unreachable once dismissed.
+##
+## It draws nothing at all for a single window, which is every ordinary turn: a lone tab naming the
+## only band there is would be a row of chrome saying what the title already says.
+func _build_band_tabs() -> void:
+	var bands: Array = _payload.get(PAYLOAD_BANDS, [])
+	if bands.size() < BAND_TABS_MIN_ROWS:
+		return
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudLoadoutVocab.BAND_TAB_SEPARATION)
+	for band_variant in bands:
+		if not (band_variant is Dictionary):
+			continue
+		var band: Dictionary = band_variant
+		var band_id := int(band.get("band_id", 0))
+		var label := String(band.get("label", ""))
+		var tab := Button.new()
+		tab.text = label
+		tab.tooltip_text = HudLoadoutVocab.BAND_TAB_TOOLTIP_FORMAT % label
+		tab.focus_mode = Control.FOCUS_NONE
+		# **THE ID AS TEXT, like every other row meta on this card.** A harness reads a row's meta back
+		# as a string, and `String(<int>)` is not a constructor GDScript offers — it RAISES, which
+		# aborts the walk rather than failing a claim.
+		tab.set_meta(HudLoadoutVocab.BAND_TAB_META, str(band_id))
+		tab.add_theme_font_size_override("font_size", HudLoadoutVocab.BAND_TAB_FONT_SIZE)
+		# The subject wears the PRIMARY treatment and the others the ghost, the same "you are here"
+		# vocabulary every picker in this HUD uses. A `disabled` subject would read as unavailable.
+		HudStyle.apply_button(tab, "primary" if bool(band.get("subject", false)) else "ghost")
+		tab.pressed.connect(func() -> void: band_selected.emit(band_id))
+		row.add_child(tab)
+	_header.add_child(row)
 
 # ---- the three columns ------------------------------------------------------
 
@@ -356,21 +426,24 @@ func _build_columns(payload: Dictionary) -> void:
 func _build_kits_column(payload: Dictionary) -> Control:
 	var col := _column(HudLoadoutVocab.KITS_HEAD, HudLoadoutVocab.KITS_NOTE)
 	var budget: Dictionary = payload.get(PAYLOAD_KIT_BUDGET, {})
-	col.add_child(_budget_meter(HudLoadoutVocab.BUDGET_KITS, budget, _kit_bar_segments(budget)))
+	col.add_child(_budget_meter(HudLoadoutVocab.BUDGET_KITS, budget, _kit_bar_segments(budget),
+		bool(payload.get(PAYLOAD_IS_TAKE, false))))
 	var rows: Array = payload.get(PAYLOAD_KITS, [])
 	if rows.is_empty():
 		col.add_child(_caption(HudLoadoutVocab.EMPTY_NOTICE, HudStyle.INK_FAINT,
 			HudLoadoutVocab.ROW_NOTE_FONT_SIZE, true))
 		return col
-	var remaining := int(budget.get(BUDGET_TOTAL, 0)) - int(budget.get(BUDGET_SPENT, 0))
 	for row_variant in rows:
 		if row_variant is Dictionary:
-			col.add_child(_kit_row(row_variant as Dictionary, remaining > 0))
+			col.add_child(_kit_row(row_variant as Dictionary))
 	return col
 
-func _kit_row(row: Dictionary, can_add: bool) -> Control:
+## **THE ROW CARRIES ITS OWN `can_add`** — see `PAYLOAD_KITS`. Reading it off the meter was right
+## while every row shared one budget and is wrong the moment a take caps them per item.
+func _kit_row(row: Dictionary) -> Control:
 	var kit_id := String(row.get("id", ""))
 	var count := int(row.get("count", 0))
+	var can_add := bool(row.get("can_add", false))
 	var block := VBoxContainer.new()
 	block.add_theme_constant_override("separation", 0)
 	block.set_meta(HudLoadoutVocab.KIT_ROW_META, kit_id)
@@ -402,20 +475,20 @@ func _build_materials_column(payload: Dictionary) -> Control:
 	var budget: Dictionary = payload.get(PAYLOAD_MATERIAL_BUDGET, {})
 	var rows: Array = payload.get(PAYLOAD_MATERIALS, [])
 	col.add_child(_budget_meter(HudLoadoutVocab.BUDGET_MATERIALS, budget,
-		_material_bar_segments(rows, budget)))
+		_material_bar_segments(rows, budget), bool(payload.get(PAYLOAD_IS_TAKE, false))))
 	if rows.is_empty():
 		col.add_child(_caption(HudLoadoutVocab.EMPTY_NOTICE, HudStyle.INK_FAINT,
 			HudLoadoutVocab.ROW_NOTE_FONT_SIZE, true))
 		return col
-	var remaining := int(budget.get(BUDGET_TOTAL, 0)) - int(budget.get(BUDGET_SPENT, 0))
 	for row_variant in rows:
 		if row_variant is Dictionary:
-			col.add_child(_material_row(row_variant as Dictionary, remaining > 0))
+			col.add_child(_material_row(row_variant as Dictionary))
 	return col
 
-func _material_row(row: Dictionary, can_add: bool) -> Control:
+func _material_row(row: Dictionary) -> Control:
 	var material_id := String(row.get("id", ""))
 	var units := int(row.get("units", 0))
+	var can_add := bool(row.get("can_add", false))
 	var line := HBoxContainer.new()
 	line.add_theme_constant_override("separation", HudLoadoutVocab.SWATCH_SEPARATION)
 	line.set_meta(HudLoadoutVocab.MATERIAL_ROW_META, material_id)
@@ -546,14 +619,21 @@ func _build_footer() -> void:
 
 ## A meter is the REMAINDER and a stacked bar, and nothing else. Printing "28 of 30 packed" beside
 ## "2 / 30 left" states one fact twice, and the bar already draws the spent half.
-func _budget_meter(key: String, budget: Dictionary, segments: Array) -> Control:
+##
+## On a TAKE the remainder is what the home band keeps rather than what this band may still mint, so
+## the same two numbers are read with different words — see the label below.
+func _budget_meter(key: String, budget: Dictionary, segments: Array, take: bool) -> Control:
 	var block := VBoxContainer.new()
 	block.add_theme_constant_override("separation", HudLoadoutVocab.BUDGET_ROW_SEPARATION)
 	block.set_meta(HudLoadoutVocab.BUDGET_METER_META, key)
 	var total := int(budget.get(BUDGET_TOTAL, 0))
 	var remaining := total - int(budget.get(BUDGET_SPENT, 0))
 	var label := Label.new()
-	label.text = HudLoadoutVocab.BUDGET_REMAINING_FORMAT % [remaining, total]
+	# **A TAKE'S REMAINDER STAYS AT HOME; A GRANT'S IS FORFEIT ON THE ADVANCE.** Two different facts,
+	# so two different words — reusing the grant's bare `left` here would state a loss that a take
+	# does not have.
+	label.text = (HudLoadoutVocab.SUPPLY_REMAINING_FORMAT if take
+		else HudLoadoutVocab.BUDGET_REMAINING_FORMAT) % [remaining, total]
 	label.add_theme_font_size_override("font_size", HudLoadoutVocab.BUDGET_FONT_SIZE)
 	# A budget with nothing left is not a problem — it is a finished decision — so it reads in the
 	# calm signal ink rather than in a warning colour.

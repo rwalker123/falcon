@@ -1465,6 +1465,70 @@ table PopulationCohortState {
   // Empty means the sim has no name for this cohort (only reachable from a hand-built fixture); a
   // client renders that as its `Band #<id>` fallback and nothing else.
   name:string;
+  // --- THIS BAND'S OUTFITTING WINDOW (appended last, per-band loadout arc) -----------------------
+  //
+  // *** EVERY BAND GETS A WINDOW, NOT JUST THE ONE THAT SPAWNED. *** A band that splits hands its
+  // splinter a window of its own, and it stays open until the turn is finalized - so the picker is
+  // drawn per band and revised as often as the player likes. Absent (or `open == false`) means this
+  // band has nothing to outfit right now and the picker draws nothing.
+  //
+  // It rides the COHORT rather than the campaign section because the two things a picker has to draw
+  // beside it - `equipmentBatches` and `materialBatches` - are already here. See `CampaignSection.
+  // openingLoadout` for the campaign-wide half (the profile's pick list and its pre-fills), which is
+  // one per world and deliberately NOT duplicated per band.
+  loadoutWindow:BandLoadoutWindowState;
+}
+
+// One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
+// one this is:
+//
+//   parentBandId == 0  - a GRANT window. The picks MINT gear, capped by `kitBudget` (kits, summed
+//                        over the order) and `materialBudget` (units). This is the spawned band's
+//                        window, and a splinter's when it split off a band whose own grant was still
+//                        unspent - that splinter's budgets were DEDUCTED from the parent's, so no
+//                        slot and no point is minted twice or lost.
+//   parentBandId != 0  - a TAKE on that band. The picks MOVE gear and material out of the parent's
+//                        ledger, `kitBudget`/`materialBudget` are 0 and mean nothing, and the cap is
+//                        `parentItemSupply` / `parentMaterialSupply` below.
+//
+// A KIT ROW CANNOT BE CAPPED ON ITS OWN. The roster maps kits to items almost one-to-one, but `sled`
+// is used by both `big_game` and `trapping`, so what the sim validates is the EXPANDED item list,
+// whole. A client drawing a take's cap must expand the kits the same way and check against
+// `parentItemSupply`; a per-kit cap would be a different rule from the one the server refuses on.
+table BandLoadoutWindowState {
+  // False (or the whole table absent) once this band's window has shut. It shuts on the turn advance
+  // and on nothing else - committing a loadout leaves it open, which is what lets a pick be revised.
+  open:bool;
+  // Kit slots this window may MINT against. 0 for a take, which mints nothing.
+  kitBudget:uint;
+  // Material points this window may MINT against, one point per unit. 0 for a take.
+  materialBudget:uint;
+  // THE ACCEPTED ALLOCATION - the kit rows this band's last accepted `set_starting_loadout` named.
+  // Empty for a window nobody has ordered against yet, INCLUDING a fresh splinter's: the default take
+  // a split hands over is per-ITEM (a proportional share of everything the parent held) and names no
+  // kit, so it shows up in `equipmentBatches` rather than here.
+  kits:[OpeningKitDefault];
+  // The material half of the accepted allocation, the twin of `kits`.
+  materials:[OpeningMaterialDefault];
+  // The band this take is drawn from, or 0 for a grant window. See the table comment.
+  parentBandId:ulong;
+  // A TAKE'S CAP, per item: how many units of each item this band may claim, which is what the parent
+  // still holds PLUS what this take already moved. The standing take is priced as available on
+  // purpose - otherwise raising a take from 3 to 5 would be refused for the 3 already here.
+  //
+  // Published so a client can draw the cap without re-deriving one, which it could not do correctly
+  // anyway: the standing take is bookkeeping the sim owns and the ledger cannot be inverted to it
+  // once this band has itself split. Empty for a grant window.
+  parentItemSupply:[BandLoadoutSupplyRow];
+  // The material twin, in whole units (floored, because that is the currency the command spends).
+  parentMaterialSupply:[BandLoadoutSupplyRow];
+}
+
+// One cap row: how many units of `id` this take may claim. `id` is an `equipment.json` item id on
+// `parentItemSupply` and a `materials.json` material id on `parentMaterialSupply`.
+table BandLoadoutSupplyRow {
+  id:string;
+  units:uint;
 }
 
 // What ONE kit would grant ONE band at its current wear - a row of
@@ -5793,21 +5857,22 @@ table CampaignSection {
 }
 
 // --- The opening loadout: what the turn-one picker draws ---------------------------------------
-// A SPAWNING BAND OWNS NOTHING, so this window is the one source of a campaign's starting gear and
-// material. It is open from world build until the first turn advance; unspent budget is forfeited.
+// A SPAWNING BAND OWNS NOTHING, so the opening window is the one source of a campaign's starting gear
+// and material. What is left in THIS table is the campaign-wide half - the profile's pick list, its
+// two pre-fills, and what this faction could bench today. The per-band half (is the window open, and
+// what caps it) is `PopulationCohortState.loadoutWindow`.
 //
 // THE KIT ROSTER IS NOT HERE and must not be added: it already rides
 // `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
 // `craftOffers` rows. A second copy of either is a second wire contract for one fact.
+// *** `open`, `kitBudget` and `materialBudget` WERE DELETED FROM THIS TABLE, NOT DEPRECATED IN PLACE.
+// *** They moved to `PopulationCohortState.loadoutWindow`, because a window is now a fact about ONE
+// BAND rather than about the campaign: every band gets one, and a splinter's budgets are not the
+// spawned band's. The deletion is safe here for exactly one reason - this repo has NO SHIPPED SAVES
+// OR CLIENTS and both halves build from one tree, so no reader can hold the old vtable. The general
+// append-only rule stands; see the identical note on `foundingRefusals` in
+// `.claude/rules/core_sim/fission.md`.
 table OpeningLoadoutState {
-  // False once the window has shut. The picker draws nothing and the server refuses a
-  // `set_starting_loadout`.
-  open:bool;
-  // One per working-age hand of the starting band. DERIVED from the band, never configured — see
-  // `start_profiles.json` `opening_loadout`, which deliberately carries no kit dial.
-  kitBudget:uint;
-  // `start_profiles.json` `opening_loadout.material_points`. One point buys one unit.
-  materialBudget:uint;
   // The pick list, in the order the profile declares it. A material absent from it cannot be bought.
   pickableMaterials:[string];
   // The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a
@@ -5822,7 +5887,8 @@ table OpeningLoadoutState {
   craftableRecipeIds:[string];
   // The KIT column's pre-fill, the material one's twin — appended last (append-only).
   //
-  // ALREADY CLAMPED to `kitBudget`. That budget is the spawned band's working-age head count rather
+  // ALREADY CLAMPED to the SPAWNED band's `loadoutWindow.kitBudget`. That budget is that band's
+  // working-age head count rather
   // than a config number, so `start_profiles.json` cannot sum-check its own pre-fill; the sim scales
   // it proportionally at publish time and warns when that binds. A client draws these counts as-is
   // and never has to re-fit them.

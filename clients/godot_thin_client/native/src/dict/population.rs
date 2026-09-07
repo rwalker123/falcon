@@ -4,6 +4,7 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
+use crate::dict::campaign::{opening_kit_defaults_to_array, opening_material_defaults_to_array};
 use crate::dict::economy::fragment_to_dict;
 use crate::dict::fixed64_to_f64;
 
@@ -1427,7 +1428,87 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("roadwork_supplied", cohort.roadworkSupplied() as f64);
     let _ = dict.insert("roadwork_shortfall", cohort.roadworkShortfall() as f64);
 
+    // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
+    // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and
+    // `materialBudget` were deleted from `CampaignSection.openingLoadout` and live here; what stayed
+    // on the campaign section is the profile's pick list and pre-fills, one per world.
+    //
+    // **Inserted only when the table rode the frame**, unlike the campaign half's own fields: an
+    // absent window and a shut one mean the same thing to the picker (*this band has nothing to
+    // outfit*), so there is no third reading for a missing key to be confused with.
+    //
+    // Decoded HERE rather than at a call site, so the FULL and DELTA paths get it from one place —
+    // `populations_to_array` is what both of them run, and the change that matters is `open` going
+    // false on the turn advance, which arrives on a delta.
+    if let Some(window) = cohort.loadoutWindow() {
+        let _ = dict.insert("loadout_window", &loadout_window_to_dict(window));
+    }
+
     dict
+}
+
+/// **ONE BAND'S OUTFITTING WINDOW** (`PopulationCohortState.loadoutWindow`) — what the picker draws
+/// itself with, and what says which of the two windows this is.
+///
+/// ⛔ **`parentBandId` DECIDES EVERYTHING DOWNSTREAM.** `0` is a GRANT window: the picks MINT, and
+/// `kit_budget` / `material_budget` are what caps them. Non-zero is a TAKE on that band: the picks
+/// MOVE gear out of that band's ledger, both budgets are `0` and mean nothing, and the cap is
+/// `parent_item_supply` / `parent_material_supply`.
+///
+/// ⛔ **A TAKE'S KIT CAP CANNOT BE DRAWN PER KIT ROW.** The roster maps kits to items almost
+/// one-to-one, but `sled` is used by both `big_game` and `trapping` — so what the sim validates is
+/// the EXPANDED item list, whole, and a client has to expand the same way before checking
+/// `parent_item_supply`. Both supplies are already `holdings + this take's standing units`, so the
+/// cap published here is the one the server refuses on.
+fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    // False once this band's window has shut. It shuts on the TURN ADVANCE and on nothing else —
+    // committing a loadout leaves it open, which is what lets a pick be revised.
+    let _ = dict.insert("open", window.open());
+    let _ = dict.insert("kit_budget", window.kitBudget() as i64);
+    let _ = dict.insert("material_budget", window.materialBudget() as i64);
+    // THE ACCEPTED ALLOCATION — the rows this band's last accepted order named, and **what a card
+    // opens on**. Empty only for a grant window nobody has ordered against yet.
+    //
+    // ⛔ **A FRESH SPLINTER'S ARE NOT EMPTY**: the split's default take is kit-denominated and
+    // published here, so re-sending it unchanged is an exact no-op. While these were empty on a
+    // splinter, an untouched commit ordered *take nothing* and handed the band's dowry back to its
+    // parent, an apply being a replacement.
+    let _ = dict.insert("kits", &opening_kit_defaults_to_array(window.kits()));
+    let _ = dict.insert(
+        "materials",
+        &opening_material_defaults_to_array(window.materials()),
+    );
+    // `0` = a grant. Non-zero is the band a take is drawn from, and the client says so on the card.
+    let _ = dict.insert("parent_band_id", window.parentBandId() as i64);
+    let _ = dict.insert(
+        "parent_item_supply",
+        &loadout_supply_to_array(window.parentItemSupply()),
+    );
+    let _ = dict.insert(
+        "parent_material_supply",
+        &loadout_supply_to_array(window.parentMaterialSupply()),
+    );
+    dict
+}
+
+/// A take's cap rows — `id -> units`, an `equipment.json` item id on the item supply and a
+/// `materials.json` material id on the material one. Empty for a grant window, which mints and is
+/// capped by its budgets instead.
+fn loadout_supply_to_array(
+    rows: Option<Vector<'_, ForwardsUOffset<fb::BandLoadoutSupplyRow<'_>>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    let Some(rows) = rows else {
+        return array;
+    };
+    for row in rows {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("id", row.id().unwrap_or(""));
+        let _ = dict.insert("units", row.units() as i64);
+        array.push(&dict.to_variant());
+    }
+    array
 }
 
 /// **WHAT THE STORE ACTUALLY LOST FOR THE JOB IN FLIGHT** — one row per input material, in the

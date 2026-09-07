@@ -1205,11 +1205,14 @@ func close_crafting_panel() -> void:
 func crafting_panel() -> CraftingPanelController:
     return _crafting
 
-## **THE TURN-ONE OUTFITTING WINDOW** (issue #629, `CampaignSection.openingLoadout`). The picker opens
-## itself on the first frame this says `open`, and closes when the sim says it has shut — the client
-## never decides that. Absence means unchanged, like every other whole section.
+## **THE CAMPAIGN'S HALF OF THE OUTFITTING WINDOW** (issue #629, `CampaignSection.openingLoadout`) —
+## the pick list, the two pre-fills and the craftable recipe ids, one per world. Absence means
+## unchanged, like every other whole section.
+##
+## ⛔ **IT NO LONGER OPENS OR SHUTS ANYTHING.** A window is a fact about one BAND now, so `open` and
+## the two budgets ride the cohorts and reach the picker through `update_band_alerts` below.
 func update_opening_loadout(state: Variant) -> void:
-    _loadout.set_window(state)
+    _loadout.set_campaign_loadout(state)
 
 ## The whole effective `EquipmentConfig`, serialized (`SubsistenceSection.equipmentConfigJson`).
 ## Forwarded to the loadout picker, which is the HUD's only consumer of it: the KIT ROSTER has no
@@ -2205,6 +2208,13 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # `_band_labor.prev_band_sizes()`, which `ingest_snapshot_bands` OVERWRITES for next turn, so the
     # build must run against the PRE-INGEST sizes or every band silently stops reporting decline.
     var attention := _attention.build_band_attention(player_bands, player_expeditions)
+    # 2a. **AND THE OUTFITTING PICKER TAKES ITS WINDOWS OFF THE SAME ROSTER** (the per-band loadout
+    # arc). Every band gets a window — the spawned band's grant, and a take on the home band for
+    # every splinter a split makes — so the picker reads `loadout_window` off the cohorts rather than
+    # off a campaign section, and it is handed the roster this method has already filtered to the
+    # player's own bands rather than walking `populations` a second time. Parties are excluded with
+    # them: a detached party is those same people walking somewhere, not a band to outfit.
+    _loadout.set_bands(player_bands)
     # 3. Ingest (overwrites prev_band_sizes) — unchanged.
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
     # 3a. Publish this roster's band NAMES for the event dock (see `band_labels_changed`). Keyed by

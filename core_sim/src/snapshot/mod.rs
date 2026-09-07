@@ -1394,6 +1394,8 @@ mod tests {
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
             band_name: None,
+            // No world, so no outfitting window either.
+            loadout_window: None,
             cohort,
             allocation: Some(allocation),
             expedition: None,

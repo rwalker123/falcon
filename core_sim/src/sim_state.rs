@@ -407,7 +407,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         pending_crisis_seeds: world.resource::<PendingCrisisSeeds>().clone(),
         pending_crisis_spawns: world.resource::<PendingCrisisSpawns>().clone(),
         sedentarization: world.resource::<SedentarizationScore>().clone(),
-        starting_loadout: *world.resource::<StartingLoadout>(),
+        starting_loadout: world.resource::<StartingLoadout>().clone(),
         sentiment_bias: world.resource::<SentimentAxisBias>().clone(),
         trade_telemetry: world.resource::<TradeTelemetry>().clone(),
         victory: world.resource::<VictoryState>().clone(),
@@ -593,7 +593,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.pending_crisis_seeds.clone());
     world.insert_resource(state.pending_crisis_spawns.clone());
     world.insert_resource(state.sedentarization.clone());
-    world.insert_resource(state.starting_loadout);
+    world.insert_resource(state.starting_loadout.clone());
     world.insert_resource(state.sentiment_bias.clone());
     world.insert_resource(state.trade_telemetry.clone());
     world.insert_resource(state.victory.clone());

@@ -410,9 +410,6 @@ fn create_opening_loadout<'a>(
     fb::OpeningLoadoutState::create(
         builder,
         &fb::OpeningLoadoutStateArgs {
-            open: state.open,
-            kitBudget: state.kit_budget,
-            materialBudget: state.material_budget,
             pickableMaterials: Some(pickable),
             materialDefaults: Some(defaults),
             craftableRecipeIds: Some(craftable),

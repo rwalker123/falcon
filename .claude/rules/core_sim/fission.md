@@ -33,11 +33,20 @@ What survived and was repointed rather than rebuilt: the runtime band-creation m
 `BandId`, insert `ResidentBand` + `DemographicFlowAccumulator`), the culture attach, and the
 checkpoint path that re-attaches `ResidentBand` for a band worldgen never made.
 
-## One number decides everything
+## The worker count decides the SHARE — and the share is a starting point, not the answer
 
 The player names a **worker count**. `share = asked ÷ parent.working`, applied to children, elders and
 **every** store the band holds. The new band is a smaller copy of the one it came from, not a party
 with a composition of its own.
+
+> **The "one number decides everything" framing is RETIRED for the band's KIT.** It described the whole
+> verb while a splinter's gear was a copy of the parent's, so there was nothing else to say. Since the
+> per-band loadout arc a split also **opens an outfitting window on the new band**, standing at the
+> proportional take it was just handed and revisable for the rest of the turn — so the player picks a
+> worker count *and* a take. The share still divides the people, the larder and the material by itself,
+> and it is still the only number a split needs; what changed is that the gear half is now a decision
+> the player can revise rather than a consequence they only receive. See
+> `.claude/rules/core_sim/starting-loadout.md`, and `docs/plan_band_fission.md` §Q3/§Q4.
 
 **This is the model, not a simplification of it.** Per-bracket allocation lets a band that cannot feed
 itself shed the people who cannot feed it — split off the elders, keep the workers, and the parent's
@@ -90,10 +99,17 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 
 - **A proportional share of the larder** — not a reserve calculation and not a new number. The new band
   starts stocked because its people were already sitting on that food.
-- **The kit is inherited WORN** — a copy of the parent's `BandEquipment` wear ledger, never
-  `BandEquipment::default()`. A fresh kit would mint equipment out of nothing on every split,
-  permanently, and trivially defeat the pull into the crafting economy that running your kit dry is
-  supposed to be.
+- **A proportional share of the KIT, DENOMINATED IN KITS, moved and inherited WORN.**
+  `fission::default_take_kits` resolves a kit allocation and `expand_kits` turns it into the item list
+  that crosses, taken with `BandEquipment::take_units` and debited from the parent by exactly what
+  left. A `BandEquipment::default()` would mint a fresh kit out of nothing on every split,
+  permanently, and defeat the pull into the crafting economy that running your kit dry is supposed to
+  be — so the splinter's units carry the parent's real condition. **The freshest units go**: see the
+  callout below.
+- **A proportional share of the MATERIAL BATCHES**, `floor(share × material_total)` **whole units**
+  per material, moved with `LocalStore::take_material_batches` — the store's-own-order twin of
+  `take_material`, because a split names no axis and each draw has to carry its source batch's exact
+  reading across.
 - **Grievance is inherited, not zeroed.** These are the same people who were unhappy a moment ago, and
   a split that reset it would make forming a band a way to launder discontent — the same class of move
   the proportional share exists to close.
@@ -102,6 +118,88 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
   `reconcile_band_culture_layers`, whose no-layer case seeds from the province — identical today,
   since both halves are co-located, and wrong the moment the new band moves before the reconcile runs.
 
+> ### ⛔ THE KIT WAS DUPLICATED, AND THE MATERIALS WERE NOT DIVIDED AT ALL
+>
+> Two defects lived in this section's own description of itself, and both shipped:
+>
+> - **The kit was CLONED.** `split_band_from_parent` copied the whole `BandEquipment` onto the splinter
+>   and never debited the parent, so every split minted a second full kit. That was documented here as
+>   intended — *"a copy of the parent's wear ledger"* — which is why it survived: the ledger really was
+>   inherited worn, which is the property the sentence was defending, and the duplication rode along
+>   underneath it. A splinter is exactly as worn out as the people it came from **and** it is a share of
+>   what they held; the first claim alone is satisfied by a copy.
+> - **Materials never crossed.** This section claimed *"the child inherits a share of every good"*, and
+>   it was never true of materials: the child's store was rebuilt from `LocalStore::new()` plus the
+>   parent's `iter()`, which walks the **commodity** account only. A splinter of a band sitting on
+>   twenty hides opened with none of them and the parent kept the lot.
+>
+> The guard is `band_fission::gear_is_conserved_across_a_split` and its material twin, both asserting on
+> the **pair** — a test that only looked at the new band passes against a clone.
+
+> ### ⛔ THE FRESHEST UNITS LEAVE, AND THAT IS THE OPPOSITE OF THE WEAR ORDER
+>
+> `BandEquipment::wear_item` spends the **most worn** batch first: a band uses up the thing nearest the
+> end of its life before opening a fresh one. `take_units` inverts it — **a new venture is outfitted
+> properly**, so the splinter walks out with the best gear the band has and the parent keeps the worn
+> stock. Ascending `wear`, ties broken by earliest insertion index, and the last batch **split** when
+> the count falls inside it (the units that leave carry that batch's `tier`, `grade` and `wear`
+> verbatim).
+>
+> They are two different questions — *which unit is being used* and *which unit is being handed over* —
+> so they get two different answers rather than one shared "order" that serves neither.
+
+> ### ⛔ THE MANIFEST IS DENOMINATED IN KITS, AND THAT IS WHAT THE CARD CAN SHOW
+>
+> The default take was a bare per-item `floor(share × count_of(item))`. It moved the right gear and it
+> was **unpublishable**: the outfitting picker is kit-denominated (the player composes kits, never bare
+> items), so no allocation could express it, the splinter's window opened with **empty** accepted rows,
+> and the auto-popped card showed nothing while the band stood on its dowry. An apply is a
+> *replacement*, so an untouched *"Set out"* ordered **take nothing** and handed the whole share
+> straight back to the parent.
+>
+> **The card is not special-cased; the take is.** An empty tail stays a real order — *take nothing*,
+> exactly as it is for a grant — and what changed is that the card is no longer empty when the take is
+> not. `fission::default_take_kits` resolves the share into kits and the window publishes it, so
+> re-sending it unchanged is an exact no-op
+> (`split_loadout::re_sending_the_published_allocation_untouched_changes_nothing`).
+>
+> **The rule is proportional, floored, remainder unspent** — `clamped_kit_defaults`' rule, applied to a
+> different budget. Two clamps, because `sled` is used by **both** `big_game` and `trapping` and so no
+> kit's count can be resolved on its own: each kit's own ceiling is the minimum share across the items
+> it uses, and where two kits' combined demand for an item exceeds that item's share they are both
+> scaled by `budget ÷ demand` and floored. Not first-come, for the reason `clamped_kit_defaults` states:
+> the roster has no author's order to consume in, so "declaration order" is really *id* order and makes
+> `big_game` beat `trapping` because `b` sorts first.
+>
+> **The material half is floored to WHOLE units** for the same publishability reason — a card states
+> `units:u32`, so a fractional take could not be shown and re-sending what it showed would hand the
+> remainder back. The remainder stays with the parent, where the player can take it deliberately.
+
+> ### ⛔ A BENCH TOOL DOES NOT WALK OUT WITH A SPLINTER
+>
+> `bone_awl`, `loom` and `tanning_frame` are the only three items **no kit `uses`**
+> (`EquipmentConfig::item_is_kit_carried`; every other item is reachable — `warrior` grants `clubs`,
+> `tillage` grants `hoes`). They are the knowledge-gated bench tools, and because the take is composed
+> of kits they can never appear in one.
+>
+> **That is a design statement, not a limitation to apologise for.** They are shop equipment, not a
+> pair of hands' gear, so they **stay with the workshop that built them**. The alternative is an item
+> that moves invisibly with a band that cannot see it on the card, adjust it, or choose to keep it —
+> and the fix for *that* would be widening the grammar to bare items, which is exactly the
+> kit-denominated design being refused.
+>
+> They are also kept off the published cap (`parentItemSupply`), so no client is told they are
+> claimable. Pinned by `split_loadout::a_bench_tool_does_not_walk_out_with_a_splinter`, which asserts
+> the roster's un-kitted set **is** those three — a fourth means the rule needs restating rather than
+> the list extending.
+
+> ### The manifest divides on the RATIO, never on the rounded share
+>
+> `share` is a fixed-point quotient, so a third stores as `0.333333` and `0.333333 × 3` floors to **0**:
+> a band splitting three ways would hand its splinter none of the three spears the player plainly asked
+> for a third of. `fission::whole_share` computes `floor(held × asked ÷ workers)` from the ratio
+> instead. The continuous halves — children, elders, the larder, the material batches — multiply by the
+> share as before, because nothing there is quantised and there is no floor to fall through.
 ### The dowry is a transfer, and it is booked as one
 
 The share of the larder that walks out with the new band is **food that crossed between two larders**,
@@ -121,8 +219,8 @@ transferSent` is simply false on the turn a band splits. The child receives it o
 `LaborAllocation` it is spawned with, because its first published frame is the one that has to
 account for it.
 
-**FOOD only.** The child inherits a share of every good, but materials deliberately have no identity
-of their own — a material's account is the batch store itself.
+**FOOD only.** The child takes a share of the material batches too (above), but materials deliberately
+have no identity of their own — a material's account is the batch store itself.
 
 Pinned by `transfer_food_ledger::the_food_ledger_reconciles_when_a_band_splits_mid_window`, which
 splits after a published frame and asserts the identity on **both** halves.
@@ -149,6 +247,23 @@ refusal sentences and does no gate of its own.
 > can hold the old vtable. The general rule stands; a slot removed after a client ships is a silent
 > mis-read, not a compile error. Cross-reference: the `no-back-compat-yet` position in the root
 > `CLAUDE.md` lineage.
+
+## The splinter opens its own outfitting window
+
+A split ends by opening a `starting_loadout` window on the new band, **carrying the default take as
+its accepted allocation** — the kit and material rows the card draws itself from — and it stays open
+until the turn advances. What bounds that take is a fact about the
+**parent's** state rather than about the turn — a grant carved off the parent's on turn one, the
+parent's own holdings from turn two. The whole model, the caps table and the onward-take refusal live
+in `.claude/rules/core_sim/starting-loadout.md`; what belongs here is that **the split is one of the
+two things in the game that opens a window**, and that the proportional manifest above is that
+window's *starting point* and not its verdict.
+
+**`StartingUnit` still rides onto the splinter, and it must.** It is not merely the marker the
+outfitting window used to select a band by: `bin/server.rs`'s `resolve_starting_unit_entity` gates
+**every band-addressed order** on it, and `visibility_systems::VisionCohorts` requires it to make a
+band a vision source at all. A splinter without it is a band the player cannot order and that sees
+nothing.
 
 ## What the new band silently joins
 

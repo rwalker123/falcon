@@ -3146,6 +3146,94 @@ impl BandEquipment {
             .unwrap_or_default()
     }
 
+    /// **Take `count` whole units of `item` OUT of this ledger, FRESHEST FIRST** — the moving half
+    /// of a band split and of a splinter's outfitting take ([`crate::starting_loadout`]).
+    ///
+    /// # ⛔ FRESHEST FIRST — the best units leave, and that is the OPPOSITE of the wear order
+    ///
+    /// [`Self::wear_item`] spends the **most worn** batch first, because a band uses up the thing
+    /// nearest the end of its life before opening a fresh one. This removal deliberately inverts
+    /// that: a new venture is outfitted properly, so the splinter walks out with the best gear the
+    /// band has and the parent keeps the worn stock. Two different questions — *which unit is being
+    /// used* and *which unit is being handed over* — so they get two different answers rather than
+    /// one shared "order" that happens to serve neither.
+    ///
+    /// Batches leave in ascending `wear`, ties broken by **earliest insertion index**, so the rule
+    /// is deterministic against a ledger holding two equally-fresh batches. The last batch is
+    /// **split** when `count` falls inside it: the returned batch carries that batch's `tier`,
+    /// `grade` and `wear` verbatim, because a batch is a quantity of interchangeable units and half
+    /// of it is still those units at exactly that condition.
+    ///
+    /// Emptied batches are pruned and the item key is removed when its vec empties, matching
+    /// [`Self::restore_batches`]' convention — *"does the band own one"* stays a question about
+    /// presence.
+    ///
+    /// Returns **what actually left**, which is short of `count` when the ledger is short: the
+    /// availability question is the caller's, asked with [`Self::count_of`].
+    pub fn take_units(&mut self, item: &str, count: u32) -> Vec<EquipmentBatch> {
+        let mut taken = Vec::new();
+        if count == 0 {
+            return taken;
+        }
+        let Some(batches) = self.batches.get_mut(item) else {
+            return taken;
+        };
+        let mut order: Vec<usize> = (0..batches.len()).collect();
+        // `total_cmp` rather than `partial_cmp().unwrap()`: a NaN wear is unrepresentable today
+        // (`wear_item` refuses a non-finite charge) and a total order keeps it that way without a
+        // panic seam.
+        order.sort_by(|left, right| {
+            batches[*left]
+                .wear
+                .total_cmp(&batches[*right].wear)
+                .then(left.cmp(right))
+        });
+        let mut remaining = count;
+        for index in order {
+            if remaining == 0 {
+                break;
+            }
+            let batch = &mut batches[index];
+            let units = remaining.min(batch.count);
+            if units == 0 {
+                continue;
+            }
+            batch.count -= units;
+            remaining -= units;
+            taken.push(EquipmentBatch {
+                count: units,
+                tier: batch.tier.clone(),
+                grade: batch.grade.clone(),
+                wear: batch.wear,
+            });
+        }
+        batches.retain(|batch| batch.count > 0);
+        if batches.is_empty() {
+            self.batches.remove(item);
+        }
+        taken
+    }
+
+    /// **The receiving half of [`Self::take_units`]** — append `batches` to what this band already
+    /// owns of `item`, verbatim.
+    ///
+    /// **Appended, never merged**, on [`Self::stock`]'s rule and for its reason: a batch carries one
+    /// wear number, so folding an arriving batch into a standing one would re-condition both. An
+    /// empty vec is a no-op, and a zero-count batch is dropped rather than stored as a husk.
+    pub fn place_batches(&mut self, item: &str, batches: Vec<EquipmentBatch>) {
+        let arriving: Vec<EquipmentBatch> = batches
+            .into_iter()
+            .filter(|batch| batch.count > 0)
+            .collect();
+        if arriving.is_empty() {
+            return;
+        }
+        self.batches
+            .entry(item.to_string())
+            .or_default()
+            .extend(arriving);
+    }
+
     /// Restore an item's batches verbatim — the checkpoint's setter. Not for gameplay: the only
     /// gameplay-side mutations are [`Self::wear_item`], which can never *reduce* wear, and
     /// [`Self::stock`], which is a spawn or the bench delivering a finished item.
@@ -7421,6 +7509,173 @@ mod tests {
             store.material_batches(HIDE).count(),
             0,
             "an emptied material leaves no husk, so two equal stores compare equal"
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // `BandEquipment::take_units` — the moving half of a split
+    // ---------------------------------------------------------------------------------------
+
+    /// The item every `take_units` fixture below moves. Any id would do; spears are the one every
+    /// kit reaches for.
+    const MOVED_ITEM: &str = "spears";
+    /// The tier the fixtures stock at — a bare id, because `take_units` never consults the config.
+    const MOVED_TIER: &str = "flint";
+
+    /// A ledger holding one batch per `(count, wear)` pair, in the order given, so a test can state
+    /// its insertion order and its conditions in one line.
+    fn ledger_of(batches: &[(u32, f32)]) -> BandEquipment {
+        let mut ledger = BandEquipment::default();
+        let rows: Vec<EquipmentBatch> = batches
+            .iter()
+            .map(|(count, wear)| EquipmentBatch {
+                count: *count,
+                tier: MOVED_TIER.to_string(),
+                grade: None,
+                wear: *wear,
+            })
+            .collect();
+        ledger.restore_batches(MOVED_ITEM, rows);
+        ledger
+    }
+
+    /// ⛔ **THE FRESHEST UNITS LEAVE, AND THE PARENT KEEPS THE WORN ONES.**
+    ///
+    /// This is the opposite of the ledger's internal wear order (`wear_item` spends the most worn
+    /// batch first), so a `take_units` that reused that order would pass any test that only counted
+    /// units. The assertion is on the *conditions*, on both sides.
+    #[test]
+    fn take_units_moves_the_freshest_batches_first() {
+        let mut ledger = ledger_of(&[(2, 60.0), (2, 5.0), (2, 30.0)]);
+        let taken = ledger.take_units(MOVED_ITEM, 4);
+        assert_eq!(
+            taken.iter().map(|batch| batch.wear).collect::<Vec<_>>(),
+            vec![5.0, 30.0],
+            "the two freshest batches walk out, freshest first"
+        );
+        assert_eq!(
+            ledger
+                .batches_of(MOVED_ITEM)
+                .iter()
+                .map(|batch| batch.wear)
+                .collect::<Vec<_>>(),
+            vec![60.0],
+            "the parent keeps the worn stock"
+        );
+    }
+
+    /// **Equally fresh batches leave in insertion order**, so the rule is deterministic rather than
+    /// dependent on whatever `sort_by` does with a tie.
+    #[test]
+    fn take_units_breaks_a_wear_tie_on_the_earliest_batch() {
+        let mut ledger = ledger_of(&[(1, 10.0), (1, 10.0), (1, 10.0)]);
+        // Distinguish the three otherwise-identical batches by tier so the order is observable.
+        let mut rows = ledger.batches_of(MOVED_ITEM).to_vec();
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.tier = format!("tier{index}");
+        }
+        ledger.restore_batches(MOVED_ITEM, rows);
+
+        let taken = ledger.take_units(MOVED_ITEM, 2);
+        assert_eq!(
+            taken
+                .iter()
+                .map(|batch| batch.tier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tier0", "tier1"]
+        );
+    }
+
+    /// ⛔ **A MID-BATCH TAKE SPLITS IT, AND THE HALF THAT LEAVES CARRIES THE SAME READINGS.**
+    ///
+    /// A batch is a quantity of interchangeable units, so half of it is still those units at
+    /// exactly that tier, grade and condition — inventing a fresh unit here would mint life.
+    #[test]
+    fn take_units_splits_the_last_batch_and_preserves_its_readings() {
+        let mut ledger = BandEquipment::default();
+        ledger.restore_batches(
+            MOVED_ITEM,
+            vec![EquipmentBatch {
+                count: 5,
+                tier: MOVED_TIER.to_string(),
+                grade: Some(BatchGrade {
+                    id: "good".to_string(),
+                    effects: Vec::new(),
+                }),
+                wear: 22.5,
+            }],
+        );
+
+        let taken = ledger.take_units(MOVED_ITEM, 2);
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].count, 2);
+        assert_eq!(taken[0].tier, MOVED_TIER);
+        assert_eq!(taken[0].wear, 22.5);
+        assert_eq!(
+            taken[0].grade.as_ref().map(|grade| grade.id.as_str()),
+            Some("good"),
+            "the units that left were made on the same bench as the ones that stayed"
+        );
+        assert_eq!(ledger.count_of(MOVED_ITEM), 3);
+        assert_eq!(ledger.batches_of(MOVED_ITEM)[0].wear, 22.5);
+    }
+
+    /// **An emptied batch is pruned, and an emptied item key with it** — `count 0` is never stored,
+    /// so *"does the band own one"* stays a question about presence.
+    #[test]
+    fn take_units_prunes_emptied_batches_and_the_item_key() {
+        let mut ledger = ledger_of(&[(2, 1.0), (3, 2.0)]);
+        ledger.take_units(MOVED_ITEM, 2);
+        assert_eq!(
+            ledger.batches_of(MOVED_ITEM).len(),
+            1,
+            "the emptied batch leaves no husk"
+        );
+        ledger.take_units(MOVED_ITEM, 3);
+        assert!(
+            ledger.batches_of(MOVED_ITEM).is_empty(),
+            "the item key goes with its last batch"
+        );
+        assert_eq!(ledger.batches().count(), 0);
+    }
+
+    /// **A take for more than the ledger holds moves everything and says so.** The shortfall is the
+    /// caller's question, asked with `count_of` — the same contract `LocalStore::take_material`
+    /// keeps.
+    #[test]
+    fn take_units_is_short_when_the_ledger_is_short() {
+        let mut ledger = ledger_of(&[(2, 4.0)]);
+        let taken = ledger.take_units(MOVED_ITEM, 7);
+        assert_eq!(taken.iter().map(|batch| batch.count).sum::<u32>(), 2);
+        assert_eq!(ledger.count_of(MOVED_ITEM), 0);
+        assert!(
+            ledger.take_units("an_item_nobody_owns", 3).is_empty(),
+            "an unheld item yields nothing rather than panicking"
+        );
+    }
+
+    /// **`place_batches` is the receiving half and it APPENDS** — a batch carries one wear number,
+    /// so merging an arriving batch into a standing one would re-condition both.
+    #[test]
+    fn place_batches_appends_rather_than_merging() {
+        let mut parent = ledger_of(&[(4, 40.0)]);
+        let taken = parent.take_units(MOVED_ITEM, 2);
+        let mut child = ledger_of(&[(1, 0.0)]);
+        child.place_batches(MOVED_ITEM, taken);
+        assert_eq!(child.count_of(MOVED_ITEM), 3);
+        assert_eq!(
+            child
+                .batches_of(MOVED_ITEM)
+                .iter()
+                .map(|batch| batch.wear)
+                .collect::<Vec<_>>(),
+            vec![0.0, 40.0],
+            "the arriving units keep their own condition beside the ones already held"
+        );
+        assert_eq!(
+            parent.count_of(MOVED_ITEM) + child.count_of(MOVED_ITEM),
+            5,
+            "nothing is minted and nothing is lost by the move"
         );
     }
 }

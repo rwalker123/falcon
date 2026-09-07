@@ -2483,6 +2483,23 @@ pub fn capture_snapshot(
                 .map(|p| (entity, p))
         })
         .collect();
+    // **EVERY OPEN OUTFITTING WINDOW**, resolved once — a take's cap is a fact about its PARENT's
+    // ledger, so this is a lookup rather than a per-band walk. Empty on every turn after the windows
+    // shut, which is almost every frame.
+    let loadout_windows = starting_loadout
+        .as_deref()
+        .map(|windows| {
+            crate::snapshot::population::band_loadout_windows(
+                windows,
+                &equipment_config,
+                populations
+                    .iter()
+                    .filter_map(|(_, cohort, _, _, _, band_id, _, equipment, _)| {
+                        band_id.map(|band| (*band, equipment, &cohort.stores))
+                    }),
+            )
+        })
+        .unwrap_or_default();
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(
@@ -2615,6 +2632,10 @@ pub fn capture_snapshot(
                         baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
                     },
                     bench,
+                    // **This band's outfitting window**, or `None` when it has nothing to outfit.
+                    loadout_window: band_id
+                        .and_then(|band| loadout_windows.get(&band.0))
+                        .cloned(),
                     // **This band's faction decides which crafts are known**, so the memo is keyed
                     // per faction and resolved lazily — one entry per faction that owns a band,
                     // not one per band.

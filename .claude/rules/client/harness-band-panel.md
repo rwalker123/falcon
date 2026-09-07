@@ -1162,6 +1162,29 @@ carries the right kit — every other assertion in the file green.
   both rounded spellings failing, the floored one passing — so the regression is reachable without
   launching Godot, the treatment `kit_failure` already has.
 
+## `command_guard`'s OUTFITTING drive — the verb that gained a band (the per-band loadout arc)
+
+`set_starting_loadout` used to address a faction and default to its band, so it was not in this gate
+at all. Every band has an outfitting window of its own now — the spawned band's grant, and a take on
+the home band for every splinter a split makes — so the band is **positional and required**, and this
+is the gate that says the client sends the durable `BandId` down it rather than the ECS `entity` the
+picker also holds. `xtask/src/command_guard.rs`'s `band_handle` gained the matching arm; the emitted
+line is `set_starting_loadout 0 71204 kit big_game 2 material hide 4`, the band token being the
+fixture's `BAND_ID` and never its deliberately different `BAND_ENTITY`.
+
+- **It is driven LAST, and through the REAL commit control.** Pushing an open window earlier would
+  stand a card up over every drive above it; and the payload is composed inside the controller (the
+  picks, the subject band), so pressing the button by `HudLoadoutVocab.COMMIT_BUTTON_META` is the only
+  way to reach the code a player reaches.
+- **The window rides the BAND fixture** (`_outfitting_band_fixture`), which is what makes the emitted
+  band the one this gate already asserts everything else against.
+- **The order is one kit line and one material line**, seeded from the campaign pre-fill. What is read
+  off the line is the BAND TOKEN; a longer order would be more tokens saying the same thing. Both
+  budgets sit above the pre-fill, the client drawing a published pre-fill as-is.
+- **It carries no `expected_kit`.** `SetStartingLoadout` has no kit AXIS — its `kit <id> <n>` tail is
+  an allocation rather than the selection `Main._kit_token` omits — so `kit_token` answers
+  `NotKitBearing` and the kit gate correctly says nothing about it.
+
 ## The RECALL VERB pair, and the compose float's two LATCH guards
 
 Four claims added to `band_panel_preview`, none of which a frame can carry: three of them are about a
