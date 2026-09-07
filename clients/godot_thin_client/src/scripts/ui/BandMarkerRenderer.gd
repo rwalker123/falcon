@@ -2,9 +2,9 @@ class_name BandMarkerRenderer
 extends RefCounted
 
 ## Renders the PRIMARY player-band map markers for MapView: the offset card-stack
-## of settlement-stage tokens / expedition flag-discs, the faction nameplate
-## banner, the food-runway dot, the travel/task arrow, and the ×N over-cap count
-## pill. Extracted from MapView (composition — MapView owns one and calls
+## of settlement-stage tokens / expedition flag-discs, the nameplate (the fixed-size
+## band NAME PILL at high zoom, the scaled faction banner below it), the food-runway
+## dot, the travel/task arrow, and the ×N over-cap count pill. Extracted from MapView (composition — MapView owns one and calls
 ## draw_primary_bands() during its _draw pass). Every draw command routes through
 ## the MapView canvas item via the `_view` back-ref, and all shared geometry/glyph/
 ## pill primitives + the unit/selection state stay on MapView. Behaviour (and the
@@ -14,6 +14,12 @@ var _view: MapView = null
 # StyleBoxFlat reused across banner draws; constant chrome set once, per-call
 # fields (bg_color, corner radius) updated in _draw_band_banner.
 var _band_banner_box: StyleBoxFlat = null
+# THE NAME-PILL OVERLAP CULL, both halves rebuilt from scratch every draw pass (see
+# `_reserve_name_pills`): the rects already claimed this pass, and the tile → rect grants that
+# came out of it. Nothing here survives a frame — a stale rect would cull a label that has
+# nothing to collide with.
+var _label_rects: Array[Rect2] = []
+var _label_grants: Dictionary = {}   # Vector2i -> Rect2
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -40,8 +46,79 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 			by_tile[tile] = []
 			order.append(tile)
 		by_tile[tile].append(unit)
+	# Decide the name pills BEFORE anything is drawn. It has to be a separate pre-pass because the
+	# two orders differ and both matter: labels are placed SELECTED-FIRST (a cull must never eat the
+	# label of the band the player is looking at), while tokens keep snapshot order so no glyph
+	# changes what it stacks over. Resolving placement up front leaves the draw order below byte-for-
+	# byte what it was.
+	_reserve_name_pills(by_tile, order, radius, origin)
 	for tile in order:
 		_draw_band_stack(by_tile[tile], radius, origin)
+
+## Which tiles won a name pill in the last pass (see `MapView.band_label_tiles`).
+func placed_label_tiles() -> Array:
+	return _label_grants.keys()
+
+## THE NAME-PILL RESERVATION PASS. Fixed-size text does not shrink with the map, so at the gate
+## radius a 15-character pill spans roughly two hexes and neighbouring bands collide. A pill whose
+## rect intersects one already placed is SKIPPED ENTIRELY — no pill, and no fall back to the scaled
+## faction bar (two different nameplate shapes in one frame reads as two kinds of band). The token,
+## its stack, its ⚠ and its food dot all still draw.
+##
+## SELECTED FIRST, THEN SNAPSHOT ORDER. The tile holding `_view.selected_unit_id` claims its rect
+## before any other, so the band the player is working can never be the one culled. Everything after
+## it keeps snapshot order for the reason the secondary slots fill sequentially: placement has to be
+## the same answer frame to frame or labels flicker on and off as the array shuffles.
+func _reserve_name_pills(by_tile: Dictionary, order: Array, radius: float, origin: Vector2) -> void:
+	_label_rects.clear()
+	_label_grants.clear()
+	if radius < _view.BAND_NAME_PILL_MIN_RADIUS:
+		return
+	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
+	for tile in _label_priority_order(by_tile, order):
+		var group: Array = by_tile[tile]
+		var active: Dictionary = group[_active_index(group)]
+		# Expeditions carry their faction on the flag-disc ring and have never worn a nameplate;
+		# the pill inherits that exactly.
+		if bool(active.get("is_expedition", false)):
+			continue
+		var center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
+		var rect := _name_pill_rect(center, token_radius, String(active.get("id", "")), group.size())
+		if rect.size == Vector2.ZERO:
+			continue
+		var blocked := false
+		for placed in _label_rects:
+			if placed.intersects(rect):
+				blocked = true
+				break
+		if blocked:
+			continue
+		_label_rects.append(rect)
+		_label_grants[tile] = rect
+
+## `order`, with the selected band's tile moved to the front — the ONE reordering the cull does, and
+## it touches label placement only (the caller still draws tokens in `order`).
+func _label_priority_order(by_tile: Dictionary, order: Array) -> Array:
+	if _view.selected_unit_id < 0:
+		return order
+	for tile in order:
+		for unit in by_tile[tile]:
+			if int((unit as Dictionary).get("entity", -1)) == _view.selected_unit_id:
+				var prioritized: Array = [tile]
+				for other in order:
+					if other != tile:
+						prioritized.append(other)
+				return prioritized
+	return order
+
+## Which card of a co-located group is the ACTIVE (top) one: the selected band if it is on this
+## tile, else the first in snapshot order. Shared by the reservation pass and the draw pass so the
+## pill can never name a different band than the token it sits under.
+func _active_index(group: Array) -> int:
+	for i in range(group.size()):
+		if int((group[i] as Dictionary).get("entity", -1)) == _view.selected_unit_id:
+			return i
+	return 0
 
 func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 	var count := group.size()
@@ -53,11 +130,7 @@ func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 	var center: Vector2 = _view._hex_center_wrapped(group_tile.x, group_tile.y, radius, origin)
 	# Active band = the selected one on this tile (_view.selected_unit_id is the cycle target),
 	# else the first. _view.selected_unit_id already tracks the cycled/roster-picked band.
-	var active_idx := 0
-	for i in range(count):
-		if int((group[i] as Dictionary).get("entity", -1)) == _view.selected_unit_id:
-			active_idx = i
-			break
+	var active_idx := _active_index(group)
 	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
 	# Back cards = every non-active band (decorative depth), active drawn last on top.
 	var back_bands: Array = []
@@ -73,16 +146,27 @@ func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 	# Active top card at base position.
 	var active: Dictionary = group[active_idx]
 	_draw_band_token(active, center, token_radius, false)
-	# Faction nameplate banner under the active (primary) card only. Far-zoom LOD-gated with the
-	# same threshold that suppresses secondary icons/chips. Returns its rect so the count pill
-	# can cap its right end.
-	# Expeditions carry their faction on the flag-disc ring, not a settlement nameplate, so skip
-	# the banner for them (and thus the banner-anchored count pill falls back to the offset).
+	# Nameplate under the active (primary) card only, LOD-gated: suppressed below the same threshold
+	# that hides secondary icons/chips. Returns its rect so the count pill can cap its right end.
+	# Expeditions carry their faction on the flag-disc ring, not a settlement nameplate, so they get
+	# neither form (and thus the nameplate-anchored count pill falls back to the offset).
 	var active_is_expedition := bool(active.get("is_expedition", false))
-	var show_banner := radius >= _view.ICON_MIN_DETAIL_RADIUS and not active_is_expedition
+	# ONE nameplate, two forms, chosen by zoom. Above `BAND_NAME_PILL_MIN_RADIUS` the fixed-size NAME
+	# PILL replaces the scaled faction bar at the same anchor (and only if the cull granted this tile
+	# a rect); between that and `ICON_MIN_DETAIL_RADIUS` the bar draws exactly as it always has; below
+	# it, nothing. Either shape hands its Rect2 to the `×N` anchoring below unchanged.
+	var granted: Variant = _label_grants.get(group_tile, null)
+	var show_banner := radius >= _view.ICON_MIN_DETAIL_RADIUS \
+		and radius < _view.BAND_NAME_PILL_MIN_RADIUS and not active_is_expedition
 	var banner_rect := Rect2()
+	var has_nameplate := false
 	if show_banner:
 		banner_rect = _draw_band_banner(center, token_radius, _band_faction_color(active))
+		has_nameplate = true
+	elif granted != null:
+		banner_rect = _draw_band_name_pill(granted, String(active.get("id", "")),
+			_band_faction_color(active))
+		has_nameplate = true
 	# Active band reads by brightness alone now (full-color top card over darkened back cards);
 	# the hex selection outline still marks the selected tile. No per-token ring.
 	# Decorations on the active band only (expeditions show provisions in their drawer, not a dot).
@@ -97,9 +181,9 @@ func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 	# it always caps the banner).
 	if count > _view.BAND_STACK_MAX_CARDS and radius >= _view.ICON_MIN_DETAIL_RADIUS:
 		var pill_center := center + _view.BAND_COUNT_BADGE_OFFSET * radius
-		if show_banner:
+		if has_nameplate:
 			pill_center = Vector2(banner_rect.position.x + banner_rect.size.x, banner_rect.position.y + banner_rect.size.y * 0.5)
-		_view._draw_count_pill(pill_center, "×%d" % count)
+		_view._draw_count_pill(pill_center, _count_pill_text(count))
 
 func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, dim: bool) -> void:
 	if bool(unit.get("is_expedition", false)):
@@ -147,11 +231,81 @@ func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, di
 func _band_faction_color(unit: Dictionary) -> Color:
 	return _view.faction_colors.get(unit.get("faction", ""), _view.BAND_FACTION_FALLBACK_COLOR)
 
+## THE BAND NAME PILL's geometry, resolved WITHOUT drawing — the reservation pass needs the rect
+## before it knows whether the pill may be drawn at all, and the draw then reuses the very rect that
+## was tested, so a granted label can never land somewhere the cull did not clear.
+##
+## Fixed screen size: the plate is measured off the text at `BAND_NAME_PILL_FONT_SIZE` and the gap
+## below the token is a fixed pixel count, so the only thing zoom moves is the anchor (which follows
+## the token's radius, keeping the pill off the glyph at every scale). An unnamed band returns an
+## empty rect and gets no pill — the name is the sim's, never fabricated here.
+## The returned rect is the label's WHOLE FOOTPRINT — the plate plus the room the `×N` chip will take
+## on its right end when the stack is over cap. Both consumers want that total: the cull, because a
+## chip is as much clutter as the name it caps, and the caller's chip anchor, which centres the chip
+## on `rect`'s right edge. The faction BAR needs no such allowance (nothing is written on it), which
+## is why this reservation lives on the pill rather than in the anchoring code.
+func _name_pill_rect(center: Vector2, token_radius: float, band_name: String, count: int) -> Rect2:
+	var half := _name_plate_half(band_name)
+	if half == Vector2.ZERO:
+		return Rect2()
+	var chip_reach := 0.0
+	if count > _view.BAND_STACK_MAX_CARDS:
+		chip_reach = _view.count_pill_reach(_count_pill_text(count))
+	var pill_y: float = center.y + token_radius + _view.BAND_NAME_PILL_GAP + half.y
+	return Rect2(center.x - half.x, pill_y - half.y, half.x * 2.0 + chip_reach, half.y * 2.0)
+
+## Half-extents of the name pill's PLATE alone — the measured text, its padding, and the border plate
+## drawn under it. `Vector2.ZERO` for a band with no name, which gets no pill at all: the name is the
+## sim's, and this renderer never invents one.
+func _name_plate_half(band_name: String) -> Vector2:
+	var font: Font = ThemeDB.fallback_font
+	if font == null or band_name == "":
+		return Vector2.ZERO
+	var text_size: Vector2 = font.get_string_size(band_name, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		_view.BAND_NAME_PILL_FONT_SIZE)
+	return Vector2(
+		text_size.x * 0.5 + _view.BAND_NAME_PILL_PAD_X + _view.BAND_NAME_PILL_BORDER_WIDTH,
+		text_size.y * 0.5 * _view.MARKER_BADGE_HEIGHT_FACTOR + _view.BAND_NAME_PILL_BORDER_WIDTH)
+
+## The over-cap count chip's text, written once so the string the caller DRAWS and the string the
+## pill MEASURES its reservation against can never drift apart.
+func _count_pill_text(count: int) -> String:
+	return "×%d" % count
+
+## Draw the band's name into a rect `_name_pill_rect` already measured and the cull already cleared.
+## The plate is the shared `_draw_pill_plate` — the same family as the `×N`/`+N` badges — with the
+## FACTION COLOR on its border rather than its fill: the fill has to stay dark for `MARKER_BADGE_FG`
+## text to read, and tinting it per faction would make every faction's label a different style.
+## Returns the rect so the caller can anchor the `×N` count pill to its right end, exactly as the
+## faction bar does.
+func _draw_band_name_pill(rect: Rect2, band_name: String, faction_color: Color) -> Rect2:
+	var font: Font = ThemeDB.fallback_font
+	if font == null or band_name == "":
+		return Rect2()
+	# The plate is LEFT-aligned in the rect, not centred in it: the rect may carry a chip allowance on
+	# its right end (see `_name_pill_rect`), and the plate itself still has to sit under the token.
+	var half := _name_plate_half(band_name)
+	var pill_center := Vector2(rect.position.x + half.x, rect.position.y + rect.size.y * 0.5)
+	var text_size: Vector2 = font.get_string_size(band_name, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		_view.BAND_NAME_PILL_FONT_SIZE)
+	_view._draw_pill_plate(pill_center, text_size, _view.BAND_NAME_PILL_PAD_X, _view.MARKER_BADGE_BG,
+		faction_color, _view.BAND_NAME_PILL_BORDER_WIDTH)
+	_view.draw_string(font,
+		Vector2(pill_center.x - text_size.x * 0.5, pill_center.y + text_size.y * NAME_PILL_BASELINE_FACTOR),
+		band_name, HORIZONTAL_ALIGNMENT_LEFT, -1, _view.BAND_NAME_PILL_FONT_SIZE, _view.MARKER_BADGE_FG)
+	return rect
+
+## Where the text baseline sits below the plate's centre, as a fraction of the measured text height —
+## the same optical centring `MapView._draw_count_pill` uses, so the two pill families sit their text
+## identically.
+const NAME_PILL_BASELINE_FACTOR := 0.32
+
 ## Faction-colored nameplate banner drawn under the PRIMARY band token (caller draws it for the
 ## active top card only — never the dimmed back cards). Ownership reads off the fill color, so no
-## ring/disc is needed. The bar is sized to later host an optional faction/band NAME LABEL drawn
-## on top of it (this bar is the substrate); keep it wide/structured enough for that. Returns the
-## bar Rect2 so the caller can anchor the `×N` count pill to its right end.
+## ring/disc is needed. This is the MID-zoom form only: it is sized off the token radius, so it
+## cannot hold text at any legible size, and above `BAND_NAME_PILL_MIN_RADIUS` the name pill replaces
+## it at the same anchor. Returns the bar Rect2 so the caller can anchor the `×N` count pill to its
+## right end.
 func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color) -> Rect2:
 	var width := token_radius * _view.BAND_BANNER_WIDTH_FACTOR
 	var height := token_radius * _view.BAND_BANNER_HEIGHT_FACTOR

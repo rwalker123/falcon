@@ -1034,6 +1034,81 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_stage_glyphs")
 
+	# State "band names" (fixed-screen-size nameplates) — the high-zoom form of the nameplate. Three
+	# separately-factioned bands carrying the pool's shortest and longest names side by side, plus a
+	# four-band stack below whose `Thornhollow ×4` must read as ONE nameplate rather than a label with
+	# a chip floating beside it. Ownership is the pill's BORDER: the plate stays dark so the name is
+	# legible whatever the faction colour is.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_band_names())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the name-pill row really is above the pill gate (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	await _save("map_band_names")
+	_assert_map("every band in the row places a pill — none of them crowd each other at this zoom",
+		_map.band_label_tiles().size() == NAME_PILL_COLS.size() + 1)
+
+	# State "band name overlap" — THE CULL, and the priority inside it. Two adjacent bands both named
+	# "Shepherd's Fold": the pills are wider than the hex spacing, so one of the two labels must go
+	# entirely (no pill AND no fall back to the scaled bar — the tokens, not the nameplates, are what
+	# says a band is there). The survivor is the SELECTED band, which is second in snapshot order, so
+	# a renderer with no priority rule keeps the wrong one and fails here.
+	_map.display_snapshot(_snapshot_band_names_crowded())
+	_map.selected_unit_id = NAME_PILL_CULL_EAST_ENTITY
+	_map.selected_tile = NAME_PILL_CULL_EAST_TILE
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the crowded frame is close enough that two long pills cannot both fit (radius %.1f, hexes %.0fpx apart)"
+			% [_map.last_hex_radius, MAP_VIEW.SQRT3 * _map.last_hex_radius],
+		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	await _save("map_band_names_overlap")
+	var culled_labels: Array = _map.band_label_tiles()
+	_assert_map("two touching pills, one label: the overlapping one is dropped outright",
+		culled_labels.size() == 1)
+	_assert_map("…and the one kept is the SELECTED band's, not the first in snapshot order",
+		culled_labels.size() == 1 and culled_labels[0] == NAME_PILL_CULL_EAST_TILE)
+
+	# map_band_names_gate — the pill at the smallest zoom it is ever drawn at (a grid fitting JUST
+	# above BAND_NAME_PILL_MIN_RADIUS). Anything smaller takes the scaled faction bar instead.
+	_map.display_snapshot(_snapshot_band_name_gate(NAME_PILL_GATE_ABOVE_GRID_W, NAME_PILL_GATE_ABOVE_GRID_H))
+	_map.selected_unit_id = -1
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the gate frame fits JUST above the pill gate (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	await _save("map_band_names_gate")
+	_assert_map("above the gate the band wears the NAME PILL",
+		_map.band_label_tiles().size() == 1)
+
+	# map_band_names_below_gate — the other side of the same gate, one notch out rather than far out.
+	# **The bar's PRESENCE is what makes the pill's absence worth asserting**: the same token still
+	# carries a faction-coloured nameplate here, so this frame distinguishes which FORM was chosen
+	# rather than merely observing a zoom where nothing would have been visible.
+	var below_gate_tile := Vector2i(NAME_PILL_GATE_BELOW_GRID_W / 2, NAME_PILL_GATE_BELOW_GRID_H / 2)
+	_map.display_snapshot(_snapshot_band_name_gate(NAME_PILL_GATE_BELOW_GRID_W, NAME_PILL_GATE_BELOW_GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the below-gate frame fits JUST below the pill gate (radius %.1f < %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS],
+		_map.last_hex_radius < MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	_assert_map("premise: …and still above the marker detail gate, so a nameplate IS drawn (%.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.ICON_MIN_DETAIL_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.ICON_MIN_DETAIL_RADIUS)
+	await _save("map_band_names_below_gate")
+	var below_gate_frame: Image = await _capture()
+	_assert_map("one notch below the gate no pill is placed",
+		_map.band_label_tiles().is_empty())
+	_assert_map("…because the SCALED FACTION BAR is what the nameplate is at that zoom",
+		_frame_inks_red_near_hex(below_gate_frame, below_gate_tile, NAME_PILL_GATE_PROBE_RADII,
+			FACTION_BAR_INK_RED_MARGIN))
+
 	# State M — hunting expeditions (PR 2, §2b): alongside the resident band (solid dot) and a scout
 	# party (hollow ⚑ flag), two hunt parties render as hollow 🏹 bow discs — one Hunting, one
 	# Delivering (with a green food pip, "carrying a haul home"). Verifies hunt vs scout markers +
@@ -3481,6 +3556,12 @@ func _frame_paints_near_hex(image: Image, tile: Vector2i, color: Color,
 const WARNING_INK_RED_MARGIN := 0.24
 
 func _frame_marks_warning_near_hex(image: Image, tile: Vector2i, radii: float) -> bool:
+	return _frame_inks_red_near_hex(image, tile, radii, WARNING_INK_RED_MARGIN)
+
+## The generalised form: is there ink around this token whose RED channel runs `margin` clear of its
+## own green and blue? Shared by the ⚠ probe above and by the below-gate nameplate probe, which asks
+## the same question of the orange faction BAR for the same reason — see `FACTION_BAR_INK_RED_MARGIN`.
+func _frame_inks_red_near_hex(image: Image, tile: Vector2i, radii: float, margin: float) -> bool:
 	if image == null:
 		return false
 	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
@@ -3493,7 +3574,7 @@ func _frame_marks_warning_near_hex(image: Image, tile: Vector2i, radii: float) -
 	for py in range(y0, y1):
 		for px in range(x0, x1):
 			var pixel := image.get_pixel(px, py)
-			if pixel.r - maxf(pixel.g, pixel.b) >= WARNING_INK_RED_MARGIN:
+			if pixel.r - maxf(pixel.g, pixel.b) >= margin:
 				return true
 	return false
 
@@ -3715,11 +3796,26 @@ func _base_snapshot(band: Dictionary, herds: Array) -> Dictionary:
 	}
 
 ## Merge a stage's presentation tokens into a band dict (in place) and return it.
+## EVERY FIXTURE BAND CARRIES A NAME, stamped here because this is the one builder all five band
+## fixtures funnel through. The map's nameplate IS the sim's name for the band (`HudFormat.band_name`
+## → the marker's `id`), so a fixture without one renders the `Band #-1` id fallback in every frame
+## above `BAND_NAME_PILL_MIN_RADIUS`. A caller that has already set `name` keeps it — the name-pill
+## states pick specific lengths and must not be overwritten by the cycle.
 func _with_stage(band: Dictionary, stage: Dictionary) -> Dictionary:
 	band["settlement_stage_id"] = String(stage.get("id", ""))
 	band["settlement_stage_label"] = String(stage.get("label", ""))
 	band["settlement_stage_icon"] = String(stage.get("icon", ""))
+	if not band.has("name"):
+		band["name"] = _fixture_band_name(int(band.get("entity", 0)))
 	return band
+
+## Names for the fixtures that do not care WHICH name they get, cycled by entity so a band's name is
+## the same on every run. Taken from the sim's own pool (`core_sim/src/data/band_names.json`) rather
+## than invented, so the frames render label widths the shipped game can actually produce.
+const FIXTURE_BAND_NAMES := ["Ashfell", "Thornhollow", "Lowfen", "Deepfen", "Teasel", "Junipergrove"]
+
+func _fixture_band_name(entity: int) -> String:
+	return FIXTURE_BAND_NAMES[absi(entity) % FIXTURE_BAND_NAMES.size()]
 
 func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary:
 	return _with_stage({
@@ -4239,6 +4335,122 @@ func _snapshot_stages_row() -> Dictionary:
 			_band_at(STACK_ENTITY_BASE + 2, BAND_X + 1, BAND_Y, STAGE_VILLAGE, 2),
 			_band_at(STACK_ENTITY_BASE + 3, BAND_X + 3, BAND_Y, STAGE_NONE, 1),
 		],
+		"herds": [],
+	}
+
+## ---- THE BAND NAME PILLS (fixed-screen-size nameplates) ----------------------------------------
+## Names from the sim's pool (band_names.json), chosen at both ENDS of its 6–15-character range: a
+## pill that fits "Lowfen" says nothing about the one that has to hold "Shepherd's Fold", and the
+## long one is what the overlap cull is dimensioned against.
+const NAME_PILL_SHORT_NAME := "Lowfen"            # 6 chars — the pool's shortest
+const NAME_PILL_LONG_NAME := "Shepherd's Fold"    # 15 chars — the pool's longest
+const NAME_PILL_MID_NAME := "Ashfell"
+const NAME_PILL_STACK_NAME := "Thornhollow"       # the co-located stack, so `name + ×N` reads as one
+## The showcase row: three separate bands five columns apart (clear of each other's pills at this
+## zoom) plus a four-band stack on the row below.
+const NAME_PILL_ROW_Y := 3
+const NAME_PILL_COLS := [2, 7, 12]
+const NAME_PILL_NAMES := [NAME_PILL_SHORT_NAME, NAME_PILL_LONG_NAME, NAME_PILL_MID_NAME]
+const NAME_PILL_STACK_X := 7
+const NAME_PILL_STACK_Y := 8
+const NAME_PILL_STACK_COUNT := 4                  # > BAND_STACK_MAX_CARDS, so the `×4` folds on
+const NAME_PILL_ENTITY_BASE := 9500
+
+func _snapshot_band_names() -> Dictionary:
+	var bands: Array = []
+	for i in range(NAME_PILL_COLS.size()):
+		var band := _band_at(NAME_PILL_ENTITY_BASE + i, NAME_PILL_COLS[i], NAME_PILL_ROW_Y,
+			STACK_STAGE_CYCLE[i % STACK_STAGE_CYCLE.size()], i % 3)
+		band["name"] = NAME_PILL_NAMES[i]
+		bands.append(band)
+	for j in range(NAME_PILL_STACK_COUNT):
+		var card := _band_at(NAME_PILL_ENTITY_BASE + NAME_PILL_COLS.size() + j,
+			NAME_PILL_STACK_X, NAME_PILL_STACK_Y, STAGE_VILLAGE, 2)
+		card["name"] = NAME_PILL_STACK_NAME
+		bands.append(card)
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": bands,
+		"herds": [],
+	}
+
+## ---- THE OVERLAP CULL --------------------------------------------------------------------------
+## Two long-named bands on ADJACENT columns of the same row. In odd-r offset that is `SQRT3 × radius`
+## apart with identical `y`, and a 15-character pill is wider than that at this zoom — so the two
+## rects genuinely intersect and exactly one label can be placed.
+##
+## **THE SELECTED BAND IS DELIBERATELY SECOND IN SNAPSHOT ORDER.** Placement otherwise runs in
+## snapshot order, so without the selected-first priority the WEST band would win and this frame
+## would pass on a renderer that has no priority rule at all.
+## The cull grid. **MEASURED, not derived**: the 16x12 grid this harness uses elsewhere fits at
+## radius 83, which puts `SQRT3 x 83 = 144 px` between neighbouring hexes — half again the ~100 px a
+## 15-character pill spans, so nothing collides there and the state would have proved nothing. This
+## grid fits at ~35, i.e. ~61 px apart, where two long names genuinely cannot both fit. The premise
+## assertion states the radius it got.
+const NAME_PILL_CULL_GRID_W := 32
+const NAME_PILL_CULL_GRID_H := 29
+const NAME_PILL_CULL_WEST_ENTITY := 9520
+const NAME_PILL_CULL_EAST_ENTITY := 9521
+const NAME_PILL_CULL_WEST_TILE := Vector2i(NAME_PILL_CULL_GRID_W / 2 - 1, NAME_PILL_CULL_GRID_H / 2)
+const NAME_PILL_CULL_EAST_TILE := Vector2i(NAME_PILL_CULL_GRID_W / 2, NAME_PILL_CULL_GRID_H / 2)
+
+func _snapshot_band_names_crowded() -> Dictionary:
+	var west := _band_at(NAME_PILL_CULL_WEST_ENTITY, NAME_PILL_CULL_WEST_TILE.x,
+		NAME_PILL_CULL_WEST_TILE.y, STAGE_CAMP, 1)
+	west["name"] = NAME_PILL_LONG_NAME
+	var east := _band_at(NAME_PILL_CULL_EAST_ENTITY, NAME_PILL_CULL_EAST_TILE.x,
+		NAME_PILL_CULL_EAST_TILE.y, STAGE_VILLAGE, 0)
+	east["name"] = NAME_PILL_LONG_NAME
+	var terrain: Array = []
+	terrain.resize(NAME_PILL_CULL_GRID_W * NAME_PILL_CULL_GRID_H)
+	terrain.fill(TERRAIN_ID)
+	return {
+		"grid": {"width": NAME_PILL_CULL_GRID_W, "height": NAME_PILL_CULL_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [west, east],   # west first — the priority rule is what puts east's label down
+		"herds": [],
+	}
+
+## ---- THE LOD GATE, BOTH SIDES ------------------------------------------------------------------
+## ⛔ **THE TWO GRIDS STRADDLE `BAND_NAME_PILL_MIN_RADIUS` BY A HAIR**, for the reason spelled out at
+## `MARK_GATE_ABOVE_GRID_W`: an absence is only worth asserting where a PRESENCE would have been
+## visible. Just below the gate the scaled faction BAR is plainly drawn under the same token, so the
+## pill's absence there is a real observation about which form the nameplate took — not a claim about
+## a zoom at which nothing would have shown. Sized by MEASURING the cover fit (the premise assertions
+## print what they got), not by arithmetic off the window.
+const NAME_PILL_GATE_ABOVE_GRID_W := 45
+const NAME_PILL_GATE_ABOVE_GRID_H := 41
+const NAME_PILL_GATE_BELOW_GRID_W := 47
+const NAME_PILL_GATE_BELOW_GRID_H := 43
+## How far around the token the gate frames probe for nameplate ink, in hex radii. Tight: the
+## nameplate hangs just under the token in both forms, and a wide box would let a NEIGHBOUR's
+## nameplate answer for this one.
+const NAME_PILL_GATE_PROBE_RADII := 1.2
+## The gate band's faction — ORANGE, and picked for that: the below-gate frame proves the scaled bar
+## is what the nameplate is at that zoom, and orange is what the probe below can see.
+const NAME_PILL_GATE_FACTION := 1
+## ⛔ **AN EXACT-COLOUR PROBE CANNOT SEE THE BAR, AND THE FIRST ONE HERE DID NOT.** Just under the
+## gate the bar is ~19x4 viewport px and the frame is resampled on its way to the framebuffer, so no
+## pixel reaches the flat faction colour: measured on this very frame, the closest was **0.26** away
+## from it while bare terrain got to **0.40** — no threshold separates those. The discriminating
+## property is REDNESS, exactly as it is for the ⚠ (`WARNING_INK_RED_MARGIN`): the orange bar
+## measures ~0.41 and this map's khaki terrain ~0.06, so the margin sits in a wide gap rather than
+## being tuned past one of them.
+const FACTION_BAR_INK_RED_MARGIN := 0.24
+
+## One named band at the middle of whatever grid it is asked for — the gate frames want a single
+## unambiguous subject, not a row the cull could also be acting on.
+func _snapshot_band_name_gate(width: int, height: int) -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(width * height)
+	terrain.fill(TERRAIN_ID)
+	var band := _band_at(NAME_PILL_ENTITY_BASE, width / 2, height / 2, STAGE_VILLAGE, NAME_PILL_GATE_FACTION)
+	band["name"] = NAME_PILL_LONG_NAME
+	return {
+		"grid": {"width": width, "height": height, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [band],
 		"herds": [],
 	}
 
