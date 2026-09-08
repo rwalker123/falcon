@@ -206,6 +206,12 @@ impl BuildKitIds {
 }
 
 /// **The one place a band's live queue becomes the wire's `buildKitId`** — see [`BuildKitIds`].
+///
+/// ⛔ **`allocations` MUST BE THE VIEWER'S OWN BANDS.** The index keys purely by tile and herd id, so
+/// it cannot tell whose queue an entry came from; the caller filters
+/// (`snapshot/capture.rs`), and the resulting membership is what both source tables gate a rival's
+/// stamped build scratch on. See `factions.md` → "The improvement follows the ground; the BUILDER'S
+/// state follows the builder".
 pub(crate) fn resolve_build_kit_ids<'a>(
     allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
     forage: &ForageRegistry,
@@ -328,9 +334,27 @@ impl UpkeepKitIds {
             .get(id)
             .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
     }
+
+    /// **DOES ONE OF THE VIEWER'S OWN BANDS WORK THIS PATCH?** — asked, not inferred from an empty
+    /// kit id, because a resolved keeping kit is never the empty string: `keeping_kit_for` always
+    /// names a roster entry. The twin of [`BuildKitIds::patch_is_queued`], and the second of the two
+    /// ways the labor arm reaches a source — `publish_build_chain` stamps its estimate onto the
+    /// band's **queued** entries and onto everything the band **works**, so those two memberships
+    /// together are exactly *"this scratch could be ours"*.
+    fn patch_is_worked(&self, tile: UVec2) -> bool {
+        self.patches.contains_key(&tile)
+    }
+
+    /// The animal twin — see [`Self::patch_is_worked`].
+    fn herd_is_worked(&self, id: &str) -> bool {
+        self.herds.contains_key(id)
+    }
 }
 
 /// **The one place a band's live rows become the wire's `upkeepKitId`** — see [`UpkeepKitIds`].
+///
+/// ⛔ **`allocations` MUST BE THE VIEWER'S OWN BANDS**, on [`resolve_build_kit_ids`]' rule and for its
+/// reason — which is also what [`UpkeepKitIds::patch`]'s contract already claimed.
 pub(crate) fn resolve_upkeep_kits<'a>(
     allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
     // **Both webs' registries, for the RUNG each worked site stands on** — a keeping tool may be
@@ -655,6 +679,23 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 .then_some((entry, herd))
         })
         .map(|(entry, herd)| {
+            // ⛔ **WHOSE BUILD THIS IS FOLLOWS THE BUILDER, NOT THE GROUND** — the plant twin's rule,
+            // one web over; see `snapshot_forage_patches`. A rival's herd rides this list wherever the
+            // viewer can *see* it, and seeing an animal says nothing about the kit its keepers carry,
+            // how many turns their Tame has left or where it sits in their queue. Both indices are
+            // built from the viewer's own allocations, so their membership is exactly *"one of our
+            // bands stamped this"*; the clone is skipped on a herd carrying no build, which is nearly
+            // all of them.
+            let build_state_is_the_viewers =
+                build_kits.herd_is_queued(&entry.id) || upkeep_kits.herd_is_worked(&entry.id);
+            let withheld_build;
+            let herd = match herd {
+                Some(live) if !build_state_is_the_viewers && live.has_build_estimate() => {
+                    withheld_build = live.without_build_estimate();
+                    Some(&withheld_build)
+                }
+                other => other,
+            };
             // The species row backing this herd — resolved once for the raw combat components below.
             let species_def = fauna.species_by_display(&entry.species);
             // **THIS HERD'S quoted party** — the kit the compose sheet opens on, memoized once per
@@ -1452,16 +1493,6 @@ pub(crate) fn snapshot_forage_patches(
             let improvement_is_legible = patch.owner.is_none_or(|owner| owner == viewer)
                 || !fog_enabled
                 || visibility.is_discovered(viewer, patch.tile.x, patch.tile.y);
-            let improvement_fraction =
-                |value: f32| if improvement_is_legible { value } else { 0.0 };
-            let improvement_flag = |value: bool| if improvement_is_legible { value } else { false };
-            let improvement_owner = |value: Option<u32>| {
-                if improvement_is_legible {
-                    value
-                } else {
-                    None
-                }
-            };
             let seasonal = seasonal_weights
                 .get(&patch.tile)
                 .copied()
@@ -1481,6 +1512,53 @@ pub(crate) fn snapshot_forage_patches(
                 patch,
                 tile_capacities.get(&patch.tile).copied(),
             );
+            // ⛔ **THE REDACTION IS OF THE SOURCE, AND EVERY FIELD BELOW READS THE REDACTED ONE.**
+            //
+            // Five fields used to be gated by name — `owner`, the two flags and the two meters —
+            // while `carrying_capacity`, the two rung yields, `provisions_per_biomass` and the
+            // basket were all derived from the same improvement and published bare. So
+            // `carrying_capacity != tile_capacity` was an exact test for *"this rival tile carries a
+            // standing improvement"*, sitting on the very row that denied one, and a client
+            // declining to draw it is presentation rather than a boundary.
+            //
+            // **A row the viewer may not read the improvement on is built from WILD GROUND**
+            // ([`crate::forage::ForagePatch::as_wild_ground`]) — not from zeros, which would be a lie
+            // about terrain the whole map already publishes. Every improvement-derived term takes its
+            // unimproved value because the *source* it is derived from has none, so the row is
+            // internally consistent by construction and a field added below is redacted without
+            // anybody remembering to add it to a list.
+            //
+            // `tile_capacity` above is resolved from the real patch deliberately: it is the land's
+            // own `K` and carries no rung gain, and its off-map fallback
+            // (`patch_land_capacity`) is a capacity `advance_forage_regrowth` provably never
+            // multiplied. The wild twin then takes it as its `carrying_capacity`.
+            let wild_ground;
+            let patch = if improvement_is_legible {
+                patch
+            } else {
+                wild_ground = patch.as_wild_ground(tile_capacity, forage);
+                &wild_ground
+            };
+            // ⛔ **AND WHOSE BUILD THIS IS FOLLOWS THE BUILDER, NOT THE GROUND.** The improvement
+            // standing on a tile is legible where the viewer has explored, because a field does not
+            // wander off. *Who* is raising it, with what kit, how many turns from done and where it
+            // sits in their queue is the builder's internal state — the same category as the larder
+            // and the bench a foreign band's row already withholds — so it is the viewer's own bands
+            // or nothing. Both indices are built from the viewer's allocations alone
+            // (`snapshot/capture.rs`), and their two memberships are the two ways the labor arm
+            // reaches a source at all, so this is exactly *"one of our bands stamped this"*.
+            //
+            // The clone is skipped on a source carrying no build, which is nearly all of them.
+            let withheld_build;
+            let patch = if build_kits.patch_is_queued(patch.tile)
+                || upkeep_kits.patch_is_worked(patch.tile)
+                || !patch.has_build_estimate()
+            {
+                patch
+            } else {
+                withheld_build = patch.without_build_estimate();
+                &withheld_build
+            };
             // **The measure both rung quotes below are struck per** — one reading, so the price a
             // compose sheet shows and the bill the patch is handed cannot come from two places.
             let tender_loads = crate::forage::patch_tender_loads(tile_capacity, forage);
@@ -1556,18 +1634,24 @@ pub(crate) fn snapshot_forage_patches(
                 // of one question and could contradict each other. The meter asks the standing now
                 // (`intensification::rung_work_done`); the equality above is a construction rather
                 // than a coincidence of the arithmetic.
-                cultivation_progress: improvement_fraction(build_fraction(
+                cultivation_progress: build_fraction(
                     crate::forage::patch_rung_work_done(patch, RungKey::PlantTended, ladder),
                     cultivation_work_cost,
-                )),
-                is_cultivated: improvement_flag(patch.is_cultivated()),
-                owner: improvement_owner(patch.owner.map(|faction| faction.0)),
+                ),
+                is_cultivated: patch.is_cultivated(),
+                owner: patch.owner.map(|faction| faction.0),
                 biomass: patch.biomass,
                 // **WHAT THE PATCH HOLDS NOW — the rung is IN this number.** It is the tile's `K`
                 // times the interpolated `field_capacity_gain` (`patch_carrying_capacity`, written
                 // once per turn by `advance_forage_regrowth`), so a standing Field reads ~2.53× the
-                // same ground wild. **The client must redact it under fog** and render
-                // `tile_capacity` below instead — see that field.
+                // same ground wild.
+                //
+                // ⛔ **WHICH IS WHY IT IS THE SOURCE THAT IS REDACTED, NOT THE CLIENT'S RENDERING.**
+                // This used to say *"the client must redact it under fog and render `tile_capacity`
+                // instead"* — but a client declining to draw a number is presentation, and the pair
+                // `carrying_capacity != tile_capacity` was itself the disclosure. A row whose
+                // improvement the viewer may not read is built from a wild source, so this **is**
+                // `tile_capacity` there, by construction.
                 carrying_capacity: patch.carrying_capacity,
                 ecology_phase: patch.ecology_phase.as_str().to_string(),
                 // The plant web's forecast is food-only for now — its fodder component is
@@ -1580,11 +1664,11 @@ pub(crate) fn snapshot_forage_patches(
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_yield` below comes off the same `rung_payoff` seam the labor arm pays a
                 // Field with, so the client's "then Y" is the number the sim will hand over.
-                field_progress: improvement_fraction(build_fraction(
+                field_progress: build_fraction(
                     crate::forage::patch_rung_work_done(patch, RungKey::PlantField, ladder),
                     field_work_cost,
-                )),
-                is_field: improvement_flag(patch.is_field()),
+                ),
+                is_field: patch.is_field(),
                 // **Through `rung_payoff` at rung 3** — the same seam the sim pays every plant rung
                 // with, asked about the Field by name. It used to call a rung-3-only managed rate;
                 // that model is retired, so the quote and the payout are one expression again.
@@ -1772,9 +1856,11 @@ pub(crate) fn snapshot_forage_patches(
                 upkeep_kit_id: upkeep_kits.patch(patch.tile).0,
                 upkeep_kit_named: upkeep_kits.patch(patch.tile).1,
                 // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
-                // fog-safe twin of `carrying_capacity` above and the denominator every upkeep figure
+                // ungained twin of `carrying_capacity` above and the denominator every upkeep figure
                 // on this row is quoted per. **The reading already resolved once above**, never a
-                // second lookup: two producers of one number are two numbers.
+                // second lookup: two producers of one number are two numbers. On a row whose
+                // improvement is redacted the two are deliberately **equal**, because the source
+                // itself reads as wild ground — see `carrying_capacity`.
                 tile_capacity,
                 // The plant twin — see [`published_build_countdown`] and the herd row above.
                 build_turns_remaining: published_build_countdown(

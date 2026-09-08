@@ -531,8 +531,8 @@ apply only where the row describes something that can be *seen*.
 |---|---|---|
 | `populations` | `snapshot/capture.rs` + `snapshot/population.rs` | **Three tiers** — see the section above |
 | `demographics` | `snapshot/population.rs` | **Viewer** — derived from the redacted band list, so a foreign faction aggregates to nothing |
-| `foragePatches` | `snapshot/subsistence.rs` | **The row is terrain and always rides; the IMPROVEMENT on it is viewer-scoped** — see below |
-| `herds` | `snapshot/subsistence.rs` | **Fog-filtered** (`Active`), plus your own animals wherever they stand |
+| `foragePatches` | `snapshot/subsistence.rs` | **The row is terrain and always rides; the IMPROVEMENT on it follows the GROUND and the BUILDER'S state follows the BUILDER** — two rules, see below |
+| `herds` | `snapshot/subsistence.rs` | **Fog-filtered** (`Active`), plus your own animals wherever they stand — and the BUILDER'S state on a visible rival's herd is withheld on the plant web's rule |
 | `routes` | `snapshot/routes.rs` | **Fog-filtered** (`Discovered`) — a road does not wander off |
 | `connections` | `snapshot/connections.rs` | **Viewer** — edges whose *observer* band is the viewer's |
 | `factionInventory` | `snapshot/economy.rs` | **Viewer** |
@@ -570,7 +570,7 @@ named function so the two cannot drift — `discovery_reaches_viewer` and
 
 | Published aggregate | Verdict |
 |---|---|
-| `greatDiscoveryTelemetry.totalResolved` / `.activeConstellations` / `.pendingCandidates` | **Was world, now viewer.** All three counted across every faction |
+| `greatDiscoveryTelemetry.totalResolved` / `.activeConstellations` / `.pendingCandidates` | **Was world, now viewer.** All three counted across every faction. `.activeConstellations` then had to be made to agree with its list a second time — see below |
 | `knowledgeMetrics` (leak warnings/criticals, countermeasures, common knowledge) | **Viewer** — recomputed over the viewer's own ledger entries |
 | `header.populationCount` | **Viewer for free** — it counts the already-filtered band list |
 | `demographics` | **Viewer for free** — same reason: it aggregates the redacted band rows |
@@ -582,6 +582,28 @@ named function so the two cannot drift — `discovery_reaches_viewer` and
 | `greatDiscoveryDefinitions` | **World, correctly** — *how many constellations exist to chase* is the legitimately world-level number in this arc, and it ships as a catalogue with no faction at all |
 | `victory.modes[].progress` | **Was world, now viewer.** It was the aggregate-leak category's worst case — not a filter that was missing but a *model* that was absent: progress was evaluated from the world's `SimulationMetrics` and the winner hard-coded `FactionId(0)`. Victory is per faction now (`campaign.md` → "Victory is evaluated PER FACTION"), and the published rows are the viewer's |
 | `cultureLayers` / `cultureTensions` | **World, correctly.** `CultureOwner` *can* name a band — but only global, regional and tile-local layers are ever published (`capture.rs`), so no band-scoped layer reaches the wire |
+
+#### ⛔ "AGREES WITH THE LIST" MEANS ONE PREDICATE, NOT TWO THAT HAPPEN TO MATCH
+
+`activeConstellations` was scoped to the viewer and still disagreed with the list beside it, in the
+other direction: `snapshot_progress` published a row for **every unresolved** constellation while
+`snapshot_telemetry` counted only the **started** ones. `GreatDiscoveryReadiness` pre-seeds an entry
+per definition per faction, so a fresh world shipped `N` rows all reading `progress == 0` under a
+count of `0`.
+
+**Both now spend `constellation_is_in_flight`** — unresolved *and* started — and the zero-progress
+rows are gone from the list: a constellation nobody has started is not in progress, and `N` rows of
+zeros is noise on a wire whose `greatDiscoveryDefinitions` catalogue already states what there is to
+chase. The client is unaffected: its *"everything you could chase"* list is that catalogue, and its
+progress panel already carries the copy for an empty one (*"Your people are not pursuing a Great
+Discovery."*).
+
+**The test that was supposed to catch this asserted something weaker than the rule it was written
+for.** `frame_is_viewer_scoped.rs` counted the published rows `.filter(|row| row.progress() > 0)`,
+so it compared the counter's own predicate with itself and agreed. The filter is gone — and with one
+shared predicate the agreement now holds *by construction*, which is why **which** predicate is
+pinned separately, by `an_unstarted_constellation_is_not_a_published_progress_row`. A shared
+predicate makes an agreement test unfalsifiable; the content claim has to be asserted on its own.
 
 ### Three deliberate exemptions, and why each stays
 
@@ -595,24 +617,97 @@ named function so the two cannot drift — `discovery_reaches_viewer` and
    record would leave the flag observable only to its owner, the one reader it is not for. A
    discovery kept quiet stays quiet, and `greatDiscoveryProgress` takes **no** such exemption.
 
-### The improvement on a tile follows the ground
+### The improvement follows the GROUND; the BUILDER'S state follows the builder
 
 A `foragePatch` row is a fact about a **tile**, and tiles are published whole — so the row always
-rides, and its ecology half (biomass, capacity, phase, composition) is world-visible like the terrain
-it describes. What is *not* a fact about the tile is the improvement standing on it: `owner`,
-`isCultivated` / `cultivationProgress`, `isField` / `fieldProgress`. Those are a fact about a people,
-and before the sweep every client got them for every patch on the map — a live readout of exactly
-which ground a rival was farming.
+rides, and its ecology half (biomass, phase, standing crop) is world-visible like the terrain it
+describes. What is *not* a fact about the tile is the improvement standing on it. **Two different
+rules divide that row, and conflating them is what produced both of its leaks.**
 
-They are legible where the viewer's own hand built them, and where a rival's are on ground the viewer
-has **explored** — `is_discovered`, not `is_visible`, on `route_states`' precedent: **a field is
-built into the ground and does not wander off**, so having seen it once remains true. (A herd is the
-opposite case and uses `Active`.) The staleness that buys — a field that has since gone feral still
-reading as a field — is the staleness a remembered road already carries.
+**① The improvement follows the ground.** `owner`, `isCultivated` / `cultivationProgress`, `isField`
+/ `fieldProgress` and everything derived from the patch's rung are a fact about a *people*, and
+before the sweep every client got them for every patch on the map — a live readout of exactly which
+ground a rival was farming. They are legible where the viewer's own hand built them, and where a
+rival's are on ground the viewer has **explored** — `is_discovered`, not `is_visible`, on
+`route_states`' precedent: **a field is built into the ground and does not wander off**, so having
+seen it once remains true. (A herd is the opposite case and uses `Active`.) The staleness that buys —
+a field that has since gone feral still reading as a field — is the staleness a remembered road
+already carries.
+
+**② The builder's state follows the builder.** *Who* is raising that improvement, *with what kit*,
+*how many turns from done* and *where it sits in their queue* is not a fact about the ground at all —
+it is the builder's internal state, the same category as the larder, the bench and the build queue a
+foreign band's row already withholds. So `buildKitId`, `upkeepKitId` / `upkeepKitNamed`,
+`buildTurnsRemaining`, `buildQueuePosition`, `buildWorkFromGear`, `buildBlockedReason`,
+`buildDestinationRung` / `buildDestinationCapacity` and `buildLegs` are the **viewer's own bands or
+nothing**, on explored ground exactly as on unexplored. Both source tables carry it, plants and herds
+alike; a per-web asymmetry here would be a second model.
+
+> #### ⛔ RULE ① IS AN ALLOW-LIST ON THE **SOURCE**, NOT A LIST OF FIELDS
+>
+> It shipped as a **deny-list of five names** — the two flags, the two meters and `owner` — and the
+> row beside those five confirmed exactly what they denied. `carryingCapacity` is the tile's `K`
+> **times the Field rung's interpolated capacity gain**, `tendedYield` / `fieldYield` are
+> `rung_payoff` read off the patch's rung, `provisionsPerBiomass` is the *committed* conversion, and
+> `composition` / `committedSpecies` are the weeded basket. **So `carryingCapacity != tileCapacity`
+> was an exact test for "this rival tile carries a standing improvement", published on the row that
+> said it did not.** A client declining to draw it under fog is presentation, not a boundary — the
+> same standard the band redaction is held to.
+>
+> A deny-list fails open on the field nobody thought of, and this *was* that failure. So the
+> redaction is of the **source**: a row the viewer may not read the improvement on is built from
+> `ForagePatch::as_wild_ground` — the same patch with the ladder position, the standing, the
+> committed species, the owner, the keeping bill and the build scratch at their unimproved values,
+> and `carrying_capacity` back at the land's own `K`. Every one of the ~40 published values derives
+> from that struct, so **a field added to the row later is redacted by construction**, exactly as a
+> field added to `PopulationCohortState` is redacted by `redacted_population_state` taking everything
+> else from `Default`.
+>
+> **WILD GROUND, NOT ZEROS.** Zero would be a lie about terrain the map already publishes whole, and
+> the tile's own ecology is world-visible. The bar is that **no pair of published fields may differ
+> only because of an improvement the row denies** — which is why the wild twin also re-classifies its
+> `ecology_phase` against the wild capacity rather than carrying the improved reading.
+>
+> **The two capacity fields are consequently EQUAL on a redacted row**, deliberately, and
+> `tileCapacity` is no longer "the fog-safe twin the client renders instead": there is nothing left
+> for a client to be safe from.
+
+> #### ⛔ RULE ② IS ENFORCED AT THE CAPTURE'S ITERATOR, and the two source tables share it
+>
+> `resolve_build_kit_ids` / `resolve_upkeep_kits` key purely by tile and herd id, so they cannot tell
+> whose queue an entry came from — an unfiltered walk resolved *every* faction's queue onto the
+> shared source tables. `snapshot/capture.rs` filters both allocation iterators on
+> `cohort.faction == viewer_faction`, which is also what `UpkeepKitIds::patch`'s own contract had
+> always claimed (*"`("", false)` when no band **of the faction** works it"*).
+>
+> **The stamped scratch needs the same gate and does not come from those indices.**
+> `buildTurnsRemaining` / `buildQueuePosition` / `buildWorkFromGear` / `buildLegs` are written onto
+> the patch and the herd by `publish_build_chain` for whichever band worked the source, and the
+> stamp records no faction. What the two filtered indices give is the membership that answers *"could
+> one of our bands have stamped this"* — the source is in a viewer band's **queue**
+> (`BuildKitIds::patch_is_queued`) or a viewer band **works** it (`UpkeepKitIds::patch_is_worked`) —
+> and those are precisely the two ways `publish_build_chain` reaches a source at all. Where neither
+> holds, the row is built from `ForagePatch::without_build_estimate` / `Herd::without_build_estimate`.
+>
+> **Those spend `clear_build_estimate`, the same seam `advance_cultivation` / `advance_husbandry`
+> clear the scratch with every turn** — one definition of *what the per-turn build scratch is*, so a
+> seventh field added to the decay pass is withheld from a foreign viewer for free. The clone is
+> skipped on a source carrying no build, which is nearly all of them.
+>
+> **It does not narrow the viewer's own compose sheet.** `buildTurnsRemaining` is a *projection* on a
+> source nothing has queued, and a source the viewer's band works is inside the membership — so the
+> quote a player reads before committing is untouched.
 
 > **`hasOwner` is why "unowned" and "owned by faction 0" are different readings.** The wire carries a
 > presence bit beside `owner:uint`, because faction 0 is a real faction and `owner == 0` cannot mean
 > *no owner*. A reader testing `owner != 0` silently drops every patch the first faction tends.
+
+`core_sim/tests/patch_row_is_viewer_scoped.rs` pins all of it on the encoded envelope: a rival's
+Field on unexplored ground publishes a row **identical, field for field, to the one that tile
+published while it was wild**; the same row carries no kit, date or place; the viewer's own row reads
+through in every one of them; and a rival's Field on **explored** ground still reads as a Field while
+still naming no builder — which is what stops the redaction quietly widening into "a rival publishes
+nothing".
 
 ### What the sweep could not observe, and why that is not a gap
 

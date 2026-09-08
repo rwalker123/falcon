@@ -1056,10 +1056,12 @@ const SEEDED_FACTION_NAMES := {
 	"Verdant": 2,
 }
 
-## **HOW A FOURTH PEOPLE GETS A COLOUR.** The rival count the New Game screen offers runs to 11 on a
+## **HOW A FOURTH PEOPLE GETS A COLOUR.** The rival count the New Game screen offers runs to 6 on a
 ## Standard map and 17 on a Huge one (`.claude/rules/client/new-game-setup.md`), so a hand-written
 ## list would leave everyone past the third sharing one tint — which is what
-## `BAND_FACTION_FALLBACK_COLOR` looked like on the map before this existed.
+## `BAND_FACTION_FALLBACK_COLOR` looked like on the map before this existed. **Those numbers move**:
+## the ceiling is a packing count over a map's *land*, so a land-richer preset seats more, which is
+## why the generator has no upper bound and the harness pins headroom rather than today's figure.
 ##
 ## The hue turns by the GOLDEN ANGLE per id, which is the arrangement that keeps successive ids as
 ## far apart on the wheel as they can be for any count: neighbours never land next to each other, and

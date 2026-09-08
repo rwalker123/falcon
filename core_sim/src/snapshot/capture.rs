@@ -3113,9 +3113,22 @@ pub fn capture_snapshot(
     // (`docs/plan_standing_upkeep.md` §4.7a ②). It is read off the bands' **queues**, not off the
     // patch/herd scratch beside it: a `build_kit` command is answered by a recapture in the same
     // dispatch, so a turn-written field would show the pick a whole turn late.
+    //
+    // ⛔ **THE VIEWER'S OWN BANDS, AND THAT IS WHAT MAKES BOTH INDICES A BOUNDARY.** They key purely
+    // by tile and herd id, so an unfiltered walk resolved *every* faction's queue onto the shared
+    // source tables — a rival mid-build on ground the viewer has never walked published
+    // `isField: false, fieldProgress: 0` beside their kit id, their finish date and their queue
+    // position. The improvement standing on a tile follows the **ground** and is legible where the
+    // viewer has explored; who is raising it, with what, and where it sits in their line is the
+    // **builder's** internal state, the same category as the larder and bench a foreign band's row
+    // already withholds. Their membership is also what the two source tables gate the stamped
+    // scratch on, so this filter is the single seam behind both readings
+    // (`factions.md` → "The improvement follows the ground; the BUILDER'S state follows the
+    // builder").
     let build_kit_ids = crate::snapshot::subsistence::resolve_build_kit_ids(
         populations
             .iter()
+            .filter(|(_, cohort, ..)| cohort.faction == viewer_faction.0)
             .filter_map(|(_, _, allocation, ..)| allocation),
         &forage_registry,
         &herd_registry,
@@ -3124,10 +3137,13 @@ pub fn capture_snapshot(
     // **THE LIVE KEEPING KIT PER WORKED SOURCE**, on the same rule one account over
     // (`docs/plan_standing_upkeep.md` §2.7): the keeping kit is a property of the band's **row**, so
     // it is read off the rows rather than off the patch/herd scratch, and an `upkeep_kit` command is
-    // answered by a recapture in the same dispatch.
+    // answered by a recapture in the same dispatch. **Filtered to the viewer's bands** on the rule
+    // above — which is also what `UpkeepKitIds::patch`'s own contract has always claimed ("`("",
+    // false)` when no band **of the faction** works it").
     let upkeep_kit_ids = crate::snapshot::subsistence::resolve_upkeep_kits(
         populations
             .iter()
+            .filter(|(_, cohort, ..)| cohort.faction == viewer_faction.0)
             .filter_map(|(_, _, allocation, ..)| allocation),
         &forage_registry,
         &herd_registry,

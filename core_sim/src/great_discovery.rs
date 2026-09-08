@@ -1029,10 +1029,32 @@ pub fn snapshot_discoveries(
     states
 }
 
+/// ⛔ **IS THIS CONSTELLATION IN FLIGHT?** — the one predicate behind the published row list and the
+/// `activeConstellations` count above it.
+///
+/// **Unresolved AND started.** [`GreatDiscoveryReadiness`] pre-seeds an entry per definition per
+/// faction, so *"unresolved"* alone is every constellation in the catalogue: a fresh world published
+/// `N` rows all reading `progress == 0` under a counter that read `0`, because the counter already
+/// asked the second half of this question and the list did not. **A constellation nobody has started
+/// is not in progress**, and `N` rows of zeros is noise on a wire whose catalogue
+/// (`greatDiscoveryDefinitions`) already states what there is to chase.
+///
+/// It is a named function for [`discovery_reaches_viewer`]'s reason, and it is the same defect one
+/// section over: an aggregate is defined as *how many rows of the list it summarises*
+/// (`factions.md` → "A DERIVED AGGREGATE IS FACTION-KEYED DATA"), and two spellings of one rule are
+/// free to drift into two rules.
+fn constellation_is_in_flight(progress: &ConstellationProgress) -> bool {
+    !progress.resolved && progress.progress > scalar_zero()
+}
+
 /// **The viewer's own in-flight discoveries only** — no public-deployment exemption here, unlike
 /// [`snapshot_discoveries`]. A row that has not resolved has not been shown to anybody, and it
 /// carries `covert` and an ETA: it is the research a rival is *hiding*, which is what the espionage
 /// arc exists to make you work for.
+///
+/// *In flight* is [`constellation_is_in_flight`], which is also the predicate
+/// `greatDiscoveryTelemetry.activeConstellations` counts — see it for why an unstarted constellation
+/// is not a row.
 pub fn snapshot_progress(
     readiness: &GreatDiscoveryReadiness,
     viewer: FactionId,
@@ -1043,7 +1065,7 @@ pub fn snapshot_progress(
             continue;
         }
         for (id, progress) in entries {
-            if progress.resolved {
+            if !constellation_is_in_flight(progress) {
                 continue;
             }
             states.push(GreatDiscoveryProgressState {
@@ -1116,7 +1138,7 @@ pub fn snapshot_definitions(
 /// | Counter | Counts | Agrees with |
 /// |---|---|---|
 /// | `total_resolved` | records that reach the viewer ([`discovery_reaches_viewer`]) | `greatDiscoveries` |
-/// | `active_constellations` | the viewer's unresolved constellations with progress above zero | `greatDiscoveryProgress` |
+/// | `active_constellations` | the viewer's constellations in flight ([`constellation_is_in_flight`]) | `greatDiscoveryProgress`, row for row |
 /// | `pending_candidates` | those of them ready to fire ([`constellation_is_a_candidate`]) | a subset of the same list |
 ///
 /// **Derived here rather than read off [`GreatDiscoveryTelemetry`]**, which is the *server's* own
@@ -1143,9 +1165,12 @@ pub fn snapshot_telemetry(
     let mut pending = 0u32;
     if let Some(entries) = readiness.per_faction.get(&viewer) {
         for (id, progress) in entries {
-            // The published `greatDiscoveryProgress` list skips resolved rows, so the count that
-            // sits above it does too.
-            if progress.resolved || progress.progress <= scalar_zero() {
+            // **The very predicate the row list uses**, not a second spelling of it — see
+            // [`constellation_is_in_flight`]. This counter and that list disagreed for exactly as
+            // long as they were two expressions: the list published every unresolved constellation
+            // and this counted only the started ones, so a fresh world shipped `N` rows under a
+            // count of `0`.
+            if !constellation_is_in_flight(progress) {
                 continue;
             }
             active = active.saturating_add(1);

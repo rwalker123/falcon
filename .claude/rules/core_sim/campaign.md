@@ -42,8 +42,13 @@ paths:
   **43**; `seed == 0` randomizes, mirroring `map_size`/ResetMap; an unknown `profile_id` is rejected
   without building, an unknown `preset_id` falls through to the worldgen default). The trailing
   **`ai_factions`** is the player's New Game pick — **rivals, not roster size** — and is the one
-  optional argument: absent means `simulation_config.json`'s `default_ai_faction_count`, which is
-  *not* the same as an explicit `0`. A count above what the grid seats is clamped with a warning,
+  optional argument. **Absent means the UNATTENDED roster** (`unattended_ai_faction_count`): no
+  rivals, unless `simulation_config.json` pins `default_ai_faction_count` to a number. It ships
+  `null`, so on the shipped config an absent count and an explicit `0` build the same world — they
+  remain different *requests*, and a pinned config value is what separates them. The New Game
+  screen's pre-selected count is a different question entirely (`faction_start_capacity`, derived
+  from the map), which is why the client sends its pick explicitly rather than omitting the
+  argument — see `.claude/rules/client/new-game-setup.md`. A count above what the grid seats is clamped with a warning,
   never refused (`.claude/rules/core_sim/factions.md` → "The map decides the ceiling"). `new_game` and `map_size`
   (ResetMap) share one world-build helper (`rebuild_world_from_config`). A `turn` sent **before** a
   world exists is rejected with a warning. See `server-dev`'s boot flow in `bin/server.rs`.

@@ -493,9 +493,15 @@ fn the_discovery_counters_agree_with_the_lists_they_summarise() {
         .greatDiscoveries()
         .map(|rows| rows.len())
         .unwrap_or(0);
+    // **NO PRE-FILTER.** This used to count only the rows reading `progress > 0`, which asserted
+    // something weaker than the rule it was written to enforce: the list published a row for every
+    // unresolved constellation and the counter counted only the started ones, so the test agreed
+    // with itself while a fresh world shipped `N` rows of zeros under a count of `0`. The list and
+    // the counter share one predicate now (`great_discovery::constellation_is_in_flight`), so the
+    // published rows are countable as they stand.
     let active_rows = section
         .greatDiscoveryProgress()
-        .map(|rows| rows.iter().filter(|row| row.progress() > 0).count())
+        .map(|rows| rows.len())
         .unwrap_or(0);
     let telemetry = section
         .greatDiscoveryTelemetry()
@@ -503,7 +509,8 @@ fn the_discovery_counters_agree_with_the_lists_they_summarise() {
 
     assert!(
         resolved_rows > 0,
-        "the liveness half: the fixture has to publish resolved discoveries, or a count of 0          agrees with an empty list and proves nothing"
+        "the liveness half: the fixture has to publish resolved discoveries, or a count of 0 \
+         agrees with an empty list and proves nothing"
     );
     assert_eq!(
         telemetry.totalResolved() as usize,
@@ -526,6 +533,68 @@ fn the_discovery_counters_agree_with_the_lists_they_summarise() {
         "a candidate is an active constellation, so it cannot outnumber them: {} > {}",
         telemetry.pendingCandidates(),
         telemetry.activeConstellations()
+    );
+}
+
+/// ⛔ **A CONSTELLATION NOBODY HAS STARTED IS NOT A ROW.**
+///
+/// [`GreatDiscoveryReadiness`] pre-seeds an entry per definition per faction, so *"unresolved"* alone
+/// is the whole catalogue: a fresh world published `N` rows all reading `progress == 0` under an
+/// `activeConstellations` of `0`, because the counter asked *"started?"* and the list did not.
+///
+/// **The agreement test above can no longer catch this**, and that is by construction rather than a
+/// gap: the list and the counter share one predicate now, so they agree whatever that predicate
+/// says. What has to be pinned separately is *which* predicate — that a published progress row means
+/// research in flight — and this is that assertion.
+///
+/// Its liveness half is the catalogue beside it: the frame has to publish **fewer** progress rows
+/// than there are constellations to chase, or the row set was never narrowed and the claim is
+/// vacuous.
+#[test]
+fn an_unstarted_constellation_is_not_a_published_progress_row() {
+    let app = a_world_where_both_peoples_have_something_to_hide();
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let section = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .knowledge()
+        .expect("the knowledge section is published");
+
+    let zeroes: Vec<u16> = section
+        .greatDiscoveryProgress()
+        .map(|rows| {
+            rows.iter()
+                .filter(|row| row.progress() == 0)
+                .map(|row| row.discovery())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        zeroes.is_empty(),
+        "a progress row states research in flight; these constellations are unstarted: {zeroes:?}"
+    );
+
+    let published = section
+        .greatDiscoveryProgress()
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    let catalogue = section
+        .greatDiscoveryDefinitions()
+        .map(|rows| rows.len())
+        .unwrap_or(0);
+    assert!(
+        published > 0 && published < catalogue,
+        "the liveness half: the viewer has to be partway up SOME constellation and not up all of \
+         them, or an empty-or-total row set satisfies the assertion above without narrowing \
+         anything — {published} rows against a catalogue of {catalogue}"
     );
 }
 
@@ -557,7 +626,8 @@ fn the_resolved_count_is_smaller_than_the_ledger_it_is_drawn_from() {
 
     assert!(
         published < held,
-        "the fixture stages a discovery the viewer may not see, so the published count MUST be          smaller than the {held} the ledger holds — got {published}"
+        "the fixture stages a discovery the viewer may not see, so the published count MUST be \
+         smaller than the {held} the ledger holds — got {published}"
     );
 }
 
