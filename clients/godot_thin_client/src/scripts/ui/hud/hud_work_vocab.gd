@@ -519,6 +519,32 @@ const ROLE_NAME_ROADWORK := "Roadwork"
 ## them regardless.
 const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has since walked. Short of the bill, they wash out."
 
+## **THE FOURTH KEEPING ROLE** (arc #583) — the workings, on both deposit branches at once. Same
+## family again: a band-wide count of hands set by `assign_labor`, measured against a SUM.
+##
+## ⛔ **THE CARD SAYS `Workings`, AND THE COMMAND TOKEN `quarrywork` NEVER REACHES A PLAYER.** `Quarry`
+## already means the HUNTED ANIMAL in this client — it is one of the compose sheet's own field rows —
+## so a pool named for it would put one word on two unrelated things on two surfaces a player uses in
+## the same minute. *Working* is the sim's own word for a live deposit a band has opened.
+##
+## ⛔ **ONE CARD FOR BOTH BRANCHES, and that is the sim's own split.** Forestry and extraction differ
+## on KNOWLEDGE and on nothing a keeper does — *hold the face open, clear what has fallen* is one job —
+## so a second card would be a distinction nothing in the game can express.
+const ROLE_NAME_QUARRYWORK := "Workings"
+
+## ⛔ **IT NAMES THE WORKINGS THIS BAND OPENED, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`'s
+## correction, written into this branch from the first line rather than after a slice of the wrong
+## reading. The catchment is the band's own `extract` ROW: a working is held by the band that works
+## it, worked or idle, wherever that band has since camped.
+##
+## **AND IT NAMES THE CONSEQUENCE.** An unheld working slides back down its ladder — the position is
+## the thing at risk, there being no crop to rot — which is what *going back* says.
+##
+## **THIS STRING AND `UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT` ARE WRITTEN FROM ONE MODEL.** The road
+## pair's correction landed in the hint and not in the tooltip eighty lines below it for a whole
+## slice; these two were composed together, and there is no third copy.
+const QUARRYWORK_ROLE_HINT := "Holds every working this band has opened, worked or idle. Short of the bill, they go back."
+
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
 const ROLE_NAME_BUILDERS := "Builders"
@@ -606,13 +632,28 @@ const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; 
 ## sentence promising a queued half the figure does not contain would be the worse error of the two.
 const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band built need %s."
 
-## Which of the pair a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
+## …and the two DEPOSIT branches' (arc #583).
+##
+## ⛔ **IT NAMES THE WORKINGS THIS BAND OPENED, and it is written from the same model as
+## `QUARRYWORK_ROLE_HINT`** — the road pair's own lesson, where the correction landed in the hint and
+## not in the tooltip eighty lines below it. These two are the whole set; there is no third copy.
+##
+## ⛔ **IT NAMES NO QUEUE, for the road sentence's corrected reason — the FIGURE.** The pool's `asked`
+## is the cohort's published `quarrywork_demand` verbatim (`BandPanelController` does NOT take the
+## deposit branch through `_pool_coverage`), because the `deposits` rows are fog-filtered and summing
+## them client-side would understate a bill the band still owes. A sentence promising a queued term
+## the number does not carry would be the worse of the two errors.
+const UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT := "This pool supplies %s work a turn; the workings this band opened need %s."
+
+## Which of the set a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
 ## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
 static func upkeep_pool_coverage_format(role_name: String) -> String:
     if role_name == ROLE_NAME_HUSBANDRY:
         return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT
     if role_name == ROLE_NAME_ROADWORK:
         return UPKEEP_POOL_COVERAGE_ROUTE_FORMAT
+    if role_name == ROLE_NAME_QUARRYWORK:
+        return UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT
     return UPKEEP_POOL_COVERAGE_PLANT_FORMAT
 
 ## **THE POOL CARD'S ONE LINE, or `""` where the pool covers what it is asked for** — the ONE composer,
@@ -1878,6 +1919,21 @@ const POOLS_BLOCK_META := "pools_block"
 ## `build_queue_block_height` is. The work zone `clip_contents`, so a block that drew without being
 ## paid for in `_work_board_capacity`'s chrome term would silently slice board rows off the bottom of
 ## the zone; reserving and drawing from one expression is what makes the two unable to disagree.
+##
+## ⛔ **IT IS ONE ROW OF FOUR CARDS AND A FIFTH DOES NOT FIT IT AT ANY TRIM** (arc #583, measured). A
+## pool card's own minimum is its STEPPER and reads **83px** at `POOL_STEPPER_*` — the width the
+## fourth card already bought out of the CONTROL — so five abreast want
+## `5 × 83 + 4 × ROLE_CARD_SEPARATION` = **439px** of a WORK zone box that is **382** on the bottom
+## dock and **356** on the left, with the horizontal padding already at 4 against `HudStyle`'s
+## authored 11. **And the height a second row would cost cannot be found either**: it is 62px
+## (`POOL_CARD_HEIGHT` + one separation), the work zone's floor rises 358 → 420 with it, and
+## `BandCityPanel.PANEL_HEIGHT_WIDE`'s own sweep has no value left to land on — the work zone needs
+## ≥ 480 while the two-column band flank's fill floor caps that budget at 473, and at the matrix's
+## shortest viewport `MAX_WIDE_HEIGHT_FRACTION` pins the box at 337 whatever the budget says.
+##
+## **SO THE `quarrywork` POOL IS NOT A CARD HERE.** Its stepper lives on the WORKINGS ROSTER block's
+## own head, one block down, which already draws and is already paid for — see
+## `ZONE_HEADER_WORKINGS_ROSTER`.
 static func pools_block_height(has_fund_mode: bool) -> float:
     var height := ZONE_HEAD_HEIGHT + float(ZONE_BLOCK_SEPARATION) + POOL_CARD_HEIGHT
     if has_fund_mode:
@@ -1975,6 +2031,108 @@ static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
         lines += 1
     return ZONE_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
 
+# ---- THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for (arc #583) ------------
+#
+# ⛔ **THE ROADWORK ROSTER'S TWIN, AND EVERY RULE ABOVE APPLIES UNCHANGED.** The pool card one line up
+# says `Workings 2` and nothing else in the client would say WHICH two; a player cannot choose among
+# things they cannot see, and the per-working choice is the take crew on the working's own card.
+#
+# ⛔ **THE `quarrywork` POOL'S STEPPER IS ON THIS BLOCK'S HEAD, AND THAT IS NOT THE ROSTER RULE BEING
+# BROKEN.** roads.md's rule reads *"IT IS A ROSTER, NOT A WORK BOARD: no stepper, no crew count, no
+# kit picker"*, and its stated REASON is that **A ROW** offering a worker count would re-introduce the
+# per-tile work row `docs/plan_standing_upkeep.md` §4.13b retired. The prohibition is on ROWS. A pool
+# stepper on the block HEAD is the BAND-WIDE pool itself — the same control that would otherwise be a
+# fifth card in the POOLS block one line up, which does not fit (`pools_block_height`) — so it names
+# no working and staffs no crew on one.
+#
+# ⛔ **THE PER-ROW RULE IS UNCHANGED AND STAYS ENFORCED: no stepper, no crew count, no kit picker on
+# any ROW.** The hands that CUT a working are on the tile card's `Workings ▸`, and
+# `band_panel_preview` asserts that absence on the stepper's own `−`/`+` faces, scoped to the rows.
+#
+# **AND THE HEAD STATES THE BILL, NOT JUST THE COUNT** — the shortfall mark and the coverage sentence
+# the retired card carried, read off the cohort's three published fields with NO client-side
+# arithmetic. The `deposits` rows are fog-filtered, so a working out of sight would drop out of any
+# total taken here while the band still owes its keeping.
+#
+# ⛔ **AND IT CARRIES NO `✕`.** The road roster's drop is `abandon <faction> <x> <y>`, whose target
+# resolves to a FORAGE source sim-side (`BuildSourceRef::target` → `forage_source`) and is matched by
+# `LaborTarget::same_source`, which pairs an `Extract` row only with another `Extract` row of the same
+# `(tile, material)`. **So `abandon` does not drop a working**, and there is no verb that does:
+# unstaffing is the take crew's own `0`. A `✕` here would emit a command the sim answers by dropping
+# something else on the same hex.
+
+## The block's head, which is also the `quarrywork` pool's only control. **It says WORKINGS and never
+## the command token** — `Quarry` in this client is the HUNTED ANIMAL — and it is the noun
+## `HudWorkVocab.ROLE_NAME_QUARRYWORK` states one row up, so the pool and the block it staffs cannot
+## be called two things.
+const ZONE_HEADER_WORKINGS_ROSTER := "Workings held"
+
+## ⛔ **WHAT THE HEAD RESERVES WITH THE POOL STEPPER ON IT — MEASURED, not `ZONE_HEAD_HEIGHT` plus a
+## guess.** `HudWidgets.zone_head` declares `ZONE_HEAD_HEIGHT` (20) as a MINIMUM and an `HBoxContainer`
+## grows to its tallest child, so a `compact` stepper button at `WORK_STEPPER_FONT_SIZE` /
+## `WORK_STEPPER_PADDING_V` sets the row instead. `band_panel_preview._assert_workings_roster_head`
+## prints the reserved figure beside the drawn one, which is what makes this a measurement rather than
+## a re-derivation — the work zone `clip_contents`, so a head drawing taller than the block reserved
+## takes the difference off the bottom of the board in silence.
+##
+## **IT IS `ZONE_HEAD_HEIGHT` PLUS ONE PIXEL, and that is the whole of what the pool's control cost
+## this block.** Measured on the drawn head: **21.0px** against the 20 a bare title row takes, the
+## compact stepper's own button minimum being what sets it. So the block's height moves by 1px against
+## the road roster's, and it moves through the SAME single-resolution seam — `_fill_work_zone_column`
+## resolves `workings_roster_height` once and hands it to both `build_queue_rows_max` and
+## `_work_board_capacity` — so nothing in the zone's arithmetic learns about the head separately.
+const WORKINGS_ROSTER_HEAD_HEIGHT := 21.0
+
+## The head's stepper, as a stable handle. **Valued the ROLE it staffs**, so a harness reads *this is
+## the workings pool's control* rather than *a stepper exists somewhere in the block* — and so the
+## per-ROW absence claim beside it cannot accidentally find this one.
+const WORKINGS_ROSTER_STEPPER_META := "workings_roster_stepper"
+
+## **A WORKING HAS HALF A NAME THE ROAD LACKED — its MATERIAL** — so the name cell is the material
+## and then the road roster's locator: `Wood · 4 tiles E`. Two workings on one tile are two rows that
+## differ only in that first word, which is exactly why it leads.
+const WORKINGS_ROSTER_NAME_FORMAT := "%s · %s"
+
+## The block's stable handle, valued the number of working rows it drew.
+const WORKINGS_ROSTER_BLOCK_META := "workings_roster_block"
+
+## One row, valued its working's `(tile, material)` — the roster's identity, and the pair a tile-only
+## meta could not tell apart.
+const WORKINGS_ROSTER_ROW_META := "workings_roster_row"
+
+## The muted case-2 line's own handle, so its presence is assertable rather than inferred from a row
+## count.
+const WORKINGS_ROSTER_UNSEEN_META := "workings_roster_unseen"
+
+## ⛔ **CASE 2 OF THE HONESTY RULE.** `deposits` rows are FOG-FILTERED while the pool card's totals
+## come cohort-level from the sim — precisely because summing the visible rows would understate the
+## bill — so a band can legitimately show `Workings 2` beside a one-row roster or beside none at all.
+## An empty roster drawn next to a non-zero count would say *this band holds nothing*, which is a
+## readout that lies.
+const WORKINGS_ROSTER_UNSEEN_LINE := "The workings this band holds are not in sight."
+
+## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, the rule every block
+## in this zone keeps. `0` where the block does not render at all: nothing held in sight AND no
+## `quarrywork` demand, which is the expeditions block's omit-entirely rule stated in arithmetic.
+##
+## It shares `ROADWORK_ROSTER_ROWS_MAX` and the `+N more` foot deliberately — the two rosters sit in
+## one zone answering the same shape of question, and two caps would be two answers to *how long may a
+## roster be here*.
+##
+## ⛔ **IT IS NOT `roadwork_roster_height` DELEGATED, and the difference is the HEAD.** This block's
+## head carries the `quarrywork` pool's own stepper, so it reserves `WORKINGS_ROSTER_HEAD_HEIGHT`
+## rather than the bare `ZONE_HEAD_HEIGHT` the road roster's title row costs. The ROWS term is
+## identical, which is why the two functions read alike and are still two answers.
+static func workings_roster_height(visible: int, unseen_line: bool) -> float:
+    if visible <= 0 and not unseen_line:
+        return 0.0
+    var lines := mini(visible, ROADWORK_ROSTER_ROWS_MAX)
+    if visible > ROADWORK_ROSTER_ROWS_MAX:
+        lines += 1
+    if unseen_line:
+        lines += 1
+    return WORKINGS_ROSTER_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
+
 # ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
 #
 # The band's ordered build queue, above the filter chips in the WORK zone. **Above them deliberately:**
@@ -2050,18 +2208,25 @@ const BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT := 1.0
 ## did not subtract it would hand the queue rows the roster is already standing in — and the zone
 ## clips, so the overflow comes silently off the bottom. `0.0` on a band with no roster, which is the
 ## shipped case for most of the early game.
+## ⛔ **`workings_height` IS THE SECOND ROSTER'S SHARE, AND IT IS A SEPARATE TERM BECAUSE THE TWO
+## ROSTERS APPEAR INDEPENDENTLY** (arc #583). A band may keep roads and hold no workings, or the
+## reverse, or both — so each block's height AND its own gap are counted only where that block draws.
+## Summing them into one argument would charge one gap for two blocks, which is the 6px disagreement
+## `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` was added to close.
 static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int,
-        roster_height: float = 0.0) -> int:
+        roster_height: float = 0.0, workings_height: float = 0.0) -> int:
     # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
     # divides for are QUEUE rows, which are one line each.
-    # The roster's HEIGHT and the roster's GAP are one term or neither — see
-    # BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT, and `_work_board_capacity`, which counts its gaps the same way.
+    # A roster's HEIGHT and its GAP are one term or neither — see BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT,
+    # and `_work_board_capacity`, which counts its gaps the same way.
     var gaps := BUILD_QUEUE_ROOM_GAP_COUNT
     if roster_height > 0.0:
         gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
+    if workings_height > 0.0:
+        gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
-        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height \
+        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height + workings_height \
         + float(ZONE_BLOCK_SEPARATION) * gaps
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     if entries > afforded:

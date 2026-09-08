@@ -1350,6 +1350,45 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                     )
                 }
+                // **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) —
+                // `extract <x> <y> <material> <workers>`, and the material is NOT optional: one tile
+                // can hold two workings (a wooded highland holds timber and rock), so a line naming
+                // only the tile names neither of them.
+                //
+                // **The material rides the `species` slot** because that is the one free-form string
+                // this command already carries and it means the same kind of thing on a forage row —
+                // *which of the things on this ground are you here for*. The sim's own `"extract"`
+                // arm reads it from there, so a token of its own would be a second spelling of one
+                // field.
+                //
+                // **No floor and no disambiguation.** A deposit has no escapement floor to leave
+                // standing, so the tail is exactly two positional tokens after the tile and the
+                // "does it parse as `f32`" test the forage arm needs has nothing to decide here.
+                "extract" => {
+                    let x = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
+                    let y = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
+                    let material = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("material"))?;
+                    let workers_tok = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    if let Some(extra) = parts.next() {
+                        return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+                    }
+                    (
+                        parse_u32(workers_tok, "assign_labor workers")?,
+                        Some(parse_u32(x, "assign_labor target_x")?),
+                        Some(parse_u32(y, "assign_labor target_y")?),
+                        None,
+                        None,
+                        Some(material.to_string()),
+                    )
+                }
                 // **A role passes TWO gates: this grammar and the sim's own `handle_assign_labor`.**
                 // They are separate enumerations in separate crates, and `builders` sat in the sim's
                 // one alone from `docs/plan_standing_upkeep.md` §2.5 — so the client's native bridge,
@@ -1362,7 +1401,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 // sends — so the route branch's keeping pool could not be staffed at all, with no
                 // error anywhere but the refusal. `command_guard`'s role sweep is what caught it, and
                 // is what keeps the two enumerations in step.
-                "scout" | "warrior" | "agriculture" | "husbandry" | "roadwork" | "builders" => {
+                //
+                // ⛔ **AND `quarrywork` IS THE THIRD, CAUGHT BEFORE IT SHIPPED** (arc #583). The
+                // deposit branches' keeping pool reached the server's dispatch in the commit before
+                // the one that gave it a card, and this list is the gate that card's stepper has to
+                // pass — so the role was added here alongside the `extract` arm above it rather than
+                // after a play report.
+                "scout" | "warrior" | "agriculture" | "husbandry" | "roadwork" | "quarrywork"
+                | "builders" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;

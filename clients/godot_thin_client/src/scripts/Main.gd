@@ -839,6 +839,12 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # the knowledge screen's *"is anything using this"* verdict is asked of the faction's own sources.
     if snapshot.has("routes") and SnapshotSections.changed(snapshot, "routes"):
         _hud_invoke("update_road_network", [snapshot["routes"]])
+    # THE LIVE WORKINGS ON THE GROUND (arc #583). The map ingests the same section into its own
+    # per-tile lookup for the tile card; the HUD needs it because the WORKINGS ROSTER asks a
+    # whole-list question — *which workings is this band paying the `quarrywork` pool for* — which no
+    # per-hex index answers.
+    if snapshot.has("deposits") and SnapshotSections.changed(snapshot, "deposits"):
+        _hud_invoke("update_deposits", [snapshot["deposits"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
     # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
     # cached forks on absence would drop the end-turn gate every quiet turn.
@@ -1171,7 +1177,32 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
-        "scout", "warrior", "agriculture", "husbandry", "roadwork", "builders":
+        "extract":
+            # **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6, arc #583) —
+            # `assign_labor <f> <b> extract <x> <y> <material> <workers>`, and `0` unassigns.
+            #
+            # ⛔ **THE MATERIAL RIDES THE `species` TOKEN, AND IT IS NOT OPTIONAL.** That is where
+            # the sim's own `"extract"` arm reads it from — it is the one free-form string this
+            # command already carries and it means the same kind of thing on a forage row (*which of
+            # the things on this ground are you here for*). One tile can hold two workings, so a line
+            # with no material names neither of them and the sim refuses it by name; declining to
+            # build a line here is the honest answer rather than emitting a refusal.
+            #
+            # **NO FLOOR AND NO KIT TOKEN.** A deposit has no escapement floor to leave standing, and
+            # `default_kits.extract` is the bare `none` kit with no picker anywhere on the working
+            # card — so the tail is closed and the line is byte-stable.
+            var ex := int(payload.get("x", -1))
+            var ey := int(payload.get("y", -1))
+            var material := String(payload.get("species", "")).strip_edges().to_lower()
+            if ex < 0 or ey < 0 or material == "":
+                return {}
+            return {
+                "line": "assign_labor %d %d extract %d %d %s %d" % [
+                    faction, band_id, ex, ey, material, workers],
+                "message": "Assign %d worker%s to the %s working at (%d, %d)." % [
+                    workers, "" if workers == 1 else "s", material, ex, ey],
+            }
+        "scout", "warrior", "agriculture", "husbandry", "roadwork", "quarrywork", "builders":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
             # every one of those on a role target — but `kit_job()` answers for all four
@@ -1179,12 +1210,13 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
             # player who never opened the role card's picker emits the line they always did.
             #
-            # **THE THREE KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
-            # arc #532). `agriculture`, `husbandry` and `roadwork` are band-wide standing roles in
-            # exactly the grammar scout and warrior use, so a branch of their own would be the same
-            # line typed three times. They send no kit today — the role cards mount no picker, the
-            # wire naming no default kit for any of the three jobs (`default_kits.roadwork` is the
-            # bare `none` kit, so road keepers work bare-handed and that is intended) — and
+            # **THE FOUR KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
+            # arc #532, arc #583). `agriculture`, `husbandry`, `roadwork` and `quarrywork` are
+            # band-wide standing roles in exactly the grammar scout and warrior use, so a branch of
+            # their own would be the same line typed four times. They send no kit today — the role
+            # cards mount no picker, the wire naming no default kit for any of the four jobs
+            # (`default_kits.roadwork` and `default_kits.quarrywork` are both the bare `none` kit, so
+            # road keepers and working keepers work bare-handed and that is intended) — and
             # `_kit_token` omits an empty selection.
             #
             # **AND SO DOES `builders`, which the sim has always parsed and this builder DID NOT

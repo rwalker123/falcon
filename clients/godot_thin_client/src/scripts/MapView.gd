@@ -935,6 +935,19 @@ var road_network: Array = []
 ## tile sim-side, so the array holds exactly one — it stays an array so a duplicated row would render
 ## twice rather than vanish silently, and so the tile card's block loop is unchanged.
 var road_tile_lookup: Dictionary = {}
+## **THE LIVE WORKINGS ON THE GROUND, keyed by the tile they stand on** (`{Vector2i: Array[deposit]}`,
+## arc #583) — the deposit twin of `road_tile_lookup`, so `_tile_info_at` can answer *what is being
+## worked on this hex* without walking the section every hover.
+##
+## ⛔ **THE ARRAY REALLY DOES HOLD TWO, AND THAT IS THE WHOLE REASON IT IS AN ARRAY.** The registry is
+## keyed `(tile, material)` sim-side: a wooded highland carries a timber working AND a rock working,
+## and working one is not working the other. A lookup that kept one row per tile would silently drop
+## whichever arrived second.
+##
+## ⛔ **AN ABSENT TILE MEANS *NOBODY HAS WORKED THIS GROUND*, NEVER *THERE IS NO DEPOSIT HERE*.** The
+## registry is sparse and lazy, so an untouched map fills none of this; what a tile HOLDS is a pure
+## function of its terrain and is not on this table.
+var deposit_tile_lookup: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
@@ -1144,6 +1157,10 @@ const SECTION_POPULATIONS := "populations"
 ## for it and the manifest carries that spelling; the client-side NOUN is `road_network`, to keep it
 ## clear of `AnnotationRenderer`'s order-path `_routes`.
 const SECTION_ROUTES := "routes"
+## The WORKINGS section (arc #583) — one row per `(tile, material)` a band has opened. **Not a shader
+## input**: a working is drawn by no terrain pass, so it rides `SHADER_INPUT_SECTIONS` nowhere and a
+## frame that moves only this section rebuilds no splatmap.
+const SECTION_DEPOSITS := "deposits"
 const SECTION_OVERLAY_TERRAIN := "overlays.terrain"
 const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
 const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
@@ -1458,6 +1475,12 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# frame that does not name it carries the roads it already had.
 	if SnapshotSections.changed(snapshot, SECTION_ROUTES):
 		_ingest_road_network(snapshot.get("routes", []))
+	# **AND THE WORKINGS ON IT** (arc #583) — a different section, a different kind of thing, and
+	# gated on its own name for the road section's reason: the decoder republishes the whole section
+	# whenever any working moves and names it, so a frame that does not name it carries the workings
+	# it already had.
+	if SnapshotSections.changed(snapshot, SECTION_DEPOSITS):
+		_ingest_deposit_workings(snapshot.get("deposits", []))
 	profile.end(PROFILE_LAYERS_ROAD_NETWORK, t_layers_roads)
 	profile.end(PROFILE_LAYERS, t_layers)
 	var t_sites: int = profile.begin(PROFILE_SITES)
@@ -2428,6 +2451,10 @@ func reset_world_state() -> void:
 	# that is gone.
 	road_network = []
 	road_tile_lookup = {}
+	# …and the workings of that world with them. The section is diffed as a whole vector, so a new
+	# world's first frame restates it — but a world with NO workings at all restates nothing, and a
+	# lookup left standing would answer a hover off a map that is gone.
+	deposit_tile_lookup = {}
 	culture_layer_map.clear()
 	selected_unit_id = -1
 	selected_herd_id = ""
@@ -3581,6 +3608,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	# the terrain label and the river edges, so a remembered hex still reports the road that crosses
 	# it — which is exactly the `Discovered` gate the sim publishes these rows under.
 	info["roads"] = _roads_on_tile(col, row)
+	# THE WORKINGS ON THIS HEX (arc #583) — the card's `Workings ▸` action reads its rows out of here
+	# and nowhere else, the road block's own cross-ref idiom. Stamped BEFORE the fog split below and
+	# deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`: the sim publishes a working only under the
+	# same `Discovered` gate a road takes, so a remembered hex still reports the working opened on it.
+	info["deposits"] = _workings_on_tile(col, row)
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here
@@ -3680,6 +3712,37 @@ func _ingest_road_network(raw: Variant) -> void:
 		if not road_tile_lookup.has(tile):
 			road_tile_lookup[tile] = []
 		(road_tile_lookup[tile] as Array).append(road)
+
+## **THE LIVE WORKINGS, INDEXED BY THE TILE THEY STAND ON** (arc #583) — `_ingest_road_network`'s twin,
+## and it keeps that function's two rules: the lookup is cleared and refilled inside one gate (so
+## erasure is free), and a row missing either coordinate is DROPPED rather than stamped on `(0, 0)`.
+##
+## ⛔ **IT DOES NOT DE-DUPLICATE ON THE TILE.** Two rows on one hex is the ORDINARY case here, not a
+## truncated frame — the registry key is `(tile, material)` — so both are appended and the tile card
+## renders a block for each. This is exactly where a road-shaped `if not has(tile)` would lose one.
+func _ingest_deposit_workings(raw: Variant) -> void:
+	deposit_tile_lookup = {}
+	if not (raw is Array):
+		return
+	for entry in raw:
+		if not (entry is Dictionary):
+			continue
+		var deposit: Dictionary = (entry as Dictionary).duplicate(true)
+		var tile := HudDepositVocab.tile_of(deposit)
+		if tile.x < 0 or tile.y < 0:
+			continue
+		if not deposit_tile_lookup.has(tile):
+			deposit_tile_lookup[tile] = []
+		(deposit_tile_lookup[tile] as Array).append(deposit)
+
+## The workings on a hex — the tile card's cross-ref, read through `_tile_info_at`.
+##
+## **NOT fog-gated here, and that is deliberate**: the sim already publishes a working only to a
+## faction that has DISCOVERED its tile (the road's gate, not the herd list's — a working does not
+## wander off), and `_apply_visibility_to_info` drops the whole payload on an UNEXPLORED hex.
+func _workings_on_tile(col: int, row: int) -> Array:
+	var found: Variant = deposit_tile_lookup.get(Vector2i(col, row), null)
+	return found if found is Array else []
 
 ## The road on a hex — the tile card's cross-ref, read through `_tile_info_at`. The rows come back BY
 ## REFERENCE into `road_network` rather than duplicated: nothing downstream writes to a road, and a

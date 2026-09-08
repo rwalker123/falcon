@@ -162,6 +162,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `keyboard-arbiter.md` | Who owns the keyboard: the registry of every gameplay key, the three-owner arbiter, exact matching, and the focus release it depends on | `KeyboardArbiter.gd`, `TextEntryFocus.gd`, `MapView.gd`, `Main.gd`, `MenuShell.gd` |
 | `map-markers.md` | The layered hex-icon stack UX | `BandMarkerRenderer.gd`, `SecondaryMarkerRenderer.gd` |
 | `roads.md` | The roads in the ground: the rung ladder painted INTO the terrain composite, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `terrain_blend.gdshader`, `TerrainRenderer.gd`, `dict/routes.rs` |
+| `extraction-workings.md` | The workings on the ground: the tile card's per-material card, the `Workings` pool, the workings roster | `hud_deposit_vocab.gd`, `dict/deposits.rs`, `ui_preview/chapters/workings.gd` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `save-load-menu.md` | The save/load menu: the query-worker seam, the panes and their four list states, the load handoff, the config-drift notice | `SaveSlots.gd`, `ConfigDriftNotice.gd`, `MenuShell.gd`, `LandingScreen.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |

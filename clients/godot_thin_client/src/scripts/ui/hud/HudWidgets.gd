@@ -654,11 +654,20 @@ static func clear_children(node: Node) -> void:
 
 ## A zone section head: an uppercase title on the left, a dim readout on the right, and an optional
 ## trailing `⋯` menu button. The one head vocabulary all three zones use.
-static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "") -> HBoxContainer:
+## ⛔ **`title_tooltip` IS THE TRAILING OPTIONAL, AND IT EXISTS SO A HEAD CAN CARRY A HOVER WITH NO
+## READOUT.** `readout_tooltip` above rides the RIGHT-hand Label, which is built only where a readout
+## is stated — so a head whose readout is a conditional MARK (the workings roster's shortfall glyph)
+## would lose its hover on exactly the calm band that most needs the words. It goes through
+## `set_label_tooltip` for that helper's own reason: a `Label` defaults to `MOUSE_FILTER_IGNORE`, so a
+## bare `tooltip_text` here is a silent no-op.
+static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "", title_tooltip: String = "") -> HBoxContainer:
     var head := HBoxContainer.new()
     head.custom_minimum_size = Vector2(0.0, HudWorkVocab.ZONE_HEAD_HEIGHT)
     head.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
-    head.add_child(alloc_section_label(title))
+    var title_label := alloc_section_label(title)
+    if title_tooltip != "":
+        set_label_tooltip(title_label, title_tooltip)
+    head.add_child(title_label)
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE

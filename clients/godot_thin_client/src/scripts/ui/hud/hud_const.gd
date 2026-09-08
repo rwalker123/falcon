@@ -85,6 +85,38 @@ const LABOR_KIND_HUSBANDRY := "husbandry"
 # for. `fodder_need`'s rule, and load-bearing for the identical reason.
 const LABOR_KIND_ROADWORK := "roadwork"
 
+# **THE FOURTH KEEPING ROLE** (`docs/plan_extraction.md` §6, arc #583) — the same family again,
+# staffed by the same `assign_labor <faction> <band> quarrywork <workers>`, and it holds every
+# WORKING this band has opened on either deposit branch, worked or idle. `0` stops holding them at
+# all, after which each slides back down its ladder.
+#
+# ⛔ **THE TOKEN IS THE SIM'S GRAMMAR AND THE PLAYER NEVER SEES IT.** `Quarry` in this client means
+# the HUNTED ANIMAL — the compose sheet's own field row — so every player-facing string for this
+# pool, its roster and its cards says **Workings**, which is the sim's own word for the thing being
+# held. See `HudWorkVocab.ROLE_NAME_QUARRYWORK`.
+#
+# **ONE ROLE FOR BOTH BRANCHES.** Forestry and extraction split on KNOWLEDGE and on nothing a keeper
+# does — *hold the face open, clear what has fallen* is one job — so a second pool would be a
+# distinction nothing in the game can express.
+#
+# **THE BILL IS A COHORT FIELD, NOT A SUM OF ROWS.** `quarrywork_demand` / `quarrywork_supplied` /
+# `quarrywork_shortfall` ride the band, and a readout reads them straight: the `deposits` rows are
+# fog-filtered, so a working out of sight would drop out of any client-side total the band still owes
+# for. `roadwork`'s rule one pool over, and load-bearing for the identical reason.
+const LABOR_KIND_QUARRYWORK := "quarrywork"
+
+# **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) — the only source row in the
+# game that pays no food, and the whole of what wood and stone cost.
+#
+# ⛔ **IT NAMES A TILE *AND* A MATERIAL, and the pair is indivisible.** One tile can hold two
+# workings — a wooded highland holds timber and rock — so `assign_labor <f> <b> extract <x> <y>
+# <material> <n>` carries the material on the `species` token, which is where the sim's own `extract`
+# arm reads it from. A line naming only the tile names neither working.
+#
+# **It is a SOURCE kind and not a band-wide role**, so it never reaches `pending_key`'s bare-kind
+# arm: like `forage` it keys per target.
+const LABOR_KIND_EXTRACT := "extract"
+
 # **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level standing pool,
 # staffed by the same `assign_labor <faction> <band> builders <workers>`, and the one that replaced
 # the per-source build crew a verb used to carry.

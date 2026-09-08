@@ -4410,6 +4410,14 @@ const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
 ## the fourth** (arc #532), and it is what forced the block's own stepper and title metrics
 ## (`HudWorkVocab.POOL_STEPPER_*` / `POOL_CARD_NAME_FONT_SIZE`): four cards had to fit a strip that is
 ## 356px on the left dock, and at the shared widths they wanted 466.
+##
+## ⛔ **AND IT STAYS FOUR — the `quarrywork` pool got NO CARD** (arc #583). At the trimmed metrics a
+## card's own minimum is **83px** (printed by `_assert_pool_cards_are_level` below), so five abreast
+## want `5 × 83 + 4 × 6` = **439** of a box that is 382 on the bottom dock and 356 on the left, with
+## the horizontal trim already at 4 against `HudStyle`'s authored 11. A second ROW of cards was
+## measured and rejected too: it costs 62px, which takes the work zone's floor 358 → 420 and clipped
+## `band_panel_build_queue_wide` / `band_panel_queue_settings_wide`. That pool's stepper is on the
+## WORKINGS ROSTER block's own head — `_assert_workings_roster_head` is where it is asserted.
 const POOL_CARD_COUNT := 4
 
 ## GUARD: **which POOL CARDS fly the shortfall mark, asserted as a PAIR of lists.** A mark on every
@@ -15636,6 +15644,12 @@ func _render_queue_control_states() -> void:
 	# BETWEEN the pools and the queue, so every claim above it is a claim about a zone that did not
 	# have it, and re-ordering these would move the frames that follow.
 	await _assert_the_roadwork_roster_names_its_roads()
+	# **(f2) THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for** (arc #583). The
+	# roadwork roster's twin, appended straight after it so the two blocks' fixtures cannot interleave
+	# and so no frame above either of them moves. Its own claims are the two things a working has that
+	# a road does not: no keeper (the band's own `extract` ROW is the membership test) and a
+	# `(tile, material)` identity, which is why the near hex carries TWO rows.
+	await _assert_the_workings_roster_names_its_workings()
 	# **(g) THE QUEUED SOURCE WITH NOBODY GATHERING ON IT** — reported from play, and the state (d4)
 	# used to STAGE as its hidden entry. The board admitted on the take crew while the sim keeps the
 	# row and the entry on a row-exists rule, so a `cultivate` whose harvesters the player had moved
@@ -16998,6 +17012,360 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 func _restore_roadwork_roster_fixture() -> void:
 	_hud.update_road_network([])
 	_hud.update_route_rungs([])
+	_restore_queue_reorder_fixture()
+
+# ---- THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for (arc #583) -----------
+#
+# ⛔ **THE ROADWORK ROSTER'S TWIN, AND THE FIXTURE IS WHAT MAKES THE CLAIMS DIFFERENT.** The pool card
+# says `Workings 2` and nothing else in the client would say which two, so the block above's whole
+# argument applies one branch over — with two things that do not: a working publishes NO KEEPER (the
+# band's own `extract` ROW is the membership test), and one TILE can hold TWO workings, so the row's
+# identity is `(tile, material)` and a tile-keyed roster silently loses one of them.
+#
+# ⛔ **AND IT CARRIES NO `✕`.** `abandon` resolves a tile to a FORAGE source sim-side
+# (`BuildSourceRef::target` → `forage_source`), which `LaborTarget::same_source` pairs only with
+# another Forage row — so the verb does not reach a working and there is no verb that does. A `✕` here
+# would emit a command that destroys something else on the same hex.
+
+## The three workings this band holds, at three DISTANCES — reusing the road roster's own tiles, so
+## the locators are worked against one stated camp and a move to `_band_fixture` fails both blocks
+## together rather than one silently.
+##
+## ⛔ **THE NEAR TILE CARRIES TWO WORKINGS**, which is the claim a tile-keyed roster cannot pass: a
+## wooded highland holds timber AND rock, and the two rows differ in nothing but their material.
+const WORKINGS_WOOD := "wood"
+const WORKINGS_STONE := "stone"
+
+## What the ground holds and what is standing on it, at the shipped `extraction.json` proportions
+## (mixed woodland 600 at 0.03, karst highland 3000 at 0.0). The stone seam's `reachable` is a
+## FRACTION of its stock — `extraction:gathering` reaches 0.15 of a rock body — so the roster's
+## composer is reading a source whose three stock numbers are genuinely three numbers.
+const WORKINGS_WOOD_CAPACITY := 600.0
+const WORKINGS_WOOD_STOCK := 412.0
+const WORKINGS_WOOD_REGROWTH := 0.03
+const WORKINGS_STONE_CAPACITY := 3000.0
+const WORKINGS_STONE_STOCK := 2200.0
+const WORKINGS_STONE_REACHABLE := 330.0
+
+## The over-cut pair on the renewing seam, and the finite one's runway. The wood is cut HARDER than it
+## grows, which is §7's renewable warning; the stone quotes a real count of turns.
+const WORKINGS_WOOD_SUSTAINABLE := 4.5
+const WORKINGS_WOOD_TAKE := 7.2
+const WORKINGS_STONE_TAKE := 4.4
+const WORKINGS_STONE_RUNWAY := 75
+
+## The bill the band owes, through the cohort's own published trio — `demand - supplied == shortfall`
+## holds verbatim on the wire (`HudBandLaborState.quarrywork_pool_state`), so the fixture states three
+## numbers the sim can produce rather than a flag.
+const WORKINGS_DEMAND := 2.10
+const WORKINGS_SUPPLIED := 1.40
+const WORKINGS_SHORTFALL := 0.70
+
+## Hands on the pool. Stated for `ROSTER_ROADWORK_WORKERS`' reason: the pool card renders whatever the
+## roster does, and a card reading `0` beside a roster of three is a different frame.
+const WORKINGS_POOL_WORKERS := 2
+
+## …and the take crew on each working's own `extract` row. **A row held at ZERO still counts** — a
+## working with no cutters is still held and still owes — so the FAR one is staged at nobody, which is
+## the reading a membership test keyed on the crew rather than on the row would drop.
+const WORKINGS_CUTTERS := 2
+const WORKINGS_NO_CUTTERS := 0
+
+## The name cells, material-led. `_roadwork_roster_locator` supplies the tail verbatim, so a bearing
+## that drifted would fail both rosters rather than only one.
+const WORKINGS_NEAR_WOOD_NAME := "Wood · 1 tile E"
+const WORKINGS_NEAR_STONE_NAME := "Stone · 1 tile E"
+const WORKINGS_FAR_NAME := "Stone · 6 tiles N"
+
+## One working row, shaped exactly as `native/src/dict/deposits.rs` writes one — the `(tile, material)`
+## pair is its identity, and every derived number is read live off the tile sim-side.
+func _workings_row(tile: Vector2i, material: String, renews: bool,
+		actual_take: float) -> Dictionary:
+	var row := {
+		"tile_x": tile.x, "tile_y": tile.y,
+		"material": material,
+		"branch": "forestry" if renews else "extraction",
+		"stock": WORKINGS_WOOD_STOCK if renews else WORKINGS_STONE_STOCK,
+		"capacity": WORKINGS_WOOD_CAPACITY if renews else WORKINGS_STONE_CAPACITY,
+		"reachable": WORKINGS_WOOD_STOCK if renews else WORKINGS_STONE_REACHABLE,
+		"regrowth_rate": WORKINGS_WOOD_REGROWTH if renews \
+			else HudDepositVocab.REGROWTH_NEVER_RENEWS,
+		"rung": HudDepositVocab.RUNG_KEY_FELLING if renews \
+			else HudDepositVocab.RUNG_KEY_GATHERING,
+		"build_fraction": HudDepositVocab.METER_COMPLETE,
+		"ladder_position": 60.0 if renews else 0.0,
+		"sustainable_take": WORKINGS_WOOD_SUSTAINABLE if renews else 0.0,
+		"actual_take": actual_take,
+		# ⛔ **THE FORK IS THE RATE, SO THE SENTINEL FOLLOWS IT.** A renewing working answers
+		# `RUNWAY_NOT_APPLICABLE` — it does not run out — and a finite one a real count. A fixture
+		# stating the other pairing is a row no server can send.
+		"turns_remaining": HudDepositVocab.RUNWAY_NOT_APPLICABLE if renews else WORKINGS_STONE_RUNWAY,
+		"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 0,
+		"has_neglect_grace": false, "neglect_grace_remaining": 0,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+		"build_blocked_reason": "", "is_queued": false,
+		"build_kit_id": "", "upkeep_kit_id": "", "upkeep_kit_named": false,
+	}
+	return row
+
+## The four workings on the wire — three of this band's (two of them on ONE tile) and the NEGATIVE: a
+## working on a hex this band has no `extract` row for, which no roster of a band's holdings may list.
+func _workings_rows() -> Array:
+	return [
+		# Deliberately NOT in distance order on the wire, so the sort is doing work.
+		_workings_row(ROSTER_FAR_TILE, WORKINGS_STONE, false, WORKINGS_STONE_TAKE),
+		_workings_row(ROSTER_NEAR_TILE, WORKINGS_STONE, false, WORKINGS_STONE_TAKE),
+		_workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE),
+		# **THE NEGATIVE**: a real working this band works not at all.
+		_workings_row(ROSTER_MID_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE),
+	]
+
+## The band, carrying the workings bill, a real `quarrywork` ROLE row (band-wide, no tile — the only
+## shape the wire carries for a pool) and one `extract` row per working it holds.
+##
+## ⛔ **EACH `extract` ROW NAMES ITS MATERIAL.** That field is half the row's identity, and a fixture
+## omitting it stages an assignment `LaborTarget::Extract` cannot produce — the roster would then find
+## no working at all and every claim below would pass as an absence.
+func _workings_band_fixture(demand: float) -> Dictionary:
+	var band := _band_fixture()
+	band["quarrywork_demand"] = demand
+	band["quarrywork_supplied"] = WORKINGS_SUPPLIED if demand > 0.0 else 0.0
+	band["quarrywork_shortfall"] = WORKINGS_SHORTFALL if demand > 0.0 else 0.0
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_QUARRYWORK, "workers": WORKINGS_POOL_WORKERS,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	})
+	if demand > 0.0:
+		for held in [[ROSTER_NEAR_TILE, WORKINGS_WOOD, WORKINGS_CUTTERS],
+				[ROSTER_NEAR_TILE, WORKINGS_STONE, WORKINGS_CUTTERS],
+				[ROSTER_FAR_TILE, WORKINGS_STONE, WORKINGS_NO_CUTTERS]]:
+			var tile: Vector2i = held[0]
+			rows.append({
+				"kind": HudConst.LABOR_KIND_EXTRACT, "workers": int(held[2]),
+				"target_x": tile.x, "target_y": tile.y, "fauna_id": "",
+				"material": String(held[1]),
+			})
+	return band
+
+## The workings roster block and its rows, off the live panel.
+func _workings_block() -> Control:
+	return _find_meta_control(_panel, HudWorkVocab.WORKINGS_ROSTER_BLOCK_META)
+
+func _workings_rows_drawn() -> Array[Control]:
+	return _collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_ROW_META, [])
+
+func _workings_row_name(row: Control) -> String:
+	for child in row.find_children("*", "Button", true, false):
+		return (child as Button).text
+	return ""
+
+func _workings_row_value(row: Control) -> String:
+	for child in row.find_children("*", "Label", true, false):
+		return (child as Label).text
+	return ""
+
+func _assert_the_workings_roster_names_its_workings() -> void:
+	_hud.update_deposits(_workings_rows())
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	# **PRECONDITION: the bearings below are worked against THIS camp**, restated for the road
+	# roster's reason — `_band_fixture` is shared with every other state in this file.
+	_assert_band_panel("precondition: the workings band is camped at %s, which the locators are worked from"
+			% ROSTER_CAMP,
+		SourceForecast.band_tile(_hud._band_labor.panel_band()) == ROSTER_CAMP)
+	await _save("band_panel_workings_roster")
+	_assert_zone_content_fits()
+	var block := _workings_block()
+	_assert_band_panel("a band holding workings draws the WORKINGS ROSTER block", block != null)
+	if block == null:
+		_restore_workings_roster_fixture()
+		await _settle()
+		return
+	var rows := _workings_rows_drawn()
+	var keys: Array = []
+	for row in rows:
+		keys.append(String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META)))
+	# ⛔ **THE NEGATIVE FIRST.** A working this band has no `extract` row for is on the wire and must
+	# not be listed — a roster keyed on the DEPOSIT list rather than on the band's holdings would draw
+	# it, and the count alone would not say which extra row it found.
+	var stranger := "%d,%d:%s" % [ROSTER_MID_TILE.x, ROSTER_MID_TILE.y, WORKINGS_WOOD]
+	_assert_band_panel("…and never a working this band does not work (%s not listed, got %s)"
+			% [stranger, keys],
+		not keys.has(stranger))
+	# ⛔ **TWO ROWS ON ONE TILE, WHICH IS THE CLAIM A TILE-KEYED ROSTER CANNOT PASS.** The near hex
+	# holds timber and rock; a roster that de-duplicated on the tile draws one of them and the count is
+	# the only thing that says so.
+	_assert_band_panel(("…with one row per WORKING this band holds and can see, TWO of them on one "
+			+ "tile — 3 (got %d: %s)") % [rows.size(), keys],
+		rows.size() == 3)
+	if rows.size() < 3:
+		_restore_workings_roster_fixture()
+		await _settle()
+		return
+	# **NEAREST FIRST, tie-broken by tile and then by MATERIAL**, so the two rows on one hex cannot
+	# swap frame to frame. `stone` sorts before `wood`.
+	_assert_band_panel("…sorted nearest-first and tie-broken by material (%s)" % [keys],
+		keys == ["%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE],
+			"%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD],
+			"%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]])
+	# **THE NAME CELL LEADS WITH THE MATERIAL**, because a working has half a name the road lacked and
+	# the two rows on one hex differ in nothing else.
+	var names: Array = [_workings_row_name(rows[0]), _workings_row_name(rows[1]),
+		_workings_row_name(rows[2])]
+	_assert_band_panel("…each named by its MATERIAL and then its distance and bearing (%s)" % [names],
+		names == [WORKINGS_NEAR_STONE_NAME, WORKINGS_NEAR_WOOD_NAME, WORKINGS_FAR_NAME])
+	# ⛔ **AND THE VALUE CELL IS `HudDepositVocab.deposit_row_value` VERBATIM.** The claim is the
+	# REUSE: the tile card's working block and this roster compose a working's state through ONE
+	# function, so §7's fork is taken once and the two cannot disagree.
+	var wood := _workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE)
+	var wanted := HudDepositVocab.deposit_row_value(wood)
+	var got := _workings_row_value(rows[1])
+	_assert_band_panel("…and its value is `deposit_row_value` verbatim — `%s` (got \"%s\")"
+			% [wanted, got], got == wanted)
+	# ⛔ **THE §7 FORK, READ OFF TWO ROWS OF ONE ROSTER.** The renewing seam states the over-cut word
+	# and the finite one a runway — the pair, since either alone passes on a composer that says the
+	# same thing about both.
+	_assert_band_panel("…the RENEWING working states the over-cut word (`%s`)"
+			% SourceForecast.YIELD_OVERDRAW_WORD,
+		got.contains(SourceForecast.YIELD_OVERDRAW_WORD))
+	_assert_band_panel("…while the FINITE one states its runway instead (\"%s\")"
+			% _workings_row_value(rows[0]),
+		_workings_row_value(rows[0]).contains(
+			HudDepositVocab.DEPOSIT_RUNWAY_FORMAT % WORKINGS_STONE_RUNWAY)
+			and not _workings_row_value(rows[0]).contains(SourceForecast.YIELD_OVERDRAW_WORD))
+	# ⛔ **NO STEPPER AND NO `✕` ON ANY ROW — SCOPED TO THE ROWS, WHICH IS THE WHOLE OF THE RULE.**
+	# roads.md forbids a worker count on a ROW, because a per-working crew here would re-introduce the
+	# per-tile work row §4.13b retired; the pool's own band-wide stepper is on the block's HEAD and is
+	# asserted there. **A block-scoped search would now find that head control and pass or fail for the
+	# wrong reason**, which is why this walks `rows` and not `block`.
+	var row_controls: Array = []
+	for row in rows:
+		for control in row.find_children("*", "Button", true, false):
+			var face := (control as Button).text
+			if face == HudWorkVocab.STEPPER_MINUS_FACE or face == HudWorkVocab.STEPPER_PLUS_FACE \
+					or face == HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH:
+				row_controls.append(face)
+	_assert_band_panel(("…and no ROW carries a stepper or a `%s` — the hands are elsewhere and no verb "
+			+ "drops a working (found %s)")
+			% [HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH, row_controls],
+		row_controls.is_empty())
+	# **AND THE HEAD IS THE POOL**, asserted on this state because it is the one with a live shortfall.
+	_assert_workings_roster_head("band_panel_workings_roster", block, true)
+
+	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
+	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** The `deposits` rows are fog-filtered
+	# while the pool card's totals come cohort-level from the sim, precisely because summing the
+	# visible rows would understate the bill — so a band can show a `Workings` demand beside NO rows,
+	# and an empty roster drawn there would say *this band holds nothing*.
+	_hud.update_deposits([])
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_roster_unseen")
+	_assert_zone_content_fits()
+	var unseen := _workings_block()
+	_assert_band_panel("a workings bill with NO working in sight still draws the block",
+		unseen != null)
+	_assert_band_panel("…with no rows at all (got %d)" % _workings_rows_drawn().size(),
+		_workings_rows_drawn().is_empty())
+	_assert_band_panel("…and ONE muted line saying the held workings are not in sight, never a silent empty roster",
+		unseen != null and _find_meta_control(unseen,
+			HudWorkVocab.WORKINGS_ROSTER_UNSEEN_META) != null)
+	# ⛔ **AND THE HEAD DRAWS HERE, which is the case the pool's control MUST be reachable in.** A band
+	# that owes a bill it can see no working for is exactly the band that needs to staff the pool, and
+	# with the stepper on this head a block that skipped case 2 would leave it nowhere to be staffed.
+	if unseen != null:
+		_assert_workings_roster_head("band_panel_workings_roster_unseen", unseen, true)
+
+	# ---- CASE 1: NOTHING HELD AND NOTHING OWED — NO BLOCK AT ALL ---------------------------------
+	# The paired negative without which every claim above is satisfied by a block that renders
+	# unconditionally.
+	_push_bands([_workings_band_fixture(0.0)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("a band holding nothing and owing nothing draws NO workings roster at all",
+		_workings_block() == null)
+	# ⛔ **AND THE POOL'S STEPPER GOES WITH IT — a DECISION, asserted so it cannot be read as an
+	# oversight** (arc #583). With the control on the block's head, a band holding no working and owing
+	# no bill has nowhere to staff `quarrywork`; that is the honest arrangement rather than a gap —
+	# there is nothing to keep, so there is nothing to staff — and a fallback stepper here would be a
+	# live control for a bill of zero. The claim is made because the alternative reading is invisible:
+	# a missing control looks the same either way.
+	_assert_band_panel("…and the `quarrywork` stepper goes with it — nothing owed, nothing to staff",
+		_collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_STEPPER_META, []).is_empty())
+	_restore_workings_roster_fixture()
+	await _settle()
+
+## GUARD: **THE ROSTER BLOCK'S HEAD *IS* THE `quarrywork` POOL** (arc #583) — the title, the shortfall
+## mark and a compact stepper on the pool cards' own metrics, driving the same command a fifth card in
+## the POOLS block would have sent. That card does not exist (`POOL_CARD_COUNT`), so this head is the
+## only control that staffs this pool and every claim the retired card carried is made here.
+##
+## **THE HEIGHT CLAIM IS THE ONE NO PICTURE CAN MAKE.** The work zone `clip_contents`, so a head
+## drawing taller than `HudWorkVocab.workings_roster_height` reserved takes the difference off the
+## bottom of the board in silence — the same failure `_assert_pools_block` exists to catch one block
+## up. It PRINTS both figures beside the claim, which is what makes
+## `HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT` a measurement rather than a re-derivation.
+##
+## `want_mark` is whether this band's bill is short: the mark and the hover are the retired card's
+## readings, and asserting them only where they are present would pass on a head that flew the glyph
+## unconditionally.
+func _assert_workings_roster_head(where: String, block: Control, want_mark: bool) -> void:
+	var stepper := _find_meta_control(block, HudWorkVocab.WORKINGS_ROSTER_STEPPER_META)
+	_assert_band_panel("%s: the roster HEAD carries the `%s` pool's own stepper"
+			% [where, HudWorkVocab.ROLE_NAME_QUARRYWORK], stepper != null)
+	# **THE STEPPER IS THE POOL CARDS' SIZE, not a work row's** — the control is one of that family
+	# wherever it is mounted, and the metric is what says so.
+	if stepper != null:
+		var faces: Array = []
+		for control in stepper.find_children("*", "Button", true, false):
+			faces.append((control as Button).text)
+		_assert_band_panel("%s: …with both faces on it (%s)" % [where, faces],
+			faces.has(HudWorkVocab.STEPPER_MINUS_FACE)
+				and faces.has(HudWorkVocab.STEPPER_PLUS_FACE))
+	# **THE MARK AND ITS HOVER ARE THE RETIRED CARD'S READINGS.** Asserted as a PAIR with the calm
+	# band below, or "the head flies the mark" passes on a head that always does.
+	var title := _label_titled_under_head(block, HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER)
+	_assert_band_panel("%s: …and its title carries the pool's hint on its hover" % where,
+		title != null and title.tooltip_text.contains(HudWorkVocab.QUARRYWORK_ROLE_HINT))
+	var marks: Array = []
+	for label in block.find_children("*", "Label", true, false):
+		if (label as Label).text == HudWorkVocab.UPKEEP_POOL_SHORT_MARK:
+			marks.append((label as Label).text)
+	_assert_band_panel("%s: …and the shortfall mark is %s (found %s)"
+			% [where, "flown" if want_mark else "absent", marks],
+		marks.is_empty() != want_mark)
+	# **RESERVED >= DRAWN, printed.** The block declares its own minimum from
+	# `HudWorkVocab.workings_roster_height`; what the HEAD draws is what that expression's head term
+	# has to cover.
+	var head := block.get_child(0) as Control
+	if head != null:
+		var drawn: float = head.get_combined_minimum_size().y
+		_assert_band_panel(("%s: …and the head RESERVES what it DRAWS (%.0f reserved, %.0f drawn)")
+				% [where, HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT, drawn],
+			HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT + ZONE_BOUNDS_TOLERANCE >= drawn)
+		_assert_band_panel(("%s: …and the block RESERVES what it DRAWS (%.0f reserved, %.0f drawn)")
+				% [where, block.custom_minimum_size.y,
+					block.get_combined_minimum_size().y],
+			block.custom_minimum_size.y + ZONE_BOUNDS_TOLERANCE
+				>= block.get_combined_minimum_size().y)
+
+## The head's TITLE label, found by its own text — the head is an `HBoxContainer` whose first Label is
+## the title, and a positional read would be asserting against `HudWidgets.zone_head`'s child order
+## rather than against the label being there.
+func _label_titled_under_head(block: Control, title: String) -> Label:
+	for label in block.find_children("*", "Label", true, false):
+		if (label as Label).text == title.to_upper() or (label as Label).text == title:
+			return label as Label
+	return null
+
+## Put the world back the way the states after this one expect it — the deposits section cleared, the
+## `_restore_roadwork_roster_fixture` idiom one branch over.
+func _restore_workings_roster_fixture() -> void:
+	_hud.update_deposits([])
 	_restore_queue_reorder_fixture()
 
 func _restore_road_queue_fixture() -> void:

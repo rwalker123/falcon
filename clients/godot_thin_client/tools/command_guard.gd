@@ -444,6 +444,16 @@ func _drive_assign_labor_kits() -> void:
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
+	# **THE FOURTH GRAMMAR — the deposit branches' take row** (arc #583).
+	# `assign_labor <f> <b> extract <x> <y> <material> <n>`, where the MATERIAL rides the `species`
+	# token and is not optional: one tile can hold two workings, so a line naming only the tile names
+	# neither of them. It carries no kit — `default_kits.extract` is the bare `none` kit and the
+	# working card mounts no picker — so the tail is closed and this is the exact line the card's
+	# stepper emits.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
+		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
+	await _settle()
 	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
 	# `assign_labor <faction> <band> <role> <workers>` takes no tile, no herd, no floor and no
 	# species, so its tail is CLOSED but for the kit token.
@@ -876,22 +886,32 @@ const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_AGRICULTURE,
 	HudConst.LABOR_KIND_HUSBANDRY,
 	HudConst.LABOR_KIND_ROADWORK,
+	HudConst.LABOR_KIND_QUARRYWORK,
 	HudConst.LABOR_KIND_BUILDERS,
 ]
+
+## The material the `extract` drive names. A real shipped material, so the line this guard parses is
+## the line the client emits rather than one built out of a placeholder.
+const EXTRACT_MATERIAL := "wood"
 
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 
-## The three TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
-## map's quick-hunt, and hunt + forage with a `kit <id>` tail.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 3
+## The FOUR TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
+## map's quick-hunt, hunt + forage with a `kit <id>` tail, and the deposit branches' `extract`.
+##
+## ⛔ **`extract` IS A TARGETED GRAMMAR AND NOT A ROLE, so the sweep below cannot reach it** — it names
+## a tile AND a material, where every role in that list takes a bare worker count. It is driven here
+## for the reason the whole sweep exists: a grammar the server's dispatch takes and
+## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 4
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits.
 const ASSIGN_LABOR_BARE_DRIVES := 1
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 10
+const ASSIGN_LABOR_EXPECTED := 12
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##

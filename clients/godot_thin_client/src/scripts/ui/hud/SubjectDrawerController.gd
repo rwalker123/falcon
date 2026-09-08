@@ -70,6 +70,8 @@ var _forage_assign_controls: VBoxContainer = null
 # …and the LAND drawer's road action, hidden alongside `_forage_assign_controls` on every branch that
 # is not the land: a road is a property of the GROUND, so it belongs to exactly one subject.
 var _road_ladder_controls: VBoxContainer = null
+# …and the LAND drawer's WORKINGS action (arc #583), hidden and shown beside the road's.
+var _workings_controls: VBoxContainer = null
 var _subject_body: VBoxContainer = null
 var _subject_scroll: ScrollContainer = null
 # The fit ceiling — read only, the room the drawer may claim in the dock beneath the card.
@@ -96,7 +98,8 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         bandpanel: BandPanelController, banddetail: BandDetailLines, host: Node,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        road_ladder_controls: VBoxContainer, subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
+        road_ladder_controls: VBoxContainer, workings_controls: VBoxContainer,
+        subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
         targeting: TargetingController, topbar: FactionReadouts) -> void:
     _selection = selection
     _band_labor = band_labor
@@ -112,6 +115,7 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _herd_assign_controls = herd_assign_controls
     _forage_assign_controls = forage_assign_controls
     _road_ladder_controls = road_ladder_controls
+    _workings_controls = workings_controls
     _subject_body = subject_body
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
@@ -199,6 +203,10 @@ func _render_land_drawer() -> void:
     # exactly where the `Road` readout row above does — a tile carrying a road — so nothing shows on
     # ground with no road; the builder decides that from the same `roads` key the rows are drawn from.
     _drawercompose.build_road_drawer_actions(_selection.tile_info())
+    # …and the WORKINGS action beside it (arc #583). It appears exactly where a live working stands
+    # on this hex, off the same `deposits` key the card's rows would be drawn from — so nothing shows
+    # on ground nobody has worked, which is most of the world.
+    _drawercompose.build_workings_drawer_actions(_selection.tile_info())
     if _allocation_panel != null:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
@@ -700,6 +708,8 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         _forage_assign_controls.visible = false
     if _road_ladder_controls != null:
         _road_ladder_controls.visible = false
+    if _workings_controls != null:
+        _workings_controls.visible = false
     # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
     # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
     var ctx := DetailFormat.Context.new()

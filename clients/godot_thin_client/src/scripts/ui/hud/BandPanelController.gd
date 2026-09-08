@@ -1286,14 +1286,20 @@ func _build_role_card_row() -> HBoxContainer:
 ## reads as an answer to a live question. Both figures are summed from the wire's per-source fields
 ## and neither is derived from the other (`upkeep_pool_state`).
 func _build_upkeep_mode_row(band: Dictionary, plant_pool: Dictionary,
-        animal_pool: Dictionary, road_pool: Dictionary) -> VBoxContainer:
+        animal_pool: Dictionary, road_pool: Dictionary,
+        deposit_pool: Dictionary) -> VBoxContainer:
     # **THE ROAD BILL COUNTS TOWARDS "IS THERE ANYTHING TO FUND"** (arc #532): route keeping runs
     # through the same `distribute_upkeep_pool` under the band's own `upkeep_fund_mode` that the two
     # food webs do, so a band whose ONLY standing cost is a road it stands on must still be offered
     # the split. Leaving it out hid the control on exactly the band the road branch creates.
+    #
+    # **AND SO DOES THE WORKINGS BILL** (arc #583), for the identical reason on a fourth pool: a band
+    # whose only standing cost is a felling working it opened is exactly the band the deposit branch
+    # creates, and it has the same split to make.
     var demand := float(plant_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)) \
         + float(animal_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)) \
-        + float(road_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
+        + float(road_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND)) \
+        + float(deposit_pool.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
     if demand < SourceForecast.UPKEEP_WORK_MIN:
         return null
     var block := HudWidgets.make_zone_block()
@@ -1877,6 +1883,16 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var roster := _build_roadwork_roster_block(band, roster_models)
     if roster != null:
         col.add_child(roster)
+    # **AND WHICH WORKINGS IT IS HOLDING, directly under that** (arc #583). A second roster answering
+    # a second pool card's question, resolved and paid for exactly as the first is — its own height,
+    # its own gap, threaded into BOTH capacity terms below because the zone clips. The two appear
+    # independently, so neither may be folded into the other's term.
+    var workings_models := _workings_roster_models(band)
+    var workings_h := HudWorkVocab.workings_roster_height(workings_models.size(),
+        _workings_roster_unseen(band, workings_models.size()))
+    var workings := _build_workings_roster_block(band, workings_models)
+    if workings != null:
+        col.add_child(workings)
     # **THE QUEUE SITS ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the
     # band's own ordered list rather than a view of that board, so a block beneath them would read as
     # a filtered subset of it. It is derived from the FULL model set for the same reason — a chip must
@@ -1899,7 +1915,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         col.add_child(_build_build_queue_expanded(band, queued, pools_fund_mode))
         return
     var queue_rows_max := HudWorkVocab.build_queue_rows_max(_zone_box().y,
-        pools_fund_mode, queued.size(), roster_h)
+        pools_fund_mode, queued.size(), roster_h, workings_h)
     if not queued.is_empty():
         col.add_child(_build_build_queue_block(band, queued, queue_rows_max))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
@@ -1948,7 +1964,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         int(queue_settings["legs"]), bool(queue_settings["crop"]),
-        bool(queue_settings["kit"]), bool(queue_settings["one_line"]), roster_h)
+        bool(queue_settings["kit"]), bool(queue_settings["one_line"]), roster_h, workings_h)
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -1996,7 +2012,8 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
 func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_legs: int = 0,
         queue_settings_crop: bool = false, queue_settings_kit: bool = false,
-        queue_settings_one_line: bool = true, roster_height: float = 0.0) -> Dictionary:
+        queue_settings_one_line: bool = true, roster_height: float = 0.0,
+        workings_height: float = 0.0) -> Dictionary:
     var box := _zone_box()
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
         queue_settings_legs, queue_settings_crop, queue_settings_kit, queue_settings_one_line)
@@ -2006,8 +2023,14 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         gaps += 1.0
     if roster_height > 0.0:
         gaps += 1.0
+    # **THE WORKINGS ROSTER'S OWN GAP, counted apart from the road roster's** (arc #583): the two
+    # blocks appear independently, so a band with only one of them pays for one gap and a band with
+    # both pays for two. Folding the pair into one term is the 6px disagreement
+    # `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` exists to prevent, on a second block.
+    if workings_height > 0.0:
+        gaps += 1.0
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
-        + queue_h + pools_h + roster_height \
+        + queue_h + pools_h + roster_height + workings_height \
         + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
     var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
     var layout := _declare_work_layout(count, rows)
@@ -2225,10 +2248,17 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     var agriculture_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE)
     var husbandry_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY)
     var roadwork_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK)
+    var quarrywork_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_QUARRYWORK)
     var builders_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)
     var block := HudWidgets.make_zone_block()
+    # ⛔ **THE HEAD COUNTS THE `quarrywork` POOL TOO, THOUGH ITS CARD IS NOT IN THIS BLOCK** (arc
+    # #583). This readout is *how many of the band's working age are on standing roles*, and those
+    # hands are spent whether or not the control that spends them draws here — a head that omitted
+    # them would not add up to the band's own idle count, which is the one thing it is measured
+    # against.
     var on_work := int(agriculture_eff.get("workers", 0)) + int(husbandry_eff.get("workers", 0)) \
-        + int(roadwork_eff.get("workers", 0)) + int(builders_eff.get("workers", 0))
+        + int(roadwork_eff.get("workers", 0)) + int(quarrywork_eff.get("workers", 0)) \
+        + int(builders_eff.get("workers", 0))
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_POOLS,
         HudWorkVocab.POOLS_ZONE_READOUT_FORMAT % [on_work, int(band.get("working_age", 0))]))
     # **ONE ROW OF THREE, through the role cards' own row chrome.** They are one family — the hands the
@@ -2269,6 +2299,11 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
         HudWorkVocab.POOL_COVERAGE_SHORTFALL_KEY: float(road_pool.get("shortfall",
             SourceForecast.NO_UPKEEP_DEMAND)),
     }
+    # **AND THE WORKINGS POOL'S BILL, WHICH THIS BLOCK READS FOR THE FUND-MODE ROW ALONE** (arc #583).
+    # Its card is not here — the row of four is full and the height a fifth would cost cannot be found
+    # (see the card row below) — so the coverage sentence and the mark ride the WORKINGS ROSTER's own
+    # head. What the bill still decides HERE is whether this band has anything to fund at all.
+    var deposit_pool := _band_labor.quarrywork_pool_state(band)
     # ⛔ **ONE ROW OF FOUR, AND THE STEPPERS ARE NARROWED TO PAY FOR IT** (arc #532). At the shared
     # stepper width a pool card's floor is 112px, so four of them wanted 466px of a box that is 382
     # on the bottom dock and 356 on the left — `band_panel_preview`'s overflow probe named every
@@ -2279,6 +2314,13 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     #
     # **THE FOUR STAY ONE ROW BECAUSE THEY ARE ONE DECISION**: how this band spends the hands it is
     # not sending out. A row that wrapped would put that decision in two places at two widths.
+    #
+    # ⛔ **AND THERE IS NO FIFTH CARD, WHICH IS WHY THE `quarrywork` POOL IS NOT HERE** (arc #583).
+    # Five abreast measure `5 × 83 + 4 × 6` = **439px** of those same boxes at the already-trimmed
+    # metrics, and the 62px a second row costs cannot be found either — the work zone's floor rises
+    # 358 → 420 with it and `BandCityPanel.PANEL_HEIGHT_WIDE`'s sweep has no value left to land on.
+    # That pool's stepper is on the WORKINGS ROSTER block's own head, one block down, which already
+    # draws and is already paid for.
     var cards := _build_role_card_row()
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
         HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle,
@@ -2301,7 +2343,7 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`.
     # Its presence is what the reserved height forks on, so the answer is recorded on the block rather
     # than re-derived by the capacity maths.
-    var fund_mode := _build_upkeep_mode_row(band, plant_pool, animal_pool, road_pool)
+    var fund_mode := _build_upkeep_mode_row(band, plant_pool, animal_pool, road_pool, deposit_pool)
     if fund_mode != null:
         block.add_child(fund_mode)
     block.set_meta(HudWorkVocab.POOLS_BLOCK_META, fund_mode != null)
@@ -2471,6 +2513,197 @@ func _build_roadwork_roster_abandon_button(band: Dictionary, tile: Vector2i) -> 
             "y": tile.y,
         }))
     return drop
+
+## **WHICH WORKINGS THIS BAND IS HOLDING** — one entry per working it can see and has a crew row on,
+## nearest first (arc #583). The roadwork roster's twin, and every rule there applies unchanged.
+##
+## ⛔ **THE CATCHMENT IS THE BAND'S OWN `extract` ROW, not a keeper field.** A working publishes no
+## keeper — it is held by the band that WORKS it, which is the arc's one deliberate departure from the
+## route branch — so membership is asked of this band's labor assignments and the `deposits` row
+## supplies the state. **A row held at ZERO cutters still counts**: a working with no crew is still
+## held and still owes, which is the whole reason the pool exists.
+##
+## Sorted by distance ascending, tie-broken by TILE and then by MATERIAL, so the order is stable frame
+## to frame — a wooded highland's two rows would otherwise swap under an unstable sort.
+func _workings_roster_models(band: Dictionary) -> Array:
+    var camp := SourceForecast.band_tile(band)
+    var models: Array = []
+    for deposit_variant in _band_labor.deposits():
+        if not (deposit_variant is Dictionary):
+            continue
+        var deposit: Dictionary = deposit_variant
+        var tile := HudDepositVocab.tile_of(deposit)
+        if tile.x < 0 or tile.y < 0:
+            continue
+        var material := HudDepositVocab.material_of(deposit)
+        if _band_labor.extract_assignment_of(band, tile.x, tile.y, material).is_empty():
+            continue
+        var distance := SourceForecast.hex_distance_wrapped(camp.x, camp.y, tile.x, tile.y,
+            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        models.append({
+            "deposit": deposit,
+            "tile": tile,
+            "material": material,
+            "distance": distance,
+            # **THE MATERIAL LEADS THE NAME CELL** — a working has half a name the road lacked, and
+            # two workings on one tile differ in nothing else.
+            "name": HudWorkVocab.WORKINGS_ROSTER_NAME_FORMAT % [
+                HudDepositVocab.material_label(deposit),
+                _roadwork_roster_locator(distance, camp, tile)],
+        })
+    models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["distance"]) != int(b["distance"]):
+            return int(a["distance"]) < int(b["distance"])
+        var ta: Vector2i = a["tile"]
+        var tb: Vector2i = b["tile"]
+        if ta.y != tb.y:
+            return ta.y < tb.y
+        if ta.x != tb.x:
+            return ta.x < tb.x
+        return String(a["material"]) < String(b["material"]))
+    return models
+
+## Does this band owe `quarrywork` it cannot show a row for? — **case 2 of the honesty rule**, off the
+## cohort's own published demand, which is summed sim-side precisely because the fog-filtered rows
+## would understate it.
+func _workings_roster_unseen(band: Dictionary, visible: int) -> bool:
+    if visible > 0:
+        return false
+    return SourceForecast.has_upkeep(_band_labor.quarrywork_pool_state(band))
+
+## **THE WORKINGS ROSTER BLOCK** — the workings the pool above is paying for. `null` where the band
+## holds nothing visible AND owes nothing, which is the expeditions block's omit-entirely rule.
+##
+## ⛔ **NO STEPPER, NO CREW COUNT, NO KIT PICKER — AND NO `✕`.** See
+## `HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER`: the hands are elsewhere on both counts, and there is no
+## verb that drops a working, `abandon` resolving to a FORAGE source sim-side.
+func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContainer:
+    var unseen := _workings_roster_unseen(band, models.size())
+    # ⛔ **CASE 1 DRAWS NOTHING, AND THAT TAKES THE POOL'S STEPPER WITH IT — DELIBERATELY** (arc #583).
+    # With the pool's control on this block's head, a band holding no working and owing no bill has
+    # nowhere to staff `quarrywork` — which is the honest arrangement rather than an oversight: there
+    # is nothing to keep, so there is nothing to staff, and the stepper appears exactly when there is
+    # something for it to pay for. **A fallback control here would be a live stepper for a bill of
+    # zero**, which is the furniture-explaining-an-absence the pools block's own note refuses one
+    # block up. Cases 2 and 3 both draw the head, so a band that owes anything can always reach it.
+    if models.is_empty() and not unseen:
+        return null
+    var block := VBoxContainer.new()
+    block.set_meta(HudWorkVocab.WORKINGS_ROSTER_BLOCK_META, models.size())
+    block.add_theme_constant_override("separation", 0)
+    block.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.workings_roster_height(models.size(), unseen))
+    block.add_child(_build_workings_roster_head(band))
+    if unseen:
+        var line := HudWidgets.alloc_hint_label(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_LINE)
+        line.set_meta(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_META, true)
+        line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(line)
+    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
+    for index in range(drawn):
+        block.add_child(_build_workings_roster_row(models[index] as Dictionary))
+    if models.size() > drawn:
+        var more := HudWidgets.alloc_hint_label(
+            HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % (models.size() - drawn))
+        more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(more)
+    return block
+
+## **THE BLOCK'S HEAD *IS* THE `quarrywork` POOL** (arc #583) — the block title, the shortfall mark,
+## and a compact stepper on the pool cards' own `POOL_STEPPER_*` metrics driving the same
+## `assign_labor <faction> <band> quarrywork <n>` a fifth card would have sent.
+##
+## ⛔ **IT IS HERE BECAUSE THE POOLS BLOCK HAS NO ROOM FOR A FIFTH CARD, and this head already draws
+## and is already paid for.** Five cards abreast measure 439px of a 382/356 box at the already-trimmed
+## stepper metrics, and the 62px a second row of cards would cost takes the work zone's floor 358 → 420
+## — which `BandCityPanel.PANEL_HEIGHT_WIDE` cannot buy at any value (see `pools_block_height`). So the
+## control moved one block down, to the very place the question *which workings am I paying for* is
+## already being answered.
+##
+## ⛔ **THIS IS NOT roads.md's ROSTER RULE BEING BROKEN.** That rule forbids a stepper on a ROW,
+## because a per-row worker count would re-introduce the per-tile work row §4.13b retired. This is the
+## BAND-WIDE pool, on the head, naming no working — and the per-row prohibition is unchanged and still
+## asserted.
+##
+## **THE MARK AND THE SENTENCE ARE THE RETIRED CARD'S, off the cohort and with no arithmetic here.**
+## `upkeep_pool_coverage_line` is the ONE composer that decides both, exactly as it does for the four
+## cards, so the glyph and the words cannot disagree — and the `deposits` rows are fog-filtered, which
+## is why the three figures are read off the band rather than summed from the rows.
+##
+## **THE HINT RIDES THE TITLE'S OWN HOVER**, not the mark's: the mark is conditional and a calm band
+## would otherwise have nowhere to read what this pool does.
+func _build_workings_roster_head(band: Dictionary) -> HBoxContainer:
+    var pool := _band_labor.quarrywork_pool_state(band)
+    var cover := {
+        HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(pool.get("supplied",
+            SourceForecast.NO_UPKEEP_DEMAND)),
+        HudWorkVocab.POOL_COVERAGE_ASKED_KEY: float(pool.get("demand",
+            SourceForecast.NO_UPKEEP_DEMAND)),
+        HudWorkVocab.POOL_COVERAGE_SHORTFALL_KEY: float(pool.get("shortfall",
+            SourceForecast.NO_UPKEEP_DEMAND)),
+    }
+    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(
+        HudWorkVocab.ROLE_NAME_QUARRYWORK, cover)
+    var hover := HudFormat.join_tooltip_lines([HudWorkVocab.QUARRYWORK_ROLE_HINT, coverage_line])
+    var head := HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER,
+        HudWorkVocab.UPKEEP_POOL_SHORT_MARK if coverage_line != "" else "",
+        null, HudStyle.WARN, hover, hover)
+    var effective := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_QUARRYWORK)
+    var stepper := HBoxContainer.new()
+    stepper.set_meta(HudWorkVocab.WORKINGS_ROSTER_STEPPER_META, HudConst.LABOR_KIND_QUARRYWORK)
+    stepper.alignment = BoxContainer.ALIGNMENT_END
+    stepper.add_theme_constant_override("separation", HudWorkVocab.POOL_STEPPER_SEPARATION)
+    # **THE POOL CARDS' OWN METRIC, not the shared stepper's** — this control is one of that family
+    # wherever it is mounted, and `HudWorkVocab.POOL_STEPPER_*` is what keeps it the same size as the
+    # four in the block above rather than the wider one a work row carries.
+    #
+    # **THE COMMAND CARRIES NO `kit` TOKEN**, the keeping pair's rule: `default_kits.quarrywork` is the
+    # bare `none` kit and this head mounts no picker, so `NO_KIT_ID` is what `_kit_token` omits.
+    HudWidgets.add_stepper_controls(stepper,
+        int(effective.get("workers", 0)), _band_labor.effective_idle(band) > 0,
+        func(n: int) -> void: _emit_assign_labor(
+            band, HudConst.LABOR_KIND_QUARRYWORK, n, -1, -1, "",
+            SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+            KitRoster.NO_KIT_ID), true, {
+        HudWidgets.STEPPER_METRIC_BUTTON_WIDTH: HudWorkVocab.POOL_STEPPER_BUTTON_WIDTH,
+        HudWidgets.STEPPER_METRIC_VALUE_WIDTH: HudWorkVocab.POOL_STEPPER_VALUE_WIDTH,
+        HudWidgets.STEPPER_METRIC_PADDING_H: HudWorkVocab.POOL_STEPPER_PADDING_H,
+    })
+    head.add_child(stepper)
+    return head
+
+## One roster row: which working it is, where it is, and what state it is in.
+##
+## ⛔ **THE VALUE CELL IS `HudDepositVocab.deposit_row_value`, VERBATIM** — the same composer the tile
+## card's working block states its line with, so the card and the roster cannot disagree about a
+## working's state and the §7 fork is taken once. The row's INK is that composer's own answer too
+## (`deposit_value_color`), keyed on the hazard mark it puts there rather than on a second test.
+##
+## **THE NAME JUMPS AND THE REST DROPS**, the road roster's split: a working IS its tile, so the jump
+## is `alert_focus_requested` on its own coordinates with no entity resolution.
+func _build_workings_roster_row(model: Dictionary) -> PanelContainer:
+    var tile: Vector2i = model["tile"]
+    var deposit: Dictionary = model["deposit"]
+    var row := PanelContainer.new()
+    row.set_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META,
+        "%d,%d:%s" % [tile.x, tile.y, String(model["material"])])
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    row.add_child(line)
+    var jump := HudWidgets.build_inline_link(String(model["name"]), HudStyle.SIGNAL,
+        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
+    line.add_child(jump)
+    var value := Label.new()
+    value.text = HudDepositVocab.deposit_row_value(deposit)
+    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    value.add_theme_color_override("font_color", HudDepositVocab.deposit_value_color(deposit))
+    value.clip_text = true
+    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_child(value)
+    return row
 
 ## **WHAT ONE KEEPING POOL SUPPLIES AGAINST WHAT IT IS ASKED FOR** — `{supply, asked}` in work units,
 ## the ONE input the pool card's mark and its hover both fork on.

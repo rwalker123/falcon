@@ -214,7 +214,12 @@ const YIELD_PER_TURN_SUFFIX := " /turn"
 # cannot drift into two different words.
 const YIELD_RENEWABLE_NOTE := "renewable"
 const YIELD_TOOLTIP_RENEWABLE := " · " + YIELD_RENEWABLE_NOTE
-const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# …and its opposite, in the same two spellings of ONE word: the bare WORD for a state clause that
+# leads with the hazard mark (`HudDepositVocab`'s working row), the joined form for this tooltip.
+# **Taking more than a source renews is one idea, so it gets one word** wherever it is stated — a
+# second spelling in the deposit vocab would be exactly the drift the renewable pair above avoids.
+const YIELD_OVERDRAW_WORD := "overdrawing"
+const YIELD_TOOLTIP_OVERDRAW := " — " + YIELD_OVERDRAW_WORD
 # **THE ROW'S TWO RATES, EACH NAMED** — `+1.96 a turn on average · +1.91 this turn`. The row's FACE is
 # `realizedYield`, the forward projection of this source's take; the number beside it is
 # `actualYield`, the take the sim resolved THIS turn. They are different quantities and routinely

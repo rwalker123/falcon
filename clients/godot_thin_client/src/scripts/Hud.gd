@@ -285,6 +285,10 @@ var _server_build: String = "?"
 ## slice 13). Its own container rather than a row inside `%ForageAssignControls`, which is gated on
 ## the tile being a gathering site with a band in hand — a road crosses ground that is neither.
 @onready var road_ladder_controls: VBoxContainer = %RoadLadderControls
+## …and the LAND drawer's WORKINGS action (arc #583), beside it and for the same reason: a deposit is
+## a tile-keyed source reached by a tile-first pick, and the ground it stands on need be neither a
+## gathering site nor a hex with a band in hand.
+@onready var workings_controls: VBoxContainer = %WorkingsControls
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -641,7 +645,8 @@ func _ready() -> void:
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
-        herd_assign_controls, forage_assign_controls, road_ladder_controls, tile_panel,
+        herd_assign_controls, forage_assign_controls, road_ladder_controls, workings_controls,
+        tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
@@ -848,7 +853,8 @@ func _ready() -> void:
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        road_ladder_controls, subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
+        road_ladder_controls, workings_controls,
+        subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
     _load_ui_balance_config()
     _connect_zoom_rail()
     # AFTER `_connect_zoom_rail()`: that call applies the nav backing's stylebox, hence its padding,
@@ -994,6 +1000,13 @@ func update_route_rungs(catalog_variant: Variant) -> void:
 ## tiles stands on the rung it unlocked, and a road tile is the only source that can.
 func update_road_network(roads_variant: Variant) -> void:
     _band_labor.set_roads(roads_variant)
+
+## THE LIVE WORKINGS ON THE GROUND, into the shared labor model (arc #583) — the deposit twin of
+## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER, which names WHICH
+## workings the band's `quarrywork` pool is paying for. `Main` reaches this BY NAME through
+## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
+func update_deposits(deposits_variant: Variant) -> void:
+    _band_labor.set_deposits(deposits_variant)
 
 func update_intensification(intensification_variant: Variant) -> void:
     _topbar.update_intensification(intensification_variant)
@@ -1410,8 +1423,14 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     # REPLACES the confirmed one, so a kit left off here is a pending row with no kit at all — which
     # blanks the work inspector's take picker and, through `_emit_work_assign`'s restate, re-kits the
     # crew to the job default on the next `+`. `record_pending_assign` carries the long form.
+    # ⛔ **ON AN `extract` ROW THE `species` TOKEN IS THE MATERIAL, AND IT IS HALF THE OVERLAY KEY**
+    # (arc #583). One tile can hold two workings, so the pending entry has to be keyed by
+    # `(tile, material)` exactly as the confirmed row is — without it a Wood edit and a Stone edit on
+    # one hex overwrite each other. It is read on that kind ALONE: on a forage row the same token is
+    # the CROP COMMIT, which is not part of that row's identity and must not enter its key.
+    var material := species if kind == HudConst.LABOR_KIND_EXTRACT else ""
     _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement,
-        kit_id)
+        kit_id, material)
     _after_pending_change()
     emit_signal("assign_labor_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1586,9 +1605,15 @@ func drop_pending_assign(payload: Dictionary) -> void:
     var entity := int(payload.get("pending_entity", -1))
     if entity < 0:
         return
+    # **THE KEY IS REBUILT THE WAY THE WRITE BUILT IT**, material included — see `_emit_assign_labor`
+    # for why an `extract` row's `species` token is half its identity. A rollback that dropped the
+    # material would miss the entry it was sent to undo and leave the phantom crew standing.
+    var kind := String(payload.get("kind", ""))
+    var material := String(payload.get("species", "")) \
+        if kind == HudConst.LABOR_KIND_EXTRACT else ""
     if _band_labor.drop_pending_assign(entity, _band_labor.pending_key(
-            String(payload.get("kind", "")), int(payload.get("x", -1)),
-            int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
+            kind, int(payload.get("x", -1)),
+            int(payload.get("y", -1)), String(payload.get("herd_id", "")), material)):
         _after_pending_change()
         _drawercompose.withdraw_declaration(String(payload.get("kind", "")),
             int(payload.get("x", -1)), int(payload.get("y", -1)),
@@ -2030,6 +2055,8 @@ func _hide_drawer_blocks() -> void:
         forage_assign_controls.visible = false
     if road_ladder_controls != null:
         road_ladder_controls.visible = false
+    if workings_controls != null:
+        workings_controls.visible = false
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
