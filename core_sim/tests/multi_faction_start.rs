@@ -260,27 +260,44 @@ fn a_cramped_map_relaxes_the_separation_instead_of_failing_to_place_a_faction() 
 ///
 /// A player reported a rival opening about two hexes from their own band on a heavily oceanic map.
 /// It was not the *seed* — at 1, 2 and 3 rivals this map clears the separation comfortably (33.1,
-/// 24.4 and 23.4 tiles). It was the **rival count**: `max_faction_starts` is land-blind, so the New
-/// Game screen offers up to 11 rivals on a Standard grid, and past 7 the land runs out. The old
-/// "take the best remaining tile" fallback then put each further start on the next-best hex, which
-/// clusters — the achieved minimum collapsed to **1.00 tile** at 9 rivals and stayed there.
+/// 24.4 and 23.4 tiles). It was the **rival count**: the ceiling was a land-blind lattice count, so
+/// the New Game screen offered up to 11 rivals on a Standard grid, and past 7 the land runs out.
+/// The old "take the best remaining tile" fallback then put each further start on the next-best
+/// hex, which clusters — the achieved minimum collapsed to **1.00 tile** at 9 rivals and stayed
+/// there.
+///
+/// **`HISTORIC_LATTICE_ROSTER` is kept deliberately, though nothing offers it any more.** The
+/// ceiling is now an area estimate discounted for water and stops well below 11 on this grid, but
+/// the graceful relaxation is the net *beneath* the ceiling and has to hold at any count something
+/// installs — `world_with` installs a registry directly, exactly as a wider separation lever or a
+/// future roster source would. Dropping the case would retire the evidence along with the offer.
 ///
 /// ⛔ **This is a REGRESSION FIXTURE, and its seed is deliberately not `HARNESS_MAP_SEED`.** It is
 /// the reported map, pinned because it is the evidence — not a seed shopped for a passing result.
 #[test]
 fn the_playtest_map_spreads_a_full_rival_roster_instead_of_stacking_it() {
     const PLAYTEST_SEED: u64 = 10954655273796111774;
+    const HISTORIC_LATTICE_ROSTER: u32 = 11;
 
     let world = world_with(NO_RIVALS, |_| {});
-    let grid = world
-        .world
-        .resource::<core_sim::SimulationConfig>()
-        .grid_size;
-    // Every rival the New Game screen would let this grid be asked for — the count at which the
-    // land, not the lattice, is the binding constraint.
-    let full_roster = core_sim::max_faction_starts(grid, SHIPPED_SEPARATION) - 1;
+    let config = world.world.resource::<core_sim::SimulationConfig>().clone();
+    let presets = world.world.resource::<core_sim::MapPresetsHandle>().get();
+    let land_fraction = core_sim::faction_start_land_fraction(&presets, &config.map_preset_id);
+    // Every rival the New Game screen would let this grid be asked for.
+    let full_roster =
+        core_sim::max_faction_starts(config.grid_size, SHIPPED_SEPARATION, land_fraction) - 1;
+    assert!(
+        full_roster < HISTORIC_LATTICE_ROSTER,
+        "fixture: the land-aware ceiling must sit under the lattice count it replaced"
+    );
 
-    for rivals in [ONE_RIVAL, ONE_RIVAL + 1, ONE_RIVAL + 2, full_roster] {
+    for rivals in [
+        ONE_RIVAL,
+        ONE_RIVAL + 1,
+        ONE_RIVAL + 2,
+        full_roster,
+        HISTORIC_LATTICE_ROSTER,
+    ] {
         let world = world_with(rivals, |config| config.map_seed = PLAYTEST_SEED);
         let starts = world.world.resource::<StartLocation>();
         let placed: Vec<UVec2> = (0..=rivals)

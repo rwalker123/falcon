@@ -97,11 +97,13 @@ id after it is `Ai`, by construction.
 
 ## Where the roster comes from
 
-- **`build_headless_app`** seeds the registry from `simulation_config.json`'s
-  `default_ai_faction_count`, clamped against that file's own grid, before
-  `TurnQueue::new(registry.factions().to_vec())`. Raising the count therefore extends the await set
-  with no further edit. This is the roster a test harness and a `ResetMap` rebuild start from — the
-  shipped server boots idle and builds no world at all.
+- **`build_headless_app`** seeds the registry from `unattended_ai_faction_count` — **no rivals**
+  unless `simulation_config.json`'s `default_ai_faction_count` pins some — clamped against that
+  file's own grid, before `TurnQueue::new(registry.factions().to_vec())`. Pinning the count
+  therefore extends the await set with no further edit. This is the roster a test harness and a
+  `ResetMap` rebuild start from — the shipped server boots idle and builds no world at all.
+  ⛔ It is deliberately **not** the map-scaled count a New Game screen pre-selects; see "THE OFFER
+  AND THE UNATTENDED ROSTER ARE TWO NUMBERS" below.
 - **`seed_faction_roster`** (`bin/server.rs`) seeds the registry **and everything else the boot path
   seeds from it** from the count a `new_game` carried. It has to: `rebuild_world_from_config` calls
   `build_headless_app` *first*, so the replacement app arrives holding the **config file's** roster,
@@ -158,16 +160,78 @@ constrains:
 
 | Function | Answers |
 |---|---|
-| `max_faction_starts(grid, min_separation)` | how many starts fit — the count of points on a lattice of that spacing, per axis |
-| `faction_start_capacity(grid, min_separation, configured_default)` | the **default** to open a control on and the **ceiling** to stop it at: `max_ai_factions = starts - 1`, and the default clamped by it |
-| `granted_ai_faction_count(requested, grid, min_separation)` | what a request is actually granted, warning `worldgen.ai_faction_count_clamped` with both numbers when the clamp binds |
+| `max_faction_starts(grid, min_separation, land_fraction)` | how many starts fit — `area / (d² · √3/2) · √land_fraction`, rounded, never below 1 |
+| `faction_start_land_fraction(presets, preset_id)` | the land share to discount by: that preset's `target_land_pct` |
+| `faction_start_capacity(grid, min_separation, land_fraction, configured_default)` | the value a New Game control **pre-selects** and the **ceiling** to stop it at: `max_ai_factions = starts - 1` |
+| `unattended_ai_faction_count(configured_default)` | what a process **nobody picked for** builds a world with — see the split below |
+| `granted_ai_faction_count(requested, grid, min_separation, land_fraction)` | what a request is actually granted, warning `worldgen.ai_faction_count_clamped` with both numbers when the clamp binds |
 
-**A lattice count, not a packing number.** Points at `0, s, 2s, …` are exactly `s` apart along an
-axis and further apart diagonally, so every lattice point clears the separation — which makes this an
-*achievable* count rather than an upper bound nothing could reach. It is deliberately **blind to
-land**: the sea does not exist until worldgen has run, and the client asks about a grid it has not
-generated yet. Where the land cannot honour it, `faction_start_tiles` relaxes and warns — that
-relaxation is the safety net *beneath* this ceiling, not a competing rule.
+### An AREA estimate discounted for water, not a lattice count
+
+Points held at a minimum distance `d` are a packing problem, and the densest packing in the plane is
+the hexagonal one, whose cell area is `d²·√3/2`. Dividing the map's area by that cell is the natural
+smooth estimate of *"how many starts that far apart fit"*, and the sea is then discounted out of it.
+
+**The lattice count it replaced was a bad model, not merely an optimistic one.** It counted points
+at `0, s, 2s, …` per axis — `⌊(extent−1)/d⌋+1` each way — which is a **step function of the grid**,
+and the steps were coarse enough for a player to see: at a separation of 20 the shipped Small
+(66×42) and Standard (80×52) grids both fit 4 columns × 3 rows, so both offered **11 rivals**,
+though Standard has half again the area. The whole shipped ladder read 5 / 11 / 11 / 23 / 27. The
+area form has no steps, and it separates them.
+
+> #### ⛔ `√land_fraction` IS AN AFTER-THE-FACT FIT TO 25 POINTS, NOT A DERIVATION
+>
+> A sweep of 25 generated maps (the 5 shipped grids × 5 seeds) measured what the land **actually**
+> seats without the picker relaxing: **4-6** starts on Tiny, **5-7** Small, **8-9** Standard,
+> **11-13** Large, **15-20** Huge. Against those, a plain `land_fraction` multiplier came in about
+> **2× under** — a spaced lattice samples clumped continents far better than a uniform-area model
+> does, so scaling the area by the land share double-counts the loss — while **`√land_fraction`**
+> landed within the noise of their means.
+>
+> The square root is **the shape that matched the measurement**. There is no argument from first
+> principles behind it, and a change to worldgen's continent shaping (`macro_land`, erosion, the
+> contour anchor) is a reason to **re-measure**, not to trust it.
+
+**It is an estimate, so it can be wrong in both directions**, and only one of them is affordable:
+the relaxation below degrades gracefully, so **over-promising costs spacing while under-promising
+costs a seat nobody can ask for**. It is calibrated to sit at or just under the measured means for
+that reason — which also means it is no longer the *achievable* count the lattice was. The
+relaxation is the net beneath it, not a competing rule.
+
+### What each shipped map size offers and pre-selects
+
+At the shipped `faction_start_min_separation` of 20 and the `earthlike` preset's `target_land_pct`
+of 0.38. The sizes are the client's (`clients/godot_thin_client/src/scripts/MapSizes.gd`); the sim
+has no size registry, because a size is a number the player sends.
+
+| Size | Grid | Measured seats | Ceiling (`max_ai_factions`) | Pre-selected | Old lattice ceiling |
+|---|---|---|---|---|---|
+| Tiny | 56×36 | 4-6 | **3** | 1 | 5 |
+| Small | 66×42 | 5-7 | **4** | 1 | 11 |
+| Standard | 80×52 | 8-9 | **6** | 2 | 11 |
+| Large | 104×64 | 11-13 | **11** | 3 | 23 |
+| Huge | 128×80 | 15-20 | **17** | 5 | 27 |
+
+Pinned by `core_sim/tests/faction_start_capacity.rs`, which reads the levers out of the shipped
+configs rather than restating them, so a tuning change to any of the three has to look at this table
+and agree to it.
+
+### ⛔ THE OFFER AND THE UNATTENDED ROSTER ARE TWO NUMBERS, AND THEY ARE NOT THE SAME PATH
+
+A New Game screen **pre-selects** `DEFAULT_AI_FACTIONS_SHARE_OF_CEILING` (0.34, floored) of what the
+grid seats — a third of the map's capacity, enough that a Standard map opens as a world with
+neighbours and far enough below the ceiling that it is never the cramped end a player has to dial
+back from. A **named constant, not a config lever**, because `default_ai_faction_count` already pins
+the pre-selection outright and two levers moving one number is one too many.
+
+**An unattended process gets none of that.** `build_headless_app`, a test harness, and a `new_game`
+that carried no `ai_faction_count` all resolve through `unattended_ai_faction_count`, which is
+`UNATTENDED_AI_FACTION_COUNT` — **zero rivals** — unless the config pins a number. There is still no
+AI driving a rival, so a faction nobody asked for would sit and pass; the split is what lets the
+screen offer a populated world without a `cargo run` server quietly gaining peoples.
+
+**A client that shows the pre-selection must SEND it.** Omitting `ai_faction_count` is a request for
+the unattended roster, not for the number the capacity query just answered with.
 
 **Clamped, never refused.** A player who asked for more rivals than the map holds still gets a game;
 refusing would leave somebody who moved a slider with no world at all. Every path that takes a count
@@ -198,6 +262,19 @@ is the command protocol, not the snapshot.
 The point of answering it at all is that the rule must not be reimplemented in GDScript: a client
 computing its own spinner bounds would be a second copy of the ceiling, free to disagree with the
 clamp the server actually applies.
+
+> #### ⛔ THE ANSWER IS NOT PER-MAP: THE QUERY CARRIES NO PRESET
+>
+> `FactionCapacityQuery` is a width and a height. The land discount is a **preset** property, so
+> `answer_query` takes it from the preset the **server currently holds** — its own
+> `SimulationConfig.map_preset_id` — not from whatever the player has selected in a preset picker.
+> On a preset whose `target_land_pct` differs sharply from the server's, the offered ceiling is
+> wrong in whichever direction the difference runs.
+>
+> It is bounded twice and so is a misleading control rather than a broken world: `handle_new_game`
+> re-derives the land fraction from the preset the world is **actually** built on and clamps against
+> that, and the relaxation sits beneath that in turn. Fixing it properly means putting the preset id
+> on the query — both halves, wire and client.
 
 > **The answer is read off the config the SERVER currently holds**, while a `new_game` rebuild
 > re-reads every config from disk (`config-loading.md` → staged overrides). A staged override to
@@ -279,8 +356,11 @@ picks one start per faction:
 > >
 > > Reported from a playtest and reproduced on `map_seed 10954655273796111774` at the shipped 80×52
 > > earthlike grid. The separation is *met* there at 1/2/3 rivals (33.1 / 24.4 / 23.4 tiles) — the
-> > trigger is the **rival count**, because the ceiling below is land-blind and the New Game screen
-> > offers up to 11 rivals on that grid. Achieved minimum pairwise distance, before → after:
+> > trigger is the **rival count**, because the ceiling was then a land-blind lattice count and the
+> > New Game screen offered up to 11 rivals on that grid. (It now offers 6 — the ceiling above is
+> > land-aware — but the fixture keeps the 11-rival case: the relaxation is the net *beneath* the
+> > ceiling and has to hold at any count something installs, and retiring the case would retire the
+> > evidence with the offer.) Achieved minimum pairwise distance, before → after:
 > > 8 rivals **9.5 → 17.1**, 9 rivals **1.0 → 16.8**, 10 rivals **1.0 → 16.0**, 11 rivals
 > > **1.0 → 15.5**. Counts at or below 7 rivals are byte-identical — pass 1 is untouched.
 > >
@@ -559,7 +639,7 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 
 | File | Key | Default | Purpose |
 |---|---|---|---|
-| `src/data/simulation_config.json` | `default_ai_faction_count` | **0** | **How many AI factions a world gets when nobody picked a number** — the boot roster, the roster a `ResetMap` rebuild carries when it has none, and the value the New Game screen is offered as its default. It counts **rivals, not the roster**: 0 is the single-faction world, 2 is three peoples. Shipped at 0 because the AI that would drive a rival does not exist yet — a higher default would put peoples on the map that sit and pass. Clamped by the ceiling above, never refused |
+| `src/data/simulation_config.json` | `default_ai_faction_count` | **`null`** | **The pin on the AI count, or `null` for "derive it".** `null` is not `0` — the same distinction the optional `new_game` wire field draws. Unpinned (shipped): the New Game screen pre-selects a share of what the chosen grid seats, and an **unattended** boot takes **no rivals**, because the AI that would drive one does not exist yet and a faction nobody asked for would sit and pass. Pinned to `n`: **both** become `n` — the escape hatch a headless run, a test or a designer uses to boot with rivals without touching the UI. Counts **rivals, not the roster**: 0 is the single-faction world, 2 is three peoples. Clamped by the ceiling above, never refused |
 | `src/data/simulation_config.json` | `faction_start_min_separation` | **20** tiles | How far apart worldgen tries to put two factions' start tiles — a quarter of the shipped map's width, far enough that two peoples do not open sharing one food shed. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes and warns rather than failing to place a faction. Validated `> 0` at parse (`ZeroFactionStartMinSeparation`), because zero would let two peoples open on the same hex |
 
 ## Saves win over profile edits

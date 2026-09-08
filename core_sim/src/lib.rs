@@ -421,7 +421,8 @@ pub use systems::{
 /// every path that takes an AI count runs through. Exported because the boot path, the `new_game`
 /// handler and the capacity query all ask the same function.
 pub use systems::{
-    faction_start_capacity, granted_ai_faction_count, max_faction_starts, FactionStartCapacity,
+    faction_start_capacity, faction_start_land_fraction, granted_ai_faction_count,
+    max_faction_starts, unattended_ai_faction_count, FactionStartCapacity,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
@@ -513,14 +514,17 @@ pub fn build_headless_app() -> App {
 
     // **Who plays this world is a COUNT OF RIVALS, not a profile declaration**: one human — the
     // player — plus however many AI factions were asked for. A world built here was asked by
-    // `simulation_config.json`; a `new_game` re-seeds this from the count the player picked. The
-    // count is clamped to what the grid can seat before the registry is built, so no path can
+    // nobody: it is the UNATTENDED roster, so an absent `default_ai_faction_count` means no rivals
+    // rather than the map-scaled count a New Game screen is offered (`unattended_ai_faction_count`
+    // vs `faction_start_capacity`). A `new_game` re-seeds this from the count the player picked.
+    // The count is clamped to what the grid can seat before the registry is built, so no path can
     // register a faction worldgen has nowhere to put; the turn queue then awaits exactly the roster
     // the registry was seeded with.
     let faction_registry = orders::FactionRegistry::with_ai_factions(granted_ai_faction_count(
-        config.default_ai_faction_count,
+        unattended_ai_faction_count(config.default_ai_faction_count),
         config.grid_size,
         config.faction_start_min_separation,
+        faction_start_land_fraction(&map_presets, &config.map_preset_id),
     ));
     let turn_queue = orders::TurnQueue::new(faction_registry.factions().to_vec());
     // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which

@@ -7,7 +7,9 @@
 //!
 //! **The roster is installed before the first `update()`**, which is when `Startup` — and therefore
 //! `spawn_initial_world` — runs. `build_headless_app` seeds the registry from
-//! `simulation_config.json`'s `default_ai_faction_count`, which ships at 0; overwriting the resource
+//! the UNATTENDED roster (`unattended_ai_faction_count`), which is no rivals unless
+//! `simulation_config.json`'s `default_ai_faction_count` pins some — and it ships unpinned;
+//! overwriting the resource
 //! before the world is generated is what makes worldgen place two peoples, without editing a shipped
 //! config file or setting a process-global env var that a parallel test would race on.
 

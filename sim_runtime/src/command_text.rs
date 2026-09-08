@@ -434,9 +434,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .next()
                 .ok_or(CommandParseError::MissingArgument("profile_id"))?;
             // **The rival count is the one OPTIONAL argument**, and omitting it is not the same as
-            // typing 0: absent leaves the server to take `default_ai_faction_count` from its config,
-            // while `0` is an explicit "I play alone". Optional so every existing script and replay
-            // line keeps parsing and keeps meaning what it meant.
+            // typing 0: absent leaves the server on its unattended roster — no rivals unless
+            // `default_ai_faction_count` pins some — while `0` is an explicit "I play alone".
+            // Optional so every existing script and replay line keeps parsing and keeps meaning
+            // what it meant.
             let ai_faction_count = match parts.next() {
                 Some(token) => Some(parse_u32(token, "new_game ai_factions")?),
                 None => None,

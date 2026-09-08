@@ -504,10 +504,14 @@ pub enum CommandPayload {
         /// **How many AI factions the player asked for, NOT counting their own.** 2 builds a world
         /// of three peoples; 0 is the single-faction world.
         ///
-        /// `None` is not `Some(0)`: it means *"take `default_ai_faction_count` from
-        /// `simulation_config.json`"*, which is what the text grammar's optional argument and any
-        /// caller that does not care resolve to. A count above what the grid seats is clamped
-        /// server-side with a warning, never a refusal.
+        /// `None` is not `Some(0)`: it means *"nobody picked"* — the text grammar's optional
+        /// argument, a direct scene launch, any caller that does not care — and resolves
+        /// server-side to the **unattended** roster, which is no rivals unless
+        /// `simulation_config.json`'s `default_ai_faction_count` pins some. That is deliberately
+        /// **not** the [`FactionCapacityReply::default_ai_faction_count`] a New Game screen
+        /// pre-selects: that number scales with the map, and a process nobody is watching should
+        /// not gain peoples from it. A count above what the grid seats is clamped server-side with
+        /// a warning, never a refusal.
         ai_faction_count: Option<u32>,
     },
     /// Stage a config-tuning override, applied at the **next** `new_game`. Proto field 47.
@@ -624,8 +628,14 @@ pub struct FactionCapacityQuery {
 /// in GDScript would be free to disagree with the clamp the server actually applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FactionCapacityReply {
-    /// What an absent `ai_faction_count` resolves to, already clamped — so the value a control opens
-    /// on is always one the server will grant.
+    /// **The count the control PRE-SELECTS**, already clamped — so the value it opens on is always
+    /// one the server will grant. Derived from what this grid seats unless
+    /// `simulation_config.json`'s `default_ai_faction_count` pins a number.
+    ///
+    /// ⛔ **Not what an absent `ai_faction_count` resolves to.** That is the unattended roster (no
+    /// rivals, absent a config pin); this is an offer to a player looking at a screen. A client
+    /// that pre-selects this value must therefore **send it explicitly** — omitting the field
+    /// requests a different world.
     pub default_ai_faction_count: u32,
     /// The most rivals this grid seats. 0 means the player plays alone on it.
     pub max_ai_faction_count: u32,

@@ -641,11 +641,13 @@ message NewGameCommand {
   // HOW MANY AI FACTIONS THE PLAYER PICKED, NOT COUNTING THEIR OWN. 2 means a world of three
   // peoples: the human at FactionId(0) and rivals at 1 and 2. 0 is the single-faction world.
   //
-  // OPTIONAL, and absent is NOT the same as 0: absent means "whatever `default_ai_faction_count`
-  // in simulation_config.json says", which is what a dev typing `new_game` without the argument
-  // gets, while an explicit 0 is a player who chose to play alone. A count above what the grid can
-  // seat at `faction_start_min_separation` is CLAMPED with a warning naming both numbers — the new
-  // game is never refused over it. `faction_capacity` answers what the ceiling and the default are.
+  // OPTIONAL, and absent is NOT the same as 0: absent means "nobody picked" — a dev typing
+  // `new_game` without the argument, a scripted launch — and resolves to the UNATTENDED roster,
+  // which is no rivals unless simulation_config.json's `default_ai_faction_count` pins some. An
+  // explicit 0 is a player who chose to play alone. Absent is NOT the count `faction_capacity`
+  // pre-selects: that number scales with the map, so a client showing it must send it explicitly.
+  // A count above what the grid can seat at `faction_start_min_separation` is CLAMPED with a
+  // warning naming both numbers — the new game is never refused over it.
   optional uint32 ai_faction_count = 6;
 }
 
@@ -904,8 +906,11 @@ message FactionCapacityQuery {
 }
 
 message FactionCapacityReply {
-  // What `new_game` uses when `ai_faction_count` is absent — the config default, already clamped to
-  // `max_ai_faction_count`, so the number a client opens its control on is always grantable.
+  // The count a rival control PRE-SELECTS, already clamped to `max_ai_faction_count`, so the number
+  // a client opens on is always grantable. Derived from what this grid seats unless
+  // simulation_config.json's `default_ai_faction_count` pins one. NOT what `new_game` uses when
+  // `ai_faction_count` is absent — that is the unattended roster — so a client showing this number
+  // must send it explicitly.
   uint32 default_ai_faction_count = 1;
   // The most rivals this grid seats. 0 means the grid holds one start, so the player plays alone.
   uint32 max_ai_faction_count = 2;

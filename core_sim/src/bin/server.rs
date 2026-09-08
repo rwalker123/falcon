@@ -350,10 +350,15 @@ fn main() {
                 // this world was actually playing with back to the file's default.
                 let carried_ai_factions =
                     app.world.resource::<FactionRegistry>().ai_faction_count();
+                let reset_land_fraction = core_sim::faction_start_land_fraction(
+                    &app.world.resource::<core_sim::MapPresetsHandle>().get(),
+                    &new_config.map_preset_id,
+                );
                 let granted_ai_factions = granted_ai_faction_count(
                     carried_ai_factions,
                     new_config.grid_size,
                     new_config.faction_start_min_separation,
+                    reset_land_fraction,
                 );
 
                 retire_publisher(&mut app);
@@ -847,7 +852,7 @@ enum Command {
         seed: u64,
         profile_id: String,
         /// **How many AI factions the player picked, not counting their own.** `None` means
-        /// *"whatever `default_ai_faction_count` says"*, which is not the same as `Some(0)`.
+        /// *"nobody picked"* — the unattended roster, which is not the same as `Some(0)`.
         ai_faction_count: Option<u32>,
     },
     /// **One band's outfitting loadout** — the one source of a faction's gear and material. Field
@@ -1286,10 +1291,15 @@ fn answer_query(
     // dimensions from the query and only the levers from the live config. Answering it here is what
     // keeps the ceiling rule in the sim instead of restated in GDScript.
     if let QueryPayload::FactionCapacity(ask) = query {
+        // **The land discount comes from the SERVER's preset, not the player's.** The ask carries a
+        // width and a height and no preset id, so this is the one input the answer cannot take from
+        // the question — see `faction_start_land_fraction`, where that limitation is recorded.
+        let presets = world.resource::<core_sim::MapPresetsHandle>().get();
         let config = world.resource::<SimulationConfig>();
         let capacity = core_sim::faction_start_capacity(
             UVec2::new(ask.width, ask.height),
             config.faction_start_min_separation,
+            core_sim::faction_start_land_fraction(&presets, &config.map_preset_id),
             config.default_ai_faction_count,
         );
         return QueryReply::FactionCapacity(FactionCapacityReply {
@@ -1747,16 +1757,21 @@ fn rebuild_world_from_config(
 
 /// **What an AI-faction count on the wire resolves to before the grid clamps it.**
 ///
-/// `None` is *not* `Some(0)`: absent means the new world's own config decides
-/// (`default_ai_faction_count`), and 0 means a player who chose to play alone. The two arrive on the
-/// same wire field precisely so a client can leave the choice to the sim, and collapsing them here
-/// would make a config default unreachable from every caller that does.
+/// `None` is *not* `Some(0)`: absent means **nobody picked** — a direct scene launch, a CLI
+/// `new_game`, a test — and 0 means a player who chose to play alone. The two arrive on the same
+/// wire field precisely so a client can leave the choice to the sim, and collapsing them here would
+/// make the unattended roster unreachable from every caller that does.
+///
+/// ⛔ **An absent pick resolves to [`core_sim::unattended_ai_faction_count`], NOT to the count the
+/// New Game screen pre-selects.** The screen's number is derived from the map and can be several
+/// rivals; this path is what a `cargo run` server and a scripted launch get, and it stays at zero
+/// rivals until something drives them. `simulation_config.json`'s `default_ai_faction_count` pins it
+/// when a headless run wants otherwise.
 ///
 /// `config` is the config the NEW world will run on — `load_simulation_config_for_new_world`'s, not
-/// the outgoing world's — because the default is a tuning value and tuning is re-read at world
-/// start.
+/// the outgoing world's — because the pin is a tuning value and tuning is re-read at world start.
 fn requested_ai_faction_count(picked: Option<u32>, config: &SimulationConfig) -> u32 {
-    picked.unwrap_or(config.default_ai_faction_count)
+    picked.unwrap_or_else(|| core_sim::unattended_ai_faction_count(config.default_ai_faction_count))
 }
 
 /// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
@@ -1824,11 +1839,20 @@ fn handle_new_game(
     // **The player's pick, clamped by the grid they picked it for.** Over the ceiling is granted
     // down with a warning naming both numbers rather than refused: a cramped map is a smaller game,
     // not a dead one, and `worldgen.start_separation_relaxed` is the second net beneath it.
+    //
+    // This is the one caller that knows the preset the world will actually be generated from — the
+    // capacity *query* does not (see `faction_start_land_fraction`) — so the clamp here is the
+    // authoritative one even where the offered ceiling was computed against a different preset.
+    let new_game_land_fraction = core_sim::faction_start_land_fraction(
+        &app.world.resource::<core_sim::MapPresetsHandle>().get(),
+        &new_config.map_preset_id,
+    );
     let requested_ai_factions = requested_ai_faction_count(ai_faction_count, &new_config);
     let granted_ai_factions = granted_ai_faction_count(
         requested_ai_factions,
         new_config.grid_size,
         new_config.faction_start_min_separation,
+        new_game_land_fraction,
     );
 
     info!(
@@ -11840,6 +11864,17 @@ mod tests {
         ))
     }
 
+    /// The land share this app's capacity answers are discounted by — its own preset's, exactly as
+    /// `answer_query` and `handle_new_game` resolve it. Asked through the same function rather than
+    /// written as a number, so a preset edit moves the fixture and the code together.
+    fn capacity_land_fraction(app: &bevy::prelude::App) -> f32 {
+        let presets = app.world.resource::<core_sim::MapPresetsHandle>().get();
+        core_sim::faction_start_land_fraction(
+            &presets,
+            &app.world.resource::<SimulationConfig>().map_preset_id,
+        )
+    }
+
     /// ⛔ **`new_game` SEEDS THE ROSTER THE PLAYER PICKED**, not the boot config's.
     ///
     /// `rebuild_world_from_config` builds the replacement app first — `build_headless_app` seeds
@@ -11967,9 +12002,9 @@ mod tests {
     /// ⛔ **A COUNT THE MAP CANNOT SEAT IS CLAMPED, NOT REFUSED.** The world still starts; the
     /// player simply gets the rivals the ground holds, and the warning names both numbers.
     ///
-    /// A 24x24 grid at the shipped 20-tile separation seats a 2x2 lattice of starts — four peoples,
-    /// so three rivals — and this asks for far more than that. Refusing here would leave a player
-    /// who moved a slider with no game at all.
+    /// A 60x40 grid at the shipped 20-tile separation and the earthlike preset's land target seats
+    /// a handful of starts, and this asks for far more than that. Refusing here would leave a
+    /// player who moved a slider with no game at all.
     #[test]
     fn new_game_clamps_a_rival_count_the_grid_cannot_seat() {
         let mut app = build_test_app();
@@ -11980,11 +12015,13 @@ mod tests {
             .world
             .resource::<SimulationConfig>()
             .faction_start_min_separation;
-        let grid = UVec2::new(24, 24);
-        let ceiling = core_sim::max_faction_starts(grid, separation) - 1;
+        let land = capacity_land_fraction(&app);
+        let grid = UVec2::new(60, 40);
+        let ceiling = core_sim::max_faction_starts(grid, separation, land) - 1;
         assert!(
-            ceiling < 9,
-            "fixture: the grid must NOT seat the count asked for, or the clamp is untested"
+            (1..9).contains(&ceiling),
+            "fixture: the grid must seat SOME rivals but fewer than the count asked for, or the \
+             clamp is untested (it seats {ceiling})"
         );
 
         let flat = loopback_snapshot_server();
@@ -12021,22 +12058,42 @@ mod tests {
         );
     }
 
-    /// **An absent count is the config's, and it is not `Some(0)`.** The wire distinguishes them,
-    /// and only this says the server honours the distinction.
+    /// **An absent count is the UNATTENDED roster, and it is not `Some(0)`.** The wire
+    /// distinguishes them, and only this says the server honours the distinction.
+    ///
+    /// ⛔ Absent resolves to **no rivals**, not to the map-scaled count the New Game screen
+    /// pre-selects. A scripted launch and a `cargo run` server are not a player looking at a
+    /// screen, and there is still no AI to drive a rival — sabotaged by routing this through
+    /// `faction_start_capacity`, which the first case catches.
     ///
     /// Asserted on the resolution rule rather than through `handle_new_game`, because the count a
     /// rebuild defaults to comes from the config FILE (`load_simulation_config_for_new_world` re-reads
     /// it, carrying only fog and the binds), and steering a file would mean a process-global env var
     /// a parallel test would race on.
     #[test]
-    fn an_absent_rival_count_resolves_to_the_config_default() {
+    fn an_absent_rival_count_resolves_to_the_unattended_roster() {
         let app = build_test_app();
         let mut config = app.world.resource::<SimulationConfig>().clone();
-        config.default_ai_faction_count = 3;
+        assert_eq!(
+            config.default_ai_faction_count, None,
+            "fixture: the shipped config derives rather than pinning"
+        );
+        assert_eq!(
+            requested_ai_faction_count(None, &config),
+            0,
+            "nobody picked, and nothing pins it: the world that has always shipped"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(2), &config),
+            2,
+            "a pick is honoured"
+        );
+
+        config.default_ai_faction_count = Some(3);
         assert_eq!(
             requested_ai_faction_count(None, &config),
             3,
-            "absent takes the config default"
+            "absent takes the config pin when there is one"
         );
         assert_eq!(
             requested_ai_faction_count(Some(0), &config),
@@ -12046,7 +12103,7 @@ mod tests {
         assert_eq!(
             requested_ai_faction_count(Some(1), &config),
             1,
-            "a pick overrides the default"
+            "a pick overrides the pin"
         );
     }
 
@@ -12063,6 +12120,7 @@ mod tests {
             .world
             .resource::<SimulationConfig>()
             .faction_start_min_separation;
+        let land = capacity_land_fraction(&app);
 
         let roomy = UVec2::new(80, 52);
         let cramped = UVec2::new(20, 20);
@@ -12085,8 +12143,13 @@ mod tests {
         };
         assert_eq!(
             roomy_reply.max_ai_faction_count,
-            core_sim::max_faction_starts(roomy, separation) - 1,
+            core_sim::max_faction_starts(roomy, separation, land) - 1,
             "the ceiling is the sim's own rule, not a second copy of it"
+        );
+        assert!(
+            roomy_reply.default_ai_faction_count > 0,
+            "and with nothing pinned the screen pre-selects a world with neighbours, unlike the \
+             unattended roster the same server would boot with"
         );
 
         let answer = answer_query(

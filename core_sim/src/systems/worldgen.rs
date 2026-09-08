@@ -2760,46 +2760,155 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
 /// capacity query. It is never restated in GDScript, which is the whole reason it is a function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FactionStartCapacity {
-    /// The AI count a new game gets when nobody picked one — `simulation_config.json`'s
-    /// `default_ai_faction_count`, clamped by [`Self::max_ai_factions`] so the offered default is
-    /// always a grantable one.
+    /// The AI count a New Game screen **pre-selects**: `simulation_config.json`'s
+    /// `default_ai_faction_count` when that key pins a number, otherwise
+    /// [`DEFAULT_AI_FACTIONS_SHARE_OF_CEILING`] of [`Self::max_ai_factions`]. Always clamped by the
+    /// ceiling, so a control never opens on an ungrantable value.
+    ///
+    /// ⛔ **This is the OFFER, not the roster an unattended server boots with.** A `cargo run`
+    /// server, a test harness and a `new_game` that carried no pick all go through
+    /// [`unattended_ai_faction_count`] instead, which stays at zero rivals.
     pub default_ai_factions: u32,
     /// The most AI factions this grid can seat at `faction_start_min_separation`, i.e. one fewer
     /// than the starts that fit, because the player is one of the peoples.
     pub max_ai_factions: u32,
 }
 
-/// **How many starts fit on this grid at `min_separation`** — the count of points on a lattice of
-/// that spacing, in each axis independently.
+/// **The area one start occupies at a minimum separation of `d`: `d² · √3/2`.**
 ///
-/// A lattice rather than a real packing number: points at `0, s, 2s, …` are exactly `s` apart along
-/// an axis and further apart diagonally, so every lattice point clears the separation, which makes
-/// this an *achievable* count rather than an upper bound nothing could reach. It is deliberately
-/// **blind to land**: the sea is not known until worldgen has run, and the client asks this about a
-/// grid it has not generated yet. Where the land cannot honour it, [`faction_start_tiles`] relaxes
-/// and warns — that relaxation is the safety net beneath this ceiling, not a competing rule.
+/// A minimum-distance constraint is a packing problem, and the densest packing of points at
+/// distance `d` in the plane is the hexagonal one, whose cell area is exactly `d²·√3/2`. Dividing
+/// the map's area by it is therefore the natural smooth estimate of *"how many points that far
+/// apart fit"*.
+///
+/// Written out as `√3/2` rather than rounded because it is a constant of the packing, not a tuning
+/// value: nothing about this number is a design choice.
+const HEX_PACKING_CELL_AREA_FACTOR: f64 = 0.866_025_403_784_438_6;
+
+/// **The share of a map's rival ceiling the New Game screen pre-selects.**
+///
+/// About a third of what the map could hold: enough that a Standard map opens as a world with
+/// neighbours rather than an empty one, far enough below the ceiling that the pre-selection is
+/// never the cramped end of the range a player would have to dial back from. Slightly over `1/3` so
+/// a ceiling of exactly 3 pre-selects 1 rather than depending on how a third rounds.
+///
+/// A constant rather than a config lever deliberately: `default_ai_faction_count` already pins the
+/// pre-selection outright, and two levers moving one number is one too many.
+const DEFAULT_AI_FACTIONS_SHARE_OF_CEILING: f64 = 0.34;
+
+/// **What an unattended server starts with when nobody picked a count: no rivals.**
+///
+/// There is no AI driving a rival yet, so a faction the player did not ask for would sit and pass.
+/// A boot with no pick therefore opens the single-faction world that has always shipped — this is
+/// the half of "the default" that is deliberately *not* derived from the map.
+const UNATTENDED_AI_FACTION_COUNT: u32 = 0;
+
+/// **How many starts fit on this grid at `min_separation`, once the sea is discounted** — the
+/// ceiling the New Game screen stops its rival control at.
+///
+/// `area / (d² · √3/2) · √land_fraction`, rounded, never below 1.
+///
+/// **Why an area estimate and not a lattice count.** The count this used to return was the number
+/// of points on a lattice of that spacing, per axis — `⌊(extent−1)/d⌋+1` each way. That is a step
+/// function of the grid, and the steps were coarse enough to be visible: the shipped Small (66×42)
+/// and Standard (80×52) grids both fit 4 columns × 3 rows at a separation of 20 and therefore
+/// offered the **same** 11 rivals, though Standard has half again the area. The area form has no
+/// steps, and it separates them.
+///
+/// > **The land discount is an after-the-fact FIT, not a derivation.** A sweep of 25 generated maps
+/// > (5 grids × 5 seeds) measured what the land actually seats without the picker relaxing: 4-6
+/// > starts on Tiny, 5-7 on Small, 8-9 on Standard, 11-13 on Large, 15-20 on Huge. A plain
+/// > `land_fraction` multiplier came in about **2× under** those figures — a spaced lattice samples
+/// > clumped continents far better than a uniform-area model does — while **`√land_fraction`**
+/// > landed within the noise of their means. The square root is the shape that matched 25 data
+/// > points; there is no argument from first principles behind it, and a change to worldgen's
+/// > continent shaping is a reason to re-measure rather than to trust it.
+///
+/// **It is an estimate, so it can be wrong in both directions**, and that is affordable in only one
+/// of them: [`faction_start_tiles`] relaxes and warns where the land cannot honour the count,
+/// spreading the crowded starts rather than stacking them, so over-promising costs spacing while
+/// under-promising costs a seat nobody can ask for. It is calibrated to land at or just under the
+/// measured means for that reason.
 ///
 /// Always at least 1: a grid always seats the player.
-pub fn max_faction_starts(grid_size: UVec2, min_separation: u32) -> u32 {
-    let spacing = min_separation.max(1);
-    let per_axis = |extent: u32| -> u32 { extent.saturating_sub(1) / spacing + 1 };
-    per_axis(grid_size.x)
-        .saturating_mul(per_axis(grid_size.y))
-        .max(1)
+pub fn max_faction_starts(grid_size: UVec2, min_separation: u32, land_fraction: f32) -> u32 {
+    let spacing = f64::from(min_separation.max(1));
+    let cell_area = spacing * spacing * HEX_PACKING_CELL_AREA_FACTOR;
+    let map_area = f64::from(grid_size.x) * f64::from(grid_size.y);
+    // A non-finite land fraction is a broken config, not a full-land map: discount it to nothing so
+    // the map seats the player alone rather than seating `u32::MAX` peoples.
+    let land = if land_fraction.is_finite() {
+        f64::from(land_fraction).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let seats = (map_area / cell_area * land.sqrt()).round();
+    if !seats.is_finite() || seats <= 1.0 {
+        return 1;
+    }
+    seats.min(f64::from(u32::MAX)) as u32
 }
 
-/// The capacity a New Game screen draws its control from: the default to open on and the ceiling to
-/// stop at, both derived here so the two cannot disagree.
+/// **The land share to discount a grid's capacity by** — the `target_land_pct` of the preset a
+/// world is (or is about to be) generated from, falling back to the built-in preset default when
+/// the id resolves to nothing.
+///
+/// > ⛔ **The capacity QUERY cannot ask this per map.** `QueryPayload::FactionCapacity` carries a
+/// > width and a height and no preset id, so `answer_query` answers from the preset the **server**
+/// > currently holds. A New Game screen offering a preset picker therefore gets a ceiling computed
+/// > against the running server's preset, not the one in the dropdown — on a preset whose land
+/// > target differs sharply from it the offered ceiling is wrong, in whichever direction the
+/// > difference runs. It is bounded by the clamp (`granted_ai_faction_count` re-derives against the
+/// > preset the world is actually built on) and by the relaxation beneath that, so the failure is a
+/// > misleading control rather than a broken world. Fixing it properly means putting the preset id
+/// > on the query.
+pub fn faction_start_land_fraction(
+    presets: &crate::map_preset::MapPresets,
+    preset_id: &str,
+) -> f32 {
+    presets
+        .get(preset_id)
+        .map(|preset| preset.macro_land.target_land_pct)
+        .unwrap_or_else(|| crate::map_preset::MacroLandConfig::default().target_land_pct)
+}
+
+/// The capacity a New Game screen draws its control from: the value to **pre-select** and the
+/// ceiling to stop at, both derived here so the two cannot disagree.
+///
+/// `configured_default` is `simulation_config.json`'s `default_ai_faction_count`, and `None` is not
+/// `Some(0)`: absent means *"derive it from what this map can seat"*, which is the shipped setting,
+/// while `Some(0)` pins a lone-player pre-selection. That is character for character the
+/// distinction the optional `new_game` wire field already draws.
 pub fn faction_start_capacity(
     grid_size: UVec2,
     min_separation: u32,
-    configured_default: u32,
+    land_fraction: f32,
+    configured_default: Option<u32>,
 ) -> FactionStartCapacity {
-    let max_ai_factions = max_faction_starts(grid_size, min_separation).saturating_sub(1);
+    let max_ai_factions =
+        max_faction_starts(grid_size, min_separation, land_fraction).saturating_sub(1);
+    let offered = configured_default.unwrap_or_else(|| {
+        (f64::from(max_ai_factions) * DEFAULT_AI_FACTIONS_SHARE_OF_CEILING).floor() as u32
+    });
     FactionStartCapacity {
-        default_ai_factions: configured_default.min(max_ai_factions),
+        default_ai_factions: offered.min(max_ai_factions),
         max_ai_factions,
     }
+}
+
+/// **The roster a server builds a world with when NOBODY picked a count** — a boot, a test harness,
+/// a `new_game` that carried no `ai_faction_count`.
+///
+/// Deliberately *not* [`FactionStartCapacity::default_ai_factions`]. That number is an **offer**
+/// made to a player looking at a New Game screen, and it scales with the map; this one is what an
+/// unattended process starts with, and it is [`UNATTENDED_AI_FACTION_COUNT`] — no rivals — until
+/// there is an AI to drive one. Splitting them is what lets the screen pre-select a world with
+/// neighbours without a `cargo run` server quietly gaining peoples that sit and pass.
+///
+/// `configured` pins it: `simulation_config.json`'s `default_ai_faction_count` is the escape hatch a
+/// headless run, a test or a designer uses to boot with rivals without touching the UI.
+pub fn unattended_ai_faction_count(configured: Option<u32>) -> u32 {
+    configured.unwrap_or(UNATTENDED_AI_FACTION_COUNT)
 }
 
 /// **What a requested AI count is actually granted** — the request, clamped to what the grid can
@@ -2809,15 +2918,22 @@ pub fn faction_start_capacity(
 /// game, and `worldgen.start_separation_relaxed` is the second net beneath that. Every path that
 /// takes a count — boot, `new_game`, `ResetMap` — goes through here, so "the map decides the
 /// ceiling" has exactly one implementation.
-pub fn granted_ai_faction_count(requested: u32, grid_size: UVec2, min_separation: u32) -> u32 {
-    let capacity = faction_start_capacity(grid_size, min_separation, requested);
+pub fn granted_ai_faction_count(
+    requested: u32,
+    grid_size: UVec2,
+    min_separation: u32,
+    land_fraction: f32,
+) -> u32 {
+    let capacity =
+        faction_start_capacity(grid_size, min_separation, land_fraction, Some(requested));
     if requested > capacity.max_ai_factions {
         warn!(
             target: "shadow_scale::worldgen",
-            "worldgen.ai_faction_count_clamped requested={} granted={} min_separation={} grid={}x{}",
+            "worldgen.ai_faction_count_clamped requested={} granted={} min_separation={} land_fraction={} grid={}x{}",
             requested,
             capacity.max_ai_factions,
             min_separation,
+            land_fraction,
             grid_size.x,
             grid_size.y
         );
@@ -3639,73 +3755,153 @@ mod start_tile_selection_tests {
         );
     }
 
-    /// **The ceiling is a lattice count, and it is ACHIEVABLE** — the property that makes it a
-    /// ceiling rather than a guess. Every pair of starts the greedy picker returns for exactly
-    /// `max_faction_starts` factions clears the separation without ever relaxing.
+    /// **The ceiling is an AREA estimate, so it has no steps** — the property the lattice count it
+    /// replaced did not have, and the one the shipped map sizes needed (see
+    /// `tests/faction_start_capacity.rs`, which pins them).
+    ///
+    /// A grid one tile wider must never seat *fewer* starts, and a grid with twice the area seats
+    /// about twice as many. Sabotaged by reinstating any per-axis quantisation: the second half
+    /// fails the moment a whole band of widths collapses onto one answer.
     #[test]
-    fn the_ceiling_is_a_count_the_picker_can_actually_place() {
-        let (width, height) = (24u32, 24u32);
-        let separation = 6u32;
-        let seats = max_faction_starts(UVec2::new(width, height), separation);
-        assert_eq!(
-            seats,
-            4 * 4,
-            "a 24-wide grid seats four starts per axis at 6"
-        );
-        let picked = pick(
-            seats as usize,
-            separation,
-            width,
-            height,
-            &flat_land(width, height),
-        );
-        for (index, a) in picked.iter().enumerate() {
-            for b in picked.iter().skip(index + 1) {
-                let dx = a.0 as i64 - b.0 as i64;
-                let dy = a.1 as i64 - b.1 as i64;
-                assert!(
-                    dx * dx + dy * dy >= (separation as i64) * (separation as i64),
-                    "the ceiling promised {seats} starts but {a:?} and {b:?} are too close"
-                );
-            }
+    fn the_ceiling_follows_area_smoothly_rather_than_stepping() {
+        const SEPARATION: u32 = 6;
+        const ALL_LAND: f32 = 1.0;
+
+        let mut previous = 0;
+        let mut distinct = std::collections::BTreeSet::new();
+        for width in 24u32..=48 {
+            let seats = max_faction_starts(UVec2::new(width, 24), SEPARATION, ALL_LAND);
+            assert!(
+                seats >= previous,
+                "a wider grid seats no fewer starts: {width} wide dropped {previous} to {seats}"
+            );
+            previous = seats;
+            distinct.insert(seats);
         }
+        assert!(
+            distinct.len() >= 20,
+            "25 widths produced only {} distinct ceilings — that is a step function, which is the \
+             artifact this model exists to remove",
+            distinct.len()
+        );
+
+        let single = max_faction_starts(UVec2::new(24, 24), SEPARATION, ALL_LAND);
+        let doubled = max_faction_starts(UVec2::new(48, 24), SEPARATION, ALL_LAND);
+        assert_eq!(single, 18, "24x24 at a separation of 6: 576 / (36 * √3/2)");
+        assert_eq!(
+            doubled,
+            2 * single + 1,
+            "and twice the area seats twice as many, give or take the rounding"
+        );
+    }
+
+    /// **The sea is discounted as `√land_fraction`, not as `land_fraction`** — the after-the-fact
+    /// fit recorded on [`max_faction_starts`]. Quartering the land halves the seats; a plain
+    /// multiplier would quarter them, which measurement said was about 2x too harsh.
+    #[test]
+    fn the_land_discount_is_a_square_root() {
+        const SEPARATION: u32 = 6;
+        let grid = UVec2::new(24, 24);
+
+        let all_land = max_faction_starts(grid, SEPARATION, 1.0);
+        let quarter_land = max_faction_starts(grid, SEPARATION, 0.25);
+        assert_eq!(all_land, 18);
+        assert_eq!(
+            quarter_land,
+            all_land / 2,
+            "a quarter of the land is half the seats — the square root, not the fraction"
+        );
+
+        assert!(
+            max_faction_starts(grid, SEPARATION, 0.38) < all_land,
+            "and any sea at all costs seats"
+        );
     }
 
     /// A grid too small for two starts seats exactly one, so it offers **no** rivals — and the
-    /// ceiling never reads zero seats, because a map always seats the player.
+    /// ceiling never reads zero seats, because a map always seats the player. A land fraction that
+    /// is not a number is a broken config, and fails to *one* seat rather than to `u32::MAX`.
     #[test]
     fn a_grid_too_small_for_two_starts_offers_no_rivals() {
         let tiny = UVec2::new(10, 10);
-        assert_eq!(max_faction_starts(tiny, 20), 1);
-        let capacity = faction_start_capacity(tiny, 20, 4);
+        assert_eq!(max_faction_starts(tiny, 20, 1.0), 1);
+        let capacity = faction_start_capacity(tiny, 20, 1.0, Some(4));
         assert_eq!(capacity.max_ai_factions, 0);
         assert_eq!(
             capacity.default_ai_factions, 0,
             "the offered default is clamped too, so a control never opens on an ungrantable value"
         );
         assert_eq!(
-            max_faction_starts(UVec2::new(0, 0), 20),
+            max_faction_starts(UVec2::new(0, 0), 20, 1.0),
             1,
             "even a degenerate grid seats the player"
         );
+        assert_eq!(
+            max_faction_starts(UVec2::new(200, 200), 20, f32::NAN),
+            1,
+            "a land fraction that is not a number seats the player alone, never everybody"
+        );
     }
 
-    /// **The default is offered, not imposed**: below the ceiling it comes back untouched, above it
-    /// it is granted down. Sabotaged by returning the ceiling unconditionally, which the first case
-    /// catches, or the configured value unconditionally, which the second does.
+    /// **A pinned count is offered as-is; an absent one is DERIVED from the map** — the two
+    /// readings of `default_ai_faction_count`, and the reason it is an `Option` rather than a `u32`
+    /// with 0 doing double duty.
+    ///
+    /// Sabotaged by collapsing `None` into `Some(0)`, which the derived case catches, or by
+    /// deriving unconditionally, which the pinned cases do.
     #[test]
-    fn the_offered_default_is_the_configured_one_until_the_grid_binds() {
+    fn a_pinned_default_is_offered_and_an_absent_one_is_derived() {
         let grid = UVec2::new(80, 52);
         let separation = 20u32;
-        let ceiling = max_faction_starts(grid, separation) - 1;
+        let land = 0.38f32;
+        let ceiling = max_faction_starts(grid, separation, land) - 1;
         assert!(ceiling >= 2, "fixture: the shipped grid seats rivals");
+
         assert_eq!(
-            faction_start_capacity(grid, separation, 2).default_ai_factions,
-            2
+            faction_start_capacity(grid, separation, land, Some(2)).default_ai_factions,
+            2,
+            "a pinned count under the ceiling is offered untouched"
         );
         assert_eq!(
-            faction_start_capacity(grid, separation, ceiling + 5).default_ai_factions,
-            ceiling
+            faction_start_capacity(grid, separation, land, Some(ceiling + 5)).default_ai_factions,
+            ceiling,
+            "and one over it is granted down"
+        );
+        assert_eq!(
+            faction_start_capacity(grid, separation, land, Some(0)).default_ai_factions,
+            0,
+            "an explicit zero is a pin, not an absent key"
+        );
+
+        let derived = faction_start_capacity(grid, separation, land, None).default_ai_factions;
+        assert_eq!(
+            derived,
+            (f64::from(ceiling) * DEFAULT_AI_FACTIONS_SHARE_OF_CEILING).floor() as u32
+        );
+        assert!(
+            derived > 0,
+            "an absent key on a grid that seats rivals must offer some — deriving zero everywhere \
+             is the complaint this replaced"
+        );
+        assert!(derived <= ceiling, "and it is always grantable");
+    }
+
+    /// **An UNATTENDED roster is not the offered default**, and that split is the whole point: the
+    /// New Game screen pre-selects a map-scaled count, while a `cargo run` server, a test harness
+    /// and a `new_game` carrying no pick keep the zero-rival world that ships. The config pin moves
+    /// both.
+    #[test]
+    fn an_unattended_boot_takes_no_rivals_unless_the_config_pins_some() {
+        assert_eq!(unattended_ai_faction_count(None), 0);
+        assert_eq!(unattended_ai_faction_count(Some(0)), 0);
+        assert_eq!(unattended_ai_faction_count(Some(3)), 3);
+
+        let grid = UVec2::new(128, 80);
+        let offered = faction_start_capacity(grid, 20, 0.38, None).default_ai_factions;
+        assert!(
+            offered > unattended_ai_faction_count(None),
+            "the offer scales with the map and the unattended roster does not — if these ever \
+             agree, the two paths have been merged back together"
         );
     }
 
@@ -3713,13 +3909,20 @@ mod start_tile_selection_tests {
     /// one over it comes back as the ceiling.
     #[test]
     fn a_request_over_the_ceiling_is_granted_down_to_it() {
-        let grid = UVec2::new(24, 24);
+        let grid = UVec2::new(80, 52);
         let separation = 20u32;
-        let ceiling = max_faction_starts(grid, separation) - 1;
-        assert_eq!(ceiling, 3, "a 24-wide grid seats a 2x2 lattice at 20");
-        assert_eq!(granted_ai_faction_count(0, grid, separation), 0);
-        assert_eq!(granted_ai_faction_count(2, grid, separation), 2);
-        assert_eq!(granted_ai_faction_count(99, grid, separation), ceiling);
+        let land = 0.38f32;
+        let ceiling = max_faction_starts(grid, separation, land) - 1;
+        assert_eq!(
+            ceiling, 6,
+            "the shipped Standard grid at the shipped separation"
+        );
+        assert_eq!(granted_ai_faction_count(0, grid, separation, land), 0);
+        assert_eq!(granted_ai_faction_count(2, grid, separation, land), 2);
+        assert_eq!(
+            granted_ai_faction_count(99, grid, separation, land),
+            ceiling
+        );
     }
 
     /// The good ground still wins: separation reorders *which* tile each later faction gets, it
