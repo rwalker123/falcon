@@ -25,7 +25,7 @@ use core_sim::{
     GreatDiscoveryLedger, GreatDiscoveryRecord, GreatDiscoveryRegistry, KnowledgeLedger,
     KnowledgeLedgerEntry, Scalar, SnapshotHistory, VisibilityLedger, CULTIVATION_DISCOVERY_ID,
 };
-use faction_support::{human_and_ai, world_with, HOME, RIVAL};
+use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 /// The stockpiled good each faction is given, and how much of it, so a leaked row is unmistakable in
@@ -41,6 +41,12 @@ const RIVAL_PROGRESS: f32 = 0.5;
 /// The great discovery ids the fixture plants: one kept quiet, one deployed publicly.
 const COVERT_DISCOVERY: u16 = 4001;
 const PUBLIC_DISCOVERY: u16 = 4002;
+
+/// **Victory progress, one distinguishable reading per faction.** Distinct values, because the mode
+/// rows carry no faction on the wire — the only way to say whose progress reached the frame is to
+/// give the two peoples numbers that cannot be confused.
+const HOME_VICTORY_PROGRESS: f32 = 0.25;
+const RIVAL_VICTORY_PROGRESS: f32 = 0.75;
 
 /// A wondrous site id and where each faction "found" one. Distinct coordinates so a row cannot be
 /// attributed to the wrong faction by accident.
@@ -182,7 +188,7 @@ fn frame_factions(app: &App) -> FrameFactions {
 /// "filtered"; giving only the viewer state would let "the section is the viewer's" pass as
 /// "unfiltered but the rival happened to have nothing".
 fn a_world_where_both_peoples_have_something_to_hide() -> App {
-    let mut app = world_with(&human_and_ai(), |_| {});
+    let mut app = world_with(ONE_RIVAL, |_| {});
 
     for (faction, stock) in [(HOME, HOME_STOCK), (RIVAL, RIVAL_STOCK)] {
         app.world.resource_mut::<FactionInventory>().add_stockpile(
@@ -575,7 +581,7 @@ fn a_rivals_field_on_ground_the_viewer_has_never_walked_names_no_owner() {
 /// viewer-only here.
 #[test]
 fn fog_off_makes_a_rivals_improvement_legible_and_changes_nothing_else() {
-    let mut app = world_with(&human_and_ai(), |config| config.fog_enabled = false);
+    let mut app = world_with(ONE_RIVAL, |config| config.fog_enabled = false);
     app.world.resource_mut::<FactionInventory>().add_stockpile(
         RIVAL,
         STOCK_ITEM.to_string(),
@@ -612,5 +618,82 @@ fn fog_off_makes_a_rivals_improvement_legible_and_changes_nothing_else() {
         dedup(frame.inventory.clone()),
         vec![HOME.0],
         "…and the stockpile is still the viewer's alone: fog is not a disclosure switch"
+    );
+}
+
+/// ⛔ **VICTORY PROGRESS IS THE VIEWER'S; THE WINNER IS THE WORLD'S.**
+///
+/// Progress is a claim about one people — how many of *your* people there are and how they feel — so
+/// publishing every faction's rows would be a live readout of exactly how close each rival is. The
+/// **winner** is the deliberate exemption beside it, and it is not a leak: a winner is public by
+/// definition, and the row names the faction that actually achieved it rather than `FactionId(0)`.
+///
+/// The rows carry no faction on the wire, so the two peoples are given **different progress
+/// readings** and the assertion is on the value. Sabotaged by publishing `state.modes` whole: the
+/// frame would then carry two rows, and by publishing faction 0's regardless of viewer: it would
+/// carry the home reading while the winner says otherwise — which is the state that shipped.
+#[test]
+fn victory_progress_is_the_viewers_own_and_the_winner_is_public() {
+    let mut app = world_with(ONE_RIVAL, |_| {});
+    {
+        let mut victory = app.world.resource_mut::<core_sim::VictoryState>();
+        for (faction, progress) in [
+            (HOME, HOME_VICTORY_PROGRESS),
+            (RIVAL, RIVAL_VICTORY_PROGRESS),
+        ] {
+            victory.modes.insert(
+                faction,
+                vec![core_sim::VictoryModeState {
+                    id: core_sim::VictoryModeId("hegemony".to_string()),
+                    kind: core_sim::VictoryModeKind::Hegemony,
+                    progress,
+                    threshold: 1.0,
+                    achieved: false,
+                }],
+            );
+        }
+        // The rival is the one who won, so a frame that named the player would be naming the wrong
+        // people rather than merely a default.
+        victory.winner = Some(core_sim::VictoryResult {
+            mode: core_sim::VictoryModeId("hegemony".to_string()),
+            faction: RIVAL,
+            tick: 7,
+        });
+    }
+    publish_baseline_snapshot(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let victory = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .campaign()
+        .and_then(|section| section.victory())
+        .expect("the campaign section carries victory state");
+
+    let progress: Vec<f32> = victory
+        .modes()
+        .expect("the viewer's mode rows are published")
+        .iter()
+        .map(|row| row.progress())
+        .collect();
+    assert_eq!(
+        progress,
+        vec![HOME_VICTORY_PROGRESS],
+        "the frame carries the viewer's progress and nobody else's"
+    );
+
+    let winner = victory.winner().expect("the winner is published");
+    assert_eq!(
+        winner.faction(),
+        RIVAL.0,
+        "a winner is public, and it is the faction that actually achieved it"
     );
 }

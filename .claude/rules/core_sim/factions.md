@@ -3,6 +3,10 @@ paths:
   - "core_sim/src/orders.rs"
   - "core_sim/src/start_profile.rs"
   - "core_sim/src/data/start_profiles.json"
+  - "core_sim/src/data/simulation_config.json"
+  - "core_sim/src/metrics.rs"
+  - "core_sim/src/victory.rs"
+  - "sim_runtime/proto/command.proto"
   - "core_sim/src/bin/server.rs"
   - "core_sim/src/systems/mod.rs"
   - "core_sim/src/systems/worldgen.rs"
@@ -31,20 +35,33 @@ each one driven"*. Everything downstream — the turn queue's await set, the esp
 counter-intel budgets, the security policies — is built from its `factions` list, so the registry is
 the single place a world's roster is decided.
 
-## Ids are POSITIONAL, never authored
+## The roster is ONE HUMAN PLUS N AI, and the player picks N
 
-A start profile declares a list of `FactionSpec`s; entry `i` **is** `FactionId(i)`. Nothing in the
-JSON names an id.
+A world's roster is not authored anywhere. It is a **count of AI factions**, chosen by the player at
+New Game, and the registry is built from it: `FactionId(0)` is always the human the player commands,
+and ids `1..=N` are the sim's. Pick 2 and the world holds three peoples; pick 0 and it is the
+single-faction world that has always shipped.
 
-That is deliberate. An authored id can be written twice or leave a gap, and the registry's `control`
-map is keyed by id — a duplicate would silently collapse two factions into one map entry, and a gap
-would produce an id that is in `factions` but has no control. With positional ids both are
-unrepresentable rather than merely validated against.
+**The count is rivals, not roster size.** Naming it for what it is (`ai_faction_count`) is what keeps
+the off-by-one out of every caller's head — nobody has to remember whether "2 factions" includes
+themselves.
 
-```jsonc
-// core_sim/src/data/start_profiles.json — top level of a profile object
-"factions": [ { "control": "human" }, { "control": "ai" } ]   // human = 0, ai = 1
-```
+Two things fall out of that shape, and both used to be rules enforced against an authored list:
+
+- **Ids are positional**, so a duplicate id or a gap is unrepresentable rather than validated
+  against. The registry's `control` map is keyed by id; a duplicate would silently collapse two
+  factions into one entry, and a gap would leave an id in `factions` with no control.
+- **"Non-empty" and "at least one human" are structural.** There is always a faction 0 for worldgen
+  to place, always somebody to play it, and always somebody for the turn queue to await. Nothing can
+  express a world without them, so nothing has to check for one. What replaced those two checks is
+  the **ceiling** below: `N >= 0` is the `u32`, and the map decides the rest.
+
+> **The start profile no longer declares a roster.** `StartProfileOverrides.factions`, `FactionSpec`,
+> `default_factions`, `validate_factions` and `faction_roster_error` are all gone. A profile that
+> named who plays the world made the roster authored content a player could not reach — which is the
+> whole reason it moved. A profile still stocks the opening (units, knowledge, inventory, the loadout
+> window), and swapping one mid-session leaves the peoples alone. `FactionControl` stays: the
+> registry still *records* how each faction is driven, it is simply derived from an id's position.
 
 ## The registry's invariant, and its one constructor
 
@@ -55,9 +72,11 @@ pub struct FactionRegistry {
 }
 ```
 
-**`control` is keyed by exactly the ids in `factions`.** `FactionRegistry::new(&[FactionSpec])` is
-the only constructor that can produce a non-default registry, and it derives *both* fields from one
-declaration list, so the two cannot be written apart; a `debug_assert!` there states the invariant.
+**`control` is keyed by exactly the ids in `factions`.** `FactionRegistry::with_ai_factions(n)` is
+the only constructor there is, and it derives *both* fields from one count, so the two cannot be
+written apart; a `debug_assert!` there states the invariant. `Default` is exactly
+`with_ai_factions(0)`, so "the default world" has one statement rather than two, and
+`ai_faction_count()` reads the count back off the roster.
 Readers ask through `factions()`, `control_of`, `is_ai` and `contains` rather than touching either
 field, and an unregistered faction answers `None` / `false` rather than panicking — a faction nobody
 declared is not the sim's to drive.
@@ -72,19 +91,29 @@ faction's commands. Serde reads and writes private fields, so nothing about the 
 on their visibility.
 
 `FactionControl` is `Human | Ai`. There is no third arm: every faction is either somebody's to play
-or something the sim drives. It lives in `start_profile.rs` with `FactionSpec`, because the profile
-is where control is *declared*; `orders.rs` imports it.
+or something the sim drives. It still lives in `start_profile.rs` — where it was declared, and moving
+it would churn every import for nothing — but nothing declares it any more: id 0 is `Human` and every
+id after it is `Ai`, by construction.
 
 ## Where the roster comes from
 
-- **`build_headless_app`** validates the active profile's roster and then seeds the registry from
-  it, before `TurnQueue::new(registry.factions().to_vec())`. Raising the count therefore extends the
-  await set with no further edit.
-- **`apply_start_profile`** (`bin/server.rs`) re-seeds the registry **and everything else the boot
-  path seeds from it** when a runtime command names another profile. It has to:
-  `rebuild_world_from_config` calls `build_headless_app` *first*, so a `new_game` arrives holding the
-  **boot** profile's roster, and applying the chosen one to `SimulationConfig` alone left a
-  two-faction profile producing a one-faction world. See the table below for the set.
+- **`build_headless_app`** seeds the registry from `simulation_config.json`'s
+  `default_ai_faction_count`, clamped against that file's own grid, before
+  `TurnQueue::new(registry.factions().to_vec())`. Raising the count therefore extends the await set
+  with no further edit. This is the roster a test harness and a `ResetMap` rebuild start from — the
+  shipped server boots idle and builds no world at all.
+- **`seed_faction_roster`** (`bin/server.rs`) seeds the registry **and everything else the boot path
+  seeds from it** from the count a `new_game` carried. It has to: `rebuild_world_from_config` calls
+  `build_headless_app` *first*, so the replacement app arrives holding the **config file's** roster,
+  clamped against the **config file's** grid — and a `new_game` is neither of those things. See the
+  table below for the set. The count it takes is expected to be already clamped, because only the
+  caller knows which grid the world is being built on.
+- **`apply_start_profile` does NOT touch the roster**, and no longer can: a profile declares none.
+  A `set_start_profile` mid-session restocks the opening and leaves the peoples alone.
+- **`ResetMap` carries the roster it had**, re-clamped to the grid it is moving to
+  (`registry.ai_faction_count()` in the dispatch arm). A resize is a map reroll, not a re-pick of who
+  is playing — and without the re-clamp a shrink could register more factions than the new map
+  seats, while a grow would silently drop this world's rivals back to the config default.
 - **`save::apply_save`** rebuilds the `TurnQueue` from the registry it has just restored, beside that
   restore rather than in the load handler. A load's replacement app is also a `build_headless_app`,
   so its queue awaits the *file's* profile; a two-faction save opened on the shipped one-faction
@@ -93,13 +122,11 @@ is where control is *declared*; `orders.rs` imports it.
   submissions must not survive — and the two now say the same thing. **The load needs nothing
   further**: every other roster-derived resource is checkpoint state and comes back with the save.
 - **`FactionRegistry::default()`** is one human faction — `FactionId(0)`, `control { 0: Human }` —
-  and is what a test harness or any other non-profile construction path gets. It shares
-  `start_profile::default_factions()` with the profile layer's default so the two statements of
-  "the default world" cannot drift.
-- **`StartProfileOverrides` implements `Default` by hand** for exactly this reason. A derived
-  `Default` gives `factions` an *empty* `Vec` regardless of the serde `default =` attribute, and an
-  empty roster has no faction 0 for worldgen to place, nobody to play and nobody to await. The empty
-  roster has to be unrepresentable from every construction path, not only the deserialising one.
+  and is what a test harness or any other construction path that never asked for rivals gets. It is
+  `with_ai_factions(0)`, not a second statement of it.
+- **`StartProfileOverrides` derives `Default` again.** It was hand-written for one reason — a derived
+  `Default` gave `factions` an *empty* `Vec` regardless of the serde attribute — and with the roster
+  gone every field's default is the empty one.
 
 ### ⛔ THE ROSTER-DERIVED SET IS FIVE RESOURCES, AND A RUNTIME PATH OWES ALL OF THEM
 
@@ -107,9 +134,9 @@ is where control is *declared*; `orders.rs` imports it.
 on a roster change is the *same defect* as re-seeding none, one resource further along — and worse to
 read, because the next person infers the short list is the whole list.
 
-| Resource | `new_game` / `set_start_profile` | A load |
+| Resource | `new_game` / `ResetMap` | A load |
 |---|---|---|
-| `FactionRegistry` | re-seeded in `apply_start_profile` | restored — `WorldStatics` |
+| `FactionRegistry` | re-seeded in `seed_faction_roster` | restored — `WorldStatics` |
 | `TurnQueue` | rebuilt from that registry | **rebuilt in `apply_save`** — server-side order intake, so no payload carries it |
 | `CounterIntelBudgets` | re-seeded, through `CounterIntelBudgets::new` | restored — `SimState` |
 | `FactionSecurityPolicies` | re-seeded, through `FactionSecurityPolicies::new(.., Standard)` | restored — `SimState` |
@@ -124,28 +151,58 @@ has one definition rather than two.
 forgotten faction is silently indistinguishable from a seeded one at every reader. That is why
 `FactionSecurityPolicies::contains` exists: the row's presence is the only thing a test can assert
 on.
-### Validation is a boot panic
+## THE MAP DECIDES THE CEILING, AND THE SIM IS THE AUTHORITY
 
-`StartProfileOverrides::validate_factions(profile_id)` enforces two rules and panics naming the
-profile when either breaks:
+**How many peoples a map can seat is stated once**, in `systems/worldgen.rs` beside the placement it
+constrains:
 
-| Rule | Why |
+| Function | Answers |
 |---|---|
-| the list is non-empty | a world with no factions has nobody to place, play or await |
-| at least one entry is `human` | a world nobody plays is not a world |
+| `max_faction_starts(grid, min_separation)` | how many starts fit — the count of points on a lattice of that spacing, per axis |
+| `faction_start_capacity(grid, min_separation, configured_default)` | the **default** to open a control on and the **ceiling** to stop it at: `max_ai_factions = starts - 1`, and the default clamped by it |
+| `granted_ai_faction_count(requested, grid, min_separation)` | what a request is actually granted, warning `worldgen.ai_faction_count_clamped` with both numbers when the clamp binds |
 
-This is the `config-loading.md` boot rule applied to a profile key: **absent means the builtin
-default, present-but-broken stops the boot.** The shipped profile omits `factions` entirely, so the
-builtin can never trip it.
+**A lattice count, not a packing number.** Points at `0, s, 2s, …` are exactly `s` apart along an
+axis and further apart diagonally, so every lattice point clears the separation — which makes this an
+*achievable* count rather than an upper bound nothing could reach. It is deliberately **blind to
+land**: the sea does not exist until worldgen has run, and the client asks about a grid it has not
+generated yet. Where the land cannot honour it, `faction_start_tiles` relaxes and warns — that
+relaxation is the safety net *beneath* this ceiling, not a competing rule.
 
-**A profile chosen at RUNTIME is refused instead, never panicked on.** `new_game` and
-`set_start_profile` ask `StartProfileOverrides::faction_roster_error()` — the same two rules,
-returning the broken one instead of panicking — and answer the way each already answers a profile id
-it cannot resolve: `new_game` warns `new_game.rejected=unusable_roster` and returns **before the
-outgoing world is torn down**, and `apply_start_profile` writes nothing and warns
-`start_profile.rejected=unusable_roster`. Boot panics because there is no earlier world to decline
-back to; taking a live server down because a player picked a bad profile is a worse answer than
-declining the pick.
+**Clamped, never refused.** A player who asked for more rivals than the map holds still gets a game;
+refusing would leave somebody who moved a slider with no world at all. Every path that takes a count
+— boot, `new_game`, `ResetMap` — goes through `granted_ai_faction_count`, so there is one
+implementation of *"the map decides"*.
+
+**There is no boot panic left to write.** The count is a `u32`, so `N >= 0` is the type; the only
+other rule is the clamp, and it binds at boot the same way it binds at runtime — because the grid the
+config file was parsed against is not necessarily the grid a world is built on.
+
+### How the client learns the default and the max — a QUERY, not a header field
+
+The New Game screen needs both numbers, and it needs them **for the grid the player is choosing**,
+on a screen where **there is no world**. Neither half fits a snapshot header:
+
+- The shipped server **boots idle** and publishes no frame at all until `new_game`, so a header field
+  would be unavailable on exactly the screen that needs it.
+- The ceiling is a property of the map **about to be built**. A header describes the world the server
+  is running, which on the New Game screen is either nothing or the previous game.
+
+So it rides the query channel — `QueryPayload::FactionCapacity { width, height }` →
+`QueryReply::FactionCapacity { default_ai_faction_count, max_ai_faction_count }` — answered by
+`answer_query` **ahead of the `world_active` gate**, from the live `SimulationConfig` and the grid in
+the ask. That is character for character the arrangement `list_saves` already has, and for the same
+reason: a player opens the load menu before there is a world too. **The `.fbs` is unchanged**; this
+is the command protocol, not the snapshot.
+
+The point of answering it at all is that the rule must not be reimplemented in GDScript: a client
+computing its own spinner bounds would be a second copy of the ceiling, free to disagree with the
+clamp the server actually applies.
+
+> **The answer is read off the config the SERVER currently holds**, while a `new_game` rebuild
+> re-reads every config from disk (`config-loading.md` → staged overrides). A staged override to
+> `faction_start_min_separation` between the ask and the pick would therefore move the ceiling under
+> the answer. The clamp is what makes that harmless — the pick is granted down, never refused.
 
 ## Command authorization
 
@@ -228,8 +285,8 @@ about the world rather than about a people:
 | the worldgen suites (`food_site_water_bias`, `graze_distribution`) | `anchor_position()` | they assert about the terrain, and have no faction to ask with |
 
 `Default` is the **empty** map, which is what ~20 integration fixtures insert as scaffolding, so none
-of them needed an edit. **`SAVE_FORMAT_VERSION` is 7** for the shape change — see the changelog table
-on that constant.
+of them needed an edit. That shape change **bumped `SAVE_FORMAT_VERSION` to 7** — see the changelog
+table on that constant, where per-faction victory is the row after it.
 
 ## One opening-loadout window PER FACTION
 
@@ -368,7 +425,8 @@ apply only where the row describes something that can be *seen*.
 | `pendingForks` / `stanceAxes` / `voiceMedium` | `snapshot/campaign.rs` | **Viewer** |
 | `openingLoadout` | `snapshot/campaign.rs` | **Viewer** — already took `viewer_faction` for its known-crafts list |
 | `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
-| `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition |
+| `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
+| `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
 
 ### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD
 
@@ -398,7 +456,7 @@ named function so the two cannot drift — `discovery_reaches_viewer` and
 | `powerMetrics`, `header.tileCount` / `.powerCount` / `.influencerCount` | **World, correctly** — none of the underlying rows carries a faction |
 | `sentiment`, `axisBias` | **World, correctly** — culture-wide axes with no per-faction storage |
 | `greatDiscoveryDefinitions` | **World, correctly** — *how many constellations exist to chase* is the legitimately world-level number in this arc, and it ships as a catalogue with no faction at all |
-| `victory.modes[].progress` | **World, and not a leak — because victory has no per-faction model at all.** Progress is evaluated from `SimulationMetrics`, and `victory.winner.faction` is hard-coded `FactionId(0)` (`victory.rs`). It is a *third* single-faction assumption, of a different kind from the two below: not a filter that is missing, a model that is absent |
+| `victory.modes[].progress` | **Was world, now viewer.** It was the aggregate-leak category's worst case — not a filter that was missing but a *model* that was absent: progress was evaluated from the world's `SimulationMetrics` and the winner hard-coded `FactionId(0)`. Victory is per faction now (`campaign.md` → "Victory is evaluated PER FACTION"), and the published rows are the viewer's |
 | `cultureLayers` / `cultureTensions` | **World, correctly.** `CultureOwner` *can* name a band — but only global, regional and tile-local layers are ever published (`capture.rs`), so no band-scoped layer reaches the wire |
 
 ### Three deliberate exemptions, and why each stays
@@ -450,7 +508,9 @@ being cleared rather than after it.
 
 ## The single-faction assumptions that are still live
 
-Two places still read a one-faction world into a roster that may hold more.
+Two places still read a one-faction world into a roster that may hold more. **Victory used to be a
+third and is not any more** — it is evaluated per faction and the winner is whoever achieved it; see
+`campaign.md` → "Victory is evaluated PER FACTION".
 
 | Site | What it assumes |
 |---|---|
@@ -460,10 +520,11 @@ Two places still read a one-faction world into a roster that may hold more.
 ## The two-faction fixture
 
 `core_sim/tests/faction_support/mod.rs` builds both arms of every comparison — `one_faction_world()`
-and `two_faction_world()`, plus `world_with(roster, tune)` for a world that also needs a config edit.
-**The roster is installed before the first `update()`**, which is when `Startup` and therefore
-`spawn_initial_world` run; that is what makes worldgen place two factions without editing a shipped
-config file or setting a process-global env var a parallel test would race on. It rebuilds the
+and `two_faction_world()`, plus `world_with(ai_factions, tune)` for a world that also needs a config
+edit (`NO_RIVALS` / `ONE_RIVAL` name the two counts). **The roster is installed before the first
+`update()`**, which is when `Startup` and therefore `spawn_initial_world` run; that is what makes
+worldgen place two factions without editing a shipped config file or setting a process-global env var
+a parallel test would race on. It rebuilds the
 `TurnQueue` from the roster too, for the reason the roster-derived-set table above gives.
 
 The control arm is not optional: it is what distinguishes *"the second faction got its own"* from
@@ -473,19 +534,20 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 
 | File | Key | Default | Purpose |
 |---|---|---|---|
+| `src/data/simulation_config.json` | `default_ai_faction_count` | **0** | **How many AI factions a world gets when nobody picked a number** — the boot roster, the roster a `ResetMap` rebuild carries when it has none, and the value the New Game screen is offered as its default. It counts **rivals, not the roster**: 0 is the single-faction world, 2 is three peoples. Shipped at 0 because the AI that would drive a rival does not exist yet — a higher default would put peoples on the map that sit and pass. Clamped by the ceiling above, never refused |
 | `src/data/simulation_config.json` | `faction_start_min_separation` | **20** tiles | How far apart worldgen tries to put two factions' start tiles — a quarter of the shipped map's width, far enough that two peoples do not open sharing one food shed. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes and warns rather than failing to place a faction. Validated `> 0` at parse (`ZeroFactionStartMinSeparation`), because zero would let two peoples open on the same hex |
 
 ## Saves win over profile edits
 
 `FactionRegistry` is **ground truth in the save** — a field of `WorldStatics`, captured whole and
-restored whole. The start profile, by contrast, is re-resolved from **live config by id** on load,
-which then overwrites `SimulationConfig::start_profile_overrides`.
+restored whole. The AI count, by contrast, is a *request*: `simulation_config.json`'s
+`default_ai_faction_count` is re-read on every world build, and the pick that built this world is not
+recorded anywhere except in the registry itself.
 
-So the two can drift, and the intended rule is that **the save's registry wins**: a world loaded
-from a save has the roster it was created with, even if `start_profiles.json` has been edited to
-declare a different one since. That is the same reason the rest of `WorldStatics` is saved rather
-than recomputed — re-deriving a world's ground truth from tuning that has moved produces a
-*different world*.
+So the two can drift, and the rule is that **the save's registry wins**: a world loaded from a save
+has the roster it was created with, whatever the config default says now. That is the same reason the
+rest of `WorldStatics` is saved rather than recomputed — re-deriving a world's ground truth from
+tuning that has moved produces a *different world*.
 
 ## A free slot
 

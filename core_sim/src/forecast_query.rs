@@ -74,6 +74,12 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         // server is idle, which is exactly when a player opens the load menu. Reaching here means
         // the dispatch routed it wrong, so it says so rather than inventing an empty list.
         QueryPayload::ListSaves => QueryReply::Error(query_error::WRONG_ANSWERER.to_string()),
+        // **Answered by the server, from the live config**, ahead of the world gate: it is a
+        // question about a grid the player is still configuring, so like the slot list it must be
+        // answerable while the server is idle. Reaching here is a routing mistake, and says so.
+        QueryPayload::FactionCapacity(_) => {
+            QueryReply::Error(query_error::WRONG_ANSWERER.to_string())
+        }
     }
 }
 

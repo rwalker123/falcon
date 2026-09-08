@@ -972,6 +972,17 @@ pub fn export_great_discovery_metrics(
 ) {
     if let Some(mut metrics) = metrics {
         metrics.great_discoveries_total = ledger.records.len() as u32;
+        // **The same count, split by whose discovery it is** — rebuilt whole each turn from the same
+        // list the world total counts, so the two cannot disagree about what a record is. Victory's
+        // Ascension mode reads this: a rival's breakthroughs are not yours to ascend on.
+        metrics.great_discoveries_by_faction =
+            ledger
+                .records
+                .iter()
+                .fold(std::collections::BTreeMap::new(), |mut counts, record| {
+                    *counts.entry(record.faction).or_insert(0) += 1;
+                    counts
+                });
         metrics.great_discovery_candidates = telemetry.pending_candidates;
         metrics.great_discovery_active = telemetry.active_constellations;
     }

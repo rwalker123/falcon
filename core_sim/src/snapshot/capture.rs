@@ -3238,7 +3238,7 @@ pub fn capture_snapshot(
     let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer_faction.0);
     let stance_axes_state = snapshot_stance_axes(&beat_ledger, viewer_faction.0);
     let voice_medium_state = snapshot_voice_medium(&beat_ledger, viewer_faction.0);
-    let victory_snapshot_state = victory_snapshot_from_resource(&victory);
+    let victory_snapshot_state = victory_snapshot_from_resource(&victory, viewer_faction.0);
     let capability_bits = capability_flags.bits();
     drop(readouts_scope);
 

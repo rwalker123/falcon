@@ -20,7 +20,7 @@ use core_sim::{
     simulate_population, BandId, ConnectionKey, ConnectionLedger, ConnectionsConfigHandle,
     PopulationCohort,
 };
-use faction_support::{human_and_ai, world_with, HOME, RIVAL};
+use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 
 /// Comfortably past `migration_min_settled_turns` (5) so the settled gate cannot be what decides the
 /// outcome of either arm.
@@ -88,7 +88,7 @@ fn record_mutual_contact(app: &mut App, a: BandId, b: BandId) {
 
 #[test]
 fn a_band_does_not_defect_to_a_faction_it_has_never_met() {
-    let mut world = world_with(&human_and_ai(), |_| {});
+    let mut world = world_with(ONE_RIVAL, |_| {});
     assert!(
         world.world.resource::<ConnectionLedger>().is_empty(),
         "a freshly generated world has met nobody — that is the premise of this arm"
@@ -106,7 +106,7 @@ fn a_band_does_not_defect_to_a_faction_it_has_never_met() {
 
 #[test]
 fn a_band_defects_once_the_two_peoples_have_made_contact() {
-    let mut world = world_with(&human_and_ai(), |_| {});
+    let mut world = world_with(ONE_RIVAL, |_| {});
     let home_band = opening_band(&mut world, HOME);
     let rival_band = opening_band(&mut world, RIVAL);
     record_mutual_contact(&mut world, home_band, rival_band);
@@ -125,7 +125,7 @@ fn a_band_defects_once_the_two_peoples_have_made_contact() {
 /// one world so the only difference between them is the ledger.
 #[test]
 fn the_gate_is_the_only_difference_between_the_two_arms() {
-    let mut world = world_with(&human_and_ai(), |_| {});
+    let mut world = world_with(ONE_RIVAL, |_| {});
     let home_band = opening_band(&mut world, HOME);
     let rival_band = opening_band(&mut world, RIVAL);
 

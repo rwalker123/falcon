@@ -38,6 +38,7 @@
   "population_cluster_stride": 8,
   "population_cap": 25000,
   "faction_start_min_separation": 20,
+  "default_ai_faction_count": 0,
   "power_adjust_rate": 0.02,
   "max_power_generation": 25.0,
   "max_power_efficiency": 1.75,

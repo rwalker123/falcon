@@ -17,7 +17,7 @@ use bevy::prelude::*;
 mod faction_support;
 
 use core_sim::{run_turn, BandId, PopulationCohort, SnapshotHistory, TileRegistry};
-use faction_support::{human_and_ai, world_with, HOME, RIVAL};
+use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 /// How far from the viewer's own band the rival is parked when a test wants it **out of sight**.
@@ -176,7 +176,7 @@ fn stand_at(app: &mut App, band: Entity, target: UVec2) {
 /// A two-faction world with the rival standing **beside** the viewer's own band, so the viewer can
 /// genuinely see it, and one turn resolved so `calculate_visibility` has run over those positions.
 fn a_rival_in_plain_sight() -> (App, BandId, BandId) {
-    let mut app = world_with(&human_and_ai(), |_| {});
+    let mut app = world_with(ONE_RIVAL, |_| {});
     let (home_band, home_entity) = opening_band(&mut app, HOME);
     let (rival_band, rival_entity) = opening_band(&mut app, RIVAL);
     let beside = position_of(&app, home_entity);
@@ -210,7 +210,7 @@ fn assert_visibility(app: &App, tile: UVec2, expected: bool) {
 /// The same world with the rival left where worldgen put it, then walked further still — far outside
 /// any band's sight.
 fn a_rival_over_the_horizon() -> (App, BandId, BandId) {
-    let mut app = world_with(&human_and_ai(), |_| {});
+    let mut app = world_with(ONE_RIVAL, |_| {});
     let (home_band, home_entity) = opening_band(&mut app, HOME);
     let (rival_band, rival_entity) = opening_band(&mut app, RIVAL);
     let home_pos = position_of(&app, home_entity);
@@ -303,7 +303,7 @@ fn each_faction_sees_its_own_band_in_full_and_the_others_redacted() {
 /// are; it does not entitle you to their insides.
 #[test]
 fn fog_off_reveals_where_a_foreign_band_is_and_still_says_nothing_about_it() {
-    let mut app = world_with(&human_and_ai(), |config| config.fog_enabled = false);
+    let mut app = world_with(ONE_RIVAL, |config| config.fog_enabled = false);
     let (_, home_entity) = opening_band(&mut app, HOME);
     let (rival_band, rival_entity) = opening_band(&mut app, RIVAL);
     let home_pos = position_of(&app, home_entity);

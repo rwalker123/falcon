@@ -120,6 +120,20 @@ pub struct SimulationConfig {
     /// `systems::worldgen`). Validated `> 0` at parse, because a separation of zero would let two
     /// peoples open the campaign on the same hex.
     pub faction_start_min_separation: u32,
+    /// **How many AI factions a world gets when nobody picked a number** — the boot roster, the
+    /// roster a `ResetMap` rebuild takes, and the value offered to the New Game screen as its
+    /// default (`systems::worldgen::faction_start_capacity`).
+    ///
+    /// The player picks this at New Game and the pick rides the `new_game` command; this key is
+    /// what a world built without one gets, so a default game is reproducible and a designer can
+    /// raise it without the UI. **It counts rivals, not the roster** — 0 is the single-faction
+    /// world, 2 is a world of three peoples.
+    ///
+    /// Clamped, never refused: a count above what the grid can hold at
+    /// [`Self::faction_start_min_separation`] is granted down to the ceiling with a warning, the
+    /// same answer the `new_game` command gets, because the grid a world is finally built on is not
+    /// the grid this file was parsed against.
+    pub default_ai_faction_count: u32,
     pub power_adjust_rate: Scalar,
     pub max_power_generation: Scalar,
     pub max_power_efficiency: Scalar,
@@ -302,6 +316,8 @@ struct SimulationConfigData {
     population_cap: u32,
     #[serde(default = "default_faction_start_min_separation")]
     faction_start_min_separation: u32,
+    #[serde(default = "default_ai_faction_count")]
+    default_ai_faction_count: u32,
     power_adjust_rate: f32,
     max_power_generation: f32,
     max_power_efficiency: f32,
@@ -501,6 +517,7 @@ impl SimulationConfigData {
             population_cluster_stride: self.population_cluster_stride,
             population_cap: self.population_cap,
             faction_start_min_separation: self.faction_start_min_separation,
+            default_ai_faction_count: self.default_ai_faction_count,
             power_adjust_rate: scalar_from_f32(self.power_adjust_rate),
             max_power_generation: scalar_from_f32(self.max_power_generation),
             max_power_efficiency: scalar_from_f32(self.max_power_efficiency),
@@ -541,6 +558,15 @@ fn default_fog_enabled() -> bool {
 /// key cannot disagree.
 fn default_faction_start_min_separation() -> u32 {
     20
+}
+
+/// **No rivals.** The shipped campaign is the single-faction world it has always been, and the AI
+/// that would drive a rival does not exist yet — a shipped default above 0 would put peoples on the
+/// map that sit and pass. The player raises it at New Game; a designer raises it here to test
+/// without the UI. The single source of the number, so an untouched config and an absent key cannot
+/// disagree.
+fn default_ai_faction_count() -> u32 {
+    0
 }
 
 /// 20 turns of world events: long enough that a player returning from a few quick turns can read

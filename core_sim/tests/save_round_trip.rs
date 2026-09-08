@@ -24,10 +24,10 @@ mod common;
 use common::{canonical_tree, differing_paths};
 use core_sim::{
     build_test_app, publish_baseline_snapshot, run_turn, scalar_one, BiomePalette,
-    DiscoveryProgressLedger, FactionControl, FactionId, FactionRegistry, FactionSpec,
-    FoodSiteRegistry, HydrologyState, MoistureRaster, PowerTopology, ProvinceMap, SimulationConfig,
-    SnapshotHistory, StartLocation, Tile, TileRegistry, TurnQueue, WorldGenSeed,
-    CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID,
+    DiscoveryProgressLedger, FactionId, FactionRegistry, FoodSiteRegistry, HydrologyState,
+    MoistureRaster, PowerTopology, ProvinceMap, SimulationConfig, SnapshotHistory, StartLocation,
+    Tile, TileRegistry, TurnQueue, WorldGenSeed, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
+    SEED_SELECTION_DISCOVERY_ID,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -81,11 +81,11 @@ fn sim_tree(app: &App) -> ciborium::value::Value {
     canonical_tree(&capture_sim_state(&app.world))
 }
 
-/// [`spawn_world`], but generated for an explicit roster.
+/// [`spawn_world`], but generated for one human plus `ai_factions` rivals.
 ///
 /// The registry is installed **before** the first `update()`, which is when `Startup` — and
 /// therefore `spawn_initial_world` — runs, so worldgen places every faction in it.
-fn spawn_world_with_factions(factions: &[FactionSpec]) -> App {
+fn spawn_world_with_ai_factions(ai_factions: u32) -> App {
     let mut app = build_test_app();
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::default());
@@ -93,7 +93,7 @@ fn spawn_world_with_factions(factions: &[FactionSpec]) -> App {
     config.map_preset_id = "earthlike".to_string();
     config.map_seed = core_sim::HARNESS_MAP_SEED;
     app.world.insert_resource(config);
-    let registry = FactionRegistry::new(factions);
+    let registry = FactionRegistry::with_ai_factions(ai_factions);
     app.world
         .insert_resource(TurnQueue::new(registry.factions().to_vec()));
     app.world.insert_resource(registry);
@@ -664,14 +664,7 @@ fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
 /// assertion has a second entry to lose.
 #[test]
 fn a_two_faction_start_location_survives_the_round_trip() {
-    let mut original = spawn_world_with_factions(&[
-        FactionSpec {
-            control: FactionControl::Human,
-        },
-        FactionSpec {
-            control: FactionControl::Ai,
-        },
-    ]);
+    let mut original = spawn_world_with_ai_factions(1);
     for _ in 0..TURNS_BEFORE_SAVE {
         run_turn(&mut original);
     }
@@ -711,14 +704,9 @@ fn a_two_faction_start_location_survives_the_round_trip() {
 #[test]
 fn a_two_faction_save_comes_back_awaiting_both_factions() {
     let mut original = spawn_world();
-    original.world.insert_resource(FactionRegistry::new(&[
-        FactionSpec {
-            control: FactionControl::Human,
-        },
-        FactionSpec {
-            control: FactionControl::Ai,
-        },
-    ]));
+    original
+        .world
+        .insert_resource(FactionRegistry::with_ai_factions(1));
     run_turn(&mut original);
 
     let blob = encode_save(&original.world).expect("the world encodes");

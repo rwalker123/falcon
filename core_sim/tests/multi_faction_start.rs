@@ -15,7 +15,7 @@ use core_sim::{
     BandId, FactionInventory, InventoryEntry, PopulationCohort, StartLocation, StartingLoadout,
     StartingUnit,
 };
-use faction_support::{human_and_ai, human_only, one_faction_world, world_with, HOME, RIVAL};
+use faction_support::{one_faction_world, world_with, HOME, NO_RIVALS, ONE_RIVAL, RIVAL};
 
 /// **The tile a one-faction world has always opened on**, at `HARNESS_MAP_SEED` on the shipped
 /// earthlike preset.
@@ -165,7 +165,7 @@ fn each_faction_gets_its_own_opening_loadout_window() {
 fn each_faction_gets_its_own_seeded_stockpile_and_knowledge() {
     // The shipped profile ships an empty `inventory`, so the stockpile half needs a grant to exist
     // at all — stated here rather than in the shipped config, which is not this test's subject.
-    let world = world_with(&human_and_ai(), |config| {
+    let world = world_with(ONE_RIVAL, |config| {
         config.start_profile_overrides.inventory = vec![InventoryEntry {
             item: "provisions".to_string(),
             quantity: 7,
@@ -223,7 +223,7 @@ fn a_cramped_map_relaxes_the_separation_instead_of_failing_to_place_a_faction() 
         "the fixture grid must be too small for the separation, or this tests nothing"
     );
 
-    let world = world_with(&human_and_ai(), |config| config.grid_size = CRAMPED);
+    let world = world_with(ONE_RIVAL, |config| config.grid_size = CRAMPED);
     let starts = world.world.resource::<StartLocation>();
 
     let home = starts.position_for(HOME).expect("the human is placed");
@@ -239,14 +239,14 @@ fn a_cramped_map_relaxes_the_separation_instead_of_failing_to_place_a_faction() 
 }
 
 fn two_faction_world_app() -> App {
-    world_with(&human_and_ai(), |_| {})
+    world_with(ONE_RIVAL, |_| {})
 }
 
 /// A guard on the fixture itself: the control arm must really be one faction, or every comparison
 /// above is between two identical worlds.
 #[test]
 fn the_control_arm_is_a_one_faction_world() {
-    let world = world_with(&human_only(), |_| {});
+    let world = world_with(NO_RIVALS, |_| {});
     assert_eq!(
         world
             .world

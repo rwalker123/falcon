@@ -2,9 +2,18 @@ use std::collections::BTreeMap;
 
 use super::*;
 
-pub(crate) fn victory_snapshot_from_resource(state: &VictoryState) -> VictorySnapshotState {
+/// **The viewer's own standing, and the world's winner.**
+///
+/// `modes` is scoped: progress is one people's — how many of *your* people there are and how they
+/// feel — and publishing every faction's rows would hand a client a live readout of exactly how
+/// close each rival is. `winner` is deliberately **not** scoped: a winner is public by definition,
+/// which is the exemption `factions.md` already records for it.
+pub(crate) fn victory_snapshot_from_resource(
+    state: &VictoryState,
+    viewer: FactionId,
+) -> VictorySnapshotState {
     let modes = state
-        .modes
+        .modes_for(viewer)
         .iter()
         .map(|mode| VictoryModeSnapshotState {
             id: mode.id.0.clone(),

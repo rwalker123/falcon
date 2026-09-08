@@ -638,6 +638,15 @@ message NewGameCommand {
   uint32 height = 3;
   uint64 seed = 4;
   string profile_id = 5;
+  // HOW MANY AI FACTIONS THE PLAYER PICKED, NOT COUNTING THEIR OWN. 2 means a world of three
+  // peoples: the human at FactionId(0) and rivals at 1 and 2. 0 is the single-faction world.
+  //
+  // OPTIONAL, and absent is NOT the same as 0: absent means "whatever `default_ai_faction_count`
+  // in simulation_config.json says", which is what a dev typing `new_game` without the argument
+  // gets, while an explicit 0 is a player who chose to play alone. A count above what the grid can
+  // seat at `faction_start_min_separation` is CLAMPED with a warning naming both numbers — the new
+  // game is never refused over it. `faction_capacity` answers what the ceiling and the default are.
+  optional uint32 ai_faction_count = 6;
 }
 
 // Which boot config a staged tuning override applies to. Deliberately a SHORT list: these are the
@@ -873,7 +882,33 @@ message QueryCommand {
     HuntCrewTakeQuery hunt_crew_take = 4;
     // 4 is held by `hunt_crew_take`, so the slot listing takes 5 (append-only; never renumber).
     ListSavesQuery list_saves = 5;
+    // 5 is held by `list_saves`, so the faction capacity takes 6.
+    FactionCapacityQuery faction_capacity = 6;
   }
+}
+
+// "If I start a game on a grid this size, how many AI factions may I ask for, and how many do I get
+// if I say nothing?"
+//
+// Asked from the NEW GAME SCREEN, where there is no world yet — so it is answered before the
+// `world_active` gate, from the live `SimulationConfig`, exactly as `list_saves` is answered from
+// disk. It takes the grid the player is CONFIGURING rather than the one the server is running,
+// because the ceiling is a property of the map about to be built.
+//
+// It exists so the rule ("how many starts fit at `faction_start_min_separation`, minus one for the
+// player") has one implementation, in the sim. A client that computed its own spinner bounds would
+// be a second copy of it, free to disagree with the clamp the server actually applies.
+message FactionCapacityQuery {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message FactionCapacityReply {
+  // What `new_game` uses when `ai_faction_count` is absent — the config default, already clamped to
+  // `max_ai_faction_count`, so the number a client opens its control on is always grantable.
+  uint32 default_ai_faction_count = 1;
+  // The most rivals this grid seats. 0 means the grid holds one start, so the player plays alone.
+  uint32 max_ai_faction_count = 2;
 }
 
 // "What does a raid of `party_workers` from `band_id`, carrying `kit_id`, take off `herd_id` if it
@@ -974,6 +1009,8 @@ message QueryReplyEnvelope {
     // are questions.
     ListSavesReply list_saves = 6;
     SaveOpReply save_op = 7;
+    // 7 is held by `save_op`, so the faction capacity answer takes 8.
+    FactionCapacityReply faction_capacity = 8;
   }
 }
 

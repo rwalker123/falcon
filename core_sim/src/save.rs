@@ -102,7 +102,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 5 | `SimState.starting_loadout` became a **map of per-band windows** — one `open`/budget triple replaced by a `BandId`-keyed table carrying each band's supply and its standing take |
 /// | 6 | `WorldStatics.factions` (`FactionRegistry`) gained `control` — the roster now carries how each faction is driven, and that map has no serde default, so without the bump a version-5 blob dies on the missing field inside the decoder and reads as `unreadable` rather than as the wrong version |
 /// | 7 | `WorldStatics.start_location` (`StartLocation`) became a **per-faction map** — one `Option<UVec2>` replaced by a `FactionId`-keyed table, because worldgen now places every registered faction at its own start, and a rival founding a settlement must not move your marker |
-pub const SAVE_FORMAT_VERSION: u32 = 7;
+/// | 8 | `SimState.victory` (`VictoryState.modes`) became a **per-faction map** — one mode list replaced by a `FactionId`-keyed table, because a victory threshold measures one people and the world's totals were scoring everybody's; `SimulationMetrics` gained its per-faction twins in the same change |
+pub const SAVE_FORMAT_VERSION: u32 = 8;
 
 /// gzip level for the payload document.
 ///
