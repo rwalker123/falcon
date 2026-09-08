@@ -916,6 +916,42 @@ impl<'a> LiveItem<'a> {
         self.effect_entry(stat).map(|effect| effect.tier)
     }
 
+    /// **EVERY [`EquipmentStat::BuildWork`] ENTRY IN THE WINNING LAYER** — the layer rule of
+    /// [`Self::effect_entry`] (grade beats tier beats item) with *all* of that layer's matches
+    /// returned instead of the first.
+    ///
+    /// ⛔ **IT EXISTS BECAUSE `build_work` IS THE ONE STAT WITH A BOUND FINE ENOUGH TO MAKE A SECOND
+    /// ENTRY MEAN SOMETHING.** Every other stat resolves to a single value per unit, so a second
+    /// declaration would be a silently dead line — which is exactly what
+    /// `EquipmentConfig::validate_effect_layer` still rejects for them. A build tool carries
+    /// [`EquipmentEffect::branch`] and [`EquipmentEffect::rung`], and two entries naming **different
+    /// rungs** are two different jobs the same physical tool does: `stone_dressing` is the maul and
+    /// wedges a `route:paved_road` is dressed with **and** the maul and wedges a working face is
+    /// split with (`docs/plan_extraction.md` §6 — *a pick is a pick*). Reading only the first would
+    /// have made widening a binding impossible and forced a second item that was the same three
+    /// tools under another name.
+    ///
+    /// **The bounds still do the excluding**, so this changes nothing for an item declaring one
+    /// entry: every consumer filters on [`EquipmentEffect::serves_build`], and an effect outside its
+    /// bound contributes exactly [`NO_BUILD_GEAR`].
+    pub fn build_work_entries(&self) -> impl Iterator<Item = &'a EquipmentEffect> {
+        let layer = [
+            self.grade.unwrap_or(&[]),
+            &self.tier.effects,
+            &self.item.effects,
+        ]
+        .into_iter()
+        .find(|effects| {
+            effects
+                .iter()
+                .any(|effect| effect.stat == EquipmentStat::BuildWork)
+        })
+        .unwrap_or(&[]);
+        layer
+            .iter()
+            .filter(|effect| effect.stat == EquipmentStat::BuildWork)
+    }
+
     /// **The equipped value this unit declares for a craft stat.** `None` when it says nothing
     /// about it — *present effects apply, absent ones do not*, the same "only declared values
     /// participate" clause [`KitChoice::best_declared`] runs on. A speed-only tool therefore leaves
@@ -997,12 +1033,48 @@ pub enum KitJob {
     /// provisions upkeep, and resolve their kit off the *quarry's* derived default
     /// ([`crate::fauna::quarry_default_hunt_kit`]); they stay on [`KitJob::Hunt`].
     Expedition,
+    /// **THE CREW ON A DEPOSIT** — the `extract` row's job, and the two extraction branches' only
+    /// one (`docs/plan_extraction.md` §6).
+    ///
+    /// **One job for BOTH branches**, matching the row: what the crew is doing is taking a material
+    /// out of the ground, and which of the two skills that is, is the deposit's
+    /// (`extraction_config::DepositDef::branch`).
+    ///
+    /// **There is deliberately no BUILD job beside it and no KEEPING job either** — the builders'
+    /// pool raises a working and this branch's keeping is [`KitJob::Builders`]'s twin over on the
+    /// keeping side, both of which already exist. What this job names is the *take*.
+    ///
+    /// **The shipped roster declares no take gear, so `default_kits.extract` is the empty `none`
+    /// kit** — the same opening [`KitJob::Roadwork`] has. Forestry's natural tool is an axe and it
+    /// would be bone-hafted while stone tools are out of scope (§9); the two quarry tools that do
+    /// ship declare `build_work`, which is the pool that *raises* a working. The day a felling axe
+    /// declares a take stat, this job is what it names.
+    ///
+    /// **Its token is `extract`, not `extraction`** — the same string
+    /// [`crate::components::LaborTarget::kind`] publishes for the row
+    /// ([`crate::components::EXTRACT_ROLE_KEY`]), because a kit's `jobs` list and a labor role are
+    /// compared in one language. The *variant* is named for the branch pair it serves.
+    #[serde(rename = "extract")]
+    Extraction,
+    /// **THE BAND'S WORKING KEEPERS** — the `quarrywork` role's job, and the deposit branches' twin
+    /// of [`KitJob::Agriculture`] / [`KitJob::Husbandry`] / [`KitJob::Roadwork`]
+    /// (`docs/plan_extraction.md` §6).
+    ///
+    /// **One job for both branches**, matching the one role: holding a face open and clearing what
+    /// has fallen is one job, and which ladder the deposit is on is the deposit's.
+    ///
+    /// ⛔ **IT IS SPLIT FROM [`KitJob::Extraction`] EVEN THOUGH BOTH SHIP BARE**, on
+    /// [`KitJob::Agriculture`]'s stated reason: **gear covers people**, so sharing a job with the
+    /// take row would divide whatever a future felling axe arms among hands that are not cutting.
+    /// The split is free to make while both defaults are the empty `none` kit and would be a
+    /// migration afterwards.
+    Quarrywork,
 }
 
 impl KitJob {
     /// Every job, for the validations and the wire — one list, so a new job cannot be validated in
     /// three places and forgotten in a fourth.
-    pub const ALL: [KitJob; 9] = [
+    pub const ALL: [KitJob; 11] = [
         KitJob::Hunt,
         KitJob::Forage,
         KitJob::Scout,
@@ -1012,6 +1084,8 @@ impl KitJob {
         KitJob::Builders,
         KitJob::Roadwork,
         KitJob::Expedition,
+        KitJob::Extraction,
+        KitJob::Quarrywork,
     ];
 
     /// The wire/command token for this job — the same string `assign_labor`'s role token uses (and
@@ -1028,6 +1102,10 @@ impl KitJob {
             KitJob::Builders => "builders",
             KitJob::Roadwork => "roadwork",
             KitJob::Expedition => "expedition",
+            // The same token `LaborTarget::kind` answers for the row — `components::EXTRACT_ROLE_KEY`.
+            KitJob::Extraction => "extract",
+            // The same token `LaborTarget::kind` answers for the role — `components::QUARRYWORK_ROLE_KEY`.
+            KitJob::Quarrywork => "quarrywork",
         }
     }
 }
@@ -1080,6 +1158,17 @@ pub struct DefaultKitsConfig {
     /// above, this one is NOT `none`: a party out of contact with its band that cannot gather and
     /// cannot hunt has no way at all to replace what it eats.
     pub expedition: String,
+    /// **The deposit crews' default: nothing.** The shipped roster declares no *take* gear on either
+    /// extraction branch, so the `extract` row opens bare like the keeping roles above it — and that
+    /// is load-bearing rather than a gap: **the free floor of both branches has to be workable
+    /// bare-handed** or the material economy could never start (`docs/plan_extraction.md` §4d — a
+    /// felling kit wants a haft, a haft is wood, and wood comes from felling). The two quarry tools
+    /// that ship declare `build_work` and land on the builders' pool, not here.
+    pub extract: String,
+    /// **The working keepers' default: nothing.** The shipped roster declares no keeping gear on
+    /// either deposit branch, so the `quarrywork` role opens bare like the three keeping roles above
+    /// it. The day a felling axe or a propping set declares a stat, this row is where it lands.
+    pub quarrywork: String,
 }
 
 /// **What the kit is being resolved AGAINST** — the argument a mass-bounded effect is tested on.
@@ -1330,7 +1419,7 @@ impl KitChoice {
         rung: Option<&str>,
     ) -> Option<(f32, crate::intensification::RungBranch)> {
         self.live_items(wear, config)
-            .filter_map(|item| item.effect_entry(EquipmentStat::BuildWork))
+            .flat_map(|item| item.build_work_entries())
             .filter(|effect| effect.serves_build(branch, rung))
             .map(|effect| effect.tier.value())
             .fold(None::<f32>, |best, value| {
@@ -1607,6 +1696,11 @@ impl EquipmentConfig {
             crate::intensification::RungBranch::Plant => KitJob::Agriculture,
             crate::intensification::RungBranch::Animal => KitJob::Husbandry,
             crate::intensification::RungBranch::Route => KitJob::Roadwork,
+            // **Both deposit branches keep through one role**, exactly as they take through one:
+            // holding a working is holding a working, and the roster carries no gear that would tell
+            // a woodward's hands from a quarryman's.
+            crate::intensification::RungBranch::Forestry
+            | crate::intensification::RungBranch::Extraction => KitJob::Quarrywork,
         }
     }
 
@@ -1725,8 +1819,8 @@ impl EquipmentConfig {
             .iter()
             .filter(|item| {
                 self.live_item(item, wear).is_some_and(|live| {
-                    live.effect_entry(EquipmentStat::BuildWork)
-                        .is_some_and(|effect| effect.serves_build(branch, rung))
+                    live.build_work_entries()
+                        .any(|effect| effect.serves_build(branch, rung))
                 })
             })
             .cloned()
@@ -2019,6 +2113,8 @@ impl EquipmentConfig {
             KitJob::Builders => &self.default_kits.builders,
             KitJob::Roadwork => &self.default_kits.roadwork,
             KitJob::Expedition => &self.default_kits.expedition,
+            KitJob::Extraction => &self.default_kits.extract,
+            KitJob::Quarrywork => &self.default_kits.quarrywork,
         }
     }
 
@@ -2523,7 +2619,7 @@ impl EquipmentConfig {
         wear: &crate::components::BandEquipment,
     ) -> Option<(f32, crate::intensification::RungBranch, Option<String>)> {
         kit.live_items(wear, self)
-            .filter_map(|item| item.effect_entry(EquipmentStat::BuildWork))
+            .flat_map(|item| item.build_work_entries())
             .filter_map(|effect| Some((effect.tier.value(), effect.branch?, effect.rung.clone())))
             .fold(None::<(f32, _, _)>, |best, found| {
                 Some(match best {
@@ -2591,13 +2687,14 @@ impl EquipmentConfig {
             .iter()
             .filter_map(|item| {
                 let live = self.live_item(item, wear)?;
-                let effect = live.effect_entry(EquipmentStat::BuildWork)?;
                 // `>=` rather than `==` because `worth` IS one of these values by construction — the
                 // comparison is a "did this item set the maximum" test, not float equality.
-                (effect.serves_build(branch, rung) && effect.tier.value() >= worth).then(|| {
-                    wear.live_units(item, self)
-                        .saturating_mul(live.item.workers_per_unit)
-                })
+                live.build_work_entries()
+                    .any(|effect| effect.serves_build(branch, rung) && effect.tier.value() >= worth)
+                    .then(|| {
+                        wear.live_units(item, self)
+                            .saturating_mul(live.item.workers_per_unit)
+                    })
             })
             .max()
             .unwrap_or(NO_SATURATING_CREW)
@@ -2911,10 +3008,23 @@ impl EquipmentConfig {
                     value: value.to_string(),
                 });
             }
-            if effects[..index]
-                .iter()
-                .any(|prior| prior.stat == effect.stat)
-            {
+            // ⛔ **A SECOND `build_work` IS LEGAL IF IT NAMES A DIFFERENT RUNG, AND NOTHING ELSE
+            // IS.** The rule this narrows is *"a stat declared twice in one layer is a silently
+            // dead line"*, which holds for every stat resolved through
+            // [`LiveItem::effect_entry`] — first match wins. `build_work` is not one of them:
+            // [`LiveItem::build_work_entries`] sweeps the whole layer and every consumer then
+            // filters on [`EquipmentEffect::serves_build`], so two entries bound to **different**
+            // rungs are two different jobs one physical tool does. Two entries that could both
+            // serve the same build are still a dead line and are still refused, which is what keeps
+            // the per-worker SUM the `rung` bound exists to protect.
+            let shadowed = effects[..index].iter().any(|prior| {
+                prior.stat == effect.stat
+                    && (effect.stat != EquipmentStat::BuildWork
+                        || prior.rung.is_none()
+                        || effect.rung.is_none()
+                        || prior.rung == effect.rung)
+            });
+            if shadowed {
                 return Err(EquipmentConfigError::InvalidRoster {
                     reason: format!("{field} declares the same stat twice"),
                 });
@@ -4486,7 +4596,7 @@ mod tests {
         );
     }
 
-    /// ⛔ **EVERY CREW-BUILT RUNG HAS A BUILDERS KIT, AND THAT KIT SERVES NO OTHER WEB.**
+    /// ⛔ **NO CREW-BUILT RUNG'S KIT GOES MISSING, AND NO KIT REACHES A RUNG IT DID NOT NAME.**
     ///
     /// The replacement for *"every kit that supplies `build_work` offers the `builders` job"*, which
     /// stopped being the invariant when `husbandry` kept the handling gear and gave up building: a
@@ -4504,10 +4614,27 @@ mod tests {
     /// `build_kit_for_branch(Route, None)` and got `None` — a roster whose kits exist reported as a
     /// roster with none. Asking per rung is the question the turn itself asks.
     ///
-    /// **The cross-check is ACROSS BRANCHES only.** Within a branch, a tool that names no rung
-    /// serves all of them on purpose (hoes raise a Cultivate and a Sow alike); the *route* pair's
-    /// within-branch exclusivity is
+    /// **The cross-check is over the rungs a kit did NOT name, and that is a widening of what it
+    /// used to be.** It read *"a build tool serves one web"* and swept every rung on every **other**
+    /// branch — which stopped being the invariant the day one item was bound to two branches:
+    /// `stone_dressing` is the maul and wedges that split stone out of a face, so it serves
+    /// `route:paved_road` **and** `extraction:quarry` (`docs/plan_extraction.md` §6 — *a pick is a
+    /// pick*, and widening a binding beats minting an item). What must never happen is a kit
+    /// silently reaching a rung nobody bound it to, which is what `branch` and `rung` exist to
+    /// prevent, so the exclusion is now *"every rung this kit does not declare"* rather than *"every
+    /// rung off this branch"*. Within a branch, a tool that names no rung serves all of them on
+    /// purpose (hoes raise a Cultivate and a Sow alike); the *route* pair's within-branch
+    /// exclusivity is
     /// [`each_route_rung_derives_its_own_kit_and_the_other_rungs_tool_is_worth_nothing`].
+    ///
+    /// ⛔ **AND A BRANCH MAY SHIP WHOLLY KITLESS, WHICH IS WHY THE MISSING-KIT ARM IS A FORK.**
+    /// `forestry` does: its natural tool is an axe, a bone-hafted axe while stone tools are out of
+    /// scope sits oddly, and shipping the branch bare is the recorded decision
+    /// (`docs/plan_extraction.md` §9). The failure this test exists to catch is a **partial**
+    /// roster — one rung's kit gone missing while its siblings keep theirs, after which every build
+    /// there silently falls back to `default_kits.builders` (`none`) for the rest of the game. So a
+    /// rung with no kit is only legal where **nothing at all** serves its branch, which is a fact
+    /// about the roster that no single edit can create by accident.
     #[test]
     fn every_crew_built_rung_has_a_builders_kit_that_serves_no_other_web() {
         use crate::intensification::RungKey;
@@ -4524,14 +4651,23 @@ mod tests {
         for rung in &crew_built {
             let branch = rung.branch();
             let key = rung.wire_key();
-            let kit = config
-                .build_kit_for_branch(branch, Some(&key))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "the shipped roster must carry a builders kit serving {key}, or the pool \
-                         falls back to `none` and every build there is bare-handed"
-                    )
-                });
+            let Some(kit) = config.build_kit_for_branch(branch, Some(&key)) else {
+                // **A wholly kitless branch is legal; a half-kitted one is not.** If anything on
+                // this branch is served, this rung's kit has gone missing and its builds are bare.
+                for sibling in crew_built.iter().filter(|other| other.branch() == branch) {
+                    assert!(
+                        config
+                            .build_kit_for_branch(branch, Some(&sibling.wire_key()))
+                            .is_none(),
+                        "no builders kit serves {key} while '{}' serves {} on the same branch — a \
+                         rung whose kit went missing falls back to `none` and every build there is \
+                         bare-handed for the rest of the game",
+                        sibling.wire_key(),
+                        sibling.wire_key()
+                    );
+                }
+                continue;
+            };
             assert!(
                 config
                     .kit_definition(kit.id())
@@ -4546,20 +4682,24 @@ mod tests {
                 "**LIVENESS**: '{}' must actually take work off a {key} build",
                 kit.id()
             );
-            // **Every rung on every OTHER ladder.** A build tool serves one web; a hoe brought to a
-            // `Tame` or to a `grade` takes nothing off either.
-            for other in crew_built.iter().filter(|other| other.branch() != branch) {
+            // **Every rung this kit did not name.** A build tool reaches the rungs it declares and
+            // nothing else — whether the rung it did not declare is on this branch or another one.
+            for other in crew_built.iter().filter(|other| **other != *rung) {
+                let other_key = other.wire_key();
+                if config
+                    .build_kit_for_branch(other.branch(), Some(&other_key))
+                    .is_some_and(|serving| serving.id() == kit.id())
+                {
+                    // The same kit is this rung's answer too — a widened binding, which is the
+                    // point of the two road tools being reused.
+                    continue;
+                }
                 assert_eq!(
-                    config.build_work_per_worker(
-                        &kit,
-                        &fresh,
-                        other.branch(),
-                        Some(&other.wire_key())
-                    ),
+                    config.build_work_per_worker(&kit, &fresh, other.branch(), Some(&other_key)),
                     NO_BUILD_GEAR,
-                    "'{}' is {key}'s kit and must take nothing off a {} build",
-                    kit.id(),
-                    other.wire_key()
+                    "'{}' is {key}'s kit and does not declare {other_key}, so it must take nothing \
+                     off that build",
+                    kit.id()
                 );
             }
         }
@@ -4926,7 +5066,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "big_game", "display_name": "B", "jobs": ["hunt"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4936,7 +5076,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": [], "uses": [] }
                 ],
-                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
+                "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4946,7 +5086,7 @@ mod tests {
                 r#""kits": [
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
+                "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4957,7 +5097,7 @@ mod tests {
                     { "id": "big_game", "display_name": "A", "jobs": ["hunt"], "uses": [] },
                     { "id": "gathering", "display_name": "B", "jobs": ["forage"], "uses": [] }
                 ],
-                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" , "roadwork": "gathering", "expedition": "gathering" },
+                "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" , "roadwork": "gathering", "expedition": "gathering", "extract": "gathering", "quarrywork": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -4987,7 +5127,7 @@ mod tests {
             r#""kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["net_kit"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
@@ -5037,9 +5177,9 @@ mod tests {
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
-                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders", "roadwork", "expedition"], "uses": ["snares"] }
+                { "id": "warrior", "display_name": "W", "jobs": ["warrior", "scout", "agriculture", "husbandry", "builders", "roadwork", "expedition", "extract", "quarrywork"], "uses": ["snares"] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" , "roadwork": "warrior", "expedition": "warrior" },
+            "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" , "roadwork": "warrior", "expedition": "warrior", "extract": "warrior", "quarrywork": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
@@ -5061,7 +5201,7 @@ mod tests {
                 { "id": "gathering", "display_name": "Gathering kit", "jobs": ["forage"], "uses": ["baskets"] },
                 { "id": "none", "display_name": "No kit", "jobs": ["hunt", "forage", "scout", "warrior", "agriculture", "husbandry", "builders", "expedition"], "uses": [] }
             ],
-            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" , "roadwork": "none", "expedition": "none" },
+            "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" , "roadwork": "none", "expedition": "none", "extract": "none", "quarrywork": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
             "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;

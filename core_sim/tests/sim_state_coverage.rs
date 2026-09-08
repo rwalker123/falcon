@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 42] = [
+const SIM_STATE_RESOURCES: [&str; 43] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -72,6 +72,11 @@ const SIM_STATE_RESOURCES: [&str; 42] = [
     "FactionInventory",
     // Mutated only by command handlers, which is still state a rollback has to put back.
     "FactionSecurityPolicies",
+    // The live workings on the two deposit branches. **The stock is the only irrecoverable thing
+    // in it** — a deposit's capacity, its rate and its material's characteristics are all pure
+    // functions of the tile and are re-read every turn — but how much has been taken out of one, and
+    // how far up the ladder it has been raised, nothing can recompute.
+    "DepositRegistry",
     "ForageRegistry",
     "GrazeRegistry",
     "GreatDiscoveryLedger",
@@ -283,11 +288,13 @@ const CONFIG_RESOURCES: [&str; 44] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 21] = [
+const CONFIG_RESOURCES_CONT: [&str; 23] = [
     "ConnectionsConfigHandle",
     "ConnectionsConfigMetadata",
     "EquipmentConfigHandle",
     "EquipmentConfigMetadata",
+    "ExtractionConfigHandle",
+    "ExtractionConfigMetadata",
     "MaterialsConfigHandle",
     "MaterialsConfigMetadata",
     "RecipesConfigHandle",

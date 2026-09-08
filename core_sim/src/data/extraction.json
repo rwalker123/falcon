@@ -1,0 +1,450 @@
+{
+  "_comment": "THE DEPOSITS (docs/plan_extraction.md 2). A DEPOSIT IS A STOCK WITH A CAPACITY AND A REGROWTH RATE, AND ROCK'S RATE IS ZERO. There is no `is_finite` flag, no finite-deposit branch and no special case anywhere: with `regrowth_rate: 0.0` the growth term returns the stock unchanged, so 'a quarry only ever goes down' is ARITHMETIC rather than a rule somebody has to remember not to break. That is the whole reason this file has the shape it has - a metal is a deposit and a config row, not a second system. It is also why REGROWTH IS PER TERRAIN AND NOT PER MATERIAL AND NOT PER BRANCH: a plains flint scatter and a highland quarry are the same branch and the same material, and only one of them runs out (plan_extraction.md 3, the falsifier that killed the renewable-versus-finite branch split).",
+  "_comment_capacity": "CAPACITY IS A PURE FUNCTION OF THE TILE, NEVER SAVED STATE - forage.capacity_by_biome's own rule (labor_config.json), read through ONE function (extraction::tile_deposit_capacity) so the seeding path and any future wire path cannot drift. Nothing about a deposit lands in `Tile` and nothing lands in `WorldStatics`; the ONLY saved state is the stock, and it starts at capacity. A RUNG MAY NEVER RAISE IT (plan_standing_upkeep.md 6 - the floor trap): the extraction floor is `(1 - recovery_fraction) x capacity`, so a capacity that climbed with the rung would drag the floor up under a working that was already standing on it, exactly as a rung that raised a herd's K starved the tame that was building on it. no_rung_on_either_branch_may_raise_capacity is the test that keeps it true.",
+  "_comment_absence": "A TERRAIN ABSENT FROM `by_terrain` HAS NO DEPOSIT OF THAT MATERIAL - capacity 0, no source can be seeded there, and the verb is refused there. ABSENCE IS THE ANSWER; there is no `enabled` flag and no parked `0.0` row, on materials.json's own reasoning that a dial reading zero looks like a tuning value and behaves as nothing. Every water terrain is absent from both tables for that reason and not by omission: a navigable river hex is water, and you fell no timber and cut no rock in it. The read is on the tile's OWN terrain, never its `resource_terrain()` underlay - a deposit is a thing on the ground of the hex, so a navigable river does not inherit the wood of the valley it cut, which is exactly where tile_forage_capacity's fishery bonus DOES belong and this does not.",
+  "_comment_characteristics": "A SOURCE STATES THE CHARACTERISTICS OF WHAT IT YIELDS, exactly as a fauna or flora yield edge does (materials.json), and the axes here MUST be the two that material declares - wood hardness/pliancy, stone hardness/workability. Load rejects any other key, because materials.json's own rule is that a material must be RATED to exist. THE RATINGS RIDE THE TERRAIN ROW rather than sitting in a parallel axis-major table, so a terrain's capacity, its rate and its ratings are one record and cannot drift out of step with one another. NOTHING READS EITHER MATERIAL'S AXES TODAY AND THAT IS DELIBERATE (plan_extraction.md 5b): what will read them is a RECIPE - a spear point wants stone that knaps (workability), a road wants stone that bears load (hardness) - and stone tools are out of this arc's scope. An IMPROVEMENT reading an axis stays deferred; a road takes 20 stone, any stone. THE READINGS ARE THEREFORE THE PROVISIONAL HALF OF THIS FILE and are authored for the shape the pair is meant to have - genuinely opposed, no best deposit - rather than tuned against a consumer that does not exist. WHAT THE PAIRS MEAN: a hard wood resists and holds an edge, a pliant one bends and weaves without breaking, so oak woodland is hard/stiff and marsh withy is soft/supple; a hard stone bears load and dresses badly, a workable one knaps and dresses clean and wears out under traffic, so basalt is hard/unworkable and river cobble is the knapping stone.",
+  "_comment_regrowth": "THE RATE IS THE ONE DIAL THAT DECIDES RENEWABLE FROM FINITE, and it is a property of the DEPOSIT. Wood regrows everywhere it grows at all; rock's rate is 0.0 on every rock body, and a scatter of loose stone carries a small POSITIVE rate because frost, flood and weathering keep turning more of it up - which is what makes knapping stone available nearly anywhere and unable to run the map dry, while stone for ROADS still needs a quarry. The rate is the growth coefficient of the same logistic curve the two food webs use (fauna::logistic_regrowth), so it reads as a fraction of the standing stock per turn at low stock and tapers to nothing at capacity. Wood rates are authored so a mature stand replaces itself on the order of a human lifetime of turns rather than a season: 0.03 on mixed woodland peaks at 0.03 x 600 / 4 = 4.5 wood a turn, which one felling crew of three matches almost exactly - the point at which management, not effort, is what buys more. PROVISIONAL OPENING VALUES, chosen for shape and not for balance.",
+  "_comment_seed_fraction": "WHAT A DEPOSIT REGROWS FROM WHEN IT HAS BEEN TAKEN TO NOTHING. The logistic term is zero at a stock of zero, so a wood cut clean would stick at zero for ever - the same trap forage.reseed_floor_fraction exists to close for a stripped patch. IT MAY NOT BE A LIFT ON THE STOCK THE WAY THE PLANT WEB'S IS: a `max(stock, fraction x capacity)` would raise a QUARRY off zero and break the one invariant this whole file is built on. So the seed is evaluated INSIDE the growth term instead - the curve is read at `stock + seed_fraction x capacity` and the delta is added to the real stock - which means it is multiplied by the deposit's own rate and a rate of zero seeds exactly nothing. Rock stays monotonically non-increasing by the same arithmetic that makes everything else on this branch work. 0.02 of capacity is the smallest seed that recovers a cleared wood in a bearable number of turns; PROVISIONAL.",
+  "seed_fraction": 0.02,
+  "_comment_stone_by_terrain": "TWO POPULATIONS IN ONE TABLE, AND THE RATE IS THE ONLY THING THAT SEPARATES THEM. The rock bodies - mountain, plateau, karst, badlands, lava, the crater and cavern country - carry capacities in the low thousands at rate 0.0: they are worked out, never renewed, and a quarry is the only rung that reaches most of one. THE RATE IS WHAT SPLITS THE TWO POPULATIONS AND THE THRESHOLD FOLLOWS IT: extraction:quarry's `min_deposit_capacity` of 100 sits in the gap between the smallest finite row (an ash plain at 120) and the largest renewing one (a periglacial 70), so EVERY rate-0 row is quarryable and no scatter is. That is not a tuning choice - a rate-0 row below the threshold is a dead work site that still accepts a crew, since its stock never returns and the rung that would reach deeper is refused for ever. Everything else carries TENS of units at a small positive rate - loose stone the ground keeps turning up - which is what makes knapping flint available nearly anywhere. SIZED AGAINST THE ONE CONSUMER: a paved road tile eats 20 stone plus 0.1667 a turn to hold, so a 900-unit hill quarry at extraction:quarry's 0.85 recovery yields 765 - about 38 paved tiles - and a 40-unit steppe scatter at extraction:gathering's 0.15 recovery yields 6 before it is down to its floor and living on its own regrowth of about a tenth of a unit a turn. PROVISIONAL OPENING VALUES.",
+  "_comment_wood_by_terrain": "STANDING TIMBER, AND EVERY ROW REGROWS - there is no rate of 0.0 anywhere in this table, which is the other half of what the shared model buys: the same three dials describe a wood and a quarry, and only the numbers differ. Capacity is what the land supports at maturity, so a closed woodland canopy carries 600 and a few stands along a steppe draw carry 25; the wet rows (marsh, delta, floodplain) carry LESS timber than the woodland but regrow fastest, because withy and willow are cut and back in three years. SIZED AGAINST THE THREE CONSUMERS: a pen is 24 wood (6 hurdles x 4 wood each), each of the two road tools is 3 wood, and opening an extraction:quarry is timbered with 8 wood of props, ramps and sleds. So a mixed woodland at forestry:felling's 2.0 a worker-turn pays a pen in 12 worker-turns and ONE road tool in under two, while the same wood at the free floor's 0.3 pays them in 80 and 10 - the free floor is a real producer and a slow one, which is what makes the felling rung worth its 60 units of work. PROVISIONAL OPENING VALUES.",
+  "deposits": {
+    "stone": {
+      "branch": "extraction",
+      "capacity_per_keeper": 3000.0,
+      "by_terrain": {
+        "AlpineMountain": {
+          "capacity": 4200.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.9,
+            "workability": 0.2
+          }
+        },
+        "KarstHighland": {
+          "capacity": 3000.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.45,
+            "workability": 0.8
+          }
+        },
+        "BasalticLavaField": {
+          "capacity": 2600.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.95,
+            "workability": 0.1
+          }
+        },
+        "HighPlateau": {
+          "capacity": 2500.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.75,
+            "workability": 0.35
+          }
+        },
+        "CanyonBadlands": {
+          "capacity": 2200.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.5,
+            "workability": 0.6
+          }
+        },
+        "ActiveVolcanoSlope": {
+          "capacity": 1800.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.85,
+            "workability": 0.15
+          }
+        },
+        "KarstCavernMouth": {
+          "capacity": 1600.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.45,
+            "workability": 0.8
+          }
+        },
+        "ImpactCraterField": {
+          "capacity": 1400.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.8,
+            "workability": 0.3
+          }
+        },
+        "RockyReg": {
+          "capacity": 1200.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.7,
+            "workability": 0.4
+          }
+        },
+        "SinkholeField": {
+          "capacity": 1200.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.45,
+            "workability": 0.75
+          }
+        },
+        "RollingHills": {
+          "capacity": 900.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.6,
+            "workability": 0.5
+          }
+        },
+        "AquiferCeiling": {
+          "capacity": 600.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.4,
+            "workability": 0.7
+          }
+        },
+        "FumaroleBasin": {
+          "capacity": 300.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.8,
+            "workability": 0.2
+          }
+        },
+        "AshPlain": {
+          "capacity": 120.0,
+          "regrowth_rate": 0.0,
+          "characteristics": {
+            "hardness": 0.25,
+            "workability": 0.85
+          }
+        },
+        "PeriglacialSteppe": {
+          "capacity": 70.0,
+          "regrowth_rate": 0.015,
+          "characteristics": {
+            "hardness": 0.65,
+            "workability": 0.7
+          }
+        },
+        "Tundra": {
+          "capacity": 60.0,
+          "regrowth_rate": 0.012,
+          "characteristics": {
+            "hardness": 0.65,
+            "workability": 0.7
+          }
+        },
+        "SemiAridScrub": {
+          "capacity": 55.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.6,
+            "workability": 0.8
+          }
+        },
+        "BorealTaiga": {
+          "capacity": 45.0,
+          "regrowth_rate": 0.018,
+          "characteristics": {
+            "hardness": 0.7,
+            "workability": 0.55
+          }
+        },
+        "SeasonalSnowfield": {
+          "capacity": 40.0,
+          "regrowth_rate": 0.01,
+          "characteristics": {
+            "hardness": 0.7,
+            "workability": 0.4
+          }
+        },
+        "PrairieSteppe": {
+          "capacity": 40.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.55,
+            "workability": 0.85
+          }
+        },
+        "MixedWoodland": {
+          "capacity": 35.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.55,
+            "workability": 0.85
+          }
+        },
+        "PeatHeath": {
+          "capacity": 30.0,
+          "regrowth_rate": 0.015,
+          "characteristics": {
+            "hardness": 0.6,
+            "workability": 0.7
+          }
+        },
+        "Floodplain": {
+          "capacity": 30.0,
+          "regrowth_rate": 0.04,
+          "characteristics": {
+            "hardness": 0.5,
+            "workability": 0.9
+          }
+        },
+        "AlluvialPlain": {
+          "capacity": 25.0,
+          "regrowth_rate": 0.03,
+          "characteristics": {
+            "hardness": 0.5,
+            "workability": 0.9
+          }
+        },
+        "TidalFlat": {
+          "capacity": 25.0,
+          "regrowth_rate": 0.03,
+          "characteristics": {
+            "hardness": 0.55,
+            "workability": 0.85
+          }
+        },
+        "RiverDelta": {
+          "capacity": 20.0,
+          "regrowth_rate": 0.04,
+          "characteristics": {
+            "hardness": 0.45,
+            "workability": 0.9
+          }
+        },
+        "OasisBasin": {
+          "capacity": 20.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.6,
+            "workability": 0.7
+          }
+        },
+        "HotDesertErg": {
+          "capacity": 10.0,
+          "regrowth_rate": 0.008,
+          "characteristics": {
+            "hardness": 0.6,
+            "workability": 0.6
+          }
+        },
+        "FreshwaterMarsh": {
+          "capacity": 8.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.5,
+            "workability": 0.8
+          }
+        },
+        "MangroveSwamp": {
+          "capacity": 5.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.45,
+            "workability": 0.85
+          }
+        },
+        "SaltFlat": {
+          "capacity": 5.0,
+          "regrowth_rate": 0.01,
+          "characteristics": {
+            "hardness": 0.4,
+            "workability": 0.6
+          }
+        }
+      }
+    },
+    "wood": {
+      "branch": "forestry",
+      "capacity_per_keeper": 600.0,
+      "by_terrain": {
+        "MixedWoodland": {
+          "capacity": 600.0,
+          "regrowth_rate": 0.03,
+          "characteristics": {
+            "hardness": 0.75,
+            "pliancy": 0.35
+          }
+        },
+        "BorealTaiga": {
+          "capacity": 450.0,
+          "regrowth_rate": 0.015,
+          "characteristics": {
+            "hardness": 0.35,
+            "pliancy": 0.55
+          }
+        },
+        "MangroveSwamp": {
+          "capacity": 250.0,
+          "regrowth_rate": 0.03,
+          "characteristics": {
+            "hardness": 0.6,
+            "pliancy": 0.5
+          }
+        },
+        "RollingHills": {
+          "capacity": 180.0,
+          "regrowth_rate": 0.025,
+          "characteristics": {
+            "hardness": 0.65,
+            "pliancy": 0.45
+          }
+        },
+        "Floodplain": {
+          "capacity": 150.0,
+          "regrowth_rate": 0.05,
+          "characteristics": {
+            "hardness": 0.2,
+            "pliancy": 0.85
+          }
+        },
+        "RiverDelta": {
+          "capacity": 120.0,
+          "regrowth_rate": 0.05,
+          "characteristics": {
+            "hardness": 0.15,
+            "pliancy": 0.9
+          }
+        },
+        "KarstHighland": {
+          "capacity": 120.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.7,
+            "pliancy": 0.3
+          }
+        },
+        "AlluvialPlain": {
+          "capacity": 100.0,
+          "regrowth_rate": 0.04,
+          "characteristics": {
+            "hardness": 0.3,
+            "pliancy": 0.75
+          }
+        },
+        "FreshwaterMarsh": {
+          "capacity": 90.0,
+          "regrowth_rate": 0.055,
+          "characteristics": {
+            "hardness": 0.1,
+            "pliancy": 0.95
+          }
+        },
+        "OasisBasin": {
+          "capacity": 80.0,
+          "regrowth_rate": 0.03,
+          "characteristics": {
+            "hardness": 0.35,
+            "pliancy": 0.65
+          }
+        },
+        "AquiferCeiling": {
+          "capacity": 70.0,
+          "regrowth_rate": 0.03,
+          "characteristics": {
+            "hardness": 0.4,
+            "pliancy": 0.6
+          }
+        },
+        "PeatHeath": {
+          "capacity": 60.0,
+          "regrowth_rate": 0.012,
+          "characteristics": {
+            "hardness": 0.4,
+            "pliancy": 0.6
+          }
+        },
+        "KarstCavernMouth": {
+          "capacity": 60.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.6,
+            "pliancy": 0.4
+          }
+        },
+        "AlpineMountain": {
+          "capacity": 50.0,
+          "regrowth_rate": 0.01,
+          "characteristics": {
+            "hardness": 0.55,
+            "pliancy": 0.4
+          }
+        },
+        "SinkholeField": {
+          "capacity": 45.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.55,
+            "pliancy": 0.45
+          }
+        },
+        "HighPlateau": {
+          "capacity": 40.0,
+          "regrowth_rate": 0.012,
+          "characteristics": {
+            "hardness": 0.5,
+            "pliancy": 0.4
+          }
+        },
+        "SemiAridScrub": {
+          "capacity": 40.0,
+          "regrowth_rate": 0.01,
+          "characteristics": {
+            "hardness": 0.7,
+            "pliancy": 0.2
+          }
+        },
+        "ImpactCraterField": {
+          "capacity": 30.0,
+          "regrowth_rate": 0.015,
+          "characteristics": {
+            "hardness": 0.5,
+            "pliancy": 0.5
+          }
+        },
+        "PrairieSteppe": {
+          "capacity": 25.0,
+          "regrowth_rate": 0.02,
+          "characteristics": {
+            "hardness": 0.45,
+            "pliancy": 0.6
+          }
+        },
+        "PeriglacialSteppe": {
+          "capacity": 20.0,
+          "regrowth_rate": 0.006,
+          "characteristics": {
+            "hardness": 0.3,
+            "pliancy": 0.7
+          }
+        },
+        "CanyonBadlands": {
+          "capacity": 15.0,
+          "regrowth_rate": 0.01,
+          "characteristics": {
+            "hardness": 0.65,
+            "pliancy": 0.25
+          }
+        },
+        "Tundra": {
+          "capacity": 15.0,
+          "regrowth_rate": 0.005,
+          "characteristics": {
+            "hardness": 0.25,
+            "pliancy": 0.8
+          }
+        }
+      }
+    }
+  },
+  "_comment_capacity_per_keeper": "HOW MUCH OF A DEPOSIT ONE KEEPER LOOKS AFTER - the divisor that turns a tile's own capacity into the KEEPER-LOADS both branches' rungs quote their upkeep.work_per_turn per, and the per-material twin of fauna_config's animals_per_herder and labor_config's capacity_per_tender: THE WEB OWNS THE RATIO, THE RUNG OWNS THE RATE. Each is ANCHORED ON A REFERENCE TERRAIN'S OWN CAPACITY, which is what makes the move onto the scale provably pacing-neutral there, exactly as 195.0 is AlluvialPlain's own K. Wood's 600 is MixedWoodland's - the reference forest - so a felling working on closed woodland is exactly 1.0 load and owes exactly the rung's declared rate, while a Tundra stand of dwarf willow (15) is 0.025 of a load and costs essentially nothing to hold, which is right. Stone's 3000 is KarstHighland's - limestone, the classic quarry stone, and the middle of the rock bodies - so a karst quarry is 1.0 load, rolling hills (900) is 0.3 and an alpine mountain (4200) is 1.4. THE MEASURE IS DELIBERATELY POSITION-FREE AND CAPACITY IS THE TERRAIN'S: the obvious alternative, 'how much of the deposit this rung can reach', interpolates on the ladder position and so does work_per_turn, and multiplying both is the compounding capacity_per_tender's own note exists to prevent. PLAYTEST DIALS."
+}

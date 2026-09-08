@@ -33,12 +33,12 @@ use core_sim::{
     species_stands_in, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
     BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
     BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget,
-    LadderConfigHandle, LocalStore, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand,
-    RungKey, SiteRefusal, SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    TakeSelection, TransferLink, UpkeepFundMode, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR,
-    NO_FORAGE_SEASON,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle,
+    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
+    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority, SpeciesRefusal,
+    StartProfile, StartProfileOverrides, TakeSelection, TransferLink, UpkeepFundMode,
+    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -2672,12 +2672,19 @@ fn seed_source_yield(
                 range_sigmas,
             )
         }
+        // ⛔ **A DEPOSIT PAYS NO FOOD, SO THERE IS NO FOOD ROW TO SEED** — and that is the whole
+        // of `docs/plan_extraction.md` §6, restated where a forecast would otherwise invent one.
+        // `SourceYield` is the *food* readout; what a working pays is a material, and the turn
+        // reports that through the row's `materials` rather than through a projected `actual`. A
+        // seeded zero here would put a permanent `+0.00` food line on every working the band holds.
+        LaborTarget::Extract { .. } => return,
         // A band-wide role produces no per-source yield, so there is no row to seed.
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
@@ -2772,11 +2779,44 @@ fn validate_labor_policy(
             };
             validate_species_selection(app, *tile, Some(named), RungKey::PlantTended)
         }
+        // **IS THERE ANYTHING HERE TO WORK?** — the deposit branches' one stance rule, and it is
+        // `absence is the answer` enforced at the command: a terrain carrying no row in
+        // `extraction.json`'s `by_terrain` holds none of that material, so there is no working to
+        // open and no crew to put on it. That is *also* what refuses the free floor on bare ground,
+        // which is why neither rung 1 carries a `site_requirement` (a floor of ~0 admits every tile
+        // and reads as a placement rule while being none).
+        LaborTarget::Extract { tile, material } => {
+            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+            if extraction.deposit(material).is_none() {
+                return Err(format!(
+                    "'{material}' is not something that comes out of the ground. Your people can \
+                     work wood and stone."
+                ));
+            }
+            let capacity = app
+                .world
+                .resource::<TileRegistry>()
+                .index(tile.x, tile.y)
+                .and_then(|entity| app.world.get::<Tile>(entity))
+                .map(|ground| {
+                    core_sim::extraction::tile_deposit_capacity(&extraction, material, ground)
+                })
+                .unwrap_or(core_sim::NO_DEPOSIT);
+            if capacity <= core_sim::NO_DEPOSIT {
+                return Err(format!(
+                    "There is no {material} at ({}, {}) — that ground holds none. Move to ground \
+                     that does.",
+                    tile.x, tile.y
+                ));
+            }
+            Ok(())
+        }
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => Ok(()),
     }
 }
@@ -2824,11 +2864,21 @@ fn validate_improvement(
                 _ => validate_corral(app, faction, fauna_id),
             }
         }
+        LaborTarget::Extract { tile, material } => {
+            if !improvement.valid_for_extract() {
+                return Err(format!(
+                    "'{}' is not something you build on a deposit — it applies to the food webs.",
+                    improvement.as_str()
+                ));
+            }
+            validate_deposit_verb(app, faction, *tile, material, improvement)
+        }
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => Err(format!(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
@@ -2881,7 +2931,86 @@ fn plant_rung_site_refusal(
         &labor.forage,
         app.world.resource::<FoodSiteRegistry>().is_site(tile),
         fresh_water,
+        // **A plant rung asks nothing of a deposit** — every rung off the two deposit branches
+        // leaves `min_deposit_capacity` at this neutral, so the term cannot refuse one.
+        core_sim::NO_DEPOSIT_FLOOR,
     )
+}
+
+/// **MAY THIS BAND RAISE THIS RUNG ON THIS DEPOSIT?** — the deposit branches' arm of
+/// [`validate_improvement`], and the twin of `validate_sow`.
+///
+/// Two terms, and they are exactly the two [`deposit_head_gate`](core_sim) resolves for the turn:
+/// - **the ground**, through the **same** `rung_site_refusal` seam every plant gate uses, so the
+///   command's rejection and the labor arm's gate cannot drift into disagreeing about which ground
+///   takes a working. On the shipped ladder only `extraction:quarry` asks anything — the tile's own
+///   stone must clear its `min_deposit_capacity` — which is the whole of *you cannot quarry just
+///   anywhere*;
+/// - **the knowledge**, off the rung record's own `unlock_discovery_id`, never a literal.
+///
+/// ⛔ **THE STOCK IS DELIBERATELY NOT A TERM.** A scatter already worked down to
+/// `extraction:gathering`'s floor has nothing reachable, and opening a quarry is precisely how you
+/// reach deeper — refusing there would be the `plan_standing_upkeep.md` §6 floor trap arriving by a
+/// different door.
+fn validate_deposit_verb(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    material: &str,
+    improvement: Improvement,
+) -> Result<(), String> {
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    let Some(deposit) = extraction.deposit(material) else {
+        return Err(format!(
+            "'{material}' is not something that comes out of the ground."
+        ));
+    };
+    let destination = RungKey::built_by(improvement);
+    if destination.branch() != deposit.branch {
+        return Err(format!(
+            "'{}' is not how you work {material} — that is the other ladder.",
+            improvement.as_str()
+        ));
+    }
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let rung = ladder.rung(destination);
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let registry = app.world.resource::<TileRegistry>();
+    let Some(ground) = registry
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+    else {
+        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    };
+    if let Some(refusal) = rung_site_refusal(
+        rung,
+        ground,
+        &labor.forage,
+        // A deposit rung asks nothing about gathering or water, so both readings are passed at
+        // their permissive values rather than looked up.
+        true,
+        true,
+        core_sim::extraction::tile_deposit_capacity(&extraction, material, ground),
+    ) {
+        return Err(site_refusal_message(refusal, tile, improvement.as_str()));
+    }
+    // **Through the ladder's own `knows`**, so the command's gate and the turn's are one
+    // comparison against one threshold.
+    let knows_rung = rung.unlock_discovery_id().is_none_or(|id| {
+        core_sim::knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            id,
+            ladder.knowledge.completion_threshold,
+        )
+    });
+    if !knows_rung {
+        return Err(format!(
+            "Your people have not learned how to {} yet. Work the ground below it to learn.",
+            improvement.as_str()
+        ));
+    }
+    Ok(())
 }
 
 /// **The land's refusal, phrased for the player** — one wording per fault, shared by every plant
@@ -2895,6 +3024,11 @@ fn site_refusal_message(refusal: SiteRefusal, tile: UVec2, verb: &str) -> String
         SiteRefusal::NotGatheringSite => format!(
             "Nobody gathers at ({}, {}) — your people cannot {} ground they do not already work. \
              Choose a gathering site, or move to one.",
+            tile.x, tile.y, verb
+        ),
+        SiteRefusal::NoDeposit => format!(
+            "There is not enough at ({}, {}) to {} — a scatter is not a body of rock. Find real \
+             stone: the highlands, the plateaus and the badlands carry it.",
             tile.x, tile.y, verb
         ),
         SiteRefusal::TooPoor => format!(
@@ -3412,6 +3546,7 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
         "forage" => CommandEventKind::Forage,
         "hunt" => CommandEventKind::Hunt,
         "scout" => CommandEventKind::Scout,
+        "extract" | "quarrywork" => CommandEventKind::Extraction,
         _ => CommandEventKind::CancelOrder,
     }
 }
@@ -3556,10 +3691,39 @@ fn handle_assign_labor(
         // walked (`routes` rule 2; the catchment is the keeper, never the band's own position) — and
         // `0` stops keeping roads at all.
         "roadwork" => LaborTarget::Roadwork,
+        // **The fourth keeping role** (`docs/plan_extraction.md` §6) — staffed exactly like the
+        // three above it. What its hands hold is every WORKING this band has an `extract` row on,
+        // across both deposit branches, worked or idle; `0` stops holding them at all, after which
+        // each slides back down its ladder.
+        "quarrywork" => LaborTarget::Quarrywork,
         // **The builders** (`docs/plan_standing_upkeep.md` §2.5) — one pool for both webs, whose
         // whole output goes on the head of this band's build queue. A verb declares what to raise;
         // this is what raises it, and `0` stops building altogether.
         "builders" => LaborTarget::Builders,
+        // **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) — the only row in
+        // the game that pays no food, and the whole of what wood and stone cost: every hand here
+        // comes out of the same pool a Forage row spends.
+        //
+        // **It names a TILE AND A MATERIAL**, because one tile can hold two deposits and working
+        // the timber is not working the rock. The material rides the `species` token, which is the
+        // one free-form string this command already carries for a Forage row and means the same
+        // kind of thing there — *which of the things on this ground are you here for*.
+        "extract" => match (target_x, target_y, species.as_deref().map(str::trim)) {
+            (Some(x), Some(y), Some(material)) if !material.is_empty() => LaborTarget::Extract {
+                tile: UVec2::new(x, y),
+                material: material.to_string(),
+            },
+            _ => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::Extraction,
+                    faction,
+                    "assign_labor extract requires <x> <y> and a material (wood, stone)."
+                        .to_string(),
+                );
+                return;
+            }
+        },
         other => {
             emit_command_failure(
                 app,
@@ -3584,9 +3748,13 @@ fn handle_assign_labor(
         // verb at all — traffic is the crew — so they report on the generic one, as the builders and
         // the warriors do.
         LaborTarget::Roadwork => CommandEventKind::CancelOrder,
+        // **The working keepers ride their branches' own channel**, as the two food webs' keeping
+        // roles ride theirs: one channel serves both deposit ladders, exactly as one role does.
+        LaborTarget::Quarrywork => CommandEventKind::Extraction,
         // The builders serve both webs, so they have no web's channel to ride and report on the
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,
+        LaborTarget::Extract { .. } => CommandEventKind::Extraction,
     };
 
     // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
@@ -3746,8 +3914,11 @@ fn handle_assign_labor(
     let source_holds_something = {
         let forage_registry = app.world.resource::<ForageRegistry>();
         let herds = app.world.resource::<HerdRegistry>();
+        let deposits = app
+            .world
+            .resource::<core_sim::extraction::DepositRegistry>();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        core_sim::source_has_a_meter_at_risk(&target, forage_registry, herds, &ladder)
+        core_sim::source_has_a_meter_at_risk(&target, forage_registry, herds, deposits, &ladder)
     };
 
     let kind_label = target.kind();
@@ -8069,6 +8240,15 @@ fn handle_upkeep_kit(
         // names a road (the keeping is the band-wide `Roadwork` row, which names no tile). The arm
         // is stated rather than wildcarded so a future road labor row fails to compile here.
         BuildSource::Road(_) => core_sim::RungBranch::Route,
+        // **Which of the two deposit ladders this is, is the DEPOSIT'S** — `DepositDef::branch`,
+        // never the row's. A material the table does not carry cannot be worked at all, and the
+        // stance gate has already refused the row, so `Forestry` is a fall-back nothing reaches.
+        BuildSource::Deposit { ref material, .. } => app
+            .world
+            .resource::<ExtractionConfigHandle>()
+            .get()
+            .deposit(material)
+            .map_or(core_sim::RungBranch::Forestry, |deposit| deposit.branch),
     };
     // **The kit resolves at the command boundary and FAILS CLOSED** — see the doc above. The
     // `absent` arm is never taken: an absent token is handled here as *"clear the override"*, so
@@ -8245,6 +8425,10 @@ fn build_verb_on_source(
             .resource::<HerdRegistry>()
             .find(&id)
             .and_then(|herd| herd_build_verb(herd, Some(declared))),
+        // **A working's declaration answers for itself**, exactly as a road's does and for its
+        // reason: `fell`, `coppice` and `quarry` are the only things that ever raise one, so there
+        // is no second, meter-derived declaration for a stale entry to override.
+        BuildSource::Deposit { .. } => Some(declared),
         // **A road's declaration answers for itself**, with no meter-derived twin behind it: `grade`
         // and `pave` are the only things that ever raise a road, so there is no second statement for
         // the ground to override. Unreachable through this path in any case — the source comes from a
@@ -9574,6 +9758,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Tame => "Tame",
+        CommandEventKind::Extraction => "Work the ground",
         CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
@@ -12430,6 +12615,106 @@ mod tests {
         );
     }
 
+    /// **`assign_labor extract` names a TILE AND A MATERIAL, and the ground has to hold it**
+    /// (`docs/plan_extraction.md` §6).
+    ///
+    /// The refusal is the arc's *absence is the answer* rule enforced where the player can see it: a
+    /// terrain carrying no row in `extraction.json`'s `by_terrain` holds none of that material, so
+    /// there is no working to open and no crew to put on it. **Both halves are asserted** — a row
+    /// that lands and a row that is refused — because "the command did nothing" passes just as well
+    /// against a verb that was never wired up.
+    #[test]
+    fn assign_labor_extract_takes_the_ground_that_holds_the_material_and_refuses_the_ground_that_does_not(
+    ) {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = starting_band_id(&mut app, faction);
+        const CREW: u32 = 2;
+
+        // Find one tile of each kind, off the map the harness actually generated: ground the shipped
+        // deposits table gives stone, and ground it gives none.
+        let (holds_stone, holds_none) = {
+            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+            let registry = app.world.resource::<TileRegistry>();
+            let mut with = None;
+            let mut without = None;
+            for y in 0..registry.height {
+                for x in 0..registry.width {
+                    let Some(ground) = registry
+                        .index(x, y)
+                        .and_then(|entity| app.world.get::<Tile>(entity))
+                    else {
+                        continue;
+                    };
+                    let capacity =
+                        core_sim::extraction::tile_deposit_capacity(&extraction, "stone", ground);
+                    if capacity > core_sim::NO_DEPOSIT && with.is_none() {
+                        with = Some(UVec2::new(x, y));
+                    } else if capacity <= core_sim::NO_DEPOSIT && without.is_none() {
+                        without = Some(UVec2::new(x, y));
+                    }
+                }
+            }
+            (
+                with.expect("the generated map carries ground that holds stone"),
+                without.expect("…and ground that holds none — the sea, if nothing else"),
+            )
+        };
+
+        let row = |app: &mut bevy::prelude::App, tile: UVec2| {
+            role_crew(
+                app,
+                faction,
+                &LaborTarget::Extract {
+                    tile,
+                    material: "stone".to_string(),
+                },
+            )
+        };
+
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(band),
+            "extract".to_string(),
+            CREW,
+            Some(holds_stone.x),
+            Some(holds_stone.y),
+            None,
+            Some("stone".to_string()),
+            None,
+            None,
+            Vec::new(),
+        );
+        assert_eq!(
+            row(&mut app, holds_stone),
+            CREW,
+            "a crew may be put on ground that holds the material"
+        );
+
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(band),
+            "extract".to_string(),
+            CREW,
+            Some(holds_none.x),
+            Some(holds_none.y),
+            None,
+            Some("stone".to_string()),
+            None,
+            None,
+            Vec::new(),
+        );
+        assert_eq!(
+            row(&mut app, holds_none),
+            NO_CREW_ON_THIS_ACTIVITY,
+            "and ground that holds none of it takes no row at all — absence is the answer, not a \
+             zero-capacity working"
+        );
+    }
+
     /// **The keeping is staffed like any other band-wide role**, through `assign_labor` — which is
     /// the whole of what "maintenance left the tile" means at the command boundary. `0` stops
     /// maintaining that web, exactly as `0` unassigns any other row.
@@ -14436,6 +14721,7 @@ mod tests {
             &labor.forage,
             app.world.resource::<FoodSiteRegistry>().is_site(coord),
             fresh_water,
+            core_sim::NO_DEPOSIT_FLOOR,
         ))
     }
 
@@ -14469,8 +14755,9 @@ mod tests {
             requires_gathering_site: false,
             min_forage_capacity: 0.0,
             requires_fresh_water: true,
+            min_deposit_capacity: core_sim::NO_DEPOSIT_FLOOR,
         }
-        .refusal(false, 0.0, fresh_water)
+        .refusal(false, 0.0, fresh_water, core_sim::NO_DEPOSIT_FLOOR)
     }
 
     /// The first tile matching `accept`, scanned in a **totally ordered** `(y, x)` sweep — never map

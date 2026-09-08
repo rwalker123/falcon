@@ -1447,6 +1447,17 @@ pub enum CommandEventKind {
     /// **The client's `RUNG_BY_KIND` does not carry `road`**, so it falls to that map's default rung
     /// exactly as `craft` does; giving the branch its own importance is the event dock's to decide.
     Road,
+    /// **THE TWO DEPOSIT BRANCHES' WHOLE LIFE** — `fell`, `coppice` and `quarry`, the working's
+    /// build meter completing, and its entry retiring (`docs/plan_extraction.md`).
+    ///
+    /// **One kind for all three verbs and both branches**, on [`Self::Road`]'s reading rather than
+    /// the plant web's `Cultivate`/`Sow` split: the player is looking at *one working on one tile*
+    /// climbing its ladder, and which verb it was rides the detail (`action=quarry`). Splitting it
+    /// by branch would also make the client's importance map ask a question the sim answers better —
+    /// which ladder this deposit is on is the **deposit's**, not the event's.
+    ///
+    /// The wire field is already a string, so the feed renders it generically — no schema change.
+    Extraction,
     /// **The crafting bench** (`docs/plan_crafting_and_materials.md` §5) — a recipe put on it, taken
     /// off it, or re-crewed. One kind for the bench's whole life, the way [`Self::Corral`] is one
     /// kind for the pen's: the player is looking at one bench, not at three verbs.
@@ -1582,6 +1593,7 @@ impl CommandEventKind {
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
             CommandEventKind::Road => "road",
+            CommandEventKind::Extraction => "extraction",
             CommandEventKind::Craft => "craft",
             CommandEventKind::KitLife => "kit_life",
             CommandEventKind::MaterialShortfall => "material_shortfall",

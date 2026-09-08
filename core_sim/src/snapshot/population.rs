@@ -134,6 +134,15 @@ pub(crate) fn labor_assignment_to_state(
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
         }
+        // ⛔ **THE TILE ONLY — THE MATERIAL HAS NO WIRE FIELD YET.** A deposit row is keyed by
+        // `(tile, material)` because one tile can hold two of them, so a client reading this row
+        // cannot yet tell a felling crew from a quarrying crew standing on the same wooded highland.
+        // Adding the field is a schema change and belongs with the readouts
+        // (`docs/plan_extraction.md` §7), which are the next slice.
+        LaborTarget::Extract { tile, .. } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+        }
         // The six band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
@@ -141,6 +150,7 @@ pub(crate) fn labor_assignment_to_state(
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => {}
     }
     state
@@ -573,6 +583,14 @@ fn resolved_build_job(
         (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Road(_)) => {
             declared.as_str().to_string()
         }
+        // **A deposit answers as a road does, and for the road's exact reason.** `fell`, `coppice`
+        // and `quarry` are the only things that ever raise a working, so the entry's own `declared`
+        // is the whole statement — there is no second, meter-derived declaration on a deposit for a
+        // stale entry to override.
+        (
+            crate::components::BuildJob::Rung(declared),
+            crate::components::BuildSource::Deposit { .. },
+        ) => declared.as_str().to_string(),
     }
 }
 
@@ -1617,6 +1635,12 @@ fn build_queue_entry_to_state(source: &BuildSource) -> SchemaBuildQueueEntryStat
             state.target_x = tile.x;
             state.target_y = tile.y;
         }
+        // The tile only — see `labor_assignment_state`: the material half of a deposit's key has no
+        // wire field yet, and adding one belongs with the readouts.
+        BuildSource::Deposit { tile, .. } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+        }
     }
     state
 }
@@ -2273,6 +2297,10 @@ mod tests {
                         BuildSource::Road(_) => unreachable!(
                             "a road has no labor row, so it cannot be a source in this fixture"
                         ),
+                        BuildSource::Deposit { tile, material } => LaborTarget::Extract {
+                            tile: *tile,
+                            material: material.clone(),
+                        },
                     },
                     workers: 1,
                     kit: None,

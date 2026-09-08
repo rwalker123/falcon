@@ -4488,7 +4488,13 @@ pub fn herd_rung_already_built(herd: &Herd, declared: crate::components::Improve
     match declared {
         Improvement::Tame => herd.is_domesticated(),
         Improvement::Corral => herd.corral_meter_full(),
-        Improvement::Cultivate | Improvement::Sow | Improvement::Grade | Improvement::Pave => false,
+        Improvement::Cultivate
+        | Improvement::Sow
+        | Improvement::Grade
+        | Improvement::Pave
+        | Improvement::Fell
+        | Improvement::Coppice
+        | Improvement::Quarry => false,
     }
 }
 
@@ -4627,9 +4633,15 @@ pub fn herd_claims_keeping(
         use crate::components::Improvement;
         match verb {
             Improvement::Tame | Improvement::Corral => true,
-            Improvement::Cultivate | Improvement::Sow | Improvement::Grade | Improvement::Pave => {
-                false
-            }
+            // A verb another branch owns can never be in flight on a herd — the three deposit verbs
+            // answer `false` for `cultivate`'s reason: this is the *animal* web's claim.
+            Improvement::Cultivate
+            | Improvement::Sow
+            | Improvement::Grade
+            | Improvement::Pave
+            | Improvement::Fell
+            | Improvement::Coppice
+            | Improvement::Quarry => false,
         }
     });
     by_position || by_verb
