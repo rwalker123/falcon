@@ -3308,6 +3308,13 @@ pub fn advance_labor_allocation(
     // its id).
     let mut patch_build_claims: BuildEstimateClaims<UVec2> = BuildEstimateClaims::default();
     let mut herd_build_claims: BuildEstimateClaims<String> = BuildEstimateClaims::default();
+    // **AND ONE FOR THE WORKINGS**, keyed the way a working is named — `(tile, material)`, because
+    // one tile can hold two. It is a claims set and not the road's bare write for the road's own
+    // stated reason read the other way: a road has **one keeper per tile**, so at most one band can
+    // hold an entry for it, while a deposit verb enqueues on *every* band of the faction working the
+    // source — so several bands really can quote one working and the sooner answer must win.
+    let mut deposit_build_claims: BuildEstimateClaims<(UVec2, String)> =
+        BuildEstimateClaims::default();
 
     for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench) in cohorts.iter_mut() {
         // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
@@ -7292,9 +7299,10 @@ pub fn advance_labor_allocation(
             &mut forage_registry,
             &mut registry,
             &mut roads,
-            &deposits,
+            &mut deposits,
             &mut patch_build_claims,
             &mut herd_build_claims,
+            &mut deposit_build_claims,
         );
     }
 }
@@ -7499,12 +7507,12 @@ fn publish_build_chain(
     // **Written, not merely read.** A road is a source row and this pass stamps its countdown, the
     // one figure on it that only the queue can answer for.
     roads: &mut crate::routes::RoadRegistry,
-    // **Read only.** A working carries no published estimate yet — the deposit readouts are the next
-    // slice — but the staffed-head invariant below has to be able to ask whether one is on the
-    // ground.
-    deposits: &crate::extraction::DepositRegistry,
+    // **Written, not merely read.** A working is a source row (`DepositState`) and this pass stamps
+    // its countdown, the one figure on it that only the queue can answer for.
+    deposits: &mut crate::extraction::DepositRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
+    deposit_claims: &mut BuildEstimateClaims<(UVec2, String)>,
 ) {
     let quote_for = |source: &BuildSource| {
         quotes
@@ -7632,8 +7640,10 @@ fn publish_build_chain(
             forage_registry,
             herds,
             roads,
+            deposits,
             patch_claims,
             herd_claims,
+            deposit_claims,
         );
     }
     // **Everything the band works that is NOT queued** — quoted where it would land if the player
@@ -7692,12 +7702,22 @@ fn publish_build_chain(
             // without one, a staffed road head published `Blocked` with no cause and `carried` handed that
             // same answer to every entry behind it.
             BuildSource::Road(_) => {}
-            // **A working has no wire row to publish an estimate on YET** — the deposit readouts
-            // are the next slice (`docs/plan_extraction.md` §7), so there is nowhere to put the
-            // quote. The quote itself is still *taken* above, which is the half that matters: it is
-            // what lets a staffed working's head record a cause rather than publishing `Blocked`
-            // with none and handing that to every entry behind it.
-            BuildSource::Deposit { .. } => {}
+            // **A working the band cuts but has not queued is dated at the BACK OF THE LINE**, the
+            // two food webs' arm rather than the road's silence — a working has a row to put the
+            // quote on now, and quoting it at the head would over-promise a compose sheet by the
+            // whole queue. A running build on it has already answered, so the claims set is what
+            // stops the projection displacing a real date.
+            BuildSource::Deposit { tile, material } => {
+                if let Some(working) = deposits.source_mut(*tile, material) {
+                    deposit_claims.publish_projected(
+                        &(*tile, material.clone()),
+                        &mut working.build_turns_remaining,
+                        &mut working.build_blocked_reason,
+                        projected,
+                        reason,
+                    );
+                }
+            }
         }
     }
 }
@@ -7823,8 +7843,10 @@ fn publish_entry(
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
     roads: &mut crate::routes::RoadRegistry,
+    deposits: &mut crate::extraction::DepositRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
+    deposit_claims: &mut BuildEstimateClaims<(UVec2, String)>,
 ) {
     let answer = BuildEstimate {
         turns,
@@ -7899,12 +7921,33 @@ fn publish_entry(
                 road.build_queue_position = answer.position;
             }
         }
-        // **A working carries no published estimate YET** — there is no deposit row on the wire for
-        // one to land on, and the readouts are the next slice
-        // (`docs/plan_extraction.md` §7). It is deliberately not a `DepositSource` field written and
-        // read by nobody: transient per-turn scratch that no capture reads is a second, silently
-        // stale statement of what the queue already knows.
-        BuildSource::Deposit { .. } => {}
+        // ⛔ **A WORKING IS A SOURCE ROW AND IT PUBLISHES A CHAINED COUNTDOWN LIKE ANY OTHER.**
+        // `DepositState` is that row — keyed by `(tile, material)` exactly as a patch row is keyed by
+        // tile — and this is the one figure on it that **only the queue can answer for**: an entry is
+        // dated as everything above it plus its own span, which no per-source seam can see.
+        //
+        // ⛔ **IT GOES THROUGH A CLAIMS SET, WHERE THE ROAD ARM ABOVE DOES NOT** — the road's own
+        // reason, read the other way. A road has one keeper per tile, so at most one band holds an
+        // entry for it; a deposit verb enqueues on **every** band of the faction working the source,
+        // so several bands really can quote one working and the sooner answer must win.
+        //
+        // **It publishes the countdown TRIO and not the six-field estimate.** `DepositState` carries
+        // the date, its cause and the place in the line; it carries no `buildWorkFromGear`,
+        // destination or leg list, and writing scratch no capture reads is a second, silently stale
+        // statement of what the queue already knows.
+        BuildSource::Deposit { tile, material } => {
+            if let Some(working) = deposits.source_mut(*tile, material) {
+                deposit_claims.publish_countdown(
+                    (*tile, material.clone()),
+                    CountdownSlots {
+                        turns: &mut working.build_turns_remaining,
+                        reason: &mut working.build_blocked_reason,
+                        position: &mut working.build_queue_position,
+                    },
+                    &answer,
+                );
+            }
+        }
     }
 }
 
@@ -8560,6 +8603,15 @@ struct BuildEstimateSlots<'a> {
     legs: &'a mut Vec<crate::intensification::PublishedBuildLeg>,
 }
 
+/// **THE THREE SLOTS A SOURCE THAT PUBLISHES ONLY THE COUNTDOWN CARRIES** — the date, its cause and
+/// its place in the line. [`BuildEstimateSlots`]' short form, and the shape a working's row
+/// (`DepositState`) has: it carries no `buildWorkFromGear`, no destination and no leg list.
+struct CountdownSlots<'a> {
+    turns: &'a mut Option<BuildTurns>,
+    reason: &'a mut BuildGate,
+    position: &'a mut i32,
+}
+
 /// The answer [`BuildEstimateSlots`] carries.
 #[derive(Clone)]
 struct BuildEstimate {
@@ -8595,6 +8647,25 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
             // down — a climb quoted against a countdown that is not measuring it.
             *slots.destination = answer.destination;
             *slots.legs = answer.legs;
+        }
+    }
+
+    /// **Publish a running build's answer for a source that carries only the countdown TRIO** —
+    /// the date, its cause and the place in the line — on [`Self::publish_running`]'s exact rules.
+    ///
+    /// It exists because a working (`DepositState`) publishes those three and nothing else: it
+    /// carries no `buildWorkFromGear`, no destination and no leg list, and giving `DepositSource`
+    /// scratch fields for them so this could take a [`BuildEstimateSlots`] would be writing state no
+    /// capture reads — a second, silently stale statement of what the queue already knows.
+    fn publish_countdown(&mut self, key: K, slots: CountdownSlots<'_>, answer: &BuildEstimate) {
+        let first_claim = self.claimed.insert(key);
+        if first_claim || is_a_sooner_estimate(answer.turns, *slots.turns) {
+            *slots.turns = answer.turns;
+            // **The cause and the place ride the same winner**, for the reason the six-field twin
+            // above states: a cause from one band's queue beside a date from another's would be two
+            // answers pretending to be one.
+            *slots.reason = answer.reason;
+            *slots.position = answer.position;
         }
     }
 

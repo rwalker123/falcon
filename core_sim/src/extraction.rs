@@ -64,8 +64,10 @@ use crate::{
     components::Tile,
     extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
     intensification::{
-        interpolate, rung_span, LadderConfig, RungBranch, RungExtractionPayoff, RungKey,
-        RungStanding, NEGLECT_NONE, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        build_fraction, interpolate, neglect_grace_remaining, rung_span, rung_work_done, BuildGate,
+        BuildTurns, LadderConfig, RungBranch, RungExtractionPayoff, RungKey, RungStanding,
+        NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
+        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
 };
 
@@ -88,6 +90,10 @@ pub const DEPOSIT_EMPTY: f32 = 0.0;
 
 /// **NOBODY IS WORKING THIS DEPOSIT** — a crew of no hands, which takes nothing and teaches nothing.
 pub const NO_CREW_ON_THE_DEPOSIT: u32 = 0;
+
+/// **NOBODY CUT THIS WORKING THIS TURN** — the reset value of [`DepositSource::last_take`], and the
+/// reading that makes the runway *"there is no rate to project"* rather than a division by zero.
+pub const NO_TAKE_THIS_TURN: f32 = 0.0;
 
 /// **WHAT A DEPOSIT'S RUNGS COST THIS SOURCE** — the ladder's own price, unscaled.
 ///
@@ -149,6 +155,48 @@ pub struct DepositSource {
     /// rung's `upkeep.grace_turns` — a crew re-tasked for a season does not cost the working.
     #[serde(default)]
     pub neglect_turns: u16,
+    /// **WHAT EVERY CREW TOOK OUT OF THIS WORKING THIS TURN**, in the material's own units.
+    ///
+    /// Accumulates (`+=`) across the bands cutting it — [`Self::upkeep_supplied`]'s rule, and for
+    /// its reason: a shared working is drawn down **sequentially**, so the row-by-row takes are the
+    /// only place the total exists — and is cleared once per turn by [`advance_deposits`].
+    ///
+    /// ⛔ **IT IS THE RATE THE RUNWAY IS PROJECTED FORWARD ON, NEVER A TRAILING AVERAGE.** The
+    /// arrivals rule: `turns_remaining` is *this turn's* take carried forward, so it moves the turn
+    /// the crew does. A working nobody cut reads [`NO_TAKE_THIS_TURN`], which is the honest *"there
+    /// is no rate to project"* rather than a zero the projection would divide by.
+    #[serde(default)]
+    pub last_take: f32,
+    /// **WHY THE POOL IS STUCK ON THIS WORKING** — [`BuildGate::Open`] when it is not stuck, which
+    /// is also what a working nobody has queued reads. `routes::Road::build_blocked_reason`'s twin,
+    /// stamped by the labour pass's `Extract` arm where the quote is struck and **cleared at the top
+    /// of every turn** by [`advance_deposits`], so a cause is a statement about *this* turn.
+    #[serde(default)]
+    pub build_blocked_reason: BuildGate,
+    /// **HOW MANY TURNS UNTIL THIS WORKING REACHES WHERE ITS ENTRY IS SENDING IT** — the chained
+    /// countdown, and the exact twin of `routes::Road::build_turns_remaining`.
+    ///
+    /// ⛔ **IT CAN ONLY BE STAMPED BY THE CHAIN PASS**, because it is a fact about the **queue**: an
+    /// entry is dated as everything above it plus its own span, which no per-source seam can see. A
+    /// working nobody has queued keeps `None` — the honest *no estimate*, never a `0` that would
+    /// render as a finished build.
+    #[serde(default)]
+    pub build_turns_remaining: Option<BuildTurns>,
+    /// **THIS WORKING'S 0-BASED PLACE IN ITS BAND'S BUILD QUEUE**, or
+    /// [`crate::intensification::NOT_IN_ANY_BUILD_QUEUE`] when no pass has placed it.
+    ///
+    /// **Scratch, not published**: its one reader is the countdown's *"has an estimate pass ever run
+    /// for this entry"* test, which is what separates a build queued a second ago from one that is
+    /// genuinely stalled — both sit at `0%`. Cleared every turn with the pair above, which is what
+    /// makes *"live-queued and still cleared"* mean *"queued since the last pass"*.
+    #[serde(default = "not_in_any_build_queue")]
+    pub build_queue_position: i32,
+}
+
+/// The serde default of [`DepositSource::build_queue_position`] — *"no pass has placed this
+/// working"*, which is a different fact from *"it is at the head"* that a derived `0` would give.
+fn not_in_any_build_queue() -> i32 {
+    crate::intensification::NOT_IN_ANY_BUILD_QUEUE
 }
 
 impl DepositSource {
@@ -167,6 +215,10 @@ impl DepositSource {
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             neglect_turns: NEGLECT_NONE,
+            last_take: NO_TAKE_THIS_TURN,
+            build_blocked_reason: BuildGate::Open,
+            build_turns_remaining: None,
+            build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
         }
     }
 
@@ -465,15 +517,115 @@ pub fn deposit_meter_rot(source: &DepositSource, measure: f32, ladder: &LadderCo
     )
 }
 
-// **RETIRED BEFORE IT HAD A CALLER: `deposit_neglect_grace_remaining`** — the countdown a working
-// publishes beside its shortfall, `routes::road_neglect_grace_remaining`'s twin.
-//
-// Its one consumer on every other branch is the **wire** (`hasNeglectGrace` /
-// `neglectGraceRemaining`), and a working has no wire row (`docs/plan_extraction.md` §7). Nothing in
-// the sim branches on a grace *remaining* — the bleed asks `RungDef::upkeep_decay`, which owns the
-// `>` against `neglect_turns` — so this was a readout with no reader. It comes back with the
-// deposit row, as `neglect_grace_remaining(source.neglect_turns, rung.upkeep_grace_turns())` on the
-// at-risk rung, which is the same three lines.
+/// **HOW MANY MORE TURNS OF SHORTFALL THIS WORKING CAN ABSORB BEFORE IT SLIDES** — the countdown,
+/// not the counter, through [`neglect_grace_remaining`] so all four branches and the wire mean one
+/// thing by a grace.
+///
+/// **`None` = THERE IS NOTHING AT RISK HERE**, which is a working on either free floor: neither
+/// `forestry:deadfall` nor `extraction:gathering` declares an `upkeep`, so there is no meter to
+/// lose. `routes::road_neglect_grace_remaining`'s twin, and the field the wire's `hasNeglectGrace`
+/// is read off — a client must check the bool first, because the number reuses the *"biting now"*
+/// `0` rather than inventing a sentinel.
+pub fn deposit_neglect_grace_remaining(
+    source: &DepositSource,
+    ladder: &LadderConfig,
+) -> Option<u32> {
+    let rung = ladder.rung(deposit_at_risk_rung(&source.standing));
+    rung.upkeep.as_ref()?;
+    Some(neglect_grace_remaining(
+        source.neglect_turns,
+        rung.upkeep_grace_turns(),
+    ))
+}
+
+/// **HOW MANY WHOLE `quarrywork` KEEPERS THIS WORKING'S BILL WANTS** — `ceil(basis /
+/// PER_WORKER_OUTPUT)`, the deposit twin of `routes::road_upkeep_workers_needed`.
+///
+/// It reads the **stamped** basis, exactly as the published demand beside it does, so *"wants 2, you
+/// have 0"* and the shortfall on the same row describe one bill.
+pub fn deposit_upkeep_workers_needed(
+    source: &DepositSource,
+    measure: f32,
+    ladder: &LadderConfig,
+) -> u32 {
+    let demand = deposit_keeping_basis(source, measure, ladder);
+    if demand <= NO_UPKEEP_DEMAND {
+        return NO_CREW_ON_THIS_ACTIVITY;
+    }
+    (demand / PER_WORKER_OUTPUT).ceil() as u32
+}
+
+/// **THE METER ON THE RUNG THIS WORKING IS ACTUALLY RAISING**, `0..=1` — the deposit branches' twin
+/// of `road_build_fraction` / `cultivationProgress`, and what the wire's `buildFraction` publishes.
+///
+/// ⛔ **IT GOES THROUGH [`rung_work_done`], NEVER THROUGH A SUBTRACTION.** That seam answers a rung
+/// the standing already holds with the rung's full `width` by construction rather than with
+/// `fl(base + width) − base`, which is the rounding that published a completed Field at *"99%"*.
+pub fn deposit_build_fraction(source: &DepositSource, ladder: &LadderConfig) -> f32 {
+    let standing = source.standing();
+    let at_risk = deposit_at_risk_rung(standing);
+    let span = deposit_rung_span(at_risk, ladder);
+    build_fraction(
+        rung_work_done(*standing, at_risk, source.ladder_position(), span),
+        span.1,
+    )
+}
+
+/// **WHAT A CREW COULD TAKE EVERY TURN AT THIS STOCK AND LEAVE THE WORKING WHERE IT STANDS** — the
+/// growth term itself, which is the deposit reading of `sustainable_yield`
+/// (`docs/plan_intensification.md`) and half of the over-cut pair on the wire.
+///
+/// ⛔ **IT IS THE GROWTH TERM AND NOTHING ELSE, WHICH IS WHY A QUARRY HONESTLY READS ZERO.** Rock's
+/// rate is [`NEVER_RENEWS`], so [`deposit_regrowth`] returns the stock unchanged and the difference
+/// is exactly `0` — *stone sustains no take* survives as arithmetic here too, with no finite branch
+/// anywhere. What a finite working publishes instead is [`deposit_runway`].
+///
+/// It reads through [`renew_deposit`]'s own terms — the ground's rate scaled by what the rung
+/// bought, at the seeded reading — so the number the row quotes is the growth the next Logistics
+/// pass will actually apply.
+pub fn deposit_sustainable_take(
+    source: &DepositSource,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+) -> f32 {
+    let capacity = tile_deposit_capacity(config, &source.material, ground);
+    let payoff = deposit_payoff(&source.standing, ladder);
+    let rate = tile_deposit_regrowth(config, &source.material, ground) * payoff.regrowth_multiplier;
+    (deposit_regrowth(source.stock, capacity, rate, config.seed_fraction) - source.stock)
+        .max(DEPOSIT_EMPTY)
+}
+
+/// **HOW MANY TURNS THIS WORKING LASTS AT THE CURRENT TAKE** — `floor(reachable / take)`, and the
+/// other half of the §7 fork.
+///
+/// ⛔ **A FORWARD PROJECTION, NEVER A TRAILING AVERAGE AND NEVER AN EMA** (the food-arrivals rule):
+/// the numerator is what this rung can reach *now* and the denominator is what the crews took *this*
+/// turn, so the answer moves the turn the crew does rather than lagging it.
+///
+/// ⛔ **WHICH READOUT A WORKING GETS IS DECIDED BY THE RATE, NEVER BY THE BRANCH**
+/// (`docs/plan_extraction.md` §7). A renewing deposit does not run out, so it answers
+/// [`sim_schema::DEPOSIT_RUNWAY_NOT_APPLICABLE`] and its warning is the over-cut pair instead — and
+/// a flint scatter and a quarry are both `extraction` and land on opposite sides of this test. A
+/// finite working nobody is cutting answers [`sim_schema::DEPOSIT_RUNWAY_NO_TAKE`]: it *will* run
+/// out, just not while it stands idle.
+pub fn deposit_runway(
+    source: &DepositSource,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+) -> i32 {
+    if tile_deposit_regrowth(config, &source.material, ground) > NEVER_RENEWS {
+        return sim_schema::DEPOSIT_RUNWAY_NOT_APPLICABLE;
+    }
+    if source.last_take <= NO_TAKE_THIS_TURN {
+        return sim_schema::DEPOSIT_RUNWAY_NO_TAKE;
+    }
+    let capacity = tile_deposit_capacity(config, &source.material, ground);
+    let payoff = deposit_payoff(&source.standing, ladder);
+    let reachable = deposit_reachable(source.stock, capacity, &payoff);
+    (reachable / source.last_take).floor() as i32
+}
 
 /// **EVERY LIVE WORKING**, keyed by the pair that names one — the deposit branches' twin of
 /// `ForageRegistry` / `HerdRegistry`.
@@ -600,6 +752,10 @@ pub fn take_from_deposit(
     let reachable_before = deposit_reachable(source.stock, capacity, &payoff);
     let taken = deposit_take(workers, source.stock, capacity, &payoff);
     source.stock = (source.stock - taken).max(DEPOSIT_EMPTY);
+    // **The turn's take, accumulated across the bands cutting this working** — the wire's
+    // `actualTake` and the denominator of its runway. `+=` for `upkeep_supplied`'s reason: a shared
+    // working is drawn down sequentially, so this is the only place the total exists.
+    source.last_take += taken;
     DepositTake {
         taken,
         reachable_before,
@@ -722,8 +878,17 @@ pub fn advance_deposits(
             let bled = source.ladder_position() - decay;
             source.set_ladder_position(bled, &ladder, branch);
         }
-        // ## 3 — clear the payment and re-stamp, at the position the bleed left.
+        // ## 3 — clear the payment and re-stamp, at the position the bleed left. **This turn's
+        // take, the blocked cause and the countdown clear with it**, and for the same reason: each
+        // is a statement about the turn just resolved, and a stale one would leave an idle working
+        // still quoting a runway off a crew that has gone. The countdown and its place in the line
+        // clear **together**, which is what makes *"live-queued and still cleared"* mean *"queued
+        // since the last pass"*.
         source.upkeep_supplied = NO_UPKEEP_DEMAND;
+        source.last_take = NO_TAKE_THIS_TURN;
+        source.build_blocked_reason = BuildGate::Open;
+        source.build_turns_remaining = None;
+        source.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
         let measure = deposit_measure(source, ground, &config);
         source.upkeep_demanded = Some(deposit_upkeep_demand(source, measure, &ladder));
         // ## 4 — the renewal, once per working, at that same post-decay position.

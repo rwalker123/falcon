@@ -32,7 +32,7 @@ use crate::state::population::{
 };
 use crate::state::routes::RouteState;
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
+    CharacteristicBandState, CraftKnowledgeState, DepositState, FoodModuleState, ForagePatchState,
     HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderKnowledgeState,
     MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
 };
@@ -187,6 +187,11 @@ pub struct WorldSnapshot {
     /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
     #[serde(default)]
     pub forage_patches: Vec<ForagePatchState>,
+    /// **The live workings on deposits** — one row per `(tile, material)` the viewer has explored.
+    /// The registry is sparse and lazy (a working opens the first turn a crew stands on it), so an
+    /// untouched map publishes none. Diffed as a whole vector like [`Self::forage_patches`].
+    #[serde(default)]
+    pub deposits: Vec<DepositState>,
     /// Per-faction progress on every ladder knowledge, `0..1`. Sparse in FACTIONS (a faction that
     /// has learned nothing is absent) and never in knowledges.
     #[serde(default)]
@@ -343,6 +348,10 @@ pub struct WorldDelta {
     pub discovered_sites: Option<Vec<DiscoveredSitesState>>,
     pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub forage_patches: Option<Vec<ForagePatchState>>,
+    /// The live workings; diffed as a whole vector like [`Self::forage_patches`]. `None` means
+    /// unchanged.
+    #[serde(default)]
+    pub deposits: Option<Vec<DepositState>>,
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     /// The ladder knowledge roster; a per-world constant, so a delta re-sends it only when the world
     /// is rebuilt. `None` means unchanged.

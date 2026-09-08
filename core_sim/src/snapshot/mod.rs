@@ -15,7 +15,7 @@ use sim_runtime::{
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
+    CultureTraitEntry, DepositState, DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
@@ -114,6 +114,7 @@ mod capture;
 mod connections;
 pub(crate) mod crafting;
 mod culture;
+mod deposits;
 mod economy;
 mod flora_quotes;
 mod governance;
@@ -1138,6 +1139,7 @@ mod tests {
             discovered_sites: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1215,6 +1217,7 @@ mod tests {
             discovered_sites: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1287,6 +1290,7 @@ mod tests {
             discovered_sites: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),

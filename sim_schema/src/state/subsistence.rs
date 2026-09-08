@@ -1738,6 +1738,199 @@ pub struct ForagePatchState {
     pub upkeep_kit_named: bool,
 }
 
+/// **"This working does not run out"** — the wire value of [`DepositState::turns_remaining`] on a
+/// deposit whose ground **renews** (`regrowth_rate > 0`).
+///
+/// It is *not applicable* rather than *unknown*: a renewing working's warning is the
+/// sustainable-versus-actual pair beside it (`docs/plan_extraction.md` §7), so a client reads the
+/// other readout here rather than drawing an empty runway.
+///
+/// **Which sentence a working publishes is decided by the RATE, never by the branch** — surface
+/// flint and a quarry are both `extraction` and only one of them runs out.
+pub const DEPOSIT_RUNWAY_NOT_APPLICABLE: i32 = -1;
+
+/// **"Nobody is cutting this working"** — the wire value of [`DepositState::turns_remaining`] on a
+/// **finite** working with no take this turn, so there is no rate to carry forward.
+///
+/// It is **not** [`DEPOSIT_RUNWAY_NOT_APPLICABLE`], and the difference is what the player is being
+/// told: this working *will* run out, just not while it stands idle. Sits outside the `>= 0` range a
+/// real count lives in, beside its sibling, so no reader has to guess which negative it is looking
+/// at.
+pub const DEPOSIT_RUNWAY_NO_TAKE: i32 = -2;
+
+/// **ONE LIVE WORKING ON A DEPOSIT** — the wire row of `extraction::DepositSource`, keyed by
+/// `(tile, material)` because **one tile can hold two**: a wooded highland holds timber *and* rock,
+/// and working one is not working the other.
+///
+/// **The registry is sparse and lazy** — a working opens the first turn a band puts a crew on it —
+/// so the absence of a row is *"nobody has worked this ground"* and never *"there is no deposit
+/// here"*. What a tile **holds** is a pure function of its terrain and is not on this table.
+///
+/// Published for the workings the viewing faction has **explored** (the road row's `Discovered`
+/// gate rather than the herd row's `Active`): a working does not wander off, so remembering one is
+/// remembering something true.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DepositState {
+    /// **The row's identity, both halves.** `tile_x`/`tile_y` alone cannot join this row to the crew
+    /// standing on it — see [`crate::state::population::LaborAssignmentState::material`].
+    pub tile_x: u32,
+    pub tile_y: u32,
+    /// The `extraction.json` deposit this working is on: `wood`, `stone`, and whatever the minerals
+    /// arc adds.
+    pub material: String,
+    /// **Which LADDER works this deposit** — `"forestry"` or `"extraction"`, `RungBranch`'s wire
+    /// form. It is **not** what decides the readout; see [`Self::regrowth_rate`].
+    pub branch: String,
+    /// **What is standing here right now**, in the material's own units — the only *saved* thing
+    /// about a working. It opens at capacity, is drawn down by the take and put back by the growth
+    /// term.
+    pub stock: f32,
+    /// **What this ground holds when full** (`extraction::tile_deposit_capacity`), read **live off
+    /// the tile** at capture rather than stored on the source. **No rung may raise it**: it is the
+    /// terrain's, which is what keeps the floor below from climbing out from under a build.
+    pub capacity: f32,
+    /// **What the CURRENT rung can actually get at** (`extraction::deposit_reachable`) — capacity
+    /// minus the rung's own floor, clamped to the stock, and the numerator of
+    /// [`Self::turns_remaining`].
+    ///
+    /// ⛔ **IT IS NEVER SIMPLY [`Self::stock`].** A rung that cannot reach the whole seam leaves
+    /// stock it cannot take, and climbing the extraction ladder is precisely how you reach deeper —
+    /// so a reader that rendered the stock as *"what you can have"* would promise the player rock
+    /// the crew cannot cut.
+    pub reachable: f32,
+    /// **The ground's own renewal rate** (`extraction::tile_deposit_regrowth`), already scaled by
+    /// what this working's rung bought.
+    ///
+    /// ⛔ **THIS IS THE FIELD THAT DECIDES WHICH READOUT A CLIENT DRAWS**
+    /// (`docs/plan_extraction.md` §7): `> 0` → the over-cut pair ([`Self::sustainable_take`] against
+    /// [`Self::actual_take`]); `== 0` → the runway ([`Self::turns_remaining`]).
+    ///
+    /// ⛔ **IT IS NOT [`Self::branch`].** Surface flint and a quarry are the same skill and the same
+    /// branch, and only one of them runs out; what differs is the *terrain's* rate, which is this.
+    pub regrowth_rate: f32,
+    /// The rung this working **holds**, as `"<branch>:<id>"` (`RungKey::wire_key`). **This string is
+    /// the bool** — a rung is never to be inferred by thresholding [`Self::build_fraction`], which
+    /// is a different rung's meter. [`crate::state::routes::RouteState::rung`] carries the same
+    /// rule.
+    pub rung: String,
+    /// The meter on the rung being **raised**, `0..=1`, off the shared
+    /// `intensification::build_fraction` seam both food webs and the road publish theirs from.
+    /// **Never derived by subtraction.** A working that has just completed a rung reads exactly
+    /// `1.0`, and so does one at the top of its ladder.
+    pub build_fraction: f32,
+    /// **How far up its branch this working has been raised, in cumulative work units**
+    /// (`DepositSource::ladder_position`) — the one meter both deposit branches carry, published so
+    /// a ladder card can place the working on the *whole* branch rather than only within one rung.
+    pub ladder_position: f32,
+    /// **What a crew could take every turn AT THIS STOCK and leave the working where it stands** —
+    /// the growth term, in the material's own units per turn.
+    ///
+    /// ⛔ **`0` ON A FINITE DEPOSIT, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP.** Rock's rate
+    /// is zero, so there is no take a quarry can sustain; what a finite working publishes instead is
+    /// [`Self::turns_remaining`].
+    pub sustainable_take: f32,
+    /// **What this working actually paid out last turn**, summed over every band that cut it.
+    ///
+    /// sustainable-versus-actual is the **existing** intensification income breakdown
+    /// (`docs/plan_intensification.md`) pointed at a new source, not a new readout: actual above
+    /// sustainable is over-cutting, which is possible on purpose and **warned about rather than
+    /// refused**.
+    pub actual_take: f32,
+    /// **How many turns this working lasts at the current take** — `floor(reachable / actual_take)`.
+    ///
+    /// ⛔ **A FORWARD PROJECTION, NEVER A TRAILING AVERAGE AND NEVER AN EMA** (the food-arrivals
+    /// rule): it is this turn's rate carried forward, so it moves the turn the crew does.
+    ///
+    /// `>= 0` is a real count; [`DEPOSIT_RUNWAY_NOT_APPLICABLE`] (`-1`) and
+    /// [`DEPOSIT_RUNWAY_NO_TAKE`] (`-2`) are the two ways of having no runway to quote.
+    pub turns_remaining: i32,
+    /// **The standing bill**, in work units per turn, drawn from the band's `quarrywork` pool. All
+    /// three read the **stamped** basis (`DepositSource::upkeep_demanded`), so
+    /// `demand − supplied == shortfall` holds verbatim on the wire.
+    ///
+    /// `0` on **both free floors** (`forestry:deadfall`, `extraction:gathering`), which declare no
+    /// upkeep at all — nobody built them, so there is nothing to hold, and that is the whole of what
+    /// makes a floor free.
+    pub upkeep_demand: f32,
+    /// See [`Self::upkeep_demand`].
+    pub upkeep_supplied: f32,
+    /// See [`Self::upkeep_demand`].
+    pub upkeep_shortfall: f32,
+    /// Whole `quarrywork` keepers the bill wants — `ceil(demand / per-worker output)`. `0` for a
+    /// working that owes nothing.
+    pub upkeep_workers_needed: u32,
+    /// `false` = **nothing at risk here** (a working on either free floor, which declares no
+    /// upkeep). Read this before the countdown beside it.
+    pub has_neglect_grace: bool,
+    /// The **countdown**, not the counter: turns of shortfall left before the rung bleeds, `0` =
+    /// sliding now, and a working whose bill is met reads its rung's full grace + 1.
+    pub neglect_grace_remaining: u32,
+    /// **The chained countdown** — everything above this entry in its band's queue, plus this
+    /// entry's own span. The **same quantity with the same sentinels** a patch, a herd and a road
+    /// publish, through the same seam: [`crate::NO_BUILD_TURNS_ESTIMATE`] (`-1`),
+    /// [`crate::BUILD_METER_HOLDS`] (`-2`), [`crate::BUILD_METER_ROTS`] (`-3`),
+    /// [`crate::BUILD_QUEUE_BLOCKED`] (`-4`), [`crate::BUILD_NOT_YET_ESTIMATED`] (`-5`); `>= 0` is a
+    /// real count. [`ForagePatchState::build_turns_remaining`] carries the full table.
+    pub build_turns_remaining: i32,
+    /// **Why the pool is stuck on this working**, `""` when it is not — the same `BuildGate`
+    /// vocabulary [`ForagePatchState::build_blocked_reason`] uses, two branches over.
+    /// **Empty is not "fine"**: a working nobody has queued is not blocked, it is simply not being
+    /// built.
+    pub build_blocked_reason: String,
+    /// **Is this working in some band's build queue right now?** — the membership flag, and the term
+    /// that separates [`crate::BUILD_NOT_YET_ESTIMATED`] from [`crate::NO_BUILD_TURNS_ESTIMATE`].
+    ///
+    /// It cannot be replaced by a `!build_kit_id.is_empty()` test: a resolved builders kit is
+    /// **never** the empty string, because the bare-handed kit is a roster entry like any other.
+    pub is_queued: bool,
+    /// The kit this working's build is being raised with — [`ForagePatchState::build_kit_id`]'s
+    /// twin, off the same one resolution seam. `""` only where no band has this working queued.
+    pub build_kit_id: String,
+    /// The keeping kit this working's `quarrywork` keepers carry — see
+    /// [`ForagePatchState::upkeep_kit_id`] for the whole rationale.
+    pub upkeep_kit_id: String,
+    /// **Not recoverable from the id** — a player may name the very kit the derivation would have
+    /// picked — which is why it rides the wire beside it. See
+    /// [`ForagePatchState::upkeep_kit_named`].
+    pub upkeep_kit_named: bool,
+}
+
+impl Default for DepositState {
+    fn default() -> Self {
+        Self {
+            tile_x: 0,
+            tile_y: 0,
+            material: String::new(),
+            branch: String::new(),
+            stock: 0.0,
+            capacity: 0.0,
+            reachable: 0.0,
+            regrowth_rate: 0.0,
+            rung: String::new(),
+            build_fraction: 0.0,
+            ladder_position: 0.0,
+            sustainable_take: 0.0,
+            actual_take: 0.0,
+            // **The wire's own default, not `0`** — a zero here reads as *"it runs out this turn"*,
+            // which is the one thing a defaulted row must not say.
+            turns_remaining: DEPOSIT_RUNWAY_NOT_APPLICABLE,
+            upkeep_demand: 0.0,
+            upkeep_supplied: 0.0,
+            upkeep_shortfall: 0.0,
+            upkeep_workers_needed: 0,
+            has_neglect_grace: false,
+            neglect_grace_remaining: 0,
+            // Same rule one field over: `0` renders as a finished build.
+            build_turns_remaining: NO_BUILD_TURNS_ESTIMATE,
+            build_blocked_reason: String::new(),
+            is_queued: false,
+            build_kit_id: String::new(),
+            upkeep_kit_id: String::new(),
+            upkeep_kit_named: false,
+        }
+    }
+}
+
 /// **ONE LEG OF A QUEUE ENTRY'S CLIMB** — a rung still to raise, and what it owes on that rung **from
 /// where the source stands now** (`docs/plan_standing_upkeep.md` §2.8).
 ///

@@ -1327,3 +1327,492 @@ fn a_working_whose_keeping_is_short_quotes_a_rotting_meter() {
          not about the crew: got {turns:?}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The working on the wire (`docs/plan_extraction.md` §7, issue #650)
+// ---------------------------------------------------------------------------------------------
+//
+// Every assertion below reads the **encoded envelope** through `root_as_envelope`, never the
+// in-process `DepositSource`: a field that never reached the codec still passes an in-process
+// assertion, and the deposit section has no client reader yet to notice.
+//
+// The fixtures drive **whole turns** through `core_sim::build_test_app`, so the numbers under test
+// are the ones the real stage order produced — Logistics stamps the bill and renews the stock,
+// Population takes and pays, and the Snapshot stage publishes what they left.
+
+mod wire {
+    use bevy::app::App;
+    use bevy::math::UVec2;
+    use bevy::prelude::{Entity, With};
+
+    use core_sim::extraction::{tile_deposit_capacity, DepositRegistry, DepositSource};
+    use core_sim::{
+        build_test_app, BandId, ExtractionConfig, LaborAllocation, LaborTarget, LadderConfig,
+        PopulationCohort, ResidentBand, RungKey, SnapshotHistory, Tile, TileRegistry,
+        ViewerFaction,
+    };
+    use sim_schema::{TerrainType, DEPOSIT_RUNWAY_NOT_APPLICABLE};
+
+    /// **The renewing half of the §7 fork.** Mixed woodland carries 600 wood at a rate of 0.03 —
+    /// and 35 stone at 0.02 beside it, which is what makes *"one tile can hold two"* a fact this
+    /// fixture could exercise without a second terrain.
+    const RENEWING_GROUND: TerrainType = TerrainType::MixedWoodland;
+    /// **The finite half.** The largest rock body on the shipped table, at a rate of exactly zero.
+    const FINITE_GROUND: TerrainType = TerrainType::AlpineMountain;
+
+    const WOOD: &str = "wood";
+    const STONE: &str = "stone";
+
+    /// **The crew on each take row**, and the keepers on the band's `quarrywork` pool. One keeper
+    /// deliberately does **not** cover the seated quarry's bill, which is what makes the published
+    /// `demand − supplied == shortfall` identity a statement about three different numbers.
+    const A_TAKE_CREW: u32 = 1;
+    const TOO_FEW_KEEPERS: u32 = 1;
+
+    /// One published working, read off the encoded envelope.
+    #[derive(Debug, Clone)]
+    struct PublishedWorking {
+        tile: UVec2,
+        material: String,
+        branch: String,
+        stock: f32,
+        capacity: f32,
+        reachable: f32,
+        regrowth_rate: f32,
+        rung: String,
+        sustainable_take: f32,
+        actual_take: f32,
+        turns_remaining: i32,
+        demand: f32,
+        supplied: f32,
+        shortfall: f32,
+        workers_needed: u32,
+        has_neglect_grace: bool,
+        build_turns_remaining: i32,
+        build_blocked_reason: String,
+        is_queued: bool,
+        upkeep_kit_id: String,
+    }
+
+    /// The band's `quarrywork*` trio, read off the encoded envelope.
+    #[derive(Debug, Clone, Copy)]
+    struct PublishedQuarrywork {
+        demand: f32,
+        supplied: f32,
+        shortfall: f32,
+    }
+
+    /// One published `extract` labor row.
+    #[derive(Debug, Clone)]
+    struct PublishedExtractRow {
+        tile: UVec2,
+        material: String,
+    }
+
+    fn encoded(app: &App) -> Vec<u8> {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref())
+    }
+
+    fn published_workings(app: &App) -> Vec<PublishedWorking> {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        let bytes = encoded(app);
+        let envelope =
+            fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+        let section = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .subsistence()
+            .and_then(|section| section.deposits())
+            .expect("the deposit section is published");
+        section
+            .iter()
+            .map(|row| PublishedWorking {
+                tile: UVec2::new(row.tileX(), row.tileY()),
+                material: row
+                    .material()
+                    .expect("a working names its material")
+                    .to_string(),
+                branch: row
+                    .branch()
+                    .expect("a working names its branch")
+                    .to_string(),
+                stock: row.stock(),
+                capacity: row.capacity(),
+                reachable: row.reachable(),
+                regrowth_rate: row.regrowthRate(),
+                rung: row
+                    .rung()
+                    .expect("a working publishes its rung")
+                    .to_string(),
+                sustainable_take: row.sustainableTake(),
+                actual_take: row.actualTake(),
+                turns_remaining: row.turnsRemaining(),
+                demand: row.upkeepDemand(),
+                supplied: row.upkeepSupplied(),
+                shortfall: row.upkeepShortfall(),
+                workers_needed: row.upkeepWorkersNeeded(),
+                has_neglect_grace: row.hasNeglectGrace(),
+                build_turns_remaining: row.buildTurnsRemaining(),
+                build_blocked_reason: row
+                    .buildBlockedReason()
+                    .expect("the cause is published, empty or not")
+                    .to_string(),
+                is_queued: row.isQueued(),
+                upkeep_kit_id: row
+                    .upkeepKitId()
+                    .expect("the keeping kit is published")
+                    .to_string(),
+            })
+            .collect()
+    }
+
+    fn published_working(app: &App, tile: UVec2, material: &str) -> PublishedWorking {
+        published_workings(app)
+            .into_iter()
+            .find(|row| row.tile == tile && row.material == material)
+            .unwrap_or_else(|| {
+                panic!("the {material} working at {tile:?} reached the viewer's frame")
+            })
+    }
+
+    /// The band's `quarrywork*` trio and its `extract` rows, off one decode of the envelope. The
+    /// campaign runs one cohort per test, so the sole published row is the band's.
+    fn published_band(app: &App) -> (PublishedQuarrywork, Vec<PublishedExtractRow>) {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        let bytes = encoded(app);
+        let envelope =
+            fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+        let cohorts = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section is published");
+        let row = cohorts
+            .iter()
+            .next()
+            .expect("the campaign publishes at least one cohort");
+        let rows = row
+            .laborAssignments()
+            .expect("the cohort publishes its labor rows")
+            .iter()
+            .filter(|assignment| assignment.kind().is_some_and(|kind| kind == "extract"))
+            .map(|assignment| PublishedExtractRow {
+                tile: UVec2::new(assignment.targetX(), assignment.targetY()),
+                material: assignment
+                    .material()
+                    .expect("an extract row publishes its material")
+                    .to_string(),
+            })
+            .collect();
+        (
+            PublishedQuarrywork {
+                demand: row.quarryworkDemand(),
+                supplied: row.quarryworkSupplied(),
+                shortfall: row.quarryworkShortfall(),
+            },
+            rows,
+        )
+    }
+
+    /// The campaign's first resident band, with the viewer pinned to its faction so what is
+    /// published is what *this* people can see. The last term is the band's working-age pool, which
+    /// every `set_assignment` below clamps against.
+    fn first_band(app: &mut App) -> (Entity, UVec2, u32) {
+        let (entity, faction, tile, working) = {
+            let mut query = app
+                .world
+                .query_filtered::<(Entity, &PopulationCohort, &BandId), With<ResidentBand>>();
+            let (entity, cohort, _band) = query
+                .iter(&app.world)
+                .next()
+                .expect("the campaign spawns at least one resident band");
+            (
+                entity,
+                cohort.faction,
+                cohort.current_tile,
+                cohort.working.to_f32() as u32,
+            )
+        };
+        let position = app
+            .world
+            .get::<Tile>(tile)
+            .expect("a band stands on a real tile")
+            .position;
+        app.world.insert_resource(ViewerFaction(faction));
+        (entity, position, working)
+    }
+
+    /// **Re-ground a tile**, so a fixture about a deposit is not at the mercy of what the generated
+    /// map happened to put under the band. The deposits table reads `tile.terrain` and nothing
+    /// else, so this is the whole of what decides which deposit stands here.
+    fn reground(app: &mut App, tile: UVec2, terrain: TerrainType) {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(tile.x, tile.y)
+            .expect("the fixture tile is on the map");
+        app.world
+            .get_mut::<Tile>(entity)
+            .expect("the fixture tile carries terrain")
+            .terrain = terrain;
+    }
+
+    /// **Seat a working exactly on a rung's top**, written straight into the registry so a keeping
+    /// fixture does not have to spend 250 work units of builders getting there first.
+    fn seat_working(app: &mut App, tile: UVec2, material: &str, rung: RungKey) {
+        let ladder = LadderConfig::builtin();
+        let config = ExtractionConfig::builtin();
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(tile.x, tile.y)
+            .expect("the fixture tile is on the map");
+        let ground = app
+            .world
+            .get::<Tile>(entity)
+            .expect("the fixture tile carries terrain");
+        let capacity = tile_deposit_capacity(&config, material, ground);
+        assert!(capacity > 0.0, "fixture: that ground must hold {material}");
+        let mut working = DepositSource::opening(tile, material, capacity, rung.branch());
+        let (base, width) = core_sim::extraction::deposit_rung_span(rung, &ladder);
+        working.set_ladder_position(base + width, &ladder, rung.branch());
+        assert_eq!(working.rung(), rung, "fixture: seated on the wrong rung");
+        app.world.resource_mut::<DepositRegistry>().insert(working);
+    }
+
+    /// Put a take crew on each working and `keepers` hands on the band's `quarrywork` pool.
+    fn staff(
+        app: &mut App,
+        band: Entity,
+        workings: &[(UVec2, &str)],
+        available: u32,
+        keepers: u32,
+    ) {
+        let mut allocation = LaborAllocation::default();
+        for (tile, material) in workings {
+            allocation.set_assignment(
+                LaborTarget::Extract {
+                    tile: *tile,
+                    material: (*material).to_string(),
+                },
+                A_TAKE_CREW,
+                available,
+                None,
+            );
+        }
+        allocation.set_assignment(LaborTarget::Quarrywork, keepers, available, None);
+        app.world.entity_mut(band).insert(allocation);
+    }
+
+    /// **A wooded tile beside a rock body, both worked, one turn resolved** — the fixture every
+    /// test below reads. It returns the two tiles in the order `(renewing, finite)`.
+    fn a_wood_and_a_quarry() -> (App, UVec2, UVec2) {
+        let mut app = build_test_app();
+        app.update();
+        let (band, home, working) = first_band(&mut app);
+        let width = app.world.resource::<TileRegistry>().width;
+        let rock = UVec2::new((home.x + 1) % width, home.y);
+        reground(&mut app, home, RENEWING_GROUND);
+        reground(&mut app, rock, FINITE_GROUND);
+        // **The rock working stands at the QUARRY rung**, so it owes a real keeping bill and the
+        // published quad is three different numbers rather than three zeros.
+        seat_working(&mut app, rock, STONE, RungKey::ExtractionQuarry);
+        staff(
+            &mut app,
+            band,
+            &[(home, WOOD), (rock, STONE)],
+            working,
+            TOO_FEW_KEEPERS,
+        );
+        app.update();
+        (app, home, rock)
+    }
+
+    /// ⛔ **THE §7 FORK, AND IT IS DECIDED BY THE RATE RATHER THAN BY THE BRANCH.**
+    ///
+    /// A wood renews, so it does not run out: it quotes the *not applicable* sentinel and warns
+    /// with the over-cut pair instead. A quarry's rate is zero, so it has no take to sustain and
+    /// answers with the runway. The two are asserted **against each other in one run**, on the same
+    /// code path with no branch anywhere between them.
+    #[test]
+    fn a_renewing_working_quotes_the_pair_and_a_finite_one_quotes_the_runway() {
+        let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
+        let wood = published_working(&app, wood_tile, WOOD);
+        let rock = published_working(&app, rock_tile, STONE);
+
+        assert!(
+            wood.regrowth_rate > 0.0,
+            "fixture: mixed woodland renews, so the wood row must take the over-cut fork: {wood:?}"
+        );
+        assert_eq!(
+            wood.turns_remaining, DEPOSIT_RUNWAY_NOT_APPLICABLE,
+            "a working that renews does not run out, so it quotes no runway: {wood:?}"
+        );
+        assert!(
+            wood.sustainable_take > 0.0,
+            "a renewing working's warning IS the sustainable-versus-actual pair, so the \
+             sustainable half must be a real rate: {wood:?}"
+        );
+
+        assert_eq!(
+            rock.regrowth_rate, 0.0,
+            "fixture: an alpine rock body never renews: {rock:?}"
+        );
+        assert_eq!(
+            rock.sustainable_take, 0.0,
+            "there is no take a quarry can hold indefinitely, and 0 is the honest answer rather \
+             than a gap: {rock:?}"
+        );
+        assert!(
+            rock.actual_take > 0.0,
+            "fixture: the quarry crew must have cut something for there to be a rate to project: \
+             {rock:?}"
+        );
+        assert!(
+            rock.turns_remaining >= 0,
+            "a finite working being cut quotes a real count of turns: {rock:?}"
+        );
+        assert_eq!(
+            rock.turns_remaining,
+            (rock.reachable / rock.actual_take).floor() as i32,
+            "the runway is a FORWARD projection of this turn's own take, never a trailing \
+             average: {rock:?}"
+        );
+    }
+
+    /// **The row's identity is the PAIR**, and the branch, the rung and the ground come with it.
+    #[test]
+    fn a_worked_deposit_publishes_a_row_keyed_by_tile_and_material() {
+        let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
+        let wood = published_working(&app, wood_tile, WOOD);
+        let rock = published_working(&app, rock_tile, STONE);
+
+        assert_eq!(
+            wood.branch, "forestry",
+            "wood is worked by forestry: {wood:?}"
+        );
+        assert_eq!(
+            wood.rung, "forestry:deadfall",
+            "a fresh working opens on its branch's free floor: {wood:?}"
+        );
+        assert_eq!(
+            rock.branch, "extraction",
+            "stone is worked by extraction: {rock:?}"
+        );
+        assert_eq!(
+            rock.rung, "extraction:quarry",
+            "the seated rock working holds the rung it was seated on: {rock:?}"
+        );
+        assert!(
+            rock.capacity > wood.capacity,
+            "capacity is read LIVE off the tile, so the rock body must out-measure the wood: \
+             {rock:?} vs {wood:?}"
+        );
+        assert!(
+            rock.reachable <= rock.stock,
+            "a rung reaches at most what is standing: {rock:?}"
+        );
+        assert!(
+            rock.stock < rock.capacity,
+            "fixture: the quarry crew drew the body down this turn: {rock:?}"
+        );
+        // **A working nobody has queued is not blocked, it is simply not being built** — and its
+        // countdown is the honest *no estimate* rather than the `-5` a client used to hardcode.
+        assert!(!rock.is_queued, "no band queued a build here: {rock:?}");
+        assert_eq!(
+            rock.build_blocked_reason, "",
+            "an unqueued working publishes no cause: {rock:?}"
+        );
+        assert_eq!(
+            rock.build_turns_remaining,
+            sim_schema::NO_BUILD_TURNS_ESTIMATE,
+            "a rung nobody ordered has no quote, and never a 0 that renders as finished: {rock:?}"
+        );
+        assert!(
+            !rock.upkeep_kit_id.is_empty(),
+            "a worked working resolves a keeping kit, the bare-handed one included: {rock:?}"
+        );
+    }
+
+    /// ⛔ **`demand − supplied == shortfall` HOLDS VERBATIM ON BOTH QUADS**, and all three numbers
+    /// are different — a quad of zeros would pass this identity while saying nothing.
+    #[test]
+    fn the_standing_bill_holds_its_identity_on_the_working_and_on_the_band() {
+        let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
+        let rock = published_working(&app, rock_tile, STONE);
+        let (quarrywork, _) = published_band(&app);
+
+        assert!(
+            rock.demand > 0.0 && rock.supplied > 0.0 && rock.shortfall > 0.0,
+            "fixture: one keeper must part-pay a real bill, or the identity is three zeros: \
+             {rock:?}"
+        );
+        assert_eq!(
+            rock.shortfall,
+            rock.demand - rock.supplied,
+            "the working's quad reads the STAMPED basis, so the identity is verbatim: {rock:?}"
+        );
+        assert!(
+            rock.workers_needed > TOO_FEW_KEEPERS,
+            "the bill wants more keepers than the band staffed: {rock:?}"
+        );
+        assert!(
+            rock.has_neglect_grace,
+            "a built rung has a meter to lose, so there is a countdown here: {rock:?}"
+        );
+
+        assert_eq!(
+            quarrywork.shortfall,
+            quarrywork.demand - quarrywork.supplied,
+            "the band's quarrywork triple holds the same identity: {quarrywork:?}"
+        );
+        assert_eq!(
+            quarrywork.demand, rock.demand,
+            "the band keeps exactly this one billed working, so its summed demand is that \
+             working's: {quarrywork:?} vs {rock:?}"
+        );
+
+        // **The free floor owes nothing, and that is what makes it free.**
+        let wood = published_working(&app, wood_tile, WOOD);
+        assert_eq!(
+            wood.demand, 0.0,
+            "`forestry:deadfall` declares no upkeep at all: {wood:?}"
+        );
+        assert!(
+            !wood.has_neglect_grace,
+            "nothing is at risk on a free floor: {wood:?}"
+        );
+    }
+
+    /// **An `extract` row names its deposit**, because `targetX`/`targetY` alone cannot tell a
+    /// felling crew from a quarrying crew on the same hex.
+    #[test]
+    fn an_extract_labor_row_publishes_the_material_it_works() {
+        let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
+        let (_, rows) = published_band(&app);
+
+        // Sorted on the wire spelling of the key, because `UVec2` carries no `Ord` and the row
+        // order is the allocation's rather than anything this test may assume.
+        let key = |tile: UVec2, material: &str| (tile.x, tile.y, material.to_string());
+        let mut named: Vec<(u32, u32, String)> = rows
+            .into_iter()
+            .map(|row| key(row.tile, &row.material))
+            .collect();
+        named.sort();
+        let mut expected = vec![key(wood_tile, WOOD), key(rock_tile, STONE)];
+        expected.sort();
+        assert_eq!(
+            named, expected,
+            "each extract row publishes both halves of the working's key"
+        );
+    }
+}

@@ -307,6 +307,13 @@ fn create_populations<'a>(
                         // The plants this crew carries home. **Absent rather than an empty vector**
                         // when the crew named none, the `species`/`faunaId` convention: an absent
                         // vector reads as empty, and empty *is* "the whole basket".
+                        // The deposit this crew is on — `None` on every row that is not
+                        // `extract`, the `fauna_id` convention: an absent string is "no selection".
+                        let material = if assignment.material.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.material))
+                        };
                         let take_species = if assignment.take_species.is_empty() {
                             None
                         } else {
@@ -386,6 +393,11 @@ fn create_populations<'a>(
                                     SourcePriorityState::High => fb::SourcePriority::High,
                                     SourcePriorityState::Low => fb::SourcePriority::Low,
                                 },
+                                // **WHICH DEPOSIT THIS CREW IS WORKING** — the other half of a
+                                // working's key, because one tile can hold two. Absent rather than
+                                // an empty string, the `species`/`faunaId` convention. Appended
+                                // last.
+                                material,
                             },
                         )
                     })
@@ -976,6 +988,12 @@ fn create_populations<'a>(
                     // THIS BAND'S OUTFITTING WINDOW — appended last. `None` is the ordinary state:
                     // a window shuts on the turn advance, so most frames carry none at all.
                     loadoutWindow: loadout_window,
+                    // The band's QUARRYWORK bill — appended last, always written, and summed by the
+                    // sim for the roadwork triple's reason: deposit rows are fog-filtered, so a
+                    // working out of sight would drop out of any client-side total the band owes.
+                    quarryworkDemand: cohort.quarrywork_demand,
+                    quarryworkSupplied: cohort.quarrywork_supplied,
+                    quarryworkShortfall: cohort.quarrywork_shortfall,
                 },
             )
         })

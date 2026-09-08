@@ -2,7 +2,7 @@
 
 use crate::codec::FbBuilder;
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
+    CharacteristicBandState, CraftKnowledgeState, DepositState, FloraShareInfo, FoodModuleState,
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
     LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState, RouteRungState,
     SedentarizationState,
@@ -36,6 +36,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let recipes = create_recipes(builder, &snapshot.recipes);
     let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
     let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
+    let deposits = create_deposits(builder, &snapshot.deposits);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -59,6 +60,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             recipes: Some(recipes),
             craftKnowledge: Some(craft_knowledge),
             routeRungs: Some(route_rungs),
+            deposits: Some(deposits),
         },
     )
 }
@@ -139,6 +141,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .route_rungs
         .as_ref()
         .map(|entries| create_route_rungs(builder, entries));
+    let deposits = delta
+        .deposits
+        .as_ref()
+        .map(|entries| create_deposits(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -160,6 +166,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             recipes,
             craftKnowledge: craft_knowledge,
             routeRungs: route_rungs,
+            deposits,
         },
     )
 }
@@ -1056,5 +1063,59 @@ fn create_food_modules<'a>(
         );
         entries.push(entry);
     }
+    builder.create_vector(&entries)
+}
+
+/// **The live workings on deposits** — one row per `(tile, material)`, in the registry's own key
+/// order so the section is stable frame to frame and diffs out when nothing moved.
+fn create_deposits<'a>(
+    builder: &mut FbBuilder<'a>,
+    deposits: &[DepositState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DepositState<'a>>>> {
+    let entries: Vec<_> = deposits
+        .iter()
+        .map(|deposit| {
+            // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+            let material = builder.create_string(&deposit.material);
+            let branch = builder.create_string(&deposit.branch);
+            let rung = builder.create_string(&deposit.rung);
+            // Always written, `""` included: *"not blocked"* is a statement about this turn, not an
+            // absent field.
+            let build_blocked_reason = builder.create_string(&deposit.build_blocked_reason);
+            let build_kit_id = builder.create_string(&deposit.build_kit_id);
+            let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
+            fb::DepositState::create(
+                builder,
+                &fb::DepositStateArgs {
+                    tileX: deposit.tile_x,
+                    tileY: deposit.tile_y,
+                    material: Some(material),
+                    branch: Some(branch),
+                    stock: deposit.stock,
+                    capacity: deposit.capacity,
+                    reachable: deposit.reachable,
+                    regrowthRate: deposit.regrowth_rate,
+                    rung: Some(rung),
+                    buildFraction: deposit.build_fraction,
+                    ladderPosition: deposit.ladder_position,
+                    sustainableTake: deposit.sustainable_take,
+                    actualTake: deposit.actual_take,
+                    turnsRemaining: deposit.turns_remaining,
+                    upkeepDemand: deposit.upkeep_demand,
+                    upkeepSupplied: deposit.upkeep_supplied,
+                    upkeepShortfall: deposit.upkeep_shortfall,
+                    upkeepWorkersNeeded: deposit.upkeep_workers_needed,
+                    hasNeglectGrace: deposit.has_neglect_grace,
+                    neglectGraceRemaining: deposit.neglect_grace_remaining,
+                    buildTurnsRemaining: deposit.build_turns_remaining,
+                    buildBlockedReason: Some(build_blocked_reason),
+                    isQueued: deposit.is_queued,
+                    buildKitId: Some(build_kit_id),
+                    upkeepKitId: Some(upkeep_kit_id),
+                    upkeepKitNamed: deposit.upkeep_kit_named,
+                },
+            )
+        })
+        .collect();
     builder.create_vector(&entries)
 }

@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/extraction.rs"
   - "core_sim/src/extraction_config.rs"
   - "core_sim/src/data/extraction.json"
+  - "core_sim/src/snapshot/deposits.rs"
   - "core_sim/tests/extraction.rs"
 ---
 
@@ -408,20 +409,78 @@ and its floor is the **rung's**, not the row's, so there is nothing to trade.
 | `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
 | `src/data/equipment.json` | `default_kits.extract` and `default_kits.quarrywork` both `"none"`, the `none` kit's `jobs` gains both, and `stone_dressing`'s flint tier gains its second `build_work` effect on `extraction:quarry` |
 
-## Wire and client — what is NOT here
+## The wire — one row per WORKING, and the rate picks the readout
 
-**Nothing about a deposit reaches the client yet.** There is no `DepositState` row, the `extract`
-labor row publishes its **tile but not its material** (a wooded highland holds two workings and the
-wire cannot yet tell them apart), and neither the build countdown nor the build kit lands anywhere.
-`plan_extraction.md` §7 owns the readouts — the sustainable-versus-actual over-cut warning on a
-renewable deposit and `turns_remaining = reachable / take rate` on a finite one, chosen by
-`regrowth_rate > 0` rather than by branch — and they are a schema change.
+`DepositState` is the working's source row: keyed `(tile, material)` because one tile can hold two,
+built by `snapshot::deposits::deposit_states` and diffed as a whole vector on `foragePatches`' rule
+(no `removedDeposits` twin — a working that leaves the frame leaves by being absent). The `extract`
+labor row carries `material` beside its tile, and `PopulationCohortState` carries the
+`quarryworkDemand` / `Supplied` / `Shortfall` triple, the roadwork triple one pool over.
 
-**The keeping ledger is in the same position.** `LaborAllocation::last_quarrywork_demand` and its
-supplied twin are summed per band exactly as the roadwork pair is, and for the same reason the sim
-does the summing — but `roadwork_demand` has a `PopulationCohortState` field and this pair does not,
-so a Work board cannot yet show a band the bill it is failing to pay. That is the field the
-`quarrywork` role wants most.
+**The fog gate is the ROAD's `Discovered`, not the herd's `Active`, and the whole row passes or none
+of it does.** A working does not wander off, so remembering one is remembering something true; and
+because the registry is a *sparse, tile-keyed set of improvements a band opened*, it takes the road
+row's discipline rather than the two food webs' — they publish every patch and leave the redaction
+to the client, which is only safe because a patch exists on every food-bearing tile whether or not
+anybody has touched it. Row-level filtering is what keeps `ladderPosition`, `buildFraction` and
+`rung` off ground the faction has never seen, with no per-field rule to get wrong.
+
+**Absence of a row is *nobody has worked this ground*, never *there is no deposit here*.** The
+registry is lazy, so an untouched map publishes nothing at all; what a tile *holds* is a pure
+function of its terrain and is not on this table.
+
+**Every derived number is read LIVE off the tile at capture** — capacity, the ground's rate,
+`deposit_reachable`, the payoff — because that is `DepositSource`'s own doc comment: it carries the
+stock and the position and nothing that could be derived. A working whose tile the capture cannot
+resolve is **dropped rather than published at zero**, since every number on the row is a function of
+that ground.
+
+### `regrowthRate` is the fork, and `branch` is not
+
+`deposit_runway` answers `sim_schema::DEPOSIT_RUNWAY_NOT_APPLICABLE` (`-1`) the moment
+`tile_deposit_regrowth > 0`, so a renewing working publishes the **over-cut pair** —
+`deposit_sustainable_take`, which is the growth term itself, against `DepositSource::last_take` — and
+a finite one publishes the **runway**, `floor(reachable / last_take)`. Surface flint and a quarry are
+both `extraction` and land on opposite sides of it, which is §3's callout restated where it is
+observable; `a_renewing_working_quotes_the_pair_and_a_finite_one_quotes_the_runway` asserts the two
+against each other in one run.
+
+**`sustainableTake` reads `0` on a quarry by arithmetic, not by a branch**: `deposit_regrowth` at a
+rate of `NEVER_RENEWS` returns the stock unchanged, so the difference is exactly zero. **The runway
+is a FORWARD projection** (the arrivals rule): its denominator is `last_take`, an accumulator the
+band rows add into and `advance_deposits` clears once per turn, so the count moves the turn the crew
+does. A finite working nobody is cutting answers `DEPOSIT_RUNWAY_NO_TAKE` (`-2`) — it *will* run out,
+just not while it stands idle — which is deliberately a different sentinel from `-1`.
+
+### The countdown goes through a claims set, where the road's does not
+
+`DepositSource` gained the road's four scratch fields — `last_take`, `build_blocked_reason`,
+`build_turns_remaining`, `build_queue_position` — all cleared by `advance_deposits` phase 3 on the
+one-turn cycle, which is what makes *"live-queued and still cleared"* mean *"queued since the last
+pass"*.
+
+`publish_entry`'s deposit arm publishes through `BuildEstimateClaims<(UVec2, String)>` — the road's
+own reason read the other way. **A road has one keeper per tile**, so at most one band can hold an
+entry for it and there is nothing to arbitrate; **a deposit verb enqueues on every band of the
+faction working the source**, so several bands really can quote one working and the sooner answer
+must win. It uses `publish_countdown` rather than the six-field `publish_running`: `DepositState`
+carries the date, its cause and the place in the line and nothing else, and giving `DepositSource`
+gear/destination/leg fields so it could pass a `BuildEstimateSlots` would be writing state no capture
+reads.
+
+The unqueued tail takes the **food webs'** arm rather than the road's silence — a working the band
+cuts but has not queued is dated at the back of the line, which is where a build ordered now would
+actually go.
+
+### The kit indexes carry both halves
+
+`BuildKitIds` gains `deposits: HashMap<(UVec2, String), String>` — **a map where the road's is a
+set**, because a working publishes its kit *and* its membership on its own row, so the map's presence
+is `isQueued` and its value is `buildKitId`. One index answers both rather than two that could
+disagree, and membership cannot be replaced by a `buildKitId != ""` test: a resolved builders kit is
+never the empty string. `UpkeepKitIds` gains the same key for `upkeepKitId` / `upkeepKitNamed`, and
+`resolve_upkeep_kits` reads the working's branch off the **source's own rung** rather than off the
+row, because one row kind serves both ladders.
 
 ## See also
 

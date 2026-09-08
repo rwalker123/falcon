@@ -169,6 +169,14 @@ pub(crate) struct BuildKitIds {
     /// answered off the bands' queues rather than off the turn-written row — the row's scratch lags
     /// a command by a whole turn, and the state this separates exists precisely in that frame.
     roads: std::collections::HashSet<UVec2>,
+    /// **The workings some band has queued, and the kit each is being raised with** — keyed
+    /// `(tile, material)`, because one tile can hold two workings and a `fell` queued on the timber
+    /// is not a `quarry` queued on the rock beneath it.
+    ///
+    /// **A map and not a set, where the road's is a set**: a working publishes *both* halves on its
+    /// own row (`buildKitId` and `isQueued`), so the map's **presence** is the membership and its
+    /// value is the kit — one index answering both, rather than two that could disagree.
+    deposits: HashMap<(UVec2, String), String>,
 }
 
 impl BuildKitIds {
@@ -202,6 +210,22 @@ impl BuildKitIds {
     /// The animal twin — see [`Self::patch_is_queued`].
     fn herd_is_queued(&self, id: &str) -> bool {
         self.herds.contains_key(id)
+    }
+
+    /// The kit this working's entry resolves to, `""` when no band has it queued.
+    pub(crate) fn deposit(&self, tile: UVec2, material: &str) -> String {
+        self.deposits
+            .get(&(tile, material.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// **IS THIS WORKING IN SOME BAND'S LIVE QUEUE?** — the deposit twin of
+    /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
+    /// **Membership is the map's own presence**, which is why it cannot be replaced by a
+    /// `!deposit(..).is_empty()` test: a resolved builders kit is never the empty string.
+    pub(crate) fn deposit_is_queued(&self, tile: UVec2, material: &str) -> bool {
+        self.deposits.contains_key(&(tile, material.to_string()))
     }
 }
 
@@ -269,12 +293,25 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                 crate::components::BuildSource::Road(tile) => {
                     resolved.roads.insert(*tile);
                 }
-                // **A deposit publishes nothing here YET**, for the road's original reason: there is
-                // no deposit row on the wire to carry a kit or a membership flag, and the readouts
-                // are the next slice (`docs/plan_extraction.md` §7). The resolution above still
-                // runs for it — the entry's kit is priced off the same one seam — it simply has
-                // nowhere to be published.
-                crate::components::BuildSource::Deposit { .. } => {}
+                // **A working records BOTH halves here** — the kit its build is being raised with
+                // *and*, in the map's own presence, whether some band has it queued at all. The
+                // road records only membership because its kit rides its own row's build arm; a
+                // working's `DepositState` publishes both, so one index answers both rather than
+                // two that could disagree.
+                //
+                // ⛔ **NO CLAIMS ARBITRATION, unlike the patch and herd arms above.** Those pick a
+                // winner because several bands can work one source and the row's own published
+                // position names which band's answer it is. A working carries no such published
+                // position on the wire — the entry's date is stamped straight onto the source by
+                // the chain pass, exactly as a road's is — so the fallback here is the first band
+                // in iteration order, the same arbitrary-but-deterministic rule the two food webs
+                // fall back to for a source no matching band claimed.
+                crate::components::BuildSource::Deposit { tile, material } => {
+                    resolved
+                        .deposits
+                        .entry((*tile, material.clone()))
+                        .or_insert(kit);
+                }
             }
         }
     }
@@ -302,6 +339,9 @@ pub(crate) fn resolve_build_kit_ids<'a>(
 pub(crate) struct UpkeepKitIds {
     patches: HashMap<UVec2, ResolvedUpkeepKit>,
     herds: HashMap<String, ResolvedUpkeepKit>,
+    /// The deposit twin, keyed the way a working is named — `(tile, material)`, because one tile
+    /// can hold two and keeping the timber is not keeping the rock.
+    deposits: HashMap<(UVec2, String), ResolvedUpkeepKit>,
 }
 
 /// One site's answer: the kit its keepers carry, and whether a band stated it.
@@ -328,6 +368,13 @@ impl UpkeepKitIds {
             .get(id)
             .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
     }
+
+    /// The deposit twin, keyed `(tile, material)`.
+    pub(crate) fn deposit(&self, tile: UVec2, material: &str) -> (String, bool) {
+        self.deposits
+            .get(&(tile, material.to_string()))
+            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
+    }
 }
 
 /// **The one place a band's live rows become the wire's `upkeepKitId`** — see [`UpkeepKitIds`].
@@ -337,6 +384,9 @@ pub(crate) fn resolve_upkeep_kits<'a>(
     // bound to a rung, so the derivation cannot be answered off the row alone.
     forage: &ForageRegistry,
     herds: &HerdRegistry,
+    // **The workings' registry, for the same reason** — a `quarrywork` keeping tool may be bound to
+    // a rung, and only the source knows which rung it stands on.
+    deposits: &crate::extraction::DepositRegistry,
     equipment: &crate::equipment_config::EquipmentConfig,
 ) -> UpkeepKitIds {
     let mut resolved = UpkeepKitIds::default();
@@ -357,6 +407,21 @@ pub(crate) fn resolve_upkeep_kits<'a>(
                     herds.find(fauna_id).map(crate::fauna::herd_rung_key),
                     SourceKey::Herd(fauna_id.clone()),
                 ),
+                // **The working's own branch, off the SOURCE and never off the row** — one row kind
+                // serves both ladders (`LaborTarget::Extract`), so the branch is the deposit's
+                // (`DepositDef::branch`) as read back through the rung it stands on. A row naming
+                // ground that holds none of the material resolves no source and therefore no rung,
+                // which is the same forgiveness the two food webs give an unplaced source.
+                crate::components::LaborTarget::Extract { tile, material } => {
+                    let working = deposits.source(*tile, material);
+                    (
+                        working.map_or(crate::intensification::RungBranch::Extraction, |source| {
+                            source.rung().branch()
+                        }),
+                        working.map(crate::extraction::DepositSource::rung),
+                        SourceKey::Deposit(*tile, material.clone()),
+                    )
+                }
                 // A band-wide role stands on no ground, so it keeps nothing.
                 _ => continue,
             };
@@ -372,6 +437,9 @@ pub(crate) fn resolve_upkeep_kits<'a>(
             let slot = match key {
                 SourceKey::Patch(tile) => resolved.patches.entry(tile).or_default(),
                 SourceKey::Herd(id) => resolved.herds.entry(id).or_default(),
+                SourceKey::Deposit(tile, material) => {
+                    resolved.deposits.entry((tile, material)).or_default()
+                }
             };
             // A stated override beats a derivation; among two stated ones the first wins, so a slot
             // already carrying a named pick is never displaced. An empty slot is the fresh entry in
@@ -384,10 +452,12 @@ pub(crate) fn resolve_upkeep_kits<'a>(
     resolved
 }
 
-/// The two ways a worked source is named, so [`resolve_upkeep_kits`]'s two arms share one body.
+/// The three ways a worked source is named, so [`resolve_upkeep_kits`]'s arms share one body.
 enum SourceKey {
     Patch(UVec2),
     Herd(String),
+    /// **Both halves**, because one tile can hold two workings.
+    Deposit(UVec2, String),
 }
 
 pub(crate) fn snapshot_sedentarization(

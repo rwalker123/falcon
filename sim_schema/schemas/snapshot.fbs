@@ -1477,6 +1477,30 @@ table PopulationCohortState {
   // openingLoadout` for the campaign-wide half (the profile's pick list and its pre-fills), which is
   // one per world and deliberately NOT duplicated per band.
   loadoutWindow:BandLoadoutWindowState;
+  // --- THE BAND'S QUARRYWORK BILL (appended last) -----------------------------------------------
+  // WHAT THE WORKINGS THIS BAND KEEPS COST IT THIS TURN, in work units per turn - the exact
+  // roadwork triple above, one pool over, so the Work board can show the `quarrywork` role's need
+  // the way it shows agriculture's and husbandry's.
+  //
+  // *** ONE POOL FOR BOTH DEPOSIT BRANCHES. *** Forestry and extraction split on KNOWLEDGE and on
+  // nothing a keeper does - hold the face open, clear what has fallen is one job - so a band
+  // keeping a coppice and a quarry pays both out of this one bill.
+  //
+  // *** THE SIM SUMS IT, AND A CLIENT MUST NOT *** - `roadworkDemand`'s rule and load-bearing for
+  // its reason: DEPOSIT ROWS ARE FOG-FILTERED, so a working out of sight would silently drop out of
+  // any client-side total while the band certainly still owes its keeping.
+  //
+  // quarryworkDemand    = the summed STAMPED bill of the workings this band holds a row on
+  //                       (`extraction::deposit_keeping_basis`, via
+  //                       `labor::extraction_keeping_claims`), summed BEFORE fog and published
+  //                       whether or not the band can pay it - `fodderNeed`'s own rule. It is the
+  //                       alarm.
+  // quarryworkSupplied  = what this band's `quarrywork` keepers paid into those workings this turn.
+  // quarryworkShortfall = demand - supplied, and that identity holds verbatim here as it does on
+  //                       the `DepositState` row.
+  quarryworkDemand:float = 0;
+  quarryworkSupplied:float = 0;
+  quarryworkShortfall:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -2087,6 +2111,15 @@ table LaborAssignment {
   // that reports them says "0.29 fibre" however many ways the band earned it.
   meatYield:float = 0;
   standingYield:float = 0;
+  // --- WHICH DEPOSIT THIS CREW IS WORKING (appended last) ---------------------------------------
+  // The other half of a working's registry key. *** ONE TILE CAN HOLD TWO WORKINGS *** - a wooded
+  // highland holds timber and rock - so `targetX`/`targetY` alone cannot tell a felling crew from a
+  // quarrying crew standing on the same hex, and a client joining this row to its `DepositState`
+  // needs both halves.
+  //
+  // "" on every row that is not `extract`, which is every other row kind: nothing else names a
+  // material.
+  material:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -5741,6 +5774,11 @@ table SubsistenceSection {
   // both: quoting it as `defaultHuntKitId` would show a launch sheet a kit that cannot gather.
   // Never empty: it always names a real roster entry.
   defaultExpeditionKitId:string;
+  // --- THE LIVE WORKINGS ON DEPOSITS (appended last) --------------------------------------------
+  // One row per working the viewer can see - see `DepositState`. Diffed as a WHOLE VECTOR each
+  // frame, exactly like `foragePatches`, and like it there is deliberately no `removedDeposits`
+  // twin: a working that leaves the viewer's frame leaves by being absent from the next vector.
+  deposits:[DepositState];
 }
 
 table KnowledgeSection {
@@ -5960,6 +5998,180 @@ table ConnectionState {
 
 table ConnectionSection {
   connections:[ConnectionState];
+}
+
+// --- Workings: the deposits under a crew (arc #583, docs/plan_extraction.md 7) ------------------
+// ONE ROW PER LIVE WORKING, keyed by (tile, material). A working is a per-TILE improvement like a
+// road, but it belongs to a CAMP like a patch: a road follows nobody and is free to leave, and a
+// quarry you walk away from is a quarry you lost.
+//
+// *** THE REGISTRY IS SPARSE AND LAZY. *** A working opens the first turn a band puts a crew on it,
+// so an untouched map publishes no rows at all - the absence of a row is "nobody has worked this
+// ground", NEVER "there is no deposit here". What a tile HOLDS is a pure function of its terrain
+// and is not on this table.
+//
+// Published for the workings the VIEWING FACTION CAN SEE: one whose tile the faction has explored
+// (Discovered or Active), the road row's gate rather than the herd row's - a working does not
+// wander off, so remembering one is remembering something true.
+table DepositState {
+  // THE ROW'S IDENTITY - the tile AND the material, because ONE TILE CAN HOLD TWO. A wooded
+  // highland holds timber and rock, and working one is not working the other; tileX/tileY alone
+  // cannot join this row to the crew standing on it (see LaborAssignment.material).
+  tileX:uint;
+  tileY:uint;
+  material:string;
+  // "forestry" or "extraction" - RungBranch's wire form. WHICH LADDER works this deposit, and it
+  // is NOT what decides the readout below: a flint scatter and a quarry are both `extraction` and
+  // read differently. See regrowthRate.
+  branch:string;
+
+  // --- THE STOCK ---------------------------------------------------------------------------------
+  // What is standing here right now, in the material's own units - the ONLY saved thing about a
+  // working. It opens at capacity, is drawn down by the take and put back by the growth term.
+  stock:float = 0;
+  // What this ground holds when full (`extraction::tile_deposit_capacity`), read LIVE off the tile
+  // at capture rather than stored on the source. NO RUNG MAY RAISE IT - it is the terrain's, which
+  // is what keeps the floor below from climbing out from under a build.
+  capacity:float = 0;
+  // What the CURRENT rung can actually get at (`extraction::deposit_reachable`) - capacity minus
+  // the rung's own floor, clamped to the stock. The numerator of turnsRemaining.
+  //
+  // *** IT IS NEVER SIMPLY `stock`. *** A rung that cannot reach the whole seam leaves stock it
+  // cannot take, and climbing the extraction ladder is precisely how you reach deeper. A reader
+  // that rendered `stock` as "what you can have" would promise the player rock the crew cannot cut.
+  reachable:float = 0;
+  // The GROUND'S OWN renewal rate (`extraction::tile_deposit_regrowth`), already scaled by what
+  // this working's rung bought.
+  //
+  // *** THIS IS THE FIELD THAT DECIDES WHICH READOUT THE CLIENT DRAWS *** (plan_extraction.md 7):
+  //   > 0   the OVER-CUT warning  - sustainableTake against actualTake
+  //   == 0  the RUNWAY            - turnsRemaining
+  // *** IT IS NOT `branch`. *** Surface flint and a quarry are the same skill and the same branch,
+  // and only one of them runs out; what differs is the terrain's rate, which is this field.
+  regrowthRate:float = 0;
+
+  // --- THE RUNG ----------------------------------------------------------------------------------
+  // The rung this working HOLDS, as "<branch>:<id>" via RungKey::wire_key - "forestry:deadfall",
+  // "forestry:felling", "forestry:coppice", "extraction:gathering", "extraction:quarry".
+  //
+  // *** READ THE RUNG, NEVER THRESHOLD buildFraction TO INFER ONE. *** That meter belongs to the
+  // rung being RAISED, which is a different rung - RouteState.rung carries the same rule.
+  rung:string;
+  // The meter on the rung being RAISED, 0..1, off the shared intensification::build_fraction seam
+  // both food webs and the road publish theirs from.
+  //
+  // *** NEVER DERIVED BY SUBTRACTION *** - `fl(base + width) - base` is not `width` when that
+  // addition rounds, which is the defect that published a completed Field as "99%". A working that
+  // has just completed a rung reads EXACTLY 1.0, and so does one at the top of its ladder (there is
+  // nothing left to raise - draw a full bar, not an empty one).
+  buildFraction:float = 0;
+  // How far up its branch this working has been raised, in CUMULATIVE work units
+  // (`DepositSource::ladder_position`) - the one meter both deposit branches carry. It is the
+  // absolute position the rung and the fraction above are both read out of, published so a ladder
+  // card can place the working on the whole branch rather than only within one rung.
+  ladderPosition:float = 0;
+
+  // --- THE TWO READOUTS (plan_extraction.md 7) ---------------------------------------------------
+  // What a crew could take EVERY TURN AT THIS STOCK and leave the working where it stands - the
+  // growth term, in the material's own units per turn.
+  //
+  // *** 0 ON A FINITE DEPOSIT, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP. *** Rock's rate is
+  // zero, so there is no take a quarry can sustain: what a finite working publishes instead is the
+  // runway below.
+  sustainableTake:float = 0;
+  // What this working actually paid out last turn, summed over every band that cut it - the take
+  // side of the pair. sustainable-versus-actual is the EXISTING intensification income breakdown
+  // (docs/plan_intensification.md) pointed at a new source, not a new readout: actual above
+  // sustainable is over-cutting, which is possible on purpose and warned about rather than refused.
+  actualTake:float = 0;
+  // HOW MANY TURNS THIS WORKING LASTS AT THE CURRENT TAKE - floor(reachable / actualTake).
+  //
+  // *** A FORWARD PROJECTION, NEVER A TRAILING AVERAGE AND NEVER AN EMA *** (the food-arrivals
+  // rule): it is this turn's rate carried forward, so it moves the turn the crew does.
+  //
+  //   >= 0  a real count of turns
+  //   -1    NOT APPLICABLE - this deposit RENEWS (regrowthRate > 0), so it does not run out and the
+  //         over-cut pair above is its warning instead. It is not "unknown": a client renders the
+  //         other readout here rather than an empty runway.
+  //   -2    NO TAKE THIS TURN - nobody is cutting it, so there is no rate to carry forward and no
+  //         runway to quote. It is NOT -1: this working WILL run out, just not while it is idle.
+  turnsRemaining:int = -1;
+
+  // --- THE STANDING BILL (the patch / herd / road quad, verbatim) --------------------------------
+  // What holding this working costs per turn, in work units, drawn from the band's `quarrywork`
+  // pool - the fourth keeping pool, and the road's twin two branches over.
+  //
+  // *** demand - supplied == shortfall HOLDS VERBATIM ON THE WIRE. *** All three read the STAMPED
+  // basis (`DepositSource::upkeep_demanded`, struck by `extraction::advance_deposits` at the
+  // post-decay position), never the live interpolated demand: the build arm moves the position
+  // inside the same turn, so a bill struck on one side of the accrual and a payment on the other
+  // are two readings of two different workings.
+  //
+  // upkeepDemand         = what this working was billed this turn. 0 on BOTH FREE FLOORS
+  //                        (`forestry:deadfall`, `extraction:gathering`), which declare no upkeep
+  //                        at all - nobody built them, so there is nothing to hold, and that is
+  //                        the whole of what makes a floor free.
+  // upkeepSupplied       = what this band's `quarrywork` keepers actually paid into it.
+  // upkeepShortfall      = what the bill left unpaid. A working whose band walked out of range owes
+  //                        its bill to nobody, so it is wholly short and slides.
+  // upkeepWorkersNeeded  = whole `quarrywork` keepers the bill wants, ceil(demand / per-worker
+  //                        output) - the readout that makes a standing cost legible ("wants 2, you
+  //                        have 0"). 0 for a working that owes nothing.
+  upkeepDemand:float = 0;
+  upkeepSupplied:float = 0;
+  upkeepShortfall:float = 0;
+  upkeepWorkersNeeded:uint = 0;
+  // THE NEGLECT COUNTDOWN, not the counter - RouteState's rule verbatim. `neglectGraceRemaining` is
+  // turns of shortfall left before the rung starts to bleed: 0 means IT IS SLIDING NOW, and a
+  // working whose bill is met reads its rung's full grace + 1 ("walk away and you have this long").
+  //
+  // `hasNeglectGrace = false` means THERE IS NOTHING AT RISK HERE - a working on either free floor,
+  // which declares no upkeep and so has no meter to lose. Read the bool FIRST;
+  // `neglectGraceRemaining` reuses the "biting now" 0 rather than inventing a sentinel a client
+  // could mistake for a real countdown.
+  hasNeglectGrace:bool = false;
+  neglectGraceRemaining:uint = 0;
+
+  // --- THE BUILD IN FRONT OF THIS WORKING -------------------------------------------------------
+  // The CHAINED countdown - everything above this entry in its band's queue, plus this entry's own
+  // span. *** THE SAME QUANTITY WITH THE SAME SENTINELS a patch, a herd and a road publish ***:
+  // there is deliberately no deposit dialect, and `ForagePatchState.buildTurnsRemaining` carries
+  // the full table and the rationale.
+  //
+  //   >= 0  a real count of turns
+  //   -1    no estimate: nobody is working it, its gate refuses, or a running build banked nothing
+  //   -2    the meter holds exactly where it is
+  //   -3    the meter is going backwards
+  //   -4    the queue is blocked at this entry
+  //   -5    queued since the last turn resolved; no estimate pass has run for it yet
+  //
+  // *** ONLY A QUEUED WORKING HAS A REAL NUMBER. *** A rung nobody has ordered has no quote, so it
+  // reads -1 - never 0, which would render as a finished build.
+  buildTurnsRemaining:int = -1;
+  // WHY THE POOL IS STUCK ON THIS WORKING, "" when it is not - the same `BuildGate` vocabulary
+  // `ForagePatchState.buildBlockedReason` uses, two branches over; that field carries the key table.
+  //
+  // *** "" IS NOT "FINE". *** A working nobody has queued is not blocked, it is simply not being
+  // built - which is every working on the map until a player types `fell` or `quarry`.
+  buildBlockedReason:string;
+  // IS THIS WORKING IN SOME BAND'S BUILD QUEUE RIGHT NOW? - the MEMBERSHIP flag, and the term
+  // `buildTurnsRemaining`'s -5 is separated from -1 by. It is resolved by the same live-queue walk
+  // that resolves `buildKitId`, because the row's own scratch lags a command by a whole turn and
+  // this state exists precisely in that frame.
+  //
+  // It cannot be replaced by a `buildKitId != ""` test: a resolved builders kit is NEVER empty (the
+  // bare-handed kit is a roster entry like any other).
+  isQueued:bool = false;
+  // The kit this working's build is being raised with - `ForagePatchState.buildKitId`'s twin, off
+  // the same one resolution seam, so the row cannot state a tool the pool is not using. "" only
+  // where no band has this working queued.
+  buildKitId:string;
+  // THE KEEPING KIT - the patch/herd pair, from the upkeep-kit resolution pass.
+  // `upkeepKitNamed` is not recoverable from the id (a player may name the very kit the derivation
+  // would have picked), which is why it rides beside it rather than being re-derived on the client.
+  // See `ForagePatchState.upkeepKitId` for the whole rationale.
+  upkeepKitId:string;
+  upkeepKitNamed:bool = false;
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

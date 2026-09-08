@@ -1307,6 +1307,12 @@ fn seed_snapshot() -> WorldSnapshot {
     // own `tile_x`/`tile_y` scalars and nothing to walk.
     s.routes = rows();
 
+    // --- deposits --------------------------------------------------------
+    // The live workings on deposits (arc #583), **one row per `(tile, material)`**. Seeded for the
+    // same reason every repeated field here is: an empty vector is a field the decode guard cannot
+    // exercise. The row carries no nested repeated field — every string on it is a scalar.
+    s.deposits = rows();
+
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();
     for entry in &mut s.discovered_sites {

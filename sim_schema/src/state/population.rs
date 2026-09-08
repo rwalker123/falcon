@@ -341,6 +341,17 @@ pub struct LaborAssignmentState {
     /// last (append-only).
     #[serde(default)]
     pub priority: SourcePriorityState,
+    /// **WHICH DEPOSIT THIS CREW IS WORKING** — the other half of a working's registry key.
+    ///
+    /// ⛔ **ONE TILE CAN HOLD TWO WORKINGS** — a wooded highland holds timber *and* rock — so
+    /// [`Self::target_x`]/[`Self::target_y`] alone cannot tell a felling crew from a quarrying crew
+    /// standing on the same hex, and a client joining this row to its
+    /// [`crate::state::subsistence::DepositState`] needs both halves.
+    ///
+    /// `""` on every row that is not `extract`: nothing else names a material. Appended last
+    /// (append-only).
+    #[serde(default)]
+    pub material: String,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and
@@ -1505,6 +1516,28 @@ pub struct PopulationCohortState {
     /// beside it — [`Self::equipment_batches`] and [`Self::material_batches`] — are already here.
     #[serde(default)]
     pub loadout_window: Option<BandLoadoutWindowState>,
+    /// **WHAT THE WORKINGS THIS BAND KEEPS COST IT THIS TURN**, in work units per turn — the exact
+    /// [`Self::roadwork_demand`] triple, one pool over, so the Work board can show the `quarrywork`
+    /// role's need the way it shows agriculture's and husbandry's.
+    ///
+    /// **One pool for both deposit branches**: forestry and extraction split on *knowledge* and on
+    /// nothing a keeper does, so a band keeping a coppice and a quarry pays both out of this bill.
+    ///
+    /// ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT**, [`Self::roadwork_demand`]'s rule and
+    /// load-bearing for its reason: deposit rows are **fog-filtered**, so a working out of sight
+    /// would silently drop out of any client-side total the band certainly still owes. It is summed
+    /// *before* fog, and published whether or not the band can pay it — it is the alarm.
+    ///
+    /// `demand − supplied == shortfall` holds verbatim, as it does on the
+    /// [`crate::state::subsistence::DepositState`] row. Appended last (append-only).
+    #[serde(default)]
+    pub quarrywork_demand: f32,
+    /// See [`Self::quarrywork_demand`] — what this band's `quarrywork` keepers paid in this turn.
+    #[serde(default)]
+    pub quarrywork_supplied: f32,
+    /// See [`Self::quarrywork_demand`] — `demand − supplied`, verbatim.
+    #[serde(default)]
+    pub quarrywork_shortfall: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
