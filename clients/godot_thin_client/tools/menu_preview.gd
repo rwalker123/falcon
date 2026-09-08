@@ -10,6 +10,10 @@ extends Node
 ## then read ui_preview_out/menu_landing.png and menu_pause.png.
 
 const MENU_SHELL := preload("res://src/ui/MenuShell.tscn")
+## **`Main`'s WIRE BUILDER, called rather than restated.** `new_game_line` is a static function, so
+## the rule that decides whether the player's count reaches the socket is reachable here without
+## standing a client up — the same preload the other harnesses take for `Main`'s constants.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## The SHIPPED predicate both polled-input sites ask. Asserted directly rather than restated here —
 ## a harness that re-spelled the expression would keep passing after the real one drifted.
 const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
@@ -32,23 +36,28 @@ const SAVE_PANE_ID := "save"
 const NEW_GAME_PANE_ID := "new_game"
 
 # ---- faction-capacity fixtures --------------------------------------------------------------------
-# The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`), so these are the
-# numbers a real server answers for a Standard 80x52 map at the shipped
-# `faction_start_min_separation` of 20 — four start columns by three rows, one of them the player's.
-# They are fixtures for the ROW's states, not a restatement of the rule: the client never computes
-# this, which is the whole reason the query exists.
-const CAPACITY_MAX_STANDARD := 11
-const CAPACITY_DEFAULT_STANDARD := 0
+# The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`: a hex-packing count
+# over the map's LAND, at the shipped `faction_start_min_separation`), and the offered default is a
+# share of that ceiling. These are the numbers a real server answers for the shipped grids:
+#
+#     Tiny 3 / Small 4 / Standard 6 / Large 11 / Huge 17 rivals at the ceiling,
+#     pre-selecting     1 /       1 /         2 /        3 /      5.
+#
+# **They are fixtures for the ROW's states, not a restatement of the rule** — the client never
+# computes this, which is the whole reason the query exists. They are written down anyway because a
+# fixture that has drifted from the server renders a state no player can reach.
+const CAPACITY_MAX_STANDARD := 6
+const CAPACITY_DEFAULT_STANDARD := 2
 # What the player drags the slider to, for the frame that shows a chosen count.
 const CAPACITY_PICKED := 3
 # A genuine 0 ceiling — a grid with no room for a second start — which the row must render as "you
-# will be alone" rather than as a failure. **No offered map size produces it at the shipped
-# `faction_start_min_separation` of 20**, so it is answered here rather than reached: a heavier
-# separation is what would make it real, and the row has to be right when it does.
+# will be alone" rather than as a failure. **No offered map size produces it**: the smallest, Tiny,
+# still seats 3 rivals. So it is answered here rather than reached — a heavier separation or a preset
+# with very little land is what would make it real, and the row has to be right when it does.
 const CAPACITY_MAX_ALONE := 0
 # The roomiest offered grid's ceiling, for the re-ask frames: the pick made against it has to survive
 # the switch to a smaller map, clamped rather than reset.
-const CAPACITY_MAX_ROOMIEST := 27
+const CAPACITY_MAX_ROOMIEST := 17
 # The two map sizes the frames switch between, named from the shared registry rather than typed as
 # ids: switching size is what re-asks the ceiling, and `MapSizes` is the one list of them.
 const SIZE_KEY_SMALLEST := "tiny"
@@ -107,6 +116,15 @@ const PENDING_THEME := "kiln"
 ## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
 ## the status and the output agree — a harness that printed an error and still exited 0 was
 ## indistinguishable from a green one to anything but a human reading stdout.
+## The world parameters the wire assertion builds a line from. Any values would do — the claim is
+## about the trailing count — so they are the dev default's, which is a line a developer will
+## recognise if one is ever printed by a failure.
+const WIRE_PRESET := "earthlike"
+const WIRE_WIDTH := 80
+const WIRE_HEIGHT := 52
+const WIRE_SEED := 0
+const WIRE_PROFILE := "late_forager_tribe"
+
 const EXIT_OK := 0
 const EXIT_FAILED := 1
 
@@ -279,8 +297,8 @@ func _run_new_game_states() -> void:
 	await _save("menu_new_game_rivals_alone")
 
 	# --- THE ASK FAILED, and the screen still starts a game. The argument is omitted entirely
-	# (`NO_COUNT`), so the server falls back to its own configured default rather than to a number
-	# this screen guessed.
+	# (`NO_COUNT`), which the server answers with its unattended roster — no rivals — rather than
+	# with a number this screen guessed. The caption is what tells the player that.
 	_pick_map_size(SIZE_KEY_ROOMIEST)
 	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
 	await _settle()
@@ -291,6 +309,7 @@ func _run_new_game_states() -> void:
 	_assert_begin_is_offered()
 	await _save("menu_new_game_rivals_unavailable")
 
+	await _assert_the_shown_count_is_the_count_sent()
 	await _run_rivals_reask_states()
 	await _assert_row_height_is_stable()
 	await _assert_an_answer_survives_leaving_the_pane()
@@ -314,6 +333,65 @@ func _assert_an_answer_survives_leaving_the_pane() -> void:
 	await _settle()
 	if _find_slider(_shell._rivals_box) == null:
 		_fail("rivals: reopening the pane after an off-pane answer offered no slider")
+
+
+## **THE COUNT ON SCREEN IS THE COUNT ON THE WIRE — including the one nobody touched.**
+##
+## The row opens on the server's map-scaled offer (2 rivals on a Standard grid), and a player who
+## never drags the slider still SENDS that number: `_on_capacity_changed` seeds the pick from the
+## answer and nothing downstream re-derives it. Since an absent count no longer means "the server's
+## configured default" but its UNATTENDED roster — **zero rivals** — a break in that chain is the
+## difference between the world the screen promised and an empty one, and it would look completely
+## normal in every frame. No PNG for the same reason.
+##
+## The chain is walked at both ends: the shell's own `new_game_requested`, which is what
+## `LandingScreen` stashes, and `Main.new_game_line`, which is what actually reaches the socket.
+func _assert_the_shown_count_is_the_count_sent() -> void:
+	# **THE STATE A SCREEN NOBODY HAS TOUCHED IS IN**, staged explicitly: the frames above dragged the
+	# slider, and a pick is deliberately kept across pane changes and re-asks, so it would otherwise be
+	# inherited here and this assertion would be about a player who DID choose. These two fields are
+	# the whole of "untouched" — the pick, and the flag that says an answer may seat it.
+	_shell._rival_picked = false
+	_shell._rival_count = FactionCapacity.NO_COUNT
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	var slider := _find_slider(_shell._rivals_box)
+	if slider == null:
+		_fail("shown-is-sent: the answered row offered no control to read")
+		return
+	if int(slider.value) != CAPACITY_DEFAULT_STANDARD:
+		_fail("shown-is-sent: the row opened on %d, not the server's offer of %d"
+			% [int(slider.value), CAPACITY_DEFAULT_STANDARD])
+
+	# THE SHELL'S OUTPUT. Driven through the handler the Begin button is connected to — the button
+	# itself sits below this harness window's fold, and a click that lands on nothing would assert
+	# nothing.
+	var emitted: Array = []
+	var sink := func(_preset: String, _w: int, _h: int, _seed: int, _profile: String, count: int) -> void:
+		emitted.append(count)
+	_shell.new_game_requested.connect(sink)
+	_shell._on_begin_pressed()
+	_shell.new_game_requested.disconnect(sink)
+	if emitted.size() != 1:
+		_fail("shown-is-sent: Begin emitted %d requests, not one" % emitted.size())
+	elif int(emitted[0]) != CAPACITY_DEFAULT_STANDARD:
+		_fail("shown-is-sent: the row showed %d and the request carried %d"
+			% [CAPACITY_DEFAULT_STANDARD, int(emitted[0])])
+
+	# THE WIRE. `Main` appends the count only when there is one, and that rule is the last place the
+	# player's pick can be dropped.
+	var line: String = MAIN_SCRIPT.new_game_line(
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, CAPACITY_DEFAULT_STANDARD)
+	if not line.ends_with(" %d" % CAPACITY_DEFAULT_STANDARD):
+		_fail("shown-is-sent: the new_game line does not carry the count (%s)" % line)
+	# …and the absent case still carries NOTHING, which is a different request from a trailing 0.
+	var omitted: String = MAIN_SCRIPT.new_game_line(
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, FactionCapacity.NO_COUNT)
+	if omitted != "new_game %s %d %d %d %s" % [WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE]:
+		_fail("shown-is-sent: an unanswered ask put something on the line (%s)" % omitted)
+	# Left as it was found: untouched, so the next state stages its own starting point.
+	_shell._rival_picked = false
 
 
 ## **THE MAP-SIZE CLICK, WHICH IS THE ONE THE PLAYER MAKES REPEATEDLY.** A re-ask must not take the

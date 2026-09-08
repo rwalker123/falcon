@@ -37,7 +37,7 @@ const TextEntryFocus = preload("res://src/scripts/TextEntryFocus.gd")
 ## `ai_faction_count` is how many RIVAL peoples the player asked for, or `FactionCapacity.NO_COUNT`
 ## when they were never offered the choice (the capacity ask went unanswered). The two are different
 ## requests and the owner must keep them apart: `0` says "I play alone", while `NO_COUNT` says "send
-## no count at all", which leaves the server on its own configured default.
+## no count at all" — which the server answers with its unattended roster, no rivals.
 signal new_game_requested(preset_id: String, width: int, height: int, seed: int, profile_id: String, ai_faction_count: int)
 signal resume_requested
 signal abandon_requested
@@ -181,10 +181,11 @@ const RIVALS_CONTROL_ROW_HEIGHT := 18.0
 ## The caption under the row, in its four states. It is a CAPTION, always on screen, for the same
 ## reason the Theme row's is: the one thing the control cannot show is why it is offering what it is.
 const RIVALS_CAPTION_PENDING := "Asking how many this map can seat…"
-## **THE ASK WENT UNANSWERED, AND THAT IS NOT A DEAD END.** No count is sent in this state and the
-## server falls back to its own configured default, so the run still starts — the caption says which
-## number the world will be built with rather than inventing one to show.
-const RIVALS_CAPTION_UNAVAILABLE := "The server did not say how many this map can seat, so the world will be built with the server's own number of rivals."
+## **THE ASK WENT UNANSWERED, AND THAT IS NOT A DEAD END — but it has a consequence, and the caption
+## names it.** No count is sent in this state, and the server answers an absent count with its
+## unattended roster: a world with no rivals in it. A player who wanted neighbours and hit a failed
+## ask must not have to infer that from a sentence about the server's own settings.
+const RIVALS_CAPTION_UNAVAILABLE := "The server did not say how many this map can seat, so this world will be built with no rivals — yours would be the only people in it."
 ## A genuine 0 ceiling: a grid too small to seat a second start at the distance worldgen keeps between
 ## them. Not a failure, and not rendered as one.
 const RIVALS_CAPTION_ALONE := "This map is too small to seat another people apart from yours — you will be alone in the world."
@@ -193,9 +194,10 @@ const RIVALS_CAPTION_ALONE := "This map is too small to seat another people apar
 ## pushes "Begin the trail" further under the fold on a short window.
 const RIVALS_CAPTION_CEILING_FORMAT := "Others share the world, each taking its own start far from you — up to %d on a map this size. Nothing drives them yet."
 
-## The summary line's value for a count that was never offered — the argument is omitted and the
-## server decides, which is a different fact from having chosen none.
-const RIVALS_SUMMARY_UNSET := "server default"
+## The summary line's value for a count that was never offered. It stays distinct from an explicit
+## `none` because the REQUEST is different — no count is named, and the server answers that with its
+## unattended roster — even though both land on a world with no rivals in it.
+const RIVALS_SUMMARY_UNSET := "none asked for"
 const RIVALS_SUMMARY_NONE := "none"
 
 # ---- layout constants (named; no bare literals) ----
@@ -1390,9 +1392,14 @@ func _rival_readout_text(count: int) -> String:
 
 ## **THE COUNT THAT GOES ON THE WIRE — or the absence of one.** A pick the current answer does not
 ## permit (there is no answer, or it is for a different grid, or it failed) is sent as
-## `FactionCapacity.NO_COUNT`, which makes `Main` omit the argument and leaves the server on its own
-## configured default. Guessing a number here would either refuse a count the map could seat or ask
-## for one it could not.
+## `FactionCapacity.NO_COUNT`, which makes `Main` omit the argument; the server answers that with its
+## unattended roster, no rivals. Guessing a number here would either refuse a count the map could
+## seat or ask for one it could not.
+##
+## **EVERYTHING ELSE IS SENT AS SHOWN.** A player who never touches the slider still sends the count
+## the row opened on — the seam's map-scaled default — because `_on_capacity_changed` seeds
+## `_rival_count` from it and nothing downstream re-derives it. That is the difference between the
+## two rivals the screen promised and none at all, so `menu_preview` pins it.
 func _resolved_rival_count() -> int:
 	if _faction_capacity == null:
 		return FactionCapacity.NO_COUNT

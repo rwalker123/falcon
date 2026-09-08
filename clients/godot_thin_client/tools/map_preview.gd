@@ -4462,10 +4462,12 @@ const PALETTE_COLS := [2, 7, 12]
 const PALETTE_FACTION_COUNT := 12          # PALETTE_ROWS.size() * PALETTE_COLS.size()
 const PALETTE_ENTITY_BASE := 9700
 const PALETTE_NAME_FORMAT := "People %d"
-## The largest faction id the New Game screen can ask for: 27 rivals on a Huge map at the shipped
-## `faction_start_min_separation`, plus the player. Asserted over, not rendered — twenty-eight pills
-## would not fit in a frame, and the claim is about the palette rather than about the layout.
-const PALETTE_MAX_FACTION_ID := 27
+## How far past the shipped roster the palette is asserted. The roomiest offered grid seats 17 rivals
+## plus the player (ids 0..17), and a preset with more land than the shipped ones would seat more —
+## the ceiling is a hex-packing count over a map's LAND, not a fixed number — so the walk runs well
+## past it rather than pinning to a figure that moves with a preset. Asserted over, not rendered:
+## thirty pills would not fit in a frame, and the claim is about the palette, not the layout.
+const PALETTE_MAX_FACTION_ID := 31
 ## Successive ids must be at least this far apart on the hue wheel. A golden-angle rotation puts them
 ## ~0.29 of a turn apart; this is the floor that catches a rotation replaced by something denser.
 const PALETTE_MIN_NEIGHBOUR_HUE_GAP := 0.15

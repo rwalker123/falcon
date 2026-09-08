@@ -87,13 +87,16 @@ const DEV_DEFAULT_NEW_GAME := {
     "seed": 0,
     "profile_id": "late_forager_tribe",
     # No rival count: a direct `Main.tscn` launch never saw the New Game screen, so it has no pick to
-    # forward and the argument is omitted — the server then uses its configured
-    # `default_ai_faction_count`, which is NOT the same request as an explicit 0.
+    # forward and the argument is omitted. **The server resolves an absent field to its UNATTENDED
+    # roster — no rivals** (`worldgen::unattended_ai_faction_count`), unless `simulation_config.json`
+    # pins `default_ai_faction_count`. That is still a different REQUEST from an explicit 0, which
+    # names the count whatever the config says; it simply lands on the same world by default.
     "ai_faction_count": FactionCapacity.NO_COUNT,
 }
-## How the boot line reports the rival count it asked for. "the server's own rival count" is its own
-## phrase because omitting the argument is a distinct request from asking for none.
-const RIVALS_MESSAGE_DEFAULT := "the server's own rival count"
+## How the boot line reports the rival count it asked for. The absent-field case keeps a phrase of
+## its own because it is a distinct REQUEST from asking for none — it names no count, and the server
+## answers it with its unattended roster (no rivals, unless its config pins some).
+const RIVALS_MESSAGE_DEFAULT := "no count sent (the server's unattended roster)"
 const RIVALS_MESSAGE_NONE := "no rivals"
 const RIVALS_MESSAGE_ONE := "1 rival"
 const RIVALS_MESSAGE_FORMAT := "%d rivals"
@@ -558,18 +561,17 @@ func _build_world_request() -> void:
     var seed_value := maxi(0, int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"])))
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
     # **HOW MANY RIVAL PEOPLES, OR NO ANSWER AT ALL.** The count is the command's one OPTIONAL
-    # argument, and omitting it is not the same as sending 0: absent leaves the server on its
-    # configured `default_ai_faction_count`, while 0 is a player who chose to be alone. So a
-    # `FactionCapacity.NO_COUNT` — the New Game screen never got a ceiling to offer a choice from, or
-    # the scene was launched directly — appends nothing rather than guessing a number.
+    # argument, and omitting it is not the same request as sending 0: absent names no count and the
+    # server answers it with its UNATTENDED roster — no rivals, unless `simulation_config.json` pins
+    # `default_ai_faction_count` — while 0 is a player who chose to be alone whatever that config
+    # says. So a `FactionCapacity.NO_COUNT` (the New Game screen never got a ceiling to offer a
+    # choice from, or the scene was launched directly) appends nothing rather than guessing.
     var rivals := int(params.get("ai_faction_count", FactionCapacity.NO_COUNT))
     if rivals < 0:
         rivals = FactionCapacity.NO_COUNT
-    var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
-    var rivals_message := _rivals_message(rivals)
     _new_game_command = {
-        "line": "new_game %s %d %d %d %s%s" % [preset, width, height, seed_value, profile, rivals_suffix],
-        "message": "New game: %s (%dx%d) seed %d, %s." % [preset, width, height, seed_value, rivals_message],
+        "line": new_game_line(preset, width, height, seed_value, profile, rivals),
+        "message": "New game: %s (%dx%d) seed %d, %s." % [preset, width, height, seed_value, _rivals_message(rivals)],
     }
     # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
     # got — including when the fallback is what supplied them.
@@ -582,6 +584,14 @@ func _build_world_request() -> void:
             "profile_id": profile,
             "ai_faction_count": rivals,
         })
+
+## **THE `new_game` LINE, INCLUDING WHETHER IT CARRIES A COUNT AT ALL.** Static and pure, so the one
+## rule that decides between "2 rivals" and "none" is reachable from a harness without standing a
+## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends.
+static func new_game_line(preset: String, width: int, height: int, seed_value: int,
+        profile: String, rivals: int) -> String:
+    var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
+    return "new_game %s %d %d %d %s%s" % [preset, width, height, seed_value, profile, rivals_suffix]
 
 ## The boot line's words for a rival count — the four cases the count actually has, since "1 rivals"
 ## and "0 rivals" both misreport what was asked for.

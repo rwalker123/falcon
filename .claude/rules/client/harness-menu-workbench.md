@@ -81,6 +81,16 @@ without one, which is a comparison BETWEEN states and so has no still of its own
 by restoring the defect: freeing the children on every emit fails four legs, naming the row going
 38px → 16px while the ask was in flight.
 
+**`_assert_the_shown_count_is_the_count_sent` has no frame and is the most load-bearing of them.**
+An absent `ai_faction_count` now means the server's unattended roster — zero rivals — so a break
+between the number the row displays and the number that reaches the socket hands the player an empty
+world while every frame looks correct. It stages the state a screen nobody has touched is in (the
+pick and its flag, reset explicitly, because a pick is deliberately kept across pane changes and
+would otherwise be inherited from the frames above), then walks both ends of the chain: the shell's
+`new_game_requested` payload, and `Main.new_game_line` — `static` for exactly this, so the rule that
+decides between a trailing count and none is callable without standing a client up. Sabotage-verified
+by making the shell send only an explicit pick: it fails naming `showed 2 … carried -1`.
+
 Five more assertions ride with the state frames, and every one covers something the PNG cannot show: opening the pane
 must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
 without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout), a failed

@@ -39,13 +39,29 @@ and the three states are genuinely three:
 |---|---|---|
 | The player picked *n* | `… <profile> n` | seats *n* rivals, clamped to what the grid holds |
 | The player picked none | `… <profile> 0` | the player is alone — an explicit choice |
-| No answer to offer a choice from | `… <profile>` | uses its configured `default_ai_faction_count` |
+| No answer to offer a choice from | `… <profile>` | its **unattended roster**: no rivals, unless `simulation_config.json` pins `default_ai_faction_count` |
 
 `FactionCapacity.NO_COUNT` (`-1`) is that third state, and it travels the whole way: the shell emits
-it on `new_game_requested`, `GameLaunch.pending_new_game` carries it, and `Main._build_world_request`
+it on `new_game_requested`, `GameLaunch.pending_new_game` carries it, and `Main.new_game_line`
 appends nothing for it. **A guessed number would be worse than no number** — it would either refuse a
 count the map could seat or ask for one it could not — and a capacity ask that failed must never stop
 a player starting a game.
+
+> ⛔ **AN ABSENT COUNT MEANS ZERO RIVALS, and it did not always.** It used to resolve to the server's
+> configured `default_ai_faction_count`; it now resolves to `worldgen::unattended_ai_faction_count`,
+> which is **none** — the roster a `cargo run` server, a test harness or an unattended `new_game`
+> comes up with, deliberately split from the map-scaled number the New Game screen pre-selects. The
+> two requests are still different (an explicit `0` names the count whatever the config says), but
+> the world they land on is the same by default. Every sentence the client writes about the absent
+> case has to say *no rivals*, and the failure caption does.
+
+**So "the count shown is the count sent" is load-bearing, not incidental.** A player who never
+touches the slider still sends the number the row opened on — `_on_capacity_changed` seeds
+`_rival_count` from the answer and nothing downstream re-derives it — and if that chain broke, the
+screen would promise two rivals and hand over an empty world, looking entirely normal doing it.
+`menu_preview` pins both ends: the shell's `new_game_requested` payload, and `Main.new_game_line`,
+which is `static` precisely so the rule that decides between a trailing count and none is reachable
+without standing a client up.
 
 ## The control shows only what it has been told
 
@@ -57,8 +73,10 @@ is offering what it is.
 - **A 0 ceiling is not a failure.** A grid with no room for a second start reads as *"you will be
   alone in the world"*, and the pane sends an explicit `0` — the count it just told the player they
   are getting.
-- **A failed ask is not a dead end.** The caption says the world will be built with the server's own
-  rival count, and `Begin the trail` stays live.
+- **A failed ask is not a dead end, but it has a consequence and the caption names it**: no count is
+  sent, so the world is built with **no rivals in it**. `Begin the trail` stays live — the player is
+  never blocked — and the summary reads `none asked for`, which stays distinct from the explicit
+  `none` because the request is.
 - **Re-entering the pane is the retry**, exactly as the saves panes' "Try again" button is: a
   rebuild-driven retry would spin the socket for as long as the screen is open.
 

@@ -38,9 +38,10 @@ const STATE_READY := "ready"
 const STATE_FAILED := "failed"
 
 ## **WHAT AN UNANSWERED SEAM IS WORTH: nothing, and it says so.** A guessed ceiling would either
-## refuse a count the map could seat or offer one it could not, and the New Game screen's fallback is
-## to send no count at all and let the server use its configured default — so there is deliberately no
-## "assumed" maximum here to fall back on.
+## refuse a count the map could seat or offer one it could not, so the New Game screen sends no count
+## at all instead — which the server answers with its unattended roster, i.e. a world with no rivals
+## in it. There is deliberately no "assumed" maximum here to fall back on, and the caption on that
+## screen states the consequence rather than implying a number.
 const NO_COUNT := -1
 
 ## The bridge's own failure token, in the same vocabulary the server's refusals use.
@@ -172,8 +173,9 @@ func _deliver_one(reply: Dictionary) -> void:
 		capacity_changed.emit()
 		return
 	max_count = maxi(0, int(reply.get("max_ai_faction_count", 0)))
-	# The server clamps its configured default to the same ceiling before answering; clamping again
-	# here costs nothing and keeps "the opening pick is always grantable" true of this seam alone.
+	# The offer the server sends is already grantable — it is a share of this grid's ceiling, or a
+	# pinned config value, clamped to that ceiling either way. Clamping again here costs nothing and
+	# keeps "the opening pick is always grantable" true of this seam alone.
 	default_count = clampi(int(reply.get("default_ai_faction_count", 0)), 0, max_count)
 	state = STATE_READY
 	error = ""

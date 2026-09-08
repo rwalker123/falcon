@@ -39,7 +39,7 @@ func _ready() -> void:
 ## Stand the query seams up. **A failure here is not fatal and must not be**: the landing screen is
 ## reachable with no server running at all, and the shell renders that state as a line the player can
 ## read — a "Try again" in the saves panes, and in the New Game pane a caption saying the world will
-## be built with the server's own rival count. The seams are injected either way, so nothing about
+## be built with no rivals in it. The seams are injected either way, so nothing about
 ## either pane depends on whether the connect succeeded.
 func _setup_query_seams() -> void:
 	_command_client = CommandClient.new()
