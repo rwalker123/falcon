@@ -2614,6 +2614,7 @@ fn seed_source_yield(
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
@@ -2745,6 +2746,7 @@ fn validate_labor_policy(
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => Ok(()),
     }
 }
@@ -2806,6 +2808,7 @@ fn validate_improvement(
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => Err(format!(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
@@ -3473,7 +3476,7 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
         "forage" => CommandEventKind::Forage,
         "hunt" => CommandEventKind::Hunt,
         "scout" => CommandEventKind::Scout,
-        "extract" => CommandEventKind::Extraction,
+        "extract" | "quarrywork" => CommandEventKind::Extraction,
         _ => CommandEventKind::CancelOrder,
     }
 }
@@ -3618,6 +3621,11 @@ fn handle_assign_labor(
         // walked (`routes` rule 2; the catchment is the keeper, never the band's own position) — and
         // `0` stops keeping roads at all.
         "roadwork" => LaborTarget::Roadwork,
+        // **The fourth keeping role** (`docs/plan_extraction.md` §6) — staffed exactly like the
+        // three above it. What its hands hold is every WORKING this band has an `extract` row on,
+        // across both deposit branches, worked or idle; `0` stops holding them at all, after which
+        // each slides back down its ladder.
+        "quarrywork" => LaborTarget::Quarrywork,
         // **The builders** (`docs/plan_standing_upkeep.md` §2.5) — one pool for both webs, whose
         // whole output goes on the head of this band's build queue. A verb declares what to raise;
         // this is what raises it, and `0` stops building altogether.
@@ -3670,6 +3678,9 @@ fn handle_assign_labor(
         // verb at all — traffic is the crew — so they report on the generic one, as the builders and
         // the warriors do.
         LaborTarget::Roadwork => CommandEventKind::CancelOrder,
+        // **The working keepers ride their branches' own channel**, as the two food webs' keeping
+        // roles ride theirs: one channel serves both deposit ladders, exactly as one role does.
+        LaborTarget::Quarrywork => CommandEventKind::Extraction,
         // The builders serve both webs, so they have no web's channel to ride and report on the
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,

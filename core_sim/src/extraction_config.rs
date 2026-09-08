@@ -121,6 +121,19 @@ pub struct DepositDef {
     /// of the two extraction branches — a deposit worked by the plant or animal ladder is a
     /// food-web source, which has its own config.
     pub branch: RungBranch,
+    /// **HOW MUCH OF THIS DEPOSIT ONE KEEPER LOOKS AFTER** — the divisor that turns a tile's own
+    /// capacity into the **keeper-loads** both branches' rungs quote their `upkeep.work_per_turn`
+    /// per (`extraction::deposit_keeper_loads`, `UpkeepScale::SourceLoad`).
+    ///
+    /// **It is the per-material twin of `fauna_config`'s `animals_per_herder`** and of
+    /// `labor_config`'s `cultivation.capacity_per_tender`: *the web owns the ratio, the rung owns
+    /// the rate*. It lives here rather than on the ladder because 600 units of wood and 600 units of
+    /// stone are not the same size of job — one global divisor would make the two branches' bills
+    /// incomparable for a reason that is about units and not about workings.
+    ///
+    /// Validated finite and `> 0`: a zero divides by zero and a negative one inverts the load, and
+    /// both read as live dials.
+    pub capacity_per_keeper: f32,
     /// **WHAT EACH TERRAIN HOLDS.** A terrain with no row here has **no deposit** of this material.
     pub by_terrain: BTreeMap<TerrainType, DepositTerrain>,
 }
@@ -235,6 +248,17 @@ impl ExtractionConfig {
                                  food"
                         .to_string(),
                     value: def.branch.as_str().to_string(),
+                });
+            }
+            if !def.capacity_per_keeper.is_finite() || def.capacity_per_keeper <= NO_DEPOSIT {
+                return Err(ExtractionConfigError::Invalid {
+                    field: format!("deposits.{material}.capacity_per_keeper"),
+                    constraint: format!(
+                        "give a finite ratio above {NO_DEPOSIT} — it is the divisor that turns a \
+                         tile's capacity into keeper-loads, so a zero divides by zero and a \
+                         negative one inverts the load"
+                    ),
+                    value: def.capacity_per_keeper.to_string(),
                 });
             }
             if def.by_terrain.is_empty() {

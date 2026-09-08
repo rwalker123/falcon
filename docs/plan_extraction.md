@@ -245,9 +245,26 @@ and is free to leave, which is why it belongs to no camp; a quarry you walked aw
 you lost. That is what puts an extraction site on the move-or-stay decision, and it is the one place
 this arc deliberately does **not** copy `RungBranch::Route`.
 
-**Holding it costs upkeep like everything else** — work per turn plus materials per turn, both
-interpolating on position (`plan_standing_upkeep.md` §2.7). A quarry plausibly eats **wood** (props,
-ramps, sleds); a managed wood plausibly eats **work only**. Config, not mechanism.
+**Holding it costs upkeep like everything else** — work per turn, interpolating on position
+(`plan_standing_upkeep.md` §2.7), drawn from a keeping pool the two branches share. Without it a
+working's position never falls and **a quarry is free to hold for ever**, which is the one thing an
+improvement may not be if it is to weigh on move-or-stay.
+
+> ⛔ **BUT THE MATERIAL HALF IS A PILE, NOT A RATE — and this section said otherwise until the
+> implementation tested it.** The draft above read *"work per turn **plus materials per turn**"* and
+> gave the quarry a standing wood bill. That is wrong on §2.7's own test: props, ramps and sleds are
+> timbered once **as the face is opened**, so they go *into* the working and stay there, which is a
+> build pile. A road's stone rate is real by the same test for the opposite reason — **re-dressing a
+> road is not re-laying it**.
+>
+> So neither branch settles a standing material, and `validate_upkeep` **rejects an
+> `upkeep.materials` on a deposit rung outright** rather than leaving the key parseable. A rate with
+> no settle pass would load, validate, publish a demand and be paid by nobody — the *looks-live-but-
+> isn't* failure `route:paved_road` actually shipped for one slice. Giving a branch a rate later
+> means writing the settle pass **first** and then deleting that check on purpose.
+>
+> It also puts the two branches in the right order for a faction that starts with nothing: **you must
+> have worked a wood before you can open a quarry.**
 
 **Two of the tools already exist.** `earthmoving` (pick and spade) and `stone_dressing` (maul,
 wedges, dressing hammer) ship today, tuned for 300–800 unit jobs, and are bound to the route rungs

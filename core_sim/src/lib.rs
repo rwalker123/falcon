@@ -264,6 +264,11 @@ pub use great_discovery::{
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
+pub use extraction::{
+    advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
+    deposit_measure, deposit_meter_rot, deposit_neglect_grace_remaining, deposit_upkeep_demand,
+    DepositRegistry, DepositSource, DEPOSIT_EMPTY,
+};
 pub use extraction_config::{
     load_extraction_config_from_env, DepositDef, DepositTerrain, ExtractionConfig,
     ExtractionConfigError, ExtractionConfigHandle, ExtractionConfigMetadata,
@@ -415,11 +420,11 @@ pub use systems::{
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_roadwork,
-    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
-    DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast,
-    MigrationKnowledgeEvent, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals,
-    TradeDiffusionEvent,
+    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_extraction,
+    settle_bands_roadwork, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
+    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
+    HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand, SplitRefusal,
+    SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -1002,6 +1007,16 @@ pub fn build_headless_app() -> App {
                 // produced, so this turn's decay, banking and prune are all already in the registry
                 // when the lesson rung is resolved.
                 routes::credit_route_lessons.after(routes::advance_roads),
+                // **THE WORKINGS' DECAY AND THIS TURN'S BILL** — the deposit branches' twin of
+                // `advance_roads`. What it needs of the stage is only to run **before** the
+                // Population stage's `settle_bands_extraction`, which pays against the bill it
+                // stamps, and a stage boundary already guarantees that.
+                //
+                // **The one edge it does have is declared** rather than left to the ambiguity gate:
+                // it reads `&Tile` (a working's keeper-load is its ground's capacity) and
+                // `simulate_materials` writes them, which is the identical edge
+                // `advance_forage_regrowth` declares one line up.
+                extraction::advance_deposits.after(systems::simulate_materials),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(

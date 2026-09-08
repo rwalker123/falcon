@@ -161,6 +161,88 @@ fn run_turn(world: &mut World) {
     world.run_system_once(advance_labor_allocation);
 }
 
+/// **A WHOLE TURN, IN STAGE ORDER** — Logistics' decay-and-bill, then Population's labour pass.
+///
+/// The keeping only means anything across the pair: `advance_deposits` stamps the bill and judges
+/// last turn's payment, and `settle_bands_extraction` (inside the labour pass) pays against that
+/// stamp. A fixture that ran either alone would measure a working that is never billed or one that
+/// is never kept.
+fn run_full_turn(world: &mut World) {
+    world.run_system_once(core_sim::advance_deposits);
+    world.run_system_once(advance_labor_allocation);
+}
+
+/// **SEAT A WORKING EXACTLY ON A RUNG'S TOP** — the standing `RungStanding::arrived_at` describes,
+/// written straight into the registry so a keeping fixture does not have to spend forty turns of
+/// builders getting there first.
+fn seat_working(world: &mut World, tile: UVec2, material: &str, rung: RungKey) {
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let config = world.resource::<ExtractionConfigHandle>().get();
+    let entity = world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("the fixture tile is on the map");
+    let ground = world
+        .get::<Tile>(entity)
+        .expect("the fixture tile carries terrain");
+    let capacity = tile_deposit_capacity(&config, material, ground);
+    assert!(capacity > 0.0, "fixture: that ground must hold {material}");
+    let mut working = DepositSource::opening(tile, material, capacity, rung.branch());
+    let (base, width) = core_sim::extraction::deposit_rung_span(rung, &ladder);
+    working.set_ladder_position(base + width, &ladder, rung.branch());
+    assert_eq!(working.rung(), rung, "fixture: seated on the wrong rung");
+    world.resource_mut::<DepositRegistry>().insert(working);
+}
+
+/// A band with an `extract` row on each of `workings`, plus `keepers` hands on the `quarrywork`
+/// pool — the shape every keeping fixture below wants.
+fn spawn_keepers(
+    world: &mut World,
+    home: Entity,
+    workings: &[(UVec2, &str)],
+    take_crew: u32,
+    keepers: u32,
+) -> Entity {
+    let band = spawn_band_of(world, home, workings[0].1, 40, take_crew);
+    {
+        let mut allocation = world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band has an allocation");
+        allocation.assignments.clear();
+        for (tile, material) in workings {
+            allocation.assignments.push(LaborAssignment {
+                target: LaborTarget::Extract {
+                    tile: *tile,
+                    material: (*material).to_string(),
+                },
+                workers: take_crew,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+        }
+        if keepers > 0 {
+            allocation.assignments.push(LaborAssignment {
+                target: LaborTarget::Quarrywork,
+                workers: keepers,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+        }
+    }
+    band
+}
+
+/// The live working's ladder position.
+fn position(world: &World, tile: UVec2, material: &str) -> f32 {
+    world
+        .resource::<DepositRegistry>()
+        .source(tile, material)
+        .expect("the working stands")
+        .ladder_position()
+}
+
 /// How much of `material` the band is holding.
 fn held(world: &World, band: Entity, material: &str) -> f32 {
     world
@@ -651,5 +733,361 @@ fn the_regrowth_multiplier_scales_the_grounds_own_rate_and_rock_has_none() {
         half,
         "and the very same multiplier renews a rock body by exactly nothing — `0 x anything` is \
          still 0, which is why one payoff block serves both branches"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The standing upkeep
+// ---------------------------------------------------------------------------------------------
+
+/// **A working left unkept slides back down its ladder, and staffing it stops the slide.**
+///
+/// This is the half that makes holding a working cost something at all: without it a quarry is free
+/// to hold for ever, and an improvement free to hold cannot weigh on move-or-stay
+/// (`docs/plan_standing_upkeep.md`).
+///
+/// **Both halves in one drive**, because either alone is weak — a position that never moves also
+/// describes a decay that was never wired, and one that always falls describes a keeping pool that
+/// pays nothing.
+#[test]
+fn an_unkept_working_slides_and_a_kept_one_stops_sliding() {
+    let at = UVec2::new(0, 0);
+    let (mut world, home) = world_of(WOODED);
+    seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+    let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 2, 0);
+    let seated = position(&world, at, WOOD);
+
+    // The grace absorbs the first turns, then the meter bleeds.
+    for _ in 0..12 {
+        run_full_turn(&mut world);
+    }
+    let slumped = position(&world, at, WOOD);
+    assert!(
+        slumped < seated,
+        "a working nobody keeps must lose its meter: {slumped} against {seated}"
+    );
+
+    // Put one keeper on it — the shipped `forestry:felling` bill on the reference wood is exactly
+    // 1.0 work a turn, which one bare hand covers.
+    {
+        let mut allocation = world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band has an allocation");
+        allocation.assignments.push(LaborAssignment {
+            target: LaborTarget::Quarrywork,
+            workers: 1,
+            kit: None,
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        });
+    }
+    run_full_turn(&mut world);
+    let held_at = position(&world, at, WOOD);
+    for _ in 0..40 {
+        run_full_turn(&mut world);
+        assert_eq!(
+            position(&world, at, WOOD),
+            held_at,
+            "a kept working must not lose a unit — the slide stops the turn the keepers arrive"
+        );
+    }
+}
+
+/// **A staffed working holds its position indefinitely.** The neglect counter never arms, so the
+/// grace is never spent and the meter never rots — which is what makes the keeping a *standing*
+/// cost rather than a countdown to losing the rung anyway.
+#[test]
+fn a_staffed_working_holds_its_rung_for_ever() {
+    let at = UVec2::new(0, 0);
+    let (mut world, home) = world_of(WOODED);
+    seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+    spawn_keepers(&mut world, home, &[(at, WOOD)], 2, 1);
+    let seated = position(&world, at, WOOD);
+    for _ in 0..200 {
+        run_full_turn(&mut world);
+    }
+    assert_eq!(position(&world, at, WOOD), seated);
+    assert_eq!(
+        world
+            .resource::<DepositRegistry>()
+            .source(at, WOOD)
+            .expect("the working stands")
+            .neglect_turns,
+        0,
+        "**LIVENESS**: a met bill must reset the run, or the hold above is a grace that never ran out"
+    );
+}
+
+/// **THE BAND'S OWN LEDGER PUBLISHES AND CLEARS.** A band that has put its last working down must
+/// stop republishing a bill it no longer owes — `settle_bands_roadwork`'s `(c)` failure mode, which
+/// is why both fields are cleared ahead of every exit rather than only on the paying path.
+///
+/// It also pins the *ungated* half: the demand is summed **before** the head-count gate, so a band
+/// with nobody on the role publishes the bill it is failing to pay rather than a reassuring zero.
+#[test]
+fn the_quarrywork_ledger_publishes_a_bill_nobody_is_paying_and_clears_when_the_row_goes() {
+    let at = UVec2::new(0, 0);
+    let (mut world, home) = world_of(WOODED);
+    seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+    let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 2, 0);
+
+    run_full_turn(&mut world);
+    let ledger = |world: &World| {
+        let allocation = world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture band has an allocation");
+        (
+            allocation.last_quarrywork_demand,
+            allocation.last_quarrywork_supplied,
+        )
+    };
+    let (demand, supplied) = ledger(&world);
+    assert!(
+        demand > 0.0,
+        "a band holding a felling working owes a bill even with nobody on the role"
+    );
+    assert_eq!(supplied, 0.0, "and pays none of it with no keepers");
+
+    // Staff it, and the supplied half fills.
+    {
+        let mut allocation = world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band has an allocation");
+        allocation.assignments.push(LaborAssignment {
+            target: LaborTarget::Quarrywork,
+            workers: 1,
+            kit: None,
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        });
+    }
+    run_full_turn(&mut world);
+    let (demand, supplied) = ledger(&world);
+    assert!(supplied > 0.0 && (supplied - demand).abs() < 1e-4);
+
+    // Put the whole holding down. The bill must go with it.
+    world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation")
+        .assignments
+        .clear();
+    run_full_turn(&mut world);
+    assert_eq!(
+        ledger(&world),
+        (0.0, 0.0),
+        "a band that put its last working down must stop republishing last turn's bill"
+    );
+}
+
+/// **A SHORT POOL FUNDS THE MOST-INVESTED WORKING FIRST.** `UpkeepFundMode::Priority` walks the
+/// claims in the order the caller ranked them, and this pool ranks on the working's own ladder
+/// position — the same *"most invested"* a road is ranked by, because on both branches the position
+/// **is** the accumulator.
+#[test]
+fn a_band_short_of_keepers_funds_its_deepest_working_first() {
+    let coppice_at = UVec2::new(0, 0);
+    let felling_at = UVec2::new(1, 0);
+    let (mut world, home) = world_of(WOODED);
+    seat_working(&mut world, coppice_at, WOOD, RungKey::ForestryCoppice);
+    seat_working(&mut world, felling_at, WOOD, RungKey::ForestryFelling);
+    let band = spawn_keepers(
+        &mut world,
+        home,
+        &[(coppice_at, WOOD), (felling_at, WOOD)],
+        1,
+        // One hand against a 2.0 + 1.0 bill: the pool is short on purpose.
+        1,
+    );
+    world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation")
+        .upkeep_fund_mode = core_sim::UpkeepFundMode::Priority;
+
+    run_full_turn(&mut world);
+    let supplied = |world: &World, tile: UVec2| {
+        world
+            .resource::<DepositRegistry>()
+            .source(tile, WOOD)
+            .expect("the working stands")
+            .upkeep_supplied
+    };
+    assert!(
+        supplied(&world, coppice_at) > 0.0,
+        "the coppice is the deeper working and is paid first"
+    );
+    assert_eq!(
+        supplied(&world, felling_at),
+        0.0,
+        "and the shallower one gets what is left, which at one keeper is nothing"
+    );
+}
+
+/// ⛔ **DECAY MUST NOT RESURRECT THE §6 FLOOR TRAP.** A falling position lowers
+/// `recovery_fraction`, which raises the floor `(1 − recovery) × capacity` and so **reduces** what
+/// the working can reach. That is correct and intended — you reach less of the deposit as the face
+/// slumps — but it must never leave the working stuck at a position it cannot climb out of.
+///
+/// The proof is a round trip: starve a quarry until its rung is gone, then staff the builders and
+/// watch it climb back. **The build gate reads the ground and the knowledge and never the stock**,
+/// which is the property that makes the climb out possible at all, and this is what would fail if
+/// somebody ever added a stock term to it.
+#[test]
+fn a_slumped_working_can_be_cut_back_open() {
+    let at = UVec2::new(0, 0);
+    let (mut world, home) = world_of(ROCK);
+    seat_working(&mut world, at, STONE, RungKey::ExtractionQuarry);
+    let band = spawn_keepers(&mut world, home, &[(at, STONE)], 2, 0);
+    // The quarrying lesson, so the rung is buildable once the fixture wants it back.
+    world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(
+            FACTION,
+            core_sim::extraction::QUARRYING_DISCOVERY_ID,
+            scalar_one(),
+        );
+
+    // **The props the rung swallows.** `extraction:quarry` draws 8 wood as its meter climbs, so a
+    // band with an empty shelf is blocked on materials however many builders it staffs — which is
+    // §2.7 working, and not what this test is about.
+    {
+        let materials = world.resource::<core_sim::MaterialsConfigHandle>().get();
+        let characteristics: std::collections::BTreeMap<String, f32> =
+            [("hardness".to_string(), 0.5), ("pliancy".to_string(), 0.5)]
+                .into_iter()
+                .collect();
+        let key = materials
+            .band_key(WOOD, &characteristics)
+            .expect("wood is on the materials table");
+        world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band survives")
+            .stores
+            .deposit_material(WOOD, key, scalar_from_f32(40.0), &characteristics);
+    }
+
+    let seated = position(&world, at, STONE);
+    let reachable = |world: &World| {
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        let config = world.resource::<ExtractionConfigHandle>().get();
+        let working = world
+            .resource::<DepositRegistry>()
+            .source(at, STONE)
+            .expect("the working stands");
+        let ground = Tile {
+            position: at,
+            terrain: ROCK,
+            ..Default::default()
+        };
+        core_sim::extraction::deposit_reachable(
+            working.stock,
+            tile_deposit_capacity(&config, STONE, &ground),
+            &deposit_payoff(working.standing(), &ladder),
+        )
+    };
+
+    // Starve it to the floor of its branch.
+    for _ in 0..400 {
+        run_full_turn(&mut world);
+        assert!(
+            reachable(&world) >= 0.0,
+            "a rising floor may reduce the reach and must never make it negative"
+        );
+    }
+    let slumped = position(&world, at, STONE);
+    assert!(slumped < seated, "the quarry must really have slumped");
+    assert_eq!(
+        world
+            .resource::<DepositRegistry>()
+            .source(at, STONE)
+            .expect("the working stands")
+            .rung(),
+        RungKey::ExtractionGathering,
+        "and slid the whole way back to its free floor"
+    );
+
+    // Now cut it open again: builders on the head of the queue, and the rung is re-queued.
+    {
+        let mut allocation = world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band has an allocation");
+        allocation.assignments.push(LaborAssignment {
+            target: LaborTarget::Builders,
+            workers: 12,
+            kit: None,
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        });
+        allocation.assignments.push(LaborAssignment {
+            target: LaborTarget::Quarrywork,
+            workers: 4,
+            kit: None,
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        });
+        assert!(allocation.enqueue_build(
+            core_sim::BuildSource::Deposit {
+                tile: at,
+                material: STONE.to_string(),
+            },
+            core_sim::BuildJob::Rung(core_sim::Improvement::Quarry),
+        ));
+    }
+    let mut recovered = false;
+    for _ in 0..200 {
+        run_full_turn(&mut world);
+        if world
+            .resource::<DepositRegistry>()
+            .source(at, STONE)
+            .expect("the working stands")
+            .rung()
+            == RungKey::ExtractionQuarry
+        {
+            recovered = true;
+            break;
+        }
+    }
+    assert!(
+        recovered,
+        "a slumped working must be re-cuttable at some crew size — the build gate reads the ground \
+         and the knowledge, never the stock, and that is what keeps this reachable"
+    );
+}
+
+/// **A DEPOSIT RUNG MAY NOT DECLARE A STANDING MATERIAL RATE.** The work half of the keeping is
+/// settled and the material half is not, so a rate here would publish a demand nothing ever pays —
+/// which is exactly what `route:paved_road` shipped for one slice before its rot term learned to
+/// read both currencies.
+///
+/// The quarry's 8 wood stays where it is: a **build pile**, timbered into the face once as it is
+/// opened.
+#[test]
+fn a_standing_material_rate_on_a_deposit_rung_is_refused() {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_INTENSIFICATION_LADDER)
+            .expect("the shipped ladder parses as json");
+    let rungs = json["rungs"].as_array_mut().expect("the ladder has rungs");
+    let quarry = rungs
+        .iter_mut()
+        .find(|rung| rung["branch"] == "extraction" && rung["id"] == "quarry")
+        .expect("the shipped ladder carries the quarry rung");
+    quarry["upkeep"]["materials"] = serde_json::json!({ "wood": 0.1 });
+    let err = LadderConfig::from_json_str(&json.to_string())
+        .expect_err("a standing material rate on a deposit rung must be rejected");
+    assert!(
+        format!("{err}").contains("WORK alone"),
+        "the refusal must name the reason, got {err}"
+    );
+
+    // And the pile it is not: the shipped rung really does swallow wood as it is raised, so the
+    // rejection above is about the *rate* and not about the material.
+    assert!(
+        LadderConfig::builtin()
+            .rung(RungKey::ExtractionQuarry)
+            .build
+            .as_ref()
+            .expect("the quarry rung is built")
+            .materials
+            .contains_key(WOOD),
+        "**LIVENESS**: the quarry's props are a build pile, and this test means nothing without one"
     );
 }

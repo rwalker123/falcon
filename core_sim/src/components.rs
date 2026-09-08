@@ -2005,6 +2005,26 @@ pub enum LaborTarget {
     /// (`(1 − recovery_fraction) × capacity`), which is what makes climbing the ladder the way you
     /// reach deeper. Adding a per-row floor would put a second, contradictory answer on the same
     /// question.
+    /// **KEEP THE WORKINGS THIS BAND HOLDS** — the quarrywork standing role
+    /// (`docs/plan_extraction.md` §6), the fourth keeping pool and the twin of
+    /// [`LaborTarget::Roadwork`]: one pool against the summed
+    /// [`crate::extraction::deposit_upkeep_demand`] of every working this band has an `extract` row
+    /// on.
+    ///
+    /// ⛔ **ONE ROLE FOR BOTH DEPOSIT BRANCHES**, where the two food webs get one each. The webs
+    /// split because they are separate *ladders a crew builds with tools*; forestry and extraction
+    /// split on **knowledge** and on nothing a keeper does — the roster declares no gear for either,
+    /// and *hold the face open, clear the fallen* is one job. A second pool would be a distinction
+    /// nothing in the game can express, which is the argument `plan_standing_upkeep.md` §6 already
+    /// makes for not splitting the two it has.
+    ///
+    /// ⛔ **AND IT IS NOT THE `extract` TAKE ROW.** The take crew stands *on the working* and is
+    /// paid in material; the keepers are a **band pool** that holds every working the band has,
+    /// worked or idle — the same split `Agriculture` draws from `Forage`. A working with no cutters
+    /// is still held, and it still owes this.
+    ///
+    /// Named for the harder half exactly as `roadwork` is named for a road rather than a trail.
+    Quarrywork,
     Extract {
         tile: UVec2,
         /// The `extraction.json` deposit this crew works — `wood`, `stone`, and whatever the minerals
@@ -2030,6 +2050,9 @@ pub const ROADWORK_ROLE_KEY: &str = "roadwork";
 /// the same reason there is one row kind: what a crew is doing is *taking a material out of the
 /// ground*, and which of the two skills that is, is the deposit's.
 pub const EXTRACT_ROLE_KEY: &str = "extract";
+/// The **Quarrywork** twin of [`ROADWORK_ROLE_KEY`] — the band-wide keeping role that holds every
+/// working this band has an `extract` row on, across **both** deposit branches.
+pub const QUARRYWORK_ROLE_KEY: &str = "quarrywork";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -2044,6 +2067,7 @@ impl LaborTarget {
             LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
             LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
+            LaborTarget::Quarrywork => QUARRYWORK_ROLE_KEY,
         }
     }
 
@@ -2072,6 +2096,11 @@ impl LaborTarget {
             // *do* ship (`earthmoving`, `stone_dressing`) declare `build_work`, which lands on the
             // builders' pool that RAISES a working rather than on the crew that takes from it.
             LaborTarget::Extract { .. } => crate::equipment_config::KitJob::Extraction,
+            // **Its own job, not the take row's**, for [`crate::equipment_config::KitJob::Agriculture`]'s
+            // reason: **gear covers people**, so folding the keepers into the take's job would divide
+            // whatever a future felling axe arms among hands that are not cutting. Both are the empty
+            // `none` kit today, which is exactly when the split is free to make.
+            LaborTarget::Quarrywork => crate::equipment_config::KitJob::Quarrywork,
         }
     }
 
@@ -2091,6 +2120,7 @@ impl LaborTarget {
             (LaborTarget::Husbandry, LaborTarget::Husbandry) => true,
             (LaborTarget::Roadwork, LaborTarget::Roadwork) => true,
             (LaborTarget::Builders, LaborTarget::Builders) => true,
+            (LaborTarget::Quarrywork, LaborTarget::Quarrywork) => true,
             // **Keyed by tile AND material**, because a wooded highland holds two deposits and
             // working the timber is not working the rock — so the two are different sources on one
             // tile, not one source restated.
@@ -2132,6 +2162,7 @@ impl LaborTarget {
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
             | LaborTarget::Roadwork
+            | LaborTarget::Quarrywork
             | LaborTarget::Builders => false,
         }
     }
@@ -2479,6 +2510,11 @@ pub struct ShedFacts {
     /// of the three, and shed **last** of them (see [`ShedStep::SpareKeeper`] for why a road is the
     /// most recoverable thing a keeping role holds).
     pub spare_roadwork_keepers: u32,
+    /// **Hands on [`LaborTarget::Quarrywork`] the band's working-keeping bill does not need** — the
+    /// fourth of the four, and shed **last** of them: a working's meter is the most recoverable
+    /// thing a keeping role holds after a road's, because a slumped face can be re-cut by the same
+    /// builders that opened it, where a lost pen is a herd gone.
+    pub spare_quarrywork_keepers: u32,
 }
 
 impl ShedFacts {
@@ -3964,6 +4000,21 @@ pub struct LaborAllocation {
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_roadwork_supplied: f32,
+    /// **WHAT THE WORKINGS THIS BAND HOLDS WERE BILLED THIS TURN**, in work units — the
+    /// [`Self::last_roadwork_demand`] twin on the two deposit branches, summed by
+    /// [`crate::systems::settle_bands_extraction`].
+    ///
+    /// ⛔ **The sim sums it, not the client**, for the road ledger's reason one branch over: nothing
+    /// about a working reaches the wire yet (`docs/plan_extraction.md` §7 owns the readouts), so a
+    /// client has no row to add up at all.
+    ///
+    /// **Published whether or not the band staffs the role** — a band with nobody on `quarrywork`
+    /// owes exactly this much, and this is the field that says so. Reset then re-summed every turn,
+    /// and excluded from equality like the rest of the per-turn telemetry.
+    pub last_quarrywork_demand: f32,
+    /// The supply half of [`Self::last_quarrywork_demand`], and **this band's own contribution**
+    /// rather than the workings' totals — two bands holding one working each put a part on it.
+    pub last_quarrywork_supplied: f32,
     /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
     /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
     ///
@@ -4086,6 +4137,7 @@ impl BuildSource {
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
             | LaborTarget::Roadwork
+            | LaborTarget::Quarrywork
             | LaborTarget::Builders => None,
         }
     }
@@ -4874,6 +4926,7 @@ impl LaborAllocation {
                         LaborTarget::Agriculture => Some(&mut facts.spare_agriculture_keepers),
                         LaborTarget::Husbandry => Some(&mut facts.spare_husbandry_keepers),
                         LaborTarget::Roadwork => Some(&mut facts.spare_roadwork_keepers),
+                        LaborTarget::Quarrywork => Some(&mut facts.spare_quarrywork_keepers),
                         _ => None,
                     };
                     if let Some(spare) = spare {
@@ -4949,11 +5002,13 @@ impl LaborAllocation {
                 return Some((ShedPick::Row(index), ShedStep::UnthreatenedWarrior));
             }
         }
-        // 3. A keeper above the keeping demand — Agriculture first, then Husbandry, then Roadwork.
+        // 3. A keeper above the keeping demand — Agriculture, then Husbandry, then Roadwork, then
+        //    Quarrywork.
         for (role, spare) in [
             (LaborTarget::Agriculture, facts.spare_agriculture_keepers),
             (LaborTarget::Husbandry, facts.spare_husbandry_keepers),
             (LaborTarget::Roadwork, facts.spare_roadwork_keepers),
+            (LaborTarget::Quarrywork, facts.spare_quarrywork_keepers),
         ] {
             if spare > NO_SPARE_KEEPERS {
                 if let Some(index) = self.staffed_role_row(&role) {

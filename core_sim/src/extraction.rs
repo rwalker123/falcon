@@ -50,7 +50,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use bevy::prelude::Resource;
+use bevy::prelude::{Res, ResMut, Resource};
 use glam::UVec2;
 use serde::{Deserialize, Serialize};
 use sim_schema::TerrainType;
@@ -60,7 +60,7 @@ use crate::{
     extraction_config::{DepositDef, ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
     intensification::{
         interpolate, rung_span, LadderConfig, RungBranch, RungExtractionPayoff, RungKey,
-        RungStanding, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        RungStanding, NEGLECT_NONE, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
 };
 
@@ -123,6 +123,27 @@ pub struct DepositSource {
     /// [`Self::ladder_position`]**. Stored rather than resolved on demand because the readers hold
     /// no ladder.
     standing: RungStanding,
+    /// **THIS TURN'S BILL, STAMPED ONCE** — what holding this working was judged to cost, struck by
+    /// [`advance_deposits`] at the post-decay position and read by everything downstream.
+    ///
+    /// ⛔ **STAMPED, NOT RE-DERIVED, for `ForagePatch::upkeep_demanded`'s reason**: the demand
+    /// interpolates on the position and the build arm moves the position inside the same turn, so a
+    /// bill struck on one side of the accrual and a payment on the other are two readings of two
+    /// different workings — and `demand − supplied == shortfall` goes false. `None` is *"nobody has
+    /// judged it this turn"*, which is a working opened part-way through a Population stage and is
+    /// forgiven exactly as an unbilled road is.
+    #[serde(default)]
+    pub upkeep_demanded: Option<f32>,
+    /// **WHAT THIS TURN'S KEEPERS PUT ON IT**, in work units. Accumulates (`+=`) across the bands
+    /// working the source — §2.5's rule, kept even though a working has one row per band — and is
+    /// cleared once per turn by [`advance_deposits`].
+    #[serde(default)]
+    pub upkeep_supplied: f32,
+    /// **CONSECUTIVE TURNS THE KEEPING WENT UNMET.** Reset outright by any turn it was met, so it is
+    /// a run rather than a lifetime budget. The bleed applies only while it **exceeds** the at-risk
+    /// rung's `upkeep.grace_turns` — a crew re-tasked for a season does not cost the working.
+    #[serde(default)]
+    pub neglect_turns: u16,
 }
 
 impl DepositSource {
@@ -137,6 +158,9 @@ impl DepositSource {
             stock: capacity.max(DEPOSIT_EMPTY),
             ladder_position: RUNG_UNSTARTED,
             standing: RungStanding::unstarted(branch),
+            upkeep_demanded: None,
+            upkeep_supplied: NO_UPKEEP_DEMAND,
+            neglect_turns: NEGLECT_NONE,
         }
     }
 
@@ -338,6 +362,120 @@ pub fn deposit_regrowth(stock: f32, capacity: f32, rate: f32, seed_fraction: f32
     (stock + delta).min(capacity)
 }
 
+/// **HOW BIG A WORKING THIS IS, IN KEEPER-LOADS** — the [`crate::intensification::UpkeepScale::SourceLoad`] measure the
+/// two deposit rungs quote their `work_per_turn` per, and the third branch reading of one primitive.
+///
+/// It is **the deposit's own capacity over the material's `capacity_per_keeper`** — a great wood
+/// takes more holding than a few stands along a draw, and a mountain quarry more than a hillside
+/// one. That is the plant web's shape exactly (`forage::patch_tender_loads`, the tile's own `K` over
+/// `cultivation.capacity_per_tender`) and the route branch's (`road_upkeep_measure`, the tile's own
+/// `infrastructure_cost`): **all three shipped branches measure the PLACE, never the activity**, and
+/// a fourth reading here would be a departure with nothing behind it.
+///
+/// ⛔ **IT IS POSITION-FREE, AND THAT IS NOT A SIMPLIFICATION — IT IS `capacity_per_tender`'s TRAP
+/// AVOIDED.** The obvious alternative — *how much of the deposit this rung can reach*,
+/// `recovery_fraction × capacity` — interpolates on the position, and `upkeep.work_per_turn`
+/// interpolates on the position too, so the two would **compound**: a quarry would owe the rung's
+/// climb twice over, which is exactly the 10× a Field landed at when the plant measure briefly read
+/// the boosted `carrying_capacity` instead of the tile's own `K`. Capacity is the terrain's and no
+/// rung may raise it (`no_rung_on_either_branch_may_raise_capacity`), so this measure provably
+/// cannot compound with the rate that rides it.
+///
+/// **The ratio belongs to the MATERIAL and the rate to the RUNG**, which is `animals_per_herder`'s
+/// division: 600 units of wood and 600 units of stone are not the same size of job, so one global
+/// divisor would make the two branches' bills incomparable for a reason that is about units rather
+/// than about workings.
+pub fn deposit_keeper_loads(capacity: f32, per_keeper: f32) -> f32 {
+    if per_keeper <= NO_KEEPER_RATIO {
+        return NO_UPKEEP_DEMAND;
+    }
+    (capacity / per_keeper).max(NO_UPKEEP_DEMAND)
+}
+
+/// **A DIVISOR THAT WOULD DIVIDE BY ZERO** — [`deposit_keeper_loads`]'s guard. `validate` rejects a
+/// `capacity_per_keeper` at or below it, so this is the arithmetic's own backstop rather than a
+/// live path.
+const NO_KEEPER_RATIO: f32 = 0.0;
+
+/// **THIS WORKING'S KEEPER-LOAD**, resolved off the tile it stands on. `NO_UPKEEP_DEMAND` for ground
+/// that holds none of the material, which no live working can be standing on.
+pub fn deposit_measure(source: &DepositSource, ground: &Tile, config: &ExtractionConfig) -> f32 {
+    let Some(deposit) = config.deposit(&source.material) else {
+        return NO_UPKEEP_DEMAND;
+    };
+    deposit_keeper_loads(
+        tile_deposit_capacity(config, &source.material, ground),
+        deposit.capacity_per_keeper,
+    )
+}
+
+/// **WHAT HOLDING THIS WORKING COSTS PER TURN**, in work units — the rung's `work_per_turn`
+/// [`interpolate`]d over the standing and scaled by [`deposit_measure`], the shape every branch's
+/// demand takes.
+///
+/// **Both free floors declare no `upkeep` at all**, so a working that has never been raised owes
+/// exactly nothing — `plant:wild` and `route:path`'s own reading, and what makes the floor free.
+pub fn deposit_upkeep_demand(source: &DepositSource, measure: f32, ladder: &LadderConfig) -> f32 {
+    interpolate(&source.standing, |rung| {
+        ladder.rung(rung).upkeep_demand(measure)
+    })
+}
+
+/// **THE BILL THIS TURN'S SHARE WAS STRUCK AGAINST** — the stamp where [`advance_deposits`] has made
+/// one, the live demand where it has not. `routes::road_keeping_basis`'s rule, and the reason both
+/// halves of `demand − supplied == shortfall` describe one position.
+pub fn deposit_keeping_basis(source: &DepositSource, measure: f32, ladder: &LadderConfig) -> f32 {
+    source
+        .upkeep_demanded
+        .unwrap_or_else(|| deposit_upkeep_demand(source, measure, ladder))
+}
+
+/// **THE RUNG AT RISK ON THIS WORKING** — the newest rung carrying work, which is the rung a decay
+/// eats and whose grace and rot rate govern. `routes::road_at_risk_rung`'s twin, and one helper for
+/// the same reason: the bill, the grace and the bleed must not read different rungs.
+pub fn deposit_at_risk_rung(standing: &RungStanding) -> RungKey {
+    standing
+        .raising
+        .filter(|_| standing.banked > crate::intensification::NO_RUNG_WORK_BANKED)
+        .unwrap_or(standing.held)
+}
+
+/// **WHAT THIS WORKING'S METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — the term a build
+/// countdown nets its supply against, resolved through the same seams [`advance_deposits`] bleeds
+/// through so a quote cannot promise a rung will finish while the pass takes more off it.
+///
+/// **One currency, because a working owes no material RATE.** `validate` refuses an
+/// `upkeep.materials` on either deposit branch, so the work pair is the whole of *how short* here —
+/// see that check for why the alternative was a dial that reads live and bills nothing.
+pub fn deposit_meter_rot(source: &DepositSource, measure: f32, ladder: &LadderConfig) -> f32 {
+    let rung = ladder.rung(deposit_at_risk_rung(&source.standing));
+    if rung.upkeep.is_none() {
+        return crate::intensification::NO_UPKEEP_DECAY;
+    }
+    rung.meter_rot_at_fraction(
+        crate::intensification::upkeep_shortfall_fraction(
+            deposit_keeping_basis(source, measure, ladder),
+            source.upkeep_supplied,
+        ),
+        source.neglect_turns,
+    )
+}
+
+/// **HOW MANY MORE TURNS OF SHORTFALL THIS WORKING CAN ABSORB BEFORE IT BLEEDS** — the countdown,
+/// not the counter. `None` = there is nothing at risk here, which is a working anywhere on its free
+/// floor: those rungs declare no `upkeep`, so there is no grace to count and no meter to lose.
+pub fn deposit_neglect_grace_remaining(
+    source: &DepositSource,
+    ladder: &LadderConfig,
+) -> Option<u32> {
+    let rung = ladder.rung(deposit_at_risk_rung(&source.standing));
+    rung.upkeep.as_ref()?;
+    Some(crate::intensification::neglect_grace_remaining(
+        source.neglect_turns,
+        rung.upkeep_grace_turns(),
+    ))
+}
+
 /// **EVERY LIVE WORKING**, keyed by the pair that names one — the deposit branches' twin of
 /// `ForageRegistry` / `HerdRegistry`.
 ///
@@ -468,6 +606,87 @@ pub fn share_of_take(taken: f32, crew: u32, total_crew: u32) -> f32 {
         return DEPOSIT_EMPTY;
     }
     taken * (crew as f32 / total_crew as f32)
+}
+
+/// **THE WORKINGS' DECAY AND THIS TURN'S BILL** — the deposit branches' `routes::advance_roads`,
+/// and the half of the standing upkeep that makes neglect **self-limiting**.
+///
+/// # ⛔ WHY AN UNKEPT WORKING HAS TO SLIDE
+///
+/// Without it a working's position never falls, so **a quarry is free to hold for ever** — and an
+/// improvement that costs nothing to hold cannot weigh on move-or-stay, which is the whole of
+/// `docs/plan_standing_upkeep.md`. What the slide buys is that the penalty **shrinks itself**: the
+/// position falls, the interpolated demand falls with it, and an abandoned working decays toward
+/// costing nothing rather than bleeding a band's roster for ever (§2.7).
+///
+/// # The three phases, in the order `advance_roads` runs them
+///
+/// 1. **How short**, off the **stamped** bill — a working nobody billed reads
+///    [`crate::intensification::FULLY_SUPPLIED`] and is forgiven — and the neglect run steps or
+///    resets on that same reading, so there is no second dial free to disagree with the first.
+/// 2. **The bleed**, at the at-risk rung's own rate and past that rung's own grace.
+///    `upkeep_decay` owns the `>` that decides whether the penalty is biting.
+/// 3. **Clear the payment and re-stamp the bill**, at the **post-decay** position, so the turn that
+///    is about to run judges the working as this pass left it.
+///
+/// # ⛔ IT RUNS ON EVERY WORKING, KEPT OR NOT
+///
+/// This is the load-bearing half, and it is `bill_and_stock_roads`' lesson: a pass that billed only
+/// the workings some band still has a row on would leave an **abandoned** working reading as kept
+/// for ever — never arming its counter, never decaying. A working whose band walked out of range is
+/// exactly the case the branch's move-or-stay pressure is made of, so it is exactly the case that
+/// must decay.
+///
+/// **It stamps rather than paying**, and the payment is a whole stage later
+/// (`systems::settle_bands_extraction`, inside the labour pass, because the head count it divides is
+/// the one the shedding order left). Logistics runs before Population, so the stamp this pass writes
+/// is the bill that turn's keepers pay against, and the next Logistics pass judges that pair.
+pub fn advance_deposits(
+    mut registry: ResMut<DepositRegistry>,
+    ladder: Res<crate::intensification::LadderConfigHandle>,
+    extraction: Res<crate::extraction_config::ExtractionConfigHandle>,
+    tile_registry: Res<crate::resources::TileRegistry>,
+    tiles: bevy::prelude::Query<&Tile>,
+) {
+    let ladder = ladder.get();
+    let config = extraction.get();
+    for source in registry.sources.values_mut() {
+        // A working whose tile has gone from the map keeps whatever it was — the same forgiveness
+        // `advance_forage_regrowth` gives a synthetic off-map patch, and the only way a harness can
+        // build one.
+        let Some(ground) = tile_registry
+            .index(source.tile.x, source.tile.y)
+            .and_then(|entity| tiles.get(entity).ok())
+        else {
+            continue;
+        };
+        let measure = deposit_measure(source, ground, &config);
+        let basis = deposit_keeping_basis(source, measure, &ladder);
+        // ## 1 — how short, and the run of turns it has been short for.
+        let shortfall_fraction =
+            crate::intensification::upkeep_shortfall_fraction(basis, source.upkeep_supplied);
+        if crate::intensification::upkeep_shortfall(basis, source.upkeep_supplied)
+            > NO_UPKEEP_DEMAND
+        {
+            source.neglect_turns = source.neglect_turns.saturating_add(1);
+        } else {
+            source.neglect_turns = NEGLECT_NONE;
+        }
+        // ## 2 — the bleed.
+        let branch = source.standing.held.branch();
+        let at_risk = deposit_at_risk_rung(&source.standing);
+        let decay = ladder
+            .rung(at_risk)
+            .upkeep_decay(shortfall_fraction, source.neglect_turns);
+        if decay > crate::intensification::NO_UPKEEP_DECAY {
+            let bled = source.ladder_position() - decay;
+            source.set_ladder_position(bled, &ladder, branch);
+        }
+        // ## 3 — clear the payment and re-stamp, at the position the bleed left.
+        source.upkeep_supplied = NO_UPKEEP_DEMAND;
+        let measure = deposit_measure(source, ground, &config);
+        source.upkeep_demanded = Some(deposit_upkeep_demand(source, measure, &ladder));
+    }
 }
 
 /// **EVERY BAND'S CREW ON EVERY WORKING, this turn** — the one sweep the take pass builds, so a

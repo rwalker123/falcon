@@ -380,7 +380,14 @@
         "work_cost": 60.0,
         "grace_turns": null
       },
-      "upkeep": null,
+      "upkeep": {
+        "work_per_turn": 1.0,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 0.6
+        },
+        "grace_turns": 3
+      },
       "extraction_payoff": {
         "yield_per_worker_turn": 2.0,
         "recovery_fraction": 1.0,
@@ -406,7 +413,14 @@
         "work_cost": 150.0,
         "grace_turns": null
       },
-      "upkeep": null,
+      "upkeep": {
+        "work_per_turn": 2.0,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 1.5
+        },
+        "grace_turns": 2
+      },
       "extraction_payoff": {
         "yield_per_worker_turn": 2.5,
         "recovery_fraction": 1.0,
@@ -466,7 +480,14 @@
           "wood": 8.0
         }
       },
-      "upkeep": null,
+      "upkeep": {
+        "work_per_turn": 1.5,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 2.5
+        },
+        "grace_turns": 4
+      },
       "extraction_payoff": {
         "yield_per_worker_turn": 2.2,
         "recovery_fraction": 0.85,
@@ -478,5 +499,5 @@
     }
   ],
   "_comment_extraction_payoff": "WHAT A FORESTRY OR EXTRACTION RUNG BUYS (docs/plan_extraction.md 4c). ONE BLOCK SERVES BOTH BRANCHES AND THERE IS NO BRANCH CHECK ANYWHERE, which is the single decision this arc exists to get right. A FORESTRY rung raises `regrowth_multiplier` and leaves `recovery_fraction` at its ceiling of 1.0; an EXTRACTION rung raises `recovery_fraction` and leaves the multiplier at 1.0. The multiplier scales THE DEPOSIT'S OWN rate (extraction.json), and rock's rate is 0.0, so `0 x anything` is still 0 - 'stone's rate is zero' survives as ARITHMETIC rather than as a rule somebody has to remember not to break, and a branch-keyed payoff would have made it breakable by a config edit. All three terms interpolate on the source's position, the general rule of plan_standing_upkeep.md 2.8: every one of them is a RATE or a SHARE, and there is no classifier here whose cut points would have to step instead. NO RUNG MAY RAISE CAPACITY AND THERE IS NO KEY FOR ONE: the floor is (1 - recovery_fraction) x the TERRAIN's capacity, so climbing strictly LOWERS it - which is the safe direction of the 6 floor trap, where a rung raising a herd's K dragged the floor up under a tame already standing on it and made that build uncompletable at any crew size. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials, sized in extraction.json's own comments against the three real consumers (a pen is 24 wood, a road tool 3 wood, a paved tile 20 stone).",
-  "_comment_extraction_upkeep": "NEITHER DEPOSIT BRANCH DECLARES AN `upkeep`, AND THAT IS A STATEMENT ABOUT THE SHIPPED LADDER RATHER THAN A GAP. A working costs nothing to hold: what takes one away is the CAMP MOVING OUT OF RANGE, which lapses the `extract` row exactly as it lapses a Forage row and is where docs/plan_extraction.md 6's move-or-stay pressure actually lives - 'a quarry you walk away from is a quarry you lost'. `route:trail` already ships built and un-held on the same reasoning, and its own comment makes the argument: a rung that costs nothing to hold cannot be SHORT, so what takes it back is disuse rather than shortfall. THE CONSEQUENCE WORTH KNOWING is that a working's position never falls - there is no `meter_decay` for a shortfall to drive - so a band that comes back to a quarry it left finds the working it paid for, and what it lost is every turn's production in between. THE QUARRY'S WOOD IS ON THE BUILD PILE, NOT ON A RATE: props, ramps and sleds are timbered once as the face is opened, which is plan_standing_upkeep.md 2.7's own distinction between a pile spent as the meter climbs and a rate paid every turn the rung stands."
+  "_comment_extraction_upkeep": "WHAT HOLDING A WORKING COSTS, AND WHY A FREE FLOOR COSTS NOTHING (docs/plan_extraction.md 6). The two floor rungs declare no `upkeep` at all - deadfall and a stone scatter are what the ground already offers, so there is nothing anybody built and nothing to hold, exactly as plant:wild and route:path declare none. The three BUILT rungs each owe work per turn, scaled by `source_load`, whose DEPOSIT reading is the working's KEEPER-LOADS: the tile's own capacity over the material's capacity_per_keeper (extraction.json). All three shipped branches measure the PLACE and not the activity - a tile's K on the plant web, a herd's head count on the animal one, a tile's infrastructure_cost on the route one - and this is the same statement: a great wood takes more holding than a few stands along a draw, whatever crew is on it that turn. THE RATES READ AS KEEPERS ON THE REFERENCE GROUND, because capacity_per_keeper is anchored there: a felling working on closed mixed woodland owes 1.0 work a turn (one keeper), a coppice on the same wood 2.0, and a karst quarry 1.5 - against the plant web's 2.0 for a tended patch and 4.0 for a Field on ITS reference tile. THE DECAY IS WHAT MAKES NEGLECT SELF-LIMITING: an unkept working slides back down its ladder, the interpolated demand falls with the position, and an abandoned working decays toward costing nothing rather than bleeding a band's roster for ever (plan_standing_upkeep.md 2.7). Each meter_decay is the PACING-NEUTRAL INVERSION of the plant web's rule of thumb - a wholly unmaintained rung lapses over about a hundred bleeding turns - so felling (60 work) bleeds 0.6, coppice (150) 1.5 and quarry (250) 2.5. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, a felling working 3, and a COPPICE the least at 2 because a managed wood is the most perishable thing on either branch - the same direction plant:field runs in against plant:tended. NO RUNG DECLARES AN `upkeep.materials` AND VALIDATE REFUSES ONE: the quarry's 8 wood is a BUILD PILE - props and ramps timbered once as the face is opened, which goes into the working and stays there (2.7's own pile-versus-rate distinction) - and the material half of the standing bill has no settle pass on these branches, so a rate here would be a dial that reads live and bills nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE."
 }

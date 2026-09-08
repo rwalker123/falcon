@@ -4594,6 +4594,29 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
             });
         }
     }
+    // ⛔ **NO DEPOSIT RUNG MAY DECLARE A STANDING MATERIAL RATE, AND THE REFUSAL IS THE POINT.**
+    // The two deposit branches settle the **work** half of their keeping
+    // (`systems::settle_bands_extraction`) and have no settle pass for a material one — so a rate
+    // here would parse, validate, publish a demand, and be paid by nobody: the *"looks live but
+    // isn't"* failure this whole file is written against, and exactly what
+    // `routes::road_meter_rot` reports having shipped for one slice when `route:paved_road`
+    // declared an `upkeep.materials` its rot term could not see.
+    //
+    // **It is not a claim that a working owes no material** — `extraction:quarry`'s 8 wood is real,
+    // and it is a **build pile**: props and ramps timbered once as the face is opened go *into* the
+    // working and stay there, which is `docs/plan_standing_upkeep.md` §2.7's own pile-versus-rate
+    // distinction. Giving one branch a standing rate means building the settle pass first, and then
+    // deleting this check deliberately rather than discovering it was never enforced.
+    if matches!(rung.branch, RungBranch::Forestry | RungBranch::Extraction)
+        && !upkeep.materials.is_empty()
+    {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.upkeep.materials"),
+            constraint: "hold a deposit working with WORK alone — the two extraction branches                          settle no standing material, so a rate here would publish a demand that                          nothing ever pays. A material that goes INTO the working belongs on                          `build.materials`"
+                .to_string(),
+            value: format!("{} material(s)", upkeep.materials.len()),
+        });
+    }
     validate_material_amounts(&upkeep.materials, where_, "upkeep.materials")
 }
 

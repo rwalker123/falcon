@@ -11,6 +11,7 @@
   "deposits": {
     "stone": {
       "branch": "extraction",
+      "capacity_per_keeper": 3000.0,
       "by_terrain": {
         "AlpineMountain": {
           "capacity": 4200.0,
@@ -264,6 +265,7 @@
     },
     "wood": {
       "branch": "forestry",
+      "capacity_per_keeper": 600.0,
       "by_terrain": {
         "MixedWoodland": {
           "capacity": 600.0,
@@ -443,5 +445,6 @@
         }
       }
     }
-  }
+  },
+  "_comment_capacity_per_keeper": "HOW MUCH OF A DEPOSIT ONE KEEPER LOOKS AFTER - the divisor that turns a tile's own capacity into the KEEPER-LOADS both branches' rungs quote their upkeep.work_per_turn per, and the per-material twin of fauna_config's animals_per_herder and labor_config's capacity_per_tender: THE WEB OWNS THE RATIO, THE RUNG OWNS THE RATE. Each is ANCHORED ON A REFERENCE TERRAIN'S OWN CAPACITY, which is what makes the move onto the scale provably pacing-neutral there, exactly as 195.0 is AlluvialPlain's own K. Wood's 600 is MixedWoodland's - the reference forest - so a felling working on closed woodland is exactly 1.0 load and owes exactly the rung's declared rate, while a Tundra stand of dwarf willow (15) is 0.025 of a load and costs essentially nothing to hold, which is right. Stone's 3000 is KarstHighland's - limestone, the classic quarry stone, and the middle of the rock bodies - so a karst quarry is 1.0 load, rolling hills (900) is 0.3 and an alpine mountain (4200) is 1.4. THE MEASURE IS DELIBERATELY POSITION-FREE AND CAPACITY IS THE TERRAIN'S: the obvious alternative, 'how much of the deposit this rung can reach', interpolates on the ladder position and so does work_per_turn, and multiplying both is the compounding capacity_per_tender's own note exists to prevent. PLAYTEST DIALS."
 }

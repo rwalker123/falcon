@@ -150,6 +150,7 @@ pub(crate) fn labor_assignment_to_state(
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => {}
     }
     state

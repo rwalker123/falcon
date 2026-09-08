@@ -373,6 +373,10 @@ pub fn calculate_visibility(
                         | LaborTarget::Agriculture
                         | LaborTarget::Husbandry
                         | LaborTarget::Roadwork
+                        // **A band-wide keeping role stands on no tile of its own**, the working
+                        // keepers included: what they hold is resolved from the band's rows, and
+                        // each of those rows lights its own deposit above.
+                        | LaborTarget::Quarrywork
                         | LaborTarget::Builders => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see

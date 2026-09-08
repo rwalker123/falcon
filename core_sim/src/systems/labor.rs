@@ -59,6 +59,10 @@ const NO_FODDER_LEDGER: f32 = 0.0;
 /// the exact *"keeps no roads"* reading and not a small quantity of work.
 const NO_ROADWORK_LEDGER: f32 = 0.0;
 
+/// **A BAND THAT HOLDS NO WORKING** — [`NO_ROADWORK_LEDGER`]'s twin on the two deposit branches, and
+/// what [`settle_bands_extraction`] clears its ledger pair to ahead of every exit.
+const NO_QUARRYWORK_LEDGER: f32 = 0.0;
+
 /// **"Is there anything here for this crew to work with?"** — THE eligibility term a **build** is
 /// gated on, asked of [`crate::fauna::take_room`]: the escapement room **or** the share of this
 /// turn's growth the player's own floor left takeable, whichever is larger.
@@ -209,6 +213,7 @@ pub fn source_has_a_meter_at_risk(
         | LaborTarget::Agriculture
         | LaborTarget::Husbandry
         | LaborTarget::Roadwork
+        | LaborTarget::Quarrywork
         | LaborTarget::Builders => false,
     }
 }
@@ -613,7 +618,6 @@ impl Default for KeepingAward {
 fn keeping_rates(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
-    branch: crate::intensification::RungBranch,
     keepers: u32,
     claims: &[KeepingClaim],
 ) -> Vec<KeepingRate> {
@@ -668,6 +672,9 @@ fn keeping_rates(
         .map(|(group, claim)| {
             let rung_key = claim.rung.map(|rung| rung.wire_key());
             let rung_key = rung_key.as_deref();
+            // **THE BRANCH IS THE CLAIM'S OWN**, so a pool holding two ladders' sites prices
+            // each at its own — see [`KeepingClaim::branch`].
+            let branch = claim.branch;
             let gear = coverage[group].weighted_rate(|crew| {
                 equipment.build_work_per_worker(crew, band_kit, branch, rung_key)
             });
@@ -689,11 +696,10 @@ fn keeping_rates(
 fn keeping_worker_need(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
-    branch: crate::intensification::RungBranch,
     keepers: u32,
     claims: &[KeepingClaim],
 ) -> f32 {
-    keeping_rates(equipment, band_kit, branch, keepers, claims)
+    keeping_rates(equipment, band_kit, keepers, claims)
         .iter()
         .zip(claims)
         .map(|(rate, claim)| rate.worker_need(claim.demand))
@@ -1224,6 +1230,17 @@ fn route_head_gate(
 struct KeepingClaim {
     index: usize,
     demand: f32,
+    /// **THE LADDER THIS SITE IS ON.** It rides the claim rather than the *call* because one pool
+    /// can hold sites on **two** branches: the `quarrywork` role keeps both `forestry` and
+    /// `extraction` workings, so a single `branch` argument to [`keeping_rates`] would have to lie
+    /// about half of them.
+    ///
+    /// ⛔ **THE COVERAGE MUST STAY WHOLE, WHICH IS WHY THIS IS A FIELD AND NOT A SECOND CALL.**
+    /// Calling `keeping_rates` once per branch would partition the *coverage* by branch too — and
+    /// coverage answers *"how many of these hands does the band own gear for"*, a fact about the
+    /// ledger — so two groups would arm two prefixes off one stock. That is the same failure
+    /// `keeping_rates`' own *"the rung is not part of the key"* note guards against, one axis over.
+    branch: crate::intensification::RungBranch,
     /// **THE KIT THIS SITE IS KEPT WITH** — its own row's selection, else its web's derivation
     /// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]). Resolved here, with the
     /// claim, because the rate a claim is funded at and the wear that rate spends are two readings
@@ -1296,6 +1313,7 @@ fn keeping_claims(
                 let rung = crate::forage::patch_rung_key(patch);
                 plant.push(KeepingClaim {
                     index,
+                    branch: crate::intensification::RungBranch::Plant,
                     kit: equipment.keeping_kit_for(
                         assignment.upkeep_kit.as_ref(),
                         crate::intensification::RungBranch::Plant,
@@ -1338,6 +1356,7 @@ fn keeping_claims(
                 let rung = fauna::herd_rung_key(herd);
                 animal.push(KeepingClaim {
                     index,
+                    branch: crate::intensification::RungBranch::Animal,
                     kit: equipment.keeping_kit_for(
                         assignment.upkeep_kit.as_ref(),
                         crate::intensification::RungBranch::Animal,
@@ -1371,6 +1390,7 @@ fn keeping_claims(
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
             | LaborTarget::Roadwork
+            | LaborTarget::Quarrywork
             | LaborTarget::Builders => {}
         }
     }
@@ -1553,6 +1573,10 @@ fn resolve_shed_facts(
     // are different things and conflating them is what made the branch's material half look
     // impossible.)
     road_claims: &[KeepingClaim],
+    // **The workings this band holds**, struck by the caller for `road_claims`' reason: this pool's
+    // shares land on the `DepositRegistry` rather than on an assignment award, so its claims index
+    // their own key vector and are resolved where that registry is in scope.
+    extraction_claims: &[KeepingClaim],
     width: u32,
     wrap: bool,
 ) -> ShedFacts {
@@ -1625,6 +1649,7 @@ fn resolve_shed_facts(
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
             | LaborTarget::Roadwork
+            | LaborTarget::Quarrywork
             | LaborTarget::Builders => SourceShedFacts::default(),
         })
         .collect();
@@ -1636,7 +1661,6 @@ fn resolve_shed_facts(
             keeping_worker_need(
                 equipment,
                 band_kit,
-                crate::intensification::RungBranch::Plant,
                 allocation.workers_on(&LaborTarget::Agriculture),
                 &plant_claims,
             ),
@@ -1646,7 +1670,6 @@ fn resolve_shed_facts(
             keeping_worker_need(
                 equipment,
                 band_kit,
-                crate::intensification::RungBranch::Animal,
                 allocation.workers_on(&LaborTarget::Husbandry),
                 &animal_claims,
             ),
@@ -1656,9 +1679,17 @@ fn resolve_shed_facts(
             keeping_worker_need(
                 equipment,
                 band_kit,
-                crate::intensification::RungBranch::Route,
                 allocation.workers_on(&LaborTarget::Roadwork),
                 road_claims,
+            ),
+        ),
+        spare_quarrywork_keepers: spare_keepers(
+            allocation.workers_on(&LaborTarget::Quarrywork),
+            keeping_worker_need(
+                equipment,
+                band_kit,
+                allocation.workers_on(&LaborTarget::Quarrywork),
+                extraction_claims,
             ),
         ),
     }
@@ -1690,17 +1721,11 @@ fn maintenance_shares(
         ladder,
     );
     let mode = allocation.upkeep_fund_mode;
-    for (role, branch, claims) in [
-        (
-            LaborTarget::Agriculture,
-            crate::intensification::RungBranch::Plant,
-            &mut plant,
-        ),
-        (
-            LaborTarget::Husbandry,
-            crate::intensification::RungBranch::Animal,
-            &mut animal,
-        ),
+    // **The branch rides each claim** ([`KeepingClaim::branch`]), so the loop names only the role
+    // whose pool it is dividing.
+    for (role, claims) in [
+        (LaborTarget::Agriculture, &mut plant),
+        (LaborTarget::Husbandry, &mut animal),
     ] {
         claims.sort_by(|a, b| {
             b.invested
@@ -1725,7 +1750,7 @@ fn maintenance_shares(
         // the work-unit split produced. The proof that this change moves nothing that ships is that
         // equality — see `upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`.
         let keepers = allocation.workers_on(&role);
-        let rates = keeping_rates(equipment, band_kit, branch, keepers, claims);
+        let rates = keeping_rates(equipment, band_kit, keepers, claims);
         let needs: Vec<f32> = claims
             .iter()
             .zip(&rates)
@@ -1798,6 +1823,7 @@ fn route_keeping_claims(
         let rung = road.held_rung();
         claims.push(KeepingClaim {
             index: kept.len(),
+            branch: crate::intensification::RungBranch::Route,
             kit: equipment.keeping_kit_for(
                 None,
                 crate::intensification::RungBranch::Route,
@@ -1820,6 +1846,209 @@ fn route_keeping_claims(
             .then_with(|| a.tiebreak.cmp(&b.tiebreak))
     });
     (kept, claims)
+}
+
+/// **WHAT THE WORKINGS THIS BAND HOLDS CLAIM FROM ITS `Quarrywork` POOL** — one claim per working
+/// the band has an `extract` row on, index-aligned with the returned keys.
+///
+/// # ⛔ THE CATCHMENT IS THE ROW, AND A ROW WITH NO CUTTERS STILL COUNTS
+///
+/// A working is held by a labor row (`docs/plan_extraction.md` §6 — the one place this arc
+/// deliberately does not copy the route branch), so *"which workings does this band keep"* is
+/// *"which `extract` rows does it hold"*. **The take crew's size is not part of it**: a source row
+/// survives losing its take crew ([`source_has_a_meter_at_risk`]), and a felling working nobody is
+/// cutting this season is still a face somebody has to hold. That is `Agriculture`'s rule —
+/// *"keeping a patch does not require gathering it"* — restated on a fourth pool.
+///
+/// # ⛔ IT IS THE ROUTE SHAPE AND NOT THE FOOD WEBS', AND THE REASON IS THE INDEX
+///
+/// [`keeping_claims`] sets `KeepingClaim::index` to an **assignment index**, because the plant and
+/// animal shares are written straight back into [`maintenance_shares`]' per-assignment award vector.
+/// This pool's shares are not: they land on the **working**, in the `DepositRegistry`, exactly as a
+/// road's land on the road — so the index names the returned key vector, which is
+/// [`route_keeping_claims`]' own arrangement. Everything downstream ([`keeping_rates`],
+/// [`KeepingRate::worker_need`], [`crate::intensification::distribute_upkeep_pool`]) is the
+/// identical seam either way: **a working's keeper is funded exactly as a road, a field or a flock
+/// keeper is.**
+///
+/// **The claims carry both branches at once**, which is what [`KeepingClaim::branch`] exists for: one
+/// band can hold a coppice and a quarry, and a single branch argument would have to lie about one of
+/// them.
+///
+/// Sorted **most-invested first** on the working's own ladder position, tie-broken on the
+/// `(tile, material)` key — the total order [`crate::intensification::UpkeepFundMode::Priority`]
+/// funds in, stated here because `distribute_upkeep_pool` funds in slice order and the caller owns
+/// the ranking.
+///
+/// **No claim can carry a NAMED kit.** `upkeep_kit` is a property of a *labor row*, and it is the
+/// row's own site that it names — but the shipped roster declares no keeping gear on either deposit
+/// branch, so every working takes the roster's derivation and a named kit would resolve to the same
+/// empty `none`. The day one ships, the row's selection is where it is read from.
+fn extraction_keeping_claims(
+    allocation: &LaborAllocation,
+    deposits: &crate::extraction::DepositRegistry,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    extraction: &crate::extraction_config::ExtractionConfig,
+    ladder: &LadderConfig,
+) -> (Vec<(UVec2, String)>, Vec<KeepingClaim>) {
+    let mut held: Vec<(UVec2, String)> = Vec::new();
+    let mut claims: Vec<KeepingClaim> = Vec::new();
+    for assignment in &allocation.assignments {
+        let LaborTarget::Extract { tile, material } = &assignment.target else {
+            continue;
+        };
+        let Some(working) = deposits.source(*tile, material) else {
+            continue;
+        };
+        let Some(ground) = tile_registry
+            .index(tile.x, tile.y)
+            .and_then(|entity| tiles.get(entity).ok())
+        else {
+            continue;
+        };
+        let branch = working.standing().held.branch();
+        // **The rung the working STANDS on**, which is what its keepers are holding — not whatever a
+        // queued `quarry` is climbing toward. A working still on its free floor owes nothing (that
+        // rung declares no `upkeep`), so it claims a demand of zero and is skipped below.
+        let rung = working.rung();
+        let measure = crate::extraction::deposit_measure(working, ground, extraction);
+        let demand = crate::extraction::deposit_keeping_basis(working, measure, ladder);
+        if demand <= NO_UPKEEP_DEMAND {
+            continue;
+        }
+        claims.push(KeepingClaim {
+            index: held.len(),
+            branch,
+            kit: equipment.keeping_kit_for(None, branch, Some(&rung.wire_key())),
+            rung: Some(rung),
+            demand,
+            // *"Most invested"* on either deposit branch is how far up it the working has been
+            // raised: the position **is** the accumulator here, exactly as it is on a road, so there
+            // is no separate stored cost to read.
+            invested: working.ladder_position(),
+            tiebreak: format!("{:010}:{:010}:{material}", tile.y, tile.x),
+        });
+        held.push((*tile, material.clone()));
+    }
+    claims.sort_by(|a, b| {
+        b.invested
+            .total_cmp(&a.invested)
+            .then_with(|| a.tiebreak.cmp(&b.tiebreak))
+    });
+    (held, claims)
+}
+
+/// **PAY FOR THE WORKINGS THIS BAND HOLDS** — the `Quarrywork` keeping pool, the fourth of the four
+/// and [`settle_bands_roadwork`]'s twin two branches over (`docs/plan_extraction.md` §6).
+///
+/// # ⛔ IT IS CALLED FROM INSIDE [`advance_labor_allocation`], AT THE ROAD PAYMENT'S OWN SEAT
+///
+/// The head count it divides is the one **the shedding order left**
+/// ([`crate::components::LaborAllocation::normalize`]), which does not exist until that shed has
+/// run — and the payment has to land **before** the deposit build arm, whose countdown reads
+/// `DepositSource::upkeep_supplied` through [`crate::extraction::deposit_meter_rot`]. Paying after
+/// the labour pass is exactly the defect `settle_bands_roadwork`'s own note records: every billed
+/// road quoted its rot at a work shortfall of `1.0` whatever its keepers had done. So the seat is:
+/// after the shed, ahead of the band's `continue`s.
+///
+/// # (a) THE BILL IS STAMPED ON **EVERY** WORKING, HELD OR NOT — AND NOT HERE
+///
+/// That half belongs to [`crate::extraction::advance_deposits`], a whole stage earlier, and it is
+/// load-bearing for `bill_and_stock_roads`' reason: a pass that billed only the workings some band
+/// still has a row on would leave an **abandoned** working reading as kept for ever — never arming
+/// its neglect counter, never decaying. A working whose band walked out of range is precisely what
+/// this branch's move-or-stay pressure is made of.
+///
+/// # (b) THE PAYMENT IS THE SAME SUPPLY EXPRESSION THE OTHER THREE POOLS USE
+///
+/// [`keeping_rates`] for the per-worker rate and the wear kit,
+/// [`crate::intensification::distribute_upkeep_pool`] for the split, and the band's own
+/// `upkeep_fund_mode` for the policy. There is deliberately **no second supply expression**: an
+/// equipped working keeper covers more of a face's bill than a bare one for the same reason an
+/// equipped tender does, and the day a propping set declares a `build_work` stat serving `forestry`
+/// or `extraction` this seam picks it up with no code change.
+///
+/// **`upkeep_supplied` accumulates (`+=`)**, §2.5's rule: two bands each holding a row on one
+/// working each put a part of its keeping on the ground. It is cleared once per turn by
+/// `advance_deposits`, never here.
+///
+/// # (c) THE BAND'S OWN LEDGER, CLEARED AHEAD OF EVERY EXIT
+///
+/// [`crate::components::LaborAllocation::last_quarrywork_demand`] and its supplied twin, on
+/// `last_roadwork_demand`'s rule — **cleared before every early return**, so a band that has put its
+/// last working down stops republishing a bill it no longer owes. **The demand is summed before the
+/// head-count gate**, so a band with nobody on the role publishes the bill it is failing to pay
+/// rather than a zero. That is the alarm.
+#[allow(clippy::too_many_arguments)] // the per-band slice of what was a Bevy system's parameter list
+pub fn settle_bands_extraction(
+    deposits: &mut crate::extraction::DepositRegistry,
+    cohort: &PopulationCohort,
+    allocation: &mut LaborAllocation,
+    mut band_equipment: Option<&mut BandEquipment>,
+    equipment_cfg: &crate::equipment_config::EquipmentConfig,
+    extraction: &crate::extraction_config::ExtractionConfig,
+    ladder: &LadderConfig,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+) {
+    // **(c) cleared ahead of every exit below.**
+    allocation.last_quarrywork_demand = NO_QUARRYWORK_LEDGER;
+    allocation.last_quarrywork_supplied = NO_QUARRYWORK_LEDGER;
+    let (held, claims) = extraction_keeping_claims(
+        allocation,
+        deposits,
+        equipment_cfg,
+        tile_registry,
+        tiles,
+        extraction,
+        ladder,
+    );
+    if claims.is_empty() {
+        return;
+    }
+    // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.**
+    allocation.last_quarrywork_demand = claims.iter().map(|claim| claim.demand).sum();
+    let keepers = allocation.workers_on(&LaborTarget::Quarrywork);
+    if keepers == NO_CREW_ON_THIS_ACTIVITY {
+        return;
+    }
+    // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent component
+    // means the gear ledger was never built, which reads as start-stocked.
+    let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
+        BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
+    });
+    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims);
+    let needs: Vec<f32> = claims
+        .iter()
+        .zip(&rates)
+        .map(|(claim, rate)| rate.worker_need(claim.demand))
+        .collect();
+    let fund_mode = allocation.upkeep_fund_mode;
+    for ((claim, rate), hands) in
+        claims
+            .iter()
+            .zip(&rates)
+            .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
+    {
+        let supplied = hands * rate.per_worker;
+        let (tile, material) = &held[claim.index];
+        if let Some(working) = deposits.source_mut(*tile, material) {
+            working.upkeep_supplied += supplied;
+        }
+        // **(c) this band's own contribution**, accumulated across the workings it holds.
+        allocation.last_quarrywork_supplied += supplied;
+        // **The keeper's tools are spent on exactly that work** — billed on what the pool
+        // *supplied*, never on what the rung demanded. Inert with the shipped bare `none` kit, and
+        // wired so a future working kit is a config edit and nothing else.
+        charge_keeping_wear(
+            band_equipment.as_deref_mut(),
+            equipment_cfg,
+            Some(&rate.wear_kit),
+            supplied,
+        );
+    }
 }
 
 /// **THE ROADS' BILL, AND THE STONE THAT PAYS IT** — struck **before** the builders run, and that
@@ -2081,13 +2310,7 @@ pub fn settle_bands_roadwork(
     let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
         BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
     });
-    let rates = keeping_rates(
-        equipment_cfg,
-        &band_kit,
-        crate::intensification::RungBranch::Route,
-        keepers,
-        &claims,
-    );
+    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims);
     let needs: Vec<f32> = claims
         .iter()
         .zip(&rates)
@@ -3166,6 +3389,18 @@ pub fn advance_labor_allocation(
             &tiles,
             &ladder,
         );
+        // **And what the WORKINGS this band holds cost it**, on the same rule one branch over: the
+        // **pre-shed** reading the shedding order is entitled to, with the payment below striking
+        // its own against what survived.
+        let (_, extraction_claims) = extraction_keeping_claims(
+            &allocation,
+            &deposits,
+            &equipment_cfg,
+            &tile_registry,
+            &tiles,
+            &extraction_cfg,
+            &ladder,
+        );
         let shed_facts = resolve_shed_facts(
             &allocation,
             &shed_banking,
@@ -3183,6 +3418,7 @@ pub fn advance_labor_allocation(
             &equipment_cfg,
             &band_kit,
             &road_claims,
+            &extraction_claims,
             grid_width,
             wrap_horizontal,
         );
@@ -3245,6 +3481,22 @@ pub fn advance_labor_allocation(
                 &tiles,
             );
         }
+        // **THE FOURTH KEEPING POOL, AT THE THIRD'S OWN SEAT** — after the shed (the head count it
+        // divides is the one that survived) and above the two `continue`s (a band whose whole
+        // allocation was shed still owes what its workings cost). It takes no `BandId`: a working is
+        // held by a **row**, not by a keeper, so an anonymous cohort with rows has claims like any
+        // other — the one place this pool differs from the road's.
+        settle_bands_extraction(
+            &mut deposits,
+            &cohort,
+            &mut allocation,
+            band_equipment.as_deref_mut(),
+            &equipment_cfg,
+            &extraction_cfg,
+            &ladder,
+            &tile_registry,
+            &tiles,
+        );
         if allocation.assignments.is_empty() {
             continue;
         }
@@ -6388,7 +6640,7 @@ pub fn advance_labor_allocation(
                         tile: *tile,
                         material: material.clone(),
                     };
-                    // **The working is opened LAZILY, here and at the command** — a deposit nobody
+                    // **The working is opened LAZILY, by the turn** — a deposit nobody
                     // has worked stands at exactly the tile's capacity, which is a pure function of
                     // the tile, so seeding one per land tile per material would be storing a
                     // derivation twice over for the whole map. `None` = the ground holds none of
@@ -6581,6 +6833,12 @@ pub fn advance_labor_allocation(
                     // Scouts act as forward observers in `calculate_visibility`: staffed scouts
                     // post vantage points out from the band (`labor.scout.vantage_distance(scouts)`)
                     // and reveal from each, re-marked Active every turn — no work is done here.
+                }
+                LaborTarget::Quarrywork => {
+                    // **The fourth keeping pool, and this LOOP does not spend it either.** What it
+                    // funds is resolved from the workings the band holds rows on, and the split ran
+                    // once per band in [`settle_bands_extraction`] above this loop and ahead of the
+                    // band's `continue`s — this row is only the head count that call divides.
                 }
                 LaborTarget::Agriculture | LaborTarget::Husbandry => {
                     // **The two keeping roles do no per-worker yield here either.** Their hands are
@@ -7861,6 +8119,11 @@ fn announce_shed_crew(
             CommandEventKind::Cultivate,
             "field keepers".to_string(),
             "kind=agriculture".to_string(),
+        ),
+        LaborTarget::Quarrywork => (
+            CommandEventKind::Extraction,
+            "working keepers".to_string(),
+            "kind=quarrywork".to_string(),
         ),
         LaborTarget::Husbandry => (
             CommandEventKind::Corral,
@@ -9218,6 +9481,9 @@ mod keeping_split_tests {
         KeepingClaim {
             index,
             demand,
+            // The plant web, because these cases are about the SPLIT and not about a ladder — the
+            // branch only ever reaches a rung-bound tool, and no plant tool is one.
+            branch: crate::intensification::RungBranch::Plant,
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .kit(kit_id)
                 .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'")),
@@ -9255,7 +9521,6 @@ mod keeping_split_tests {
             keeping_worker_need(
                 &equipment,
                 &stocked,
-                crate::intensification::RungBranch::Plant,
                 KEEPERS,
                 &[claim(0, A_BILL, kits[0]), claim(1, A_BILL, kits[1])],
             )
