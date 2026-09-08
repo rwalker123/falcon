@@ -206,23 +206,42 @@ has no size registry, because a size is a number the player sends.
 
 | Size | Grid | Measured seats | Ceiling (`max_ai_factions`) | Pre-selected | Old lattice ceiling |
 |---|---|---|---|---|---|
-| Tiny | 56×36 | 4-6 | **3** | 1 | 5 |
-| Small | 66×42 | 5-7 | **4** | 1 | 11 |
-| Standard | 80×52 | 8-9 | **6** | 2 | 11 |
-| Large | 104×64 | 11-13 | **11** | 3 | 23 |
-| Huge | 128×80 | 15-20 | **17** | 5 | 27 |
+| Tiny | 56×36 | 4-6 | **3** | **2** | 5 |
+| Small | 66×42 | 5-7 | **4** | **3** | 11 |
+| Standard | 80×52 | 8-9 | **6** | **4** | 11 |
+| Large | 104×64 | 11-13 | **11** | **6** | 23 |
+| Huge | 128×80 | 15-20 | **17** | **9** | 27 |
 
 Pinned by `core_sim/tests/faction_start_capacity.rs`, which reads the levers out of the shipped
 configs rather than restating them, so a tuning change to any of the three has to look at this table
-and agree to it.
+and agree to it. The pre-selections are also asserted as *properties* there — strictly increasing
+across the five sizes, all five distinct, each within its own ceiling — so a retune has to keep the
+shape as well as agree to the numbers.
+
+> **The consecutive area ratios, for whoever next asks whether the sizes are far enough apart:**
+> Small is **1.375×** Tiny, Standard **1.501×** Small, Large **1.600×** Standard, Huge **1.538×**
+> Large. Tiny→Small is the tightest step in the ladder by a clear margin. It costs nothing today —
+> the pre-selection rule below separates them anyway — but it is the pair to look at first if the
+> two ever need to read as meaningfully different worlds.
 
 ### ⛔ THE OFFER AND THE UNATTENDED ROSTER ARE TWO NUMBERS, AND THEY ARE NOT THE SAME PATH
 
-A New Game screen **pre-selects** `DEFAULT_AI_FACTIONS_SHARE_OF_CEILING` (0.34, floored) of what the
-grid seats — a third of the map's capacity, enough that a Standard map opens as a world with
-neighbours and far enough below the ceiling that it is never the cramped end a player has to dial
-back from. A **named constant, not a config lever**, because `default_ai_faction_count` already pins
-the pre-selection outright and two levers moving one number is one too many.
+A New Game screen **pre-selects `DEFAULT_AI_FACTIONS_FLOOR + ceiling / DEFAULT_AI_FACTIONS_CEILING_DIVISOR`**
+— `1 + ceiling/2` in integer arithmetic, then clamped to the ceiling. The floor term is one rival on
+any map that can seat one, because a world with nobody else in it is the thing this game is least
+interesting as; the divisor adds half of what the map holds on top, which is far enough below the
+ceiling that the pre-selection is never the cramped end a player has to dial back from. The clamp is
+what keeps a degenerate grid (a ceiling of 0 or 1) from pre-selecting a start it has nowhere to put.
+Both are **named constants, not config levers**, because `default_ai_faction_count` already pins the
+pre-selection outright and two levers moving one number is one too many.
+
+> **A share of the ceiling cannot express this ladder — which is why the rule's SHAPE changed and
+> not its constant.** The pre-selection used to be `DEFAULT_AI_FACTIONS_SHARE_OF_CEILING` (0.34,
+> floored) of the ceiling, which gave Tiny and Small the same **1**: at ceilings of 3 and 4 no single
+> fraction separates them while also keeping Standard, Large and Huge apart. Two map sizes that
+> pre-select the same count read as the same world on the one control that says how populated a game
+> will feel. `1 + ceiling/2` gives 2/3/4/6/9 over 3/4/6/11/17 — strictly increasing, all distinct,
+> and starting with company rather than with a number the player has to notice and raise.
 
 **An unattended process gets none of that.** `build_headless_app`, a test harness, and a `new_game`
 that carried no `ai_faction_count` all resolve through `unattended_ai_faction_count`, which is

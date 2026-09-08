@@ -1057,7 +1057,7 @@ const SEEDED_FACTION_NAMES := {
 }
 
 ## **HOW A FOURTH PEOPLE GETS A COLOUR.** The rival count the New Game screen offers runs to 11 on a
-## Standard map and 27 on a Huge one (`.claude/rules/client/new-game-setup.md`), so a hand-written
+## Standard map and 17 on a Huge one (`.claude/rules/client/new-game-setup.md`), so a hand-written
 ## list would leave everyone past the third sharing one tint — which is what
 ## `BAND_FACTION_FALLBACK_COLOR` looked like on the map before this existed.
 ##

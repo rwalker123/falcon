@@ -37,27 +37,39 @@ const NEW_GAME_PANE_ID := "new_game"
 
 # ---- faction-capacity fixtures --------------------------------------------------------------------
 # The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`: a hex-packing count
-# over the map's LAND, at the shipped `faction_start_min_separation`), and the offered default is a
-# share of that ceiling. These are the numbers a real server answers for the shipped grids:
+# over the map's LAND, at the shipped `faction_start_min_separation`), and the offer is derived from
+# it. These are the numbers a real server answers for the shipped grids:
 #
-#     Tiny 3 / Small 4 / Standard 6 / Large 11 / Huge 17 rivals at the ceiling,
-#     pre-selecting     1 /       1 /         2 /        3 /      5.
+#     grid          Tiny  Small  Standard  Large  Huge
+#     ceiling          3      4         6     11    17
+#     pre-selects      2      3         4      6     9
 #
 # **They are fixtures for the ROW's states, not a restatement of the rule** — the client never
-# computes this, which is the whole reason the query exists. They are written down anyway because a
-# fixture that has drifted from the server renders a state no player can reach.
+# computes this, which is the whole reason the query exists. They are written down anyway because
+# this harness ANSWERS THE QUERY ITSELF: a drifted fixture stays perfectly green while rendering a
+# state no player can reach, which is worth less than no frame at all. Both numbers have moved once
+# already; re-derive them from `faction_start_capacity` rather than trusting this block.
+## **EVERY ANSWER IS FOR A GRID, so the pairs are per grid.** Answering a Tiny map with Standard's
+## ceiling is the same drift as a stale constant and one step harder to see, because the numbers are
+## individually right.
+const CAPACITY_MAX_SMALLEST := 3
+const CAPACITY_DEFAULT_SMALLEST := 2
 const CAPACITY_MAX_STANDARD := 6
-const CAPACITY_DEFAULT_STANDARD := 2
-# What the player drags the slider to, for the frame that shows a chosen count.
-const CAPACITY_PICKED := 3
+const CAPACITY_DEFAULT_STANDARD := 4
+# What the player drags the slider to, for the frame that shows a CHOSEN count. Well below the
+# Standard offer of 4 and nowhere near the ceiling of 6, so the grabber sits visibly left of where the
+# answer put it — a one-step nudge would read as a rounding artefact rather than as a decision. It is
+# also the one value that exercises the readout's singular form ("1 rival", not "1 rivals").
+const CAPACITY_PICKED := 1
 # A genuine 0 ceiling — a grid with no room for a second start — which the row must render as "you
 # will be alone" rather than as a failure. **No offered map size produces it**: the smallest, Tiny,
 # still seats 3 rivals. So it is answered here rather than reached — a heavier separation or a preset
 # with very little land is what would make it real, and the row has to be right when it does.
 const CAPACITY_MAX_ALONE := 0
-# The roomiest offered grid's ceiling, for the re-ask frames: the pick made against it has to survive
-# the switch to a smaller map, clamped rather than reset.
+# The roomiest offered grid, for the re-ask frames: the pick made against it has to survive the
+# switch to a smaller map, clamped rather than reset.
 const CAPACITY_MAX_ROOMIEST := 17
+const CAPACITY_DEFAULT_ROOMIEST := 9
 # The two map sizes the frames switch between, named from the shared registry rather than typed as
 # ids: switching size is what re-asks the ceiling, and `MapSizes` is the one list of them.
 const SIZE_KEY_SMALLEST := "tiny"
@@ -324,7 +336,7 @@ func _assert_an_answer_survives_leaving_the_pane() -> void:
 	_pick_map_size(SIZE_KEY_SMALLEST)
 	_shell._activate_item(OPTIONS_PANE_ID)
 	await _settle()
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
 	await _settle()
 	if _capacity_seam.state != FactionCapacity.STATE_READY:
 		_fail("rivals: an answer delivered after a pane change left the seam in %s" % _capacity_seam.state)
@@ -337,7 +349,7 @@ func _assert_an_answer_survives_leaving_the_pane() -> void:
 
 ## **THE COUNT ON SCREEN IS THE COUNT ON THE WIRE — including the one nobody touched.**
 ##
-## The row opens on the server's map-scaled offer (2 rivals on a Standard grid), and a player who
+## The row opens on the server's map-scaled offer (4 rivals on a Standard grid), and a player who
 ## never drags the slider still SENDS that number: `_on_capacity_changed` seeds the pick from the
 ## answer and nothing downstream re-derives it. Since an absent count no longer means "the server's
 ## configured default" but its UNATTENDED roster — **zero rivals** — a break in that chain is the
@@ -445,8 +457,9 @@ func _run_rivals_reask_states() -> void:
 			% _shell._resolved_rival_count())
 	await _save("menu_new_game_rivals_reask")
 
-	# …and the answer lands, updating the SAME nodes: new ceiling, pick clamped to it.
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_ROOMIEST)
+	# …and the answer lands, updating the SAME nodes: new ceiling, pick clamped to it. The ROOMIEST
+	# grid's own pair — the click above asked about that map, so this is the answer it would get.
+	_answer_capacity(CAPACITY_DEFAULT_ROOMIEST, CAPACITY_MAX_ROOMIEST)
 	await _settle()
 	var after := _find_slider(_shell._rivals_box)
 	if after == null:
@@ -463,9 +476,10 @@ func _run_rivals_reask_states() -> void:
 ## it do not move as answers land. No PNG of its own: it is a comparison BETWEEN states, which is
 ## exactly what a still cannot carry.
 func _assert_row_height_is_stable() -> void:
-	# Incoming size is the roomiest; each step names a different one so every click really re-asks.
+	# Incoming size is the roomiest; each step names a different one so every click really re-asks,
+	# and each is answered with ITS OWN grid's numbers.
 	_pick_map_size(SIZE_KEY_SMALLEST)
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
 	await _settle()
 	var with_slider := _shell._rivals_box.size.y
 	_pick_map_size(SIZE_KEY_STANDARD)

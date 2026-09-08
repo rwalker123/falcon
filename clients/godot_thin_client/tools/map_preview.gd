@@ -1951,8 +1951,8 @@ func _ready() -> void:
 
 	_finish()
 
-## **STATE "faction palette" — EVERY PEOPLE IN ONE FRAME.** The New Game screen offers up to 11
-## rivals on a Standard map and 27 on a Huge one, and the colours past the seeded three are generated
+## **STATE "faction palette" — EVERY PEOPLE IN ONE FRAME.** The New Game screen offers up to 6
+## rivals on a Standard map and 17 on a Huge one, and the colours past the seeded three are generated
 ## rather than listed (`MapView.faction_color`). A dozen name pills side by side is the only way to
 ## judge the thing that matters about them: not that the values differ, but that a player can TELL
 ## them apart. Ownership is carried by the pill's border, so the pills are what this frame is of.
@@ -1998,7 +1998,7 @@ func _assert_seeded_faction_colors_are_unchanged() -> void:
 
 
 ## **NO PEOPLE THE SLIDER CAN OFFER SHARES A COLOUR, and the neighbours are far apart.** The whole
-## roster is walked, not the dozen the frame shows: the ceiling is 27 rivals on a Huge map, and the
+## roster is walked, not the dozen the frame shows: the ceiling is 17 rivals on a Huge map, and the
 ## failure this replaced was every people past the third rendering in ONE fallback tint.
 func _assert_generated_faction_colors_are_distinct() -> void:
 	var seen: Array[Color] = []

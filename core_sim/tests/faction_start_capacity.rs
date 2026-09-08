@@ -39,12 +39,17 @@ const SHIPPED_MAP_SIZES: [(&str, u32, u32); 5] = [
 /// seats without the picker relaxing — 4-6 starts on Tiny, 5-7 Small, 8-9 Standard, 11-13 Large,
 /// 15-20 Huge — which these sit at or just under, deliberately: over-promising costs spacing,
 /// under-promising costs a seat.
+///
+/// The pre-selections are `1 + ceiling/2` — a floor of one rival on any map that can seat one, plus
+/// half of what the map holds. The share-of-the-ceiling rule this replaced gave Tiny and Small the
+/// same `1`, and a rival control that reads identically on two map sizes says the two sizes are the
+/// same world.
 const SHIPPED_OFFERS: [(&str, u32, u32); 5] = [
-    ("tiny", 3, 1),
-    ("small", 4, 1),
-    ("standard", 6, 2),
-    ("large", 11, 3),
-    ("huge", 17, 5),
+    ("tiny", 3, 2),
+    ("small", 4, 3),
+    ("standard", 6, 4),
+    ("large", 11, 6),
+    ("huge", 17, 9),
 ];
 
 /// The levers the shipped configs actually carry, read once rather than restated as numbers.
@@ -112,38 +117,118 @@ fn the_shipped_map_sizes_offer_and_preselect_exactly_these_counts() {
     }
 }
 
-/// **The pre-selection scales with the map and is always grantable** — the two properties the
-/// control depends on, stated independently of the pinned numbers so a retune still has to keep
-/// them.
-#[test]
-fn the_preselected_default_rises_with_the_map_and_never_exceeds_the_ceiling() {
+/// The pre-selection each shipped size derives, in the order the screen offers them.
+fn preselected_defaults() -> Vec<(&'static str, u32, u32)> {
     let (separation, land_fraction, configured) = shipped_levers();
+    SHIPPED_MAP_SIZES
+        .into_iter()
+        .map(|(key, width, height)| {
+            let capacity = faction_start_capacity(
+                UVec2::new(width, height),
+                separation,
+                land_fraction,
+                configured,
+            );
+            (key, capacity.default_ai_factions, capacity.max_ai_factions)
+        })
+        .collect()
+}
 
-    let mut previous = 0;
-    for (key, width, height) in SHIPPED_MAP_SIZES {
-        let capacity = faction_start_capacity(
-            UVec2::new(width, height),
-            separation,
-            land_fraction,
-            configured,
-        );
-        assert!(
-            capacity.default_ai_factions >= previous,
-            "{key} pre-selects {} rivals, fewer than the size below it ({previous})",
-            capacity.default_ai_factions
-        );
-        assert!(
-            capacity.default_ai_factions <= capacity.max_ai_factions,
-            "{key} pre-selects {} rivals but only offers {}",
-            capacity.default_ai_factions,
-            capacity.max_ai_factions
-        );
-        previous = capacity.default_ai_factions;
+/// ⛔ **THE PRE-SELECTION RISES STRICTLY, NEVER MERELY WEAKLY.** A bigger world must open with more
+/// company in it, and *equal* is the failure this exists to catch: under the share-of-the-ceiling
+/// rule this replaced, Tiny and Small both pre-selected **1**, so the two sizes were
+/// indistinguishable on the one control that says how populated a game will feel. Reverting to a
+/// share fails here on that pair.
+///
+/// Stated as a property rather than as the numbers, so a retune of the separation, the land target
+/// or the capacity model still has to keep it.
+#[test]
+fn every_shipped_map_size_preselects_strictly_more_rivals_than_the_one_below_it() {
+    let mut previous: Option<(&str, u32)> = None;
+    for (key, default, _) in preselected_defaults() {
+        if let Some((previous_key, previous_default)) = previous {
+            assert!(
+                default > previous_default,
+                "{key} pre-selects {default} rivals and {previous_key} pre-selects \
+                 {previous_default} — a bigger map must open with strictly more company, or the \
+                 two sizes read identically on the rival control"
+            );
+        }
+        previous = Some((key, default));
     }
+}
+
+/// **No two shipped sizes may share a pre-selection.** Implied by the strict rise above while that
+/// holds, and asserted separately anyway: it is the property the player actually notices, and it
+/// must survive somebody weakening the ordering test.
+#[test]
+fn no_two_shipped_map_sizes_preselect_the_same_rival_count() {
+    let defaults = preselected_defaults();
+    for (index, (key, default, _)) in defaults.iter().enumerate() {
+        for (other_key, other_default, _) in &defaults[index + 1..] {
+            assert_ne!(
+                default, other_default,
+                "{key} and {other_key} both pre-select {default} rivals — two map sizes offering \
+                 the same starting world are the same map size as far as this control is concerned"
+            );
+        }
+    }
+}
+
+/// **Every pre-selection is grantable, and the smallest map still opens with neighbours** — the two
+/// floors under the ladder. `> 0` is asserted on the *smallest* size deliberately: a game with
+/// nobody else in it is the thing this pre-selection exists to prevent, so it is the map most likely
+/// to regress that has to prove it.
+#[test]
+fn no_shipped_size_preselects_more_rivals_than_it_seats_or_leaves_the_player_alone() {
+    let defaults = preselected_defaults();
+    for (key, default, max) in &defaults {
+        assert!(
+            default <= max,
+            "{key} pre-selects {default} rivals but only offers {max}"
+        );
+    }
+    let (smallest_key, smallest_default, _) = defaults[0];
     assert!(
-        previous > 0,
-        "the largest shipped map must pre-select a world with neighbours — pre-selecting nobody on \
-         every size is the complaint this replaced"
+        smallest_default > 0,
+        "the smallest shipped map ({smallest_key}) pre-selects {smallest_default} rivals — a world \
+         with nobody else in it is what this pre-selection exists to prevent"
+    );
+}
+
+/// ⛔ **A DEGENERATE GRID CANNOT PRE-SELECT A RIVAL IT HAS NOWHERE TO PUT.** The rule carries a
+/// floor term, so the clamp to the ceiling is what stops a map seating 1 or 2 peoples from offering
+/// a start that does not exist. Both degenerate ceilings are exercised — 0 (the grid seats the
+/// player alone) and 1 (it seats exactly one rival, which is also what the floor asks for).
+#[test]
+fn a_map_that_seats_almost_nobody_preselects_only_what_it_seats() {
+    let (separation, _, configured) = shipped_levers();
+    // A grid too small for a second start at the shipped separation, and the shipped Tiny grid with
+    // its land discounted until it seats exactly two peoples — the two ways a ceiling gets small.
+    let alone = UVec2::new(10, 10);
+    assert_eq!(
+        max_faction_starts(alone, separation, 1.0) - 1,
+        0,
+        "fixture: this grid seats the player and nobody else"
+    );
+    let capacity = faction_start_capacity(alone, separation, 1.0, configured);
+    assert_eq!(
+        (capacity.max_ai_factions, capacity.default_ai_factions),
+        (0, 0),
+        "a grid that seats one people pre-selects no rivals at all"
+    );
+
+    let barely = UVec2::new(28, 20);
+    assert_eq!(
+        max_faction_starts(barely, separation, 1.0) - 1,
+        1,
+        "fixture: this grid seats exactly one rival"
+    );
+    let capacity = faction_start_capacity(barely, separation, 1.0, configured);
+    assert_eq!(
+        (capacity.max_ai_factions, capacity.default_ai_factions),
+        (1, 1),
+        "and a grid that seats one rival pre-selects that one, never more"
     );
 }
 

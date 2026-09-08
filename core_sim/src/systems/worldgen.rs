@@ -2762,8 +2762,10 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
 pub struct FactionStartCapacity {
     /// The AI count a New Game screen **pre-selects**: `simulation_config.json`'s
     /// `default_ai_faction_count` when that key pins a number, otherwise
-    /// [`DEFAULT_AI_FACTIONS_SHARE_OF_CEILING`] of [`Self::max_ai_factions`]. Always clamped by the
-    /// ceiling, so a control never opens on an ungrantable value.
+    /// [`DEFAULT_AI_FACTIONS_FLOOR`] plus [`Self::max_ai_factions`] over
+    /// [`DEFAULT_AI_FACTIONS_CEILING_DIVISOR`]. Always clamped by the ceiling, so a control never
+    /// opens on an ungrantable value — including on a degenerate grid whose ceiling is 0 or 1,
+    /// where the floor alone would over-promise.
     ///
     /// ⛔ **This is the OFFER, not the roster an unattended server boots with.** A `cargo run`
     /// server, a test harness and a `new_game` that carried no pick all go through
@@ -2785,16 +2787,28 @@ pub struct FactionStartCapacity {
 /// value: nothing about this number is a design choice.
 const HEX_PACKING_CELL_AREA_FACTOR: f64 = 0.866_025_403_784_438_6;
 
-/// **The share of a map's rival ceiling the New Game screen pre-selects.**
+/// **The rival every map that can seat one opens with.**
 ///
-/// About a third of what the map could hold: enough that a Standard map opens as a world with
-/// neighbours rather than an empty one, far enough below the ceiling that the pre-selection is
-/// never the cramped end of the range a player would have to dial back from. Slightly over `1/3` so
-/// a ceiling of exactly 3 pre-selects 1 rather than depending on how a third rounds.
+/// The floor term of the pre-selection: a world with nobody else in it is the thing this game is
+/// least interesting as, so even the smallest map starts the player with company rather than with a
+/// number a player has to notice and raise. Added to the share below, so the smallest shipped map
+/// (a ceiling of 3) pre-selects **2** rather than 1.
+const DEFAULT_AI_FACTIONS_FLOOR: u32 = 1;
+
+/// **The share of a map's rival ceiling the New Game screen pre-selects on top of that floor**,
+/// written as the divisor of an integer division so the pre-selection is exact arithmetic rather
+/// than a rounding of a fraction: half the ceiling, plus [`DEFAULT_AI_FACTIONS_FLOOR`].
 ///
-/// A constant rather than a config lever deliberately: `default_ai_faction_count` already pins the
-/// pre-selection outright, and two levers moving one number is one too many.
-const DEFAULT_AI_FACTIONS_SHARE_OF_CEILING: f64 = 0.34;
+/// Half rather than the third this replaced because a share alone could not give the five shipped
+/// sizes five *distinct* pre-selections — at ceilings of 3/4/6/11/17 every fraction collapses Tiny
+/// and Small onto the same number — and a rival control that reads identically on two map sizes says
+/// the two sizes are the same world. `1 + ceiling/2` yields 2/3/4/6/9: strictly increasing, all
+/// distinct, each comfortably under its own ceiling so the pre-selection is never the cramped end of
+/// the range a player would have to dial back from.
+///
+/// Both terms are constants rather than config levers deliberately: `default_ai_faction_count`
+/// already pins the pre-selection outright, and two levers moving one number is one too many.
+const DEFAULT_AI_FACTIONS_CEILING_DIVISOR: u32 = 2;
 
 /// **What an unattended server starts with when nobody picked a count: no rivals.**
 ///
@@ -2888,7 +2902,7 @@ pub fn faction_start_capacity(
     let max_ai_factions =
         max_faction_starts(grid_size, min_separation, land_fraction).saturating_sub(1);
     let offered = configured_default.unwrap_or_else(|| {
-        (f64::from(max_ai_factions) * DEFAULT_AI_FACTIONS_SHARE_OF_CEILING).floor() as u32
+        DEFAULT_AI_FACTIONS_FLOOR + max_ai_factions / DEFAULT_AI_FACTIONS_CEILING_DIVISOR
     });
     FactionStartCapacity {
         default_ai_factions: offered.min(max_ai_factions),
@@ -3832,6 +3846,12 @@ mod start_tile_selection_tests {
             "the offered default is clamped too, so a control never opens on an ungrantable value"
         );
         assert_eq!(
+            faction_start_capacity(tiny, 20, 1.0, None).default_ai_factions,
+            0,
+            "and the DERIVED default is clamped by the same ceiling — the floor term would \
+             otherwise pre-select a rival this grid cannot seat"
+        );
+        assert_eq!(
             max_faction_starts(UVec2::new(0, 0), 20, 1.0),
             1,
             "even a degenerate grid seats the player"
@@ -3876,7 +3896,7 @@ mod start_tile_selection_tests {
         let derived = faction_start_capacity(grid, separation, land, None).default_ai_factions;
         assert_eq!(
             derived,
-            (f64::from(ceiling) * DEFAULT_AI_FACTIONS_SHARE_OF_CEILING).floor() as u32
+            DEFAULT_AI_FACTIONS_FLOOR + ceiling / DEFAULT_AI_FACTIONS_CEILING_DIVISOR
         );
         assert!(
             derived > 0,

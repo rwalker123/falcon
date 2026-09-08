@@ -95,8 +95,8 @@ turn a knowledge track completes. Frame: `map_overflow_worked`.
 `MapView.faction_color(faction, fallback)` is the one lookup — a band token, a name pill and an order
 path all go through it, so "which colour is this people" has a single answer for a roster of any
 size. It replaced a six-entry `faction_colors` dictionary, which was correct while a world held one
-people and wrong the moment the New Game screen began offering rivals: the ceiling is 11 on a
-Standard map and 27 on a Huge one (`.claude/rules/client/new-game-setup.md`), and everyone past the
+people and wrong the moment the New Game screen began offering rivals: the ceiling is 6 on a
+Standard map and 17 on a Huge one (`.claude/rules/client/new-game-setup.md`), and everyone past the
 third rendered in `BAND_FACTION_FALLBACK_COLOR` — one tint for every rival on the map.
 
 - **Ids 0, 1 and 2 are frozen literals.** Every game in progress and every committed preview frame is

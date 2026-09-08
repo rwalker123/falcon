@@ -866,8 +866,9 @@ colours past the seeded three are GENERATED, and the thing worth checking about 
 is not that the values differ but that a player can tell them apart — which only a frame with several
 pills in it can answer.
 
-**The assertions cover the range the frame cannot.** The New Game screen can ask for 27 rivals on a
-Huge map, and twenty-eight pills do not fit in a still, so the walk over 0..27 is asserted rather
+**The assertions cover the range the frame cannot.** The New Game screen can ask for 17 rivals on a
+Huge map — and more under a preset with more land, since the ceiling is a packing count over a map's
+LAND rather than a fixed number — and that many pills do not fit in a still, so the walk over 0..27 is asserted rather
 than rendered: ids 0/1/2 still equal their literal blue/orange/green (every game in progress and
 every committed frame is drawn in them), the legacy NAME spelling still resolves to the same people,
 an absent faction still gets the caller's fallback, no two ids share a colour, no id falls through to
