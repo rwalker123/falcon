@@ -61,6 +61,27 @@ four rows cover both size units and all three time buckets plus the absolute-dat
 expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
+**…AND THE NEW GAME PANE'S RIVAL COUNT, over the same fake transport.** `_run_new_game_states`
+injects a real `FactionCapacity` seam on the same sender and walks the row's states:
+`menu_new_game_rivals_pending` (the ask in flight), `menu_new_game_rivals` (answered, opened on the
+server's default), `menu_new_game_rivals_picked` (the player drags the slider), and the two states no
+healthy stack reaches — `menu_new_game_rivals_alone`, a grid with no room for a second people, and
+`menu_new_game_rivals_unavailable`, an ask that failed. The re-ask is driven by a real map-size click
+through `_on_size_input`, because a new size IS the new question
+(`.claude/rules/client/new-game-setup.md`).
+
+Five assertions ride with them, and every one covers something the PNG cannot show: opening the pane
+must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
+without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout), a failed
+ask must still leave `Begin the trail` on screen, and the count that would go on the wire must match
+the state — the pick when there is one, an explicit `0` on a 0 ceiling, and
+`FactionCapacity.NO_COUNT` after a failure, which omits the argument entirely.
+`_assert_capacity_ids_are_disjoint_from_the_save_seam` is the id half, and it checks the CONSEQUENCE
+rather than the mechanism: a capacity answer must finish nothing on the save seam. It cannot stage
+the case the tie-break count exists for — two seams built inside the same microsecond — because the
+clock advances between two `new()` calls in a harness, so removing the tie-break leaves this run
+green. That guard is a design invariant (`.claude/rules/client/new-game-setup.md`), not a tested one.
+
 **Two more checks take no picture, and both cover a silent wrong answer.**
 `_assert_caret_survives_a_mid_string_edit` parks the caret mid-string in the real name field, pushes a
 unicode key event through `Viewport.push_input` — `LineEdit.gui_input` is the only path that both

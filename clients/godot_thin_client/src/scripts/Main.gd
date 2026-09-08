@@ -86,7 +86,18 @@ const DEV_DEFAULT_NEW_GAME := {
     "height": 52,
     "seed": 0,
     "profile_id": "late_forager_tribe",
+    # No rival count: a direct `Main.tscn` launch never saw the New Game screen, so it has no pick to
+    # forward and the argument is omitted — the server then uses its configured
+    # `default_ai_faction_count`, which is NOT the same request as an explicit 0.
+    "ai_faction_count": FactionCapacity.NO_COUNT,
 }
+## How the boot line reports the rival count it asked for. "the server's own rival count" is its own
+## phrase because omitting the argument is a distinct request from asking for none.
+const RIVALS_MESSAGE_DEFAULT := "the server's own rival count"
+const RIVALS_MESSAGE_NONE := "no rivals"
+const RIVALS_MESSAGE_ONE := "1 rival"
+const RIVALS_MESSAGE_FORMAT := "%d rivals"
+
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
 
@@ -509,8 +520,8 @@ func _on_pause_load(slot: String) -> void:
     get_tree().reload_current_scene()
 
 ## **DECIDE WHICH WORLD THIS RUN IS, AND HOW TO ASK FOR IT.** Either a `load_game <slot>` (the
-## `GameLaunch.pending_load_slot` handoff) or a `new_game <preset> <w> <h> <seed> <profile>` built
-## from `pending_new_game`, or the dev default when the scene was launched directly.
+## `GameLaunch.pending_load_slot` handoff) or a `new_game <preset> <w> <h> <seed> <profile>
+## [rivals]` built from `pending_new_game`, or the dev default when the scene was launched directly.
 ##
 ## Clears whichever handoff it consumed so a later scene reload starts fresh, and records what it
 ## RESOLVED to — `GameLaunch.active_new_game` / `active_load_slot`. The handoff slots are empty from
@@ -546,9 +557,19 @@ func _build_world_request() -> void:
     # default). 0 stays "derive from the run clock".
     var seed_value := maxi(0, int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"])))
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
+    # **HOW MANY RIVAL PEOPLES, OR NO ANSWER AT ALL.** The count is the command's one OPTIONAL
+    # argument, and omitting it is not the same as sending 0: absent leaves the server on its
+    # configured `default_ai_faction_count`, while 0 is a player who chose to be alone. So a
+    # `FactionCapacity.NO_COUNT` — the New Game screen never got a ceiling to offer a choice from, or
+    # the scene was launched directly — appends nothing rather than guessing a number.
+    var rivals := int(params.get("ai_faction_count", FactionCapacity.NO_COUNT))
+    if rivals < 0:
+        rivals = FactionCapacity.NO_COUNT
+    var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
+    var rivals_message := _rivals_message(rivals)
     _new_game_command = {
-        "line": "new_game %s %d %d %d %s" % [preset, width, height, seed_value, profile],
-        "message": "New game: %s (%dx%d) seed %d." % [preset, width, height, seed_value],
+        "line": "new_game %s %d %d %d %s%s" % [preset, width, height, seed_value, profile, rivals_suffix],
+        "message": "New game: %s (%dx%d) seed %d, %s." % [preset, width, height, seed_value, rivals_message],
     }
     # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
     # got — including when the fallback is what supplied them.
@@ -559,7 +580,19 @@ func _build_world_request() -> void:
             "height": height,
             "seed": seed_value,
             "profile_id": profile,
+            "ai_faction_count": rivals,
         })
+
+## The boot line's words for a rival count — the four cases the count actually has, since "1 rivals"
+## and "0 rivals" both misreport what was asked for.
+func _rivals_message(count: int) -> String:
+    if count == FactionCapacity.NO_COUNT:
+        return RIVALS_MESSAGE_DEFAULT
+    if count == 0:
+        return RIVALS_MESSAGE_NONE
+    if count == 1:
+        return RIVALS_MESSAGE_ONE
+    return RIVALS_MESSAGE_FORMAT % count
 
 ## Send the pending world request. A `new_game` goes through the SAME transport MapPanel uses for
 ## map_size (inspector.send_runtime_command → command socket); a `load_game` goes through the save
@@ -2968,7 +3001,7 @@ func _send_query(request_id: int, ask: Dictionary) -> bool:
 ## **DRAINED ONCE, DELIVERED TO BOTH SEAMS.** `poll_query_replies` is destructive — it empties the
 ## native queue — so two drains would race, each swallowing answers meant for the other. The two
 ## seams tell their own replies apart by `request_id`, and their id spaces are disjoint by
-## construction (`SaveSlots.REQUEST_ID_BASE`), so handing each the whole batch is correct.
+## construction (`QueryRequestIds`), so handing each the whole batch is correct.
 func _pump_forecast_queries() -> void:
     if command_client == null:
         return

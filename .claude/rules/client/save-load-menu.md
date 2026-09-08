@@ -37,7 +37,7 @@ save failed while it is being written.
 
 `ForecastQuery` and `SaveSlots` are both fed from **one** `CommandBridge.poll_query_replies` call.
 That drain is destructive, so `Main._pump_forecast_queries` drains once and hands the same array to
-both; each ignores ids it does not hold. **`SaveSlots.REQUEST_ID_BASE` (`1 << 40`) is what makes that
+both; each ignores ids it does not hold. **`QueryRequestIds.REQUEST_ID_BASE` (`1 << 40`) is what makes that
 safe** — two counters both starting at 1 would each answer the other's replies, landing a forecast in
 the save pane or a `save_op` on a compose sheet. Ids are `u64` on the wire and `ForecastQuery` counts
 up from 1, so a collision needs four billion forecasts in one session and there is no coordination to
@@ -54,7 +54,10 @@ the id and finished the LOAD as a success — no drift notice, no re-worded load
 latch left set, and a refused load reported to the player as a completed one.
 
 So each instance is handed its own block of `IDS_PER_SESSION` ids at construction, indexed by
-`Time.get_ticks_usec()`. **The clock rather than a `static var`** because a static's lifetime is the
+`Time.get_ticks_usec()` — from `QueryRequestIds`, which owns the floor and the block for EVERY
+seam on this worker rather than each seam keeping a counter of its own, because two counters
+started in the same microsecond hand out the same block
+(`.claude/rules/client/new-game-setup.md` has the second seam this now protects). **The clock rather than a `static var`** because a static's lifetime is the
 SCRIPT's, not the process's, and a scene change is precisely when a script may be unloaded; the
 counter beside it exists only to separate two seams built inside the same microsecond, and since both
 terms are non-decreasing while the counter rises by one per call, successive offsets are strictly
@@ -186,7 +189,7 @@ is taken a frame later.
 
 | Script | Purpose |
 |--------|---------|
-| `SaveSlots.gd` (`class_name SaveSlots`) | The save-channel seam, modelled on `ForecastQuery`: `set_sender`/`deliver`, `refresh`/`request_save`/`request_load`/`request_delete`, the `slots_changed` + `op_finished` signals, the four list states, the error-token → prose table, the slot-name whitelist, and the `format_size` / `format_when` renderers. **Owns no socket**; its ids live at `REQUEST_ID_BASE` so it can share `ForecastQuery`'s drain |
+| `SaveSlots.gd` (`class_name SaveSlots`) | The save-channel seam, modelled on `ForecastQuery`: `set_sender`/`deliver`, `refresh`/`request_save`/`request_load`/`request_delete`, the `slots_changed` + `op_finished` signals, the four list states, the error-token → prose table, the slot-name whitelist, and the `format_size` / `format_when` renderers. **Owns no socket**; its ids come from `QueryRequestIds` so it can share `ForecastQuery`'s drain |
 | `ui/ConfigDriftNotice.gd` (`class_name ConfigDriftNotice`) | The post-load warning: an `AutoSizingPanel` card over a scrim naming each config file whose tuning moved, one sentence per (saved → live) pair. Raised by `Main` on the reveal that follows a load, never by the menu |
 
 ## Verify

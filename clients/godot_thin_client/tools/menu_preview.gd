@@ -28,6 +28,28 @@ const OPTIONS_PANE_ID := "options"
 # Nav ids of the two saves panes, driven through the same `_activate_item` the nav rail calls.
 const LOAD_PANE_ID := "load"
 const SAVE_PANE_ID := "save"
+# …and of the setup pane, whose rival-peoples control is fed from the capacity seam below.
+const NEW_GAME_PANE_ID := "new_game"
+
+# ---- faction-capacity fixtures --------------------------------------------------------------------
+# The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`), so these are the
+# numbers a real server answers for a Standard 80x52 map at the shipped
+# `faction_start_min_separation` of 20 — four start columns by three rows, one of them the player's.
+# They are fixtures for the ROW's states, not a restatement of the rule: the client never computes
+# this, which is the whole reason the query exists.
+const CAPACITY_MAX_STANDARD := 11
+const CAPACITY_DEFAULT_STANDARD := 0
+# What the player drags the slider to, for the frame that shows a chosen count.
+const CAPACITY_PICKED := 3
+# A genuine 0 ceiling — a grid with no room for a second start — which the row must render as "you
+# will be alone" rather than as a failure. **No offered map size produces it at the shipped
+# `faction_start_min_separation` of 20**, so it is answered here rather than reached: a heavier
+# separation is what would make it real, and the row has to be right when it does.
+const CAPACITY_MAX_ALONE := 0
+# The two map sizes the frames switch between, named from the shared registry rather than typed as
+# ids: switching size is what re-asks the ceiling, and `MapSizes` is the one list of them.
+const SIZE_KEY_SMALLEST := "tiny"
+const SIZE_KEY_ROOMIEST := "huge"
 
 # ---- save-channel fixtures ------------------------------------------------------------------------
 # The `SaveSlots` seam is fed through its REAL `deliver` path with dicts shaped exactly as
@@ -92,6 +114,8 @@ var _failures := 0
 ## the fake sender captured, and it is what the canned replies correlate against — so the seam's real
 ## in-flight bookkeeping is exercised rather than bypassed.
 var _save_seam: SaveSlots
+## The New Game pane's capacity seam, driven the same way and off the same fake sender.
+var _capacity_seam: FactionCapacity
 var _last_request_id := 0
 var _drift_notice: ConfigDriftNotice
 
@@ -195,8 +219,185 @@ func _ready() -> void:
 	await _save("menu_options_theme_pending_landing")
 
 	await _run_saves_states()
+	await _run_new_game_states()
 
 	_finish()
+
+
+## **THE NEW GAME PANE'S RIVAL COUNT, over the same fake transport.** The seam is real and so is
+## every state below; the only thing standing in for a server is `_send`, which records the request id
+## and answers nothing until this harness says so. That is what makes the two states no healthy stack
+## can reach — a capacity ask that never answers, and a grid with no room for a second people —
+## renderable at all.
+func _run_new_game_states() -> void:
+	_bg.color = HudStyle.GROUND
+	_shell.mode = MenuShell.LANDING
+	_capacity_seam = FactionCapacity.new()
+	_capacity_seam.set_sender(_send)
+	_shell.set_faction_capacity(_capacity_seam)
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	await _settle()
+
+	# --- the ask in flight: no slider, and a caption saying so -----------------------------------
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: opening the setup pane put no capacity ask in flight (%s)" % _capacity_seam.state)
+	_assert_no_rival_slider("pending")
+	await _save("menu_new_game_rivals_pending")
+
+	# --- answered: the slider, opened on the server's default ------------------------------------
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	if _shell._rival_count != CAPACITY_DEFAULT_STANDARD:
+		_fail("rivals: an answered ask left the control on %d, not the server's default %d"
+			% [_shell._rival_count, CAPACITY_DEFAULT_STANDARD])
+	await _save("menu_new_game_rivals")
+
+	# --- the player picks some. The count is what "Begin the trail" would carry. ------------------
+	_drag_rival_slider(CAPACITY_PICKED)
+	await _settle()
+	if _shell._resolved_rival_count() != CAPACITY_PICKED:
+		_fail("rivals: a picked %d resolved to %d on the wire"
+			% [CAPACITY_PICKED, _shell._resolved_rival_count()])
+	await _save("menu_new_game_rivals_picked")
+
+	# --- A GRID WITH NO ROOM. Not a failure, and not rendered as one: no slider, and a caption that
+	# says the player will be alone. The pick made above is clamped away by the new ceiling, and the
+	# re-ask is driven by a real size click.
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: changing the map size did not re-ask the ceiling (%s)" % _capacity_seam.state)
+	_answer_capacity(0, CAPACITY_MAX_ALONE)
+	await _settle()
+	_assert_no_rival_slider("ceiling 0")
+	if _shell._resolved_rival_count() != 0:
+		_fail("rivals: a 0 ceiling left %d on the wire instead of an explicit none"
+			% _shell._resolved_rival_count())
+	await _save("menu_new_game_rivals_alone")
+
+	# --- THE ASK FAILED, and the screen still starts a game. The argument is omitted entirely
+	# (`NO_COUNT`), so the server falls back to its own configured default rather than to a number
+	# this screen guessed.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	await _settle()
+	_assert_no_rival_slider("failed")
+	if _shell._resolved_rival_count() != FactionCapacity.NO_COUNT:
+		_fail("rivals: a failed ask put %d on the wire instead of omitting the argument"
+			% _shell._resolved_rival_count())
+	_assert_begin_is_offered()
+	await _save("menu_new_game_rivals_unavailable")
+
+	await _assert_an_answer_survives_leaving_the_pane()
+	_assert_capacity_ids_are_disjoint_from_the_save_seam()
+
+
+## **AN ANSWER CAN LAND ON A PANE THAT IS GONE**, and it must not take the shell with it. No PNG: the
+## failure is an error on a freed node, which either aborts the run or prints and leaves a frame that
+## looks entirely normal. The pane is left with an ask in flight, swapped away, given a frame for the
+## `queue_free`s to land, and only then answered.
+func _assert_an_answer_survives_leaving_the_pane() -> void:
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	_shell._activate_item(OPTIONS_PANE_ID)
+	await _settle()
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	if _capacity_seam.state != FactionCapacity.STATE_READY:
+		_fail("rivals: an answer delivered after a pane change left the seam in %s" % _capacity_seam.state)
+	# …and the pane still builds afterwards, so the shell is not merely quiet but intact.
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	await _settle()
+	if _find_slider(_shell._rivals_box) == null:
+		_fail("rivals: reopening the pane after an off-pane answer offered no slider")
+
+
+## No slider means no range was invented. Checked rather than eyeballed: a control that quietly
+## appeared with a 0..0 range would look like a deliberate layout in the frame.
+func _assert_no_rival_slider(state_name: String) -> void:
+	if _find_slider(_shell._rivals_box) != null:
+		_fail("rivals (%s): a slider is offered with no ceiling to offer it against" % state_name)
+
+
+## **A CAPACITY ANSWER NEVER BLOCKS THE RUN.** The one thing every failure state above owes the
+## player is a game they can still start.
+func _assert_begin_is_offered() -> void:
+	if not _find_button_containing(_shell, "Begin the trail"):
+		_fail("rivals: an unanswered capacity ask left no way to begin the run")
+
+
+## The capacity seam's ids must not be read by the save seam, which shares its drain. Both are built
+## in one `_ready` on the landing screen, so the microsecond clock alone cannot separate them — the
+## shared allocator's tie-break count is what does, and this is what fails if it goes away.
+func _assert_capacity_ids_are_disjoint_from_the_save_seam() -> void:
+	var saves := SaveSlots.new()
+	saves.set_sender(_send)
+	saves.refresh()
+	var save_id := _last_request_id
+	var capacity := FactionCapacity.new()
+	capacity.set_sender(_send)
+	var grid: Dictionary = MapSizes.option_for(MapSizes.DEFAULT_KEY)
+	capacity.request(int(grid["width"]), int(grid["height"]))
+	if _last_request_id == save_id:
+		_fail("rivals: the capacity seam spent id %d, which the save seam still has in flight" % save_id)
+	# …and the capacity ANSWER must reach nothing on the save seam, which is the consequence.
+	saves.deliver([{
+		"request_id": _last_request_id,
+		"ok": true,
+		"kind": FactionCapacity.KIND_CAPACITY,
+		"default_ai_faction_count": CAPACITY_DEFAULT_STANDARD,
+		"max_ai_faction_count": CAPACITY_MAX_STANDARD,
+	}])
+	if saves.list_state != SaveSlots.LIST_PENDING:
+		_fail("rivals: a capacity answer moved the save seam's list to %s" % saves.list_state)
+
+
+## Answer the ask the seam has in flight, in the bridge's own reply shape.
+func _answer_capacity(default_count: int, max_count: int) -> void:
+	_capacity_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": true,
+		"kind": FactionCapacity.KIND_CAPACITY,
+		"default_ai_faction_count": default_count,
+		"max_ai_faction_count": max_count,
+	}])
+
+
+func _fail_capacity(token: String) -> void:
+	_capacity_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": false,
+		"error": token,
+	}])
+
+
+## Click a map size, through the shipped `_on_size_input`. **That is what re-asks**: the ceiling is
+## about the grid being made, so a new size is a new question — and it is also how a pick made on a
+## roomier map meets a smaller one's ceiling.
+func _pick_map_size(key: String) -> void:
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	_shell._on_size_input(click, key)
+
+
+## Move the slider through its own `value_changed`, so the pick goes down the shipped path.
+func _drag_rival_slider(count: int) -> void:
+	var slider := _find_slider(_shell._rivals_box)
+	if slider == null:
+		_fail("rivals: no slider to drag")
+		return
+	slider.value = count
+
+
+func _find_slider(node: Node) -> HSlider:
+	if node == null or not is_instance_valid(node):
+		return null
+	if node is HSlider:
+		return node as HSlider
+	for child in node.get_children():
+		var found := _find_slider(child)
+		if found != null:
+			return found
+	return null
 
 
 ## **THE LOAD / SAVE PANES, over a fake transport.** The seam is real, its decode and routing are
