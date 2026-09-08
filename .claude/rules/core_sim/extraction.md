@@ -47,6 +47,10 @@ deposit nobody has worked stands at exactly its tile's capacity, which is a deri
 one per land tile per material would be storing it twice over for the whole map. An untouched map
 therefore checkpoints an empty registry.
 
+**The WIRE does not follow the registry** — `deposit_states` publishes a derived row for every
+discovered tile that holds a deposit and merges the registry in where a working stands, which is what
+makes an unopened deposit reachable from the client at all. See "The wire" below.
+
 > **It reads `tile.terrain`, never `resource_terrain()`.** A deposit is a thing on the ground of the
 > hex, so a navigable river does not inherit the timber of the valley it cut — which is exactly where
 > `tile_forage_capacity`'s underlay reading *does* belong, because a fishery is a property of the
@@ -409,44 +413,105 @@ and its floor is the **rung's**, not the row's, so there is nothing to trade.
 | `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
 | `src/data/equipment.json` | `default_kits.extract` and `default_kits.quarrywork` both `"none"`, the `none` kit's `jobs` gains both, and `stone_dressing`'s flint tier gains its second `build_work` effect on `extraction:quarry` |
 
-## The wire — one row per WORKING, and the rate picks the readout
+## The wire — one row per DEPOSIT-BEARING TILE, and the rate picks the readout
 
-`DepositState` is the working's source row: keyed `(tile, material)` because one tile can hold two,
-built by `snapshot::deposits::deposit_states` and diffed as a whole vector on `foragePatches`' rule
-(no `removedDeposits` twin — a working that leaves the frame leaves by being absent). The `extract`
+`DepositState` is the deposit's row: keyed `(tile, material)` because one tile can hold two, built by
+`snapshot::deposits::deposit_states` and diffed as a whole vector on `foragePatches`' rule (no
+`removedDeposits` twin — a row that leaves the frame leaves by being absent). The `extract`
 labor row carries `material` beside its tile, and `PopulationCohortState` carries the
 `quarryworkDemand` / `Supplied` / `Shortfall` triple, the roadwork triple one pool over.
 
-**The fog gate is the ROAD's `Discovered`, not the herd's `Active`, and the whole row passes or none
-of it does.** A working does not wander off, so remembering one is remembering something true; and
-because the registry is a *sparse, tile-keyed set of improvements a band opened*, it takes the road
-row's discipline rather than the two food webs' — they publish every patch and leave the redaction
-to the client, which is only safe because a patch exists on every food-bearing tile whether or not
-anybody has touched it. Row-level filtering is what keeps `ladderPosition`, `buildFraction` and
-`rung` off ground the faction has never seen, with no per-field rule to get wrong.
+**A ROW DESCRIBES THE GROUND, AND THE WORKING IS ITS STATE — the FORAGE PATCH's shape.** A row is
+published for **every discovered tile that holds a deposit** — every `(tile, material)` pair whose
+`tile_deposit_capacity` is above `NO_DEPOSIT` — and the registry's live `DepositSource` is merged in
+where one exists. A patch row stands on every food-bearing tile whether or not anybody has touched
+it, for exactly the reason this row now does: what it is *about* is the land.
 
-**Absence of a row is *nobody has worked this ground*, never *there is no deposit here*.** The
-registry is lazy, so an untouched map publishes nothing at all; what a tile *holds* is a pure
-function of its terrain and is not on this table.
+⛔ **THE REGISTRY IS NOT SEEDED TO ACHIEVE IT.** An unopened deposit's row is derived at capture from
+`DepositSource::opening` — full stock at the tile's capacity, the branch's free floor, no upkeep, no
+neglect, no take — and is saved nowhere, so retuning `extraction.json` still reaches it and a
+checkpoint does not grow a row per land tile per material. `DepositRegistry` stays exactly what it
+was: the lazily opened set of workings a band has put a crew on.
+
+> **PUBLISHING ONLY THE REGISTRY MADE THE WHOLE FEATURE UNREACHABLE** (issue #650). The client builds
+> its tile-card `Workings ▸` affordance off these rows, and `DepositRegistry::open` is reached from
+> one place — the labour pass, when a crew is assigned. So a fresh world published **zero** rows, the
+> action appeared only on a tile that already carried a working, and nothing in the client could
+> create the first one. **Absence of a row now means *there is no deposit on this ground*** (or the
+> faction has not explored it), never *nobody has worked it*.
+> `wire::ground_nobody_has_worked_still_publishes_what_it_holds` is the regression test, and
+> `wire::a_live_working_wins_over_the_derived_opening_state_on_one_tile` pins the merge's direction
+> on a hex carrying a seated quarry beside untouched timber.
+
+**On an unopened row the two §7 readouts fall out of the existing seams with no special case.** A
+renewing deposit standing at capacity quotes its **MSY** — an untouched wood is the one that can
+best afford a crew, not the one with nothing to give; a finite one nobody is cutting answers
+`DEPOSIT_RUNWAY_NO_TAKE` off a `last_take` of
+nothing, and a renewing one still answers `DEPOSIT_RUNWAY_NOT_APPLICABLE`. `isQueued`, `buildKitId`
+and `upkeepKitId` are keyed `(tile, material)` and answer their empty/false defaults for a key they
+do not hold.
+
+**The fog gate is the ROAD's `Discovered`, not the herd's `Active`, and the whole row passes or none
+of it does.** A quarry does not wander off, so remembering one is remembering something true; and a
+row carries a `ladderPosition` a band earned, so it takes the road's **row-level filtering** rather
+than the two food webs' publish-and-let-the-client-redact. That is what keeps `ladderPosition`,
+`buildFraction` and `rung` off ground the faction has never seen, with no per-field rule to get
+wrong.
+
+**Order is `(y, x, material)`** — `snapshot_forage_patches`' own sort, because the rows are built off
+the capture's tile sweep (`extraction::tile_holds_a_deposit` picks the ground out of the one full
+walk) rather than off the registry's key order.
+
+**Measured on the shipped 80×52 map at full reveal: 3,245 rows and ~435 KB, against `foragePatches`'
+2,113 rows and ~1.82 MB on the same frame** — 1.5× the rows at under a quarter of the bytes, because
+a deposit row is far narrower than a patch's. Both sections are diffed as whole vectors, so the cost
+is per frame.
 
 **Every derived number is read LIVE off the tile at capture** — capacity, the ground's rate,
 `deposit_reachable`, the payoff — because that is `DepositSource`'s own doc comment: it carries the
-stock and the position and nothing that could be derived. A working whose tile the capture cannot
-resolve is **dropped rather than published at zero**, since every number on the row is a function of
-that ground.
+stock and the position and nothing that could be derived. A tile the capture's sweep never saw
+publishes **nothing rather than a row at zero**, since every number on the row is a function of that
+ground.
 
 ### `regrowthRate` is the fork, and `branch` is not
 
 `deposit_runway` answers `sim_schema::DEPOSIT_RUNWAY_NOT_APPLICABLE` (`-1`) the moment
 `tile_deposit_regrowth > 0`, so a renewing working publishes the **over-cut pair** —
-`deposit_sustainable_take`, which is the growth term itself, against `DepositSource::last_take` — and
+`deposit_sustainable_take` against `DepositSource::last_take` — and
 a finite one publishes the **runway**, `floor(reachable / last_take)`. Surface flint and a quarry are
 both `extraction` and land on opposite sides of it, which is §3's callout restated where it is
 observable; `a_renewing_working_quotes_the_pair_and_a_finite_one_quotes_the_runway` asserts the two
 against each other in one run.
 
+#### ⛔ THE SUSTAINABLE HALF IS THE **MSY**, NOT THE GROWTH AT TODAY'S STOCK
+
+`deposit_sustainable_take` reads the growth term at `min(stock, MSY_BIOMASS_FRACTION × capacity)` —
+`fauna::sustainable_yield`'s own expression (`net_biomass_delta(min(B, K/2), …)`) with the deposit's
+curve substituted for the food web's. That is what §7's *"the existing sustainable-versus-actual
+income breakdown pointed at a new source"* actually resolves to: a **full forage patch quotes its
+MSY** (`systems::labor`'s forage arm: *"one turn's MSY of the patch at its pre-take biomass"*), so a
+deposit quoting anything else would be two answers to one question.
+
+**It shipped as the instantaneous growth term, and that fired the ⚠ on the single most ordinary
+action in the feature** (issue #650). A mature wood stands at `K`, where `(1 − S/K)` is zero, so
+`actualTake > sustainableTake` was true of the *first* cut. Measured on mixed woodland (`K` 600,
+`r` 0.03) with one cutter at `forestry:deadfall`'s 0.3 a turn: sustainable read `0.0090` on turn 1
+and `0.0646` by turn 8, against an actual of `0.3000` throughout — against a true MSY of
+`r·K/4 = 4.5`, fifteen times what the crew was taking. **And it never cleared**: the stock converges
+on the point where growth equals the take *from above* (≈589.8 wood here), an asymptote, so the
+strict inequality holds for every finite turn. A warning that fires on correct play for ever teaches
+players to ignore it. `wire::a_full_wood_sustains_an_ordinary_crew_rather_than_warning_on_the_first_cut`
+pins the quiet case over eight turns and
+`wire::a_crew_that_out_cuts_the_msy_reads_as_over_cutting` pins that the ⚠ still has teeth — three
+fellers taking 6.0 against the same wood's 4.5.
+
+**The rung is in it, because the published `regrowthRate` is.** The MSY is taken on the ground's rate
+*already scaled by* `regrowth_multiplier`, so a coppice sustains twice what a felling working does —
+which is exactly what the forestry branch is for.
+
 **`sustainableTake` reads `0` on a quarry by arithmetic, not by a branch**: `deposit_regrowth` at a
-rate of `NEVER_RENEWS` returns the stock unchanged, so the difference is exactly zero. **The runway
+rate of `NEVER_RENEWS` returns its argument unchanged *wherever the curve is read*, so the difference
+is exactly zero and the MSY reading changes nothing about stone. **The runway
 is a FORWARD projection** (the arrivals rule): its denominator is `last_take`, an accumulator the
 band rows add into and `advance_deposits` clears once per turn, so the count moves the turn the crew
 does. A finite working nobody is cutting answers `DEPOSIT_RUNWAY_NO_TAKE` (`-2`) — it *will* run out,

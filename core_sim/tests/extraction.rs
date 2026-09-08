@@ -1349,16 +1349,22 @@ mod wire {
     use core_sim::{
         build_test_app, BandId, ExtractionConfig, LaborAllocation, LaborTarget, LadderConfig,
         PopulationCohort, ResidentBand, RungKey, SnapshotHistory, Tile, TileRegistry,
-        ViewerFaction,
+        ViewerFaction, VisibilityLedger, MSY_BIOMASS_FRACTION,
     };
-    use sim_schema::{TerrainType, DEPOSIT_RUNWAY_NOT_APPLICABLE};
+    use sim_schema::{TerrainType, DEPOSIT_RUNWAY_NOT_APPLICABLE, DEPOSIT_RUNWAY_NO_TAKE};
 
     /// **The renewing half of the §7 fork.** Mixed woodland carries 600 wood at a rate of 0.03 —
     /// and 35 stone at 0.02 beside it, which is what makes *"one tile can hold two"* a fact this
     /// fixture could exercise without a second terrain.
     const RENEWING_GROUND: TerrainType = TerrainType::MixedWoodland;
-    /// **The finite half.** The largest rock body on the shipped table, at a rate of exactly zero.
+    /// **The finite half.** The largest rock body on the shipped table, at a rate of exactly zero —
+    /// and it carries timber too, which is what lets one hex hold a worked source beside an
+    /// untouched one.
     const FINITE_GROUND: TerrainType = TerrainType::AlpineMountain;
+    /// **Ground that holds neither material** — a glacier is absent from both `by_terrain` tables,
+    /// which is `extraction.json`'s `_comment_absence`: there is no `enabled` flag and no parked
+    /// `0.0` row, so absence is the whole of *"there is nothing here"*.
+    const BARE_GROUND: TerrainType = TerrainType::Glacier;
 
     const WOOD: &str = "wood";
     const STONE: &str = "stone";
@@ -1589,12 +1595,15 @@ mod wire {
         app.world.resource_mut::<DepositRegistry>().insert(working);
     }
 
-    /// Put a take crew on each working and `keepers` hands on the band's `quarrywork` pool.
+    /// Put a take crew of `cutters` on each working and `keepers` hands on the band's `quarrywork`
+    /// pool. The crew size is a parameter because the over-cut pair is a statement *about* it: the
+    /// same wood reads within its means at one cutter and over-cut at enough of them.
     fn staff(
         app: &mut App,
         band: Entity,
         workings: &[(UVec2, &str)],
         available: u32,
+        cutters: u32,
         keepers: u32,
     ) {
         let mut allocation = LaborAllocation::default();
@@ -1604,7 +1613,7 @@ mod wire {
                     tile: *tile,
                     material: (*material).to_string(),
                 },
-                A_TAKE_CREW,
+                cutters,
                 available,
                 None,
             );
@@ -1631,11 +1640,107 @@ mod wire {
             band,
             &[(home, WOOD), (rock, STONE)],
             working,
+            A_TAKE_CREW,
             TOO_FEW_KEEPERS,
         );
         app.update();
         (app, home, rock)
     }
+
+    /// **THE TEXTBOOK MSY OF A LOGISTIC STOCK** — the growth term `r·S·(1 − S/K)` read at its peak
+    /// `S = MSY_BIOMASS_FRACTION · K`, which is what `deposit_sustainable_take` must answer.
+    ///
+    /// Written out from the curve rather than borrowed from `deposit_regrowth`, so the assertions
+    /// below are an independent statement about the shape and not a restatement of the code under
+    /// test. `rate` is the row's **published** `regrowthRate` — the ground's own rate already scaled
+    /// by what the rung bought — so a coppiced wood sustains twice what a felled one does for free.
+    fn msy_of(rate: f32, capacity: f32) -> f32 {
+        let peak = MSY_BIOMASS_FRACTION * capacity;
+        rate * peak * (1.0 - MSY_BIOMASS_FRACTION)
+    }
+
+    /// **The margin every sustainable-take comparison is made to** — these are single-precision
+    /// products of three config numbers, so an exact `==` would be a statement about float layout
+    /// rather than about the curve.
+    const A_CLOSE_ENOUGH_TAKE: f32 = 1e-4;
+
+    /// ⛔ **THE ⚠ MUST NOT FIRE ON THE MOST ORDINARY ACTION IN THE FEATURE** (issue #650).
+    ///
+    /// The sustainable half used to be the growth term read at the deposit's *current* stock. A
+    /// mature wood stands at `K`, where `(1 − S/K)` is zero, so the very first cut read as
+    /// over-drawing — and it never cleared: the stock converges on the point where growth equals the
+    /// take *from above*, an asymptote, so `actual > sustainable` stayed true for ever on a harvest
+    /// fifteen times inside the wood's means. A warning that fires on correct play teaches players
+    /// to ignore it.
+    ///
+    /// It is now the **MSY** reading, `fauna::sustainable_yield`'s own expression with the deposit's
+    /// curve substituted for the food web's — the same answer a full forage patch gives, which is
+    /// what `docs/plan_extraction.md` §7 means by *"the existing breakdown pointed at a new source"*.
+    #[test]
+    fn a_full_wood_sustains_an_ordinary_crew_rather_than_warning_on_the_first_cut() {
+        let (mut app, wood_tile, _rock) = a_wood_and_a_quarry();
+        for turn in 0..A_FEW_TURNS_OF_CUTTING {
+            let wood = published_working(&app, wood_tile, WOOD);
+            assert!(
+                (wood.sustainable_take - msy_of(wood.regrowth_rate, wood.capacity)).abs()
+                    < A_CLOSE_ENOUGH_TAKE,
+                "the sustainable half is the MSY of the deposit's curve, not the growth at today's \
+                 stock (turn {turn}): {wood:?}"
+            );
+            assert!(
+                wood.actual_take <= wood.sustainable_take,
+                "one cutter on a whole wood is inside its means, so the over-cut pair must stay \
+                 quiet (turn {turn}): {wood:?}"
+            );
+            app.update();
+        }
+    }
+
+    /// Long enough for the old defect's *"it clears in a turn or two"* defence to be false, and short
+    /// enough to stay a unit test. The stock only converges on its equilibrium asymptotically, so no
+    /// finite count proves it clears — what this count buys is that it demonstrably does not.
+    const A_FEW_TURNS_OF_CUTTING: u32 = 8;
+
+    /// ⛔ **AND THE ⚠ MUST STILL HAVE TEETH.** The MSY reading is not a way of never warning: a crew
+    /// whose take out-runs `r·K/4` is ruining the wood however full it looks today, and that is
+    /// precisely the state §7's pair exists to name. Asserted on the **same ground and rung** as the
+    /// quiet case above, so the only thing that differs is the number of hands.
+    #[test]
+    fn a_crew_that_out_cuts_the_msy_reads_as_over_cutting() {
+        let mut app = build_test_app();
+        app.update();
+        let (band, home, working) = first_band(&mut app);
+        reground(&mut app, home, RENEWING_GROUND);
+        // **Felling, not deadfall** — the free floor's 0.3 a worker would need more hands than the
+        // band has to out-cut mixed woodland's 4.5. Over-cutting first becomes *possible* at
+        // `felling`, which is exactly why that rung is what teaches conservationism.
+        seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+        staff(
+            &mut app,
+            band,
+            &[(home, WOOD)],
+            working,
+            A_CREW_THAT_OUT_CUTS_A_WOOD,
+            TOO_FEW_KEEPERS,
+        );
+        app.update();
+
+        let wood = published_working(&app, home, WOOD);
+        assert!(
+            (wood.sustainable_take - msy_of(wood.regrowth_rate, wood.capacity)).abs()
+                < A_CLOSE_ENOUGH_TAKE,
+            "fixture: the same MSY reading as the quiet case: {wood:?}"
+        );
+        assert!(
+            wood.actual_take > wood.sustainable_take,
+            "a take above the wood's MSY is over-cutting and must read as it: {wood:?}"
+        );
+    }
+
+    /// Three fellers at `forestry:felling`'s 2.0 a turn take 6.0 against mixed woodland's MSY of
+    /// 4.5 — over the line by a margin no rounding closes, and small enough for a starting band's
+    /// working-age pool to actually field.
+    const A_CREW_THAT_OUT_CUTS_A_WOOD: u32 = 3;
 
     /// ⛔ **THE §7 FORK, AND IT IS DECIDED BY THE RATE RATHER THAN BY THE BRANCH.**
     ///
@@ -1813,6 +1918,183 @@ mod wire {
         assert_eq!(
             named, expected,
             "each extract row publishes both halves of the working's key"
+        );
+    }
+
+    /// ⛔ **THE ROW IS ABOUT THE GROUND, AND THIS IS THE REGRESSION TEST FOR THE DEFECT** (issue
+    /// #650). `deposit_states` published the registry, the registry is filled lazily by
+    /// `DepositRegistry::open`, and the client builds its `Workings ▸` affordance off these rows —
+    /// so a fresh world offered **no way to open the first working anywhere on the map**, and the
+    /// feature was unreachable in a real game.
+    ///
+    /// It also pins *"one tile can hold two"* on ground nobody has touched, and both §7 readouts on
+    /// an unopened row: a renewing deposit standing at capacity has **no growth left to quote** and
+    /// a finite one nobody is cutting has **no rate to project**.
+    #[test]
+    fn ground_nobody_has_worked_still_publishes_what_it_holds() {
+        let mut app = build_test_app();
+        app.update();
+        let (_band, home, _working) = first_band(&mut app);
+        let width = app.world.resource::<TileRegistry>().width;
+        let rock = UVec2::new((home.x + 1) % width, home.y);
+        reground(&mut app, home, RENEWING_GROUND);
+        reground(&mut app, rock, FINITE_GROUND);
+        app.update();
+
+        assert!(
+            app.world.resource::<DepositRegistry>().is_empty(),
+            "fixture: no band was ever put on a deposit, so the registry must still be empty — \
+             this test is about the ground nobody has worked, not about a working"
+        );
+
+        // **Both materials on the one hex**, and neither of them opened.
+        let mut on_the_wood: Vec<String> = published_workings(&app)
+            .into_iter()
+            .filter(|row| row.tile == home)
+            .map(|row| row.material)
+            .collect();
+        on_the_wood.sort();
+        assert_eq!(
+            on_the_wood,
+            vec![STONE.to_string(), WOOD.to_string()],
+            "mixed woodland holds timber AND loose stone, so it publishes a row for each"
+        );
+
+        let wood = published_working(&app, home, WOOD);
+        assert_eq!(
+            wood.stock, wood.capacity,
+            "a deposit nobody has worked stands at exactly its tile's capacity: {wood:?}"
+        );
+        assert!(
+            wood.capacity > 0.0,
+            "fixture: mixed woodland must hold timber: {wood:?}"
+        );
+        assert_eq!(
+            wood.rung, "forestry:deadfall",
+            "an unopened deposit stands on its branch's free floor: {wood:?}"
+        );
+        assert_eq!(
+            wood.actual_take, 0.0,
+            "nobody cut it, so nothing came out of it: {wood:?}"
+        );
+        assert_eq!(
+            wood.demand, 0.0,
+            "the free floor owes no keeping, which is what makes it free: {wood:?}"
+        );
+        assert!(
+            !wood.has_neglect_grace,
+            "nothing is at risk on a deposit nobody has raised: {wood:?}"
+        );
+        assert!(
+            !wood.is_queued,
+            "no band queued a build on ground nobody is standing on: {wood:?}"
+        );
+        assert_eq!(
+            wood.build_turns_remaining,
+            sim_schema::NO_BUILD_TURNS_ESTIMATE,
+            "a rung nobody ordered has no quote: {wood:?}"
+        );
+        // **The kit passes are keyed `(tile, material)` and simply find nothing here** — the empty
+        // answer rather than a fabricated tool, and never a panic on a missing key.
+        assert_eq!(
+            wood.upkeep_kit_id, "",
+            "nobody is keeping this ground, so no keeping kit resolves: {wood:?}"
+        );
+
+        // **THE TWO §7 READOUTS ON AN UNOPENED ROW**, published as the seams compute them with no
+        // special case for *"nobody has opened this"*.
+        assert!(
+            wood.regrowth_rate > 0.0,
+            "fixture: mixed woodland renews, so this row takes the over-cut fork: {wood:?}"
+        );
+        assert_eq!(
+            wood.turns_remaining, DEPOSIT_RUNWAY_NOT_APPLICABLE,
+            "a deposit that renews does not run out, worked or not: {wood:?}"
+        );
+        assert!(
+            (wood.sustainable_take - msy_of(wood.regrowth_rate, wood.capacity)).abs()
+                < A_CLOSE_ENOUGH_TAKE,
+            "an untouched wood quotes what it could keep paying for ever — its MSY — and NOT the \
+             zero the logistic term reads at capacity: {wood:?}"
+        );
+
+        // The finite half: a rock body nobody is cutting *will* run out, just not while it stands
+        // idle — which is a different sentinel from *"it never runs out"*.
+        let stone = published_working(&app, rock, STONE);
+        assert_eq!(
+            stone.regrowth_rate, 0.0,
+            "fixture: an alpine rock body never renews: {stone:?}"
+        );
+        assert_eq!(
+            stone.stock, stone.capacity,
+            "nobody quarried it, so the whole body is standing: {stone:?}"
+        );
+        assert_eq!(
+            stone.turns_remaining, DEPOSIT_RUNWAY_NO_TAKE,
+            "there is no take to project a finite deposit's runway off: {stone:?}"
+        );
+    }
+
+    /// ⛔ **THE MERGE PREFERS THE REGISTRY; THE DERIVATION ONLY FILLS WHAT IS MISSING.** One hex,
+    /// two materials — an alpine rock body holds timber as well as stone — with a crew on the stone
+    /// alone. If a derived opening state could overwrite a live source, the seated quarry would read
+    /// back at full stock on its free floor, which is precisely the row beside it.
+    #[test]
+    fn a_live_working_wins_over_the_derived_opening_state_on_one_tile() {
+        let (app, _wood_tile, rock_tile) = a_wood_and_a_quarry();
+        let worked = published_working(&app, rock_tile, STONE);
+        let untouched = published_working(&app, rock_tile, WOOD);
+
+        assert_eq!(
+            worked.rung, "extraction:quarry",
+            "the seated working keeps the rung it was seated on: {worked:?}"
+        );
+        assert!(
+            worked.stock < worked.capacity,
+            "the live source keeps the stock its crew drew down: {worked:?}"
+        );
+        assert!(
+            worked.actual_take > 0.0,
+            "fixture: the quarry crew must have cut something: {worked:?}"
+        );
+
+        assert_eq!(
+            untouched.rung, "forestry:deadfall",
+            "the timber on the same hex is nobody's working, so it opens on the free floor: \
+             {untouched:?}"
+        );
+        assert_eq!(
+            untouched.stock, untouched.capacity,
+            "and it stands at the tile's whole capacity: {untouched:?}"
+        );
+        assert_eq!(
+            untouched.actual_take, 0.0,
+            "nobody felled anything here: {untouched:?}"
+        );
+    }
+
+    /// **Absence is the answer** (`extraction.json`'s `_comment_absence`): a terrain absent from
+    /// both tables holds nothing, so there is nothing to publish and nothing to work. The tile is
+    /// the band's own, so it is unambiguously **discovered** — which is what makes the empty answer
+    /// a statement about the ground rather than about the fog.
+    #[test]
+    fn ground_that_holds_neither_material_publishes_no_row() {
+        let mut app = build_test_app();
+        app.update();
+        let (_band, home, _working) = first_band(&mut app);
+        reground(&mut app, home, BARE_GROUND);
+        app.update();
+
+        let viewer = app.world.resource::<ViewerFaction>().0;
+        assert!(
+            app.world
+                .resource::<VisibilityLedger>()
+                .is_discovered(viewer, home.x, home.y),
+            "fixture: the band stands here, so its own tile must be explored"
+        );
+        assert!(
+            published_workings(&app).iter().all(|row| row.tile != home),
+            "a glacier is on neither deposit table, so it publishes no row at all"
         );
     }
 }

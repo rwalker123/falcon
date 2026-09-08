@@ -109,6 +109,17 @@ const METER_UNSTARTED := 0.0
 ## The scale a meter is stated at, shared with the percentage the card's build line prints.
 const PERCENT_SCALE := 100.0
 
+## **NOTHING BANKED ON THE LADDER** — `intensification::RUNG_UNSTARTED`, the position
+## `DepositSource::opening` starts a deposit at. Work banked into RAISING a rung moves it and cutting
+## never does, so it is the one field that separates a seam somebody has invested in from one nobody
+## has.
+const LADDER_UNSTARTED := 0.0
+
+## **A TAKE OF NOTHING** — `extraction::NO_TAKE_THIS_TURN`, and it is what `last_take` is cleared to
+## every turn. ⛔ On its own it says only *nothing came out last turn*, which is true of a working in
+## a dead season and of a stalled crew as well as of ground nobody has touched: see `is_unopened`.
+const TAKE_NONE := 0.0
+
 # ---- READERS — one per wire field, so a key is spelled once ------------------------------------
 
 ## The working's TILE half. `(-1, -1)` for a row missing either coordinate, which every consumer
@@ -162,6 +173,12 @@ static func rung_of(deposit: Dictionary) -> String:
 ## The meter on the rung being RAISED, 0..1 — never the rung above's fullness and never this rung's.
 static func build_fraction_of(deposit: Dictionary) -> float:
 	return float(deposit.get("build_fraction", METER_UNSTARTED))
+
+## **HOW FAR UP ITS BRANCH THIS DEPOSIT HAS BEEN RAISED**, in cumulative work units — the absolute
+## position the rung and the meter above are both read out of. It is banked by BUILDING, never by
+## cutting, so a seam worked for a hundred turns at its free floor still reads `LADDER_UNSTARTED`.
+static func ladder_position_of(deposit: Dictionary) -> float:
+	return float(deposit.get("ladder_position", LADDER_UNSTARTED))
 
 ## **THE OVER-CUT PAIR, first half** — what a crew could take EVERY TURN AT THIS STOCK and leave the
 ## working where it stands. `0` on a finite working by arithmetic (rock's rate is zero, so the
@@ -259,6 +276,41 @@ static func is_short(deposit: Dictionary) -> bool:
 static func is_at_risk(deposit: Dictionary) -> bool:
 	return is_short(deposit) and has_neglect_grace(deposit)
 
+# ---- HAS ANYBODY OPENED THIS GROUND? -----------------------------------------------------------
+
+## **TRUE WHERE THE ROW IS THE GROUND'S OPENING STATE AND NOTHING MORE** — the deposit a tile HOLDS,
+## with no working standing on it (issue #650).
+##
+## ⛔ **A ROW NO LONGER MEANS A LIVE WORKING.** The `deposits` section publishes one row for every
+## DISCOVERED tile that holds a deposit and merges the registry's working in where a band has opened
+## one, so most rows on the map describe untouched ground. The card would otherwise render every one
+## of them as a working whose bill is met, whose build is done and whose seam nobody is cutting —
+## four quiet readings that together say *this is being kept*, which is false.
+##
+## ⛔ **THE PREDICATE IS NOT `actual_take == 0`.** A working with a real crew honestly takes nothing
+## in a dead season, behind a stalled build, or with its stock at the rung's floor — and rendering
+## THAT as untouched ground hides a working the player is paying for. What this tests instead is the
+## whole fingerprint of `DepositSource::opening`, every term of which a live working moves the moment
+## anybody does anything to it:
+##
+## - **it owes no keeping** — every rung above a free floor bills `quarrywork` every turn;
+## - **nothing is banked on its ladder** — raising a rung moves `ladder_position` and cutting cannot;
+## - **its seam is FULL** — a crew that has taken anything leaves `stock` below `capacity` until the
+##   ground has grown every unit of it back;
+## - **nobody has ordered a rung on it** (`is_queued`), which is the stalled build's own field;
+## - **and nothing came out of it last turn.**
+##
+## **What it cannot separate is a working standing at its branch's FREE FLOOR, on a full seam, with
+## nothing queued and nothing taken** — which is field-for-field the opening state on the wire, costs
+## the player nothing, cuts nothing and builds nothing. The wire carries no *has a band opened this*
+## flag to ask instead; adding one is sim-side work.
+static func is_unopened(deposit: Dictionary) -> bool:
+	return not owes_keeping(deposit) \
+		and ladder_position_of(deposit) <= LADDER_UNSTARTED \
+		and stock_of(deposit) >= capacity_of(deposit) \
+		and not is_queued(deposit) \
+		and actual_take_of(deposit) <= TAKE_NONE
+
 # ---- COMPOSERS -------------------------------------------------------------------------------
 
 ## One rung's player-facing name; the raw wire key for a rung this client has never heard of.
@@ -342,6 +394,12 @@ const DEPOSIT_RUNWAY_ONE := "1 turn left"
 ## would announce an exhaustion that has not happened.
 const DEPOSIT_RUNWAY_IDLE := "not being worked"
 
+## ⛔ **THE WORD FOR GROUND NOBODY HAS OPENED, AND IT IS NOT A WARNING.** `not being worked` is the
+## IDLE WORKING's sentence — a seam somebody opened and walked away from, which will run out and
+## which the card keeps a runway for — and this is the state before that one: there is no working
+## here yet. Lower-case, and it lands after the rung the way every other qualifier does.
+const DEPOSIT_UNOPENED_WORD := "unopened"
+
 ## The hazard word for a working whose keeping is short — **its own consequence rather than a shared
 ## adjective**, exactly as the plant web's *slipping* and the animal web's *drifting* are theirs. An
 ## unheld working slides back down its ladder, so what is happening to it is that it is **going back**.
@@ -360,6 +418,14 @@ const DEPOSIT_UNDER_KEPT_WORD := "going back"
 ## to a coppice is a COMPLETE felling working, not a coppice 42% built.
 static func deposit_row_value(deposit: Dictionary) -> String:
 	var clauses: Array[String] = [rung_label(rung_of(deposit))]
+	# ⛔ **UNTOUCHED GROUND STATES WHAT IT IS AND STOPS.** Every clause below this line describes
+	# something being DONE to a working — a rung rising, a seam being cut faster than it grows, a
+	# runway burning down, a bill going unpaid — and on ground nobody has opened each of them would
+	# be a reading of an event that has not happened. The RUNG stays: the free floor is what a crew
+	# put here today would work at, which is the honest half of the line.
+	if is_unopened(deposit):
+		clauses.append(DEPOSIT_UNOPENED_WORD)
+		return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
 	var progress := progress_clause(deposit)
 	if progress != "":
 		clauses.append(progress)
@@ -435,6 +501,13 @@ const CARD_STOCK_DECIMALS := 1
 ## what it could pay out for ever. **Both figures published**; the client subtracts nothing.
 const CARD_TAKE_TIP_FORMAT := "Taking %s a turn · it renews %s a turn"
 
+## …and the hover on ground nobody has opened, which is the state a player meets FIRST on almost
+## every deposit on the map. It names the one thing that changes it — the crew stepper on this same
+## block — because the stock row above has already said what is here and how much of it the free
+## floor can reach.
+const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and the working opens " \
+	+ "at this rung."
+
 ## …and the finite working's hover, which has no sustainable take to quote (rock's rate is zero, so
 ## the sustainable figure is `0` by arithmetic) and quotes the seam instead.
 const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take it is running at now."
@@ -509,7 +582,13 @@ static func stock_value(deposit: Dictionary) -> String:
 
 ## The state line's hover — the §7 figures the one-line clause above it cannot carry. Forked on
 ## `renews()`, the same single fork, so the words and the numbers cannot describe two workings.
+##
+## **Untouched ground takes neither arm**: the renewing hover would quote a take of nothing, and the
+## finite one a runway *"at the take it is running at now"*, which is no take at all. What it says
+## instead is what the crew stepper below it would do.
 static func supply_tooltip(deposit: Dictionary) -> String:
+	if is_unopened(deposit):
+		return CARD_UNOPENED_TIP
 	if renews(deposit):
 		return CARD_TAKE_TIP_FORMAT % [
 			DetailFormat.format_trimmed(actual_take_of(deposit), CARD_STOCK_DECIMALS),

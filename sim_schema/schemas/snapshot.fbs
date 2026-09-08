@@ -6072,12 +6072,19 @@ table DepositState {
   ladderPosition:float = 0;
 
   // --- THE TWO READOUTS (plan_extraction.md 7) ---------------------------------------------------
-  // What a crew could take EVERY TURN AT THIS STOCK and leave the working where it stands - the
-  // growth term, in the material's own units per turn.
+  // What a crew could take EVERY TURN FOR EVER and still have a wood - the deposit's MSY, in the
+  // material's own units per turn. It is the growth term read at the peak of the curve
+  // (`MSY_BIOMASS_FRACTION x capacity`), which is fauna::sustainable_yield's own expression with the
+  // deposit's curve substituted for the food web's - a full forage patch answers its MSY here too.
+  //
+  // *** IT IS NOT THE GROWTH AT TODAY'S STOCK, AND READING IT THAT WAY MIS-FIRED ON CORRECT PLAY ***
+  // (issue #650). A mature wood stands at K, where (1 - S/K) is zero, so the very first cut read as
+  // over-drawing - and never cleared, because the stock converges on the take from above. A client's
+  // `actualTake > sustainableTake` test is only meaningful against the MSY reading.
   //
   // *** 0 ON A FINITE DEPOSIT, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP. *** Rock's rate is
-  // zero, so there is no take a quarry can sustain: what a finite working publishes instead is the
-  // runway below.
+  // zero, so the growth term is zero wherever it is read: there is no take a quarry can sustain, and
+  // what a finite working publishes instead is the runway below.
   sustainableTake:float = 0;
   // What this working actually paid out last turn, summed over every band that cut it - the take
   // side of the pair. sustainable-versus-actual is the EXISTING intensification income breakdown

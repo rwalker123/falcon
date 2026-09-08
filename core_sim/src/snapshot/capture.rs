@@ -2293,6 +2293,9 @@ pub fn capture_snapshot(
     let labor_config = labor.get();
     let flora_config = flora.get();
     let ladder_config = ladder.get();
+    // Resolved ahead of the tile loop like the three above, because the loop picks the
+    // deposit-bearing ground out with it (`extraction::tile_holds_a_deposit`).
+    let extraction_config = extraction.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
     // Per-tile seasonal gather weight, keyed by coord — the same `FoodModuleTag::seasonal_weight` the
@@ -2307,6 +2310,11 @@ pub fn capture_snapshot(
     // so `forage_registry.patch()` is asked once per tile instead of once per readout. Borrowing out
     // of `tiles.iter()` is sound here: the query is read-only and outlives every use of this vec.
     let mut patch_tiles: Vec<&Tile> = Vec::new();
+    // **The ground that holds a deposit**, picked out of the same sweep and on `patch_tiles`' own
+    // borrow rule. The wire pass needs the *tiles*, not the registry, because a deposit row
+    // describes the land and stands on ground nobody has worked — see
+    // `snapshot::deposits::deposit_states`.
+    let mut deposit_tiles: Vec<&Tile> = Vec::new();
     drop(prelude_scope);
     {
         // Sweep 1 of 2 — the ONLY walk of the full tile query.
@@ -2325,6 +2333,9 @@ pub fn capture_snapshot(
             }
             if forage_registry.patch(tile.position).is_some() {
                 patch_tiles.push(tile);
+            }
+            if crate::extraction::tile_holds_a_deposit(&extraction_config, tile) {
+                deposit_tiles.push(tile);
             }
         }
     }
@@ -3177,9 +3188,10 @@ pub fn capture_snapshot(
                 .map(|(_, tile, _)| tile.terrain)
         },
     );
-    // **THE WORKINGS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
-    // quarry does not wander off either. See `snapshot::deposits::deposit_states`.
-    let extraction_config = extraction.get();
+    // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
+    // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
+    // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
+    // anybody has opened a working on it.
     let deposit_states = crate::snapshot::deposits::deposit_states(
         &deposits,
         &visibility_ledger,
@@ -3189,12 +3201,7 @@ pub fn capture_snapshot(
         &extraction_config,
         &build_kit_ids,
         &upkeep_kit_ids,
-        |pos| {
-            tile_registry
-                .index(pos.x, pos.y)
-                .and_then(|entity| tiles.get(entity).ok())
-                .map(|(_, tile, _)| tile)
-        },
+        deposit_tiles.into_iter(),
     );
     let demographics_state = snapshot_demographics(&population_states);
     // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's

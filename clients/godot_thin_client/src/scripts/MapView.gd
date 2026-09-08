@@ -1127,6 +1127,11 @@ const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_ma
 const PROFILE_LAYERS_CRISIS := "layers.crisis"            # AnnotationRenderer.set_crisis_annotations
 const PROFILE_LAYERS_ROUTES := "layers.routes"            # AnnotationRenderer.set_routes (the `orders` array)
 const PROFILE_LAYERS_ROAD_NETWORK := "layers.road_network"  # _ingest_road_network (the `routes` SECTION — the roads in the ground)
+# **THE DEPOSITS GET THEIR OWN SPAN, and it is not an optional nicety**: the section is one row per
+# DISCOVERED DEPOSIT-BEARING TILE (issue #650), thousands of them on a revealed map against a few
+# hundred roads, so folded into the road span it would be an unattributable step in a bucket named
+# after something else.
+const PROFILE_LAYERS_DEPOSITS := "layers.deposits"        # _ingest_deposit_workings (the `deposits` SECTION)
 const PROFILE_SITES_FOOD := "sites.food"                  # food_modules ingest + the terrain_id stamp
 const PROFILE_SITES_DISCOVERED := "sites.discovered"      # the per-faction discovered-site ingest
 const PROFILE_SITES_FORAGE := "sites.forage"              # the forage_patches ingest
@@ -1475,13 +1480,15 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# frame that does not name it carries the roads it already had.
 	if SnapshotSections.changed(snapshot, SECTION_ROUTES):
 		_ingest_road_network(snapshot.get("routes", []))
-	# **AND THE WORKINGS ON IT** (arc #583) — a different section, a different kind of thing, and
+	profile.end(PROFILE_LAYERS_ROAD_NETWORK, t_layers_roads)
+	# **AND THE DEPOSITS IN IT** (arc #583) — a different section, a different kind of thing, and
 	# gated on its own name for the road section's reason: the decoder republishes the whole section
-	# whenever any working moves and names it, so a frame that does not name it carries the workings
-	# it already had.
+	# whenever any row moves and names it, so a frame that does not name it carries the deposits it
+	# already had.
+	var t_layers_deposits: int = profile.begin(PROFILE_LAYERS_DEPOSITS)
 	if SnapshotSections.changed(snapshot, SECTION_DEPOSITS):
 		_ingest_deposit_workings(snapshot.get("deposits", []))
-	profile.end(PROFILE_LAYERS_ROAD_NETWORK, t_layers_roads)
+	profile.end(PROFILE_LAYERS_DEPOSITS, t_layers_deposits)
 	profile.end(PROFILE_LAYERS, t_layers)
 	var t_sites: int = profile.begin(PROFILE_SITES)
 	# Four independent ingests, each now gated on the section IT reads and each clearing its own
@@ -3727,7 +3734,17 @@ func _ingest_deposit_workings(raw: Variant) -> void:
 	for entry in raw:
 		if not (entry is Dictionary):
 			continue
-		var deposit: Dictionary = (entry as Dictionary).duplicate(true)
+		# ⛔ **HELD BY REFERENCE, NEVER COPIED** — the snapshot sub-tree rule (`turn-profiling.md` →
+		# "Snapshot sub-trees are HELD BY REFERENCE"): a row belongs to the DECODER, which keeps it as
+		# the baseline the next delta patches, so holding one is free and WRITING into one edits the
+		# decoder's world. Nothing downstream stamps a derived key onto a deposit row — the tile card
+		# and the roster both read it through `HudDepositVocab`'s readers, and `HudBandLaborState`
+		# already holds the same array by reference — so there is no consumer to copy for. **It is the
+		# section where that matters most**: one row per discovered deposit-bearing tile is thousands
+		# on a revealed map (3,245 measured on the shipped 80x52 at full reveal), and the
+		# `duplicate(true)` this replaced cost **7.7 ms of every frame that carried the section**
+		# against the forage patches' 1.0 for two thirds as many rows.
+		var deposit: Dictionary = entry as Dictionary
 		var tile := HudDepositVocab.tile_of(deposit)
 		if tile.x < 0 or tile.y < 0:
 			continue

@@ -1822,12 +1822,20 @@ pub struct DepositState {
     /// (`DepositSource::ladder_position`) — the one meter both deposit branches carry, published so
     /// a ladder card can place the working on the *whole* branch rather than only within one rung.
     pub ladder_position: f32,
-    /// **What a crew could take every turn AT THIS STOCK and leave the working where it stands** —
-    /// the growth term, in the material's own units per turn.
+    /// **What a crew could take every turn FOR EVER and still have a wood** — the deposit's MSY, in
+    /// the material's own units per turn: the growth term read at the peak of its curve
+    /// (`MSY_BIOMASS_FRACTION × capacity`), which is `fauna::sustainable_yield`'s own expression with
+    /// the deposit's curve substituted for the food web's. A full forage patch answers its MSY here
+    /// too, which is what makes this the *existing* breakdown pointed at a new source.
+    ///
+    /// ⛔ **IT IS NOT THE GROWTH AT TODAY'S STOCK, AND READING IT THAT WAY MIS-FIRED ON CORRECT
+    /// PLAY** (issue #650). A mature wood stands at `K`, where `(1 − S/K)` is zero, so the very first
+    /// cut read as over-drawing — and never cleared, because the stock converges on the take from
+    /// above. The `actual_take > sustainable_take` test is only meaningful against the MSY reading.
     ///
     /// ⛔ **`0` ON A FINITE DEPOSIT, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP.** Rock's rate
-    /// is zero, so there is no take a quarry can sustain; what a finite working publishes instead is
-    /// [`Self::turns_remaining`].
+    /// is zero, so the growth term is zero wherever it is read: there is no take a quarry can
+    /// sustain, and what a finite working publishes instead is [`Self::turns_remaining`].
     pub sustainable_take: f32,
     /// **What this working actually paid out last turn**, summed over every band that cut it.
     ///

@@ -17109,8 +17109,39 @@ func _workings_row(tile: Vector2i, material: String, renews: bool,
 	}
 	return row
 
-## The four workings on the wire — three of this band's (two of them on ONE tile) and the NEGATIVE: a
-## working on a hex this band has no `extract` row for, which no roster of a band's holdings may list.
+## **UNTOUCHED GROUND — the row the sim derives for a deposit-bearing tile nobody has opened**
+## (issue #650), which is what MOST of the `deposits` section is on a revealed map. It is
+## `DepositSource::opening`'s fingerprint: the seam FULL at the ground's capacity, the branch's free
+## floor, nothing on the ladder, no bill, nothing queued and nothing taken.
+##
+## ⛔ **IT IS ON THE WIRE AND IT IS NOT A HOLDING**, which is the whole reason it is staged here: the
+## roster lists what this band WORKS, and thousands of these rows must move neither its rows nor its
+## count.
+func _unopened_workings_row(tile: Vector2i, material: String, renews: bool) -> Dictionary:
+	var row := _workings_row(tile, material, renews, UNOPENED_NO_TAKE)
+	row["stock"] = WORKINGS_WOOD_CAPACITY if renews else WORKINGS_STONE_CAPACITY
+	row["reachable"] = WORKINGS_WOOD_CAPACITY if renews else UNOPENED_STONE_REACHABLE
+	row["rung"] = HudDepositVocab.RUNG_KEY_DEADFALL if renews \
+		else HudDepositVocab.RUNG_KEY_GATHERING
+	row["build_fraction"] = HudDepositVocab.METER_UNSTARTED
+	row["ladder_position"] = HudDepositVocab.LADDER_UNSTARTED
+	# **A FULL SEAM RENEWS INTO NOTHING and a finite one has no take to project**, so the renewing arm
+	# keeps its *not applicable* and the finite one takes the idle sentinel.
+	row["turns_remaining"] = HudDepositVocab.RUNWAY_NOT_APPLICABLE if renews \
+		else HudDepositVocab.RUNWAY_NO_TAKE
+	return row
+
+## Nothing came out of untouched ground last turn. ⛔ **`sustainable_take` is NOT zeroed with it** —
+## it is the deposit's MSY, read at the peak of the curve rather than at today's stock (issue #650),
+## so the renewing arm keeps the rate `_workings_row` already gives it.
+const UNOPENED_NO_TAKE := 0.0
+
+## What `extraction:gathering`'s 0.15 `recovery_fraction` reaches of a FULL 3000-unit rock body — the
+## gap the quarry rung above it buys, and never a restatement of the stock.
+const UNOPENED_STONE_REACHABLE := 450.0
+
+## The six deposit rows on the wire — three of this band's workings (two of them on ONE tile) and
+## THREE NEGATIVES, each of which a differently-broken membership test would list.
 func _workings_rows() -> Array:
 	return [
 		# Deliberately NOT in distance order on the wire, so the sort is doing work.
@@ -17119,6 +17150,12 @@ func _workings_rows() -> Array:
 		_workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE),
 		# **THE NEGATIVE**: a real working this band works not at all.
 		_workings_row(ROSTER_MID_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE),
+		# ⛔ **AND THE TWO UNTOUCHED ONES.** The first stands on a hex this band DOES hold — its
+		# stone — so a membership test keyed on the tile rather than on `(tile, material)` lists it;
+		# the second is ground nobody has ever touched, which is what the section is now mostly made
+		# of and what a roster reading the deposit list rather than the band's own rows would draw.
+		_unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true),
+		_unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false),
 	]
 
 ## The band, carrying the workings bill, a real `quarrywork` ROLE row (band-wide, no tile — the only
@@ -17195,6 +17232,22 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	_assert_band_panel("…and never a working this band does not work (%s not listed, got %s)"
 			% [stranger, keys],
 		not keys.has(stranger))
+	# ⛔ **AND NEVER UNTOUCHED GROUND, WHICH IS NOW MOST OF THE SECTION** (issue #650). The wire
+	# carries a row for every discovered deposit-bearing tile, so a roster reading the deposit list
+	# would grow by thousands of rows on a revealed map; the membership test is the band's own
+	# `extract` row and neither of these has one. **The PRECONDITION is asserted first** — a fixture
+	# whose "untouched" rows read as ordinary workings would make the negative a claim about nothing.
+	var untouched_here := _unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true)
+	var untouched_away := _unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false)
+	_assert_band_panel("precondition: both untouched rows read as UNOPENED ground",
+		HudDepositVocab.is_unopened(untouched_here)
+			and HudDepositVocab.is_unopened(untouched_away))
+	var untouched_keys: Array = [
+		"%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_WOOD],
+		"%d,%d:%s" % [ROSTER_MID_TILE.x, ROSTER_MID_TILE.y, WORKINGS_STONE]]
+	_assert_band_panel(("…and never untouched ground, not even on a hex this band DOES hold "
+			+ "(%s not listed, got %s)") % [untouched_keys, keys],
+		not keys.has(untouched_keys[0]) and not keys.has(untouched_keys[1]))
 	# ⛔ **TWO ROWS ON ONE TILE, WHICH IS THE CLAIM A TILE-KEYED ROSTER CANNOT PASS.** The near hex
 	# holds timber and rock; a roster that de-duplicated on the tile draws one of them and the count is
 	# the only thing that says so.
@@ -17287,6 +17340,19 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 	_assert_band_panel("a band holding nothing and owing nothing draws NO workings roster at all",
+		_workings_block() == null)
+	# ⛔ **AND CASE 1 SURVIVES A WIRE FULL OF GROUND** (issue #650) — the same band with every
+	# untouched row published. This is the ordinary state of a fresh world: a section of thousands of
+	# rows and a band that has opened none of them, which must still draw no block and so no
+	# `quarrywork` stepper. Without it, case 1 is only ever asked of an EMPTY section and a roster
+	# reading the deposit list passes it for free.
+	_hud.update_deposits([_unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true),
+		_unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false),
+		_unopened_workings_row(ROSTER_NEAR_TILE, WORKINGS_STONE, false)])
+	_push_bands([_workings_band_fixture(0.0)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_band_panel("…and still none with the wire full of ground nobody has opened",
 		_workings_block() == null)
 	# ⛔ **AND THE POOL'S STEPPER GOES WITH IT — a DECISION, asserted so it cannot be read as an
 	# oversight** (arc #583). With the control on the block's head, a band holding no working and owing

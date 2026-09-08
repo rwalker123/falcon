@@ -314,6 +314,19 @@ pub fn tile_deposit_capacity(config: &ExtractionConfig, material: &str, tile: &T
         .unwrap_or(NO_DEPOSIT)
 }
 
+/// **DOES THIS GROUND HOLD ANY DEPOSIT AT ALL** — the pre-filter the snapshot's tile sweep picks
+/// the deposit-bearing ground out with, so the wire pass walks the tiles that can carry a row
+/// rather than the whole map twice over.
+///
+/// It reads through [`tile_deposit_capacity`], so the set it selects and the rows
+/// `snapshot::deposits::deposit_states` builds off that set cannot disagree about which ground
+/// holds something: `false` here is exactly *"every material answered [`NO_DEPOSIT`]"*.
+pub fn tile_holds_a_deposit(config: &ExtractionConfig, tile: &Tile) -> bool {
+    config
+        .deposits()
+        .any(|(material, _)| tile_deposit_capacity(config, material, tile) > NO_DEPOSIT)
+}
+
 /// **THE GROUND'S OWN RENEWAL RATE** — [`NEVER_RENEWS`] on every rock body and on any terrain with
 /// no deposit at all. The rung's `regrowth_multiplier` multiplies *this*, which is what makes
 /// *stone's rate is zero* survive as arithmetic.
@@ -571,18 +584,27 @@ pub fn deposit_build_fraction(source: &DepositSource, ladder: &LadderConfig) -> 
     )
 }
 
-/// **WHAT A CREW COULD TAKE EVERY TURN AT THIS STOCK AND LEAVE THE WORKING WHERE IT STANDS** — the
-/// growth term itself, which is the deposit reading of `sustainable_yield`
-/// (`docs/plan_intensification.md`) and half of the over-cut pair on the wire.
+/// **WHAT A CREW COULD TAKE EVERY TURN FOR EVER AND STILL HAVE A WOOD** — the deposit reading of
+/// `sustainable_yield` (`docs/plan_intensification.md`), and half of the over-cut pair on the wire.
 ///
-/// ⛔ **IT IS THE GROWTH TERM AND NOTHING ELSE, WHICH IS WHY A QUARRY HONESTLY READS ZERO.** Rock's
-/// rate is [`NEVER_RENEWS`], so [`deposit_regrowth`] returns the stock unchanged and the difference
-/// is exactly `0` — *stone sustains no take* survives as arithmetic here too, with no finite branch
-/// anywhere. What a finite working publishes instead is [`deposit_runway`].
+/// ⛔ **IT IS THE MSY READING OF THE GROWTH TERM, NOT THE GROWTH AT TODAY'S STOCK** — the curve is
+/// evaluated at `min(stock, MSY_BIOMASS_FRACTION × capacity)`, which is
+/// [`crate::fauna::sustainable_yield`]'s own expression with the deposit's curve substituted for the
+/// food web's. **The instantaneous reading is not a sustainable rate, it is the rate at one point**,
+/// and taking it literally made the ⚠ fire on correct play and never clear (issue #650): a full
+/// stand has `(1 − S/K) = 0`, so *any* take out-cut it, and the stock then converges on the
+/// stock where growth equals the take from above — an asymptote, so `actual > sustainable` stayed
+/// true for ever. A wood at 600 wood and `r = 0.03` sustains `r·K/4 = 4.5` a turn; one cutter takes
+/// `0.3`. The honest answer is that this is fifteen times inside the wood's means.
+///
+/// ⛔ **A QUARRY STILL READS ZERO, AND STILL BY ARITHMETIC.** Rock's rate is [`NEVER_RENEWS`], so
+/// [`deposit_regrowth`] returns its argument unchanged at *any* reading point and the difference is
+/// exactly `0` — *stone sustains no take* needs no finite branch here either. What a finite working
+/// publishes instead is [`deposit_runway`].
 ///
 /// It reads through [`renew_deposit`]'s own terms — the ground's rate scaled by what the rung
-/// bought, at the seeded reading — so the number the row quotes is the growth the next Logistics
-/// pass will actually apply.
+/// bought, at the seeded reading — so the only thing separating it from the growth the next
+/// Logistics pass applies is *where on the curve it is taken*, which is the whole of the MSY idea.
 pub fn deposit_sustainable_take(
     source: &DepositSource,
     ground: &Tile,
@@ -592,7 +614,10 @@ pub fn deposit_sustainable_take(
     let capacity = tile_deposit_capacity(config, &source.material, ground);
     let payoff = deposit_payoff(&source.standing, ladder);
     let rate = tile_deposit_regrowth(config, &source.material, ground) * payoff.regrowth_multiplier;
-    (deposit_regrowth(source.stock, capacity, rate, config.seed_fraction) - source.stock)
+    let at_the_peak = source
+        .stock
+        .min(crate::fauna::MSY_BIOMASS_FRACTION * capacity);
+    (deposit_regrowth(at_the_peak, capacity, rate, config.seed_fraction) - at_the_peak)
         .max(DEPOSIT_EMPTY)
 }
 

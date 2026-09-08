@@ -175,8 +175,18 @@ So the win lands on exactly the frames that pay for the section — the first fr
 resync, and any turn whose diff moves forage or culture — which is also why the ~42 ms in #389's
 title no longer reads off a steady-state turn: PR #396's gates had already taken those frames to zero.
 
-The five ingests are named seams on `MapView` (`_ingest_culture_layers`, `_ingest_food_modules`,
-`_ingest_discovered_sites`, `_ingest_forage_patches`, `_ingest_population_sites`) so that
+**THE DEPOSITS WERE THE SIXTH, AND THE LAST TO LOSE THEIR COPY** (issue #650). `_ingest_deposit_workings`
+deep-copied every row, and that section is one row per DISCOVERED DEPOSIT-BEARING TILE — 3,245 on the
+shipped 80x52 at full reveal, against `foragePatches`' 2,113 — so it cost **7.5-8.3 ms of every frame
+that carried it**, against 0.9-1.5 for the forage patches beside it. Holding the rows takes it to
+**2.0-2.2**, and it has its own profile span (`layers.deposits`) rather than the road network's, which
+is where it sat while it was invisible. Nothing downstream stamps a derived key onto a deposit row and
+`HudBandLaborState` has always held the same array by reference; the arc is
+`.claude/rules/client/extraction-workings.md`.
+
+The six ingests are named seams on `MapView` (`_ingest_culture_layers`, `_ingest_food_modules`,
+`_ingest_discovered_sites`, `_ingest_forage_patches`, `_ingest_population_sites`,
+`_ingest_deposit_workings`) so that
 `tools/snapshot_alias_guard.gd` can drive them headlessly with no tree and no rendering, the way
 `marker_field_guard` drives `_rebuild_unit_markers`. The gate and the profile span stay at the call
 site in `display_snapshot`; the clear and the refill stay together inside the helper.

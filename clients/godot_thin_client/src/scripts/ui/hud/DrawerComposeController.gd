@@ -4936,9 +4936,10 @@ func _clear_workings_drawer() -> void:
         child.queue_free()
     _workings_drawer_shape = []
 
-## The working rows on this hex, as typed dicts. `[]` on ground nobody has worked, which is most of the
-## world — and which is **not** the same statement as *there is no deposit here*: the registry is
-## sparse and lazy, so an untouched seam publishes no row at all.
+## The deposit rows on this hex, as typed dicts. **`[]` MEANS THIS GROUND HOLDS NOTHING** (or the
+## faction has never seen it): the section publishes a row for every discovered tile that holds a
+## deposit and merges the live working in where a band has opened one, so an untouched seam is a row
+## like any other — `HudDepositVocab.is_unopened` is what tells the two apart, never the absence.
 func _tile_workings(tile_info: Dictionary) -> Array[Dictionary]:
     var workings: Array[Dictionary] = []
     for entry in Array(tile_info.get(TILE_DEPOSITS_KEY, [])):

@@ -21,8 +21,8 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/hud_work_vocab.gd` → the `WORKINGS_ROSTER_*` family + `ROLE_NAME_QUARRYWORK` | The roster's words, metas, its `WORKINGS_ROSTER_HEAD_HEIGHT` (21, measured) and its `workings_roster_height`, plus the pool's own name, hint and coverage sentence. They live here rather than in `HudDepositVocab` because the geometry of the Work zone belongs beside the three blocks that share it, which is `roadwork_roster_height`'s own rule one pool over |
 | `ui/hud/HudWidgets.gd` → `zone_head`'s trailing `title_tooltip` | The one shared-layer change this arc makes: a head whose readout is a CONDITIONAL mark needs its hover on the TITLE, because `readout_tooltip` rides a Label built only where a readout is stated |
 | `ui/hud/HudBandLaborState.gd` → `set_deposits` / `deposits` / `quarrywork_pool_state` / `extract_assignment_of` / `effective_extract_workers` | The section held WHOLE (the roster asks a whole-list question), the pool's three cohort fields read with no arithmetic, and the per-working assignment readers — each matching on the tile **and** the material, because that pair is the row's identity |
-| `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the tile card's action reads its rows out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here, not a truncated frame — which is exactly where a road-shaped `if not has(tile)` loses one |
-| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per live WORKING, keyed `(tile, material)`. The module header carries the whole field contract: the sparse-and-lazy registry, the `regrowth_rate` fork, the two runway sentinels, and the road's own standing-bill / neglect / build quad verbatim |
+| `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the tile card's action reads its rows out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here, not a truncated frame — which is exactly where a road-shaped `if not has(tile)` loses one. It holds the frame's rows **by reference** and has its own profile span (`layers.deposits`), both for the reason below: this is the widest section the client ingests |
+| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one. The module header carries the whole field contract: the row-describes-the-ground rule below, the `regrowth_rate` fork, the two runway sentinels, and the road's own standing-bill / neglect / build quad verbatim |
 
 ## ⛔ THE WORD "QUARRY" IS TAKEN, AND IT MEANS THE HUNTED ANIMAL
 
@@ -60,6 +60,74 @@ therefore carries both halves:
   or the Stone stepper opens on the Wood crew's count.
 - The roster's row meta and the card's block meta are both `"<x>,<y>:<material>"`, so a harness can
   say *this working* rather than *a working on this hex*.
+
+## ⛔ A ROW DESCRIBES THE GROUND; THE WORKING IS ITS STATE (issue #650)
+
+The section publishes **one row for every DISCOVERED tile that holds a deposit** — `foragePatches`'
+own shape — and merges the registry's live `DepositSource` in where a band has opened one, deriving
+the opening state where none has. So **the presence of a row is not the presence of a working**, and
+most rows on a revealed map are ground nobody has touched: 3,245 of them on the shipped 80x52 at full
+reveal, against `foragePatches`' 2,113.
+
+Publishing the registry alone is what made the whole feature unreachable — the tile card's
+`Workings ▸` action is built off these rows, and the registry is filled lazily by a crew being put on
+a working, so a fresh world offered no way to open the first working anywhere on the map.
+
+**`HudDepositVocab.is_unopened` is the client's reading of the difference, and it is a FINGERPRINT
+rather than a flag.** The wire carries no *has a band opened this* bool, so the test is the whole of
+`DepositSource::opening`'s state — owes no keeping, nothing banked on the ladder
+(`ladder_position <= LADDER_UNSTARTED`), a seam at full `capacity`, nothing queued, and nothing taken
+last turn. Every term of it moves the moment anybody does anything to the ground.
+
+⛔ **`actual_take == 0` ALONE IS NOT THAT TEST, and reading it as one hides a working the player is
+paying for.** A crew takes nothing in a dead season, behind a stalled build, or with the stock at its
+rung's floor — all three of which the conjunction excludes on a different field (a drawn-down seam, a
+queued rung, a rung above the free floor billing every turn). What the fingerprint cannot separate is
+a working standing at its branch's free floor on a full seam with nothing queued and nothing taken,
+which is field-for-field the opening state and costs the player nothing.
+
+**What the card says, and what it stops saying.** The stock row is the useful part and stays — the
+three numbers are the whole reason to draw untouched ground at all — and so does the crew stepper at
+`0`, which is the affordance that OPENS the working. The state line reads the free floor's own rung
+name plus `DEPOSIT_UNOPENED_WORD` and **carries no warning**: no over-cut clause, no runway, no
+hazard mark, and its ink stays `INK_DIM`. The bill, the neglect countdown and the build line render
+nothing — and they need no gate of their own, because an unopened row is a free-floor row with an
+empty queue and `upkeep_value` / `reverting_value` / `build_value` already answer `""` to exactly
+that. `workings_unopened` asserts all three as one claim, so a rung that started billing a floor
+would fail there rather than rendering a met bill on untouched ground.
+
+⛔ **`not being worked` IS THE IDLE WORKING'S SENTENCE AND MUST NOT BE FLATTENED INTO THIS ONE.**
+`RUNWAY_NO_TAKE` on a seam somebody opened and walked away from is a real reading — that working WILL
+run out — and on ground with no working it is a reading of a thing that does not exist.
+`workings_unopened` and `workings_idle` are the pair, and the unopened frame asserts the idle
+quarry's own value is unchanged.
+
+**The ROSTER is unaffected, and that is by construction rather than by a filter added for this.**
+`_workings_roster_models` skips any row the band has no `extract` assignment on, so untouched ground
+is never listed however many rows arrive; the pool's three figures are cohort fields with no
+client-side arithmetic, so the count and the shortfall mark cannot move either.
+`band_panel_preview` puts untouched rows on the wire — including one on a hex whose OTHER material
+this band does work, which a tile-keyed membership test would list — and asserts the roster is still
+the same three rows, that case 1 draws no block with the wire full of ground, and that the
+`quarrywork` stepper goes with it.
+
+### The section is the widest the client ingests, so the ingest holds it BY REFERENCE
+
+Measured live (80x52, `earthlike` / seed 0 / `late_forager_tribe`, release server, fog OFF so every
+row publishes), on the frames that carry the section:
+
+| | `layers.deposits` | `sites.forage` |
+|---|---|---|
+| with the ingest's `duplicate(true)` | **7.5 – 8.3 ms** | 0.9 – 1.5 ms |
+| holding the rows | **2.0 – 2.2 ms** | 0.9 – 1.7 ms |
+
+3,245 deep dict copies a frame, in other words, for a section a quarter of `foragePatches`' bytes —
+and the copy bought nothing: nothing downstream stamps a derived key onto a deposit row, and
+`HudBandLaborState` has always held the same array by reference. The rule and its two halves are
+`turn-profiling.md` → "Snapshot sub-trees are HELD BY REFERENCE"; `snapshot_alias_guard` pins this
+ingest with the other five, asserting BOTH of one hex's rows by identity so a lookup that kept one of
+them cannot pass. **Its profile span is its own** (`MapView.PROFILE_LAYERS_DEPOSITS`) rather than
+folded into the road network's, which is where it sat while it was invisible.
 
 ## ⛔ THE READOUT IS DECIDED BY `regrowth_rate > 0`, NEVER BY `branch`
 
@@ -363,8 +431,9 @@ runtime from the list, so the literal cannot go stale unnoticed.
 
 ### The card — `ui_preview`'s `workings` chapter
 
-`tools/ui_preview/chapters/workings.gd`, appended LAST in `CHAPTERS` so no existing frame moves. Four
-frames and eighteen checkpoints; it hands the hex back bare on the way out.
+`tools/ui_preview/chapters/workings.gd`, appended LAST in `CHAPTERS` so no existing frame moves. Five
+frames and twenty-six checkpoints; it hands the hex back bare on the way out, and an EMPTY `deposits`
+array there means the ground holds nothing rather than nobody having worked it.
 
 | frame | what only IT can say |
 |---|---|
@@ -372,6 +441,7 @@ frames and eighteen checkpoints; it hands the hex back bare on the way out.
 | `workings_over_cut` | the RENEWING arm: the state line carries the food webs' own overdraw word, **the same seam cut inside its renewal states nothing** (the pair, since a negative alone passes on a composer that never warns), no runway on a renewing working, the figures on the hover, and the bill and countdown the road card's treatment gives them |
 | `workings_runway` | the FINITE arm beside a renewing **flint scatter of the SAME branch** — the one fixture that fails a client forking on `branch` — and both free floors stating no bill at all |
 | `workings_idle` | `-2` reads *not being worked*, **never `0 turns left`**, and the block carries the take crew's own stepper |
+| `workings_unopened` | **the state a player meets first** (issue #650) — both branches' free floors on one hex, untouched: the rung name plus `unopened`, no hazard/overdraw/runway and `INK_DIM`, the bill, countdown and build line all stating nothing, the stock row's three numbers kept, a stepper on each block, and — the claim the frame exists for — the IDLE quarry two states up still reading `not being worked` |
 
 **Every claim is asked of the shipped composer or of the rendered card**, never of a re-derivation:
 the §7 clauses go through `deposit_row_value`, the bill through `upkeep_value`, the countdown through
@@ -389,7 +459,9 @@ checked by diff, not by eye — which is the check that says the pools block rea
 doc block records the 439px and the rejected second row so the next reader does not re-derive them.
 
 The roster's own block asserts, on one fixture whose near hex carries TWO workings: the negative (a
-working this band does not work is not listed), the count of THREE with two of them on one tile, the
+working this band does not work is not listed), **the two UNTOUCHED rows** — one of them on a hex
+whose other material this band DOES hold, which a tile-keyed membership test would list, behind a
+precondition that both really read as `is_unopened` — the count of THREE with two of them on one tile, the
 nearest-first sort tie-broken by MATERIAL, the material-led name cells, the value cell as
 `deposit_row_value` verbatim, §7's fork read off two rows of ONE roster, and **no stepper or `✕` on
 any ROW** — scoped to the rows.
@@ -398,7 +470,9 @@ any ROW** — scoped to the rows.
 the stepper is there with both faces, the title carries the pool's hint on its hover, the mark is
 flown, and **reserved ≥ drawn is PRINTED** for the head (21 of 21) and for the block (105 of 105, 49
 of 49 on case 2). Case 1 asserts the block is absent **and that the stepper goes with it**, since a
-missing control looks the same whichever reading produced it.
+missing control looks the same whichever reading produced it — and it is asked twice, the second time
+with the wire full of ground nobody has opened, which is the ordinary state of a fresh world and the
+one an empty section cannot stand in for.
 
 **Frames:** `band_panel_workings_roster` (the head with its stepper and its `⚠` over three rows, under
 a four-card pools block) and `band_panel_workings_roster_unseen` (case 2 — the head still drawn, the

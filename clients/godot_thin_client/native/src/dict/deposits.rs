@@ -1,16 +1,22 @@
 //! `deposits` — the live WORKINGS on the ground (arc #583, `docs/plan_extraction.md` §7,
 //! `.claude/rules/core_sim/extraction.md`).
 //!
-//! ONE ROW PER LIVE WORKING, keyed by **(tile, material)**. A working is a per-TILE improvement
+//! ONE ROW PER DEPOSIT-BEARING TILE, keyed by **(tile, material)**. A working is a per-TILE improvement
 //! like a road, but it belongs to a CAMP like a patch: a road follows nobody and is free to leave,
 //! and a quarry you walk away from is a quarry you lost. `DepositState` is modelled field-for-field
 //! on `RouteState` and the two share their standing-bill, neglect and build blocks verbatim — read
 //! `dict::routes` beside this file rather than inventing a second reading of the same quad.
 //!
-//! ⛔ **THE REGISTRY IS SPARSE AND LAZY, so a MISSING ROW IS NOT "NO DEPOSIT HERE".** A working
-//! opens the first turn a band puts a crew on it, so an untouched map publishes no rows at all.
-//! What a tile HOLDS is a pure function of its terrain and is not on this table; a reader that
-//! painted "nothing here" from the absence of a row would hide every unworked seam on the map.
+//! ⛔ **A ROW DESCRIBES THE GROUND; THE WORKING IS ITS STATE (issue #650).** The section publishes a
+//! row for every DISCOVERED tile that holds a deposit — `snapshot_forage_patches`' shape — and merges
+//! the registry's live working in where a band has opened one; where none has, the sim derives the
+//! opening state at capture. So **most rows on the map are untouched ground**, and a consumer that
+//! read a row's presence as *somebody is working this* renders every seam on the map as a working
+//! whose bill is met. `HudDepositVocab.is_unopened` is the client's reading of that difference, and
+//! it is a FINGERPRINT of the opening state rather than a flag: the wire carries no
+//! *has-a-band-opened-this* bool. Publishing only the registry is what made the feature unreachable —
+//! the tile card's affordance is built off these rows, so a fresh world offered no way to open the
+//! first working anywhere.
 //!
 //! ⛔ **ONE TILE CAN HOLD TWO WORKINGS.** A wooded highland holds timber and rock, and working one
 //! is not working the other, so `tile_x`/`tile_y` alone is NOT a key: a consumer joining a crew to
