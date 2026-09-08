@@ -14,6 +14,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
+use crate::dict::deposits::deposits_to_array;
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::governance::{
     corruption_to_dict, crisis_overlay_to_dict, crisis_telemetry_to_dict, power_metrics_to_dict,
@@ -658,6 +659,14 @@ fn decode_delta_against(
 
     if let Some(forage_patches) = delta.subsistence().and_then(|s| s.foragePatches()) {
         frame.insert_changed("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    // **THE LIVE WORKINGS ON DEPOSITS** (arc #583) — the same whole-vector replace as
+    // `forage_patches` above, and `insert_changed` for the same reason: the sim diffs the vector
+    // whole, so presence on a delta IS the change signal and present-and-EMPTY means "every working
+    // you knew of is gone". There is no `removedDeposits` twin to consult and none is wanted.
+    if let Some(deposits) = delta.subsistence().and_then(|s| s.deposits()) {
+        frame.insert_changed("deposits", &deposits_to_array(deposits));
     }
 
     // The KIT ROSTER and the two job defaults — whole-section fields, decoded here as well as in

@@ -32,6 +32,7 @@ server side, so the two ends of the wire have the same shape.
 | `snapshot/cache.rs` | `WorldCache` — the world a delta is applied *to*: the last complete client dict, the pre-normalization `RasterCache` behind it, the `SectionCaches` (one complete array + identity index per diff-carried section, configured by the `KEYED_SECTIONS` registry), and the epoch/frame-sequence gate that says whether an incoming delta may be merged at all |
 | `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64` |
 | `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign,connections}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
+| `dict/{routes,deposits}.rs` | The two ARC-scoped converters that do not follow the section split. `routes.rs` holds `RouteState` **and** `RouteRungState`, whose catalog rides `SubsistenceSection`; `deposits.rs` holds `DepositState`, which rides `SubsistenceSection` too. Both are here rather than in `subsistence.rs` because the arc, not the section, is what a reader of either needs open — and because keeping them apart is what stops two concurrent worktrees editing one 1,600-line file |
 
 There is deliberately **no `dict/vision.rs`** — the vision section is only the
 fog/visibility/military rasters, which `snapshot/raster.rs` and the assemblers already
@@ -570,6 +571,36 @@ term in the same estimate. **The estimate's GEAR terms are not source fields at 
   cross-ref and a `FOW_DISCOVERED_HIDDEN_KEYS` entry. `tools/patch_crossref_guard.gd` caught exactly
   that omission on this arc — the decoder emitted all seven and the panel would have read none. (The
   kit row travels whole, like a herd dict, so the gear pair is one wiring.)
+
+## The WORKINGS — one row per `(tile, material)`, and the fork is `regrowth_rate`
+
+Arc #583 (`docs/plan_extraction.md` §7). `dict/deposits.rs` → `deposits_to_array` decodes
+`SubsistenceSection.deposits`, modelled field-for-field on `RouteState`, so its standing-bill,
+neglect and build blocks read exactly as `dict/routes.rs`'s do.
+
+**A WHOLE-VECTOR diff, on the `forage_patches` code path and no other** — `insert_changed` on the
+delta, decoded on both paths. There is deliberately no `removedDeposits` twin: a working leaves the
+viewer's frame by being ABSENT from the next vector, so present-and-EMPTY means *every working you
+knew of is gone* and an emptiness gate here would swallow that.
+
+⛔ **THE KEY IS THE TILE *AND* THE MATERIAL.** One tile can hold two workings — a wooded highland
+holds timber and rock — so `tile_x`/`tile_y` alone joins a felling crew to a quarrying crew's row.
+`LaborAssignment.material` → **`material`** on the assignment entry (`dict/population.rs`) is the
+other half of that join, `""` on every row that is not `extract`.
+
+⛔ **WHICH READOUT A WORKING PUBLISHES IS DECIDED BY `regrowth_rate > 0`, NEVER BY `branch`.** A
+flint scatter and a quarry are both `extraction` and read differently: `> 0` → the over-cut pair
+(`sustainable_take` against `actual_take`), `== 0` → the runway (`turns_remaining`). `turns_remaining`
+carries **two** negatives that are two different sentences — `-1` *this deposit renews, so it does not
+run out* and `-2` *nobody is cutting it, so there is no rate* (`sim_schema::DEPOSIT_RUNWAY_NOT_APPLICABLE`
+/ `DEPOSIT_RUNWAY_NO_TAKE`) — beside the shared five-negative `build_turns_remaining` family, which a
+working publishes with no dialect of its own.
+
+**THE BAND'S BILL IS NOT A SUM OF THESE ROWS**: `quarrywork_demand` / `quarrywork_supplied` /
+`quarrywork_shortfall` on the cohort dict (`dict/population.rs`, beside the `roadwork` triple) carry
+it, for `roadwork_demand`'s own reason — deposit rows are fog-filtered, so a working out of sight
+drops out of a client-side total the band still owes. **ONE POOL FOR BOTH BRANCHES**: forestry and
+extraction split on knowledge and on nothing a keeper does.
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 

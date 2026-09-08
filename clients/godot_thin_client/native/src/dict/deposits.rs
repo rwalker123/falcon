@@ -1,0 +1,192 @@
+//! `deposits` — the live WORKINGS on the ground (arc #583, `docs/plan_extraction.md` §7,
+//! `.claude/rules/core_sim/extraction.md`).
+//!
+//! ONE ROW PER LIVE WORKING, keyed by **(tile, material)**. A working is a per-TILE improvement
+//! like a road, but it belongs to a CAMP like a patch: a road follows nobody and is free to leave,
+//! and a quarry you walk away from is a quarry you lost. `DepositState` is modelled field-for-field
+//! on `RouteState` and the two share their standing-bill, neglect and build blocks verbatim — read
+//! `dict::routes` beside this file rather than inventing a second reading of the same quad.
+//!
+//! ⛔ **THE REGISTRY IS SPARSE AND LAZY, so a MISSING ROW IS NOT "NO DEPOSIT HERE".** A working
+//! opens the first turn a band puts a crew on it, so an untouched map publishes no rows at all.
+//! What a tile HOLDS is a pure function of its terrain and is not on this table; a reader that
+//! painted "nothing here" from the absence of a row would hide every unworked seam on the map.
+//!
+//! ⛔ **ONE TILE CAN HOLD TWO WORKINGS.** A wooded highland holds timber and rock, and working one
+//! is not working the other, so `tile_x`/`tile_y` alone is NOT a key: a consumer joining a crew to
+//! its working must carry `material` too (`LaborAssignment.material`, `labor_assignments[*].
+//! material` on the cohort dict).
+//!
+//! ⛔ **WHICH READOUT A WORKING PUBLISHES IS DECIDED BY `regrowth_rate > 0`, NEVER BY `branch`.** A
+//! flint scatter and a quarry are both `extraction` and read differently — the same skill, the same
+//! ladder, and only one of them runs out. `> 0` → the OVER-CUT pair (`sustainable_take` against
+//! `actual_take`); `== 0` → the RUNWAY (`turns_remaining`). Forking on the branch string paints a
+//! renewing scatter with a runway that never moves.
+//!
+//! Already fog-filtered SIM-SIDE, on the ROAD's gate rather than the herd list's: `Discovered` or
+//! `Active`, because a working does not wander off and remembering one is remembering something
+//! true. **The band's own bill is NOT a sum of these rows** — `PopulationCohortState`'s
+//! `quarrywork_demand` / `quarrywork_supplied` / `quarrywork_shortfall` carry it, precisely because
+//! these rows are fog-filtered and a working out of sight would drop out of a client-side total the
+//! band still owes.
+
+use flatbuffers::{ForwardsUOffset, Vector};
+use godot::prelude::*;
+use shadow_scale_flatbuffers::shadow_scale::sim as fb;
+
+pub(crate) fn deposits_to_array(
+    list: Vector<'_, ForwardsUOffset<fb::DepositState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for deposit in list {
+        let mut dict = VarDictionary::new();
+        // **THE ROW'S IDENTITY IS THE TILE *AND* THE MATERIAL** — see the module header for why the
+        // pair is indivisible. A consumer joins and diffs rows on all three.
+        let _ = dict.insert("tile_x", deposit.tileX() as i64);
+        let _ = dict.insert("tile_y", deposit.tileY() as i64);
+        let _ = dict.insert("material", deposit.material().unwrap_or_default());
+        // WHICH LADDER works this deposit — `"forestry"` | `"extraction"`, `RungBranch`'s wire form.
+        //
+        // ⛔ **IT DOES NOT DECIDE THE READOUT.** `regrowth_rate` below does, and the module header
+        // says why: a flint scatter and a quarry are both `extraction` and read differently.
+        // `branch` answers *which knowledge track* and nothing else.
+        let _ = dict.insert("branch", deposit.branch().unwrap_or_default());
+        // WHAT IS STANDING HERE RIGHT NOW, in the material's own units — the only SAVED thing about
+        // a working. It opens at capacity, is drawn down by the take and put back by the growth
+        // term.
+        let _ = dict.insert("stock", f64::from(deposit.stock()));
+        // What this GROUND holds when full, read live off the tile at capture rather than stored on
+        // the source. **NO RUNG MAY RAISE IT** — it is the terrain's, which is what keeps the floor
+        // below from climbing out from under a build.
+        let _ = dict.insert("capacity", f64::from(deposit.capacity()));
+        // What the CURRENT rung can actually get at — capacity minus the rung's own floor, clamped
+        // to the stock, and the numerator of `turns_remaining`.
+        //
+        // ⛔ **IT IS NEVER SIMPLY `stock`.** A rung that cannot reach the whole seam leaves stock it
+        // cannot take, and climbing the ladder is precisely how you reach deeper. A readout that
+        // drew `stock` as *what you can have* promises the player rock the crew cannot cut.
+        let _ = dict.insert("reachable", f64::from(deposit.reachable()));
+        // ⛔ **THE FIELD THAT DECIDES WHICH READOUT IS DRAWN** (`docs/plan_extraction.md` §7):
+        // `> 0` → the OVER-CUT warning (`sustainable_take` against `actual_take`); `== 0` → the
+        // RUNWAY (`turns_remaining`). **NOT `branch`** — the module header carries the whole rule.
+        // It is the GROUND'S own renewal rate, already scaled by what this working's rung bought.
+        let _ = dict.insert("regrowth_rate", f64::from(deposit.regrowthRate()));
+        // **THE RUNG STRING IS THE ANSWER — never threshold `build_fraction` to infer one.** That
+        // meter belongs to the rung being RAISED, which is a different rung; `routes`' `rung`
+        // carries the identical rule. `"<branch>:<id>"`: `"forestry:deadfall"`,
+        // `"forestry:felling"`, `"forestry:coppice"`, `"extraction:gathering"`,
+        // `"extraction:quarry"`.
+        let _ = dict.insert("rung", deposit.rung().unwrap_or_default());
+        // The meter on the rung being raised, 0..1, off the shared `intensification::build_fraction`
+        // seam both food webs and the road publish theirs from. **NEVER DERIVED BY SUBTRACTION**
+        // sim-side, so a working that has just completed a rung reads exactly `1.0` — and so does
+        // one at the top of its ladder, with nothing left to raise. Draw a full bar, not an empty
+        // one.
+        let _ = dict.insert("build_fraction", f64::from(deposit.buildFraction()));
+        // How far up its branch this working has been raised, in CUMULATIVE work units — the one
+        // meter both deposit branches carry, and the absolute position `rung` and `build_fraction`
+        // are both read out of. Published so a ladder card can place the working on the WHOLE
+        // branch rather than only within its current rung.
+        let _ = dict.insert("ladder_position", f64::from(deposit.ladderPosition()));
+        // **THE OVER-CUT PAIR** — what a crew could take EVERY TURN AT THIS STOCK and leave the
+        // working where it stands, against what it actually paid out last turn summed over every
+        // band cutting it. This is the EXISTING intensification income breakdown pointed at a new
+        // source, not a new readout: actual above sustainable is over-cutting, which is possible on
+        // purpose and warned about rather than refused.
+        //
+        // **`sustainable_take` IS `0` ON A FINITE DEPOSIT, and that is the honest answer rather than
+        // a gap.** Rock's rate is zero, so there is no take a quarry can sustain — what a finite
+        // working publishes instead is the runway below, which is why `regrowth_rate` and not this
+        // field is the fork.
+        let _ = dict.insert("sustainable_take", f64::from(deposit.sustainableTake()));
+        let _ = dict.insert("actual_take", f64::from(deposit.actualTake()));
+        // **THE RUNWAY** — how many turns this working lasts at the current take,
+        // `floor(reachable / actual_take)`. **A FORWARD PROJECTION, never a trailing average and
+        // never an EMA**: it is this turn's rate carried forward, so it moves the turn the crew
+        // does.
+        //
+        // TWO NEGATIVES, TWO DIFFERENT SENTENCES, and they are passed through VERBATIM so GDScript
+        // reads the sim's own answer rather than deriving a second opinion
+        // (`sim_schema::{DEPOSIT_RUNWAY_NOT_APPLICABLE, DEPOSIT_RUNWAY_NO_TAKE}`):
+        //   `>= 0` a real count of turns;
+        //   `-1`   NOT APPLICABLE — this deposit RENEWS, so it does not run out and the over-cut
+        //          pair above is its warning instead. It is NOT "unknown": render the other readout
+        //          here, never an empty runway;
+        //   `-2`   NO TAKE THIS TURN — nobody is cutting it, so there is no rate to carry forward.
+        //          It is NOT `-1`: this working WILL run out, just not while it is idle.
+        // Flattening the two into one "no runway" is the defect the split exists to prevent.
+        let _ = dict.insert("turns_remaining", deposit.turnsRemaining() as i64);
+        // **THE STANDING BILL — the patch / herd / road quad, verbatim**, drawn from the band's
+        // `quarrywork` pool. **`demand - supplied == shortfall` HOLDS ON THE WIRE**, all three
+        // reading the sim's STAMPED basis at the post-decay position, so nothing here is re-derived
+        // by subtraction — the build arm moves the ladder position inside the same turn, and a bill
+        // struck on one side of the accrual against a payment on the other are two readings of two
+        // different workings.
+        //
+        // **`0` ON BOTH FREE FLOORS** (`forestry:deadfall`, `extraction:gathering`), which declare
+        // no upkeep at all: nobody built them, so there is nothing to hold, and that is the whole of
+        // what makes a floor free. `upkeep_workers_needed` is the whole `quarrywork` keepers the
+        // bill wants — the readout that makes a standing cost legible ("wants 2, you have 0").
+        let _ = dict.insert("upkeep_demand", f64::from(deposit.upkeepDemand()));
+        let _ = dict.insert("upkeep_supplied", f64::from(deposit.upkeepSupplied()));
+        let _ = dict.insert("upkeep_shortfall", f64::from(deposit.upkeepShortfall()));
+        let _ = dict.insert(
+            "upkeep_workers_needed",
+            deposit.upkeepWorkersNeeded() as i64,
+        );
+        // THE NEGLECT COUNTDOWN, NOT THE COUNTER — `RouteState`'s rule verbatim. `0` means IT IS
+        // SLIDING NOW, and a working whose bill is met reads its rung's full grace + 1 ("walk away
+        // and you have this long"). `has_neglect_grace == false` means there is NOTHING AT RISK
+        // here — a working on either free floor, which declares no upkeep and so has no meter to
+        // lose. **Read the bool first**; the number reuses the "biting now" `0` rather than
+        // inventing a sentinel a client could mistake for a real countdown.
+        let _ = dict.insert("has_neglect_grace", deposit.hasNeglectGrace());
+        let _ = dict.insert(
+            "neglect_grace_remaining",
+            deposit.neglectGraceRemaining() as i64,
+        );
+        // **THE BUILD IN FRONT OF THIS WORKING — the CHAINED countdown**, everything above this
+        // entry in its band's queue plus this entry's own span, and **THE SAME QUANTITY WITH THE
+        // SAME SENTINELS a patch, a herd and a road publish**: there is deliberately no deposit
+        // dialect, so `DetailFormat.build_sentinel_value` renders a working through the identical
+        // fork with no branch of its own. `-1` no estimate, `-2` the meter holds, `-3` it rots,
+        // `-4` the queue is blocked at this entry, `-5` queued since the last turn resolved.
+        //
+        // ⛔ **ONLY A QUEUED WORKING HAS A REAL NUMBER, AND AN UNORDERED RUNG READS `-1` RATHER THAN
+        // `0`** — a `0` would render as a finished build.
+        let _ = dict.insert(
+            "build_turns_remaining",
+            deposit.buildTurnsRemaining() as i64,
+        );
+        // WHY THE POOL IS STUCK ON THIS WORKING — the same free-form `BuildGate` vocabulary a patch
+        // and a road publish, never an enum, so one reader answers for every branch.
+        //
+        // ⛔ **`""` IS NOT *FINE*.** It is *nothing is being built here*, which is a different
+        // sentence from *nothing is wrong* — and it is every working on the map until a player types
+        // `fell` or `quarry`.
+        let _ = dict.insert(
+            "build_blocked_reason",
+            deposit.buildBlockedReason().unwrap_or_default(),
+        );
+        // IS THIS WORKING IN SOME BAND'S BUILD QUEUE RIGHT NOW? — the MEMBERSHIP flag, and the term
+        // `build_turns_remaining`'s `-5` is separated from `-1` by. Resolved by the same live-queue
+        // walk that resolves `build_kit_id`, because the row's own scratch lags a command by a whole
+        // turn and this state exists precisely in that frame.
+        //
+        // ⛔ **IT CANNOT BE REPLACED BY A `build_kit_id != ""` TEST**: a resolved builders kit is
+        // NEVER empty, the bare-handed kit being a roster entry like any other.
+        let _ = dict.insert("is_queued", deposit.isQueued());
+        // The kit this working's build is being raised with — the patch's `build_kit_id` off the
+        // same one resolution seam, so the row cannot state a tool the pool is not using. `""` only
+        // where no band has this working queued.
+        let _ = dict.insert("build_kit_id", deposit.buildKitId().unwrap_or_default());
+        // **THE KEEPING KIT** — the patch / herd pair, from the upkeep-kit resolution pass.
+        // `upkeep_kit_named` is not recoverable from the id (a player may name the very kit the
+        // derivation would have picked), which is why it rides beside it rather than being
+        // re-derived on the client.
+        let _ = dict.insert("upkeep_kit_id", deposit.upkeepKitId().unwrap_or_default());
+        let _ = dict.insert("upkeep_kit_named", deposit.upkeepKitNamed());
+        array.push(&dict.to_variant());
+    }
+    array
+}

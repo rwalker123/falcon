@@ -6,6 +6,7 @@
 pub(crate) mod campaign;
 pub(crate) mod connections;
 pub(crate) mod culture;
+pub(crate) mod deposits;
 pub(crate) mod economy;
 pub(crate) mod governance;
 pub(crate) mod knowledge;
