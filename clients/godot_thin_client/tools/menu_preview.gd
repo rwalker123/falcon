@@ -46,10 +46,14 @@ const CAPACITY_PICKED := 3
 # `faction_start_min_separation` of 20**, so it is answered here rather than reached: a heavier
 # separation is what would make it real, and the row has to be right when it does.
 const CAPACITY_MAX_ALONE := 0
+# The roomiest offered grid's ceiling, for the re-ask frames: the pick made against it has to survive
+# the switch to a smaller map, clamped rather than reset.
+const CAPACITY_MAX_ROOMIEST := 27
 # The two map sizes the frames switch between, named from the shared registry rather than typed as
 # ids: switching size is what re-asks the ceiling, and `MapSizes` is the one list of them.
 const SIZE_KEY_SMALLEST := "tiny"
 const SIZE_KEY_ROOMIEST := "huge"
+const SIZE_KEY_STANDARD := "standard"
 
 # ---- save-channel fixtures ------------------------------------------------------------------------
 # The `SaveSlots` seam is fed through its REAL `deliver` path with dicts shaped exactly as
@@ -287,6 +291,8 @@ func _run_new_game_states() -> void:
 	_assert_begin_is_offered()
 	await _save("menu_new_game_rivals_unavailable")
 
+	await _run_rivals_reask_states()
+	await _assert_row_height_is_stable()
 	await _assert_an_answer_survives_leaving_the_pane()
 	_assert_capacity_ids_are_disjoint_from_the_save_seam()
 
@@ -308,6 +314,89 @@ func _assert_an_answer_survives_leaving_the_pane() -> void:
 	await _settle()
 	if _find_slider(_shell._rivals_box) == null:
 		_fail("rivals: reopening the pane after an off-pane answer offered no slider")
+
+
+## **THE MAP-SIZE CLICK, WHICH IS THE ONE THE PLAYER MAKES REPEATEDLY.** A re-ask must not take the
+## control away and put it back: the row was destroyed and redrawn on every click, and because the
+## pending caption is a different height from the slider row, every row below it jumped — a visible
+## flash, reported from a playtest.
+##
+## The two frames are the ask IN FLIGHT over a previous answer and the new answer landed, so the
+## before/after is readable rather than inferred. **The identity check is what a frame cannot show**:
+## a torn-down-and-rebuilt row renders identically to a preserved one, so the slider's instance id is
+## carried across the click, and its RECT is compared too — the flash was layout, not just identity.
+func _run_rivals_reask_states() -> void:
+	# Start from a genuinely answered row, with a pick on it. The incoming size is the roomiest (the
+	# failed state left it there), and `_on_size_input` ignores a click on the size already selected,
+	# so this walk moves standard -> roomiest.
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	_drag_rival_slider(CAPACITY_PICKED)
+	await _settle()
+	var before := _find_slider(_shell._rivals_box)
+	if before == null:
+		_fail("rivals re-ask: no slider to preserve before the size click")
+		return
+	var before_id := before.get_instance_id()
+	var before_rect := before.get_global_rect()
+	var before_height := _shell._rivals_box.size.y
+	# The summary reads the same resolved count the wire would carry, so it flickers with it.
+	var before_summary := _shell._rivals_summary_text()
+
+	# THE CLICK. The ask is now in flight and the answer has not landed.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+	await _settle()
+	var during := _find_slider(_shell._rivals_box)
+	if during == null:
+		_fail("rivals re-ask: the control vanished while the new ceiling was in flight")
+	elif during.get_instance_id() != before_id:
+		_fail("rivals re-ask: the control was rebuilt (%d -> %d) rather than left alone"
+			% [before_id, during.get_instance_id()])
+	elif during.get_global_rect() != before_rect:
+		_fail("rivals re-ask: the control moved during the ask (%s -> %s)"
+			% [str(before_rect), str(during.get_global_rect())])
+	if _shell._rivals_box.size.y != before_height:
+		_fail("rivals re-ask: the row changed height during the ask (%f -> %f)"
+			% [before_height, _shell._rivals_box.size.y])
+	if _shell._rivals_summary_text() != before_summary:
+		_fail("rivals re-ask: the summary flipped to %s during the ask (was %s)"
+			% [_shell._rivals_summary_text(), before_summary])
+	if _shell._resolved_rival_count() != CAPACITY_PICKED:
+		_fail("rivals re-ask: the pick became %d while the new ceiling was in flight"
+			% _shell._resolved_rival_count())
+	await _save("menu_new_game_rivals_reask")
+
+	# …and the answer lands, updating the SAME nodes: new ceiling, pick clamped to it.
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_ROOMIEST)
+	await _settle()
+	var after := _find_slider(_shell._rivals_box)
+	if after == null:
+		_fail("rivals re-ask: the answer left no control at all")
+	elif after.get_instance_id() != before_id:
+		_fail("rivals re-ask: the answer replaced the control instead of updating it")
+	elif int(after.max_value) != CAPACITY_MAX_ROOMIEST:
+		_fail("rivals re-ask: the control kept the old ceiling %d, not the answered %d"
+			% [int(after.max_value), CAPACITY_MAX_ROOMIEST])
+	await _save("menu_new_game_rivals_reasked")
+
+
+## **THE ROW HOLDS ITS HEIGHT WHATEVER STATE IT IS IN**, so the seed field and the actions row below
+## it do not move as answers land. No PNG of its own: it is a comparison BETWEEN states, which is
+## exactly what a still cannot carry.
+func _assert_row_height_is_stable() -> void:
+	# Incoming size is the roomiest; each step names a different one so every click really re-asks.
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	var with_slider := _shell._rivals_box.size.y
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(0, CAPACITY_MAX_ALONE)
+	await _settle()
+	var without_slider := _shell._rivals_box.size.y
+	if with_slider != without_slider:
+		_fail("rivals: the row is %f tall with a slider and %f without, so everything below it jumps"
+			% [with_slider, without_slider])
 
 
 ## No slider means no range was invented. Checked rather than eyeballed: a control that quietly

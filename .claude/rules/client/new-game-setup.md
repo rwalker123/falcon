@@ -66,11 +66,36 @@ is offering what it is.
 smaller map's ceiling through `clamp_count`, and a player who has NOT touched the control follows the
 server's default on every answer (`_rival_picked` is what tells those two apart).
 
-## The answer re-derives the ROW, never the pane
+## A RE-ASK IS NOT A STATE CHANGE
 
-`_on_capacity_changed` rebuilds only `_rivals_box`. The setup pane also holds the seed `LineEdit`,
-and rebuilding a text field under a player mid-word is the caret defect the Save pane already paid
-for (`.claude/rules/client/save-load-menu.md`). Nothing else in the pane depends on the answer.
+`_on_capacity_changed` touches only the rival row. The setup pane also holds the seed `LineEdit`, and
+rebuilding a text field under a player mid-word is the caret defect the Save pane already paid for
+(`.claude/rules/client/save-load-menu.md`); nothing else in the pane depends on the answer.
+
+**That is not enough on its own, and the first implementation proved it.** Clicking through the map
+sizes re-asks on every click, and the row freed and recreated its children on every emit: control
+gone → pending caption in → control back, twice per click. Because the caption is shorter than the
+slider row, the seed field, the summary and the actions row all moved 22px each way. It read as a
+flash, and it was reported from a playtest. So the row obeys three rules, and they are about the
+transitions rather than the states:
+
+- **A re-ask over an already-answered row changes nothing.** `_refresh_rivals_row` returns
+  immediately while the seam is `PENDING` and the row has rendered an answer before
+  (`_rivals_answered_once`). Briefly-stale bounds beat a control that vanishes and returns.
+- **An answer that keeps the shape updates the EXISTING nodes** — `max_value`, the value (through
+  `set_value_no_signal`, since this is not the player moving the control), the readout, the caption.
+  `_rebuild_rivals_row` is the only path that frees anything, and only a genuine shape change
+  (no-slider → slider, or the reverse) reaches it.
+- **Both shapes are the same height.** The caption-only states put a `RIVALS_CONTROL_ROW_HEIGHT`
+  spacer where the control would be, so even a real shape change moves nothing below the row.
+  Measured across all seven rendered states: the caption sits at the same y, and so do the seed field
+  and the summary.
+
+**The pick survives the flight, too.** `_resolved_rival_count` returns the player's count while a
+re-ask is in flight over an answered row, rather than collapsing to `NO_COUNT` — otherwise the
+summary reads "server default" for the few milliseconds after every click, and a Begin pressed in
+that window would silently discard the pick. The server clamps a count the new grid cannot seat; it
+cannot recover one this screen threw away.
 
 ## One allocator for every query seam
 
@@ -94,7 +119,9 @@ the load once reported as a success, are in `save-load-menu.md`.
 
 `menu_preview` renders the row through the seam's real `deliver`, from canned replies —
 `menu_new_game_rivals_pending`, `menu_new_game_rivals`, `menu_new_game_rivals_picked`,
-`menu_new_game_rivals_alone`, `menu_new_game_rivals_unavailable` — and asserts what a frame cannot
-show: that no slider is offered without a ceiling, that a failed ask still offers `Begin the trail`,
-that the resolved count on the wire matches the pick, and that the capacity seam's ids are disjoint
-from the save seam's. Details in `.claude/rules/client/harness-menu-workbench.md`.
+`menu_new_game_rivals_alone`, `menu_new_game_rivals_unavailable`, and the map-size click itself in
+`menu_new_game_rivals_reask` / `_reasked` — and asserts what a frame cannot show: that no slider is
+offered without a ceiling, that a failed ask still offers `Begin the trail`, that the resolved count
+on the wire matches the pick, that the control across a re-ask is the SAME NODE at the SAME RECT with
+the row's height and the summary unchanged, that the row is the same height with and without a
+slider, and that the capacity seam's ids are disjoint from the save seam's. Details in `.claude/rules/client/harness-menu-workbench.md`.

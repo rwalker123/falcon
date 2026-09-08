@@ -13,7 +13,7 @@ extends RefCounted
 ## command plus the shared geometry/label primitives (`_hex_center` / `_hex_points` /
 ## `_hex_center_wrapped` / `_unwrapped_path_points` / `_draw_label` / `_draw_reticle` /
 ## `_hex_distance` / `_wrapped_col_delta` / `_is_player_unit` / `_get_adjusted_viewport_size`) and
-## the world state it reads (units, herds, terrain, `tile_lookup`, `faction_colors`,
+## the world state it reads (units, herds, terrain, `tile_lookup`, `faction_color`,
 ## `active_overlay_key`, the hovered tile) stay on MapView and are reached through the `_view`
 ## back-ref.
 ##
@@ -333,7 +333,7 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	var path: Array = order.get("path", [])
 	if path.is_empty():
 		return
-	var color: Color = _view.faction_colors.get(order.get("faction", ""), ROUTE_FALLBACK_COLOR)
+	var color: Color = _view.faction_color(order.get("faction", ""), ROUTE_FALLBACK_COLOR)
 	var tiles: Array = []
 	for waypoint in path:
 		if waypoint.size() != COORD_PAIR_SIZE:

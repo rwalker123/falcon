@@ -70,7 +70,18 @@ healthy stack reaches — `menu_new_game_rivals_alone`, a grid with no room for 
 through `_on_size_input`, because a new size IS the new question
 (`.claude/rules/client/new-game-setup.md`).
 
-Five assertions ride with them, and every one covers something the PNG cannot show: opening the pane
+**The map-size click has its own pair**, `menu_new_game_rivals_reask` (the ask in flight over a
+previous answer) and `_reasked` (the new ceiling landed), because that is the click a player makes
+repeatedly and the row used to be destroyed and redrawn on every one of them — a flash, reported from
+a playtest. **The identity checks are what a frame cannot carry**: a rebuilt row renders identically
+to a preserved one, so the slider's INSTANCE ID and its global rect are carried across the click, and
+the row's height and the summary's text are compared either side of it.
+`_assert_row_height_is_stable` is the other half — the row must be the same height with a slider and
+without one, which is a comparison BETWEEN states and so has no still of its own. Sabotage-verified
+by restoring the defect: freeing the children on every emit fails four legs, naming the row going
+38px → 16px while the ask was in flight.
+
+Five more assertions ride with the state frames, and every one covers something the PNG cannot show: opening the pane
 must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
 without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout), a failed
 ask must still leave `Begin the trail` on screen, and the count that would go on the wire must match

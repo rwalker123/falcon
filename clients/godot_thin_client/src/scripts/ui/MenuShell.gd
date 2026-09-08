@@ -170,6 +170,13 @@ const RIVALS_READOUT_FORMAT := "%d rivals"
 ## make the row breathe.
 const RIVALS_READOUT_MIN_WIDTH := 88.0
 const RIVALS_SLIDER_STEP := 1.0
+## **THE HEIGHT THE CONTROL ROW OCCUPIES, RESERVED BY THE STATES THAT HAVE NO CONTROL.** The caption
+## states are shorter than the slider state, so without this the seed field, the summary and the
+## actions row all jump every time an answer changes the row's shape. A fixed figure because it is a
+## property of the slider at this theme, and `menu_preview`'s `_assert_row_height_is_stable` compares
+## the two states' real heights — so a theme that moves the slider fails there rather than silently
+## reintroducing the jump.
+const RIVALS_CONTROL_ROW_HEIGHT := 18.0
 
 ## The caption under the row, in its four states. It is a CAPTION, always on screen, for the same
 ## reason the Theme row's is: the one thing the control cannot show is why it is offering what it is.
@@ -315,10 +322,18 @@ var _rival_count: int = FactionCapacity.NO_COUNT
 ## the server's default; one that lands after (a map size changed) must keep their pick, clamped to
 ## the new ceiling, rather than silently resetting it to the default.
 var _rival_picked := false
-## The rival row's rebuilt contents, held so an answer landing can re-derive the row in place. The
-## setup pane is NOT rebuilt for it: the seed field lives in that pane, and a rebuild under a player
-## mid-word is the caret defect the Save pane already paid for.
+## The rival row's contents, held so an answer landing can update the row IN PLACE. The setup pane is
+## not rebuilt for it — the seed field lives in that pane, and a rebuild under a player mid-word is
+## the caret defect the Save pane already paid for — and neither are these nodes, which is a separate
+## promise: see `_refresh_rivals_row`.
 var _rivals_box: VBoxContainer = null
+var _rival_slider: HSlider = null
+var _rival_readout: Label = null
+var _rival_caption: Label = null
+## Has this row ever rendered an ANSWER? It is what makes a re-ask different from a first ask: there
+## is something worth keeping on screen only once there is something on screen. Reset with the pane,
+## because a freshly built row has nothing to preserve.
+var _rivals_answered_once := false
 
 ## **THE SAVE CHANNEL SEAM, INJECTED** (`set_save_slots`). `MenuShell` holds no socket and no handle
 ## to `Main` — the same boundary the fog row keeps — so the owner builds the seam over its command
@@ -626,6 +641,10 @@ func _show_pane(pane_id: String) -> void:
 	# The rival row is rebuilt with the pane it lives in; a reference to the outgoing one would have
 	# `_refresh_rivals_row` writing into a freed node on the next answer.
 	_rivals_box = null
+	_rival_slider = null
+	_rival_readout = null
+	_rival_caption = null
+	_rivals_answered_once = false
 	for child in _pane_body.get_children():
 		child.queue_free()
 	match pane_id:
@@ -1226,70 +1245,137 @@ func _make_rivals_row() -> VBoxContainer:
 	_rivals_box = VBoxContainer.new()
 	_rivals_box.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
 	_rivals_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rival_slider = null
+	_rival_readout = null
+	_rival_caption = null
+	_rivals_answered_once = false
 	_refresh_rivals_row()
 	return _rivals_box
 
 
-## **WHAT THE CONTROL LOOKS LIKE IN EACH STATE.** A slider exists only when the server has said how
-## far it may go and that ceiling is at least one: a range invented while the answer is in flight, or
-## after it failed, would be a promise this screen cannot keep. Every state that has no slider still
-## has a caption saying which number the world will be built with, and none of them stops the player
-## from pressing "Begin the trail".
+## **WHAT THE CONTROL LOOKS LIKE IN EACH STATE — AND WHAT IT DOES *BETWEEN* THEM.**
+##
+## A slider exists only when the server has said how far it may go and that ceiling is at least one:
+## a range invented while the answer is in flight, or after it failed, would be a promise this screen
+## cannot keep. Every state without a slider still has a caption saying which number the world will
+## be built with, and none of them stops the player pressing "Begin the trail".
+##
+## **A RE-ASK IS NOT A STATE CHANGE.** Clicking through the map sizes re-asks on every click, and this
+## used to free the row's children and redraw them twice per click — control gone, pending caption in,
+## control back — which read as a flash and moved every row below it by the difference in height.
+## So:
+##
+## - while a re-ask is in flight over a row that has already been answered, NOTHING here changes;
+##   briefly-stale bounds beat a control that vanishes and returns,
+## - an answer that keeps the row's shape updates the EXISTING nodes — bounds, value, readout,
+##   caption — and frees nothing,
+## - only a real shape change (no-slider → slider, slider → no-slider) rebuilds children, and the two
+##   shapes are the same HEIGHT, so even that moves nothing below the row.
 func _refresh_rivals_row() -> void:
 	if _rivals_box == null or not is_instance_valid(_rivals_box):
 		return
+	var state := _faction_capacity.state if _faction_capacity != null else FactionCapacity.STATE_IDLE
+	# The re-ask, over a row that already says something true. Leave it entirely alone.
+	if _rivals_answered_once and state == FactionCapacity.STATE_PENDING and _rivals_row_is_built():
+		return
+	var answered := state == FactionCapacity.STATE_READY
+	var ceiling: int = _faction_capacity.max_count if answered else 0
+	var wants_slider := answered and ceiling > 0
+	var has_slider := _rival_slider != null and is_instance_valid(_rival_slider)
+	if wants_slider != has_slider or not _rivals_row_is_built():
+		_rebuild_rivals_row(wants_slider, ceiling)
+	elif wants_slider:
+		# Same shape, new bounds: the one path a map-size answer takes, and it touches no node's
+		# lifetime. `set_value_no_signal`, because this is not the player moving the control.
+		_rival_slider.max_value = ceiling
+		_rival_slider.set_value_no_signal(_rival_slider_value(ceiling))
+		_rival_readout.text = _rival_readout_text(int(_rival_slider.value))
+	_apply_rivals_caption(state, answered, ceiling)
+	if answered:
+		_rivals_answered_once = true
+
+
+## Is the row standing? The caption is in every shape, so it is the one node that answers this.
+func _rivals_row_is_built() -> bool:
+	return _rival_caption != null and is_instance_valid(_rival_caption)
+
+
+## The value the control should carry for a ceiling — the pick, held inside the new bounds.
+func _rival_slider_value(ceiling: int) -> int:
+	return clampi(maxi(0, _rival_count), 0, ceiling)
+
+
+## Build the row's children for a shape. **The only path that frees anything**, and the two shapes
+## reserve the same height (`RIVALS_CONTROL_ROW_HEIGHT`) so a shape change moves nothing below.
+func _rebuild_rivals_row(wants_slider: bool, ceiling: int) -> void:
 	for child in _rivals_box.get_children():
 		_rivals_box.remove_child(child)
 		child.queue_free()
+	_rival_slider = null
+	_rival_readout = null
+	_rival_caption = null
 
-	var answered := _faction_capacity != null and _faction_capacity.state == FactionCapacity.STATE_READY
-	var ceiling: int = _faction_capacity.max_count if answered else 0
-	if answered and ceiling > 0:
+	if wants_slider:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.custom_minimum_size.y = RIVALS_CONTROL_ROW_HEIGHT
 
-		var slider := HSlider.new()
-		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		slider.min_value = 0
-		slider.max_value = ceiling
-		slider.step = RIVALS_SLIDER_STEP
-		slider.value = maxi(0, _rival_count)
-		HudStyle.apply_slider(slider)
-		row.add_child(slider)
+		_rival_slider = HSlider.new()
+		_rival_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_rival_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_rival_slider.min_value = 0
+		_rival_slider.max_value = ceiling
+		_rival_slider.step = RIVALS_SLIDER_STEP
+		_rival_slider.value = _rival_slider_value(ceiling)
+		HudStyle.apply_slider(_rival_slider)
+		row.add_child(_rival_slider)
 
-		var readout := Label.new()
-		readout.text = _rival_readout_text(maxi(0, _rival_count))
-		readout.custom_minimum_size.x = RIVALS_READOUT_MIN_WIDTH
-		readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
-		readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
-		row.add_child(readout)
+		_rival_readout = Label.new()
+		_rival_readout.text = _rival_readout_text(int(_rival_slider.value))
+		_rival_readout.custom_minimum_size.x = RIVALS_READOUT_MIN_WIDTH
+		_rival_readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+		_rival_readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
+		row.add_child(_rival_readout)
 
-		slider.value_changed.connect(func(value: float) -> void:
-			_rival_count = int(value)
-			_rival_picked = true
-			readout.text = _rival_readout_text(_rival_count)
-			_refresh_summary())
+		_rival_slider.value_changed.connect(_on_rival_slider_changed)
 		_rivals_box.add_child(row)
-
-	var caption := Label.new()
-	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	caption.add_theme_font_size_override("font_size", HINT_SIZE)
-	if not answered:
-		var pending := _faction_capacity != null and (
-			_faction_capacity.state == FactionCapacity.STATE_PENDING
-			or _faction_capacity.state == FactionCapacity.STATE_IDLE)
-		caption.text = RIVALS_CAPTION_PENDING if pending else RIVALS_CAPTION_UNAVAILABLE
-		caption.add_theme_color_override("font_color", HudStyle.INK_FAINT if pending else HudStyle.WARN)
-	elif ceiling == 0:
-		caption.text = RIVALS_CAPTION_ALONE
-		caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	else:
-		caption.text = RIVALS_CAPTION_CEILING_FORMAT % ceiling
-		caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	_rivals_box.add_child(caption)
+		# The control's height with no control in it, so the caption below sits where it always sits.
+		var reserved := Control.new()
+		reserved.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		reserved.custom_minimum_size.y = RIVALS_CONTROL_ROW_HEIGHT
+		_rivals_box.add_child(reserved)
+
+	_rival_caption = Label.new()
+	_rival_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rival_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rival_caption.add_theme_font_size_override("font_size", HINT_SIZE)
+	_rivals_box.add_child(_rival_caption)
+
+
+## The player moved the control. The ONLY place a pick is recorded, which is why the seam's own
+## updates go through `set_value_no_signal`.
+func _on_rival_slider_changed(value: float) -> void:
+	_rival_count = int(value)
+	_rival_picked = true
+	if _rival_readout != null and is_instance_valid(_rival_readout):
+		_rival_readout.text = _rival_readout_text(_rival_count)
+	_refresh_summary()
+
+
+## The caption's words and tone for a state, written onto the node that is already there.
+func _apply_rivals_caption(state: String, answered: bool, ceiling: int) -> void:
+	if not _rivals_row_is_built():
+		return
+	if not answered:
+		var pending := state == FactionCapacity.STATE_PENDING or state == FactionCapacity.STATE_IDLE
+		_rival_caption.text = RIVALS_CAPTION_PENDING if pending else RIVALS_CAPTION_UNAVAILABLE
+		_rival_caption.add_theme_color_override(
+			"font_color", HudStyle.INK_FAINT if pending else HudStyle.WARN)
+		return
+	_rival_caption.text = RIVALS_CAPTION_ALONE if ceiling == 0 else RIVALS_CAPTION_CEILING_FORMAT % ceiling
+	_rival_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 
 
 ## The readout's words. `0` is "None" rather than "0 rivals": the count the player is most likely to
@@ -1310,6 +1396,13 @@ func _rival_readout_text(count: int) -> String:
 func _resolved_rival_count() -> int:
 	if _faction_capacity == null:
 		return FactionCapacity.NO_COUNT
+	# **A RE-ASK DOES NOT UNMAKE THE PICK.** While a new ceiling is in flight over a row that is still
+	# showing the old one, the count on screen is the count that would be sent — anything else makes
+	# the summary read "server default" for the few milliseconds after every map-size click, and
+	# would quietly discard the player's pick if they pressed Begin inside that window. The server
+	# clamps a count the new grid cannot seat; it cannot recover one this screen threw away.
+	if _rivals_answered_once and _faction_capacity.state == FactionCapacity.STATE_PENDING:
+		return _rival_count
 	var count := _faction_capacity.clamp_count(_rival_count)
 	return count if _faction_capacity.permits(count) else FactionCapacity.NO_COUNT
 

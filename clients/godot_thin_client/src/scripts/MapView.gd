@@ -1038,14 +1038,67 @@ var mouse_pan_button: int = -1
 ## Mirror of `Main`'s pause overlay, pushed in by `set_modal_menu_open`. See `_keyboard_owner`.
 var _modal_menu_open: bool = false
 
-var faction_colors: Dictionary = {
-	"Aurora": Color(0.55, 0.85, 1.0, 1.0),
-	"Obsidian": Color(0.95, 0.62, 0.2, 1.0),
-	"Verdant": Color(0.4, 0.9, 0.55, 1.0),
-	0: Color(0.55, 0.85, 1.0, 1.0),
-	1: Color(0.95, 0.62, 0.2, 1.0),
-	2: Color(0.4, 0.9, 0.55, 1.0)
+## **THE THREE SEEDED PEOPLES, UNCHANGED.** Ids 0, 1 and 2 are literal because they are what every
+## game and every committed preview frame already shows; the generated hues below start after them
+## and never overwrite them.
+const SEEDED_FACTION_COLORS := [
+	Color(0.55, 0.85, 1.0, 1.0),   # 0 — the player's own, cyan
+	Color(0.95, 0.62, 0.2, 1.0),   # 1 — orange
+	Color(0.4, 0.9, 0.55, 1.0),    # 2 — green
+]
+
+## The three faction NAMES the snapshot used to carry in the same field an id rides in now. Kept
+## because the field is read raw (`unit.get("faction")`) and either spelling still resolves to the
+## same people's colour.
+const SEEDED_FACTION_NAMES := {
+	"Aurora": 0,
+	"Obsidian": 1,
+	"Verdant": 2,
 }
+
+## **HOW A FOURTH PEOPLE GETS A COLOUR.** The rival count the New Game screen offers runs to 11 on a
+## Standard map and 27 on a Huge one (`.claude/rules/client/new-game-setup.md`), so a hand-written
+## list would leave everyone past the third sharing one tint — which is what
+## `BAND_FACTION_FALLBACK_COLOR` looked like on the map before this existed.
+##
+## The hue turns by the GOLDEN ANGLE per id, which is the arrangement that keeps successive ids as
+## far apart on the wheel as they can be for any count: neighbours never land next to each other, and
+## the sequence never repeats a hue for any roster this game can produce.
+const FACTION_HUE_GOLDEN_ANGLE_TURNS := 0.381966  # (3 − √5) / 2, the golden angle as a fraction of a turn
+
+## Saturation and value for the generated hues — the MEAN of the three seeded colours' own, so a
+## fourth people reads as another member of this set rather than as a colour from a different palette.
+## (Seeded: S 0.45 / 0.79 / 0.56, V 1.00 / 0.95 / 0.90.)
+const FACTION_GENERATED_SATURATION := 0.6
+const FACTION_GENERATED_VALUE := 0.95
+
+## **THE ONE FACTION-COLOUR LOOKUP.** Every reader goes through it — a band token, a name pill, an
+## order path — so "which colour is this people" has a single answer for a roster of any size.
+##
+## `faction` is the RAW wire value: an id, one of the legacy names, or nothing at all. `fallback` is
+## what an ABSENT faction gets and is the caller's to choose (a band and a route disagree about it),
+## which is why it is a parameter rather than a constant read in here. A real id never reaches it.
+func faction_color(faction, fallback: Color) -> Color:
+	var index := -1
+	if faction is int:
+		index = faction
+	elif faction is float:
+		index = int(faction)
+	elif faction is String:
+		index = int(SEEDED_FACTION_NAMES.get(faction, -1))
+	if index < 0:
+		return fallback
+	if index < SEEDED_FACTION_COLORS.size():
+		return SEEDED_FACTION_COLORS[index]
+	# One golden-angle step per id PAST the seeded three, starting from the last seeded hue — so the
+	# generated run continues the set rather than restarting somewhere unrelated to it.
+	var steps := index - SEEDED_FACTION_COLORS.size() + 1
+	var hue: float = fposmod(
+		SEEDED_FACTION_COLORS[SEEDED_FACTION_COLORS.size() - 1].h
+			+ steps * FACTION_HUE_GOLDEN_ANGLE_TURNS,
+		1.0)
+	return Color.from_hsv(hue, FACTION_GENERATED_SATURATION, FACTION_GENERATED_VALUE, 1.0)
+
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
