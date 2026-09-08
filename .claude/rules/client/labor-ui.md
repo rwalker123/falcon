@@ -2517,7 +2517,7 @@ the player was reading when they clicked the map.
 would put a stale crew under the steppers this fix exists for. A lookup that FAILS is not staleness
 either: the panel band only ever comes from `player_bands()`, so an entity the roster no longer lists
 is a band that has left the world, and the last rung takes that case rather than addressing a command
-to it. The panel rung carries the same `_is_player_unit` guard the selection rung does.
+to it. The panel rung carries the same `HudConst.is_player_unit` guard the selection rung does.
 
 **Verified by `ui_preview`'s `compose_panel_band_hunt` / `compose_panel_band_forage`**
 (`chapters/hunt.gd`, appended last). Both sheets are asserted, because they are two injection sites

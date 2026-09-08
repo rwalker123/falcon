@@ -12,10 +12,11 @@ extends RefCounted
 ## `_crisis_annotations`, `_routes`, and the targeting dict + its animation clock. Every draw
 ## command plus the shared geometry/label primitives (`_hex_center` / `_hex_points` /
 ## `_hex_center_wrapped` / `_unwrapped_path_points` / `_draw_label` / `_draw_reticle` /
-## `_hex_distance` / `_wrapped_col_delta` / `_is_player_unit` / `_get_adjusted_viewport_size`) and
+## `_hex_distance` / `_wrapped_col_delta` / `_get_adjusted_viewport_size`) and
 ## the world state it reads (units, herds, terrain, `tile_lookup`, `faction_color`,
 ## `active_overlay_key`, the hovered tile) stay on MapView and are reached through the `_view`
-## back-ref.
+## back-ref. The one primitive that does NOT come through `_view` is the is-this-mine predicate:
+## `HudConst.is_player_unit` is a `class_name` static, so it is called directly.
 ##
 ## TWO PUBLIC SEAMS STAY ON MAPVIEW as thin same-named pass-throughs, because both are reached
 ## REFLECTIVELY — a rename would not error, it would silently do nothing:
@@ -360,7 +361,7 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 		# Only the player's own bands can fulfill a harvest/hunt, so only they get
 		# the valid-target glow / ETA — not other factions' visible units.
 		for unit in _view.units:
-			if not _view._is_player_unit(unit):
+			if not HudConst.is_player_unit(unit):
 				continue
 			var pos: Array = Array(unit.get("pos", []))
 			if pos.size() != COORD_PAIR_SIZE:
@@ -372,7 +373,7 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 			_view.draw_arc(center, ring_radius, 0, TAU, TARGETING_RING_SEGMENTS, ring_color, TARGETING_RING_WIDTH)
 		if _view._hovered_tile.x >= 0 and _view._hovered_tile.y >= 0:
 			for unit in _view.units:
-				if not _view._is_player_unit(unit):
+				if not HudConst.is_player_unit(unit):
 					continue
 				var hpos: Array = Array(unit.get("pos", []))
 				if hpos.size() == COORD_PAIR_SIZE \

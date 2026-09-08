@@ -664,11 +664,6 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 func _herd_label_for_id(herd_id: String) -> String:
     return _herd_label_for_id_fn.call(herd_id)
 
-## Player-faction check for a band (a trivial private copy of HudLayer's, the SelectionCardController
-## precedent — a one-line predicate is not worth a Callable).
-func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
-
 # ---- The inbound seam: is a panel even injected? ------------------------------------------------
 
 ## Is the dockable panel present? The two non-moving HudLayer readers
@@ -747,7 +742,7 @@ func show_work_tab(band_entity: int) -> void:
 ## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
 ## than a summary line because BBCode cannot host a drawn chart.
 func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxContainer:
-    if not (_is_player_unit(band) and DetailFormat.band_has_food_flow(band)):
+    if not (HudConst.is_player_unit(band) and DetailFormat.band_has_food_flow(band)):
         return null
     var arrivals := DetailFormat.merged_arrival_schedule(band)
     if arrivals.is_empty():
