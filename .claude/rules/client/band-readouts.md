@@ -1542,3 +1542,53 @@ decision's consequence, not a drift to be reconciled.
 **The fodder keys are separate from the food ones on purpose**: hay and grain cross the same links on
 the same turn in different amounts, and a ledger reading the other account's figure would look
 plausible on every frame.
+
+## A FOREIGN BAND'S ROW IS SIX FIELDS, AND EVERY OTHER READOUT MUST READ IT AS *UNKNOWN*
+
+Worldgen places every registered faction, so a rival people is a thing a frame carries — and a
+published frame is one viewer's view. A foreign band standing where the viewer can see publishes an
+allow-listed **six** fields (`entity`, `band_id`, `faction`, `name`, `current_x`/`current_y`, `size`)
+with everything else at its type DEFAULT; a foreign band anywhere else publishes **no row at all**.
+The contract is `.claude/rules/core_sim/factions.md` → "What a foreign band publishes"; what belongs
+here is what the client owes it.
+
+**"We don't know" is not "zero", and the client's answer is to render NOTHING rather than a zero.**
+`unit_summary_lines` gates Food, Fodder, Upkeep, Morale and Growth — and every disclosure registered
+beneath them — on `_is_player_unit`, so a rival's drawer is a `Position:` row and nothing else. That
+gate PREDATES the redaction and is what made the redaction safe to land: before it, a rival's cohort
+printed a fabricated `Food 0 (∞)` in healthy green, the UI claiming to have counted a larder nobody
+can see. The other three surfaces answer the same way and each for its own reason:
+
+| surface | what a rival gets | the mechanism |
+|---|---|---|
+| the Occupants roster row | a NEUTRAL vitality dot, the name, the size, and no activity mark | `SelectionCardController._build_band_row` / `_update_band_row`, gated on `_is_player_unit` |
+| the roster row's leading MARK and its hover | nothing at all | `settlement_stage_id` / `_icon` / `_label` are all `""` on a redacted row, so `StageSprites.for_stage` misses and the mark column takes its zero-width empty |
+| the map token | the neutral non-circular placeholder, with the faction carried by the nameplate | `BandMarkerRenderer._draw_band_token`'s empty-glyph branch. The food dot and the lethal ⚠ are drawn only for `_is_player_unit` |
+
+⛔ **THE PLACEHOLDER SQUARE IS THE *UNKNOWN STAGE*, not a missing-snapshot fallback.** It was written
+for a pre-stage cohort and is now the ordinary rendering for every rival camp on the map. Do not
+"repair" it by defaulting the glyph to a camp: a settlement stage is exactly the fact a redacted row
+withholds, and drawing one would state a survey the player has not made.
+
+### Absence means OUT OF SIGHT, never death
+
+A rival's row leaves the frame when it walks out of the viewer's sight and returns when it comes back
+— the same way a fog-gated herd does, and the server names it in `removedPopulations` either way. So
+no client cache, alert or feed may read a band leaving the snapshot as *this band died*: the selection
+quietly drops to the tile (`HudLayer.reapply_selection`'s default arm), the marker stops being drawn,
+and **nothing is announced**. The paths that could have got this wrong all read the PLAYER's roster
+already — `AttentionController`'s decline producer diffs `prev_band_sizes` over `player_bands`, and
+`BandPanelController`'s panel subject is only ever set from `player_bands()` — so a rival has no cache
+to be evicted from. The one place a foreign band IS named across frames is a connection's subject, and
+that already degrades by design: `_connection_subject_label` falls back to *where it was last seen*
+rather than to a raw `BandId`.
+
+### `hasOwner`, never `owner != 0`
+
+Faction 0 is a real faction, so a forage patch's `owner == 0` cannot mean *unowned* — the wire carries
+a presence bit beside it and the decoder publishes both (`has_owner` / `owner`). Every ownership
+reader in this client asks the bit first: `ReadyForImprovement._not_another_faction_s`,
+`KnowledgePanelController`'s tended-patch scan and `AttentionController`'s two neglect producers. The
+road ladder's `HudRouteVocab.has_keeper` is the same shape one subject over. **A reader that tested
+`owner != 0` would silently drop every patch the first faction tends**, which on the shipped
+single-human profile is every patch the player owns.

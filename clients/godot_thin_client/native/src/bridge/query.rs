@@ -30,8 +30,8 @@
 use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
-    HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, QueryReply, QueryReplyEnvelope,
-    MAX_PROTO_FRAME,
+    FactionCapacityQuery, HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, QueryReply,
+    QueryReplyEnvelope, MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -88,6 +88,11 @@ pub(crate) const QUERY_KIND_LOAD_GAME: &str = "load_game";
 pub(crate) const QUERY_KIND_DELETE_SAVE: &str = "delete_save";
 /// The `SaveOpReply` answer kind — what a save, load or delete comes back as.
 pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
+/// **"How many rivals may I ask for on a grid this size?"** — the New Game screen's ask, answered
+/// from the sim's own ceiling rule so the control's bounds are never restated in GDScript. Both
+/// directions use this one kind: the ask carries `width`/`height`, the answer carries
+/// `default_ai_faction_count` and `max_ai_faction_count`.
+pub(crate) const QUERY_KIND_FACTION_CAPACITY: &str = "faction_capacity";
 
 /// **The transport's OWN failure token**, and it is deliberately in the same vocabulary as the
 /// server's `query_error` tokens rather than a free-text string: the seam renders one failure line
@@ -211,6 +216,24 @@ pub(crate) fn dispatch(
                 CommandPayload::Query {
                     request_id,
                     query: QueryPayload::ListSaves,
+                },
+                SAVE_REPLY_TIMEOUT,
+            )
+        }
+        // Asked from the New Game screen, where there is no world — answered before the server's
+        // world gate, exactly as the slot list is, and given the same patient timeout for the same
+        // reason: it still queues behind whatever turn the sim is resolving.
+        QUERY_KIND_FACTION_CAPACITY => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::Query {
+                    request_id,
+                    query: QueryPayload::FactionCapacity(FactionCapacityQuery {
+                        width: dict_u32(ask, "width"),
+                        height: dict_u32(ask, "height"),
+                    }),
                 },
                 SAVE_REPLY_TIMEOUT,
             )
@@ -420,6 +443,18 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
                 drift.push(&row.to_variant());
             }
             let _ = dict.insert("config_drift", &drift);
+        }
+        Ok(QueryReply::FactionCapacity(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_FACTION_CAPACITY);
+            let _ = dict.insert(
+                "default_ai_faction_count",
+                i64::from(reply.default_ai_faction_count),
+            );
+            let _ = dict.insert(
+                "max_ai_faction_count",
+                i64::from(reply.max_ai_faction_count),
+            );
         }
         Ok(QueryReply::Error(reason)) => {
             let _ = dict.insert("ok", false);

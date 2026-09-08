@@ -90,6 +90,31 @@ stack, land included (`map-renderers.md` → Select-then-cycle). The marks SIGNA
 so icons never jump between frames; reordering on a state change would make a herd swap corners the
 turn a knowledge track completes. Frame: `map_overflow_worked`.
 
+## A PEOPLE'S COLOUR IS GENERATED, not listed
+
+`MapView.faction_color(faction, fallback)` is the one lookup — a band token, a name pill and an order
+path all go through it, so "which colour is this people" has a single answer for a roster of any
+size. It replaced a six-entry `faction_colors` dictionary, which was correct while a world held one
+people and wrong the moment the New Game screen began offering rivals: the ceiling is 6 on a
+Standard map and 17 on a Huge one (`.claude/rules/client/new-game-setup.md`), and everyone past the
+third rendered in `BAND_FACTION_FALLBACK_COLOR` — one tint for every rival on the map.
+
+- **Ids 0, 1 and 2 are frozen literals.** Every game in progress and every committed preview frame is
+  drawn in that blue / orange / green, so the generated run starts after them and never redefines
+  one. The three legacy faction NAMES resolve to the same three, because the wire field is read raw
+  and either spelling may still arrive in it.
+- **The rest turn by the GOLDEN ANGLE**, at the mean saturation and value of the seeded three, so a
+  fourth people belongs to the same set rather than arriving from another palette. Successive ids
+  land ~0.29 of a turn apart — a player compares NEIGHBOURS, and this is the arrangement that keeps
+  every prefix of the sequence spread out rather than only the full roster.
+- **`BAND_FACTION_FALLBACK_COLOR` still exists and is still right**, for an ABSENT faction — the
+  `fallback` is a parameter because a band and an order path disagree about what "no faction" should
+  look like. A real id can no longer reach it.
+
+`map_preview`'s `map_faction_palette` state renders a dozen peoples' pills in one frame, and asserts
+over the whole 0..27 range beside it: the three seeded colours unchanged, no id sharing a colour, no
+id falling through to the unknown tint, and a floor on the hue gap between neighbours.
+
 ## The nameplate is TWO SHAPES, and the pill REPLACES the bar rather than writing on it
 
 A band's map token names itself: `_draw_band_name_pill` puts the band's own name — "Ashfell",

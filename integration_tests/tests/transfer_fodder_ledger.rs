@@ -344,6 +344,14 @@ fn a_hay_shipment_lands_on_the_fodder_route_arm_and_leaves_the_food_identity_alo
     let mut app = world();
     let (sender, host) = a_sender_and_a_foreign_destination(&mut app);
     let host_id = band_id(&app, host);
+    // **This frame is captured for the faction that OWNS the destination**, because the
+    // destination's own ledger rows are what this test reads. A snapshot publishes a *foreign*
+    // band redacted — position, name and scale only (`factions.md` → "What a foreign band
+    // publishes") — so a frame captured for the sender would carry the host's arms at zero by
+    // design, which is a fact about entitlement rather than about the fodder ledger this file pins.
+    // `FOREIGN_FACTION` is foreign to the *sender*, which is all the fixture wanted of it.
+    app.world
+        .insert_resource(core_sim::ViewerFaction(FOREIGN_FACTION));
 
     // A loaded party standing in the destination's camp: it hands the cargo over on the next turn.
     let host_pos = position_of(&app, host);

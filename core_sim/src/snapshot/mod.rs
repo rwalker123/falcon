@@ -67,7 +67,6 @@ use crate::{
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
         GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
-        GreatDiscoveryTelemetry,
     },
     heightfield::ElevationField,
     influencers::InfluentialRoster,
@@ -2315,6 +2314,12 @@ mod tests {
             // Nothing is queued in this fixture, so no patch names a builders kit.
             &crate::snapshot::subsistence::BuildKitIds::default(),
             &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
+            // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
+            // must not stand between the assertion and the field it is about.
+            FactionId(0),
+            &crate::visibility::VisibilityLedger::default(),
+            false,
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
@@ -2371,6 +2376,12 @@ mod tests {
             &FloraQuoteCache::default(),
             &crate::snapshot::subsistence::BuildKitIds::default(),
             &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
+            // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
+            // must not stand between the assertion and the field it is about.
+            FactionId(0),
+            &crate::visibility::VisibilityLedger::default(),
+            false,
         );
 
         let published: Vec<&str> = patches
@@ -2459,7 +2470,7 @@ mod tests {
         // Faction 5 has only unrelated discovery progress → no intensification row.
         ledger.add_progress(FactionId(5), 1, Scalar::one());
 
-        let rows = snapshot_intensification_knowledge(&ledger, &ladder);
+        let rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(2));
         assert_eq!(rows.len(), 1, "only factions on the ladders appear");
         let f2 = &rows[0];
         assert_eq!(f2.faction, 2);
@@ -2499,12 +2510,22 @@ mod tests {
             Scalar::from_f32(PARTIAL_FODDERING),
         );
 
-        let rows = snapshot_intensification_knowledge(&ledger, &ladder);
-        assert_eq!(rows.len(), 2, "both factions are on the ladder");
-        let penned = &rows[0];
+        // **Asked once per viewer, because the list is viewer-scoped** (`factions.md` → "Which
+        // frame sections are viewer-scoped"). The claim being pinned is the all-zero skip's, not the
+        // list's membership: each faction, asked about ITSELF, gets its row.
+        let penned_rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(7));
+        assert_eq!(penned_rows.len(), 1, "a faction reads its own row");
+        let penned = &penned_rows[0];
         assert_eq!(penned.faction, 7);
         assert!((track(penned, "foddering") - 1.0).abs() < 1e-6);
-        let fodder_only = &rows[1];
+
+        let fodder_rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(9));
+        assert_eq!(
+            fodder_rows.len(),
+            1,
+            "Foddering alone is still something learned"
+        );
+        let fodder_only = &fodder_rows[0];
         assert_eq!(fodder_only.faction, 9);
         assert!((track(fodder_only, "foddering") - PARTIAL_FODDERING).abs() < 1e-6);
         assert_eq!(track(fodder_only, "penning"), 0.0);
@@ -2859,6 +2880,10 @@ mod tests {
                 &FloraQuoteCache::default(),
                 &crate::snapshot::subsistence::BuildKitIds::default(),
                 &crate::snapshot::subsistence::UpkeepKitIds::default(),
+                // Fog OFF — see the sibling fixtures above.
+                FactionId(0),
+                &crate::visibility::VisibilityLedger::default(),
+                false,
             );
             let row = &rows[0];
             assert_eq!(

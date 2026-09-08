@@ -6,8 +6,11 @@ use std::sync::OnceLock;
 pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
     readiness: Res<'w, GreatDiscoveryReadiness>,
-    telemetry: Res<'w, GreatDiscoveryTelemetry>,
     registry: Res<'w, GreatDiscoveryRegistry>,
+    // **`GreatDiscoveryTelemetry` is deliberately NOT here.** Its two counters are world-level
+    // server metrics (`SimulationMetrics.great_discovery_candidates` / `_active`); the frame's
+    // counters are derived per viewer from the ledger and the readiness map instead, so the numbers
+    // agree with the lists they sit above. See `snapshot_telemetry`.
     #[system_param(ignore)]
     _marker: std::marker::PhantomData<&'s ()>,
 }
@@ -2530,9 +2533,27 @@ pub fn capture_snapshot(
             )
         })
         .unwrap_or_default();
+    // ⛔ **WIRE-LEVEL FOG FOR PEOPLE — the SAME seam the herd list uses.**
+    //
+    // `HerdSnapshotInputs::herd_is_visible` asks `VisibilityLedger::is_visible(viewer, x, y)` and
+    // short-circuits on `fog_enabled`; this asks the identical question, so there is one notion of
+    // *"the viewer can see this"* rather than a second one free to drift from it. `Active`, not
+    // `Discovered`, for the herd list's reason: ground you saw two hundred turns ago says nothing
+    // about where a band is camped today, and a band wanders.
+    //
+    // **Fails CLOSED.** A band whose tile does not resolve to a position, and an absent faction map
+    // (before the first `calculate_visibility`, or the turn after a rollback clears the ledger),
+    // both read as not-visible — matching `visibility_raster_from_ledger`, which emits an
+    // all-unexplored raster in the same state.
+    let foreign_band_is_visible = |position: Option<UVec2>| -> bool {
+        if !config.fog_enabled {
+            return true;
+        }
+        position.is_some_and(|pos| visibility_ledger.is_visible(viewer_faction.0, pos.x, pos.y))
+    };
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(
+        .filter_map(
             |(
                 entity,
                 cohort,
@@ -2545,6 +2566,31 @@ pub fn capture_snapshot(
                 bench,
             )| {
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
+                // ⛔ **THE THREE TIERS — resolved FIRST, so nothing below it is even computed for a
+                // band the viewer is not entitled to.** See
+                // [`crate::snapshot::population::redacted_population_state`].
+                //
+                //   1. **your own band** — the full row, unchanged;
+                //   2. **a foreign band standing where you can see** — a redacted row, because the
+                //      client colours foreign markers by faction and draws them, so the row has to
+                //      exist;
+                //   3. **a foreign band anywhere else** — no row at all.
+                //
+                // **`fog_enabled` moves the line between 2 and 3 and NEVER between 1 and 2.** Fog
+                // decides what you can *see*; it is not an entitlement switch, so turning it off
+                // reveals where the rival's camps are and still says nothing about their insides.
+                if cohort.faction != viewer_faction.0 {
+                    if !foreign_band_is_visible(current_pos) {
+                        return None;
+                    }
+                    return Some(crate::snapshot::population::redacted_population_state(
+                        entity,
+                        band_id,
+                        band_name,
+                        cohort,
+                        current_pos,
+                    ));
+                }
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
                     .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
@@ -2630,7 +2676,7 @@ pub fn capture_snapshot(
                         config.map_topology.wrap_horizontal,
                     )
                 });
-                population_state(PopulationStateInputs {
+                Some(population_state(PopulationStateInputs {
                     entity,
                     band_id,
                     band_name,
@@ -2686,7 +2732,7 @@ pub fn capture_snapshot(
                         forage: &forage_registry,
                         herds: &herd_registry,
                     },
-                })
+                }))
             },
         )
         .collect();
@@ -2711,7 +2757,7 @@ pub fn capture_snapshot(
         entries: knowledge_ledger_states,
         timeline: knowledge_timeline_states,
         metrics: knowledge_metrics_state,
-    } = knowledge_ledger.snapshot_payload();
+    } = knowledge_ledger.snapshot_payload(viewer_faction.0);
 
     let mut generation_states: Vec<GenerationState> =
         registry.profiles().iter().map(generation_state).collect();
@@ -2750,11 +2796,12 @@ pub fn capture_snapshot(
     // The discovery ladder's four readouts plus its telemetry. Per catalogued discovery — a content
     // count, so it grows when the catalog does, never with the map.
     let discovery_scope = crate::turn_profile::scope("snapshot.build.discovery");
-    let discovery_states = discovery_progress_entries(&discovery_progress);
+    let discovery_states = discovery_progress_entries(&discovery_progress, viewer_faction.0);
     let great_discovery_definition_states = snapshot_definitions(&gds.registry);
-    let great_discovery_states = snapshot_discoveries(&gds.ledger);
-    let great_discovery_progress_states = snapshot_progress(&gds.readiness);
-    let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
+    let great_discovery_states = snapshot_discoveries(&gds.ledger, viewer_faction.0);
+    let great_discovery_progress_states = snapshot_progress(&gds.readiness, viewer_faction.0);
+    let great_discovery_telemetry_state =
+        snapshot_telemetry(&gds.ledger, &gds.readiness, viewer_faction.0);
     drop(discovery_scope);
 
     // The contiguous full-grid raster block: terrain, sentiment, corruption, culture,
@@ -2945,8 +2992,11 @@ pub fn capture_snapshot(
         header.campaign_label = Some(label.to_snapshot());
     }
 
+    // **The VIEWER's start.** `StartMarkerState` is a single `{x, y}` on the wire and stays one: a
+    // frame is captured for one viewer, so the marker it carries is that viewer's own opening
+    // ground. A world with one faction publishes exactly what it always has.
     let start_marker_state = start_location
-        .position()
+        .position_for(viewer_faction.0)
         .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
     drop(header_scope);
 
@@ -3063,9 +3113,22 @@ pub fn capture_snapshot(
     // (`docs/plan_standing_upkeep.md` §4.7a ②). It is read off the bands' **queues**, not off the
     // patch/herd scratch beside it: a `build_kit` command is answered by a recapture in the same
     // dispatch, so a turn-written field would show the pick a whole turn late.
+    //
+    // ⛔ **THE VIEWER'S OWN BANDS, AND THAT IS WHAT MAKES BOTH INDICES A BOUNDARY.** They key purely
+    // by tile and herd id, so an unfiltered walk resolved *every* faction's queue onto the shared
+    // source tables — a rival mid-build on ground the viewer has never walked published
+    // `isField: false, fieldProgress: 0` beside their kit id, their finish date and their queue
+    // position. The improvement standing on a tile follows the **ground** and is legible where the
+    // viewer has explored; who is raising it, with what, and where it sits in their line is the
+    // **builder's** internal state, the same category as the larder and bench a foreign band's row
+    // already withholds. Their membership is also what the two source tables gate the stamped
+    // scratch on, so this filter is the single seam behind both readings
+    // (`factions.md` → "The improvement follows the ground; the BUILDER'S state follows the
+    // builder").
     let build_kit_ids = crate::snapshot::subsistence::resolve_build_kit_ids(
         populations
             .iter()
+            .filter(|(_, cohort, ..)| cohort.faction == viewer_faction.0)
             .filter_map(|(_, _, allocation, ..)| allocation),
         &forage_registry,
         &herd_registry,
@@ -3074,10 +3137,13 @@ pub fn capture_snapshot(
     // **THE LIVE KEEPING KIT PER WORKED SOURCE**, on the same rule one account over
     // (`docs/plan_standing_upkeep.md` §2.7): the keeping kit is a property of the band's **row**, so
     // it is read off the rows rather than off the patch/herd scratch, and an `upkeep_kit` command is
-    // answered by a recapture in the same dispatch.
+    // answered by a recapture in the same dispatch. **Filtered to the viewer's bands** on the rule
+    // above — which is also what `UpkeepKitIds::patch`'s own contract has always claimed ("`("",
+    // false)` when no band **of the faction** works it").
     let upkeep_kit_ids = crate::snapshot::subsistence::resolve_upkeep_kits(
         populations
             .iter()
+            .filter(|(_, cohort, ..)| cohort.faction == viewer_faction.0)
             .filter_map(|(_, _, allocation, ..)| allocation),
         &forage_registry,
         &herd_registry,
@@ -3120,9 +3186,10 @@ pub fn capture_snapshot(
         upkeep_kits: &upkeep_kit_ids,
     });
     drop(herds_scope);
-    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
-    let sedentarization_state = snapshot_sedentarization(&sedentarization);
-    let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
+    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory, viewer_faction.0);
+    let sedentarization_state = snapshot_sedentarization(&sedentarization, viewer_faction.0);
+    let discovered_sites_state =
+        snapshot_discovered_sites(&discovered_sites, &sites_config, viewer_faction.0);
     // **Faction is a property of the ENDPOINT** — resolved here, once, so the connection ledger
     // itself never carries one. An edge whose observer band is gone resolves to nothing and is
     // filtered out rather than published against a guessed faction.
@@ -3174,20 +3241,23 @@ pub fn capture_snapshot(
         &flora_quotes,
         &build_kit_ids,
         &upkeep_kit_ids,
+        viewer_faction.0,
+        &visibility_ledger,
+        config.fog_enabled,
     );
     drop(forage_patches_scope);
     let intensification_knowledge_state =
-        snapshot_intensification_knowledge(&discovery_progress, &ladder_config);
+        snapshot_intensification_knowledge(&discovery_progress, &ladder_config, viewer_faction.0);
     let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
     // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
     // A per-world constant like the roster above, so it diffs out after the first frame.
     let route_rung_state = snapshot_route_rungs(&ladder_config);
-    let command_events_state = command_events_to_state(&command_events);
+    let command_events_state = command_events_to_state(&command_events, viewer_faction.0);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
-    let pending_forks_state = snapshot_pending_forks(&beat_ledger);
-    let stance_axes_state = snapshot_stance_axes(&beat_ledger);
-    let voice_medium_state = snapshot_voice_medium(&beat_ledger);
-    let victory_snapshot_state = victory_snapshot_from_resource(&victory);
+    let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer_faction.0);
+    let stance_axes_state = snapshot_stance_axes(&beat_ledger, viewer_faction.0);
+    let voice_medium_state = snapshot_voice_medium(&beat_ledger, viewer_faction.0);
+    let victory_snapshot_state = victory_snapshot_from_resource(&victory, viewer_faction.0);
     let capability_bits = capability_flags.bits();
     drop(readouts_scope);
 
@@ -3213,6 +3283,7 @@ pub fn capture_snapshot(
         &materials_config,
         &discovery_progress,
         knowledge_threshold,
+        viewer_faction.0,
     );
     // **The opening loadout picker's row.** A world with no chosen campaign publishes the default —
     // a shut window with no budget — which is exactly what such a world has.

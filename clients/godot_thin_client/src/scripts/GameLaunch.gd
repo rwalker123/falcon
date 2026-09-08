@@ -6,7 +6,11 @@ extends Node
 ## slot. Null when no launch is pending (Main falls back to a dev-default world in that case,
 ## so launching `Main.tscn` directly still yields a playable map).
 ##
-## Shape when set: {preset_id: String, width: int, height: int, seed: int, profile_id: String}.
+## Shape when set: {preset_id: String, width: int, height: int, seed: int, profile_id: String,
+## ai_faction_count: int}. **`ai_faction_count` is `FactionCapacity.NO_COUNT` for "the player was
+## never offered a choice"** — the New Game screen's capacity ask went unanswered — and `Main` then
+## omits the argument, which the server answers with its unattended roster: no rivals, unless its
+## config pins some. An explicit `0` is a different request naming that count outright.
 var pending_new_game = null
 
 ## The world epoch (monotonic worldgen counter from the snapshot header) that `Main` last REVEALED.

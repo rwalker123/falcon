@@ -822,6 +822,25 @@ pub fn update_constellation_progress(
     telemetry.active_constellations = active;
 }
 
+/// ⛔ **IS THIS CONSTELLATION READY TO FIRE?** — the screening rule, named once.
+///
+/// Shared by the screening system and by the **count of candidates the frame publishes**
+/// ([`snapshot_telemetry`]), on [`discovery_reaches_viewer`]'s reasoning: a counter that re-derives
+/// its own version of a predicate is free to drift from the thing it claims to be counting, and a
+/// drifted count is invisible — it is still a plausible number.
+fn constellation_is_a_candidate(
+    progress: &ConstellationProgress,
+    faction: FactionId,
+    id: GreatDiscoveryId,
+    ledger: &GreatDiscoveryLedger,
+) -> bool {
+    !progress.resolved
+        && progress.cooldown_remaining == 0
+        && progress.observation_deficit == 0
+        && progress.progress >= scalar_one()
+        && !ledger.contains(faction, id)
+}
+
 pub fn screen_great_discovery_candidates(
     registry: Res<GreatDiscoveryRegistry>,
     readiness: Res<GreatDiscoveryReadiness>,
@@ -843,12 +862,7 @@ pub fn screen_great_discovery_candidates(
             let Some(_definition) = registry.definition(&id) else {
                 continue;
             };
-            if progress.resolved
-                || progress.cooldown_remaining > 0
-                || progress.observation_deficit > 0
-                || progress.progress < scalar_one()
-                || ledger.contains(faction, id)
-            {
+            if !constellation_is_a_candidate(progress, faction, id, &ledger) {
                 continue;
             }
 
@@ -958,15 +972,50 @@ pub fn export_great_discovery_metrics(
 ) {
     if let Some(mut metrics) = metrics {
         metrics.great_discoveries_total = ledger.records.len() as u32;
+        // **The same count, split by whose discovery it is** — rebuilt whole each turn from the same
+        // list the world total counts, so the two cannot disagree about what a record is. Victory's
+        // Ascension mode reads this: a rival's breakthroughs are not yours to ascend on.
+        metrics.great_discoveries_by_faction =
+            ledger
+                .records
+                .iter()
+                .fold(std::collections::BTreeMap::new(), |mut counts, record| {
+                    *counts.entry(record.faction).or_insert(0) += 1;
+                    counts
+                });
         metrics.great_discovery_candidates = telemetry.pending_candidates;
         metrics.great_discovery_active = telemetry.active_constellations;
     }
 }
 
-pub fn snapshot_discoveries(ledger: &GreatDiscoveryLedger) -> Vec<GreatDiscoveryState> {
+/// **The viewer's own great discoveries, plus any a rival has DEPLOYED PUBLICLY.**
+///
+/// The second half is a deliberate exemption, not an oversight: `publicly_deployed` is a live flag
+/// with its own mutator (`GreatDiscoveryLedger::mark_public`), and its entire meaning is *"this
+/// faction has shown the world"*. Withholding a publicly-deployed discovery would make the flag
+/// unobservable to everyone but its owner, which is the one reader it is not for. A discovery kept
+/// quiet stays quiet. See `factions.md` → "Which frame sections are viewer-scoped".
+/// ⛔ **THE ONE PREDICATE THAT DECIDES WHETHER A RESOLVED DISCOVERY REACHES THE VIEWER.**
+///
+/// Yours, or one whose owner has deployed it publicly — see [`snapshot_discoveries`] for why the
+/// second clause is a deliberate exemption rather than an oversight.
+///
+/// It is a named function because **two** publishers ask it: the row list and the *count above the
+/// row list* ([`snapshot_telemetry`]). Two copies would let the count and the list disagree, which
+/// is exactly the defect this predicate was extracted to fix — a frame that printed
+/// *"Resolved discoveries: 7"* over a list of 2.
+fn discovery_reaches_viewer(record: &GreatDiscoveryRecord, viewer: FactionId) -> bool {
+    record.faction == viewer || record.publicly_deployed
+}
+
+pub fn snapshot_discoveries(
+    ledger: &GreatDiscoveryLedger,
+    viewer: FactionId,
+) -> Vec<GreatDiscoveryState> {
     let mut states: Vec<GreatDiscoveryState> = ledger
         .records()
         .iter()
+        .filter(|record| discovery_reaches_viewer(record, viewer))
         .map(|record| GreatDiscoveryState {
             id: record.id.0,
             faction: record.faction.0,
@@ -980,11 +1029,43 @@ pub fn snapshot_discoveries(ledger: &GreatDiscoveryLedger) -> Vec<GreatDiscovery
     states
 }
 
-pub fn snapshot_progress(readiness: &GreatDiscoveryReadiness) -> Vec<GreatDiscoveryProgressState> {
+/// ⛔ **IS THIS CONSTELLATION IN FLIGHT?** — the one predicate behind the published row list and the
+/// `activeConstellations` count above it.
+///
+/// **Unresolved AND started.** [`GreatDiscoveryReadiness`] pre-seeds an entry per definition per
+/// faction, so *"unresolved"* alone is every constellation in the catalogue: a fresh world published
+/// `N` rows all reading `progress == 0` under a counter that read `0`, because the counter already
+/// asked the second half of this question and the list did not. **A constellation nobody has started
+/// is not in progress**, and `N` rows of zeros is noise on a wire whose catalogue
+/// (`greatDiscoveryDefinitions`) already states what there is to chase.
+///
+/// It is a named function for [`discovery_reaches_viewer`]'s reason, and it is the same defect one
+/// section over: an aggregate is defined as *how many rows of the list it summarises*
+/// (`factions.md` → "A DERIVED AGGREGATE IS FACTION-KEYED DATA"), and two spellings of one rule are
+/// free to drift into two rules.
+fn constellation_is_in_flight(progress: &ConstellationProgress) -> bool {
+    !progress.resolved && progress.progress > scalar_zero()
+}
+
+/// **The viewer's own in-flight discoveries only** — no public-deployment exemption here, unlike
+/// [`snapshot_discoveries`]. A row that has not resolved has not been shown to anybody, and it
+/// carries `covert` and an ETA: it is the research a rival is *hiding*, which is what the espionage
+/// arc exists to make you work for.
+///
+/// *In flight* is [`constellation_is_in_flight`], which is also the predicate
+/// `greatDiscoveryTelemetry.activeConstellations` counts — see it for why an unstarted constellation
+/// is not a row.
+pub fn snapshot_progress(
+    readiness: &GreatDiscoveryReadiness,
+    viewer: FactionId,
+) -> Vec<GreatDiscoveryProgressState> {
     let mut states: Vec<GreatDiscoveryProgressState> = Vec::new();
     for (faction, entries) in readiness.iter() {
+        if faction != viewer {
+            continue;
+        }
         for (id, progress) in entries {
-            if progress.resolved {
+            if !constellation_is_in_flight(progress) {
                 continue;
             }
             states.push(GreatDiscoveryProgressState {
@@ -1041,14 +1122,68 @@ pub fn snapshot_definitions(
     states
 }
 
+/// ⛔ **AN AGGREGATE OVER PER-FACTION STATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD.**
+///
+/// All three counters here are `count(...)` over the great-discovery ledger and readiness map, and
+/// all three used to be counted across **every faction** — `total_resolved` was literally
+/// `ledger.records.len()`. A `u32` carries no faction, so the section did not *look* faction-keyed,
+/// and a sweep that enumerated sections whose rows are keyed by faction walked straight past it.
+/// The observable symptom was a client printing *"Resolved discoveries: 7"* above a list of 2: the
+/// count reported precisely what the viewer-scoped list beside it refuses to.
+///
+/// **Each counter is now defined as "how many rows of the list beside it".** That is a stronger
+/// contract than "it is filtered", and it is what
+/// `core_sim/tests/frame_is_viewer_scoped.rs` asserts:
+///
+/// | Counter | Counts | Agrees with |
+/// |---|---|---|
+/// | `total_resolved` | records that reach the viewer ([`discovery_reaches_viewer`]) | `greatDiscoveries` |
+/// | `active_constellations` | the viewer's constellations in flight ([`constellation_is_in_flight`]) | `greatDiscoveryProgress`, row for row |
+/// | `pending_candidates` | those of them ready to fire ([`constellation_is_a_candidate`]) | a subset of the same list |
+///
+/// **Derived here rather than read off [`GreatDiscoveryTelemetry`]**, which is the *server's* own
+/// world-level metric (`SimulationMetrics.great_discovery_candidates` / `_active`) and stays
+/// world-level: a server metric is not a client disclosure. Nothing reads the published state back
+/// into that resource — the checkpoint restores the resource whole — so the two can differ in scope
+/// without anything going out of step.
+///
+/// **No counter here is a world fact.** The legitimately world-level number in this arc is *how many
+/// constellations exist to chase*, and that already ships as the `greatDiscoveryDefinitions`
+/// catalogue, which carries no faction at all.
 pub fn snapshot_telemetry(
     ledger: &GreatDiscoveryLedger,
-    telemetry: &GreatDiscoveryTelemetry,
+    readiness: &GreatDiscoveryReadiness,
+    viewer: FactionId,
 ) -> GreatDiscoveryTelemetryState {
+    let total_resolved = ledger
+        .records()
+        .iter()
+        .filter(|record| discovery_reaches_viewer(record, viewer))
+        .count() as u32;
+
+    let mut active = 0u32;
+    let mut pending = 0u32;
+    if let Some(entries) = readiness.per_faction.get(&viewer) {
+        for (id, progress) in entries {
+            // **The very predicate the row list uses**, not a second spelling of it — see
+            // [`constellation_is_in_flight`]. This counter and that list disagreed for exactly as
+            // long as they were two expressions: the list published every unresolved constellation
+            // and this counted only the started ones, so a fresh world shipped `N` rows under a
+            // count of `0`.
+            if !constellation_is_in_flight(progress) {
+                continue;
+            }
+            active = active.saturating_add(1);
+            if constellation_is_a_candidate(progress, viewer, *id, ledger) {
+                pending = pending.saturating_add(1);
+            }
+        }
+    }
+
     GreatDiscoveryTelemetryState {
-        total_resolved: ledger.records.len() as u32,
-        pending_candidates: telemetry.pending_candidates,
-        active_constellations: telemetry.active_constellations,
+        total_resolved,
+        pending_candidates: pending,
+        active_constellations: active,
     }
 }
 

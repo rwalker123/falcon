@@ -161,7 +161,7 @@ form, a single-tile halo+core marker, and a single-tile marker with an unknown s
 `display_snapshot` clears the active overlay every time); **`map_terrain_highlight`** (the Terrain
 tab's highlight tool on the four-band biome map, so the MATCHED band and the three UNMATCHED ones
 are both in frame); and **`map_routes`** (three multi-hop turning order paths covering
-`faction_colors`' INT key, its STRING key and an unknown faction's amber default, plus a
+`faction_color`'s ID form, its legacy NAME form and an unknown faction's amber default, plus a
 one-waypoint order the draw must bail on). They run LAST, each clearing its own state afterwards,
 and they switch the canvas back to `DEFAULT_CANVAS_SIZE` (the river states leave the pasture aspect
 pinned).
@@ -857,6 +857,23 @@ that draws it for every band, which is the one way this could be wrong and still
 Sabotage-verified in two runs: dropping the LOD gate and the `is_lethal` test together (2 fail — the
 survivable band's absence and the far-zoom absence, the latter only biting once the grid moved beside
 the gate); and skipping the draw entirely (2 fail — the close mark and the smallest-size mark).
+
+### `map_faction_palette` — EVERY PEOPLE IN ONE FRAME (`map-markers.md`)
+
+Twelve bands, one per faction id 0..11, spread three to a row so no pill culls another; each is named
+for the id it is drawn from, so the frame says which colour belongs to whom. It exists because the
+colours past the seeded three are GENERATED, and the thing worth checking about a generated palette
+is not that the values differ but that a player can tell them apart — which only a frame with several
+pills in it can answer.
+
+**The assertions cover the range the frame cannot.** The New Game screen can ask for 17 rivals on a
+Huge map — and more under a preset with more land, since the ceiling is a packing count over a map's
+LAND rather than a fixed number — and that many pills do not fit in a still, so the walk over 0..27 is asserted rather
+than rendered: ids 0/1/2 still equal their literal blue/orange/green (every game in progress and
+every committed frame is drawn in them), the legacy NAME spelling still resolves to the same people,
+an absent faction still gets the caller's fallback, no two ids share a colour, no id falls through to
+the unknown-faction tint, and successive ids stay at least `PALETTE_MIN_NEIGHBOUR_HUE_GAP` of the hue
+wheel apart. **It is the LAST state in the run**, appended so no existing frame moved.
 
 ### `map_band_names*` — the fixed-screen-size BAND NAME PILL (`map-markers.md`)
 

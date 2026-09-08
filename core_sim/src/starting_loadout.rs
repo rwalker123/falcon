@@ -359,11 +359,11 @@ pub fn close_opening_window(
     }
 }
 
-/// **Stamp the spawned band's window open with the budgets the world just built.** A Startup system,
-/// chained after the spawn, because the kit budget is the *spawned band's* worker count rather than
-/// anything a config states.
+/// **Stamp each faction's spawned band's window open with the budgets the world just built.** A
+/// Startup system, chained after the spawn, because the kit budget is the *spawned band's* worker
+/// count rather than anything a config states.
 ///
-/// A world with no starting band opens nothing: there is nobody to outfit.
+/// A faction with no starting band opens nothing: there is nobody to outfit.
 pub fn stamp_starting_loadout(
     mut loadout: ResMut<StartingLoadout>,
     profile: Option<Res<ActiveStartProfile>>,
@@ -373,13 +373,27 @@ pub fn stamp_starting_loadout(
     let Some(profile) = profile else {
         return;
     };
-    // The globally lowest `BandId` carrying `StartingUnit`, with **no faction filter**: the shipped
-    // world is single-faction — `spawn_population_entity` hard-codes every band's cohort to
-    // `FactionId(0)` — and worldgen is the one moment at which exactly the spawned bands exist, so
-    // the lowest id is the campaign's opening band by construction.
-    let Some((band, cohort)) = bands.iter().min_by_key(|(id, _)| **id) else {
+    // **The lowest `BandId` WITHIN EACH FACTION — one window per people, never one per world.**
+    // Worldgen places every registered faction and spawns each one the profile's roster, so a
+    // globally-lowest pick would hand the whole opening allocation to whichever faction happened to
+    // be placed first and leave every other people unoutfitted, with nothing on screen to say why.
+    // Worldgen is the one moment at which exactly the spawned bands exist, so within a faction the
+    // lowest id is that faction's opening band by construction.
+    let mut opening_bands: BTreeMap<FactionId, (BandId, u32)> = BTreeMap::new();
+    for (band, cohort) in bands.iter() {
+        opening_bands
+            .entry(cohort.faction)
+            .and_modify(|(current, size)| {
+                if *band < *current {
+                    *current = *band;
+                    *size = cohort.size;
+                }
+            })
+            .or_insert((*band, cohort.size));
+    }
+    if opening_bands.is_empty() {
         return;
-    };
+    }
     let working_fraction = demographics
         .map(|handle| handle.get().initial_distribution.working)
         .unwrap_or_else(|| {
@@ -387,49 +401,54 @@ pub fn stamp_starting_loadout(
                 .initial_distribution
                 .working
         });
-    let workers = crate::systems::party_workers(cohort.size, working_fraction);
-    let kit_budget = workers as u32;
     let material_budget = profile
         .profile()
         .overrides()
         .opening_loadout
         .material_points;
-    loadout.open(
-        *band,
-        LoadoutWindow::opened(LoadoutSupply::Grant {
+    for (faction, (band, size)) in opening_bands {
+        let workers = crate::systems::party_workers(size, working_fraction);
+        let kit_budget = workers as u32;
+        loadout.open(
+            band,
+            LoadoutWindow::opened(LoadoutSupply::Grant {
+                kit_budget,
+                material_budget,
+            }),
+        );
+        info!(
+            target: "shadow_scale::campaign",
+            faction = faction.0,
+            band = band.0,
             kit_budget,
             material_budget,
-        }),
-    );
-    info!(
-        target: "shadow_scale::campaign",
-        band = band.0,
-        kit_budget,
-        material_budget,
-        "starting_loadout.window.opened"
-    );
-    // **The kit pre-fill's only sanity check, and it happens HERE rather than at the publish site**
-    // — this is the first and only moment a config fault of that shape can be observed (the budget
-    // does not exist until the band does), and it happens once per world rather than once per
-    // captured frame. `snapshot_opening_loadout` re-runs the same pure helper for the value.
-    let (_, clamped) = clamped_kit_defaults(
-        &profile.profile().overrides().opening_loadout.kit_defaults,
-        kit_budget,
-    );
-    if clamped {
-        warn!(
-            target: "shadow_scale::campaign",
-            kit_budget,
-            declared = profile
-                .profile()
-                .overrides()
-                .opening_loadout
-                .kit_defaults
-                .values()
-                .sum::<u32>(),
-            "starting_loadout.kit_defaults.clamped=the profile pre-fills more kits than this band \
-             has hands"
+            "starting_loadout.window.opened"
         );
+        // **The kit pre-fill's only sanity check, and it happens HERE rather than at the publish
+        // site** — this is the first and only moment a config fault of that shape can be observed
+        // (the budget does not exist until the band does), and it happens once per opening band
+        // rather than once per captured frame. `snapshot_opening_loadout` re-runs the same pure
+        // helper for the value.
+        let (_, clamped) = clamped_kit_defaults(
+            &profile.profile().overrides().opening_loadout.kit_defaults,
+            kit_budget,
+        );
+        if clamped {
+            warn!(
+                target: "shadow_scale::campaign",
+                faction = faction.0,
+                kit_budget,
+                declared = profile
+                    .profile()
+                    .overrides()
+                    .opening_loadout
+                    .kit_defaults
+                    .values()
+                    .sum::<u32>(),
+                "starting_loadout.kit_defaults.clamped=the profile pre-fills more kits than this \
+                 band has hands"
+            );
+        }
     }
 }
 

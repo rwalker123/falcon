@@ -56,46 +56,16 @@ const LIST_READY := "ready"
 ## The ask failed or was refused. `list_error` carries the token.
 const LIST_FAILED := "failed"
 
-## **THE SAVE CHANNEL'S REQUEST-ID SPACE, DISJOINT FROM `ForecastQuery`'s BY CONSTRUCTION.**
+## **THE SAVE CHANNEL'S REQUEST-ID SPACE IS ONE BLOCK OF THE SHARED ALLOCATOR.**
 ##
-## Both seams are fed from the SAME native drain (`CommandBridge.poll_query_replies`) and both route
-## a reply by its `request_id`, so two counters that each started at 1 would each answer the other's
-## replies — a forecast landing in the save pane, or worse, a `save_op` landing on a compose sheet.
-## Ids are `u64` on the wire, `ForecastQuery` counts up from 1, and every id this seam spends sits at
-## or above this floor: a collision would need four billion forecasts in one session, and there is no
-## coordination to forget.
-const REQUEST_ID_BASE := 1 << 40
-
-## **ONE BLOCK OF IDS PER SEAM INSTANCE, so an id cannot be REUSED ACROSS A SCENE CHANGE.**
-##
-## The worker's answer channel is process-global (`QUERY_ANSWERS`, an `OnceLock` in `bridge/query.rs`)
-## and outlives every scene; a `SaveSlots` does not. A load swaps the scene — `LandingScreen`'s
-## `change_scene_to_file`, `Main._on_pause_load`'s `reload_current_scene` — and the world that comes
-## up builds a NEW seam. An ask still in flight across that swap is drained by the new scene and
-## offered to it, and `list_saves` is exactly such an ask: `refresh()` is not gated on `is_busy()` and
-## `_finish_op` re-arms it after every save and delete.
-##
-## Were every instance to restart at `REQUEST_ID_BASE`, that stale list answer would carry the id the
-## new seam had just spent on `load_game`. `_deliver_one` would read the LIST reply's `ok: true`,
-## erase the id and finish the LOAD as a success — the drift notice never raised, the loading overlay
-## never re-worded, the retry latch left set, and a refused load reported to the player as a
-## completed one. So the blocks are made disjoint by construction rather than by hoping the swap is
-## quiet.
-##
-## Ids reserved to one instance. A seam asks a handful — one per pane open, one per verb — so the
-## block cannot be walked out of; and the block index below stays small enough that the product is
-## nowhere near the `u64` the wire carries.
-const IDS_PER_SESSION := 1 << 16
-
-## **THE BLOCK INDEX IS THE MONOTONIC MICROSECOND CLOCK, plus a tie-break count.** The clock cannot
-## repeat within a process and — unlike a `static var`, whose lifetime is the SCRIPT's rather than the
-## process's — is not reset by a scene change. The counter separates two seams built inside the same
-## microsecond, which the clock alone cannot; because both terms are non-decreasing and the counter
-## rises by one on every call, successive offsets are strictly increasing whatever the clock does.
-static var _sessions_started := 0
+## Every seam on the native query worker draws its ids from `QueryRequestIds` — the floor that keeps
+## them clear of `ForecastQuery`, and the per-instance block that keeps a stale answer from a
+## torn-down scene from finishing an op on the seam that replaced it. Both rules, and the load that
+## was refused and reported as a success without them, are stated there; nothing about them is
+## specific to saving, and a second copy of the counter here is precisely what would break them.
 
 ## The id of a request that was never made.
-const NO_REQUEST_ID := 0
+const NO_REQUEST_ID := QueryRequestIds.NO_REQUEST_ID
 
 # ---- error tokens (mirrors `sim_runtime::commands::save_error` + the bridge's transport token) ----
 const ERROR_TRANSPORT := "transport"
@@ -154,7 +124,7 @@ const SECONDS_PER_MINUTE_F := 60.0
 # ---- state ---------------------------------------------------------------------------------------
 var _sender: Callable = Callable()
 ## The next id this seam will spend, inside the block it was handed at construction.
-var _next_request_id: int = REQUEST_ID_BASE
+var _next_request_id: int = QueryRequestIds.REQUEST_ID_BASE
 ## request_id -> kind, for the asks that have not been answered yet.
 var _inflight: Dictionary = {}
 
@@ -171,13 +141,7 @@ var op_slot: String = ""
 
 
 func _init() -> void:
-	_next_request_id = _new_session_start()
-
-
-## The first id of a fresh block, and the reason every seam gets one is at `IDS_PER_SESSION`.
-static func _new_session_start() -> int:
-	_sessions_started += 1
-	return REQUEST_ID_BASE + (Time.get_ticks_usec() + _sessions_started) * IDS_PER_SESSION
+	_next_request_id = QueryRequestIds.reserve_block()
 
 
 ## Inject the transport. `sender` is `func(request_id: int, ask: Dictionary) -> bool` — true when the

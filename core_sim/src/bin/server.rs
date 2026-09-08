@@ -42,32 +42,32 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
-    publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
-    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
-    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
-    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
-    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig,
-    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    WorldEpoch, FODDER, FOOD,
+    fold_party_into_band, granted_ai_faction_count, hunt_trip_forecast, install_config_override,
+    party_owes_a_report, publish_baseline_snapshot, recapture_snapshot_in_place, run_turn,
+    scalar_from_f32, shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId,
+    BandIdAllocator, BandName, CommandEventEntry, CommandEventKind, CommandEventLog,
+    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
+    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
+    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
+    TradeExpeditionConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
 };
 use sim_runtime::{
     commands::{
         query_error, save_error, ConfigOverrideKind,
-        EspionageGeneratorUpdate as CommandGeneratorUpdate, QueryPayload, QueryReply,
-        QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, AUTOSAVE_SLOT, BENCH_CREW_UNSPECIFIED,
-        MAX_PROTO_FRAME,
+        EspionageGeneratorUpdate as CommandGeneratorUpdate, FactionCapacityReply, QueryPayload,
+        QueryReply, QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, AUTOSAVE_SLOT,
+        BENCH_CREW_UNSPECIFIED, MAX_PROTO_FRAME,
     },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags, TradeCargoItem,
@@ -343,6 +343,23 @@ fn main() {
                 if should_randomize_seed {
                     new_config.map_seed = 0;
                 }
+                // **A resize keeps the peoples it had**, re-clamped to the grid it is moving to:
+                // `rebuild_world_from_config` starts from `build_headless_app`, whose registry was
+                // seeded against the CONFIG FILE's grid, so without this a shrink could register
+                // more factions than the new map seats — and a grow would silently drop the rivals
+                // this world was actually playing with back to the file's default.
+                let carried_ai_factions =
+                    app.world.resource::<FactionRegistry>().ai_faction_count();
+                let reset_land_fraction = core_sim::faction_start_land_fraction(
+                    &app.world.resource::<core_sim::MapPresetsHandle>().get(),
+                    &new_config.map_preset_id,
+                );
+                let granted_ai_factions = granted_ai_faction_count(
+                    carried_ai_factions,
+                    new_config.grid_size,
+                    new_config.faction_start_min_separation,
+                    reset_land_fraction,
+                );
 
                 retire_publisher(&mut app);
                 app = rebuild_world_from_config(
@@ -352,7 +369,7 @@ fn main() {
                     &watch_paths,
                     &snapshot_flat_server,
                     &mut world_epoch,
-                    |_| {},
+                    move |new_app| seed_faction_roster(new_app, granted_ai_factions),
                 );
                 world_active = true;
                 // A new world: nothing before this point is reachable.
@@ -371,6 +388,7 @@ fn main() {
                 height,
                 seed,
                 profile_id,
+                ai_faction_count,
             } => {
                 handle_new_game(
                     &mut app,
@@ -381,6 +399,7 @@ fn main() {
                     height,
                     seed,
                     profile_id,
+                    ai_faction_count,
                     &snapshot_flat_server,
                 );
             }
@@ -832,6 +851,9 @@ enum Command {
         height: u32,
         seed: u64,
         profile_id: String,
+        /// **How many AI factions the player picked, not counting their own.** `None` means
+        /// *"nobody picked"* — the unattended roster, which is not the same as `Some(0)`.
+        ai_faction_count: Option<u32>,
     },
     /// **One band's outfitting loadout** — the one source of a faction's gear and material. Field
     /// 69. See `handle_set_starting_loadout`; it fails **closed and whole**.
@@ -1262,6 +1284,28 @@ fn answer_query(
     if matches!(query, QueryPayload::ListSaves) {
         let dir = core_sim::save_store::save_dir();
         return QueryReply::ListSaves(core_sim::save_store::list_slots(&dir));
+    }
+    // **The rival control's bounds are answered before the world gate too**, and for the same
+    // reason: the New Game screen asks it, and on that screen there is no world. It is asked about
+    // the grid the player is CONFIGURING, not the one this process is running, so it takes the
+    // dimensions from the query and only the levers from the live config. Answering it here is what
+    // keeps the ceiling rule in the sim instead of restated in GDScript.
+    if let QueryPayload::FactionCapacity(ask) = query {
+        // **The land discount comes from the SERVER's preset, not the player's.** The ask carries a
+        // width and a height and no preset id, so this is the one input the answer cannot take from
+        // the question — see `faction_start_land_fraction`, where that limitation is recorded.
+        let presets = world.resource::<core_sim::MapPresetsHandle>().get();
+        let config = world.resource::<SimulationConfig>();
+        let capacity = core_sim::faction_start_capacity(
+            UVec2::new(ask.width, ask.height),
+            config.faction_start_min_separation,
+            core_sim::faction_start_land_fraction(&presets, &config.map_preset_id),
+            config.default_ai_faction_count,
+        );
+        return QueryReply::FactionCapacity(FactionCapacityReply {
+            default_ai_faction_count: capacity.default_ai_factions,
+            max_ai_faction_count: capacity.max_ai_factions,
+        });
     }
     if !world_active {
         return QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string());
@@ -1711,6 +1755,25 @@ fn rebuild_world_from_config(
     new_app
 }
 
+/// **What an AI-faction count on the wire resolves to before the grid clamps it.**
+///
+/// `None` is *not* `Some(0)`: absent means **nobody picked** — a direct scene launch, a CLI
+/// `new_game`, a test — and 0 means a player who chose to play alone. The two arrive on the same
+/// wire field precisely so a client can leave the choice to the sim, and collapsing them here would
+/// make the unattended roster unreachable from every caller that does.
+///
+/// ⛔ **An absent pick resolves to [`core_sim::unattended_ai_faction_count`], NOT to the count the
+/// New Game screen pre-selects.** The screen's number is derived from the map and can be several
+/// rivals; this path is what a `cargo run` server and a scripted launch get, and it stays at zero
+/// rivals until something drives them. `simulation_config.json`'s `default_ai_faction_count` pins it
+/// when a headless run wants otherwise.
+///
+/// `config` is the config the NEW world will run on — `load_simulation_config_for_new_world`'s, not
+/// the outgoing world's — because the pin is a tuning value and tuning is re-read at world start.
+fn requested_ai_faction_count(picked: Option<u32>, config: &SimulationConfig) -> u32 {
+    picked.unwrap_or_else(|| core_sim::unattended_ai_faction_count(config.default_ai_faction_count))
+}
+
 /// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
 /// dimensions and the start profile, then rebuilds the world through the shared
 /// [`rebuild_world_from_config`] path and flips `world_active` so turns are accepted.
@@ -1724,6 +1787,7 @@ fn handle_new_game(
     height: u32,
     seed: u64,
     profile_id: String,
+    ai_faction_count: Option<u32>,
     snapshot_server_flat: &Arc<SnapshotServer>,
 ) {
     if width == 0 || height == 0 {
@@ -1750,19 +1814,6 @@ fn handle_new_game(
         );
         return;
     }
-    // The roster is checked BEFORE the outgoing world is torn down, for the same reason the id is:
-    // `apply_start_profile` runs inside the rebuild, where refusing would leave the player in a
-    // half-built world. Same refusal as an id we cannot resolve — warn, return, nothing changes.
-    if let Some(reason) = profile.overrides.faction_roster_error() {
-        warn!(
-            target: "shadow_scale::server",
-            requested = %profile_id,
-            %reason,
-            "new_game.rejected=unusable_roster"
-        );
-        return;
-    }
-
     let command_sender = {
         let res = app.world.resource::<CommandSenderResource>();
         res.0.clone()
@@ -1785,6 +1836,25 @@ fn handle_new_game(
     // mechanism ResetMap uses (map_seed 0 + seed_random true).
     new_config.map_seed = seed;
 
+    // **The player's pick, clamped by the grid they picked it for.** Over the ceiling is granted
+    // down with a warning naming both numbers rather than refused: a cramped map is a smaller game,
+    // not a dead one, and `worldgen.start_separation_relaxed` is the second net beneath it.
+    //
+    // This is the one caller that knows the preset the world will actually be generated from — the
+    // capacity *query* does not (see `faction_start_land_fraction`) — so the clamp here is the
+    // authoritative one even where the offered ceiling was computed against a different preset.
+    let new_game_land_fraction = core_sim::faction_start_land_fraction(
+        &app.world.resource::<core_sim::MapPresetsHandle>().get(),
+        &new_config.map_preset_id,
+    );
+    let requested_ai_factions = requested_ai_faction_count(ai_faction_count, &new_config);
+    let granted_ai_factions = granted_ai_faction_count(
+        requested_ai_factions,
+        new_config.grid_size,
+        new_config.faction_start_min_separation,
+        new_game_land_fraction,
+    );
+
     info!(
         target: "shadow_scale::server",
         preset = %preset_id,
@@ -1792,6 +1862,8 @@ fn handle_new_game(
         height,
         seed,
         profile = %profile.id,
+        requested_ai_factions,
+        granted_ai_factions,
         "new_game.begin"
     );
 
@@ -1804,11 +1876,11 @@ fn handle_new_game(
         snapshot_server_flat,
         world_epoch,
         move |new_app| {
-            let applied = apply_start_profile(new_app, &profile);
-            debug_assert!(
-                applied,
-                "the roster was checked before the rebuild, so it cannot be refused inside it"
-            );
+            apply_start_profile(new_app, &profile);
+            // **The roster is seeded here, not by the profile**: `build_headless_app` seeded it from
+            // the config file's own count and grid, and this world is neither. See
+            // `seed_faction_roster` for the five resources that ride on it.
+            seed_faction_roster(new_app, granted_ai_factions);
         },
     );
     *world_active = true;
@@ -2132,31 +2204,16 @@ fn write_autosave(app: &bevy::prelude::App) {
     }
 }
 
-/// Apply a resolved start profile to the app's campaign resources (config overrides,
-/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`) **and to the roster those resources
-/// describe** — `FactionRegistry`, then the `TurnQueue` built from it. Shared by
-/// `handle_set_start_profile` and the `new_game` rebuild — it does NOT regenerate the world; the
+/// Apply a resolved start profile to the app's campaign resources — config overrides,
+/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`. Shared by
+/// `handle_set_start_profile` and the `new_game` rebuild; it does NOT regenerate the world, and the
 /// caller runs Startup afterward.
 ///
-/// ⛔ **The roster has to be re-seeded here, because `build_headless_app` seeded it from the BOOT
-/// profile.** `rebuild_world_from_config` builds the replacement app first and applies the chosen
-/// profile second, so without this a `new_game` onto a two-faction profile produced a one-faction
-/// world — the chosen roster reached `SimulationConfig` and nothing else.
-///
-/// Returns `false` when the profile's roster is unusable, in which case **nothing is written**: a
-/// mid-session profile is a player's pick, so this refuses it the way both callers already refuse a
-/// profile id they cannot resolve, rather than taking the server down the way boot does.
-#[must_use]
-fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> bool {
-    if let Some(reason) = profile.overrides.faction_roster_error() {
-        warn!(
-            target: "shadow_scale::campaign",
-            profile = %profile.id,
-            %reason,
-            "start_profile.rejected=unusable_roster"
-        );
-        return false;
-    }
+/// ⛔ **It does not touch the roster, because a profile no longer declares one.** Who plays a world
+/// is the AI count the new game was asked for ([`seed_faction_roster`]), so swapping the profile
+/// mid-session restocks the opening and leaves the peoples alone — there is nothing about the
+/// roster in the new profile to disagree with the registry the world is already running.
+fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
     {
         let mut config = app.world.resource_mut::<SimulationConfig>();
         config.start_profile_id = profile.id.clone();
@@ -2174,21 +2231,37 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> 
         let mut label = app.world.resource_mut::<CampaignLabel>();
         *label = CampaignLabel::from_profile(profile);
     }
-    let registry = FactionRegistry::new(&profile.overrides.factions);
+}
+
+/// **Seat one human and `ai_faction_count` rivals in a world about to be generated**, and re-seed
+/// everything the boot path derives from that roster.
+///
+/// Called inside `rebuild_world_from_config`'s `configure` hook, i.e. after the replacement app is
+/// built and before Startup: `build_headless_app` seeded the registry from the CONFIG FILE's count,
+/// clamped against the config file's grid, and a `new_game` is neither of those things. Without this
+/// the count the player picked reached `SimulationConfig` and nothing that resolves a turn ever
+/// heard about it.
+///
+/// The count is expected to be **already clamped** by
+/// [`core_sim::granted_ai_faction_count`] — the clamp is the caller's, because only the caller knows
+/// which grid the world is being built on.
+///
+/// ⛔ **EVERY resource `build_headless_app` seeds from the roster is re-seeded here.** The list is
+/// `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets` and
+/// `FactionSecurityPolicies` — the five constructions taken from `faction_registry.factions()` in
+/// `lib.rs`, and re-seeding only some of them is the same defect one resource further along. They
+/// are built through the boot path's own constructors so a fresh faction's starting state has one
+/// definition rather than two.
+///
+/// **`EspionageRoster` is deliberately not among them**: `initialise_espionage_roster` is a
+/// `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
+/// this — so re-seeding it here would be a second, earlier copy of a job the schedule already does
+/// against the same roster.
+fn seed_faction_roster(app: &mut bevy::prelude::App, ai_faction_count: u32) {
+    let registry = FactionRegistry::with_ai_factions(ai_faction_count);
     let factions = registry.factions().to_vec();
     app.world.insert_resource(registry);
     app.world.insert_resource(TurnQueue::new(factions.clone()));
-    // ⛔ **EVERY resource `build_headless_app` seeds from the boot roster is re-seeded here.** The
-    // list is `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets` and
-    // `FactionSecurityPolicies` — the five constructions taken from `faction_registry.factions()`
-    // in `lib.rs`, and re-seeding only some of them is the same defect one resource further along.
-    // They are built through the boot path's own constructors so a fresh faction's starting state
-    // has one definition rather than two.
-    //
-    // **`EspionageRoster` is deliberately not among them**: `initialise_espionage_roster` is a
-    // `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
-    // this — so re-seeding it here would be a second, earlier copy of a job the schedule already
-    // does against the same roster.
     let budget_config = app
         .world
         .resource::<EspionageCatalog>()
@@ -2201,18 +2274,13 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> 
         &factions,
         SecurityPolicy::Standard,
     ));
-    true
 }
 
 fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
     let handle = app.world.resource::<StartProfilesHandle>().clone();
     let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
 
-    if !apply_start_profile(app, &profile) {
-        // The campaign the player was on is untouched — `apply_start_profile` writes nothing when it
-        // refuses, and the warning it logged names the rule that was broken.
-        return;
-    }
+    apply_start_profile(app, &profile);
 
     info!(
         target: "shadow_scale::campaign",
@@ -2339,7 +2407,9 @@ fn handle_found_settlement(
         );
         return;
     };
-    start_location.relocate(target);
+    // **Only the founding faction's marker moves.** The marker is per-faction, so a settlement one
+    // people founds says nothing about where another people began.
+    start_location.relocate(faction, target);
 
     push_command_event(
         app,
@@ -9342,12 +9412,14 @@ fn command_from_payload(
             height,
             seed,
             profile_id,
+            ai_faction_count,
         } => Some(Command::NewGame {
             preset_id,
             width,
             height,
             seed,
             profile_id,
+            ai_faction_count,
         }),
         // The one payload that carries a way BACK. `reply` is this connection's writer channel, so
         // the answer reaches the client that asked even if it is computed several commands later.
@@ -11168,6 +11240,7 @@ mod tests {
             16,
             7,
             "late_forager_tribe".to_string(),
+            None,
             flat,
         );
         assert!(*world_active, "the fixture world must build");
@@ -11862,6 +11935,7 @@ mod tests {
             32,
             7,
             "no_such_profile".to_string(),
+            None,
             &flat,
         );
         assert!(!world_active, "an unknown profile must not build a world");
@@ -11884,6 +11958,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
+            None,
             &flat,
         );
         assert!(!world_active, "zero width must be rejected");
@@ -11903,6 +11978,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
+            None,
             &flat,
         );
         assert!(world_active, "a valid new_game activates the world");
@@ -11940,6 +12016,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
+            None,
             &flat,
         );
         assert_eq!(world_epoch, 2, "the next world build increments the epoch");
@@ -11955,15 +12032,15 @@ mod tests {
         );
     }
 
-    /// A `start_profiles.json` holding one profile, whose roster is whatever `factions` names.
+    /// A `start_profiles.json` holding exactly one profile under `id`.
     ///
-    /// The two roster tests below drive real profiles rather than hand-built structs because the
-    /// path under test starts at `resolve_active_profile`: a profile the *handle* does not carry is
-    /// a different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able
-    /// to tell the two apart.
-    fn profiles_declaring(id: &str, factions: &str) -> StartProfilesHandle {
+    /// The roster tests below drive a real profile rather than a hand-built struct because the path
+    /// under test starts at `resolve_active_profile`: a profile the *handle* does not carry is a
+    /// different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able to
+    /// tell that apart from a roster that came out wrong.
+    fn profiles_named(id: &str) -> StartProfilesHandle {
         let json = format!(
-            "{{\"profiles\": [{{\"id\": \"{id}\", \"factions\": {factions}, \
+            "{{\"profiles\": [{{\"id\": \"{id}\", \
              \"opening_loadout\": {{\"material_points\": 1, \"pickable_materials\": \
              [\"bone\"]}}}}]}}"
         );
@@ -11972,22 +12049,30 @@ mod tests {
         ))
     }
 
-    /// ⛔ **`new_game <profile>` SEEDS THE ROSTER THAT PROFILE NAMES**, not the boot profile's.
+    /// The land share this app's capacity answers are discounted by — its own preset's, exactly as
+    /// `answer_query` and `handle_new_game` resolve it. Asked through the same function rather than
+    /// written as a number, so a preset edit moves the fixture and the code together.
+    fn capacity_land_fraction(app: &bevy::prelude::App) -> f32 {
+        let presets = app.world.resource::<core_sim::MapPresetsHandle>().get();
+        core_sim::faction_start_land_fraction(
+            &presets,
+            &app.world.resource::<SimulationConfig>().map_preset_id,
+        )
+    }
+
+    /// ⛔ **`new_game` SEEDS THE ROSTER THE PLAYER PICKED**, not the boot config's.
     ///
     /// `rebuild_world_from_config` builds the replacement app first — `build_headless_app` seeds
-    /// `FactionRegistry` and `TurnQueue` from whatever `simulation_config.json` points at — and
-    /// applies the chosen profile second. Before `apply_start_profile` re-seeded them, a profile
-    /// declaring two factions produced a one-faction world: the chosen roster reached
-    /// `SimulationConfig` and nothing that resolves a turn ever heard about it.
+    /// `FactionRegistry` and `TurnQueue` from `simulation_config.json`'s own
+    /// `default_ai_faction_count`, against that file's grid — and configures it second. Without
+    /// `seed_faction_roster`, a picked count reached `SimulationConfig` and nothing that resolves a
+    /// turn ever heard about it.
     #[test]
-    fn new_game_onto_a_two_faction_profile_seeds_that_roster_and_its_queue() {
+    fn new_game_with_one_rival_seeds_two_factions_and_awaits_both() {
         let mut app = build_test_app();
         app.world
             .insert_resource(CommandSenderResource(unbounded::<Command>().0));
-        app.world.insert_resource(profiles_declaring(
-            "two_sided",
-            "[{\"control\": \"human\"}, {\"control\": \"ai\"}]",
-        ));
+        app.world.insert_resource(profiles_named("two_sided"));
         assert_eq!(
             app.world.resource::<FactionRegistry>().factions(),
             [FactionId(0)],
@@ -12006,15 +12091,20 @@ mod tests {
             32,
             7,
             "two_sided".to_string(),
+            Some(1),
             &flat,
         );
 
-        assert!(world_active, "the profile is usable, so the world is built");
+        assert!(world_active, "the world is built");
         let registry = app.world.resource::<FactionRegistry>();
         assert_eq!(
             registry.factions(),
             [FactionId(0), FactionId(1)],
-            "the chosen profile's roster is the world's roster"
+            "one rival means two peoples — the human at 0 and the AI at 1"
+        );
+        assert!(
+            registry.is_ai(FactionId(1)),
+            "and the rival is the sim's to drive, not a second human"
         );
         assert!(
             registry.contains(FactionId(1)),
@@ -12025,7 +12115,7 @@ mod tests {
         assert_eq!(
             awaiting,
             vec![FactionId(0), FactionId(1)],
-            "the queue awaits every faction the chosen profile declared"
+            "the queue awaits every faction the picked count seated"
         );
 
         // **And every other resource the boot path seeds from the roster.** A registry entry with no
@@ -12056,17 +12146,14 @@ mod tests {
         );
     }
 
-    /// **A runtime profile with an unusable roster is REFUSED, never a panic.** It gets the same
-    /// refusal as a profile id we cannot resolve — warn, return, and the world the player was on is
-    /// untouched. `validate_factions`' panic is right at boot, where there is no earlier world to
-    /// decline back to, and wrong on a command a player issued.
+    /// **Picking 0 is the world that shipped.** The control arm for the test above: without it,
+    /// "one rival seats two" would also pass on a build that seated `requested + 1` rivals.
     #[test]
-    fn new_game_onto_a_profile_with_no_human_faction_is_refused_without_building() {
+    fn new_game_with_no_rivals_seeds_the_single_faction_world() {
         let mut app = build_test_app();
         app.world
             .insert_resource(CommandSenderResource(unbounded::<Command>().0));
-        app.world
-            .insert_resource(profiles_declaring("all_ai", "[{\"control\": \"ai\"}]"));
+        app.world.insert_resource(profiles_named("alone"));
 
         let flat = loopback_snapshot_server();
         let mut world_active = false;
@@ -12079,23 +12166,199 @@ mod tests {
             48,
             32,
             7,
-            "all_ai".to_string(),
+            "alone".to_string(),
+            Some(0),
             &flat,
         );
 
-        assert!(!world_active, "a world nobody plays must not be built");
-        assert!(
-            app.world.get_resource::<TileRegistry>().is_none(),
-            "no world after a refused new_game"
-        );
-        assert_eq!(
-            world_epoch, 0,
-            "a refused new_game does not advance the epoch"
-        );
+        assert!(world_active, "the world is built");
         assert_eq!(
             app.world.resource::<FactionRegistry>().factions(),
             [FactionId(0)],
-            "and the roster the server had is the roster it still has"
+            "0 rivals is one people, and that people is the player"
+        );
+        assert_eq!(
+            app.world.resource::<TurnQueue>().awaiting(),
+            vec![FactionId(0)],
+            "and the queue awaits nobody else"
+        );
+    }
+
+    /// ⛔ **A COUNT THE MAP CANNOT SEAT IS CLAMPED, NOT REFUSED.** The world still starts; the
+    /// player simply gets the rivals the ground holds, and the warning names both numbers.
+    ///
+    /// A 60x40 grid at the shipped 20-tile separation and the earthlike preset's land target seats
+    /// a handful of starts, and this asks for far more than that. Refusing here would leave a
+    /// player who moved a slider with no game at all.
+    #[test]
+    fn new_game_clamps_a_rival_count_the_grid_cannot_seat() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        app.world.insert_resource(profiles_named("crowded"));
+        let separation = app
+            .world
+            .resource::<SimulationConfig>()
+            .faction_start_min_separation;
+        let land = capacity_land_fraction(&app);
+        let grid = UVec2::new(60, 40);
+        let ceiling = core_sim::max_faction_starts(grid, separation, land) - 1;
+        assert!(
+            (1..9).contains(&ceiling),
+            "fixture: the grid must seat SOME rivals but fewer than the count asked for, or the \
+             clamp is untested (it seats {ceiling})"
+        );
+
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            grid.x,
+            grid.y,
+            7,
+            "crowded".to_string(),
+            Some(9),
+            &flat,
+        );
+
+        assert!(
+            world_active,
+            "an over-large ask is granted down, never refused — the player still gets a game"
+        );
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().ai_faction_count(),
+            ceiling,
+            "the roster holds exactly what the grid seats"
+        );
+        let mut awaiting = app.world.resource::<TurnQueue>().awaiting();
+        awaiting.sort();
+        assert_eq!(
+            awaiting.len() as u32,
+            ceiling + 1,
+            "and the queue awaits the clamped roster, not the requested one"
+        );
+    }
+
+    /// **An absent count is the UNATTENDED roster, and it is not `Some(0)`.** The wire
+    /// distinguishes them, and only this says the server honours the distinction.
+    ///
+    /// ⛔ Absent resolves to **no rivals**, not to the map-scaled count the New Game screen
+    /// pre-selects. A scripted launch and a `cargo run` server are not a player looking at a
+    /// screen, and there is still no AI to drive a rival — sabotaged by routing this through
+    /// `faction_start_capacity`, which the first case catches.
+    ///
+    /// Asserted on the resolution rule rather than through `handle_new_game`, because the count a
+    /// rebuild defaults to comes from the config FILE (`load_simulation_config_for_new_world` re-reads
+    /// it, carrying only fog and the binds), and steering a file would mean a process-global env var
+    /// a parallel test would race on.
+    #[test]
+    fn an_absent_rival_count_resolves_to_the_unattended_roster() {
+        let app = build_test_app();
+        let mut config = app.world.resource::<SimulationConfig>().clone();
+        assert_eq!(
+            config.default_ai_faction_count, None,
+            "fixture: the shipped config derives rather than pinning"
+        );
+        assert_eq!(
+            requested_ai_faction_count(None, &config),
+            0,
+            "nobody picked, and nothing pins it: the world that has always shipped"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(2), &config),
+            2,
+            "a pick is honoured"
+        );
+
+        config.default_ai_faction_count = Some(3);
+        assert_eq!(
+            requested_ai_faction_count(None, &config),
+            3,
+            "absent takes the config pin when there is one"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(0), &config),
+            0,
+            "and an explicit 0 is a player who chose to play alone, not an absent field"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(1), &config),
+            1,
+            "a pick overrides the pin"
+        );
+    }
+
+    /// **The New Game screen's two numbers come from the sim, and are answerable with no world.**
+    ///
+    /// Asked before `world_active` for the reason the slot list is: a player configures a game
+    /// before there is one. It answers about the grid IN THE ASK, not the one the server holds —
+    /// sabotaged by answering from `SimulationConfig::grid_size`, which the differing sizes below
+    /// would catch.
+    #[test]
+    fn the_faction_capacity_query_is_answered_idle_for_the_asked_grid() {
+        let mut app = build_test_app();
+        let separation = app
+            .world
+            .resource::<SimulationConfig>()
+            .faction_start_min_separation;
+        let land = capacity_land_fraction(&app);
+
+        let roomy = UVec2::new(80, 52);
+        let cramped = UVec2::new(20, 20);
+        assert_ne!(
+            app.world.resource::<SimulationConfig>().grid_size,
+            cramped,
+            "fixture: the asked grid must differ from the server's, or the ask is unread"
+        );
+
+        let answer = answer_query(
+            false,
+            &mut app.world,
+            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
+                width: roomy.x,
+                height: roomy.y,
+            }),
+        );
+        let QueryReply::FactionCapacity(roomy_reply) = answer else {
+            panic!("the capacity query is answered even with no world: {answer:?}");
+        };
+        assert_eq!(
+            roomy_reply.max_ai_faction_count,
+            core_sim::max_faction_starts(roomy, separation, land) - 1,
+            "the ceiling is the sim's own rule, not a second copy of it"
+        );
+        assert!(
+            roomy_reply.default_ai_faction_count > 0,
+            "and with nothing pinned the screen pre-selects a world with neighbours, unlike the \
+             unattended roster the same server would boot with"
+        );
+
+        let answer = answer_query(
+            false,
+            &mut app.world,
+            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
+                width: cramped.x,
+                height: cramped.y,
+            }),
+        );
+        let QueryReply::FactionCapacity(cramped_reply) = answer else {
+            panic!("the capacity query is answered even with no world: {answer:?}");
+        };
+        assert_eq!(
+            cramped_reply.max_ai_faction_count, 0,
+            "a grid that seats one start offers no rivals at all"
+        );
+        assert!(
+            cramped_reply.max_ai_faction_count < roomy_reply.max_ai_faction_count,
+            "and the answer follows the grid in the ask"
+        );
+        assert!(
+            cramped_reply.default_ai_faction_count <= cramped_reply.max_ai_faction_count,
+            "the offered default is always grantable"
         );
     }
 

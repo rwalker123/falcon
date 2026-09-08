@@ -232,7 +232,7 @@ func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, di
 
 ## Faction color lookup for a band token, with a neutral fallback for unknown factions.
 func _band_faction_color(unit: Dictionary) -> Color:
-	return _view.faction_colors.get(unit.get("faction", ""), _view.BAND_FACTION_FALLBACK_COLOR)
+	return _view.faction_color(unit.get("faction", ""), _view.BAND_FACTION_FALLBACK_COLOR)
 
 ## THE BAND NAME PILL's geometry, resolved WITHOUT drawing — the reservation pass needs the rects
 ## before it knows whether the pill may be drawn at all, and the draw then reuses the very rect that

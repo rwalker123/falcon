@@ -602,6 +602,75 @@ impl ForagePatch {
         self.ecology_phase = classify_ecology_phase(self.biomass, self.carrying_capacity, ecology);
     }
 
+    /// **⛔ CLEAR THE PER-TURN BUILD SCRATCH — the ONE definition of what that scratch IS.**
+    ///
+    /// Six fields the labor arm stamps for whichever band worked this source and
+    /// [`advance_cultivation`] clears again on the next turn's Logistics pass ([`Self::build_turns_remaining`]
+    /// carries the cycle). They are read as **one set** — a date from one band's queue beside another
+    /// band's position would be two answers pretending to be one — so they are cleared as one, here,
+    /// rather than by two call sites that must remember the same six names.
+    ///
+    /// **The decay pass is not its only caller**, and that is the point: the snapshot withholds a
+    /// rival's builder state through [`Self::without_build_estimate`], which spends this. A seventh
+    /// scratch field added to the decay pass is therefore withheld from a foreign viewer by
+    /// construction rather than by somebody noticing.
+    pub(crate) fn clear_build_estimate(&mut self) {
+        self.build_turns_remaining = None;
+        self.build_work_from_gear = NO_BUILD_GEAR;
+        self.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
+        self.build_blocked_reason = crate::intensification::BuildGate::Open;
+        self.build_destination = None;
+        self.build_legs = Vec::new();
+    }
+
+    /// **IS ANY OF THAT SCRATCH SET?** — asked so a redaction can skip the clone on the overwhelming
+    /// majority of patches, which carry no build at all: the decay pass clears the set every turn and
+    /// the labor arm re-stamps it only for sources some band actually worked or queued.
+    pub(crate) fn has_build_estimate(&self) -> bool {
+        self.build_turns_remaining.is_some()
+            || self.build_work_from_gear != NO_BUILD_GEAR
+            || self.build_queue_position != crate::intensification::NOT_IN_ANY_BUILD_QUEUE
+            || self.build_blocked_reason != crate::intensification::BuildGate::Open
+            || self.build_destination.is_some()
+            || !self.build_legs.is_empty()
+    }
+
+    /// **THIS PATCH WITH SOMEBODY ELSE'S BUILD STATE WITHHELD** — the improvement standing on the
+    /// ground is untouched; what goes is *who is raising it, with what, how far from done and where in
+    /// their queue*. See `factions.md` → "The improvement follows the ground; the BUILDER'S state
+    /// follows the builder".
+    pub(crate) fn without_build_estimate(&self) -> Self {
+        let mut withheld = self.clone();
+        withheld.clear_build_estimate();
+        withheld
+    }
+
+    /// **THIS PATCH AS WILD GROUND** — every term the improvement standing on it has moved, read back
+    /// at the unimproved value: the ladder position, the standing, the committed species, the owner,
+    /// the keeping bill, the build scratch, and the `carrying_capacity` the Field rung's gain has
+    /// raised (`tile_capacity`, the land's own `K`).
+    ///
+    /// # ⛔ IT REDACTS THE **SOURCE**, WHICH IS WHY IT IS NOT A LIST OF FIELDS
+    ///
+    /// The snapshot's patch row derives ~40 published values from this struct, and five of them were
+    /// gated by name while `carrying_capacity`, the two rung yields, the conversion rate and the
+    /// basket were not — so `carrying_capacity != tile_capacity` was an exact test for *"this rival
+    /// tile carries a standing improvement"*, published on the very row that denied one. A row built
+    /// from a wild source cannot carry that pair, and neither can any field added to it later.
+    ///
+    /// **The ECOLOGY is what stays**: the standing biomass is what anyone looking at the ground can
+    /// see, and it is re-classified here against the wild capacity so the published phase agrees with
+    /// the published pair rather than with the capacity the row denies.
+    pub(crate) fn as_wild_ground(&self, tile_capacity: f32, forage: &ForageLaborConfig) -> Self {
+        let mut wild = Self {
+            biomass: self.biomass,
+            biomass_before_regrowth: self.biomass_before_regrowth,
+            ..Self::new(self.tile, tile_capacity)
+        };
+        wild.refresh_ecology_phase(&patch_ecology(&wild, forage));
+        wild
+    }
+
     /// **WHERE THIS PATCH STANDS ON THE PLANT LADDER** — the derived verdict, re-stamped on every
     /// write to the position. Every rate seam interpolates on it and every predicate reads it, so
     /// there is exactly one answer to *"where is this source"*.
@@ -3327,12 +3396,11 @@ pub fn advance_cultivation(
         // **The turns estimate**, on the one-turn cycle: a build the player abandoned must stop
         // publishing a finish date, and the labor arm re-stamps it this turn if a crew is still on it
         // (Logistics runs before Population).
-        patch.build_turns_remaining = None;
-        patch.build_work_from_gear = NO_BUILD_GEAR;
-        patch.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
-        patch.build_blocked_reason = crate::intensification::BuildGate::Open;
-        patch.build_destination = None;
-        patch.build_legs = Vec::new();
+        //
+        // **Through [`ForagePatch::clear_build_estimate`]**, the one definition of what that scratch
+        // is — shared with the snapshot's foreign-builder redaction, so the two cannot come to hold
+        // different ideas of which fields the labor arm stamps.
+        patch.clear_build_estimate();
         // **And this turn's supply**, on the same cycle and for the same reason: it describes the
         // keepers that held the patch, so a patch whose keepers have gone must stop reporting what
         // they paid. Clearing it is also what re-arms this pass — next turn's shortfall is the whole

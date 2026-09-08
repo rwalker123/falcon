@@ -980,12 +980,21 @@ pub(crate) fn recipe_catalogue(
 /// **Per faction, per craft.** Every faction the ledger carries times every craft the materials
 /// table declares — the same shape `snapshot_intensification_knowledge` publishes the ladder's five
 /// in, and for the same reason: a client reads its own faction's rows off the list.
+/// **The viewer's own crafts.** Which crafts another people has learned, and how far along they are
+/// on the ones they have not, is not legible from outside — see `factions.md` → "Which frame sections
+/// are viewer-scoped".
 pub(crate) fn craft_knowledge_states(
     materials: &MaterialsConfig,
     discovery: &DiscoveryProgressLedger,
     threshold: f32,
+    viewer: FactionId,
 ) -> Vec<CraftKnowledgeState> {
-    let mut factions: Vec<u32> = discovery.progress.keys().map(|faction| faction.0).collect();
+    let mut factions: Vec<u32> = discovery
+        .progress
+        .keys()
+        .filter(|faction| **faction == viewer)
+        .map(|faction| faction.0)
+        .collect();
     factions.sort_unstable();
     factions.dedup();
     let crafts = crate::crafting::crafts_declared_by(materials);

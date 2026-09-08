@@ -47,6 +47,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `roads.md` | The roads in the ground: the rung ladder painted INTO the terrain composite, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `terrain_blend.gdshader`, `TerrainRenderer.gd`, `dict/routes.rs` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `save-load-menu.md` | The save/load menu: the query-worker seam, the panes and their four list states, the load handoff, the config-drift notice | `SaveSlots.gd`, `ConfigDriftNotice.gd`, `MenuShell.gd`, `LandingScreen.gd` |
+| `new-game-setup.md` | The New Game pane's rival-peoples count: the capacity ask, the optional argument that means "you decide", and the shared query-id allocator | `FactionCapacity.gd`, `MenuShell.gd`, `LandingScreen.gd`, `Main.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
 | `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
 | `telling-panel.md` | The Telling book UX and the narrative fork | `TellingPanel.gd`, `NarrativeForkPanel.gd` |

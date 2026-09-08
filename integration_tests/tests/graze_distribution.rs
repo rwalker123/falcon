@@ -110,7 +110,7 @@ fn generate(seed: u64) -> GeneratedWorld {
     GeneratedWorld {
         graze: app.world.resource::<GrazeRegistry>().clone(),
         forage: app.world.resource::<ForageRegistry>().clone(),
-        start: app.world.resource::<StartLocation>().position(),
+        start: app.world.resource::<StartLocation>().anchor_position(),
         wrap_horizontal: app
             .world
             .resource::<SimulationConfig>()

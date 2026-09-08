@@ -61,6 +61,48 @@ four rows cover both size units and all three time buckets plus the absolute-dat
 expressed as OFFSETS from now (a fixed stamp would drift into another bucket as the branch aged) and
 only the date row carries a fixed stamp, since that branch has no bucket to drift out of.
 
+**…AND THE NEW GAME PANE'S RIVAL COUNT, over the same fake transport.** `_run_new_game_states`
+injects a real `FactionCapacity` seam on the same sender and walks the row's states:
+`menu_new_game_rivals_pending` (the ask in flight), `menu_new_game_rivals` (answered, opened on the
+server's default), `menu_new_game_rivals_picked` (the player drags the slider), and the two states no
+healthy stack reaches — `menu_new_game_rivals_alone`, a grid with no room for a second people, and
+`menu_new_game_rivals_unavailable`, an ask that failed. The re-ask is driven by a real map-size click
+through `_on_size_input`, because a new size IS the new question
+(`.claude/rules/client/new-game-setup.md`).
+
+**The map-size click has its own pair**, `menu_new_game_rivals_reask` (the ask in flight over a
+previous answer) and `_reasked` (the new ceiling landed), because that is the click a player makes
+repeatedly and the row used to be destroyed and redrawn on every one of them — a flash, reported from
+a playtest. **The identity checks are what a frame cannot carry**: a rebuilt row renders identically
+to a preserved one, so the slider's INSTANCE ID and its global rect are carried across the click, and
+the row's height and the summary's text are compared either side of it.
+`_assert_row_height_is_stable` is the other half — the row must be the same height with a slider and
+without one, which is a comparison BETWEEN states and so has no still of its own. Sabotage-verified
+by restoring the defect: freeing the children on every emit fails four legs, naming the row going
+38px → 16px while the ask was in flight.
+
+**`_assert_the_shown_count_is_the_count_sent` has no frame and is the most load-bearing of them.**
+An absent `ai_faction_count` now means the server's unattended roster — zero rivals — so a break
+between the number the row displays and the number that reaches the socket hands the player an empty
+world while every frame looks correct. It stages the state a screen nobody has touched is in (the
+pick and its flag, reset explicitly, because a pick is deliberately kept across pane changes and
+would otherwise be inherited from the frames above), then walks both ends of the chain: the shell's
+`new_game_requested` payload, and `Main.new_game_line` — `static` for exactly this, so the rule that
+decides between a trailing count and none is callable without standing a client up. Sabotage-verified
+by making the shell send only an explicit pick: it fails naming `showed 2 … carried -1`.
+
+Five more assertions ride with the state frames, and every one covers something the PNG cannot show: opening the pane
+must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
+without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout), a failed
+ask must still leave `Begin the trail` on screen, and the count that would go on the wire must match
+the state — the pick when there is one, an explicit `0` on a 0 ceiling, and
+`FactionCapacity.NO_COUNT` after a failure, which omits the argument entirely.
+`_assert_capacity_ids_are_disjoint_from_the_save_seam` is the id half, and it checks the CONSEQUENCE
+rather than the mechanism: a capacity answer must finish nothing on the save seam. It cannot stage
+the case the tie-break count exists for — two seams built inside the same microsecond — because the
+clock advances between two `new()` calls in a harness, so removing the tie-break leaves this run
+green. That guard is a design invariant (`.claude/rules/client/new-game-setup.md`), not a tested one.
+
 **Two more checks take no picture, and both cover a silent wrong answer.**
 `_assert_caret_survives_a_mid_string_edit` parks the caret mid-string in the real name field, pushes a
 unicode key event through `Viewport.push_input` — `LineEdit.gui_input` is the only path that both

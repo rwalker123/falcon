@@ -487,6 +487,9 @@ fn new_game() -> CommandPayload {
         height: MAP_HEIGHT,
         seed: MAP_SEED,
         profile_id: START_PROFILE.to_string(),
+        // No count: this suite is about saving and loading, so it takes whatever roster the config
+        // default gives, exactly as a `new_game` typed without the argument does.
+        ai_faction_count: None,
     }
 }
 
