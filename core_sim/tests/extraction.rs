@@ -482,6 +482,9 @@ fn working_at(rung: RungKey, terrain: TerrainType, material: &str) -> (DepositSo
 /// Both halves are asserted, because either alone is weak: a monotonically-falling stock also
 /// describes a deposit whose renewal is simply outpaced, and a zero regrowth term also describes a
 /// deposit nobody is working.
+///
+/// **The turn is spelled out — renew, then take** — because that is the order the sim runs and the
+/// renewal is no longer inside the take (`renew_deposit` is the pass's, once per working).
 #[test]
 fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
     let config = ExtractionConfig::builtin();
@@ -490,12 +493,13 @@ fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
     let mut previous = working.stock;
     let mut ever_took = false;
     for _ in 0..400 {
-        let outcome = take_from_deposit(&mut working, 5, &ground, &config, &ladder);
-        ever_took |= outcome.taken > 0.0;
+        core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
         assert_eq!(
-            outcome.stock, outcome.stock_after_take,
+            working.stock, previous,
             "renewal must contribute EXACTLY nothing to a rock body — `0 x anything` is still 0"
         );
+        let outcome = take_from_deposit(&mut working, 5, &ground, &config, &ladder);
+        ever_took |= outcome.taken > 0.0;
         assert!(
             working.stock <= previous,
             "a quarry's stock must never rise: {} after {previous}",
@@ -523,6 +527,7 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
     let capacity = tile_deposit_capacity(&config, WOOD, &ground);
 
     for _ in 0..40 {
+        core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
         take_from_deposit(&mut working, 12, &ground, &config, &ladder);
     }
     let cut_to = working.stock;
@@ -533,8 +538,11 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
 
     let mut previous = cut_to;
     for _ in 0..600 {
-        // **Nobody is working it** — the same seam, at a crew of none.
-        take_from_deposit(&mut working, 0, &ground, &config, &ladder);
+        // ⛔ **Nobody is working it, AND NOTHING NEEDS TO BE.** Renewal is the pass's and runs on
+        // every working whether or not a band holds a row — which is exactly the half that was
+        // broken while it lived inside the take, where an abandoned wood was frozen at its
+        // low-water mark for ever.
+        core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
         assert!(
             working.stock >= previous,
             "an unworked wood must not fall: {} after {previous}",
@@ -563,6 +571,7 @@ fn enough_hands_drive_a_wood_down_turn_on_turn() {
     let (mut working, ground) = working_at(RungKey::ForestryFelling, WOODED, WOOD);
     let mut previous = working.stock;
     for turn in 0..30 {
+        core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
         take_from_deposit(&mut working, 10, &ground, &config, &ladder);
         assert!(
             working.stock < previous,
@@ -587,6 +596,7 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
         let (mut working, ground) = working_at(rung, ROCK, STONE);
         let mut total = 0.0;
         for _ in 0..4000 {
+            core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
             total += take_from_deposit(&mut working, 4, &ground, &config, &ladder).taken;
         }
         total
@@ -922,6 +932,60 @@ fn a_band_short_of_keepers_funds_its_deepest_working_first() {
     );
 }
 
+/// ⛔ **THE QUARRY THRESHOLD FALLS IN THE GAP BETWEEN THE TWO STONE POPULATIONS**, and every rate-0
+/// row is on the quarryable side of it.
+///
+/// This is the rule the docs have always stated and nothing asserted, and the failure it exists to
+/// catch is not a tuning slip: **a rate-0 row below the threshold is a dead work site that still
+/// accepts a crew.** A band on one works `extraction:gathering`, takes its `recovery_fraction` of
+/// the body once, and then reaches nothing for the rest of the game — the stock never returns, and
+/// the rung that would reach deeper is refused for ever. It shipped that way for three rows
+/// (`AquiferCeiling` 600, `FumaroleBasin` 300, `AshPlain` 120) against a threshold of 800.
+///
+/// **It reads the shipped table AND the shipped ladder**, because the invariant is a relation
+/// between two files: either one moving alone is what breaks it.
+#[test]
+fn the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones() {
+    let config = ExtractionConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let threshold = ladder
+        .rung(RungKey::ExtractionQuarry)
+        .site_requirement
+        .expect("the quarry rung states what the ground must be")
+        .min_deposit_capacity;
+    let stone = config
+        .deposit(STONE)
+        .expect("the shipped table carries stone");
+
+    let mut finite = 0;
+    let mut renewing = 0;
+    for (terrain, ground) in &stone.by_terrain {
+        if ground.regrowth_rate == core_sim::NEVER_RENEWS {
+            finite += 1;
+            assert!(
+                ground.capacity >= threshold,
+                "{terrain:?} never renews and holds {} — under the quarry threshold of \
+                 {threshold} it is a DEAD WORK SITE that still accepts a crew: gathering takes its \
+                 share once and nothing ever reaches deeper",
+                ground.capacity
+            );
+        } else {
+            renewing += 1;
+            assert!(
+                ground.capacity < threshold,
+                "{terrain:?} renews and holds {} — at or above the quarry threshold of \
+                 {threshold} a scatter of loose stone would take a working face, which is exactly \
+                 what 'you cannot quarry just anywhere' refuses",
+                ground.capacity
+            );
+        }
+    }
+    assert!(
+        finite > 0 && renewing > 0,
+        "**LIVENESS**: both populations must be present, or the split is asserted against nothing"
+    );
+}
+
 /// ⛔ **DECAY MUST NOT RESURRECT THE §6 FLOOR TRAP.** A falling position lowers
 /// `recovery_fraction`, which raises the floor `(1 − recovery) × capacity` and so **reduces** what
 /// the working can reach. That is correct and intended — you reach less of the deposit as the face
@@ -1089,5 +1153,177 @@ fn a_standing_material_rate_on_a_deposit_rung_is_refused() {
             .materials
             .contains_key(WOOD),
         "**LIVENESS**: the quarry's props are a build pile, and this test means nothing without one"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The growth term runs ONCE PER WORKING
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **TWO BANDS ON ONE WOOD RENEW IT ONCE, NOT TWICE.**
+///
+/// Renewal lived inside `take_from_deposit` for one slice, and that function is called **once per
+/// band-row** — so a working `K` bands shared ran the growth term `K` times a turn, undercutting
+/// *"over-cutting is possible and must stay so"* in exact proportion to how many bands were on it.
+///
+/// The measurement is a **difference against a one-band control**: two bands taking nothing must
+/// leave the stand exactly where one band taking nothing does. Asserting only that the stock rose
+/// would pass against the defect.
+#[test]
+fn two_bands_on_one_working_renew_it_once() {
+    let at = UVec2::new(0, 0);
+    let stand = |bands: u32| {
+        let (mut world, home) = world_of(WOODED);
+        seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+        // Cut it down first, so there is real room for the growth term to fill.
+        world
+            .resource_mut::<DepositRegistry>()
+            .source_mut(at, WOOD)
+            .expect("the working stands")
+            .stock = 100.0;
+        for _ in 0..bands {
+            // **A crew of nobody**: every band holds a row on the working, and none of them takes
+            // anything, so the only thing that can move the stock is the renewal.
+            spawn_band_of(&mut world, home, WOOD, 10, 0);
+        }
+        run_full_turn(&mut world);
+        stock(&world, WOOD).expect("the working stands")
+    };
+
+    let one = stand(1);
+    let two = stand(2);
+    let five = stand(5);
+    assert!(
+        one > 100.0,
+        "**LIVENESS**: the wood must actually have grown"
+    );
+    assert_eq!(
+        two, one,
+        "two bands on one wood must renew it ONCE — the growth term is the working's, not the row's"
+    );
+    assert_eq!(five, one, "and five bands the same");
+}
+
+/// ⛔ **A WORKING NO BAND HOLDS A ROW ON STILL RENEWS — AND A ROCK ONE STILL DOES NOT.**
+///
+/// The other half of the same defect: with renewal inside the take, an **abandoned** over-cut wood
+/// was frozen at its low-water mark for ever, because nothing called the take on it. That
+/// contradicts the arc's own headline — a wood recovers and rock does not — for exactly the ground
+/// the branch's move-or-stay pressure is made of.
+///
+/// **Both materials in one drive**, because either alone is weak: a stand that grows also describes
+/// a pass that renews everything, and a quarry that does not also describes a pass that renews
+/// nothing.
+#[test]
+fn an_abandoned_wood_still_recovers_and_an_abandoned_quarry_still_does_not() {
+    let at = UVec2::new(0, 0);
+    for (terrain, material, floor, should_grow) in [
+        (WOODED, WOOD, RungKey::ForestryDeadfall, true),
+        (ROCK, STONE, RungKey::ExtractionGathering, false),
+    ] {
+        let (mut world, _home) = world_of(terrain);
+        seat_working(&mut world, at, material, floor);
+        world
+            .resource_mut::<DepositRegistry>()
+            .source_mut(at, material)
+            .expect("the working stands")
+            .stock = 100.0;
+        // **No band at all** — not an unstaffed row, no row and no cohort.
+        for _ in 0..50 {
+            run_full_turn(&mut world);
+        }
+        let after = stock(&world, material).expect("the working stands");
+        if should_grow {
+            assert!(
+                after > 100.0,
+                "an abandoned wood must still come back: {after} after 50 quiet turns"
+            );
+        } else {
+            assert_eq!(
+                after, 100.0,
+                "and an abandoned quarry must not — its rate is zero, and nothing renews it"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The build quote nets the LIVE rot
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **A WORKING WHOSE KEEPING IS SHORT QUOTES `Rotting`, NOT A FINITE DATE.**
+///
+/// The countdown is `banked ÷ (what the crew banks − what the next decay pass takes)`, so a quote
+/// struck against `NO_UPKEEP_DECAY` promises a rung will finish while the pass takes more off it
+/// than the builders put on. **Its blast radius is the whole queue**: `publish_build_chain`
+/// accumulates the head's turns into `cumulative`, so an understated deposit head carries its error
+/// onto every entry behind it — including the patch, herd and road entries that do reach the wire.
+///
+/// It asserts on the **composition the arm performs** — `deposit_meter_rot` into
+/// `RungDef::build_balance` into `build_turns_estimate` — because a working publishes no wire row for
+/// the resolved quote to be read back off (`docs/plan_extraction.md` §7).
+///
+/// **Both halves**, or "it said Rotting" passes against a rot that is simply always larger than the
+/// crew: a *kept* working at the same crew must still quote a real number.
+#[test]
+fn a_working_whose_keeping_is_short_quotes_a_rotting_meter() {
+    let config = ExtractionConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let (mut working, ground) = working_at(RungKey::ForestryFelling, WOODED, WOOD);
+    // Part-way up the coppice rung above it, so there is a meter carrying work for a rot to eat and
+    // an estimate to be given.
+    let (base, width) = core_sim::extraction::deposit_rung_span(RungKey::ForestryCoppice, &ladder);
+    working.set_ladder_position(base + width * 0.5, &ladder, RungBranch::Forestry);
+
+    let measure = core_sim::deposit_measure(&working, &ground, &config);
+    let bill = core_sim::deposit_keeping_basis(&working, measure, &ladder);
+    assert!(bill > 0.0, "fixture: a coppice in flight owes a real bill");
+
+    // **Past the grace**, which is what arms the bleed at all.
+    working.neglect_turns = 9;
+
+    let quote = |working: &core_sim::DepositSource, builders: u32| {
+        let rung = ladder.rung(RungKey::ForestryCoppice);
+        let rot = core_sim::deposit_meter_rot(working, measure, &ladder);
+        let balance = rung.build_balance(
+            Some(core_sim::Improvement::Coppice),
+            true,
+            builders,
+            core_sim::NO_BUILD_GEAR,
+            rot,
+            1.0,
+        );
+        (
+            rot,
+            core_sim::build_turns_estimate(
+                base + width,
+                working.ladder_position() - base,
+                balance,
+                true,
+                builders,
+            ),
+        )
+    };
+
+    // Nobody keeping it, and one builder: the pass takes 1.5 a turn and the crew banks 1.0.
+    let (rot, turns) = quote(&working, 1);
+    assert!(
+        rot > 0.0,
+        "**LIVENESS**: an unkept coppice really is bleeding"
+    );
+    assert_eq!(
+        turns,
+        Some(core_sim::BuildTurns::Rotting),
+        "a build losing ground to its own decay must not publish a finite date"
+    );
+
+    // Now pay the bill in full. The same crew gets a real number.
+    working.upkeep_supplied = bill;
+    let (rot, turns) = quote(&working, 1);
+    assert_eq!(rot, 0.0, "a fully kept meter loses nothing");
+    assert!(
+        matches!(turns, Some(core_sim::BuildTurns::Turns(_))),
+        "and the same one builder then finishes it, so the Rotting above is about the KEEPING and \
+         not about the crew: got {turns:?}"
     );
 }

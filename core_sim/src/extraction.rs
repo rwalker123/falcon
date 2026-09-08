@@ -31,15 +31,21 @@
 //! ([`DepositRegistry::open`]): a deposit nobody has ever worked stands at exactly its capacity, and
 //! recording that for every tile on the map twice over would be storing a derivation.
 //!
-//! # The take
+//! # The turn: regrow, then take
 //!
 //! ```text
-//! floor      = (1 − recovery_fraction(position)) × capacity
-//! reachable  = max(0, stock − floor)
-//! take       = min(workers × yield_per_worker_turn(position), reachable)
-//! stock     -= take
-//! stock     += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
+//! Logistics  (once per working, `advance_deposits`)
+//!   stock    += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
+//! Population (once per band row on it)
+//!   floor     = (1 − recovery_fraction(position)) × capacity
+//!   reachable = max(0, stock − floor)
+//!   take      = min(workers × yield_per_worker_turn(position), reachable)
+//!   stock    -= take
 //! ```
+//!
+//! **The growth term runs once per working and the take once per row**, which is the plant web's
+//! split and is load-bearing rather than tidy: renewal inside the take ran `K` times on a working
+//! `K` bands shared and never at all on one nobody held — see [`take_from_deposit`].
 //!
 //! **Over-cutting is POSSIBLE and that is the point** — the take is not clamped to the sustainable
 //! rate, because the whole of the renewable half is that you can ruin a wood. The warning is a
@@ -48,16 +54,15 @@
 //! **These sources pay NO food and NO fodder.** Not a zero-valued food term; no food term at all. A
 //! woodcutter is a mouth that is not gathering, and *that* is what wood costs.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use bevy::prelude::{Res, ResMut, Resource};
 use glam::UVec2;
 use serde::{Deserialize, Serialize};
-use sim_schema::TerrainType;
 
 use crate::{
     components::Tile,
-    extraction_config::{DepositDef, ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
+    extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
     intensification::{
         interpolate, rung_span, LadderConfig, RungBranch, RungExtractionPayoff, RungKey,
         RungStanding, NEGLECT_NONE, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
@@ -149,7 +154,8 @@ pub struct DepositSource {
 impl DepositSource {
     /// **A FRESH WORKING ON UNTOUCHED GROUND** — full stock, standing on its branch's free floor.
     ///
-    /// `branch` is the deposit's ([`DepositDef::branch`]), because the free floor differs by ladder
+    /// `branch` is the deposit's ([`crate::extraction_config::DepositDef::branch`]), because the
+    /// free floor differs by ladder
     /// and only the config knows which one this material is worked by.
     pub fn opening(tile: UVec2, material: &str, capacity: f32, branch: RungBranch) -> Self {
         Self {
@@ -288,16 +294,14 @@ pub fn deposit_branch(config: &ExtractionConfig, material: &str) -> Option<RungB
     config.deposit(material).map(|deposit| deposit.branch)
 }
 
-/// **EVERY MATERIAL THIS TERRAIN HOLDS**, in the config's own id order — what a tile offers a band
-/// that walks onto it. A wooded highland answers both.
-pub fn terrain_deposits(
-    config: &ExtractionConfig,
-    terrain: TerrainType,
-) -> impl Iterator<Item = (&str, &DepositDef)> {
-    config
-        .deposits()
-        .filter(move |(_, deposit)| deposit.terrain(terrain).is_some())
-}
+// **RETIRED BEFORE IT HAD A CALLER: `terrain_deposits`** — *"every material this terrain holds"*,
+// in the config's own id order.
+//
+// It answers a **tile-card** question — *what does this ground offer a band that walks onto it* —
+// and nothing about a deposit reaches the client yet (`docs/plan_extraction.md` §7). A `pub fn` with
+// no caller is either a seam with a stated future reader or it is dead, and this one had no reader
+// named. `ExtractionConfig::deposits()` plus `DepositDef::terrain` is the whole of it, so the
+// readout slice re-adds it in four lines rather than inheriting a guess at its signature.
 
 /// **WHAT THIS RUNG MAY NOT DRAW BELOW** — `(1 − recovery_fraction) × capacity`, the fauna escapement
 /// floor upside down (`docs/plan_extraction.md` §4b).
@@ -461,20 +465,15 @@ pub fn deposit_meter_rot(source: &DepositSource, measure: f32, ladder: &LadderCo
     )
 }
 
-/// **HOW MANY MORE TURNS OF SHORTFALL THIS WORKING CAN ABSORB BEFORE IT BLEEDS** — the countdown,
-/// not the counter. `None` = there is nothing at risk here, which is a working anywhere on its free
-/// floor: those rungs declare no `upkeep`, so there is no grace to count and no meter to lose.
-pub fn deposit_neglect_grace_remaining(
-    source: &DepositSource,
-    ladder: &LadderConfig,
-) -> Option<u32> {
-    let rung = ladder.rung(deposit_at_risk_rung(&source.standing));
-    rung.upkeep.as_ref()?;
-    Some(crate::intensification::neglect_grace_remaining(
-        source.neglect_turns,
-        rung.upkeep_grace_turns(),
-    ))
-}
+// **RETIRED BEFORE IT HAD A CALLER: `deposit_neglect_grace_remaining`** — the countdown a working
+// publishes beside its shortfall, `routes::road_neglect_grace_remaining`'s twin.
+//
+// Its one consumer on every other branch is the **wire** (`hasNeglectGrace` /
+// `neglectGraceRemaining`), and a working has no wire row (`docs/plan_extraction.md` §7). Nothing in
+// the sim branches on a grace *remaining* — the bleed asks `RungDef::upkeep_decay`, which owns the
+// `>` against `neglect_turns` — so this was a readout with no reader. It comes back with the
+// deposit row, as `neglect_grace_remaining(source.neglect_turns, rung.upkeep_grace_turns())` on the
+// at-risk rung, which is the same three lines.
 
 /// **EVERY LIVE WORKING**, keyed by the pair that names one — the deposit branches' twin of
 /// `ForageRegistry` / `HerdRegistry`.
@@ -558,9 +557,9 @@ pub struct DepositTake {
     /// **WHAT THE RUNG COULD STILL HAVE REACHED before this take** — the room the crew was working
     /// in, which is what says whether the source is workable at all.
     pub reachable_before: f32,
-    /// The stock as the take left it, **before** renewal.
-    pub stock_after_take: f32,
-    /// The stock as renewal left it — what the source now carries.
+    /// The stock as the take left it — what the source now carries. **Renewal has already happened
+    /// this turn**, a whole stage earlier ([`renew_deposit`]), so this is the low-water mark the
+    /// next turn's growth term will start from.
     pub stock: f32,
 }
 
@@ -568,10 +567,27 @@ pub struct DepositTake {
 /// a pure function of the source, the ground and the ladder so the turn's system and any projection
 /// read one model.
 ///
-/// **Renewal happens after the take**, unlike the food webs (which regrow in Logistics and gather in
-/// Population). A deposit has no ecology phase and no forecast riding a `before_regrowth` reading, so
-/// there is nothing for the split to serve — and taking first is what makes *"this turn's crew could
-/// reach `reachable_before`"* a fact about the stock the crew actually found.
+/// # ⛔ IT DOES NOT RENEW, AND THAT IS THE ONE THING THIS SEAM MUST NOT DO
+///
+/// **Renewal is [`renew_deposit`]'s, called once per working per turn by [`advance_deposits`]** —
+/// the plant web's arrangement exactly (`advance_forage_regrowth` in Logistics, the gather in
+/// Population), so the turn's order is **regrow → take**.
+///
+/// It ran here for one slice, and *"a deposit has no forecast riding a pre-regrowth reading, so
+/// there is nothing for the split to serve"* was the wrong reading of what the split is for. **The
+/// split is about how often the growth term runs.** This function is called **once per band-row**,
+/// so renewal inside it failed in both directions at once:
+///
+/// - **two bands holding a row on one wood ran the growth term twice in a turn** — `K` bands, `K`×
+///   renewal — which undercut *"over-cutting is possible and must stay so"* in exact proportion to
+///   how many bands shared a deposit;
+/// - **a working no band held a row on never renewed at all**, so an abandoned over-cut wood was
+///   frozen at its low-water mark for ever — against the arc's own headline that a wood recovers and
+///   rock does not.
+///
+/// What survives of the old reading is [`DepositTake::reachable_before`], which is still *"the room
+/// this turn's crew actually found"* — it is simply found after the pass has grown the stand rather
+/// than before.
 pub fn take_from_deposit(
     source: &mut DepositSource,
     workers: u32,
@@ -583,30 +599,46 @@ pub fn take_from_deposit(
     let payoff = deposit_payoff(&source.standing, ladder);
     let reachable_before = deposit_reachable(source.stock, capacity, &payoff);
     let taken = deposit_take(workers, source.stock, capacity, &payoff);
-    let stock_after_take = (source.stock - taken).max(DEPOSIT_EMPTY);
-    // **The ground's own rate, scaled by what the rung bought.** Rock's is zero, so a forestry
-    // rung's multiplier cannot make one renew however it is tuned.
-    let rate = tile_deposit_regrowth(config, &source.material, ground) * payoff.regrowth_multiplier;
-    source.stock = deposit_regrowth(stock_after_take, capacity, rate, config.seed_fraction);
+    source.stock = (source.stock - taken).max(DEPOSIT_EMPTY);
     DepositTake {
         taken,
         reachable_before,
-        stock_after_take,
         stock: source.stock,
     }
 }
 
-/// **HOW ONE TURN'S TAKE IS SPLIT BETWEEN THE BANDS THAT MADE IT** — by head count, which is the only
-/// division that has a meaning: the take is `Σ workers × rate`, so each band's share is its own
-/// hands' contribution to that sum.
+/// **ONE TURN OF RENEWAL ON ONE WORKING** — the deposit branches' `forage::regrow_patch`, and the
+/// one seam [`advance_deposits`] and any projection share.
 ///
-/// Returns nothing for a crew of [`NO_CREW_ON_THE_DEPOSIT`], which cannot have taken anything.
-pub fn share_of_take(taken: f32, crew: u32, total_crew: u32) -> f32 {
-    if total_crew == NO_CREW_ON_THE_DEPOSIT {
-        return DEPOSIT_EMPTY;
-    }
-    taken * (crew as f32 / total_crew as f32)
+/// **The ground's own rate, scaled by what the rung bought.** Rock's rate is `0`, so a forestry
+/// rung's `regrowth_multiplier` cannot make a quarry renew however it is tuned — the arc's whole
+/// arithmetic, applied at the one place the stock grows.
+///
+/// **It reads the POST-DECAY position**, because `advance_deposits` bleeds before it grows: a
+/// working that has slumped off its coppice rung renews at the rate it now stands on, which is what
+/// makes an unkept managed wood fall back to an ordinary one rather than keeping its management for
+/// free.
+pub fn renew_deposit(
+    source: &mut DepositSource,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+) {
+    let capacity = tile_deposit_capacity(config, &source.material, ground);
+    let payoff = deposit_payoff(&source.standing, ladder);
+    let rate = tile_deposit_regrowth(config, &source.material, ground) * payoff.regrowth_multiplier;
+    source.stock = deposit_regrowth(source.stock, capacity, rate, config.seed_fraction);
 }
+
+// **RETIRED: `share_of_take` and the `DepositCrews` alias** — a per-band split of one summed take,
+// and the sweep that would have summed the crews.
+//
+// **The sweep was never built and must not be.** Each band's row takes from the shared stock
+// **sequentially**, drawing it down as it goes, which is exactly how `forage_take` divides a patch
+// two bands gather: the total can never exceed what the rung could reach, because every take is
+// capped by the stock it actually finds. A summed-crew sweep would be a second way to divide one
+// number, and the one thing that genuinely had to be per-working — the **growth term** — is
+// `advance_deposits`' now (see [`take_from_deposit`]).
 
 /// **THE WORKINGS' DECAY AND THIS TURN'S BILL** — the deposit branches' `routes::advance_roads`,
 /// and the half of the standing upkeep that makes neglect **self-limiting**.
@@ -628,6 +660,14 @@ pub fn share_of_take(taken: f32, crew: u32, total_crew: u32) -> f32 {
 ///    `upkeep_decay` owns the `>` that decides whether the penalty is biting.
 /// 3. **Clear the payment and re-stamp the bill**, at the **post-decay** position, so the turn that
 ///    is about to run judges the working as this pass left it.
+/// 4. **Renew the stock** ([`renew_deposit`]), at that same post-decay position.
+///
+/// # ⛔ PHASE 4 IS WHY THE GROWTH TERM IS HERE AND NOT IN THE TAKE
+///
+/// This pass sweeps **every working exactly once**; the take runs **once per band-row**. Renewal
+/// inside the take therefore ran `K` times on a working `K` bands shared, and **never** on one no
+/// band held a row on — an abandoned over-cut wood frozen at its low-water mark for ever, against
+/// the arc's own headline. It is the plant web's arrangement now, for the plant web's reason.
 ///
 /// # ⛔ IT RUNS ON EVERY WORKING, KEPT OR NOT
 ///
@@ -686,15 +726,10 @@ pub fn advance_deposits(
         source.upkeep_supplied = NO_UPKEEP_DEMAND;
         let measure = deposit_measure(source, ground, &config);
         source.upkeep_demanded = Some(deposit_upkeep_demand(source, measure, &ladder));
+        // ## 4 — the renewal, once per working, at that same post-decay position.
+        renew_deposit(source, ground, &config, &ladder);
     }
 }
-
-/// **EVERY BAND'S CREW ON EVERY WORKING, this turn** — the one sweep the take pass builds, so a
-/// source two bands work is taken from **once** at the summed crew rather than twice at each.
-///
-/// Keyed exactly as [`DepositRegistry`] is, and the value is `(total crew, per-band crews)` in band
-/// order.
-pub type DepositCrews = HashMap<(u32, u32, String), Vec<(usize, u32)>>;
 
 #[cfg(test)]
 mod tests {
@@ -831,14 +866,34 @@ mod tests {
         );
     }
 
-    /// **A take is split by head count**, so a source two bands work pays each what its own hands
-    /// earned and the parts sum to the whole.
+    /// **A SHARED WORKING IS DRAWN DOWN SEQUENTIALLY, AND THE TOTAL CANNOT EXCEED THE REACH.**
+    ///
+    /// This replaced `a_shared_working_splits_its_take_by_hands`, which asserted a per-band split of
+    /// one summed take. That model was never built and must not be: each band's row takes from the
+    /// stock it actually finds, drawing it down as it goes, which is how `forage_take` divides a
+    /// patch two bands gather. The invariant that matters is not *"the shares sum to the take"* but
+    /// *"the takes cannot sum past what the rung could reach"*, and that falls out of the
+    /// arithmetic rather than out of a divider.
     #[test]
-    fn a_shared_working_splits_its_take_by_hands() {
-        let taken = 9.0;
-        let first = share_of_take(taken, 2, 3);
-        let second = share_of_take(taken, 1, 3);
-        assert!((first + second - taken).abs() < 1e-5);
-        assert!(first > second);
+    fn the_takes_of_several_bands_cannot_sum_past_what_the_rung_can_reach() {
+        let felling = payoff(2.0, WHOLE_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
+        let capacity = 30.0;
+        let mut stock = capacity;
+        let reach = deposit_reachable(stock, capacity, &felling);
+        // Four bands of five, one after another: `4 x 5 x 2.0 = 40` against a reach of 30.
+        let mut total = 0.0;
+        for _ in 0..4 {
+            let taken = deposit_take(5, stock, capacity, &felling);
+            total += taken;
+            stock = (stock - taken).max(DEPOSIT_EMPTY);
+        }
+        assert!(
+            total <= reach + 1e-4,
+            "four bands drawing sequentially took {total} of a reach of {reach}"
+        );
+        assert!(
+            total > 0.0 && stock < capacity,
+            "**LIVENESS**: they must actually have taken something"
+        );
     }
 }

@@ -520,10 +520,12 @@ mod tests {
             .deposit(STONE)
             .expect("the shipped table carries stone");
         assert_eq!(stone.branch, RungBranch::Extraction);
-        // **The two populations in one table.** Every row at or above the quarry threshold is a rock
-        // body and never renews; the scatters below it all do. The threshold itself is the ladder's
-        // (`extraction:quarry`'s `min_deposit_capacity`) and is asserted against this table in
-        // `intensification.rs`; here the claim is only that the split is clean.
+        // **The two populations in one table.** The rock bodies never renew and the scatters all do,
+        // and the two do not overlap in size. **That the ladder's threshold falls in the gap** is a
+        // separate claim and is asserted separately, against both files at once, by
+        // `core_sim/tests/extraction.rs`'s
+        // `the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones` — here the claim is
+        // only that there *is* a gap for it to fall in.
         let (finite, renewing): (Vec<_>, Vec<_>) = stone
             .by_terrain
             .iter()

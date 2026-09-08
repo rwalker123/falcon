@@ -79,14 +79,17 @@ and rock's is `0`, so `0 × anything` is still `0` — *stone's rate is zero* su
 rather than as a rule someone has to remember. A branch-keyed payoff would have made it breakable by
 a config edit.
 
-## The take
+## The turn: regrow, then take
 
 ```text
-floor      = (1 − recovery_fraction(position)) × capacity
-reachable  = max(0, stock − floor)
-take       = min(workers × yield_per_worker_turn(position), reachable)
-stock     -= take
-stock     += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
+Logistics  — once per WORKING (`advance_deposits`, phase 4)
+  stock    += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
+
+Population — once per BAND ROW on it (the `Extract` arm)
+  floor     = (1 − recovery_fraction(position)) × capacity
+  reachable = max(0, stock − floor)
+  take      = min(workers × yield_per_worker_turn(position), reachable)
+  stock    -= take
 ```
 
 - **OVER-CUTTING IS POSSIBLE AND MUST STAY SO.** The take is not clamped to the sustainable rate —
@@ -101,9 +104,32 @@ stock     += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multip
   generic material, and the batch merge is the one every other arrival uses. It is reported through
   the row's `SourceYield::materials`, which is the producer the band's income map and the material
   shortfall Alert both read.
-- **Renewal happens after the take**, unlike the food webs (which regrow in Logistics and gather in
-  Population). A deposit has no ecology phase and no forecast riding a pre-regrowth reading, so there
-  is nothing for the split to serve.
+- **A shared working is drawn down SEQUENTIALLY** and needs no divider. Each band's row takes from
+  the stock it actually finds, so the takes cannot sum past what the rung could reach — which is how
+  `forage_take` divides a patch two bands gather.
+
+> ### ⛔ THE GROWTH TERM RUNS ONCE PER WORKING, AND IT LIVED IN THE TAKE FOR ONE SLICE
+>
+> Renewal was the last step of `take_from_deposit`, on the reading that *"a deposit has no forecast
+> riding a pre-regrowth reading, so there is nothing for the split to serve"*. **That is the wrong
+> thing for the split to be about.** The plant web's split is not about forecasts, it is about **how
+> often the growth term runs**: `advance_forage_regrowth` sweeps every patch once, and the gather is
+> per band. `take_from_deposit` is called **once per band-row**, so renewal inside it failed in both
+> directions at once —
+>
+> - **two bands on one wood ran the growth term twice in a turn** (`K` bands, `K`× renewal), which
+>   undercut *"over-cutting is possible and must stay so"* in exact proportion to how many bands
+>   shared a deposit; and
+> - **a working no band held a row on never renewed at all**, so an abandoned over-cut wood was
+>   frozen at its low-water mark for ever — against this file's own headline that a wood recovers
+>   and rock does not, on exactly the ground the branch's move-or-stay pressure is made of.
+>
+> It is `advance_deposits`' phase 4 now, at the **post-decay** position, so a working that has
+> slumped off its coppice rung renews at the rate it now stands on.
+> `two_bands_on_one_working_renew_it_once` measures against a one-band control (asserting only that
+> the stock rose would pass against the defect), and
+> `an_abandoned_wood_still_recovers_and_an_abandoned_quarry_still_does_not` drives a world with no
+> band in it at all.
 
 > ### The seed is the point the curve is READ AT, never a lift on the stock
 > The logistic term is zero at a stock of zero, so a wood cut clean would stick there for ever — the
@@ -139,10 +165,26 @@ through — so `validate_deposit_verb`, the labor arm's gate and any future read
 `SiteRefusal::NoDeposit` is the new fault, and it supersedes the fertility and water readings for
 `NotGatheringSite`'s reason.
 
-`extraction:quarry` sets it at **800**, which sits in the gap the deposits table deliberately leaves
-between its two populations: the smallest rock body is rolling hills at 900 and the largest
-loose-stone scatter is a periglacial 70. So the split is a **capacity reading** rather than a list of
-terrains anyone maintains, and the minerals arc's placed ore bodies fall on the right side for free.
+`extraction:quarry` sets it at **100**, which sits in the gap the deposits table leaves between its
+two populations: the smallest **finite** rock body is an ash plain at 120 and the largest
+**renewing** scatter is a periglacial 70. So the split is a **capacity reading** rather than a list
+of terrains anyone maintains, and the minerals arc's placed ore bodies fall on the right side for
+free.
+
+> ⛔ **IT SHIPPED AT 800, AND THAT WAS A MIS-READ OF THE TABLE RATHER THAN A TUNING CHOICE.** 800 is
+> the gap between *rolling hills* (900) and the scatters — but three rate-0 rows sit below it:
+> `AquiferCeiling` 600, `FumaroleBasin` 300, `AshPlain` 120. **A rate-0 row you cannot quarry is a
+> dead work site that still accepts a crew**: the band works `gathering`, takes its 0.15 of the body
+> once (90 / 45 / 18 units), and then reaches nothing for the rest of the game, because the stock
+> never returns and the rung that would reach deeper is refused for ever. At 100 an ash-plain quarry
+> yields ~102 against gathering's 18 — marginal, finite, and a real decision, which is the design
+> working.
+>
+> **The invariant is now asserted rather than claimed.**
+> `the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones` walks the shipped deposits
+> table and fails if any `regrowth_rate == 0.0` row falls **below** the threshold, or any renewing
+> row **above** it. That is what stops the split drifting again, and it is what this file said
+> existed while it did not.
 
 **Neither free floor carries a `site_requirement`, and that is not an omission.** A floor of ~0
 admits every tile, which `validate_site_requirement` rejects outright as a placement rule that is
@@ -281,9 +323,9 @@ as `capacity_per_tender` is `AlluvialPlain`'s `K`.
 
 ### The decay is what makes neglect self-limiting
 
-`extraction::advance_deposits` (Logistics) is the deposit branches' `routes::advance_roads`, in the
-same three phases: how short → the bleed at the at-risk rung's own rate past its own grace → clear
-the payment and **re-stamp the bill at the post-decay position**.
+`extraction::advance_deposits` (Logistics) is the deposit branches' `routes::advance_roads`: how
+short → the bleed at the at-risk rung's own rate past its own grace → clear the payment and
+**re-stamp the bill at the post-decay position** → **renew the stock**, at that same position.
 
 **The slide shrinks its own penalty.** The position falls, the interpolated demand falls with it, and
 an abandoned working decays toward costing nothing rather than bleeding a band's roster for ever
@@ -300,6 +342,20 @@ it divides is the one that survived) and **above the band's `continue`s** (a ban
 allocation was shed still owes what its workings cost). Paying any later is the defect
 `settle_bands_roadwork`'s note records — every billed road quoting its rot at a work shortfall of
 `1.0` whatever its keepers had done.
+
+### The build countdown nets the LIVE rot
+
+`extraction::deposit_meter_rot` is what the `Extract` arm's `BuildQuote::balance` subtracts, resolved
+through the same seams the decay pass bleeds through — so a quote cannot promise a rung will finish
+while the next pass takes more off it than the builders put on.
+
+⛔ **It passed `NO_UPKEEP_DECAY` for one slice**, on a comment that was true when slice 1 shipped
+(*"neither deposit branch declares an `upkeep`"*) and that this slice falsified without updating.
+**The blast radius is the whole queue, not the working**: `publish_build_chain` accumulates the
+head's turns into `cumulative`, so an understated deposit head carried its error onto **every entry
+behind it** — including the patch, herd and road entries that do reach the wire.
+`a_working_whose_keeping_is_short_quotes_a_rotting_meter` pins both halves, because *"it said
+Rotting"* also passes against a rot that is simply always larger than the crew.
 
 ### ⛔ Decay must not resurrect the §6 floor trap, and it does not
 

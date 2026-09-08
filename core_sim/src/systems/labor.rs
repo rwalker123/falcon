@@ -239,10 +239,12 @@ pub struct LaborConfigs<'w> {
     /// ([`crate::systems::bench_material_rate`]), which is half the inflow the material-shortfall
     /// Alert judges against. The bench itself is `advance_crafting`'s.
     pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
-    /// **The deposits table** (`docs/plan_extraction.md` §2) — read for the two things a working's
-    /// build needs: the tile's capacity for the source's own material, which is what
-    /// `extraction:quarry`'s site rule is judged against, and nothing else. The *take* is
-    /// `extraction::advance_extraction`'s.
+    /// **The deposits table** (`docs/plan_extraction.md` §2) — read by everything this pass does
+    /// with a working: the tile's capacity for the source's own material (what
+    /// `extraction:quarry`'s site rule is judged against and what its keeper-load is struck from),
+    /// the ground's characteristics, and its regrowth rate. **The take is this system's own**, in
+    /// the `Extract` arm of the assignment loop; what runs elsewhere is the per-turn *renewal* and
+    /// the decay, in `extraction::advance_deposits` a stage earlier.
     pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
 }
 
@@ -1377,13 +1379,17 @@ fn keeping_claims(
                     tiebreak: herd.id.clone(),
                 });
             }
-            // ⛔ **A WORKING CLAIMS NOTHING FROM EITHER KEEPING POOL, because neither deposit rung
-            // declares an `upkeep`.** That is a statement about the shipped ladder rather than about
-            // this seam: `validate_upkeep` requires nothing, `route:trail` already ships built and
-            // un-held, and what takes a working away is the camp moving out of range rather than a
-            // shortfall. The day a rung declares one, this arm grows a `KeepingClaim` on the two
-            // arms' shape above and `EquipmentConfig::keeping_job` already answers for both
-            // branches.
+            // ⛔ **A WORKING CLAIMS NOTHING *HERE*, AND THAT IS ABOUT WHICH POOL, NOT ABOUT
+            // WHETHER IT OWES.** All three built rungs on both deposit branches declare an `upkeep`
+            // and a working really is billed for it — by the **`Quarrywork`** pool, whose claims are
+            // [`extraction_keeping_claims`]' and whose shares land on the `DepositRegistry` rather
+            // than in this function's per-assignment award vector.
+            //
+            // ⛔ **DO NOT GROW A `KeepingClaim` HERE.** This function feeds the plant and animal
+            // pools; adding a working to it would bill that working **twice** in one turn, once out
+            // of `Agriculture`/`Husbandry` and once out of `Quarrywork`. If the deposit branches ever
+            // want a share of a food web's pool — they should not — it is that pool's claim list
+            // that has to say so, not this arm.
             LaborTarget::Extract { .. }
             | LaborTarget::Scout
             | LaborTarget::Warrior
@@ -3175,9 +3181,11 @@ pub fn advance_labor_allocation(
     // belongs elsewhere (`routes::advance_roads`, a whole stage earlier).
     mut roads: ResMut<crate::routes::RoadRegistry>,
     // **The live workings on the two deposit branches** (`docs/plan_extraction.md` §6). This pass
-    // reads them — the prune's holding test, the shedding order's facts, the build legs — and the
-    // build arm **writes** their ladder position; the *take* is `extraction::advance_extraction`'s,
-    // one system later, so the two never touch the same field in the same stage.
+    // reads them — the prune's holding test, the shedding order's facts, the build legs — and
+    // **writes** them twice: the build arm moves the ladder position, and the `Extract` arm's take
+    // draws the stock down. What runs elsewhere is `extraction::advance_deposits`, a whole stage
+    // earlier: it bleeds an unkept position, stamps the bill this pass pays against, and renews the
+    // stock this pass takes from.
     mut deposits: ResMut<crate::extraction::DepositRegistry>,
     mut cohorts: Query<LaborBandParts>,
 ) {
@@ -6655,7 +6663,7 @@ pub fn advance_labor_allocation(
                     // **The working's own facts, read out before the build touches it** — the
                     // registry is borrowed immutably by the leg walk below, and a working held
                     // across it would hold the whole registry with it.
-                    let (branch, standing, banked_position) = {
+                    let (branch, standing, banked_position, meter_rot) = {
                         let working = deposits
                             .source(*tile, material)
                             .expect("the working was just opened");
@@ -6663,6 +6671,27 @@ pub fn advance_labor_allocation(
                             working.standing().held.branch(),
                             *working.standing(),
                             working.ladder_position(),
+                            // ⛔ **THE LIVE ROT, read here with the rest of the working's facts.**
+                            // All three built rungs on these branches declare a `meter_decay` and
+                            // `extraction::advance_deposits` phase 2 really does bleed the position,
+                            // so a countdown struck against `NO_UPKEEP_DECAY` would promise a rung
+                            // will finish while the next pass takes more off it than this crew put
+                            // on. **Its blast radius is the whole queue**: `publish_build_chain`
+                            // accumulates the head's turns into `cumulative`, so an understated
+                            // deposit head carries its error onto every entry behind it — including
+                            // the patch, herd and road entries that do reach the wire.
+                            //
+                            // It reads through `deposit_meter_rot`, the same seams the decay pass
+                            // bleeds through, so the quote and the bleed cannot disagree.
+                            crate::extraction::deposit_meter_rot(
+                                working,
+                                crate::extraction::deposit_measure(
+                                    working,
+                                    ground,
+                                    &extraction_cfg,
+                                ),
+                                &ladder,
+                            ),
                         )
                     };
                     // **THE BUILD, before the take.** A working's meter is raised by the band's
@@ -6733,11 +6762,7 @@ pub fn advance_labor_allocation(
                                     gate.holds(),
                                     builders,
                                     entry_gear.work_per_worker,
-                                    // **NOTHING EATS A WORKING'S METER.** Neither deposit branch
-                                    // declares an `upkeep`, so there is no `meter_decay` for a
-                                    // shortfall to drive — a working's position only ever goes up,
-                                    // and what a band loses by walking away is the production.
-                                    crate::intensification::NO_UPKEEP_DECAY,
+                                    meter_rot,
                                     entry_material_coverage,
                                 ),
                                 gate,

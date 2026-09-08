@@ -1970,10 +1970,19 @@ pub struct RungSiteRequirement {
     ///
     /// [`NO_DEPOSIT_FLOOR`] = no floor, which is every rung on every other branch and both extraction
     /// **free floors**: gathering is available wherever a scatter exists at all, and what refuses it
-    /// on bare ground is the absence of a deposit, not a threshold. `extraction:quarry` sets it high
-    /// enough that only a real rock body clears it — the loose-stone scatters are an order of
-    /// magnitude smaller (`extraction.json` `_comment_by_terrain`), so the split is a capacity
-    /// reading rather than a list of terrains anybody has to maintain.
+    /// on bare ground is the absence of a deposit, not a threshold.
+    ///
+    /// **`extraction:quarry` sets it in the gap the deposits table leaves between its two
+    /// populations** — the smallest **finite** rock body against the largest **renewing** scatter —
+    /// so the split is a capacity reading rather than a list of terrains anybody has to maintain,
+    /// and a placed ore body falls on the right side of it for free.
+    ///
+    /// ⛔ **A THRESHOLD ABOVE A RATE-0 ROW IS A DEAD WORK SITE THAT STILL ACCEPTS A CREW**, which is
+    /// what this dial shipped as: a band on such ground can only ever work the free floor, takes its
+    /// `recovery_fraction` of the body once, and then reaches nothing for the rest of the game —
+    /// the stock never returns and the rung that would reach deeper is refused for ever.
+    /// `the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones` walks the shipped table
+    /// and fails if any rate-0 row falls below the threshold, or any renewing row above it.
     ///
     /// **Absent ⇒ [`NO_DEPOSIT_FLOOR`]**, so every shipped record on the other three branches stays
     /// byte-identical — a rung that asks nothing of a deposit is not a rung with a deposit rule of

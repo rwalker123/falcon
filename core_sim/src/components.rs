@@ -1986,25 +1986,6 @@ pub enum LaborTarget {
     /// so spreading a short keeping pool loses nothing; splitting a builder pool across three jobs
     /// just means nothing finishes.
     Builders,
-    /// **TAKE A MATERIAL OUT OF THE GROUND** — the two deposit branches' take row
-    /// (`docs/plan_extraction.md` §6), and **the only row in the game that pays no food**.
-    ///
-    /// ⛔ **THAT IS THE WHOLE COST MODEL, AND IT IS WHY THIS IS A ROW AT ALL.** *A woodcutter is a
-    /// mouth that is not gathering.* Every hand here comes out of the same finite pool `assign_labor`
-    /// spends on Forage and Hunt, so the price of wood is measured in the food those hands did not
-    /// bring home — not in a walk, not in a fee. It pays **no food and no fodder**: not a zero-valued
-    /// food term, no food term at all.
-    ///
-    /// Stored as `(tile, material)` rather than as an entity, on `Forage`'s reasoning: a deposit is
-    /// fixed, so the band re-resolves it each turn and a row that resolves out of range is
-    /// **abandoned**. The material is part of the key because **one tile can hold two deposits** — a
-    /// wooded highland holds timber *and* rock — and working one is not working the other.
-    ///
-    /// **There is no `floor` beside them, and its absence is the model.** A food web's floor is
-    /// escapement the player dials per row; a deposit's floor is the **rung's**
-    /// (`(1 − recovery_fraction) × capacity`), which is what makes climbing the ladder the way you
-    /// reach deeper. Adding a per-row floor would put a second, contradictory answer on the same
-    /// question.
     /// **KEEP THE WORKINGS THIS BAND HOLDS** — the quarrywork standing role
     /// (`docs/plan_extraction.md` §6), the fourth keeping pool and the twin of
     /// [`LaborTarget::Roadwork`]: one pool against the summed
@@ -2025,6 +2006,25 @@ pub enum LaborTarget {
     ///
     /// Named for the harder half exactly as `roadwork` is named for a road rather than a trail.
     Quarrywork,
+    /// **TAKE A MATERIAL OUT OF THE GROUND** — the two deposit branches' take row
+    /// (`docs/plan_extraction.md` §6), and **the only row in the game that pays no food**.
+    ///
+    /// ⛔ **THAT IS THE WHOLE COST MODEL, AND IT IS WHY THIS IS A ROW AT ALL.** *A woodcutter is a
+    /// mouth that is not gathering.* Every hand here comes out of the same finite pool `assign_labor`
+    /// spends on Forage and Hunt, so the price of wood is measured in the food those hands did not
+    /// bring home — not in a walk, not in a fee. It pays **no food and no fodder**: not a zero-valued
+    /// food term, no food term at all.
+    ///
+    /// Stored as `(tile, material)` rather than as an entity, on `Forage`'s reasoning: a deposit is
+    /// fixed, so the band re-resolves it each turn and a row that resolves out of range is
+    /// **abandoned**. The material is part of the key because **one tile can hold two deposits** — a
+    /// wooded highland holds timber *and* rock — and working one is not working the other.
+    ///
+    /// **There is no `floor` beside them, and its absence is the model.** A food web's floor is
+    /// escapement the player dials per row; a deposit's floor is the **rung's**
+    /// (`(1 − recovery_fraction) × capacity`), which is what makes climbing the ladder the way you
+    /// reach deeper. Adding a per-row floor would put a second, contradictory answer on the same
+    /// question.
     Extract {
         tile: UVec2,
         /// The `extraction.json` deposit this crew works — `wood`, `stone`, and whatever the minerals
