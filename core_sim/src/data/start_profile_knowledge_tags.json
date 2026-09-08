@@ -38,5 +38,14 @@
   },
   "paving": {
     "discovery_id": 2013
+  },
+  "woodcraft": {
+    "discovery_id": 2014
+  },
+  "conservationism": {
+    "discovery_id": 2015
+  },
+  "quarrying": {
+    "discovery_id": 2016
   }
 }

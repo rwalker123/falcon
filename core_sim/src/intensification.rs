@@ -205,6 +205,17 @@ pub fn learn_multiplier(floor: f32) -> f32 {
     (floor / crate::fauna::MSY_BIOMASS_FRACTION).max(0.0)
 }
 
+/// **THE FLOOR AT WHICH PRACTICE IS WORTH EXACTLY ITS `learn_rate`** — [`learn_multiplier`]'s fixed
+/// point, and what a source with **no escapement dial** passes.
+///
+/// The floor-scales-learning trade is a *food web* mechanism: it prices calories given up against
+/// lessons gained, and it is the player's own dial on a Forage or Hunt row. **A deposit pays no
+/// calories and carries no floor** — its floor is the *rung's*, not the row's
+/// (`extraction::deposit_floor`) — so there is nothing for a deposit crew to trade and this is the
+/// honest multiplier for one. Named rather than passed as a bare `0.5`, because a literal there
+/// would read as a tuning value on the deposit branches when it is the identity.
+pub const PRACTICE_AT_THE_PLAIN_RATE: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+
 /// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK** — its bare output
 /// ([`PER_WORKER_OUTPUT`]) **plus what its kit delivers**, and **the sum of terms** the model is
 /// written as (`docs/plan_unit_costed_work.md` §5, as amended by `docs/plan_standing_upkeep.md`
@@ -1083,6 +1094,34 @@ pub enum RungBranch {
     ///    [`UpkeepScale::SourceLoad`] is `infrastructure_cost × remoteness`
     ///    (`routes::road_upkeep_measure`), because there is no *source* under a road.
     Route,
+    /// **WOOD** (`extraction.rs`) — the fourth branch, and the first of the two that produce a
+    /// **material and no food** (`docs/plan_extraction.md` §3).
+    ///
+    /// Its knowledge is **conservationism**: the skill of taking from a wood without ruining it. So
+    /// a forestry rung buys **regrowth** rather than reach — you do not get more per turn by cutting
+    /// harder, you get more per turn *forever* by managing the wood — which is
+    /// [`RungExtractionPayoff::regrowth_multiplier`] rising while
+    /// [`RungExtractionPayoff::recovery_fraction`] stays at its ceiling.
+    ///
+    /// It is **not** merged into [`Self::Extraction`], and §3 says why: forestry is genuinely
+    /// different knowledge and its rungs buy a different thing. What the two share is the *payoff
+    /// block*, not the ladder.
+    Forestry,
+    /// **STONE today, metal later** (`extraction.rs`) — the fifth branch, and the single decision
+    /// this arc exists to get right (`docs/plan_extraction.md` §3).
+    ///
+    /// **Quarrying and mining are one skill; only the material in the deposit differs**, which is
+    /// what makes copper a deposit row and a config edit rather than a sixth branch. An extraction
+    /// rung buys **reach** — [`RungExtractionPayoff::recovery_fraction`], how much of the body you
+    /// can ever get out — because a finite deposit has no regrowth to raise.
+    ///
+    /// ⛔ **RENEWABILITY IS NOT A PROPERTY OF THIS BRANCH.** An earlier draft split the two branches
+    /// on renewable-versus-finite, and the falsifier is that **surface flint and a quarry are the
+    /// same skill and only one of them runs out**: both are `Extraction`, and their *deposits'*
+    /// rates differ (`extraction_config::DepositTerrain::regrowth_rate`). Binding renewability to
+    /// the branch would have made a flint scatter and an ore body unrepresentable on one ladder,
+    /// which is exactly what the minerals arc needs them to be.
+    Extraction,
 }
 
 /// **EVERY LADDER, in branch order** — the one list a caller sweeping the branches iterates.
@@ -1093,8 +1132,13 @@ pub enum RungBranch {
 /// have gone on iterating two branches and silently skipping roads. Renaming breaks each call site
 /// at compile time, which is what forces the choice between this and the since-retired
 /// `FOOD_WEB_BRANCHES` (gravestone below) to be made rather than defaulted.
-pub const ALL_BRANCHES: [RungBranch; 3] =
-    [RungBranch::Plant, RungBranch::Animal, RungBranch::Route];
+pub const ALL_BRANCHES: [RungBranch; 5] = [
+    RungBranch::Plant,
+    RungBranch::Animal,
+    RungBranch::Route,
+    RungBranch::Forestry,
+    RungBranch::Extraction,
+];
 
 // **RETIRED: `FOOD_WEB_BRANCHES`** — the two webs, for the sweeps that meant *"a ladder a crew
 // builds with tools"* rather than *"a ladder"*. It existed for exactly one reason, stated in its own
@@ -1118,6 +1162,8 @@ impl RungBranch {
             RungBranch::Plant => "plant",
             RungBranch::Animal => "animal",
             RungBranch::Route => "route",
+            RungBranch::Forestry => "forestry",
+            RungBranch::Extraction => "extraction",
         }
     }
 
@@ -1144,6 +1190,12 @@ impl RungBranch {
             // A **path** is what traffic leaves without anybody deciding anything. It costs nothing
             // to reach and buys nothing, exactly as a wild patch does.
             RungBranch::Route => RungKey::RoutePath,
+            // **DEADFALL** — fallen wood, gathered by hand. Like a wild patch it is what the ground
+            // already offers before anybody decides anything, and it costs nothing to reach.
+            RungBranch::Forestry => RungKey::ForestryDeadfall,
+            // **GATHERING** — loose stone picked off the ground. The extraction twin of deadfall,
+            // and available anywhere a scatter exists at all.
+            RungBranch::Extraction => RungKey::ExtractionGathering,
         }
     }
 }
@@ -1178,11 +1230,33 @@ pub enum RungKey {
     RouteDirtRoad,
     /// **A PAVED ROAD** — the top of the branch, and the only rung that swallows stone.
     RoutePavedRoad,
+    /// **DEADFALL** — gathering fallen wood. The forestry branch's **free floor**: nothing to build,
+    /// nothing to hold, and workable with an empty kit roster, which is load-bearing rather than a
+    /// convenience (`docs/plan_extraction.md` §4d — a felling kit wants a haft, a haft is wood, and
+    /// wood comes from felling).
+    ForestryDeadfall,
+    /// **FELLING** — actively cutting standing timber. The first forestry rung anybody pays for, and
+    /// the one at which **over-cutting becomes possible**: the rate is real enough to outpace what
+    /// the wood puts back.
+    ForestryFelling,
+    /// **A COPPICE** — a managed, cut-and-regrow wood. Conservationism expressed mechanically: it
+    /// raises the deposit's own [`RungExtractionPayoff::regrowth_multiplier`], never its capacity.
+    ForestryCoppice,
+    /// **GATHERING** — picking loose stone off the ground. The extraction branch's **free floor**,
+    /// available wherever there is any scatter at all, reaching only the surface.
+    ExtractionGathering,
+    /// **A QUARRY** — a cut working face. Only where there is real rock
+    /// ([`RungSiteRequirement::min_deposit_capacity`]), and what it buys is **reach**: most of the
+    /// body instead of its skin.
+    ///
+    /// `extraction:mine` — the shaft that reaches ore surface work cannot touch at all — is the
+    /// minerals arc's, and is deliberately not on this ladder yet.
+    ExtractionQuarry,
 }
 
 impl RungKey {
     /// Every rung a system names today — what `validate` requires the config to define.
-    pub const ALL: [RungKey; 10] = [
+    pub const ALL: [RungKey; 15] = [
         RungKey::PlantWild,
         RungKey::PlantTended,
         RungKey::PlantField,
@@ -1193,6 +1267,11 @@ impl RungKey {
         RungKey::RouteTrail,
         RungKey::RouteDirtRoad,
         RungKey::RoutePavedRoad,
+        RungKey::ForestryDeadfall,
+        RungKey::ForestryFelling,
+        RungKey::ForestryCoppice,
+        RungKey::ExtractionGathering,
+        RungKey::ExtractionQuarry,
     ];
 
     pub fn branch(self) -> RungBranch {
@@ -1205,6 +1284,10 @@ impl RungKey {
             | RungKey::RouteTrail
             | RungKey::RouteDirtRoad
             | RungKey::RoutePavedRoad => RungBranch::Route,
+            RungKey::ForestryDeadfall | RungKey::ForestryFelling | RungKey::ForestryCoppice => {
+                RungBranch::Forestry
+            }
+            RungKey::ExtractionGathering | RungKey::ExtractionQuarry => RungBranch::Extraction,
         }
     }
 
@@ -1226,6 +1309,13 @@ impl RungKey {
             RungKey::RouteTrail => "trail",
             RungKey::RouteDirtRoad => "dirt_road",
             RungKey::RoutePavedRoad => "paved_road",
+            // **Not `wild`**, for the route floor's reason: deadfall and a stone scatter are real
+            // things you actually take from, not "no working".
+            RungKey::ForestryDeadfall => "deadfall",
+            RungKey::ForestryFelling => "felling",
+            RungKey::ForestryCoppice => "coppice",
+            RungKey::ExtractionGathering => "gathering",
+            RungKey::ExtractionQuarry => "quarry",
         }
     }
 
@@ -1244,6 +1334,9 @@ impl RungKey {
             Improvement::Corral => RungKey::AnimalPen,
             Improvement::Grade => RungKey::RouteDirtRoad,
             Improvement::Pave => RungKey::RoutePavedRoad,
+            Improvement::Fell => RungKey::ForestryFelling,
+            Improvement::Coppice => RungKey::ForestryCoppice,
+            Improvement::Quarry => RungKey::ExtractionQuarry,
         }
     }
 
@@ -1279,6 +1372,13 @@ impl RungKey {
             RungKey::RouteTrail => Some(RungKey::RouteDirtRoad),
             RungKey::RouteDirtRoad => Some(RungKey::RoutePavedRoad),
             RungKey::RoutePavedRoad => None,
+            RungKey::ForestryDeadfall => Some(RungKey::ForestryFelling),
+            RungKey::ForestryFelling => Some(RungKey::ForestryCoppice),
+            RungKey::ForestryCoppice => None,
+            RungKey::ExtractionGathering => Some(RungKey::ExtractionQuarry),
+            // **`extraction:mine` is the minerals arc's**, so the honest answer at the top of the
+            // shipped branch is that there is nothing above a quarry yet.
+            RungKey::ExtractionQuarry => None,
         }
     }
 
@@ -1325,6 +1425,16 @@ impl RungKey {
             RungKey::RoutePath | RungKey::RouteTrail => None,
             RungKey::RouteDirtRoad => Some(Improvement::Grade),
             RungKey::RoutePavedRoad => Some(Improvement::Pave),
+            // ⛔ **THE TWO EXTRACTION BRANCHES' FREE FLOORS ARE WHERE THEIR `None`s ARE**, and for a
+            // different reason from the route branch's: deadfall and a stone scatter are worked by a
+            // **crew** — a hand on a quarry is a hand not feeding the band, from turn one
+            // (`docs/plan_extraction.md` §9) — but there is nothing to *build* on them. They are the
+            // two food webs' wild rungs exactly: a source stands on them for free and pays for
+            // everything above.
+            RungKey::ForestryDeadfall | RungKey::ExtractionGathering => None,
+            RungKey::ForestryFelling => Some(Improvement::Fell),
+            RungKey::ForestryCoppice => Some(Improvement::Coppice),
+            RungKey::ExtractionQuarry => Some(Improvement::Quarry),
         }
     }
 
@@ -1853,7 +1963,38 @@ pub struct RungSiteRequirement {
     /// sides, fresh-water ground, or a lake/channel/marsh next door (`forage::tile_is_fresh_watered`).
     /// A salt coast is **not** water for this purpose; you do not plant a field in the sea spray.
     pub requires_fresh_water: bool,
+    /// **THE DEPOSIT FLOOR — what makes *"you cannot quarry just anywhere"* true with no second
+    /// mechanism** (`docs/plan_extraction.md` §5a). The tile's own capacity for **this source's
+    /// material** (`extraction::tile_deposit_capacity` — the same number that seeds the source, never
+    /// a rung-specific table) must reach this for the rung to be placed there.
+    ///
+    /// [`NO_DEPOSIT_FLOOR`] = no floor, which is every rung on every other branch and both extraction
+    /// **free floors**: gathering is available wherever a scatter exists at all, and what refuses it
+    /// on bare ground is the absence of a deposit, not a threshold.
+    ///
+    /// **`extraction:quarry` sets it in the gap the deposits table leaves between its two
+    /// populations** — the smallest **finite** rock body against the largest **renewing** scatter —
+    /// so the split is a capacity reading rather than a list of terrains anybody has to maintain,
+    /// and a placed ore body falls on the right side of it for free.
+    ///
+    /// ⛔ **A THRESHOLD ABOVE A RATE-0 ROW IS A DEAD WORK SITE THAT STILL ACCEPTS A CREW**, which is
+    /// what this dial shipped as: a band on such ground can only ever work the free floor, takes its
+    /// `recovery_fraction` of the body once, and then reaches nothing for the rest of the game —
+    /// the stock never returns and the rung that would reach deeper is refused for ever.
+    /// `the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones` walks the shipped table
+    /// and fails if any rate-0 row falls below the threshold, or any renewing row above it.
+    ///
+    /// **Absent ⇒ [`NO_DEPOSIT_FLOOR`]**, so every shipped record on the other three branches stays
+    /// byte-identical — a rung that asks nothing of a deposit is not a rung with a deposit rule of
+    /// zero, it is a rung that has never heard of deposits.
+    #[serde(default)]
+    pub min_deposit_capacity: f32,
 }
+
+/// **A RUNG THAT ASKS NOTHING OF A DEPOSIT** — [`RungSiteRequirement::min_deposit_capacity`]'s
+/// neutral, and the reading every plant, animal and route rung takes. Named because the predicate
+/// *"does this rung care about rock at all"* is exactly the comparison against it.
+pub const NO_DEPOSIT_FLOOR: f32 = 0.0;
 
 /// **Why the land refuses a rung** — the shape of [`RungSiteRequirement::refusal`], so the *rung*
 /// says what is wrong with the ground and the caller only phrases it. The fertility and water
@@ -1866,6 +2007,16 @@ pub enum SiteRefusal {
     /// such a tile is also thin or dry is moot while there is no way to work it at all, and a refusal
     /// naming three faults teaches the player two they cannot act on.
     NotGatheringSite,
+    /// **THERE IS NOT ENOUGH HERE TO WORK** — the tile's deposit of this source's material falls
+    /// short of the rung's [`RungSiteRequirement::min_deposit_capacity`], which on the shipped ladder
+    /// means *you cannot open a quarry in a scatter of field flint*.
+    ///
+    /// It **supersedes** the two ground readings, exactly as [`Self::NotGatheringSite`] does and for
+    /// the same reason: whether the rock you have not got is also on thin or dry ground is moot, and
+    /// a refusal naming three faults teaches the player two they cannot act on. The two never
+    /// collide in practice — a deposit rung asks nothing of fertility or water, and a plant rung asks
+    /// nothing of rock — but the order is stated rather than left to whichever check runs first.
+    NoDeposit,
     /// The ground is watered, but too thin to take a crop without fertilization.
     TooPoor,
     /// The ground is rich, but too dry to farm without irrigation.
@@ -1882,6 +2033,7 @@ impl SiteRefusal {
     pub fn as_str(self) -> &'static str {
         match self {
             SiteRefusal::NotGatheringSite => "not_gathering_site",
+            SiteRefusal::NoDeposit => "no_deposit",
             SiteRefusal::TooPoor => "too_poor",
             SiteRefusal::TooDry => "too_dry",
             SiteRefusal::TooPoorAndTooDry => "too_poor_and_too_dry",
@@ -1902,15 +2054,25 @@ impl RungSiteRequirement {
     ///
     /// `None` = the land permits it.
     ///
-    /// **The gathering-site test short-circuits** — see [`SiteRefusal::NotGatheringSite`].
+    /// **The gathering-site and deposit tests short-circuit** — see
+    /// [`SiteRefusal::NotGatheringSite`] and [`SiteRefusal::NoDeposit`].
+    ///
+    /// `deposit_capacity` is the tile's capacity for **this source's own material**
+    /// (`extraction::tile_deposit_capacity`), and is [`NO_DEPOSIT_FLOOR`] for a caller with no
+    /// deposit in play — which is every plant and animal caller, all of whose rungs leave
+    /// [`Self::min_deposit_capacity`] at its neutral, so the term cannot refuse them.
     pub fn refusal(
         &self,
         gathering_site: bool,
         forage_capacity: f32,
         fresh_water: bool,
+        deposit_capacity: f32,
     ) -> Option<SiteRefusal> {
         if self.requires_gathering_site && !gathering_site {
             return Some(SiteRefusal::NotGatheringSite);
+        }
+        if deposit_capacity < self.min_deposit_capacity {
+            return Some(SiteRefusal::NoDeposit);
         }
         let too_poor = forage_capacity < self.min_forage_capacity;
         let too_dry = self.requires_fresh_water && !fresh_water;
@@ -2266,7 +2428,74 @@ pub struct RungDef {
     /// gives nothing, which is the *"a tax, not a ladder"* failure this branch exists to avoid.
     #[serde(default)]
     pub route_payoff: Option<RungRoutePayoff>,
+    /// **WHAT THIS RUNG BUYS**, on the two extraction branches ([`RungExtractionPayoff`]).
+    ///
+    /// **`Some` on every `forestry` and `extraction` rung and `None` on every other**, enforced at
+    /// load for [`Self::route_payoff`]'s reason — a rung that costs and gives nothing is a tax
+    /// rather than a ladder, and a key that parses and does nothing reads as the seam that would
+    /// carry a fix.
+    ///
+    /// ⛔ **ONE BLOCK SERVES BOTH BRANCHES, AND THERE IS DELIBERATELY NO BRANCH CHECK ANYWHERE**
+    /// (`docs/plan_extraction.md` §4c) — see the type's own doc.
+    #[serde(default)]
+    pub extraction_payoff: Option<RungExtractionPayoff>,
 }
+
+/// **WHAT AN EXTRACTION OR FORESTRY RUNG BUYS** (`docs/plan_extraction.md` §4c), on
+/// [`RungRoutePayoff`]'s precedent. All three terms interpolate on the source's ladder position, the
+/// general rule (`docs/plan_standing_upkeep.md` §2.8) — a rate is a payout and blends, where a
+/// classifier's cut points step (`fauna.rs`'s `herd_ecology`).
+///
+/// # ⛔ ONE BLOCK FOR BOTH BRANCHES, AND THAT IS WHAT MAKES THE ZERO HOLD BY ARITHMETIC
+///
+/// A **forestry** rung raises [`Self::regrowth_multiplier`] and leaves [`Self::recovery_fraction`]
+/// at its ceiling; an **extraction** rung raises the recovery and leaves the multiplier at
+/// [`REGROWTH_UNCHANGED`]. There is no second block and no branch check, because the multiplier
+/// scales *the deposit's own* rate and rock's rate is `0`: `0 × anything` is still `0`, so
+/// **stone's rate is zero** survives as arithmetic rather than as a rule someone has to remember.
+/// A branch-keyed payoff would have made that rule breakable by a config edit.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RungExtractionPayoff {
+    /// **WHAT ONE WORKER TAKES IN A TURN, in the deposit's material's own units**, before the
+    /// reachable stock caps it.
+    ///
+    /// **The free floor's value is a real bare-handed rate, not a zero** — `materials.json`'s
+    /// `hand_working` argument, one account over: a zero would be a refusal branch the sim does not
+    /// have, and the whole material economy bootstraps through these two rungs (a felling kit wants a
+    /// haft, a haft is wood, and wood comes from felling — §4d). Validated finite and `> 0`.
+    pub yield_per_worker_turn: f32,
+    /// **HOW MUCH OF THE DEPOSIT THIS RUNG CAN EVER REACH**, `0.0..=1.0`. It is the fauna escapement
+    /// floor upside down: `floor = (1 − recovery_fraction) × capacity`, and a rung **lowers** the
+    /// floor rather than raising a ceiling.
+    ///
+    /// ⛔ **THIS IS THE §6 FLOOR TRAP'S SAFE DIRECTION, AND IT IS SAFE ONLY BECAUSE CAPACITY IS
+    /// FIXED.** A rung that raised `capacity` would drag the floor up under a working already
+    /// standing on it — the trap that made a Tame begun on its floor uncompletable at any crew size.
+    /// Capacity comes from the terrain table and nothing else
+    /// (`extraction_config::DepositTerrain::capacity`), so the floor can only ever move down.
+    ///
+    /// [`WHOLE_DEPOSIT_REACHED`] is the ceiling and is what every **forestry** rung declares: a wood
+    /// can be cut to nothing, which is exactly what makes over-cutting possible.
+    pub recovery_fraction: f32,
+    /// **WHAT THIS RUNG MULTIPLIES THE DEPOSIT'S OWN `regrowth_rate` BY.**
+    /// [`REGROWTH_UNCHANGED`] = no help, which is what every **extraction** rung declares.
+    ///
+    /// Validated finite and `>= REGROWTH_UNCHANGED`: below it a rung would make the ground renew
+    /// *worse* than leaving it alone, which is not a rung on either of these ladders.
+    pub regrowth_multiplier: f32,
+}
+
+/// **A RUNG THAT LEAVES THE GROUND'S OWN RENEWAL ALONE** —
+/// [`RungExtractionPayoff::regrowth_multiplier`]'s neutral and its floor.
+pub const REGROWTH_UNCHANGED: f32 = 1.0;
+/// **A RUNG THAT CAN TAKE THE WHOLE DEPOSIT** — [`RungExtractionPayoff::recovery_fraction`]'s
+/// ceiling, and the forestry branch's live reading rather than a parked dial: a wood you can cut to
+/// nothing is the point of the renewable half.
+pub const WHOLE_DEPOSIT_REACHED: f32 = 1.0;
+/// **A RUNG THAT REACHES NONE OF IT** — the recovery fraction's floor. Never shipped (a rung that
+/// reaches nothing is not a rung), but it is the bottom of the interval the dial is bounded to.
+pub const NO_DEPOSIT_REACHED: f32 = 0.0;
 
 /// **WHAT A ROUTE RUNG BUYS** (`docs/plan_standing_upkeep.md` §4.13). The *cheaper to travel* half of
 /// the ladder's claim, against `RungUpkeep`'s *dearer to keep*.
@@ -3551,6 +3780,8 @@ impl LadderConfig {
             validate_site_requirement(rung, &where_)?;
             validate_route_payoff(rung, &where_)?;
             self.validate_route_payoff_climbs(rung, &where_)?;
+            validate_extraction_payoff(rung, &where_)?;
+            self.validate_extraction_payoff_climbs(rung, &where_)?;
         }
 
         // ⛔ **`ALL_BRANCHES`, NOT A HAND-WRITTEN LIST.** This read `[RungBranch::Plant,
@@ -3742,6 +3973,72 @@ impl LadderConfig {
         Ok(())
     }
 
+    /// **A RUNG NEVER REACHES LESS, RENEWS SLOWER OR PAYS A WORKER LESS THAN THE RUNG BELOW IT** —
+    /// [`Self::validate_route_payoff_climbs`]'s twin on the two extraction branches, and the same
+    /// claim: a rung that costs work to raise, costs work every turn to hold, and buys *less* is a
+    /// rung nobody could have a reason to climb, and the upkeep monotonicity check would wave it
+    /// straight through because costing more is exactly what that check demands.
+    ///
+    /// All three terms are checked in the direction that makes a rung better. Two of them are
+    /// deliberately allowed to stand still, which is the branch split expressed as a bound rather
+    /// than as a rule: a forestry rung holds its recovery at
+    /// [`WHOLE_DEPOSIT_REACHED`] while raising the multiplier, and an extraction rung holds the
+    /// multiplier at [`REGROWTH_UNCHANGED`] while raising the recovery.
+    ///
+    /// ⛔ **THERE IS NO `capacity` TERM HERE AND THERE MUST NEVER BE ONE.** Capacity is the terrain's
+    /// (`extraction_config::DepositTerrain::capacity`), so the floor `(1 − recovery) × capacity` can
+    /// only ever move **down** — see [`RungExtractionPayoff::recovery_fraction`] for the §6 trap this
+    /// is the guard against, and `no_rung_on_either_branch_may_raise_capacity` for the test that
+    /// pins it.
+    fn validate_extraction_payoff_climbs(
+        &self,
+        rung: &RungDef,
+        where_: &str,
+    ) -> Result<(), LadderConfigError> {
+        let (Some(payoff), Some(requires)) = (
+            rung.extraction_payoff.as_ref(),
+            rung.requires_rung.as_deref(),
+        ) else {
+            return Ok(());
+        };
+        let Some(below) = self
+            .find(rung.branch, requires)
+            .and_then(|below| below.extraction_payoff.as_ref())
+        else {
+            return Ok(());
+        };
+        for (term, above, under) in [
+            (
+                "yield_per_worker_turn",
+                payoff.yield_per_worker_turn,
+                below.yield_per_worker_turn,
+            ),
+            (
+                "recovery_fraction",
+                payoff.recovery_fraction,
+                below.recovery_fraction,
+            ),
+            (
+                "regrowth_multiplier",
+                payoff.regrowth_multiplier,
+                below.regrowth_multiplier,
+            ),
+        ] {
+            if above < under {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("{where_}.extraction_payoff.{term}"),
+                    constraint: "buy at least as much as the rung below it on every term — a rung \
+                                 that costs work to raise and work to hold while paying less, \
+                                 reaching less or renewing slower is one nobody could have a reason \
+                                 to climb"
+                        .to_string(),
+                    value: format!("{above} below {requires}'s {under}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn validate_upkeep_climbs(
         &self,
         rung: &RungDef,
@@ -3880,6 +4177,13 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // `roadbuilding` / `paving` keep 2012 / 2013 rather than sliding down onto it.
         "roadbuilding" => Some(crate::routes::ROADBUILDING_DISCOVERY_ID),
         "paving" => Some(crate::routes::PAVING_DISCOVERY_ID),
+        // **The two deposit branches' three lessons** (`docs/plan_extraction.md` §3). Gathering
+        // deadfall teaches you to fell; felling — being in a position to ruin a wood — teaches you
+        // conservationism; picking loose stone teaches you to quarry, and the minerals arc's `mine`
+        // will wait on the same lesson one rung up.
+        "woodcraft" => Some(crate::extraction::WOODCRAFT_DISCOVERY_ID),
+        "conservationism" => Some(crate::extraction::CONSERVATIONISM_DISCOVERY_ID),
+        "quarrying" => Some(crate::extraction::QUARRYING_DISCOVERY_ID),
         // **The three CRAFTS** (`crafting.rs`). They are not ladder rungs and nothing here earns
         // them — a bench does, per item completed. They are named in this lookup for the same
         // reason the ladder's five are: it is the sim's one bounded set of knowledge names, and a
@@ -4033,6 +4337,77 @@ fn validate_route_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfi
     Ok(())
 }
 
+/// **AN `extraction_payoff` ON EVERY FORESTRY AND EXTRACTION RUNG, AND ON NOTHING ELSE** —
+/// [`validate_route_payoff`]'s twin, with the same presence rule and the same argument for it: a
+/// rung on either of these branches without one is a rung that costs and buys nothing, and a payoff
+/// on a patch, a herd or a road is a key that parses and does nothing, which reads to a designer as
+/// the seam that would carry a fix.
+///
+/// **One rule, both branches** — the whole point of §4c is that nothing in the engine asks *which*
+/// of the two a rung is on.
+fn validate_extraction_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
+    let works_a_deposit = matches!(rung.branch, RungBranch::Forestry | RungBranch::Extraction);
+    let Some(payoff) = rung.extraction_payoff.as_ref() else {
+        if works_a_deposit {
+            return Err(LadderConfigError::Invalid {
+                field: where_.to_string(),
+                constraint: "state what this rung BUYS (`extraction_payoff`) — a rung with a \
+                             standing cost and no payoff is a tax rather than a ladder"
+                    .to_string(),
+                value: "missing".to_string(),
+            });
+        }
+        return Ok(());
+    };
+    if !works_a_deposit {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: "declare `extraction_payoff` on the deposit branches only (`forestry`, \
+                         `extraction`) — a take rate, a reach and a regrowth multiplier are \
+                         properties of a deposit, and a key that parses and does nothing reads as \
+                         the seam that would carry a fix"
+                .to_string(),
+            value: format!("branch '{}'", rung.branch.as_str()),
+        });
+    }
+    if !payoff.yield_per_worker_turn.is_finite() || payoff.yield_per_worker_turn <= 0.0 {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.extraction_payoff.yield_per_worker_turn"),
+            constraint: "pay a finite, positive amount per worker-turn — a zero is a refusal \
+                         branch the sim does not have, and the free floor of both branches has to \
+                         be workable BARE-HANDED or the material economy can never start"
+                .to_string(),
+            value: payoff.yield_per_worker_turn.to_string(),
+        });
+    }
+    if !payoff.recovery_fraction.is_finite()
+        || !(NO_DEPOSIT_REACHED..=WHOLE_DEPOSIT_REACHED).contains(&payoff.recovery_fraction)
+    {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.extraction_payoff.recovery_fraction"),
+            constraint: format!(
+                "keep the reach finite and within \
+                 {NO_DEPOSIT_REACHED}..={WHOLE_DEPOSIT_REACHED} — it is the share of the deposit \
+                 this rung can ever get out, and the floor it sets is \
+                 (1 - it) x the terrain's capacity"
+            ),
+            value: payoff.recovery_fraction.to_string(),
+        });
+    }
+    if !payoff.regrowth_multiplier.is_finite() || payoff.regrowth_multiplier < REGROWTH_UNCHANGED {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.extraction_payoff.regrowth_multiplier"),
+            constraint: format!(
+                "keep the multiplier finite and at least {REGROWTH_UNCHANGED} — below it a rung \
+                 would make the ground renew WORSE than leaving it alone, which is not a rung on \
+                 either of these ladders"
+            ),
+            value: payoff.regrowth_multiplier.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// A road that spills nothing in transit — [`RungRoutePayoff::friction_multiplier`]'s floor.
 pub const NO_FRICTION_LEFT: f32 = 0.0;
 /// A road that takes nothing off the base friction — the multiplier's ceiling, and the **game
@@ -4052,7 +4427,19 @@ fn validate_site_requirement(rung: &RungDef, where_: &str) -> Result<(), LadderC
             value: format!("min_forage_capacity = {}", site.min_forage_capacity),
         });
     }
+    if !site.min_deposit_capacity.is_finite() || site.min_deposit_capacity < NO_DEPOSIT_FLOOR {
+        return Err(LadderConfigError::Invalid {
+            field: where_.to_string(),
+            constraint: format!(
+                "set a finite deposit floor of at least {NO_DEPOSIT_FLOOR} — the floor is compared \
+                 against a tile's `extraction.json` capacity for this source's own material, which \
+                 is never negative"
+            ),
+            value: format!("min_deposit_capacity = {}", site.min_deposit_capacity),
+        });
+    }
     if site.min_forage_capacity <= NO_FORAGE_CAPACITY
+        && site.min_deposit_capacity <= NO_DEPOSIT_FLOOR
         && !site.requires_fresh_water
         && !site.requires_gathering_site
     {
@@ -4060,8 +4447,8 @@ fn validate_site_requirement(rung: &RungDef, where_: &str) -> Result<(), LadderC
             field: where_.to_string(),
             constraint: "require SOMETHING of the site, or state `site_requirement: null` — a                          requirement that admits every tile reads as a placement rule while being                          none, which is how a rung's scarcity silently evaporates"
                 .to_string(),
-            value: "min_forage_capacity = 0 with requires_fresh_water = false and \
-                    requires_gathering_site = false"
+            value: "min_forage_capacity = 0 and min_deposit_capacity = 0 with \
+                    requires_fresh_water = false and requires_gathering_site = false"
                 .to_string(),
         });
     }
@@ -4215,6 +4602,29 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
                 ),
             });
         }
+    }
+    // ⛔ **NO DEPOSIT RUNG MAY DECLARE A STANDING MATERIAL RATE, AND THE REFUSAL IS THE POINT.**
+    // The two deposit branches settle the **work** half of their keeping
+    // (`systems::settle_bands_extraction`) and have no settle pass for a material one — so a rate
+    // here would parse, validate, publish a demand, and be paid by nobody: the *"looks live but
+    // isn't"* failure this whole file is written against, and exactly what
+    // `routes::road_meter_rot` reports having shipped for one slice when `route:paved_road`
+    // declared an `upkeep.materials` its rot term could not see.
+    //
+    // **It is not a claim that a working owes no material** — `extraction:quarry`'s 8 wood is real,
+    // and it is a **build pile**: props and ramps timbered once as the face is opened go *into* the
+    // working and stay there, which is `docs/plan_standing_upkeep.md` §2.7's own pile-versus-rate
+    // distinction. Giving one branch a standing rate means building the settle pass first, and then
+    // deleting this check deliberately rather than discovering it was never enforced.
+    if matches!(rung.branch, RungBranch::Forestry | RungBranch::Extraction)
+        && !upkeep.materials.is_empty()
+    {
+        return Err(LadderConfigError::Invalid {
+            field: format!("{where_}.upkeep.materials"),
+            constraint: "hold a deposit working with WORK alone — the two extraction branches                          settle no standing material, so a rate here would publish a demand that                          nothing ever pays. A material that goes INTO the working belongs on                          `build.materials`"
+                .to_string(),
+            value: format!("{} material(s)", upkeep.materials.len()),
+        });
     }
     validate_material_amounts(&upkeep.materials, where_, "upkeep.materials")
 }
@@ -6587,22 +6997,22 @@ mod tests {
             .expect("rung 3 has a site requirement");
 
         assert_eq!(
-            site.refusal(true, 0.0, true),
+            site.refusal(true, 0.0, true, NO_DEPOSIT_FLOOR),
             None,
             "a watered gathering site takes seed"
         );
         assert_eq!(
-            site.refusal(true, 0.0, false),
+            site.refusal(true, 0.0, false, NO_DEPOSIT_FLOOR),
             Some(SiteRefusal::TooDry),
             "a dry gathering site is refused on water alone"
         );
         assert_eq!(
-            site.refusal(false, 0.0, true),
+            site.refusal(false, 0.0, true, NO_DEPOSIT_FLOOR),
             Some(SiteRefusal::NotGatheringSite),
             "ground nobody gathers is refused before anything else is asked of it"
         );
         assert_eq!(
-            site.refusal(false, 0.0, false),
+            site.refusal(false, 0.0, false, NO_DEPOSIT_FLOOR),
             Some(SiteRefusal::NotGatheringSite),
             "the gathering-site fault SUPERSEDES the others — a tile that is also dry must not be \
              told two things it cannot act on"
@@ -6614,10 +7024,14 @@ mod tests {
             requires_gathering_site: false,
             min_forage_capacity: 40.0,
             requires_fresh_water: true,
+            min_deposit_capacity: NO_DEPOSIT_FLOOR,
         };
-        assert_eq!(farm.refusal(false, 39.0, true), Some(SiteRefusal::TooPoor));
         assert_eq!(
-            farm.refusal(false, 39.0, false),
+            farm.refusal(false, 39.0, true, NO_DEPOSIT_FLOOR),
+            Some(SiteRefusal::TooPoor)
+        );
+        assert_eq!(
+            farm.refusal(false, 39.0, false, NO_DEPOSIT_FLOOR),
             Some(SiteRefusal::TooPoorAndTooDry)
         );
     }
@@ -6631,6 +7045,7 @@ mod tests {
             requires_gathering_site: false,
             min_forage_capacity: 40.0,
             requires_fresh_water: true,
+            min_deposit_capacity: NO_DEPOSIT_FLOOR,
         };
         // Fertile, watered ground that simply is not a gathering site: refused at rung 3, farmable
         // at rung 4. That difference IS what Farm unlocks.
@@ -6639,10 +7054,10 @@ mod tests {
                 .rung(RungKey::PlantField)
                 .site_requirement
                 .expect("rung 3 has a site requirement")
-                .refusal(false, 195.0, true),
+                .refusal(false, 195.0, true, NO_DEPOSIT_FLOOR),
             Some(SiteRefusal::NotGatheringSite)
         );
-        assert_eq!(farm.refusal(false, 195.0, true), None);
+        assert_eq!(farm.refusal(false, 195.0, true, NO_DEPOSIT_FLOOR), None);
     }
 
     #[test]

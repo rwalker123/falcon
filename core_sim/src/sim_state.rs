@@ -65,6 +65,7 @@ use crate::{
     espionage::{
         CounterIntelBudgets, EspionageMissionState, EspionageRoster, FactionSecurityPolicies,
     },
+    extraction::DepositRegistry,
     fauna::HerdRegistry,
     food::FoodModuleTag,
     forage::ForageRegistry,
@@ -197,6 +198,19 @@ pub struct SimState {
     pub espionage_roster: EspionageRoster,
     pub faction_inventory: FactionInventory,
     pub security_policies: FactionSecurityPolicies,
+    /// **THE LIVE WORKINGS ON THE TWO DEPOSIT BRANCHES.**
+    ///
+    /// ⛔ **THE STOCK IS THE ONLY THING HERE THAT IS NOT DERIVABLE, and it is why this is state at
+    /// all.** A deposit's capacity, its regrowth rate and its material's characteristics are all
+    /// pure functions of the tile (`extraction.json`), re-read every turn — so retuning the table
+    /// reaches a restored working and a restored working cannot carry stale terrain figures. What a
+    /// checkpoint has to hold is **how much has been taken out** and **how far up the ladder the
+    /// working has been raised**, neither of which anything can recompute.
+    ///
+    /// A registry entry exists only where a band has put a crew on one, so an untouched map
+    /// checkpoints an empty map here — which is exactly right: a deposit nobody has worked stands
+    /// at its capacity, and that is a derivation.
+    pub deposits: DepositRegistry,
     pub forage: ForageRegistry,
     pub graze: GrazeRegistry,
     pub great_discoveries: GreatDiscoveryLedger,
@@ -397,6 +411,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         espionage_roster: world.resource::<EspionageRoster>().clone(),
         faction_inventory: world.resource::<FactionInventory>().clone(),
         security_policies: world.resource::<FactionSecurityPolicies>().clone(),
+        deposits: world.resource::<DepositRegistry>().clone(),
         forage: world.resource::<ForageRegistry>().clone(),
         graze: world.resource::<GrazeRegistry>().clone(),
         great_discoveries: world.resource::<GreatDiscoveryLedger>().clone(),
@@ -583,6 +598,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.espionage_roster.clone());
     world.insert_resource(state.faction_inventory.clone());
     world.insert_resource(state.security_policies.clone());
+    world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
     world.insert_resource(state.graze.clone());
     world.insert_resource(state.great_discoveries.clone());

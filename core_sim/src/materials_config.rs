@@ -831,9 +831,10 @@ mod tests {
     /// of equipment; `wood` is what a panel is woven from.
     const WOOD: &str = "wood";
     const HURDLES: &str = "hurdles";
-    /// **The paved road's**, and the second material on the roster with no producer. Quarrying
-    /// belongs to the minerals arc (issue #583), so until it lands the only stone in the game is
-    /// what the player buys with the turn-one opening allocation.
+    /// **The paved road's.** It was the second material on the roster with no producer until issue
+    /// #583; both it and `wood` are now worked out of a **deposit**
+    /// (`crate::extraction`, `data/extraction.json`) — the one source shape that pays a material and
+    /// no food, which is why neither could ever be a byproduct of eating.
     const STONE: &str = "stone";
 
     fn builtin() -> MaterialsConfig {

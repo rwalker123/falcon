@@ -500,6 +500,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     .resource::<core_sim::FoodSiteRegistry>()
                     .is_site(coord),
                 fresh_water,
+                core_sim::NO_DEPOSIT_FLOOR,
             );
             if refusal.is_some() {
                 continue;

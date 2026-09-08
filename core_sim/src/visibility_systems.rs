@@ -364,11 +364,19 @@ pub fn calculate_visibility(
                         // a kept road lights its own tile through `routes::Road::grants_sight`,
                         // which is the *road's* grant beside a band's presence and not the keeping
                         // role's, and it is not wired to this sweep yet.
+                        // **A deposit crew stands on the deposit**, exactly as the foragers stand
+                        // on their patch — the working is a fixed spot on the map and the hands are
+                        // at it, so it sees fog on the same terms.
+                        LaborTarget::Extract { tile, .. } => Some(*tile),
                         LaborTarget::Scout
                         | LaborTarget::Warrior
                         | LaborTarget::Agriculture
                         | LaborTarget::Husbandry
                         | LaborTarget::Roadwork
+                        // **A band-wide keeping role stands on no tile of its own**, the working
+                        // keepers included: what they hold is resolved from the band's rows, and
+                        // each of those rows lights its own deposit above.
+                        | LaborTarget::Quarrywork
                         | LaborTarget::Builders => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see

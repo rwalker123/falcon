@@ -447,6 +447,7 @@ fn sowable_and_deltas(world: &World) -> (usize, usize, usize) {
                     .resource::<FoodSiteRegistry>()
                     .is_site(UVec2::new(x, y)),
                 fresh,
+                core_sim::NO_DEPOSIT_FLOOR,
             )
             .is_none()
             {

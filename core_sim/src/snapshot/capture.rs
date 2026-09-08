@@ -2362,6 +2362,9 @@ pub fn capture_snapshot(
             &labor_config.forage,
             food_sites.is_site(tile.position),
             fresh_water,
+            // **A plant rung asks nothing of a deposit**, so the term cannot refuse it: every rung
+            // off the two deposit branches leaves `min_deposit_capacity` at this neutral.
+            crate::intensification::NO_DEPOSIT_FLOOR,
         ) {
             sow_site_refusals.insert(tile.position, refusal);
         }
