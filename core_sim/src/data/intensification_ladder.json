@@ -22,7 +22,10 @@
       "weaving": 20.0,
       "bone_working": 20.0,
       "roadbuilding": 20.0,
-      "paving": 20.0
+      "paving": 20.0,
+      "woodcraft": 20.0,
+      "conservationism": 20.0,
+      "quarrying": 20.0
     }
   },
   "_comment_route_traffic": "HOW FAST TRAFFIC WEARS A ROAD IN - the route branch's build pace, in the same work units build.work_cost is quoted in. IT IS THE LINK, NOT THE TONNAGE: a live journey banks this much on EACH TILE IT CROSSES per turn, whatever it happened to carry. balance_supply_networks drops sub-min_transfer moves, so a BALANCED network ships nothing - a mass-driven rate would leave two camps who have shared a larder for thirty turns with no path at all, which is exactly the case issue #532 says must not be the one that produces no trail. PER TILE IS NOW LITERAL, and that is the per-tile model's doing: the stored-path model banked rate x path-length onto ONE object, so a 2-tile link put 0.7 a turn into a single road and reached the trail rung's 40 in about 57 turns. Each tile now banks 0.35 of its own, so the same neighbours wear each of their two tiles in over about 114 turns - a long haul wears MANY tiles a little rather than one object a lot, which is what makes 'one band keeps half the tiles and another the other half' a state traffic can actually produce. The model change is deliberately left visible rather than hidden behind a compensating edit. PLAYTEST DIAL, section 4.14 owns the number.",
@@ -336,6 +339,144 @@
         "movement": "fixed"
       },
       "_comment_materials": "STONE IS ON THE ROSTER NOW AND THIS RUNG EATS IT - see `_comment_build_materials` above for the pile and its terms. What this note records is the SHAPE of the arrival, because the prediction it replaced was wrong in a way worth keeping: it said the rung would take `build.materials {stone: 30}` and `upkeep.materials {stone: 0.08}` and that NOTHING ELSE WOULD CHANGE because 'the engine half already ships'. BOTH HALVES DID ARRIVE, AT OTHER NUMBERS: the pile is 20 rather than 30 (_comment_build_materials) and the standing rate 0.1667 rather than 0.08, derived from `animal:pen`'s own pile-to-rate ratio rather than guessed (_comment_upkeep_materials). WHAT WAS FLATLY FALSE IS THE ENGINE CLAIM - the material path could not reach a road at all. `head_rung_gate` resolved a queue head by finding it among the band's LABOR ROWS, and a road names no row, so the head was judged `Unworked`, the pile was never struck, and `head_build_legs`' road arm was unreachable code quoting an empty answer as though it were exact. The road build arm banked its full turn of work whatever the store held, and it pushed no BuildQuote, so a road could neither be blocked on stone nor say so. All three are closed; the road is now the same shape every other build is. WHAT REMAINS TRUE IS THE MATERIAL'S OWN STATUS: stone has no PRODUCER. It reaches the player through materials.json's `start_stock` - an opening pile, ten paved tiles' worth, that nothing renews - and quarrying is the minerals arc's to add (issue #583), not this branch's. The ladder's load-time check still rejects a rung naming a material the table does not carry, for exactly the right reason: 'a rung that eats a material nobody defines draws nothing, for ever, with no fault reported anywhere'."
+    },
+    {
+      "id": "deadfall",
+      "branch": "forestry",
+      "order": 1,
+      "_comment_rung": "THE FORESTRY BRANCH'S FREE FLOOR - gathering fallen wood, and a real thing rather than the absence of one, exactly as `route:path` and the two wild rungs are. `build` and `upkeep` are both null: NOBODY BUILDS A DEADFALL AND NOBODY HOLDS ONE. IT MUST BE WORKABLE BARE-HANDED AND THAT IS LOAD-BEARING, NOT A CONVENIENCE (docs/plan_extraction.md 4d): a felling kit wants a haft, a haft is wood, and wood comes from felling, so if the floor rung needed gear the material economy could never start. It is the same argument materials.json makes for `hand_working` - a bare-handed rate is what refuses nothing, and a zero would be a refusal branch the sim does not have. `yield_per_worker_turn` 0.3 is a real trickle: two hands pay a set of road tools (3 wood) in five turns and a pen (24 wood) in forty, which is what makes the 60-unit felling rung above it worth buying. It CANNOT out-cut a mature woodland - at 0.03 regrowth on a capacity of 600 the wood puts back 4.5 a turn and this rung would need fifteen hands to match it - while on a 25-unit steppe copse one hand over-cuts, which is correct: a few stands along a draw are finite in practice.",
+      "verb": null,
+      "unlock_knowledge": null,
+      "_comment_earns_knowledge": "GATHERING DEADFALL TEACHES WOODCRAFT (discovery 2014), which gates `fell`. The ladder's own shape: practise rung N to unlock rung N+1. It is credited once per SOURCE per turn and never per worker, and at the plain rate - a deposit carries no escapement dial for a crew to trade calories against, so intensification::PRACTICE_AT_THE_PLAIN_RATE is what the earn site passes where a food web passes its row's floor.",
+      "earns_knowledge": "woodcraft",
+      "requires_rung": null,
+      "ceiling_required": null,
+      "_comment_site_requirement": "NULL, AND THE ABSENCE IS THE PLACEMENT RULE. What refuses a crew here is that the ground holds no wood at all - a terrain absent from extraction.json's `by_terrain` has capacity 0, so no working can be opened and the row is refused. That is `absence is the answer` doing the job a threshold would do badly: a floor of ~0 admits every tile and reads as a placement rule while being none, which validate_site_requirement rejects outright.",
+      "site_requirement": null,
+      "build": null,
+      "upkeep": null,
+      "extraction_payoff": {
+        "yield_per_worker_turn": 0.3,
+        "recovery_fraction": 1.0,
+        "regrowth_multiplier": 1.0
+      },
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "felling",
+      "branch": "forestry",
+      "order": 2,
+      "_comment_rung": "FELLING - actively cutting standing timber, and THE RUNG AT WHICH OVER-CUTTING BECOMES POSSIBLE. 2.0 a worker-turn against a mixed woodland's 4.5 of renewal means three hands out-cut the wood, which is the whole point of the renewable half: you can ruin a wood, and nothing in the take clamps it. `recovery_fraction` stays at its ceiling like every forestry rung - a wood can be cut to nothing - and `regrowth_multiplier` stays at 1.0, because what this rung buys is the RATE OF TAKE and the rung above it is what buys management. work_cost 60 is a shade above the plant web's Cultivate (50) and well under a dirt road (300): opening a working is a season's job for a small crew. It declares NO MATERIALS - you fell with what you have, and the free floor below is where the wood for a haft comes from. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
+      "verb": "fell",
+      "unlock_knowledge": "woodcraft",
+      "_comment_earns_knowledge": "FELLING TEACHES CONSERVATIONISM (discovery 2015), which gates `coppice` - and the naming is the fiction working: you learn to take from a wood without ruining it by being in a position to ruin one. This is the first rung on either deposit branch where that is true.",
+      "earns_knowledge": "conservationism",
+      "requires_rung": "deadfall",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": {
+        "work_cost": 60.0,
+        "grace_turns": null
+      },
+      "upkeep": null,
+      "extraction_payoff": {
+        "yield_per_worker_turn": 2.0,
+        "recovery_fraction": 1.0,
+        "regrowth_multiplier": 1.0
+      },
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "coppice",
+      "branch": "forestry",
+      "order": 3,
+      "_comment_rung": "A COPPICE - a managed, cut-and-regrow wood, and CONSERVATIONISM EXPRESSED MECHANICALLY: you do not get much more per turn by cutting harder, you get more per turn FOR EVER by managing the wood. `regrowth_multiplier` 2.0 doubles the ground's own renewal (a mixed woodland goes from 4.5 a turn to 9.0 at its peak), which is what makes a crew that over-cut at `felling` sustainable here at the same hands. The take rises only from 2.0 to 2.5 - deliberately a small step, because a forestry rung that mostly bought RATE would be the extraction branch wearing a different name. IT DOES NOT AND CANNOT RAISE CAPACITY: conservationism is about the rate of renewal, not about there being more forest, and the payoff block has no key for one. work_cost 150 is two and a half times the felling rung beneath it - laying out a coppice is a bigger job than opening a face. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
+      "verb": "coppice",
+      "unlock_knowledge": "conservationism",
+      "_comment_earns_knowledge": "NULL - the top of the shipped branch, and there is nothing above it to teach. The route branch's `paved_road` says the same thing the same way.",
+      "earns_knowledge": null,
+      "requires_rung": "felling",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": {
+        "work_cost": 150.0,
+        "grace_turns": null
+      },
+      "upkeep": null,
+      "extraction_payoff": {
+        "yield_per_worker_turn": 2.5,
+        "recovery_fraction": 1.0,
+        "regrowth_multiplier": 2.0
+      },
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "gathering",
+      "branch": "extraction",
+      "order": 1,
+      "_comment_rung": "THE EXTRACTION BRANCH'S FREE FLOOR - picking loose stone off the ground, available wherever there is any scatter at all, and reaching only the surface. `build` and `upkeep` are both null and the rate is BARE-HANDED, for the forestry floor's reason: the two shipped quarry tools cost 3 wood each, so a floor that needed gear could not be reached by a faction with no wood. RUNG-0 STONE COSTS HANDS AND THAT IS DECIDED (docs/plan_extraction.md 9): picking and knapping is work, and 'a hand on stone is a hand not on food' should be true from turn one - cheap and widely available, but never free. If it plays tedious the fix is a bigger yield per turn, NEVER a free mechanism. `recovery_fraction` 0.15 is what makes it a SURFACE rung: on a 900-unit hill it reaches 135 units and no more, and on a 40-unit steppe scatter 6 - after which it lives on that scatter's own small regrowth of about a tenth of a unit a turn. So knapping flint never runs a map dry and paving a road is impossible without the rung above. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
+      "verb": null,
+      "unlock_knowledge": null,
+      "_comment_earns_knowledge": "PICKING LOOSE STONE TEACHES QUARRYING (discovery 2016), which gates `quarry` - and the MINERALS ARC'S `mine` will sit above that on this same branch. That is the whole reason stone and metal share a ladder: quarrying and mining are one skill and only the material in the deposit differs, so copper is a deposit row and a config edit rather than a third branch.",
+      "earns_knowledge": "quarrying",
+      "requires_rung": null,
+      "ceiling_required": null,
+      "_comment_site_requirement": "NULL - see forestry:deadfall. `min_deposit_capacity` would have to be ~0 here (gathering is available wherever there is any scatter), and a requirement that admits every tile is exactly what validate_site_requirement refuses. What refuses a crew on bare rock-free ground is that there is no deposit to open.",
+      "site_requirement": null,
+      "build": null,
+      "upkeep": null,
+      "extraction_payoff": {
+        "yield_per_worker_turn": 0.4,
+        "recovery_fraction": 0.15,
+        "regrowth_multiplier": 1.0
+      },
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "quarry",
+      "branch": "extraction",
+      "order": 2,
+      "_comment_rung": "A QUARRY - a cut working face, and WHAT IT BUYS IS REACH RATHER THAN RATE. A finite deposit has no regrowth to raise, so `regrowth_multiplier` stays at 1.0 and `recovery_fraction` goes 0.15 -> 0.85: on a 900-unit hill body the reachable stock goes from 135 to 765, five and a half times as much over the working's whole life. THAT is the rung's decision - a cheap working now, or 250 units of work and 8 wood to reach most of the body - and it is exactly the decision a copper mine will want. Mechanically it is the fauna escapement floor UPSIDE DOWN: fauna has a floor you may not draw below, and here the rung LOWERS the floor. The take rises too (0.4 -> 2.2 a worker-turn), because a face you can stand at is worked faster than ground you stoop over; at four hands a hill quarry is worked out in about eighty turns, or thirty-eight paved road tiles. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE.",
+      "verb": "quarry",
+      "unlock_knowledge": "quarrying",
+      "_comment_earns_knowledge": "NULL - the top of the SHIPPED branch. `extraction:mine` is the minerals arc's, and quoting a lesson for a rung that does not exist would be a dangling name.",
+      "earns_knowledge": null,
+      "requires_rung": "gathering",
+      "ceiling_required": null,
+      "_comment_site_requirement": "THE ONE PLACEMENT RULE ON EITHER DEPOSIT BRANCH, AND IT IS THE WHOLE OF 'YOU CANNOT QUARRY JUST ANYWHERE' (docs/plan_extraction.md 5a). `min_deposit_capacity` 800 is compared against the tile's own stone capacity (extraction::tile_deposit_capacity), through the SAME forage::rung_site_refusal seam a `sow` resolves through - so the command's rejection, the labor arm's gate and any future readout cannot drift into disagreeing about which ground takes a working. 800 sits in the gap the deposits table deliberately leaves between its two populations: the smallest rock body is rolling hills at 900 and the largest loose-stone scatter is a periglacial 70, so the line is a CAPACITY READING rather than a list of terrains anyone has to maintain, and the minerals arc's placed ore bodies will fall on the right side of it for free. The other three dials are their own neutrals: a quarry asks nothing about gathering sites, fertility or fresh water.",
+      "site_requirement": {
+        "requires_gathering_site": false,
+        "min_forage_capacity": 0.0,
+        "requires_fresh_water": false,
+        "min_deposit_capacity": 800.0
+      },
+      "_comment_build_materials": "8 WOOD - the props, ramps and sleds a working face is timbered with, DRAWN AS THE METER CLIMBS rather than on completion, exactly as the paved road's 20 stone is (plan_standing_upkeep.md 2.7). A short store stalls the build proportionally and a dry one blocks the head with BuildGate::Materials. IT IS A PILE AND NOT A RATE, and the distinction is 2.7's own: timbering a new face is spent once as the face is opened, where re-dressing a road is owed every turn it stands. It also puts the two branches in the right order for a faction with nothing - you must have worked a wood before you can open a quarry - which is the bootstrap 4d is about, one rung up.",
+      "build": {
+        "work_cost": 250.0,
+        "grace_turns": null,
+        "materials": {
+          "wood": 8.0
+        }
+      },
+      "upkeep": null,
+      "extraction_payoff": {
+        "yield_per_worker_turn": 2.2,
+        "recovery_fraction": 0.85,
+        "regrowth_multiplier": 1.0
+      },
+      "behavior": {
+        "movement": "fixed"
+      }
     }
-  ]
+  ],
+  "_comment_extraction_payoff": "WHAT A FORESTRY OR EXTRACTION RUNG BUYS (docs/plan_extraction.md 4c). ONE BLOCK SERVES BOTH BRANCHES AND THERE IS NO BRANCH CHECK ANYWHERE, which is the single decision this arc exists to get right. A FORESTRY rung raises `regrowth_multiplier` and leaves `recovery_fraction` at its ceiling of 1.0; an EXTRACTION rung raises `recovery_fraction` and leaves the multiplier at 1.0. The multiplier scales THE DEPOSIT'S OWN rate (extraction.json), and rock's rate is 0.0, so `0 x anything` is still 0 - 'stone's rate is zero' survives as ARITHMETIC rather than as a rule somebody has to remember not to break, and a branch-keyed payoff would have made it breakable by a config edit. All three terms interpolate on the source's position, the general rule of plan_standing_upkeep.md 2.8: every one of them is a RATE or a SHARE, and there is no classifier here whose cut points would have to step instead. NO RUNG MAY RAISE CAPACITY AND THERE IS NO KEY FOR ONE: the floor is (1 - recovery_fraction) x the TERRAIN's capacity, so climbing strictly LOWERS it - which is the safe direction of the 6 floor trap, where a rung raising a herd's K dragged the floor up under a tame already standing on it and made that build uncompletable at any crew size. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials, sized in extraction.json's own comments against the three real consumers (a pen is 24 wood, a road tool 3 wood, a paved tile 20 stone).",
+  "_comment_extraction_upkeep": "NEITHER DEPOSIT BRANCH DECLARES AN `upkeep`, AND THAT IS A STATEMENT ABOUT THE SHIPPED LADDER RATHER THAN A GAP. A working costs nothing to hold: what takes one away is the CAMP MOVING OUT OF RANGE, which lapses the `extract` row exactly as it lapses a Forage row and is where docs/plan_extraction.md 6's move-or-stay pressure actually lives - 'a quarry you walk away from is a quarry you lost'. `route:trail` already ships built and un-held on the same reasoning, and its own comment makes the argument: a rung that costs nothing to hold cannot be SHORT, so what takes it back is disuse rather than shortfall. THE CONSEQUENCE WORTH KNOWING is that a working's position never falls - there is no `meter_decay` for a shortfall to drive - so a band that comes back to a quarry it left finds the working it paid for, and what it lost is every turn's production in between. THE QUARRY'S WOOD IS ON THE BUILD PILE, NOT ON A RATE: props, ramps and sleds are timbered once as the face is opened, which is plan_standing_upkeep.md 2.7's own distinction between a pile spent as the meter climbs and a rate paid every turn the rung stands."
 }

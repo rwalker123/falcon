@@ -170,6 +170,12 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
         .insert_resource(core_sim::MaterialsConfigHandle::default());
     app.world
         .insert_resource(core_sim::RecipesConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::ExtractionConfigHandle::default());
+    // An empty deposit registry is the shipped turn-1 state: a working is opened the
+    // first turn a crew stands on it, so a harness with no `extract` row has none.
+    app.world
+        .insert_resource(core_sim::extraction::DepositRegistry::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_forage);
     app
@@ -210,6 +216,7 @@ fn site_verdict(app: &App, coord: UVec2) -> Option<SiteRefusal> {
         &labor.forage,
         app.world.resource::<FoodSiteRegistry>().is_site(coord),
         fresh_water,
+        core_sim::NO_DEPOSIT_FLOOR,
     )
 }
 

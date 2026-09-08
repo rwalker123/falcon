@@ -4,7 +4,13 @@ use crate::state::{same_to_hundredths_f32, same_to_hundredths_fixed};
 use serde::{Deserialize, Serialize};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+/// **`Ord` is by discriminant, and that is a deliberate ordering rather than a derive nobody
+/// thought about**: the values are explicitly numbered and the numbering is the wire's, so sorting
+/// by it gives a canonical, stable terrain order for any config or readout keyed by terrain
+/// (`core_sim`'s deposits table is the first). It says nothing about a terrain being "greater".
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
+)]
 #[repr(u16)]
 pub enum TerrainType {
     DeepOcean = 0,

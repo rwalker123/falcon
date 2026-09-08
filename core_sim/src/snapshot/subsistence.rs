@@ -219,17 +219,10 @@ pub(crate) fn resolve_build_kit_ids<'a>(
     let mut claimed_herds: std::collections::HashSet<String> = std::collections::HashSet::new();
     for allocation in allocations {
         for (position, entry) in allocation.build_queue.iter().enumerate() {
-            let branch = match entry.source {
-                crate::components::BuildSource::Patch(_) => {
-                    crate::intensification::RungBranch::Plant
-                }
-                crate::components::BuildSource::Herd(_) => {
-                    crate::intensification::RungBranch::Animal
-                }
-                crate::components::BuildSource::Road(_) => {
-                    crate::intensification::RungBranch::Route
-                }
-            };
+            // **The entry's declared destination names the ladder** — the same reading
+            // `LaborAllocation::head_build_branch` takes, and for its reason: a deposit is worked by
+            // either `forestry` or `extraction` and the *source kind* cannot say which.
+            let branch = entry.declared.destination().branch();
             // **The one resolution seam**, so the row cannot state a kit the pool is not using.
             // The rung is the entry's **destination**, on `LaborAllocation::builders_kit`'s own
             // rule and for its reason: this pass walks a queue and holds no source standing.
@@ -276,6 +269,12 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                 crate::components::BuildSource::Road(tile) => {
                     resolved.roads.insert(*tile);
                 }
+                // **A deposit publishes nothing here YET**, for the road's original reason: there is
+                // no deposit row on the wire to carry a kit or a membership flag, and the readouts
+                // are the next slice (`docs/plan_extraction.md` §7). The resolution above still
+                // runs for it — the entry's kit is priced off the same one seam — it simply has
+                // nowhere to be published.
+                crate::components::BuildSource::Deposit { .. } => {}
             }
         }
     }

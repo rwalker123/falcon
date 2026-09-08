@@ -1986,6 +1986,32 @@ pub enum LaborTarget {
     /// so spreading a short keeping pool loses nothing; splitting a builder pool across three jobs
     /// just means nothing finishes.
     Builders,
+    /// **TAKE A MATERIAL OUT OF THE GROUND** — the two deposit branches' take row
+    /// (`docs/plan_extraction.md` §6), and **the only row in the game that pays no food**.
+    ///
+    /// ⛔ **THAT IS THE WHOLE COST MODEL, AND IT IS WHY THIS IS A ROW AT ALL.** *A woodcutter is a
+    /// mouth that is not gathering.* Every hand here comes out of the same finite pool `assign_labor`
+    /// spends on Forage and Hunt, so the price of wood is measured in the food those hands did not
+    /// bring home — not in a walk, not in a fee. It pays **no food and no fodder**: not a zero-valued
+    /// food term, no food term at all.
+    ///
+    /// Stored as `(tile, material)` rather than as an entity, on `Forage`'s reasoning: a deposit is
+    /// fixed, so the band re-resolves it each turn and a row that resolves out of range is
+    /// **abandoned**. The material is part of the key because **one tile can hold two deposits** — a
+    /// wooded highland holds timber *and* rock — and working one is not working the other.
+    ///
+    /// **There is no `floor` beside them, and its absence is the model.** A food web's floor is
+    /// escapement the player dials per row; a deposit's floor is the **rung's**
+    /// (`(1 − recovery_fraction) × capacity`), which is what makes climbing the ladder the way you
+    /// reach deeper. Adding a per-row floor would put a second, contradictory answer on the same
+    /// question.
+    Extract {
+        tile: UVec2,
+        /// The `extraction.json` deposit this crew works — `wood`, `stone`, and whatever the minerals
+        /// arc adds. **Which ladder that is, is the deposit's** (`DepositDef::branch`), never the
+        /// row's, which is what lets one row kind serve both branches.
+        material: String,
+    },
 }
 
 /// The stable role key a **Forage** row publishes, and the one a plant-web build queue entry names
@@ -1999,6 +2025,11 @@ pub const HUNT_ROLE_KEY: &str = "hunt";
 /// build-queue entry names its web with. A road carries no *take* row of its own, so the keeping role
 /// is what a client joins a queued `grade` to.
 pub const ROADWORK_ROLE_KEY: &str = "roadwork";
+/// The **Extract** twin of [`FORAGE_ROLE_KEY`] — the take row on a deposit, and the row a
+/// forestry/extraction build-queue entry names its branch with. **One key for both ladders**, for
+/// the same reason there is one row kind: what a crew is doing is *taking a material out of the
+/// ground*, and which of the two skills that is, is the deposit's.
+pub const EXTRACT_ROLE_KEY: &str = "extract";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -2012,6 +2043,7 @@ impl LaborTarget {
             LaborTarget::Husbandry => "husbandry",
             LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
             LaborTarget::Builders => "builders",
+            LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
         }
     }
 
@@ -2033,6 +2065,13 @@ impl LaborTarget {
             LaborTarget::Husbandry => crate::equipment_config::KitJob::Husbandry,
             LaborTarget::Roadwork => crate::equipment_config::KitJob::Roadwork,
             LaborTarget::Builders => crate::equipment_config::KitJob::Builders,
+            // **The shipped roster declares no take gear for either deposit branch**, so this job's
+            // default is the empty `none` kit — exactly the opening `roadwork` has, and for the same
+            // kind of reason. Forestry's natural tool is an axe and it would be bone-hafted while
+            // stone tools are out of scope (`docs/plan_extraction.md` §9); the two quarry tools that
+            // *do* ship (`earthmoving`, `stone_dressing`) declare `build_work`, which lands on the
+            // builders' pool that RAISES a working rather than on the crew that takes from it.
+            LaborTarget::Extract { .. } => crate::equipment_config::KitJob::Extraction,
         }
     }
 
@@ -2052,6 +2091,19 @@ impl LaborTarget {
             (LaborTarget::Husbandry, LaborTarget::Husbandry) => true,
             (LaborTarget::Roadwork, LaborTarget::Roadwork) => true,
             (LaborTarget::Builders, LaborTarget::Builders) => true,
+            // **Keyed by tile AND material**, because a wooded highland holds two deposits and
+            // working the timber is not working the rock — so the two are different sources on one
+            // tile, not one source restated.
+            (
+                LaborTarget::Extract {
+                    tile: a,
+                    material: left,
+                },
+                LaborTarget::Extract {
+                    tile: b,
+                    material: right,
+                },
+            ) => a == b && left == right,
             _ => false,
         }
     }
@@ -2069,7 +2121,12 @@ impl LaborTarget {
     /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
     pub fn is_source(&self) -> bool {
         match self {
-            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } => true,
+            LaborTarget::Forage { .. }
+            | LaborTarget::Hunt { .. }
+            // **A deposit is ground the band holds**, exactly as a patch is: zeroing the crew is
+            // *stop cutting here*, never *this band has nothing here*, and the row has to survive it
+            // or the working loses its place in the build queue and its share of the keeping pool.
+            | LaborTarget::Extract { .. } => true,
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Agriculture
@@ -3985,6 +4042,19 @@ pub enum BuildSource {
     /// the keeper, whether that is `abandon`, another band's adoption, or decay dropping the road
     /// back into the free floor. See [`LaborAllocation::holds_build_source`].
     Road(UVec2),
+    /// **A DEPOSIT, by tile AND material** — the two extraction branches' build source
+    /// (`docs/plan_extraction.md` §6).
+    ///
+    /// ⛔ **THE WORKING BELONGS TO A CAMP, LIKE A PATCH — NOT TO NOBODY, LIKE A ROAD.** This is the
+    /// one place the arc deliberately does *not* copy [`BuildSource::Road`]. A road follows no one
+    /// and is free to leave, which is why it belongs to no camp; **a quarry you walk away from is a
+    /// quarry you lost**, and that is what puts a working on the move-or-stay decision. So it *is*
+    /// backed by a labor row ([`LaborTarget::Extract`]) and is pruned exactly as a patch's entry is:
+    /// no row, no holding.
+    ///
+    /// The material is part of the key for [`LaborTarget::Extract`]'s reason — one tile can hold two
+    /// deposits, and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
+    Deposit { tile: UVec2, material: String },
 }
 
 /// **THE ROAD-MEMBERSHIP ANSWER A CALLER WITH NO VIEW OF THE ROADS GIVES** — *"leave road entries
@@ -4007,6 +4077,10 @@ impl BuildSource {
         match target {
             LaborTarget::Forage { tile, .. } => Some(BuildSource::Patch(*tile)),
             LaborTarget::Hunt { fauna_id, .. } => Some(BuildSource::Herd(fauna_id.clone())),
+            LaborTarget::Extract { tile, material } => Some(BuildSource::Deposit {
+                tile: *tile,
+                material: material.clone(),
+            }),
             LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Agriculture
@@ -4027,6 +4101,9 @@ impl BuildSource {
             // **The band-wide keeping role**, because that is the row a road's entry joins to on the
             // Work board — a road has no take row of its own for a client to join against.
             BuildSource::Road(_) => ROADWORK_ROLE_KEY,
+            // **The take row's own key**, unlike a road's: a working has a row, so a client joins
+            // its queued `fell` or `quarry` to the crew that is actually standing on it.
+            BuildSource::Deposit { .. } => EXTRACT_ROLE_KEY,
         }
     }
 
@@ -4035,6 +4112,13 @@ impl BuildSource {
         match (self, target) {
             (BuildSource::Patch(tile), LaborTarget::Forage { tile: other, .. }) => tile == other,
             (BuildSource::Herd(id), LaborTarget::Hunt { fauna_id, .. }) => id == fauna_id,
+            (
+                BuildSource::Deposit { tile, material },
+                LaborTarget::Extract {
+                    tile: other,
+                    material: worked,
+                },
+            ) => tile == other && material == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
             // the band keeps, so it names no one of them — the same answer `Agriculture` gives a
             // patch.
@@ -4224,12 +4308,19 @@ impl LaborAllocation {
     /// **THE WEB THE BAND'S BUILDERS ARE ACTUALLY WORKING ON** — the head entry's, since the whole
     /// pool goes on the head. `None` when the queue is empty, which is *"nothing is being raised"*
     /// rather than a web.
+    ///
+    /// ⛔ **IT READS THE ENTRY'S DECLARED DESTINATION, NOT THE KIND OF SOURCE IT SITS ON.** It used
+    /// to be a match over [`BuildSource`], which worked only while *"what kind of thing is this"*
+    /// and *"which ladder is being climbed"* were the same question — and [`BuildSource::Deposit`]
+    /// is where they stop being: a deposit is worked by **either** `forestry` or `extraction`, and
+    /// which one is the deposit's own (`extraction_config::DepositDef::branch`), which this
+    /// component cannot see and must not carry a second copy of. Every entry already names a
+    /// destination rung ([`BuildJob::destination`]) and every rung names exactly one branch, so this
+    /// is the same fact read from the authority that has it.
     pub fn head_build_branch(&self) -> Option<crate::intensification::RungBranch> {
-        self.build_queue.first().map(|entry| match entry.source {
-            BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
-            BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
-            BuildSource::Road(_) => crate::intensification::RungBranch::Route,
-        })
+        self.build_queue
+            .first()
+            .map(|entry| entry.declared.destination().branch())
     }
 
     /// **The kit this band's builders are working with**, resolved through the one seam
@@ -4635,7 +4726,11 @@ impl LaborAllocation {
     fn holds_build_source(&self, source: &BuildSource, keeps_road: &dyn Fn(UVec2) -> bool) -> bool {
         match source {
             BuildSource::Road(tile) => keeps_road(*tile),
-            BuildSource::Patch(_) | BuildSource::Herd(_) => self
+            // ⛔ **A DEPOSIT IS HELD BY ITS ROW, LIKE A PATCH — NOT BY A KEEPER, LIKE A ROAD.** That
+            // is `docs/plan_extraction.md` §6's one deliberate departure from the route branch: a
+            // road is free to leave and so belongs to no camp, but *a quarry you walk away from is a
+            // quarry you lost*, and that is what puts a working on the move-or-stay decision.
+            BuildSource::Patch(_) | BuildSource::Herd(_) | BuildSource::Deposit { .. } => self
                 .assignments
                 .iter()
                 .any(|assignment| source.names(&assignment.target)),
@@ -5423,6 +5518,28 @@ pub enum Improvement {
     /// **Route-only.** Pave a graded tile — the route rung-4 verb, and [`Improvement::Grade`]'s twin
     /// one rung up. It names a keeper on the same terms.
     Pave,
+    /// **Forestry-only.** Open a felling working on a wood — the forestry rung-2 verb
+    /// (`docs/plan_extraction.md` §4a).
+    ///
+    /// It is what turns gathering deadfall into cutting standing timber, and therefore the rung at
+    /// which **over-cutting becomes possible**: the take is finally fast enough to outpace what the
+    /// wood puts back. The rung below it is free and needs no verb.
+    Fell,
+    /// **Forestry-only.** Bring a wood under management — the forestry rung-3 verb, and
+    /// conservationism expressed mechanically: it raises the deposit's own regrowth
+    /// ([`crate::intensification::RungExtractionPayoff::regrowth_multiplier`]) and never its
+    /// capacity. **You do not get more per turn by cutting harder; you get more per turn for ever by
+    /// managing the wood.**
+    Coppice,
+    /// **Extraction-only.** Open a cut working face — the extraction rung-2 verb
+    /// (`docs/plan_extraction.md` §4b).
+    ///
+    /// **What it buys is REACH, not rate**: a finite deposit has no regrowth to raise, so the rung
+    /// lowers the floor `(1 − recovery) × capacity` instead — the fauna escapement floor upside
+    /// down. And it is the one rung on either branch that asks something of the ground: the tile's
+    /// stone must clear the rung's `min_deposit_capacity`, which is what makes *you cannot quarry
+    /// just anywhere* true with no second mechanism.
+    Quarry,
 }
 
 /// **A floor of `0` — "leave nothing standing."** Named because a bare `0.0` at a comparison site
@@ -5452,6 +5569,9 @@ impl Improvement {
             Improvement::Corral => "corral",
             Improvement::Grade => "grade",
             Improvement::Pave => "pave",
+            Improvement::Fell => "fell",
+            Improvement::Coppice => "coppice",
+            Improvement::Quarry => "quarry",
         }
     }
 
@@ -5462,9 +5582,13 @@ impl Improvement {
     pub fn valid_for_forage(self) -> bool {
         match self {
             Improvement::Cultivate | Improvement::Sow => true,
-            Improvement::Tame | Improvement::Corral | Improvement::Grade | Improvement::Pave => {
-                false
-            }
+            Improvement::Tame
+            | Improvement::Corral
+            | Improvement::Grade
+            | Improvement::Pave
+            | Improvement::Fell
+            | Improvement::Coppice
+            | Improvement::Quarry => false,
         }
     }
 
@@ -5478,9 +5602,40 @@ impl Improvement {
     pub fn valid_for_hunt(self) -> bool {
         match self {
             Improvement::Tame | Improvement::Corral => true,
-            Improvement::Cultivate | Improvement::Sow | Improvement::Grade | Improvement::Pave => {
-                false
-            }
+            Improvement::Cultivate
+            | Improvement::Sow
+            | Improvement::Grade
+            | Improvement::Pave
+            | Improvement::Fell
+            | Improvement::Coppice
+            | Improvement::Quarry => false,
+        }
+    }
+
+    /// The improvements an **Extract** assignment accepts — the two deposit branches' three
+    /// rung-transition verbs, and the third of the exhaustive trio
+    /// ([`Improvement::valid_for_forage`], [`Improvement::valid_for_hunt`]).
+    ///
+    /// ⛔ **IT EXISTS BECAUSE A DEPOSIT HAS A ROW AND A ROAD DOES NOT**, which is exactly the
+    /// distinction the retired `valid_for_route` gravestone above draws. `grade` and `pave` are
+    /// their own tile commands and reach their handler as literals, so a predicate over them could
+    /// only compare a constant with itself; `fell`, `coppice` and `quarry` are typed **at a
+    /// [`LaborTarget::Extract`] row** in `assign_labor`'s own grammar, exactly as `cultivate` is typed
+    /// at a Forage row — so this one guards a verb the player aimed at the wrong kind of source, and
+    /// it has the callers its siblings have.
+    ///
+    /// **Both branches answer through one predicate**, because one row kind works both: an Extract row
+    /// names a tile and a material, and which ladder that is, is the deposit's
+    /// (`extraction_config::DepositDef::branch`) rather than the row's.
+    pub fn valid_for_extract(self) -> bool {
+        match self {
+            Improvement::Fell | Improvement::Coppice | Improvement::Quarry => true,
+            Improvement::Cultivate
+            | Improvement::Sow
+            | Improvement::Tame
+            | Improvement::Corral
+            | Improvement::Grade
+            | Improvement::Pave => false,
         }
     }
 
@@ -5510,6 +5665,9 @@ impl FromStr for Improvement {
             "corral" => Ok(Improvement::Corral),
             "grade" => Ok(Improvement::Grade),
             "pave" => Ok(Improvement::Pave),
+            "fell" => Ok(Improvement::Fell),
+            "coppice" => Ok(Improvement::Coppice),
+            "quarry" => Ok(Improvement::Quarry),
             _ => Err(()),
         }
     }

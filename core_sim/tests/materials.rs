@@ -142,6 +142,12 @@ fn hunting_world() -> App {
     app.world.insert_resource(MaterialsConfigHandle::default());
     app.world
         .insert_resource(core_sim::RecipesConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::ExtractionConfigHandle::default());
+    // An empty deposit registry is the shipped turn-1 state: a working is opened the
+    // first turn a crew stands on it, so a harness with no `extract` row has none.
+    app.world
+        .insert_resource(core_sim::extraction::DepositRegistry::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app

@@ -1559,15 +1559,39 @@ fn every_build_job_and_source_kind_is_stated() {
     let patch = BuildSource::Patch(UVec2::new(1, 1));
     let herd = BuildSource::Herd("game_deer_07".to_string());
     let road = BuildSource::Road(UVec2::new(2, 2));
-    for source in [&patch, &herd, &road] {
+    let deposit = BuildSource::Deposit {
+        tile: UVec2::new(3, 3),
+        material: "stone".to_string(),
+    };
+    for source in [&patch, &herd, &road, &deposit] {
         match source {
             // A patch is named by its tile; a herd by an id that outlives its position; a ROAD by
-            // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b).
+            // its tile, because a road IS a tile (`docs/plan_standing_upkeep.md` §4.13b); and a
+            // DEPOSIT by its tile **and its material**, because one tile can hold two of them and
+            // working the timber is not working the rock (`docs/plan_extraction.md` §6).
             BuildSource::Patch(tile) => assert_eq!(*tile, UVec2::new(1, 1)),
             BuildSource::Herd(id) => assert_eq!(id, "game_deer_07"),
             BuildSource::Road(tile) => assert_eq!(*tile, UVec2::new(2, 2)),
+            BuildSource::Deposit { tile, material } => {
+                assert_eq!(*tile, UVec2::new(3, 3));
+                assert_eq!(material, "stone");
+            }
         }
     }
+    assert!(
+        deposit.names(&LaborTarget::Extract {
+            tile: UVec2::new(3, 3),
+            material: "stone".to_string(),
+        }),
+        "a working IS named by its own row — the one place this arc deliberately does not copy the          route branch, because a quarry you walk away from is a quarry you lost"
+    );
+    assert!(
+        !deposit.names(&LaborTarget::Extract {
+            tile: UVec2::new(3, 3),
+            material: "wood".to_string(),
+        }),
+        "the MATERIAL is half the key: a felling crew on the same tile is a different source"
+    );
     assert!(
         !road.names(&LaborTarget::Forage {
             tile: UVec2::new(2, 2),

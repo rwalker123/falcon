@@ -36,6 +36,8 @@ mod demographics_config;
 mod equipment_config;
 mod espionage;
 mod expedition_config;
+pub mod extraction;
+mod extraction_config;
 mod fauna;
 mod fauna_config;
 mod flora_config;
@@ -262,6 +264,11 @@ pub use great_discovery::{
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
+pub use extraction_config::{
+    load_extraction_config_from_env, DepositDef, DepositTerrain, ExtractionConfig,
+    ExtractionConfigError, ExtractionConfigHandle, ExtractionConfigMetadata,
+    BUILTIN_EXTRACTION_CONFIG, NEVER_RENEWS, NO_DEPOSIT,
+};
 pub use hydrology::{debug_drainage_census, DrainageCensus};
 pub use influencers::{
     tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
@@ -273,12 +280,13 @@ pub use intensification::{
     learn_multiplier, load_intensification_ladder_from_env, pool_work_supply, rung_work_done,
     upkeep_shortfall, upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig,
     LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
-    RungKey, RungMeterDecay, RungMovement, RungPartialCredit, RungSiteRequirement, RungStanding,
-    RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale, BUILTIN_INTENSIFICATION_LADDER,
-    FABRICATED_BUILD_COST, FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR,
-    NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY,
-    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
-    WHOLLY_UNSUPPLIED,
+    RungExtractionPayoff, RungKey, RungMeterDecay, RungMovement, RungPartialCredit,
+    RungSiteRequirement, RungStanding, RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale,
+    ALL_BRANCHES, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST, FULLY_SUPPLIED,
+    NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR,
+    NO_DEPOSIT_REACHED, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
+    PER_WORKER_OUTPUT, PRACTICE_AT_THE_PLAIN_RATE, REGROWTH_UNCHANGED, RUNG_COST_UNSCALED,
+    RUNG_UNSTARTED, SITE_ACCEPTED, WHOLE_DEPOSIT_REACHED, WHOLLY_UNSUPPLIED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -568,6 +576,16 @@ pub fn build_headless_app() -> App {
     // source that silently yields nothing (`docs/plan_crafting_and_materials.md` §2).
     let (materials_config, materials_metadata) = materials_config::load_materials_config_from_env();
     let materials_handle = materials_config::MaterialsConfigHandle::new(materials_config.clone());
+    // **The deposits table loads beside the two food webs' rosters and is reconciled against the
+    // same materials table** (`docs/plan_extraction.md` §2). A deposit of a material that does not
+    // exist — or one rated on an axis that material does not declare — would otherwise parse,
+    // validate, and then pay a band a pile nothing can hold or merge.
+    let (extraction_config, extraction_metadata) =
+        extraction_config::load_extraction_config_from_env();
+    if let Err(err) = extraction_config.validate_against_materials(&materials_config) {
+        panic!("extraction config does not reconcile with the materials table: {err}");
+    }
+    let extraction_handle = extraction_config::ExtractionConfigHandle::new(extraction_config);
     let (fauna_config, fauna_metadata) =
         fauna_config::load_fauna_config_from_env(&materials_config);
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
@@ -722,6 +740,12 @@ pub fn build_headless_app() -> App {
         .insert_resource(connections_handle)
         .insert_resource(connections_metadata)
         .insert_resource(materials_handle)
+        .insert_resource(extraction_handle)
+        .insert_resource(extraction_metadata)
+        // **The live workings on the two deposit branches.** Empty at boot and filled lazily — a
+        // deposit nobody has worked stands at exactly its tile's capacity, which is a pure function
+        // of the tile, so there is nothing to seed (`extraction::DepositRegistry::open`).
+        .insert_resource(extraction::DepositRegistry::default())
         .insert_resource(materials_metadata)
         .insert_resource(recipes_handle)
         .insert_resource(recipes_metadata)

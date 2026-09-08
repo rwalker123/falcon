@@ -179,6 +179,7 @@ pub fn source_has_a_meter_at_risk(
     target: &LaborTarget,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
+    deposits: &crate::extraction::DepositRegistry,
     ladder: &LadderConfig,
 ) -> bool {
     match target {
@@ -188,6 +189,21 @@ pub fn source_has_a_meter_at_risk(
         LaborTarget::Hunt { fauna_id, .. } => herds
             .find(fauna_id)
             .is_some_and(|herd| fauna::herd_keeping_rung(herd, ladder).is_some()),
+        // **A WORKING RAISED ABOVE ITS FREE FLOOR IS A HOLDING, and un-staffing it must not end
+        // it** — the exact reading the two food webs take, with one difference that is the branch's
+        // own: there is no *rot* to be at risk from, so what the row protects is the position
+        // itself. A band that stops cutting for a season still has the felling working it paid 60
+        // units of work for; what takes a working away is the camp moving out of range, which is
+        // the Forage row's own abandonment rule and is where this branch's move-or-stay pressure
+        // actually lives (`docs/plan_extraction.md` §6).
+        //
+        // A working still on its **free floor** answers `false`, exactly as a wild stand does: there
+        // is nothing there anybody paid for, so unstaffing it really does end the band's business.
+        LaborTarget::Extract { tile, material } => {
+            deposits.source(*tile, material).is_some_and(|source| {
+                source.ladder_position() > crate::intensification::RUNG_UNSTARTED
+            })
+        }
         LaborTarget::Scout
         | LaborTarget::Warrior
         | LaborTarget::Agriculture
@@ -218,6 +234,11 @@ pub struct LaborConfigs<'w> {
     /// ([`crate::systems::bench_material_rate`]), which is half the inflow the material-shortfall
     /// Alert judges against. The bench itself is `advance_crafting`'s.
     pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
+    /// **The deposits table** (`docs/plan_extraction.md` §2) — read for the two things a working's
+    /// build needs: the tile's capacity for the source's own material, which is what
+    /// `extraction:quarry`'s site rule is judged against, and nothing else. The *take* is
+    /// `extraction::advance_extraction`'s.
+    pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
 }
 
 /// **WHAT EACH OF A BAND'S SOURCES GETS OUT OF ITS MAINTENANCE POOLS** — one work amount per
@@ -381,7 +402,7 @@ impl<'a> BuildersGear<'a> {
         source: &BuildSource,
         rung: Option<crate::intensification::RungKey>,
     ) -> BuildersRungGear {
-        let branch = source_branch(source);
+        let branch = source_branch(source, rung);
         let key = rung.map(|rung| rung.wire_key());
         let key = key.as_deref();
         let named = self
@@ -389,7 +410,19 @@ impl<'a> BuildersGear<'a> {
             .iter()
             .find(|(source_key, _)| source_key == source)
             .map(|(_, kit)| kit);
-        let kit = self.equipment.builders_kit_for(named, Some(branch), key);
+        let kit = self.equipment.builders_kit_for(named, branch, key);
+        // **Nothing here names a ladder, so no tool can serve it** — an unqueued deposit, and the
+        // one case `source_branch` cannot answer. The pool still works the source bare-handed
+        // ([`crate::intensification::PER_WORKER_OUTPUT`] is not a gear term); what is
+        // [`NO_BUILD_GEAR`] is the *offset*, which is the honest reading when there is no rung for a
+        // rung-bound tool to be quoted against.
+        let Some(branch) = branch else {
+            return BuildersRungGear {
+                wear_kit: kit,
+                work_per_worker: crate::intensification::NO_BUILD_GEAR,
+                gear_supply: gear_work_supply(crate::intensification::NO_BUILD_GEAR, self.builders),
+            };
+        };
         // **The coverage is over the POOL**, so the rate the wire publishes and the rate the accrual
         // is struck at are one number for the whole band.
         let coverage = self
@@ -432,13 +465,31 @@ fn queued_destination(
 }
 
 /// **THE LADDER A BUILD SOURCE BELONGS TO** — a patch is plant, a herd is animal, a road tile is
-/// route. One expression, because three copies of this match are three places a fourth source kind
-/// has to be remembered.
-fn source_branch(source: &BuildSource) -> crate::intensification::RungBranch {
+/// route. One expression, because copies of this match are places a new source kind has to be
+/// remembered.
+///
+/// ⛔ **THE RUNG BEING CLIMBED ANSWERS FIRST, AND FOR A DEPOSIT IT IS THE ONLY THING THAT CAN.** A
+/// working is raised by **either** `forestry` or `extraction`, and which one is the deposit's own
+/// (`extraction_config::DepositDef::branch`) — a fact this seam holds no config to read and must not
+/// carry a second copy of. Every rung names exactly one branch, so a queued source answers off the
+/// destination it declared.
+///
+/// `None` is *"nothing here names a ladder"* — a deposit nobody has queued — and it is the
+/// conservative answer rather than a gap: the kit resolution it feeds takes an `Option` and falls
+/// back to the builders' own default, and a source climbing nothing has no build for a rung-bound
+/// tool to be quoted against anyway.
+fn source_branch(
+    source: &BuildSource,
+    rung: Option<crate::intensification::RungKey>,
+) -> Option<crate::intensification::RungBranch> {
+    if let Some(rung) = rung {
+        return Some(rung.branch());
+    }
     match source {
-        BuildSource::Patch(_) => crate::intensification::RungBranch::Plant,
-        BuildSource::Herd(_) => crate::intensification::RungBranch::Animal,
-        BuildSource::Road(_) => crate::intensification::RungBranch::Route,
+        BuildSource::Patch(_) => Some(crate::intensification::RungBranch::Plant),
+        BuildSource::Herd(_) => Some(crate::intensification::RungBranch::Animal),
+        BuildSource::Road(_) => Some(crate::intensification::RungBranch::Route),
+        BuildSource::Deposit { .. } => None,
     }
 }
 
@@ -878,6 +929,7 @@ fn head_rung_gate(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     flora: &crate::flora_config::FloraConfig,
+    extraction: &crate::extraction_config::ExtractionConfig,
     food_sites: &FoodSiteRegistry,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
@@ -959,6 +1011,7 @@ fn head_rung_gate(
                         &labor.forage,
                         food_sites.is_site(ground.position),
                         fresh_water,
+                        crate::intensification::NO_DEPOSIT_FLOOR,
                     )
                     .is_none();
                     // §10 scoping, exactly as the arm scopes it: a Sow that **upgrades** an existing
@@ -982,7 +1035,10 @@ fn head_rung_gate(
                 Improvement::Tame
                 | Improvement::Corral
                 | Improvement::Grade
-                | Improvement::Pave => BuildGate::Undeclared,
+                | Improvement::Pave
+                | Improvement::Fell
+                | Improvement::Coppice
+                | Improvement::Quarry => BuildGate::Undeclared,
             }
         }
         (BuildSource::Herd(id), LaborTarget::Hunt { floor, .. }) => {
@@ -1012,12 +1068,92 @@ fn head_rung_gate(
                 Improvement::Cultivate
                 | Improvement::Sow
                 | Improvement::Grade
-                | Improvement::Pave => BuildGate::Undeclared,
+                | Improvement::Pave
+                | Improvement::Fell
+                | Improvement::Coppice
+                | Improvement::Quarry => BuildGate::Undeclared,
             }
         }
-        // A queue entry always names a Forage tile or a Hunt herd; a band-wide role holds neither.
+        (BuildSource::Deposit { tile, material }, LaborTarget::Extract { .. }) => {
+            let Some(ground) = tile_registry
+                .index(tile.x, tile.y)
+                .and_then(|entity| tiles.get(entity).ok())
+            else {
+                return BuildGate::Unworked;
+            };
+            let destination = RungKey::built_by(improvement);
+            if !matches!(
+                destination.branch(),
+                crate::intensification::RungBranch::Forestry
+                    | crate::intensification::RungBranch::Extraction
+            ) {
+                // A rung another branch owns can never stand on a deposit — a dead entry.
+                return BuildGate::Undeclared;
+            }
+            deposit_head_gate(
+                ladder.rung(destination),
+                ground,
+                material,
+                labor,
+                extraction,
+                faction,
+                discovery,
+                knowledge_threshold,
+            )
+        }
+        // A queue entry always names a Forage tile, a Hunt herd or an Extract deposit; a band-wide
+        // role holds none of the three.
         _ => BuildGate::Unworked,
     }
+}
+
+/// **THE `forestry:*` / `extraction:*` GATE**, stated once — [`route_head_gate`]'s twin, and the two
+/// terms a working's build is judged by, in the order their refusals are published in.
+///
+/// **The ground, then the knowledge, and there is deliberately nothing else.**
+/// - **The ground.** `extraction:quarry`'s `min_deposit_capacity` against this tile's own capacity
+///   for **this source's material**, resolved through `forage::rung_site_refusal` — the same one
+///   seam a `sow` resolves through, so *"does the land admit this rung"* has one answer for the
+///   whole game. That is the whole of *you cannot quarry just anywhere*; the free floors ask nothing
+///   and are refused only by there being no deposit to open at all.
+/// - **The knowledge.** `woodcraft` gates a `fell`, `conservationism` a `coppice` and `quarrying` a
+///   `quarry`, off the rung record's own `unlock_discovery_id`.
+///
+/// ⛔ **THE STOCK IS NOT A TERM, AND ADDING ONE WOULD BE THE §6 FLOOR TRAP.** The obvious third gate
+/// — *is there anything left above the floor* — is exactly wrong here: a scatter already worked down
+/// to `extraction:gathering`'s floor has **nothing** reachable, and opening a quarry is precisely how
+/// you reach deeper. Gating the build on the room the *current* rung has would refuse the very build
+/// that moves the floor, which is the trap that made a Tame begun on its escapement floor
+/// uncompletable at any crew size (`docs/plan_standing_upkeep.md` §6).
+#[allow(clippy::too_many_arguments)] // one rung, one tile, and every seam its gate is judged by
+fn deposit_head_gate(
+    rung: &RungDef,
+    ground: &Tile,
+    material: &str,
+    labor: &LaborConfig,
+    extraction: &crate::extraction_config::ExtractionConfig,
+    faction: FactionId,
+    discovery: &DiscoveryProgressLedger,
+    knowledge_threshold: f32,
+) -> BuildGate {
+    let land_admits = rung_site_refusal(
+        rung,
+        ground,
+        &labor.forage,
+        // **A deposit rung asks nothing about gathering or water**, so neither reading can refuse
+        // it; they are passed at their permissive values rather than looked up.
+        true,
+        true,
+        crate::extraction::tile_deposit_capacity(extraction, material, ground),
+    )
+    .is_none();
+    let knows_rung = rung
+        .unlock_discovery_id()
+        .is_none_or(|id| knows(discovery, faction, id, knowledge_threshold));
+    BuildGate::first_refusal(&[
+        (land_admits, BuildGate::Site),
+        (knows_rung, BuildGate::Knowledge),
+    ])
 }
 
 /// **THE `route:*` GATE**, stated once — the terms of the road build arm's own `eligible`, in the
@@ -1222,7 +1358,15 @@ fn keeping_claims(
                     tiebreak: herd.id.clone(),
                 });
             }
-            LaborTarget::Scout
+            // ⛔ **A WORKING CLAIMS NOTHING FROM EITHER KEEPING POOL, because neither deposit rung
+            // declares an `upkeep`.** That is a statement about the shipped ladder rather than about
+            // this seam: `validate_upkeep` requires nothing, `route:trail` already ships built and
+            // un-held, and what takes a working away is the camp moving out of range rather than a
+            // shortfall. The day a rung declares one, this arm grows a `KeepingClaim` on the two
+            // arms' shape above and `EquipmentConfig::keeping_job` already answers for both
+            // branches.
+            LaborTarget::Extract { .. }
+            | LaborTarget::Scout
             | LaborTarget::Warrior
             | LaborTarget::Agriculture
             | LaborTarget::Husbandry
@@ -1276,6 +1420,7 @@ fn band_banking(
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     flora: &crate::flora_config::FloraConfig,
+    extraction: &crate::extraction_config::ExtractionConfig,
     food_sites: &FoodSiteRegistry,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
@@ -1298,6 +1443,7 @@ fn band_banking(
             fauna,
             labor,
             flora,
+            extraction,
             food_sites,
             tile_registry,
             tiles,
@@ -1391,6 +1537,7 @@ fn resolve_shed_facts(
     faction: FactionId,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
+    deposits: &crate::extraction::DepositRegistry,
     tile_capacity_of: &dyn Fn(UVec2) -> f32,
     forage: &crate::labor_config::ForageLaborConfig,
     fauna: &FaunaConfig,
@@ -1450,6 +1597,25 @@ fn resolve_shed_facts(
                             knowledge_threshold,
                         ),
                         improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
+                    })
+            }
+            LaborTarget::Extract { tile, material } => {
+                deposits
+                    .source(*tile, material)
+                    .map_or(SourceShedFacts::default(), |source| SourceShedFacts {
+                        accruing_knowledge: source_is_still_teaching(
+                            ladder.rung(source.rung()),
+                            // **A deposit has no escapement dial to trade against** — see
+                            // `intensification::PRACTICE_AT_THE_PLAIN_RATE`.
+                            crate::intensification::PRACTICE_AT_THE_PLAIN_RATE,
+                            faction,
+                            discovery,
+                            knowledge_threshold,
+                        ),
+                        // **Work banked on the ladder is the whole of it.** The two food webs read an
+                        // *at-risk* cost because their meters rot; a working's does not, so what makes
+                        // it improved is simply that somebody paid to raise it.
+                        improved: source.ladder_position() > RUNG_UNSTARTED,
                     })
             }
             // A band-wide role stands on no ground, so it carries neither a lesson nor a meter. No
@@ -2546,6 +2712,7 @@ fn head_build_legs(
     forage_registry: &ForageRegistry,
     registry: &HerdRegistry,
     roads: &crate::routes::RoadRegistry,
+    deposits: &crate::extraction::DepositRegistry,
     ladder: &LadderConfig,
 ) -> Vec<(RungKey, f32, f32)> {
     let mut legs = Vec::new();
@@ -2572,6 +2739,18 @@ fn head_build_legs(
             // build arm banks against — and the work done is how far into that rung the tile's
             // position has already climbed. See the flat-pile note above for why quoting the width
             // at remoteness is what keeps the *stone* flat.
+            // **A working lays legs off the LADDER'S OWN span**, unpriced: a deposit carries no
+            // per-source cost multiplier — see `extraction::DEPOSIT_RUNG_PRICE` — so its rungs are
+            // the same width on every tile, and what differs between two woods is the capacity.
+            BuildSource::Deposit { tile, material } => {
+                deposits.source(*tile, material).map(|working| {
+                    let (base, width) = crate::extraction::deposit_rung_span(rung, ladder);
+                    (
+                        width,
+                        (working.ladder_position() - base).clamp(NOTHING_DEMANDED, width),
+                    )
+                })
+            }
             BuildSource::Road(tile) => roads.road(*tile).map(|road| {
                 let (base, width) =
                     crate::routes::road_rung_span(rung, ladder, road.keeper_remoteness);
@@ -2772,6 +2951,11 @@ pub fn advance_labor_allocation(
     // half is this pass's own — see the road arm below. Only the traffic that wears the free floor in
     // belongs elsewhere (`routes::advance_roads`, a whole stage earlier).
     mut roads: ResMut<crate::routes::RoadRegistry>,
+    // **The live workings on the two deposit branches** (`docs/plan_extraction.md` §6). This pass
+    // reads them — the prune's holding test, the shedding order's facts, the build legs — and the
+    // build arm **writes** their ladder position; the *take* is `extraction::advance_extraction`'s,
+    // one system later, so the two never touch the same field in the same stage.
+    mut deposits: ResMut<crate::extraction::DepositRegistry>,
     mut cohorts: Query<LaborBandParts>,
 ) {
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
@@ -2828,6 +3012,8 @@ pub fn advance_labor_allocation(
     // The recipe book, for the bench half of `LaborAllocation::material_income` — see
     // [`LaborConfigs::recipes`].
     let recipes_cfg = configs.recipes.get();
+    // **The deposits table** — read for the site rule on `extraction:quarry` and nothing else here.
+    let extraction_cfg = configs.extraction.get();
     // **A band with no `BandEquipment` at all** — a hand-built test world may spawn a bare cohort,
     // and `bench_tiers` wants a wear ledger to read a live tool out of. An empty one is the honest
     // answer for a band that owns nothing: every tier falls back to the material's bare-handed rate.
@@ -2954,6 +3140,7 @@ pub fn advance_labor_allocation(
             &fauna,
             &labor,
             &flora,
+            &extraction_cfg,
             &food_sites,
             &tile_registry,
             &tiles,
@@ -2986,6 +3173,7 @@ pub fn advance_labor_allocation(
             faction,
             &forage_registry,
             &registry,
+            &deposits,
             &tile_capacity_of,
             &labor.forage,
             &fauna,
@@ -3130,6 +3318,7 @@ pub fn advance_labor_allocation(
             &fauna,
             &labor,
             &flora,
+            &extraction_cfg,
             &food_sites,
             &tile_registry,
             &tiles,
@@ -3273,6 +3462,7 @@ pub fn advance_labor_allocation(
                     &forage_registry,
                     &registry,
                     &roads,
+                    &deposits,
                     &ladder,
                 ),
             ),
@@ -3623,6 +3813,7 @@ pub fn advance_labor_allocation(
                             &assignment.target,
                             &forage_registry,
                             &registry,
+                            &deposits,
                             &ladder,
                         )
                     {
@@ -3686,6 +3877,7 @@ pub fn advance_labor_allocation(
                                 &labor.forage,
                                 food_sites.is_site(ground.position),
                                 fresh_water,
+                                crate::intensification::NO_DEPOSIT_FLOOR,
                             )
                             .is_none()
                         })
@@ -4697,6 +4889,7 @@ pub fn advance_labor_allocation(
                             &assignment.target,
                             &forage_registry,
                             &registry,
+                            &deposits,
                             &ladder,
                         )
                     {
@@ -6134,6 +6327,256 @@ pub fn advance_labor_allocation(
                         &mut event_log,
                     );
                 }
+                LaborTarget::Extract { tile, material } => {
+                    // **Out of range → the assignment is ABANDONED**, byte-for-byte the Forage
+                    // arm's rule and for its reason: a deposit cannot move, so beyond
+                    // `band_work_range` the band walked away from it. **This is where the deposit
+                    // branches' move-or-stay pressure actually lives** — *a quarry you walk away
+                    // from is a quarry you lost* (`docs/plan_extraction.md` §6) — which is why the
+                    // working belongs to a camp and not, as a road does, to nobody.
+                    let distance = crate::grid_utils::hex_distance_wrapped(
+                        band_pos,
+                        *tile,
+                        grid_width,
+                        wrap_horizontal,
+                    );
+                    if distance > work_range {
+                        lapsed.push(idx);
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Extraction,
+                            faction,
+                            format!(
+                                "the {material} crew abandoned ({}, {}) — out of the band's work \
+                                 range",
+                                tile.x, tile.y
+                            ),
+                            Some(band_detail_token(
+                                format!(
+                                    "status=lapsed reason=out_of_range material={material} x={} \
+                                     y={} distance={} range={}",
+                                    tile.x, tile.y, distance, work_range
+                                ),
+                                band_id,
+                            )),
+                        ));
+                        continue;
+                    }
+                    // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD** — the
+                    // two food webs' rule. A working still on its free floor is a wild stand: with
+                    // no crew and nothing declared, the band has nothing here.
+                    if !take_crew_present
+                        && queued.is_none()
+                        && !source_has_a_meter_at_risk(
+                            &assignment.target,
+                            &forage_registry,
+                            &registry,
+                            &deposits,
+                            &ladder,
+                        )
+                    {
+                        lapsed.push(idx);
+                        continue;
+                    }
+                    let Some(ground) = tile_registry
+                        .index(tile.x, tile.y)
+                        .and_then(|entity| tiles.get(entity).ok())
+                    else {
+                        continue;
+                    };
+                    let deposit_source = BuildSource::Deposit {
+                        tile: *tile,
+                        material: material.clone(),
+                    };
+                    // **The working is opened LAZILY, here and at the command** — a deposit nobody
+                    // has worked stands at exactly the tile's capacity, which is a pure function of
+                    // the tile, so seeding one per land tile per material would be storing a
+                    // derivation twice over for the whole map. `None` = the ground holds none of
+                    // this material, which is a row `assign_labor` refuses and only a hand-built
+                    // fixture can reach.
+                    if deposits
+                        .open(*tile, material, ground, &extraction_cfg)
+                        .is_none()
+                    {
+                        continue;
+                    }
+                    // **The working's own facts, read out before the build touches it** — the
+                    // registry is borrowed immutably by the leg walk below, and a working held
+                    // across it would hold the whole registry with it.
+                    let (branch, standing, banked_position) = {
+                        let working = deposits
+                            .source(*tile, material)
+                            .expect("the working was just opened");
+                        (
+                            working.standing().held.branch(),
+                            *working.standing(),
+                            working.ladder_position(),
+                        )
+                    };
+                    // **THE BUILD, before the take.** A working's meter is raised by the band's
+                    // builders pool exactly as a patch's is: the pool lands only on the **head** of
+                    // the queue (`build_workers`), the rung's own gate decides whether it banks,
+                    // and the material store scales it (`entry_material_coverage` — the quarry rung
+                    // is the second declarer of a build pile on the shipped ladder).
+                    //
+                    // ⛔ **THE GATE DOES NOT READ THE STOCK.** *"Is there anything left above the
+                    // floor"* is exactly the wrong term here: a scatter already worked down to
+                    // `extraction:gathering`'s floor has nothing reachable, and opening a quarry is
+                    // precisely how you reach deeper — see [`deposit_head_gate`], which both this
+                    // arm and [`head_rung_gate`] resolve through so the claim side and the payment
+                    // side cannot disagree.
+                    if let Some(improvement) = declared.filter(|verb| verb.valid_for_extract()) {
+                        let destination = RungKey::built_by(improvement);
+                        let rung = ladder.rung(destination);
+                        let gate = deposit_head_gate(
+                            rung,
+                            ground,
+                            material,
+                            &labor,
+                            &extraction_cfg,
+                            faction,
+                            &discovery,
+                            knowledge_threshold,
+                        );
+                        // **THE RUNG THE WORKING IS ACTUALLY CLIMBING, not where the entry is
+                        // going** — the road arm's rule: a `coppice` on a working that stands at the
+                        // free floor is doing *felling* work this turn, so it resolves and wears the
+                        // felling tool. The destination caps the climb; it does not price it.
+                        let in_flight = standing
+                            .raising
+                            .filter(|next| destination.is_at_or_above(*next))
+                            .unwrap_or(destination);
+                        let entry_gear = builders_gear.for_source(&deposit_source, Some(in_flight));
+                        let accrual = rung.build_accrual(
+                            Some(improvement),
+                            gate.holds(),
+                            build_workers,
+                            entry_gear.work_per_worker,
+                        ) * entry_material_coverage;
+                        // ⛔ **EVERY QUEUED WORKING RECORDS A QUOTE, HEAD OR NOT** — the hole the
+                        // pen ring and the road both fell into. A staffed head with no quote is
+                        // minted `BuildTurns::Blocked` with `BuildGate::Unworked` — *a block with no
+                        // cause* — and `publish_build_chain` then carries that same answer onto
+                        // every entry behind it and every source the band works. A waiting entry is
+                        // quoted at the **full pool** and [`FULLY_SERVED`], the convention every
+                        // other waiting entry is dated under.
+                        let legs = head_build_legs(
+                            &deposit_source,
+                            destination,
+                            &forage_registry,
+                            &registry,
+                            &roads,
+                            &deposits,
+                            &ladder,
+                        );
+                        let (base, width) =
+                            crate::extraction::deposit_rung_span(destination, &ladder);
+                        build_quotes.push((
+                            deposit_source.clone(),
+                            BuildQuote {
+                                cost: width,
+                                banked: (banked_position - base).clamp(NOTHING_DEMANDED, width),
+                                balance: rung.build_balance(
+                                    Some(improvement),
+                                    gate.holds(),
+                                    builders,
+                                    entry_gear.work_per_worker,
+                                    // **NOTHING EATS A WORKING'S METER.** Neither deposit branch
+                                    // declares an `upkeep`, so there is no `meter_decay` for a
+                                    // shortfall to drive — a working's position only ever goes up,
+                                    // and what a band loses by walking away is the production.
+                                    crate::intensification::NO_UPKEEP_DECAY,
+                                    entry_material_coverage,
+                                ),
+                                gate,
+                                legs: legs
+                                    .iter()
+                                    .map(|(rung, owed, _)| crate::intensification::BuildLeg {
+                                        rung: *rung,
+                                        work_remaining: *owed,
+                                    })
+                                    .collect(),
+                                material_coverage: entry_material_coverage,
+                            },
+                        ));
+                        if accrual > crate::intensification::NO_BUILD_PROGRESS {
+                            if let Some(working) = deposits.source_mut(*tile, material) {
+                                let position = working.ladder_position() + accrual;
+                                working.set_ladder_position(position, &ladder, branch);
+                            }
+                            charge_build_wear(
+                                band_equipment.as_deref_mut(),
+                                &equipment_cfg,
+                                &entry_gear.wear_kit,
+                                accrual,
+                            );
+                        }
+                    }
+                    // **THE TAKE — a material and NO FOOD** (`docs/plan_extraction.md` §6). It is
+                    // resolved through `extraction::take_from_deposit`, the one seam the turn and
+                    // any projection share, and it draws the shared stock down band by band exactly
+                    // as `forage_take` draws a shared patch down.
+                    let Some(working) = deposits.source_mut(*tile, material) else {
+                        continue;
+                    };
+                    let outcome = crate::extraction::take_from_deposit(
+                        working,
+                        workers,
+                        ground,
+                        &extraction_cfg,
+                        &ladder,
+                    );
+                    // **The arrival, with the GROUND'S OWN characteristics** — a streambed pays
+                    // knappable flint and a quarry pays building block out of one generic material,
+                    // and the batch merge in the store is the same one every other material arrival
+                    // rides (`LocalStore::deposit_material`).
+                    if outcome.taken > crate::extraction::DEPOSIT_EMPTY {
+                        let characteristics = crate::extraction::tile_deposit_characteristics(
+                            &extraction_cfg,
+                            material,
+                            ground,
+                        );
+                        // **`band_key` is `None` only for a material the table does not carry**,
+                        // which the deposits table's own boot reconciliation makes unreachable
+                        // (`ExtractionConfig::validate_against_materials`).
+                        if let Some(key) = materials_cfg.band_key(material, &characteristics) {
+                            cohort.stores.deposit_material(
+                                material,
+                                key,
+                                crate::scalar::scalar_from_f32(outcome.taken),
+                                &characteristics,
+                            );
+                        }
+                        // **REPORTED THROUGH THE ROW, never written to the band's income map
+                        // directly** — the discipline every other arm keeps: the post-loop pass sums
+                        // `row.materials` into `last_material_income`, so the shortfall Alert and
+                        // the published inflow read one producer. **`actual` stays `SourceYield::ZERO`**
+                        // — a deposit pays no food at all, so its row contributes nothing to
+                        // `food_income` and the larder identity is untouched.
+                        yields[idx].materials = vec![crate::materials_config::MaterialPayoff {
+                            material: material.clone(),
+                            amount: outcome.taken,
+                        }];
+                    }
+                    // **THE LESSON, on the rung the working STANDS on** — `deadfall` teaches
+                    // woodcraft, `felling` conservationism, `gathering` quarrying. Credited once per
+                    // source per turn and never per worker, the ladder's own rule.
+                    //
+                    // **`eligible` is *there is room above this rung's floor to work in*** — the
+                    // deposit reading of `crew_is_working_the_source`, taken **before** the take so
+                    // a crew that cleared the last reachable unit this turn is still credited for
+                    // the turn it worked.
+                    credit_rung_lesson(
+                        ladder.rung(standing.held),
+                        // **A deposit has no escapement dial to trade against** — see
+                        // `intensification::PRACTICE_AT_THE_PLAIN_RATE`.
+                        crate::intensification::PRACTICE_AT_THE_PLAIN_RATE,
+                        take_crew_present && source_is_workable(outcome.reachable_before),
+                        &ladder.knowledge,
+                        faction,
+                        &mut discovery,
+                    );
+                }
                 LaborTarget::Scout => {
                     // Scouts act as forward observers in `calculate_visibility`: staffed scouts
                     // post vantage points out from the band (`labor.scout.vantage_distance(scouts)`)
@@ -6360,6 +6803,7 @@ pub fn advance_labor_allocation(
                 &forage_registry,
                 &registry,
                 &roads,
+                &deposits,
                 &ladder,
             );
             let Some(road) = roads.road(*tile) else {
@@ -6548,6 +6992,7 @@ pub fn advance_labor_allocation(
             &forage_registry,
             &registry,
             &roads,
+            &deposits,
             faction,
             tick.0,
             &mut event_log,
@@ -6564,6 +7009,7 @@ pub fn advance_labor_allocation(
             &mut forage_registry,
             &mut registry,
             &mut roads,
+            &deposits,
             &mut patch_build_claims,
             &mut herd_build_claims,
         );
@@ -6618,11 +7064,13 @@ fn band_keeps_road(
 /// A source the band no longer holds is not this function's business — `prune_build_queue` has
 /// already taken it, and an entry naming a source neither registry can resolve is left alone rather
 /// than guessed at.
+#[allow(clippy::too_many_arguments)] // every registry a source kind can be resolved against
 fn retire_entries_already_built(
     allocation: &mut LaborAllocation,
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     roads: &crate::routes::RoadRegistry,
+    deposits: &crate::extraction::DepositRegistry,
     faction: FactionId,
     tick: u64,
     event_log: &mut CommandEventLog,
@@ -6630,7 +7078,7 @@ fn retire_entries_already_built(
     let dead: Vec<BuildQueueEntry> = allocation
         .build_queue
         .iter()
-        .filter(|entry| entry_job_already_built(entry, forage_registry, herds, roads))
+        .filter(|entry| entry_job_already_built(entry, forage_registry, herds, roads, deposits))
         .cloned()
         .collect();
     for entry in &dead {
@@ -6664,6 +7112,7 @@ fn entry_job_already_built(
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     roads: &crate::routes::RoadRegistry,
+    deposits: &crate::extraction::DepositRegistry,
 ) -> bool {
     match (&entry.source, entry.declared) {
         (BuildSource::Patch(tile), BuildJob::Rung(improvement)) => forage_registry
@@ -6697,8 +7146,23 @@ fn entry_job_already_built(
         (BuildSource::Herd(id), BuildJob::SetHerdOutput(_)) => herds
             .find(id.as_str())
             .is_some_and(|herd| herd.standing_output_target.is_none()),
+        // **A working's test is the rung it HOLDS**, the road's shape exactly — and a working that
+        // has vanished from the registry reads as **not** built, which is the honest answer to
+        // *this* question: what retires such an entry is the prune, which finds no row holding it.
+        (BuildSource::Deposit { tile, material }, BuildJob::Rung(improvement)) => {
+            deposits.source(*tile, material).is_some_and(|working| {
+                working
+                    .rung()
+                    .is_at_or_above(RungKey::built_by(improvement))
+            })
+        }
+        // A ring and a commitment both name a herd; a deposit entry can never carry either.
+        (BuildSource::Deposit { .. }, BuildJob::ExtendPen) => false,
         // A commitment names a herd; neither other source kind can carry one.
-        (BuildSource::Patch(_) | BuildSource::Road(_), BuildJob::SetHerdOutput(_)) => false,
+        (
+            BuildSource::Patch(_) | BuildSource::Road(_) | BuildSource::Deposit { .. },
+            BuildJob::SetHerdOutput(_),
+        ) => false,
     }
 }
 
@@ -6752,6 +7216,10 @@ fn publish_build_chain(
     // **Written, not merely read.** A road is a source row and this pass stamps its countdown, the
     // one figure on it that only the queue can answer for.
     roads: &mut crate::routes::RoadRegistry,
+    // **Read only.** A working carries no published estimate yet — the deposit readouts are the next
+    // slice — but the staffed-head invariant below has to be able to ask whether one is on the
+    // ground.
+    deposits: &crate::extraction::DepositRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
 ) {
@@ -6834,6 +7302,7 @@ fn publish_build_chain(
                                         forage_registry,
                                         herds,
                                         roads,
+                                        deposits,
                                     ),
                                 "a staffed head standing on real ground must record a BuildQuote - \
                                  without one it publishes Blocked with the cause `unworked`, which \
@@ -6940,6 +7409,12 @@ fn publish_build_chain(
             // without one, a staffed road head published `Blocked` with no cause and `carried` handed that
             // same answer to every entry behind it.
             BuildSource::Road(_) => {}
+            // **A working has no wire row to publish an estimate on YET** — the deposit readouts
+            // are the next slice (`docs/plan_extraction.md` §7), so there is nowhere to put the
+            // quote. The quote itself is still *taken* above, which is the half that matters: it is
+            // what lets a staffed working's head record a cause rather than publishing `Blocked`
+            // with none and handing that to every entry behind it.
+            BuildSource::Deposit { .. } => {}
         }
     }
 }
@@ -6957,11 +7432,15 @@ fn source_is_on_the_ground(
     forage_registry: &ForageRegistry,
     herds: &HerdRegistry,
     roads: &crate::routes::RoadRegistry,
+    deposits: &crate::extraction::DepositRegistry,
 ) -> bool {
     match source {
         BuildSource::Patch(tile) => forage_registry.patch(*tile).is_some(),
         BuildSource::Herd(id) => herds.find(id).is_some(),
         BuildSource::Road(tile) => roads.road(*tile).is_some(),
+        // A working exists from the moment a crew is put on it (`DepositRegistry::open`), so this
+        // is `false` only where the row names ground that holds none of that material at all.
+        BuildSource::Deposit { tile, material } => deposits.source(*tile, material).is_some(),
     }
 }
 
@@ -7137,6 +7616,12 @@ fn publish_entry(
                 road.build_queue_position = answer.position;
             }
         }
+        // **A working carries no published estimate YET** — there is no deposit row on the wire for
+        // one to land on, and the readouts are the next slice
+        // (`docs/plan_extraction.md` §7). It is deliberately not a `DepositSource` field written and
+        // read by nobody: transient per-turn scratch that no capture reads is a second, silently
+        // stale statement of what the queue already knows.
+        BuildSource::Deposit { .. } => {}
     }
 }
 
@@ -7272,6 +7757,11 @@ fn describe_build_source(source: &BuildSource) -> String {
         BuildSource::Patch(tile) => format!("({}, {})", tile.x, tile.y),
         BuildSource::Herd(id) => id.clone(),
         BuildSource::Road(tile) => format!("the road at ({}, {})", tile.x, tile.y),
+        // **The material is named, because the tile is not enough** — a wooded highland holds both,
+        // and *"the working at (12, 7)"* would say nothing about which one just finished.
+        BuildSource::Deposit { tile, material } => {
+            format!("the {material} working at ({}, {})", tile.x, tile.y)
+        }
     }
 }
 
@@ -7292,6 +7782,11 @@ fn improvement_feed_channel(improvement: Improvement) -> CommandEventKind {
         // **One channel for both road verbs** — a road tile climbing its branch is one thing the
         // player is watching, and which verb it was rides the detail.
         Improvement::Grade | Improvement::Pave => CommandEventKind::Road,
+        // **One channel for all three deposit verbs**, on the road pair's reading — one working
+        // climbing its ladder is one thing the player is watching.
+        Improvement::Fell | Improvement::Coppice | Improvement::Quarry => {
+            CommandEventKind::Extraction
+        }
     }
 }
 
@@ -7346,6 +7841,11 @@ fn announce_shed_crew(
             CommandEventKind::Hunt,
             format!("hunters on {fauna_id}"),
             format!("kind=hunt herd={fauna_id}"),
+        ),
+        LaborTarget::Extract { tile, material } => (
+            CommandEventKind::Extraction,
+            format!("the {material} crew at ({}, {})", tile.x, tile.y),
+            format!("kind=extract material={material} x={} y={}", tile.x, tile.y),
         ),
         LaborTarget::Scout => (
             CommandEventKind::Scout,
@@ -9099,6 +9599,10 @@ mod labor_yield_tests {
         );
         world.insert_resource(crate::materials_config::MaterialsConfigHandle::default());
         world.insert_resource(crate::recipes_config::RecipesConfigHandle::default());
+        world.insert_resource(crate::extraction_config::ExtractionConfigHandle::default());
+        // **An empty deposit registry is the shipped turn-1 state** — a working is opened the first
+        // turn a crew stands on it, so a harness with no `extract` row has none.
+        world.insert_resource(crate::extraction::DepositRegistry::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
@@ -13943,6 +14447,7 @@ mod labor_yield_tests {
                 &ForageRegistry::default(),
                 &HerdRegistry::default(),
                 &roads,
+                &crate::extraction::DepositRegistry::default(),
                 &ladder,
             );
             // ⛔ **THE MECHANISM, STATED DIRECTLY.** The pile is spread over the leg's third term,

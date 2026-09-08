@@ -1190,6 +1190,16 @@ pub fn tile_is_fresh_watered(
 /// `gathering_site` is the caller's `FoodSiteRegistry::is_site` reading; it is passed IN rather than
 /// looked up here so this stays a pure function of the rung and the ground, like the other two.
 ///
+/// `deposit_capacity` is the tile's capacity for the **source's own material**
+/// (`crate::extraction::tile_deposit_capacity`), and is passed in for the same reason: this stays a
+/// function of the rung and the ground, and only the caller knows which deposit is being worked. A
+/// caller with no deposit in play passes [`crate::intensification::NO_DEPOSIT_FLOOR`], which cannot
+/// refuse anything, because every plant, animal and route rung leaves `min_deposit_capacity` at its
+/// neutral. **It stays in this one seam rather than gaining a sibling for the deposit branches**:
+/// the plant web's `sow` and the extraction branch's `quarry` are asking one question — *does the
+/// land admit this rung* — and two functions answering it is how a refusal comes to differ between
+/// the command that rejects it and the labor arm that gates it.
+///
 /// `None` = the rung asks nothing of the site, or the land permits it. `Some(refusal)` says **which**
 /// way the ground fell short, so the caller can phrase each distinctly — they are different problems
 /// with different answers (work a site instead, move, or wait for a rung that relaxes the dial).
@@ -1199,11 +1209,13 @@ pub fn rung_site_refusal(
     forage: &ForageLaborConfig,
     gathering_site: bool,
     fresh_water: bool,
+    deposit_capacity: f32,
 ) -> Option<SiteRefusal> {
     rung.site_requirement.as_ref()?.refusal(
         gathering_site,
         tile_forage_capacity(forage, tile),
         fresh_water,
+        deposit_capacity,
     )
 }
 
@@ -2951,7 +2963,15 @@ pub fn patch_claims_keeping(patch: &ForagePatch, improvement: Option<Improvement
     let by_position = patch.ladder_position() > RUNG_UNSTARTED;
     let by_verb = improvement.is_some_and(|verb| match verb {
         Improvement::Cultivate | Improvement::Sow => true,
-        Improvement::Tame | Improvement::Corral | Improvement::Grade | Improvement::Pave => false,
+        // A verb another branch owns can never be in flight on a patch. The three deposit verbs
+        // answer `false` here for the same reason `tame` does — this is the *plant* web's claim.
+        Improvement::Tame
+        | Improvement::Corral
+        | Improvement::Grade
+        | Improvement::Pave
+        | Improvement::Fell
+        | Improvement::Coppice
+        | Improvement::Quarry => false,
     });
     by_position || by_verb
 }

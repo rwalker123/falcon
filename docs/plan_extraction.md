@@ -1,8 +1,10 @@
 # A Deposit Is a Stock With a Regrowth Rate, and Stone's Is Zero
 
-**Status:** design agreed, unimplemented (worktree `wood-and-stone-producers`, branch
-`worktree-wood-and-stone-producers`). Closes the gap left open by `docs/plan_standing_upkeep.md`
-§6 — `wood` and `stone` ship as materials that **nothing produces**. Issue #583.
+**Status:** arc open (worktree `wood-and-stone-producers`, branch
+`worktree-wood-and-stone-producers`). The deposit, the source and the take are **built**; the
+standing bill (§6) and the readouts (§7) follow on the same branch. Closes the gap left open by
+`docs/plan_standing_upkeep.md` §6 — `wood` and `stone` ship as materials that **nothing produces**.
+Issue #583. As-built rationale: `.claude/rules/core_sim/extraction.md`.
 
 **Scope:** this arc gives both materials a producer, through **one** mechanism that the minerals arc
 (copper, silver, gold) is meant to slot into without re-design. It does **not** change what any
@@ -154,7 +156,19 @@ reachable  = max(0, stock − floor)
 > written once by worldgen and never moves, so the floor can only ever go **down** — the safe
 > direction. Conservationism is about the rate of renewal, not about there being more forest.
 
-### 4c. THE FLOOR RUNG MUST BE BARE-HANDED, OR THE ECONOMY CANNOT START
+### 4c. ONE PAYOFF BLOCK SERVES BOTH BRANCHES, and that is what makes the zero hold by arithmetic
+
+A rung carries one `extraction_payoff` — `yield_per_worker_turn`, `recovery_fraction`, and
+`regrowth_multiplier` — and all three interpolate on position. A **forestry** rung raises the
+multiplier and leaves recovery at its ceiling; an **extraction** rung raises recovery and leaves the
+multiplier at 1.0.
+
+**There is deliberately no second block and no branch check.** The multiplier scales *the deposit's
+own* regrowth rate, and rock's is zero, so `0 × anything` is still zero: *stone's rate is zero*
+survives as arithmetic rather than as a rule someone has to remember not to break. A branch-keyed
+payoff would have made that rule breakable by a config edit.
+
+### 4d. THE FLOOR RUNG MUST BE BARE-HANDED, OR THE ECONOMY CANNOT START
 
 **There is a bootstrap here and it is easy to miss.** A felling kit wants a haft, a haft is wood, and
 wood comes from felling. The same loop exists for stone: `earthmoving` and `stone_dressing` each cost
