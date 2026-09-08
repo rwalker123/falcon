@@ -258,12 +258,37 @@ picks one start per faction:
 - **Distance is Euclidean, compared squared**, matching the curated food-site pass's `min_spacing`
   idiom, so the file has one notion of "far enough apart".
 
-> #### Relaxation, never failure
+> #### Relaxation degrades GRACEFULLY, and never fails
 >
-> If no remaining tile clears the separation, worldgen takes the best remaining tile anyway and
-> warns `worldgen.start_separation_relaxed` with the faction and the distance it achieved. **A
-> cramped map is a worse world, not a dead one** — a faction left unplaced has no land, no band and
-> nobody to play it, which is a strictly worse outcome than two peoples starting near each other.
+> **A cramped map is a worse world, not a dead one** — a faction left unplaced has no land, no band
+> and nobody to play it, which is a strictly worse outcome than two peoples starting near each
+> other. So `faction_start_tiles` never refuses a faction. It picks in **two passes**:
+>
+> 1. among the candidates that clear `faction_start_min_separation`, **the highest score**;
+> 2. when none clear it, **the candidate that maximises the minimum distance to every start already
+>    placed** — score is only the tie-break, and the row-major `(y, then x)` order breaks the rest,
+>    so determinism is unchanged. It warns
+>    `worldgen.start_separation_relaxed=unachievable` with the faction, the target and the distance
+>    actually achieved.
+>
+> > ⛔ **Pass 2 is NOT "take the best remaining tile", and that rule — the one this arc originally
+> > shipped — was the bug.** Good ground clusters, so the highest-scoring *remaining* tile is
+> > normally a **neighbour of the start that just took the highest-scoring tile outright**. The
+> > moment the separation stopped being satisfiable, peoples stacked on adjacent hexes: the worst
+> > possible answer for the exact case the fallback exists to handle.
+> >
+> > Reported from a playtest and reproduced on `map_seed 10954655273796111774` at the shipped 80×52
+> > earthlike grid. The separation is *met* there at 1/2/3 rivals (33.1 / 24.4 / 23.4 tiles) — the
+> > trigger is the **rival count**, because the ceiling below is land-blind and the New Game screen
+> > offers up to 11 rivals on that grid. Achieved minimum pairwise distance, before → after:
+> > 8 rivals **9.5 → 17.1**, 9 rivals **1.0 → 16.8**, 10 rivals **1.0 → 16.0**, 11 rivals
+> > **1.0 → 15.5**. Counts at or below 7 rivals are byte-identical — pass 1 is untouched.
+> >
+> > Guarded by `start_tile_selection_tests::a_separation_nothing_can_satisfy_spreads_the_starts_out`
+> > (a flat grid whose four relaxed picks must be its four corners) and
+> > `multi_faction_start::the_playtest_map_spreads_a_full_rival_roster_instead_of_stacking_it` (the
+> > reported map at a full roster). Both fail at an achieved distance of **1.00** against the old
+> > rule.
 
 ### `spawn_default_population_clusters` stays faction 0's alone
 

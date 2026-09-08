@@ -2835,9 +2835,18 @@ pub fn granted_ai_faction_count(requested: u32, grid_size: UVec2, min_separation
 /// **Distance is Euclidean, compared squared** — the metric the curated food-site pass already
 /// spaces markers by (`min_spacing_sq`), so the file has one notion of "far enough apart".
 ///
-/// **Relaxation, never failure.** If no remaining tile clears the separation, the best remaining
-/// tile is taken anyway and the shortfall is warned. A cramped map is a worse world, not a dead one:
-/// a faction left unplaced would have no land, no band and nobody to play it.
+/// **Relaxation degrades gracefully, and never fails.** If no remaining tile clears the separation,
+/// the pick becomes the tile **farthest from every start already placed** — score only breaks the
+/// tie — and the shortfall is warned. A cramped map is a worse world, not a dead one: a faction left
+/// unplaced would have no land, no band and nobody to play it.
+///
+/// ⛔ **The fallback must NOT be "the best remaining tile".** That was the original rule and it is
+/// the worst possible answer for the case it exists to handle: good ground clusters, so the
+/// highest-scoring *remaining* tile is normally a neighbour of the start that just took the
+/// highest-scoring tile outright — the moment the separation stops being satisfiable, peoples stack
+/// on adjacent hexes. Maximising the minimum distance instead spreads them as far as the land
+/// allows. Guarded by
+/// `start_tile_selection_tests::a_separation_nothing_can_satisfy_spreads_the_starts_out`.
 #[allow(clippy::too_many_arguments)] // the scoring inputs, plus how many starts to pick and how far apart
 fn faction_start_tiles(
     faction_count: usize,
@@ -2863,7 +2872,10 @@ fn faction_start_tiles(
     // centre `best_start_tile` has always returned when it found nothing to score.
     let fallback = (width / 2, height / 2);
     let min_separation_sq = (min_separation as i64) * (min_separation as i64);
-    let far_enough = |candidate: (u32, u32), picked: &[(u32, u32)]| -> Option<i64> {
+    // How far a candidate is from the *nearest* start already picked, squared. `None` when nothing
+    // has been picked yet — a first pick has nothing to be far from, which is a different answer
+    // from "zero away".
+    let nearest_picked_sq = |candidate: (u32, u32), picked: &[(u32, u32)]| -> Option<i64> {
         let mut nearest = i64::MAX;
         for other in picked {
             let dx = candidate.0 as i64 - other.0 as i64;
@@ -2875,17 +2887,22 @@ fn faction_start_tiles(
 
     let mut picked: Vec<(u32, u32)> = Vec::with_capacity(faction_count);
     for index in 0..faction_count {
-        // **Strict `>`, over the tiles in scan order** — the lowest `(y, then x)` maximum wins, which
-        // is what makes a one-faction world's pick byte-identical to the argmax it always was.
+        // **Pass 1 — strict `>`, over the tiles in scan order**: among the candidates that clear the
+        // separation, the highest score, with the lowest `(y, then x)` winning a tie. That is what
+        // makes a one-faction world's pick byte-identical to the argmax it always was.
         let mut best_separated: Option<(i32, (u32, u32))> = None;
-        let mut best_any: Option<(i32, (u32, u32), i64)> = None;
+        // **Pass 2 — the graceful degradation**: the candidate that MAXIMISES THE MINIMUM DISTANCE
+        // to every start already placed, ordered `(distance, score)` so the score is only a
+        // tie-break, and the scan order breaks the rest. Read only when pass 1 finds nothing.
+        let mut best_spread: Option<(i64, i32, (u32, u32))> = None;
         for &(score, pos) in &scored {
             if picked.contains(&pos) {
                 continue;
             }
-            let nearest_sq = far_enough(pos, &picked);
-            if best_any.is_none_or(|(best, _, _)| score > best) {
-                best_any = Some((score, pos, nearest_sq.unwrap_or(0)));
+            let nearest_sq = nearest_picked_sq(pos, &picked);
+            let spread_key = (nearest_sq.unwrap_or(0), score);
+            if best_spread.is_none_or(|(far, best_score, _)| spread_key > (far, best_score)) {
+                best_spread = Some((spread_key.0, spread_key.1, pos));
             }
             if nearest_sq.is_none_or(|nearest| nearest >= min_separation_sq)
                 && best_separated.is_none_or(|(best, _)| score > best)
@@ -2893,12 +2910,12 @@ fn faction_start_tiles(
                 best_separated = Some((score, pos));
             }
         }
-        match (best_separated, best_any) {
+        match (best_separated, best_spread) {
             (Some((_, pos)), _) => picked.push(pos),
-            (None, Some((_, pos, nearest_sq))) => {
+            (None, Some((nearest_sq, _, pos))) => {
                 warn!(
                     target: "shadow_scale::worldgen",
-                    "worldgen.start_separation_relaxed faction={} min_separation={} achieved={:.2}",
+                    "worldgen.start_separation_relaxed=unachievable faction={} min_separation={} achieved={:.2} pick=farthest_from_every_placed_start",
                     index,
                     min_separation,
                     (nearest_sq as f64).sqrt()
@@ -3567,20 +3584,46 @@ mod start_tile_selection_tests {
         }
     }
 
-    /// **Relaxation, not failure.** A separation no pair of tiles on this grid can satisfy must
-    /// still place everybody, on distinct tiles.
+    /// ⛔ **RELAXATION SPREADS, IT DOES NOT STACK.** A separation no pair of tiles on this grid can
+    /// satisfy must still place everybody — on distinct tiles, and **as far apart as the land
+    /// allows**, not on the next-best hex beside the start that already took the best one.
+    ///
+    /// Every tile here scores the same, so the pick is decided entirely by the max-min distance
+    /// pass: the corners, in scan order. Sabotaged by restoring the old "best remaining tile"
+    /// fallback, under which the picks are `(0,0), (1,0), (2,0), (3,0)` and the achieved minimum is
+    /// **1** — which is exactly the two-hexes-apart playtest report this rule exists to prevent.
     #[test]
-    fn a_separation_nothing_can_satisfy_still_places_every_faction() {
-        let (width, height) = (4u32, 4u32);
-        let picked = pick(3, 100, width, height, &flat_land(width, height));
-        assert_eq!(picked.len(), 3, "every faction is placed");
+    fn a_separation_nothing_can_satisfy_spreads_the_starts_out() {
+        let (width, height) = (12u32, 12u32);
+        // Nothing on a 12x12 grid is 100 apart, so pass 1 finds nothing for anybody after the first.
+        let picked = pick(4, 100, width, height, &flat_land(width, height));
+        assert_eq!(picked.len(), 4, "every faction is placed");
         let mut unique = picked.clone();
         unique.sort();
         unique.dedup();
         assert_eq!(
             unique.len(),
-            3,
+            4,
             "and no two of them share a tile: {picked:?}"
+        );
+        // The four corners, which is the farthest four tiles this grid can hold.
+        let achieved_sq = picked
+            .iter()
+            .enumerate()
+            .flat_map(|(index, a)| {
+                picked.iter().skip(index + 1).map(move |b| {
+                    let dx = a.0 as i64 - b.0 as i64;
+                    let dy = a.1 as i64 - b.1 as i64;
+                    dx * dx + dy * dy
+                })
+            })
+            .min()
+            .expect("four starts have pairs");
+        let widest_edge = (width - 1) as i64;
+        assert_eq!(
+            achieved_sq,
+            widest_edge * widest_edge,
+            "the relaxed picks must be the grid's corners, not a cluster: {picked:?}"
         );
     }
 

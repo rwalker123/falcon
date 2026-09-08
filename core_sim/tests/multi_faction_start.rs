@@ -30,6 +30,14 @@ const HARNESS_SEED_START: UVec2 = UVec2::new(28, 18);
 /// `simulation_config.json` by [`the_pinned_separation_is_the_shipped_one`].
 const SHIPPED_SEPARATION: u32 = 20;
 
+/// **What "spread out, not stacked" has to mean to be falsifiable.** When the separation cannot be
+/// met, worldgen maximises the minimum distance to every placed start — so the achieved distance is
+/// bounded by the land, which no test can predict, but it must be a real *share* of what was on
+/// offer rather than the adjacency a highest-score fallback produces. Half is the floor these
+/// assertions read against; the old fallback achieved 1.00 tile and fails it by an order of
+/// magnitude, so this is a tripwire, not a tuned threshold.
+const RELAXED_SHARE_OF_THE_AVAILABLE_GROUND: f64 = 0.5;
+
 fn distance(a: UVec2, b: UVec2) -> f64 {
     let dx = a.x as f64 - b.x as f64;
     let dy = a.y as f64 - b.y as f64;
@@ -236,6 +244,72 @@ fn a_cramped_map_relaxes_the_separation_instead_of_failing_to_place_a_faction() 
         distance(home, rival) < SHIPPED_SEPARATION as f64,
         "the fixture is supposed to exercise the relaxed branch"
     );
+    // ...and the relaxed branch spreads rather than stacks: the achieved distance must be a real
+    // share of the ground available, not the adjacency the old "best remaining tile" fallback gave.
+    let achievable = distance(UVec2::ZERO, CRAMPED);
+    assert!(
+        distance(home, rival) >= achievable * RELAXED_SHARE_OF_THE_AVAILABLE_GROUND,
+        "relaxed to {:.1} on a grid whose diagonal is {achievable:.1} — the fallback is stacking, \
+         not spreading ({home:?} vs {rival:?})",
+        distance(home, rival)
+    );
+}
+
+/// **The playtest map, and the rival count that broke it** (`map_seed` below, shipped grid and
+/// preset).
+///
+/// A player reported a rival opening about two hexes from their own band on a heavily oceanic map.
+/// It was not the *seed* — at 1, 2 and 3 rivals this map clears the separation comfortably (33.1,
+/// 24.4 and 23.4 tiles). It was the **rival count**: `max_faction_starts` is land-blind, so the New
+/// Game screen offers up to 11 rivals on a Standard grid, and past 7 the land runs out. The old
+/// "take the best remaining tile" fallback then put each further start on the next-best hex, which
+/// clusters — the achieved minimum collapsed to **1.00 tile** at 9 rivals and stayed there.
+///
+/// ⛔ **This is a REGRESSION FIXTURE, and its seed is deliberately not `HARNESS_MAP_SEED`.** It is
+/// the reported map, pinned because it is the evidence — not a seed shopped for a passing result.
+#[test]
+fn the_playtest_map_spreads_a_full_rival_roster_instead_of_stacking_it() {
+    const PLAYTEST_SEED: u64 = 10954655273796111774;
+
+    let world = world_with(NO_RIVALS, |_| {});
+    let grid = world
+        .world
+        .resource::<core_sim::SimulationConfig>()
+        .grid_size;
+    // Every rival the New Game screen would let this grid be asked for — the count at which the
+    // land, not the lattice, is the binding constraint.
+    let full_roster = core_sim::max_faction_starts(grid, SHIPPED_SEPARATION) - 1;
+
+    for rivals in [ONE_RIVAL, ONE_RIVAL + 1, ONE_RIVAL + 2, full_roster] {
+        let world = world_with(rivals, |config| config.map_seed = PLAYTEST_SEED);
+        let starts = world.world.resource::<StartLocation>();
+        let placed: Vec<UVec2> = (0..=rivals)
+            .map(|faction| {
+                starts
+                    .position_for(core_sim::FactionId(faction))
+                    .unwrap_or_else(|| panic!("faction {faction} is placed"))
+            })
+            .collect();
+
+        let achieved = placed
+            .iter()
+            .enumerate()
+            .flat_map(|(index, a)| placed.iter().skip(index + 1).map(|b| distance(*a, *b)))
+            .fold(f64::INFINITY, f64::min);
+
+        // Three rivals is well inside what this map's land can seat, so the constraint itself must
+        // still hold; the full roster is past it, and there only the degradation is on trial.
+        let floor = if rivals < full_roster {
+            SHIPPED_SEPARATION as f64
+        } else {
+            SHIPPED_SEPARATION as f64 * RELAXED_SHARE_OF_THE_AVAILABLE_GROUND
+        };
+        assert!(
+            achieved >= floor,
+            "with {rivals} rivals the closest pair is {achieved:.2} apart, under {floor:.2}: \
+             {placed:?}"
+        );
+    }
 }
 
 fn two_faction_world_app() -> App {
