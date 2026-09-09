@@ -8,6 +8,10 @@ paths:
   - "clients/godot_thin_client/native/src/runtime.rs"
   - "clients/godot_thin_client/src/scripts/CommandClient.gd"
   - "clients/godot_thin_client/src/scripts/SeatClaim.gd"
+  # The snapshot socket's FIRST BYTES are the seat token this seam obtained, so the two files that
+  # open and greet on that socket load the rule that says what the greeting is.
+  - "clients/godot_thin_client/src/scripts/SnapshotStream.gd"
+  - "clients/godot_thin_client/src/scripts/SnapshotLoader.gd"
   # `Main` owns the claim, the refusal report and the End Turn submission, so the rule describing
   # them has to load when Main is touched.
   - "clients/godot_thin_client/src/scripts/Main.gd"
@@ -170,14 +174,65 @@ first puts the grant in flight before the first band exists rather than after th
 something. Faction 0 is always in the roster (`FactionRegistry::with_ai_factions`), so a world rebuild
 — `new_game`, a load — keeps the claim rather than dropping it (`SeatRegistry::retain_seats`).
 
+## The snapshot stream greets with the seat token, so it opens AFTER the claim is answered
+
+**The seat decides what the client is SENT, not only what it may send.** A frame is one viewer's
+world, and `SnapshotServer::deliver` addresses it to the connections whose token resolves to that
+seat — so a snapshot socket that presents no token is registered *unseated* and receives **nothing**,
+for the life of the connection, with no error anywhere on the client. The only trace is a server line:
+
+```
+Snapshot client 127.0.0.1:65369 presented no seat token (…); it will receive no frames
+```
+
+The greeting is **exactly `SEAT_TOKEN_BYTES` = 8 little-endian bytes and nothing else** — no framing,
+no length prefix, no reply. `SnapshotStream.SEAT_TOKEN_BYTES` mirrors `core_sim::network`'s constant
+of the same name and the two must move together: a width disagreement is unobservable from the client
+side, because the server simply reads a token nobody holds and the map stays blank. `0`
+(`SnapshotStream.NO_SEAT_TOKEN` = `ConnectionId::INTERNAL`) is the explicit *"I hold no seat"*, which
+registers a watching tool as unseated at once instead of making it sit out the server's
+`DEFAULT_HANDSHAKE_TIMEOUT`.
+
+**The write cannot happen in `connect_to`.** `StreamPeerTCP.connect_to_host` is asynchronous, so the
+socket is still `STATUS_CONNECTING` on return; `SnapshotStream.poll` writes the greeting the first
+time it sees `STATUS_CONNECTED`, which is within a frame of the connect and far inside the server's
+two-second handshake window. `encode_s64`, not `encode_u64`: the bridge hands the token up as an
+`i64` (a reinterpreted `u64`, `query.rs`), and only the signed encoder accepts the high-bit case.
+
+That ordering is why **`SnapshotLoader.enable_stream` is not called from `_ready` any more.** It runs
+from `Main._on_seat_seated`, which is the first moment the token exists — the claim's answer carries
+it (`SeatClaim.seated(faction_id, seat_token)`, read from the reply's `seat_token`). A refused claim
+therefore opens no stream at all, which is honest: an unseated connection would receive nothing from
+it anyway, and the refusal is already on the overlay and the System channel.
+
+**A reconnect mints a NEW token, so the stream is replaced.** The seat belongs to the command
+connection; when the seated link reconnects it re-claims and the server hands out a fresh
+`ConnectionId`. The old token then names a connection the server has forgotten, and every later frame
+is addressed past us — the same dead stream as the no-token case, wearing a different hat. So
+`Main._open_snapshot_stream` compares the granted token with the one the open socket greeted with and,
+when they differ, closes the socket and greets again with the new one. It is idempotent when the token
+is unchanged. Because the replacement socket missed whatever was published while it was down, a
+`resync` is then sent through `_tick_resync`'s existing bookkeeping — but only once a world has been
+revealed, since before that the world request's own retry is what covers the gap.
+
+**The world request waits for the greeting**, not merely for the connect: `_try_send_world_request`
+and `_tick_new_game_retry` both gate on `Main._snapshot_stream_ready()` →
+`SnapshotLoader.stream_presented_seat_token()`. `new_game`'s answer *is* the new world's first full
+snapshot, and a socket the snapshot server still holds as unseated is skipped when that frame is
+delivered — the race `_tick_new_game_retry`'s phase 2 exists to recover from. Waiting on the token
+removes it instead. Waiting is not a rejection, so phase 1's bounded retry burst does not tick down
+while the claim is outstanding.
+
 ## Key scripts
 
 | Script | Holds |
 |---|---|
+| `SnapshotStream.gd` | The snapshot socket: `SEAT_TOKEN_BYTES` / `NO_SEAT_TOKEN`, the greeting written on the first `STATUS_CONNECTED` poll and retried until it lands, and `seat_token_presented` |
+| `SnapshotLoader.gd` | `enable_stream(host, port, seat_token)` and `stream_presented_seat_token` — the loader is where the token reaches the socket |
 | `native/src/bridge/command_link.rs` | The seated link: the worker that owns the socket and the seat, the reader thread, the reconnect/re-claim clock, `dispatch`'s two-arm routing, and the one-shot transmit the host verbs use. It also carries the faction-bearing QUESTIONS (`send_query`) and the deadline per outstanding one. The levers are `RECONNECT_BACKOFF`, `SEAT_CLAIM_REPLY_TIMEOUT`, `SEAT_CLAIM_RETRY_BACKOFF`, `SEAT_CLAIM_ATTEMPTS`, `LINK_ACK_TIMEOUT` |
 | `native/src/bridge/query.rs` | The query channel and the split above: `names_a_faction` (exhaustive over `QueryPayload`), `routes_over_seated_link`, and the per-round-trip worker the faction-free questions still use with their own `QUERY_REPLY_TIMEOUT` / `SAVE_REPLY_TIMEOUT` |
 | `native/src/bridge/command.rs` | `CommandBridge` (`#[godot_api]`) — `send_line`, `send_query`, `claim_seat`, `poll_query_replies` — and the worker that keeps a send off Godot's main thread. It decides *when* a command is written; `command_link` decides *where* |
 | `native/src/runtime.rs` | The embedded script host. Its `commands.issue` path takes the SAME `command_link::dispatch`, so a script's faction-bearing command is seated like a panel's |
 | `CommandClient.gd` | The GDScript face of the bridge: endpoint precedence, `send_line`'s two-error contract, `send_query`, `claim_seat` |
-| `SeatClaim.gd` | The seat seam: one reserved request id, the refusal tokens and their prose, `seated` / `refused`. Asked once — the link re-claims by itself |
-| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal on the two surfaces above, and sends `order <faction> ready` for End Turn |
+| `SeatClaim.gd` | The seat seam: one reserved request id, the refusal tokens and their prose, `seated(faction_id, seat_token)` / `refused`. Asked once — the link re-claims by itself, and each re-grant carries a new token |
+| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal on the two surfaces above, opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn |

@@ -62,10 +62,16 @@ func consume_poll_profile() -> bool:
     _poll_profile_unreported = false
     return true
 
-func enable_stream(host: String, port: int) -> Error:
-    print("SnapshotLoader: attempting stream connection to %s:%d" % [host, port])
+## **Open the snapshot stream, greeting the server with `seat_token`.**
+##
+## The token is the one the seat claim was answered with, and frames are addressed per seat: a stream
+## that presents no token — or a stale one — is registered unseated and receives **nothing**. So the
+## caller must have the claim's answer in hand before calling this; see
+## `.claude/rules/client/command-transport.md` → "The snapshot stream greets with the seat token".
+func enable_stream(host: String, port: int, seat_token: int = SnapshotStream.NO_SEAT_TOKEN) -> Error:
+    print("SnapshotLoader: attempting stream connection to %s:%d (seat token %d)" % [host, port, seat_token])
     stream = SnapshotStream.new()
-    var err_variant: Variant = stream.call("connect_to", host, port)
+    var err_variant: Variant = stream.call("connect_to", host, port, seat_token)
     var err: Error = err_variant if typeof(err_variant) == TYPE_INT else ERR_BUG
     if err != OK:
         stream = null
@@ -94,6 +100,15 @@ func is_streaming() -> bool:
         return false
     var status: int = stream_status()
     return status == StreamPeerTCP.STATUS_CONNECTED or status == StreamPeerTCP.STATUS_CONNECTING
+
+## Has the open stream presented its seat token? False when there is no stream, while the socket is
+## still connecting, and in the frames between CONNECTED and the greeting write. Callers that must not
+## race the snapshot server's view of this connection ask THIS, not `is_streaming`.
+func stream_presented_seat_token() -> bool:
+    if not stream_enabled or stream == null:
+        return false
+    var presented: Variant = stream.call("seat_token_presented")
+    return typeof(presented) == TYPE_BOOL and bool(presented)
 
 func stream_status() -> int:
     if stream == null:

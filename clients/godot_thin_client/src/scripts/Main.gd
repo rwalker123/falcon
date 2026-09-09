@@ -66,6 +66,13 @@ var seat_claim: SeatClaim = null
 # too: the link re-claims on reconnect, and a standing "orders will not be obeyed" alert that has
 # since become false is worse than the alert never appearing.
 var _seat_refusal_reported: bool = false
+# Where the snapshot stream will be opened, resolved at _ready but DIALLED only once the seat claim
+# is answered — the socket's first bytes are the token that grant carries.
+var _stream_host: String = ""
+var _stream_port: int = 0
+# The token the currently open snapshot stream greeted with, so a re-grant carrying a DIFFERENT one
+# is recognised as "this socket is now stale" rather than ignored. `NO_SEAT_TOKEN` = no stream open.
+var _stream_seat_token: int = SnapshotStream.NO_SEAT_TOKEN
 # The slot this run is being LOADED from ("" = this run generates a world instead). Set from the
 # GameLaunch handoff in _build_world_request; it is what makes _try_send_world_request send
 # `load_game` rather than `new_game`, through the same retry and the same reveal gate.
@@ -163,6 +170,9 @@ const LOADING_OVERLAY_TEXT = "Generating world…"
 ## What the System channel says when a refused or lost seat comes back — the retraction of
 ## `SeatClaim.REFUSED_HEADLINE`, and the reason that headline is safe to raise on a transient fault.
 const SEAT_RECOVERED_MESSAGE = "Your people's seat is held again — orders are being obeyed."
+## Why a `resync` went out that the player did not cause: the snapshot socket was replaced because the
+## seat came back under a new token, and the new socket has no baseline to apply deltas onto.
+const STREAM_REOPEN_RESYNC_MESSAGE := "resync requested (snapshot stream re-opened for a new seat token)"
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
@@ -273,16 +283,15 @@ func _ready() -> void:
         _reveal_baseline_epoch = int(launch_node.get("last_world_epoch"))
     _world_revealed = false
     _show_loading_overlay()
-    var stream_host: String = _determine_stream_host()
-    var stream_port: int = _determine_stream_port()
-    print("[Endpoints] stream=%s:%d" % [stream_host, stream_port])
-    var err: Error = snapshot_loader.enable_stream(stream_host, stream_port)
-    if err != OK:
-        # Stay in the loading state — there is no mock fallback. The map reveals only once a live
-        # snapshot for the new world arrives (the stream retries via poll/status in _process).
-        push_warning("Godot client: unable to connect to snapshot stream (error %d); holding loading screen." % err)
-    # The client ALWAYS streams; even on a failed initial connect we hold the loading overlay
-    # rather than degrade to a demo playback.
+    _stream_host = _determine_stream_host()
+    _stream_port = _determine_stream_port()
+    print("[Endpoints] stream=%s:%d" % [_stream_host, _stream_port])
+    # **THE STREAM IS NOT OPENED HERE.** It cannot be: the socket's first bytes are the seat token,
+    # which only exists once the claim below has been ANSWERED, and the server sends nothing to a
+    # connection that greets with no token. So the stream is opened from `_on_seat_seated`; see
+    # `_open_snapshot_stream`.
+    # The client ALWAYS streams; even before the socket exists we hold the loading overlay rather
+    # than degrade to a demo playback.
     streaming_mode = true
     set_process(true)
     var command_host: String = _determine_command_host()
@@ -636,6 +645,13 @@ func _rivals_message(count: int) -> String:
 func _try_send_world_request() -> void:
     if _new_game_sent or _new_game_command.is_empty():
         return
+    # **THE STREAM GOES FIRST.** The world request's answer IS the new world's first full snapshot, and
+    # a socket the snapshot server holds as unseated misses it — the race phase 2 below exists to
+    # recover from. Since the stream now waits on the seat claim anyway, holding the request until the
+    # token has been presented removes the race instead of recovering from it; the retry keeps this
+    # from being a deadlock if the claim is slow.
+    if not _snapshot_stream_ready():
+        return
     if _pending_load_slot != "":
         # A load is not a text command: it carries a request id and is ANSWERED on the query channel
         # (`.claude/rules/core_sim/save-game.md`), so it goes out through the save seam. The latch is
@@ -651,6 +667,11 @@ func _try_send_world_request() -> void:
     var result: Variant = inspector.call("send_runtime_command", _new_game_command["line"], _new_game_command["message"])
     if result is bool and result:
         _new_game_sent = true
+
+## Is the snapshot socket up AND greeted — i.e. does the snapshot server hold this connection as
+## seated? The world request and its retry both wait on this; see `_try_send_world_request`.
+func _snapshot_stream_ready() -> bool:
+    return snapshot_loader != null and snapshot_loader.stream_presented_seat_token()
 
 ## Retry the new_game request until it is ANSWERED, not merely SENT. Two phases, in order:
 ##
@@ -681,6 +702,12 @@ func _tick_new_game_retry(delta: float) -> void:
         push_warning("new_game went unanswered for %.0fs (no world arrived); re-sending." % NEW_GAME_ANSWER_TIMEOUT)
         _new_game_sent = false
         _new_game_elapsed = 0.0
+        return
+    if not _snapshot_stream_ready():
+        # Waiting for the stream to greet is not a rejection, so phase 1's bounded burst must not tick
+        # down while it waits. The retry clock still runs, so the send goes out on the first tick after
+        # the token lands rather than up to NEW_GAME_RETRY_INTERVAL later.
+        _new_game_retry_accum += delta
         return
     _new_game_elapsed += delta
     _new_game_retry_accum += delta
@@ -3051,8 +3078,11 @@ func _claim_seat(faction_id: int, request_id: int) -> bool:
 ## The seat is ours: every faction-bearing command this client sends will now be obeyed. Nothing is
 ## shown — a working game is the expected state and does not deserve a notification — but it IS logged,
 ## because a grant that never arrives is otherwise indistinguishable from one that did.
-func _on_seat_seated(faction_id: int) -> void:
-    print("[Seat] faction %d seated on the command connection." % faction_id)
+## **…and it is what the snapshot stream needs.** Frames are addressed per seat, so opening the stream
+## is part of being seated, not a separate boot step: see `_open_snapshot_stream`.
+func _on_seat_seated(faction_id: int, seat_token: int) -> void:
+    print("[Seat] faction %d seated on the command connection (token %d)." % [faction_id, seat_token])
+    _open_snapshot_stream(seat_token)
     if not _seat_refusal_reported:
         return
     # The link reconnected and got the seat back. The alert that said otherwise is now false, so the
@@ -3062,6 +3092,55 @@ func _on_seat_seated(faction_id: int) -> void:
     _note_system_event(SEAT_RECOVERED_MESSAGE, "", false, HudEventVocab.KIND_SYSTEM)
     if loading_overlay != null and loading_overlay.visible:
         _set_loading_overlay_text(LOADING_OVERLAY_TEXT)
+
+
+## **OPEN (OR RE-OPEN) THE SNAPSHOT STREAM FOR THE SEAT WE NOW HOLD.**
+##
+## The stream's first bytes are `seat_token`, and the server delivers a frame only to the connections
+## whose token resolves to the seat that frame was captured for — so this cannot run before the claim
+## is answered, and a stream holding a **stale** token is a live socket that receives nothing at all.
+##
+## **A re-grant with a new token therefore replaces the socket.** The seat belongs to the command
+## CONNECTION, so when the seated link reconnects it re-claims and the server mints a new id: the old
+## token now names a connection the server has forgotten, and every later frame would be addressed
+## past us. Tearing the stream down and greeting again with the new token is the only repair; the same
+## call is idempotent when the token has not changed, so a repeated grant costs nothing.
+##
+## The baseline is then re-asked for, because the socket that comes back has missed whatever was
+## published while it was down — `resync` is exactly the "republish a full world" verb `_tick_resync`
+## already owns, including its unanswered-retry clock. Pre-reveal there is nothing to resync onto and
+## the world request's own retry covers it, so it is only sent once a world has been shown.
+func _open_snapshot_stream(seat_token: int) -> void:
+    if snapshot_loader == null:
+        return
+    if seat_token == _stream_seat_token and snapshot_loader.is_streaming():
+        return
+    var replacing := _stream_seat_token != SnapshotStream.NO_SEAT_TOKEN
+    if replacing:
+        print("[Seat] snapshot stream token changed (%d -> %d); reconnecting the stream." % [_stream_seat_token, seat_token])
+        snapshot_loader.disable_stream()
+    _stream_seat_token = seat_token
+    var err: Error = snapshot_loader.enable_stream(_stream_host, _stream_port, seat_token)
+    if err != OK:
+        # Stay in the loading state — there is no mock fallback. Nothing retries a refused connect,
+        # so this is terminal for the session, and saying so is the whole of the handling.
+        _stream_seat_token = SnapshotStream.NO_SEAT_TOKEN
+        push_warning("Godot client: unable to connect to snapshot stream (error %d); holding loading screen." % err)
+        return
+    if replacing and _world_revealed:
+        _request_stream_baseline()
+
+
+## Ask the server to republish a full world onto a stream socket that has just been replaced.
+##
+## Piggybacks on the `resync` bookkeeping rather than adding a second one: arming
+## `_resync_pending_accum` is what makes `_tick_resync` chase the answer, and an already-outstanding
+## resync needs no second ask.
+func _request_stream_baseline() -> void:
+    if _resync_pending_accum >= 0.0:
+        return
+    _send_runtime_command("resync", STREAM_REOPEN_RESYNC_MESSAGE, HudEventVocab.KIND_SYSTEM)
+    _resync_pending_accum = 0.0
 
 
 ## **THE SEAT IS NOT OURS, AND THIS IS THE ONE PLACE THE PLAYER LEARNS IT.**

@@ -19,9 +19,10 @@ class_name SeatClaim
 ## The claim's answer rides the query drain because a `ClaimSeatCommand` is a command that is
 ## ANSWERED — on the socket that made it — exactly as the save verbs are.
 
-## The seat is ours. Emitted once per grant; a re-grant after a reconnect emits again, because the
-## seat genuinely went away and came back.
-signal seated(faction_id: int)
+## The seat is ours, and `seat_token` is what the SNAPSHOT stream must greet with to be sent this
+## seat's frames. Emitted once per grant; a re-grant after a reconnect emits again — carrying a
+## **different** token, because the seat is held by a connection and the reconnect made a new one.
+signal seated(faction_id: int, seat_token: int)
 
 ## The seat is NOT ours, and `error` says why in the server's own vocabulary. Also emitted when the
 ## claim went unanswered, carrying [`ERROR_TRANSPORT`] — a claim nobody answered leaves the client in
@@ -62,6 +63,10 @@ var _request_id: int = NO_REQUEST_ID
 var _faction_id: int = HudConst.NO_FACTION_ID
 ## Whether the last answer granted the seat. Read by the owner rather than tracked twice.
 var seated_now: bool = false
+## **The token the grant came with**, i.e. the id of the connection that holds the seat, and the eight
+## bytes the snapshot stream greets with. `SnapshotStream.NO_SEAT_TOKEN` while no seat is held — the
+## same "I hold no seat" value the server reads as `ConnectionId::INTERNAL`.
+var seat_token: int = SnapshotStream.NO_SEAT_TOKEN
 ## The last refusal token, `""` while the seat is held or nothing has been asked.
 var refusal: String = ""
 
@@ -116,13 +121,16 @@ func _deliver_one(reply: Dictionary) -> void:
 	var error := String(reply.get("error", ""))
 	if not ok and error.is_empty():
 		error = ERROR_TRANSPORT
-	_finish(ok, error)
+	# The bridge stamps the token on every seat_claim answer (`query.rs`); a refusal carries the
+	# "no seat" value, which is exactly what the stream should greet with if it opens anyway.
+	_finish(ok, error, int(reply.get("seat_token", SnapshotStream.NO_SEAT_TOKEN)))
 
 
-func _finish(ok: bool, error: String) -> void:
+func _finish(ok: bool, error: String, token: int = SnapshotStream.NO_SEAT_TOKEN) -> void:
 	seated_now = ok
 	refusal = "" if ok else error
+	seat_token = token if ok else SnapshotStream.NO_SEAT_TOKEN
 	if ok:
-		seated.emit(_faction_id)
+		seated.emit(_faction_id, seat_token)
 		return
 	refused.emit(_faction_id, error)
