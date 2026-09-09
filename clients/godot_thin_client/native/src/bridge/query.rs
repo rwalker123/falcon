@@ -5,17 +5,28 @@
 //! payload the server *answers*, writing a `QueryReplyEnvelope` back on the same TCP stream
 //! (`sim_runtime/proto/command.proto` → "THE QUERY CHANNEL").
 //!
-//! ## Why a query gets its own worker, and its own connection
+//! ## Two channels, split by whether the QUESTION names a faction
 //!
-//! A query must **hold the connection open** until the answer arrives, because that is where the
+//! A query must **hold a connection open** until the answer arrives, because that is where the
 //! answer is written, and it must not ride the ordinary command *thread* — a query that waits on the
-//! sim would put every queued order behind it. It also must not ride the **seated** command link
-//! (`bridge/command_link.rs`): that connection carries this client's seat, and a forecast the sim
-//! answers between turns has no business bounding how long a seat's orders queue behind it.
+//! sim would put every queued order behind it.
 //!
-//! **A query names no commanding faction**, so an unseated round trip is answered exactly as a seated
-//! one is — which is what makes a connection per question still correct here while it is no longer
-//! correct for a command.
+//! Which connection it holds open is decided by [`names_a_faction`]:
+//!
+//! - **The three faction-bearing questions** (`HuntTripForecast`, `DenialRaidForecast`,
+//!   `HuntCrewTake`) go out on the **seated command link** (`bridge/command_link.rs`). Each names a
+//!   `faction_id` and is answered with that faction's private state — a band's live equipment wear,
+//!   its idle workers, its take curve — so asking from an unseated connection is the same disclosure
+//!   the seat gate closes on commands, one channel over. The link writes it and reads the answer back
+//!   asynchronously, so nothing about this queues a seat's orders behind a forecast.
+//! - **The two that name no faction** (`ListSaves`, `FactionCapacity`) and the three save verbs keep
+//!   a connection **per round trip**, on this module's worker. They are asked from `LandingScreen`
+//!   before `Main` exists and therefore before any seat is claimed, and the server answers them ahead
+//!   of its `world_active` gate so the load menu opens with no world — putting them on the link would
+//!   make the load menu depend on the seat machinery to answer a question no gate will ever apply to.
+//!
+//! **The split cannot drift silently**: [`names_a_faction`] matches [`QueryPayload`] exhaustively
+//! with no wildcard arm, so a new question is a compile error until it says which channel it takes.
 //!
 //! ## **A QUERY TRIGGERS NO SNAPSHOT, so nothing else will arrive to render off**
 //!
@@ -44,6 +55,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
+
+use crate::bridge::command_link;
 
 // The framing bound is `sim_runtime::MAX_PROTO_FRAME`, imported above and never restated. Both
 // directions of this socket are framed as a 4-byte little-endian length followed by the encoded
@@ -267,8 +280,40 @@ pub(crate) fn dispatch(
     )
 }
 
-/// Hand one composed round trip to the worker. The single place a `QueryRequest` is built, so every
-/// ask carries a timeout chosen for it rather than a default nobody revisited.
+/// **Does this question name a faction whose private state answers it?**
+///
+/// The one place the channel split is decided, and it is deliberately an **exhaustive match with no
+/// wildcard arm**: a question added to [`QueryPayload`] is a compile error here until someone says
+/// which channel it takes. That matters because the failure it prevents is invisible — a
+/// faction-bearing question asked from an unseated connection compiles, runs, and answers, and only
+/// leaks in a game with a second player.
+fn names_a_faction(query: &QueryPayload) -> bool {
+    match query {
+        // Each carries a client-supplied `faction_id` and is answered with that faction's private
+        // state: a named band's live equipment wear, its idle workers, its take curve.
+        QueryPayload::HuntTripForecast(_)
+        | QueryPayload::DenialRaidForecast(_)
+        | QueryPayload::HuntCrewTake(_) => true,
+        // The save headers on disk and the roster ceiling for a grid size. Neither reads a faction's
+        // state, and both are asked before a world — and therefore before a seat — exists.
+        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => false,
+    }
+}
+
+/// Which socket a composed payload takes. Only a [`CommandPayload::Query`] can be faction-bearing;
+/// the save verbs that answer on this envelope name a slot, never a faction, so they stay on the
+/// per-round-trip worker with the patience a disk write needs.
+fn routes_over_seated_link(payload: &CommandPayload) -> bool {
+    match payload {
+        CommandPayload::Query { query, .. } => names_a_faction(query),
+        _ => false,
+    }
+}
+
+/// Hand one composed round trip to the channel it belongs on. The single place a `QueryRequest` is
+/// built, so every ask carries a timeout chosen for it rather than a default nobody revisited — and
+/// the seated link is handed that same timeout, since the bound on an unanswered question is a
+/// property of the question, not of the socket.
 fn send(
     host: &str,
     port: u16,
@@ -276,6 +321,18 @@ fn send(
     payload: CommandPayload,
     timeout: Duration,
 ) -> Result<(), String> {
+    if routes_over_seated_link(&payload) {
+        return command_link::send_query(
+            host,
+            port,
+            request_id,
+            CommandEnvelope {
+                payload,
+                correlation_id: None,
+            },
+            timeout,
+        );
+    }
     query_sender()
         .send(QueryRequest {
             host: host.to_string(),
@@ -677,4 +734,73 @@ fn query_answers() -> &'static Mutex<Receiver<QueryAnswer>> {
     QUERY_ANSWERS
         .get()
         .expect("query answer channel is created with the sender")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_faction_bearing_questions_take_the_seated_link() {
+        // Each is answered with a NAMED faction's private state, so it has to be asked from the
+        // connection that holds that faction's seat — the same disclosure the seat gate closes on
+        // commands.
+        for query in [
+            QueryPayload::HuntTripForecast(HuntTripForecastQuery {
+                faction_id: 0,
+                band_id: 1,
+                herd_id: String::new(),
+                kit_id: String::new(),
+                party_workers: 0,
+                floor: 0.0,
+                preset_floors: Vec::new(),
+                max_party_workers: 0,
+            }),
+            QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
+                faction_id: 0,
+                band_id: 1,
+                herd_id: String::new(),
+                kit_id: String::new(),
+                party_workers: 0,
+                max_party_workers: 0,
+            }),
+            QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
+                faction_id: 0,
+                band_id: 1,
+                herd_id: String::new(),
+                kit_id: String::new(),
+                floor: 0.0,
+                max_workers: 0,
+            }),
+        ] {
+            assert!(names_a_faction(&query));
+        }
+    }
+
+    #[test]
+    fn the_landing_screens_questions_keep_their_own_connection() {
+        // Asked before `Main` exists and therefore before any seat is claimed. Routing either onto
+        // the seated link would make the load menu and the New Game screen wait on the seat.
+        assert!(!names_a_faction(&QueryPayload::ListSaves));
+        assert!(!names_a_faction(&QueryPayload::FactionCapacity(
+            FactionCapacityQuery {
+                width: 1,
+                height: 1,
+            }
+        )));
+    }
+
+    #[test]
+    fn a_save_verb_is_not_routed_by_the_faction_split() {
+        // The save channel's verbs are commands that answer on the query envelope. They name a slot,
+        // never a faction, and carry the patience a disk write needs.
+        assert!(!routes_over_seated_link(&CommandPayload::SaveGame {
+            request_id: 1,
+            slot: "a".to_string(),
+        }));
+        assert!(!routes_over_seated_link(&CommandPayload::Query {
+            request_id: 1,
+            query: QueryPayload::ListSaves,
+        }));
+    }
 }

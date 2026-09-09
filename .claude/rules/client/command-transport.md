@@ -2,6 +2,9 @@
 paths:
   - "clients/godot_thin_client/native/src/bridge/command_link.rs"
   - "clients/godot_thin_client/native/src/bridge/command.rs"
+  # The query channel routes by the same rule and half of it now rides the seated link, so the file
+  # that decides which socket a QUESTION takes has to load this too.
+  - "clients/godot_thin_client/native/src/bridge/query.rs"
   - "clients/godot_thin_client/native/src/runtime.rs"
   - "clients/godot_thin_client/src/scripts/CommandClient.gd"
   - "clients/godot_thin_client/src/scripts/SeatClaim.gd"
@@ -57,12 +60,51 @@ faction-bearing command is refused at runtime with no compile error**, which is 
 of bug hides. So the classification is kept as small as it can be: the same two variants
 `core_sim`'s `is_host_verb` names, and everything else takes the seated default.
 
-**The forecast/save worker keeps its connection per round trip** (`bridge/query.rs`). Those payloads
-name no commanding faction, so an unseated round trip is answered exactly as a seated one would be —
-and a forecast the sim answers between turns has no business bounding how long a seat's orders queue
-behind it. What changed there is only that the drain grew a second producer: `deliver_reply` lets the
-link put an answer it read itself onto the same once-a-frame hop
-(`CommandBridge.poll_query_replies`), correlated by `request_id` like every other seam's.
+## A QUESTION is routed by whether it names a faction, and that one IS decidable
+
+The command router refuses to classify by faction (above). The QUERY channel does exactly that, and
+the difference is not inconsistency — it is that `QueryPayload` has **five** variants against
+`CommandPayload`'s forty, and `bridge/query.rs` already matches all five in one place to build them.
+So `names_a_faction` is an **exhaustive match with no wildcard arm**, and a sixth question is a
+compile error until it says which socket it takes. That is the compile-time guard the command side
+cannot have, which is why the command side answers the question a different way.
+
+| Goes out on | What | Why |
+|---|---|---|
+| the **seated link** | `HuntTripForecast`, `DenialRaidForecast`, `HuntCrewTake` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
+| a **connection per round trip** | `ListSaves`, `FactionCapacity`, and the three save verbs | They name no faction, and they are asked from `LandingScreen` **before `Main` exists and therefore before any seat is claimed**. The server answers both ahead of its `world_active` gate so the load menu opens with no world; routing them onto the link would make that menu wait on the seat machinery to answer a question no gate will ever apply to |
+
+**A query written on the link is fire-and-forget out and correlated by `request_id` back**, exactly
+as the claim is — `send_query` is called on Godot's main thread and must not block on the worker, so
+there is no ack channel. The worker keeps a **deadline per outstanding question** instead, and the
+three ways an answer can fail to arrive all land on the drain as an `error` rather than as silence:
+the socket would not open, the socket died holding it (`on_dropped` fails everything outstanding), or
+the server never answered (`QUERY_DETAIL_UNANSWERED`, at the timeout `bridge/query.rs` chose for that
+kind — the bound is a property of the QUESTION, so the link is handed it rather than owning one).
+
+⛔ **No queue, and none is needed.** A question asked while the link is down connects on the spot, and
+`connect` writes the seat claim as the **first frame** on the new socket; the server reads one
+connection's frames in order into one channel (`handle_proto_client`), so the claim is registered
+before the question is evaluated. **Wire order is the queue** — which is why a question asked
+mid-reconnect needs no holding pen, and a question asked before the grant landed is still asked from
+a seated connection. A socket that will not open fails the question *now* rather than parking it: the
+sheet renders one failure line and reopening asks again, where a parked question would come back at
+an arbitrary later moment against a world that had moved on.
+
+**Nothing is ever re-asked by the link.** A re-sent question is one the sheet did not ask, answered
+against a later world — the same reason a command is written at most once. `ForecastQuery` owns the
+retry it does have, and only for the transport token.
+
+The drain is unchanged and still has two producers: `deliver_reply` lets the link put an answer it
+read itself onto the same once-a-frame hop (`CommandBridge.poll_query_replies`), correlated by
+`request_id` like every other seam's.
+
+**Routing a question is separable from refusing one, and they land in that order.** `Command::Query`
+sits in `commanding_faction`'s `None` arm, so the server answers a faction-bearing query whatever
+connection it arrives on — which is what makes moving them **behaviour-neutral**: single-player
+forecast sheets, the load menu and the New Game capacity ask are unchanged, and the only observable
+difference is that the server logs one `command.client.connected` per session instead of one more per
+question. A gate that refused before the client routed would break every forecast sheet in the game.
 
 ## Reconnect re-claims, because the alternative is silence
 
@@ -132,7 +174,8 @@ something. Faction 0 is always in the roster (`FactionRegistry::with_ai_factions
 
 | Script | Holds |
 |---|---|
-| `native/src/bridge/command_link.rs` | The seated link: the worker that owns the socket and the seat, the reader thread, the reconnect/re-claim clock, `dispatch`'s two-arm routing, and the one-shot transmit the host verbs use. The levers are `RECONNECT_BACKOFF`, `SEAT_CLAIM_REPLY_TIMEOUT`, `SEAT_CLAIM_RETRY_BACKOFF`, `SEAT_CLAIM_ATTEMPTS`, `LINK_ACK_TIMEOUT` |
+| `native/src/bridge/command_link.rs` | The seated link: the worker that owns the socket and the seat, the reader thread, the reconnect/re-claim clock, `dispatch`'s two-arm routing, and the one-shot transmit the host verbs use. It also carries the faction-bearing QUESTIONS (`send_query`) and the deadline per outstanding one. The levers are `RECONNECT_BACKOFF`, `SEAT_CLAIM_REPLY_TIMEOUT`, `SEAT_CLAIM_RETRY_BACKOFF`, `SEAT_CLAIM_ATTEMPTS`, `LINK_ACK_TIMEOUT` |
+| `native/src/bridge/query.rs` | The query channel and the split above: `names_a_faction` (exhaustive over `QueryPayload`), `routes_over_seated_link`, and the per-round-trip worker the faction-free questions still use with their own `QUERY_REPLY_TIMEOUT` / `SAVE_REPLY_TIMEOUT` |
 | `native/src/bridge/command.rs` | `CommandBridge` (`#[godot_api]`) — `send_line`, `send_query`, `claim_seat`, `poll_query_replies` — and the worker that keeps a send off Godot's main thread. It decides *when* a command is written; `command_link` decides *where* |
 | `native/src/runtime.rs` | The embedded script host. Its `commands.issue` path takes the SAME `command_link::dispatch`, so a script's faction-bearing command is seated like a panel's |
 | `CommandClient.gd` | The GDScript face of the bridge: endpoint precedence, `send_line`'s two-error contract, `send_query`, `claim_seat` |

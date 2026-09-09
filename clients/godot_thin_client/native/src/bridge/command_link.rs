@@ -38,6 +38,20 @@
 //!   command is refused at runtime with no compile error**, so the classification is kept as small
 //!   as it can be: two variants, mirroring `is_host_verb`.
 //!
+//! ## The faction-bearing QUESTIONS ride it too
+//!
+//! A forecast query names a `faction_id` and is answered with that faction's private state — its
+//! bands' equipment wear, its idle workers, its take curve. That is the same disclosure the seat gate
+//! closes on commands, so the three faction-bearing queries are written on **this** socket rather
+//! than on a throwaway one of their own ([`send_query`], routed from `bridge/query.rs`). The two that
+//! name no faction (`ListSaves`, `FactionCapacity`) stay on the per-round-trip connection, because
+//! they are asked from the landing screen before any seat exists.
+//!
+//! A query written here is fire-and-forget on the way out and correlated by `request_id` on the way
+//! back, exactly as a seat claim is. What the worker keeps is a **deadline per outstanding query**,
+//! so the three ways an answer can fail to arrive — the socket would not open, the socket died, the
+//! server never answered — all land on the drain as an error rather than as silence.
+//!
 //! ## Reconnect
 //!
 //! A dropped link is re-established and the seat **re-claimed** on the new connection, because the
@@ -100,6 +114,16 @@ const SEAT_CLAIM_ATTEMPTS: u32 = 8;
 /// wedge the command bridge for the session.
 const LINK_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// **What an unanswered question is reported as.** Free-text detail, not a token: the seam renders
+/// one failure line whatever went wrong, and the tokens a caller may branch on are the server's
+/// (`sim_runtime::query_error`) plus the transport one `bridge/query.rs` owns.
+const QUERY_DETAIL_UNANSWERED: &str = "query went unanswered";
+/// The link was pointed at a different server before this question could be answered.
+const QUERY_DETAIL_ENDPOINT_CHANGED: &str = "query endpoint changed before the reply arrived";
+/// The write half vanished between the connect and the write — reported rather than retried, for the
+/// same reason a command is: a question written twice is a question the sheet did not ask twice.
+const QUERY_DETAIL_NOT_CONNECTED: &str = "command link is not connected";
+
 /// Where the link connects. Carried on every message because the endpoint is resolved by GDScript
 /// (env var → ports file → default) and only the caller knows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +154,16 @@ enum LinkMessage {
         endpoint: Endpoint,
         envelope: Box<CommandEnvelope>,
         ack: Sender<Result<(), String>>,
+    },
+    /// One faction-bearing question to write on the seated socket. Unlike [`Self::Send`] it carries
+    /// no ack channel: `send_query` is called from Godot's main thread and must not block on the
+    /// worker, so a dispatch failure is delivered to the query drain under `request_id` like every
+    /// other way this question can fail to be answered.
+    Query {
+        endpoint: Endpoint,
+        envelope: Box<CommandEnvelope>,
+        request_id: u64,
+        timeout: Duration,
     },
     /// A framed reply read off the socket by the reader thread of `generation`.
     Inbound { generation: u64, frame: Vec<u8> },
@@ -163,6 +197,17 @@ struct SeatIntent {
     state: SeatState,
     /// When a transient refusal should be retried.
     retry_at: Option<Instant>,
+}
+
+/// One question written on the seated socket and not yet answered.
+///
+/// The list exists for the failure paths only — a healthy answer is matched by `request_id` off the
+/// reader thread and forwarded within a frame. What it buys is that *no* question can end in
+/// silence: the deadline is the bound on a server that never answers, and a dropped socket fails
+/// everything it was still holding.
+struct PendingQuery {
+    request_id: u64,
+    deadline: Instant,
 }
 
 /// **Ask for the seat that drives `faction_id`.** Returns whether the ask reached the worker; the
@@ -207,6 +252,32 @@ pub(crate) fn dispatch(host: &str, port: u16, envelope: &CommandEnvelope) -> Res
         Ok(result) => result,
         Err(_) => Err("command link did not answer".to_string()),
     }
+}
+
+/// **Put one faction-bearing question on the seated socket.**
+///
+/// Returns whether the ask reached the worker; every later outcome — a socket that would not open,
+/// one that died holding the question, a server that never answered — arrives on the query drain
+/// under `request_id`, in the same `error` field a server refusal would use. `timeout` is the
+/// caller's patience for this question (`bridge/query.rs` chooses it per kind), not a constant here.
+pub(crate) fn send_query(
+    host: &str,
+    port: u16,
+    request_id: u64,
+    envelope: CommandEnvelope,
+    timeout: Duration,
+) -> Result<(), String> {
+    link_sender()
+        .send(LinkMessage::Query {
+            endpoint: Endpoint {
+                host: host.to_string(),
+                port,
+            },
+            envelope: Box::new(envelope),
+            request_id,
+            timeout,
+        })
+        .map_err(|err| format!("query dispatch error: {err}"))
 }
 
 /// **The verbs that move the world for EVERYONE and are therefore the host's, not a seat's.**
@@ -297,6 +368,9 @@ struct LinkWorker {
     generation: u64,
     seat: Option<SeatIntent>,
     reconnect_at: Option<Instant>,
+    /// Questions written on the live socket and still owed an answer. Short by construction — a
+    /// sheet asks one question per interaction — so a linear scan is the right shape.
+    pending: Vec<PendingQuery>,
 }
 
 impl LinkWorker {
@@ -309,6 +383,7 @@ impl LinkWorker {
             generation: 0,
             seat: None,
             reconnect_at: None,
+            pending: Vec::new(),
         }
     }
 
@@ -346,6 +421,9 @@ impl LinkWorker {
                 earliest = Some(min_instant(earliest, deadline));
             }
         }
+        for query in &self.pending {
+            earliest = Some(min_instant(earliest, query.deadline));
+        }
         earliest
     }
 
@@ -364,6 +442,12 @@ impl LinkWorker {
                 let result = self.on_send(endpoint, &envelope);
                 let _ = ack.send(result);
             }
+            LinkMessage::Query {
+                endpoint,
+                envelope,
+                request_id,
+                timeout,
+            } => self.on_query(endpoint, &envelope, request_id, timeout),
             LinkMessage::Inbound { generation, frame } => self.on_inbound(generation, &frame),
             LinkMessage::Dropped { generation, detail } => self.on_dropped(generation, &detail),
         }
@@ -421,6 +505,76 @@ impl LinkWorker {
         }
     }
 
+    /// **Write one question, and remember that it is owed an answer.**
+    ///
+    /// ⛔ **No queue, and none is needed.** A question asked while the link is down connects here,
+    /// and `connect` writes the seat claim as the first frame on the new socket — the server reads
+    /// one connection's frames in order into one channel (`handle_proto_client`), so the claim is
+    /// registered before the question is evaluated. Wire order IS the queue, which is why a question
+    /// asked mid-reconnect needs no holding pen and a question asked before the claim was granted is
+    /// still asked from a seated connection.
+    ///
+    /// A socket that will not open fails the question **now** rather than parking it: the sheet
+    /// renders one failure line and reopening it asks again, whereas a parked question would come
+    /// back at an arbitrary later moment against a world that had moved on.
+    fn on_query(
+        &mut self,
+        endpoint: Endpoint,
+        envelope: &CommandEnvelope,
+        request_id: u64,
+        timeout: Duration,
+    ) {
+        self.retarget(&endpoint);
+        let bytes = match encode(envelope) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                query::deliver_reply(request_id, Err(err));
+                return;
+            }
+        };
+        if self.write.is_none() {
+            if let Err(err) = self.connect() {
+                if self.seat.is_some() {
+                    self.reconnect_at = Some(Instant::now() + RECONNECT_BACKOFF);
+                }
+                query::deliver_reply(request_id, Err(err));
+                return;
+            }
+        }
+        // Recorded as owed BEFORE the write, so a write that fails is reported by the one path that
+        // reports every other way this socket loses an answer, rather than by a second one here.
+        self.pending.push(PendingQuery {
+            request_id,
+            deadline: Instant::now() + timeout,
+        });
+        let generation = self.generation;
+        let written = match self.write.as_mut() {
+            Some(stream) => write_frame(stream, &bytes),
+            None => Err(QUERY_DETAIL_NOT_CONNECTED.to_string()),
+        };
+        if let Err(err) = written {
+            self.on_dropped(generation, &err);
+        }
+    }
+
+    /// **Fail every outstanding question with one detail.** Called where the answer can no longer
+    /// arrive — the socket that owed it is gone, or its deadline passed. Nothing is re-asked: a
+    /// re-sent question would be one the sheet did not ask, answered against a later world.
+    fn fail_pending(&mut self, detail: &str, expired_only: bool) {
+        let now = Instant::now();
+        let mut failed = Vec::new();
+        self.pending.retain(|query| {
+            if expired_only && now < query.deadline {
+                return true;
+            }
+            failed.push(query.request_id);
+            false
+        });
+        for request_id in failed {
+            query::deliver_reply(request_id, Err(detail.to_string()));
+        }
+    }
+
     /// A different endpoint is a different server: drop what we hold rather than writing this
     /// client's seat traffic to whatever answers on the old address.
     fn retarget(&mut self, endpoint: &Endpoint) {
@@ -431,6 +585,8 @@ impl LinkWorker {
         self.write = None;
         self.generation += 1;
         self.reconnect_at = None;
+        // Whatever was outstanding was asked of the OLD server and will never be answered here.
+        self.fail_pending(QUERY_DETAIL_ENDPOINT_CHANGED, false);
         if let Some(seat) = self.seat.as_mut() {
             seat.state = SeatState::Unclaimed;
             seat.retry_at = None;
@@ -548,7 +704,11 @@ impl LinkWorker {
             self.on_claim_reply(reply.reply);
             return;
         }
-        // Anything else answered on this socket belongs to whichever seam spent that id.
+        // Anything else answered on this socket belongs to whichever seam spent that id — this
+        // worker's own outstanding questions among them, so the one that just landed stops being
+        // owed an answer before it is forwarded.
+        self.pending
+            .retain(|query| query.request_id != reply.request_id);
         query::deliver_reply(reply.request_id, Ok(reply.reply));
     }
 
@@ -597,7 +757,8 @@ impl LinkWorker {
         }
         self.write = None;
         self.generation += 1;
-        let _ = detail;
+        // The answers were owed on the socket that just died; the reply direction died with it.
+        self.fail_pending(detail, false);
         if let Some(seat) = self.seat.as_mut() {
             // The seat went with the socket. It is re-claimed on the next connection, which is what
             // keeps a mid-session server restart from silently unseating the player.
@@ -613,6 +774,7 @@ impl LinkWorker {
 
     fn on_deadline(&mut self) {
         let now = Instant::now();
+        self.fail_pending(QUERY_DETAIL_UNANSWERED, true);
         if let Some(at) = self.reconnect_at {
             if now >= at && self.write.is_none() {
                 if let Err(err) = self.connect() {
