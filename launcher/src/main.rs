@@ -1,10 +1,12 @@
 //! ShadowScale desktop launcher.
 //!
 //! The game ships as two programs: a simulation SERVER that binds a block of
-//! four local TCP ports, and a Godot CLIENT that connects to them. A player
+//! four local TCP ports, and PLAYER programs that connect to them — today one,
+//! the Godot client the human at this keyboard sits in front of. A player
 //! double-clicks one icon, so something has to start the server, wait for it to
-//! be reachable, run the client, and reap the server afterwards. This binary is
-//! that supervisor; it replaces the per-platform shell scripts
+//! be reachable, run one process per seat this machine hosts, and reap them all
+//! afterwards. This binary is that supervisor; it replaces the per-platform
+//! shell scripts
 //! (`scripts/macos_dist/run.command`, `scripts/windows_dist/run.bat`) with one
 //! implementation, and fixes the two bugs both of them shared:
 //!
@@ -16,7 +18,17 @@
 //! Readiness here is a fully written ports handshake file
 //! (`core_sim::port_alloc`), at a path unique to this launcher process, and
 //! shutdown is a `Drop` guard plus, on Windows, a kill-on-close Job Object that
-//! the OS honours even if this process is terminated.
+//! the OS honours even if this process is terminated. Both cover **every**
+//! child, not just the server: a seat's process is a child like any other, and
+//! the reaping guarantee is the reason this binary exists.
+//!
+//! **Seats** (`.claude/rules/core_sim/launcher.md`). A world has N faction
+//! seats and the sim knows only whether one is occupied; the person who started
+//! the game is a remote player whose process happens to be local. So the human's
+//! client is spawned *as the process filling a seat*, through the same path any
+//! other locally-hosted seat would use — there is deliberately no in-process
+//! fast path for a local player. Rival seats are left **vacant**, which the
+//! server's turn timeout already handles.
 
 // No console window when the player double-clicks the packaged .exe. Errors are
 // surfaced through `report_error` (a message box) rather than stdio.
@@ -95,6 +107,14 @@ const SERVER_STEM: &str = "server";
 /// Name of the client executable/bundle inside the package.
 const CLIENT_STEM: &str = "ShadowScaleClient";
 
+/// How the launcher's messages name the simulation server when reporting a
+/// failure that is about the *process* rather than the package layout.
+const SERVER_LABEL: &str = "the server";
+/// How they name the human's player program. One constant because the same
+/// phrase has to read naturally in "Could not find …", "Could not start …" and
+/// "Could not add … to the process group".
+const HUMAN_PLAYER_LABEL: &str = "the game";
+
 /// On macOS both children live in `ShadowScale.app/Contents/Helpers/`, one level
 /// up from the launcher's own `Contents/MacOS/`.
 #[cfg(target_os = "macos")]
@@ -128,6 +148,12 @@ fn run() -> Result<(), String> {
     // satisfy the readiness wait instantly and hand the client dead ports.
     remove_ports_file(&ports_file);
 
+    // Belt and braces on Windows: the guard below covers orderly exits, the job
+    // object covers this process being killed outright. It is created before the
+    // first spawn so that every child — server and seats alike — joins it the
+    // instant it exists.
+    let group = ProcessGroup::kill_on_close()?;
+
     let server = Command::new(&layout.server)
         .current_dir(&data_dir)
         .env(ENV_PORTS_FILE, &ports_file)
@@ -139,35 +165,21 @@ fn run() -> Result<(), String> {
             )
         })?;
 
-    // From here on every exit path must reap the server, so ownership moves
+    // From here on every exit path must reap every child, so ownership moves
     // into a guard rather than being cleaned up at each `return`.
     let mut session = Session::new(server, ports_file.clone());
-
-    // Belt and braces on Windows: the guard covers orderly exits, the job
-    // object covers this process being killed outright.
-    let _job = ProcessGroup::kill_on_close(session.server())?;
+    group.adopt(session.server(), SERVER_LABEL)?;
 
     wait_for_ready(&mut session, &ports_file)?;
 
-    let mut client = Command::new(&layout.client)
-        .current_dir(&data_dir)
-        .env(ENV_PORTS_FILE, &ports_file)
-        // The client is a GUI app; inheriting stdio is harmless but noisy when
-        // the launcher is run from a terminal, and meaningless otherwise.
-        .stdin(Stdio::null())
-        .spawn()
-        .map_err(|err| {
-            format!(
-                "Could not start the game:\n{}\n\n{err}",
-                layout.client.display()
-            )
-        })?;
+    // One process per player. The server never spawns these: in a real
+    // multiplayer game the other seats are on other machines, so a server that
+    // spawned its players would only work locally.
+    for seat in local_seats(&layout) {
+        session.fill_seat(&seat, &data_dir, &ports_file, &group)?;
+    }
 
-    client
-        .wait()
-        .map_err(|err| format!("Lost track of the game process: {err}"))?;
-
-    Ok(())
+    session.wait_for_players()
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +196,7 @@ impl Layout {
     fn resolve(exe_dir: &Path) -> Result<Self, String> {
         let layout = Self::platform_layout(exe_dir)?;
         require_file(&layout.server, "the simulation server")?;
-        require_file(&layout.client, "the game")?;
+        require_file(&layout.client, HUMAN_PLAYER_LABEL)?;
         Ok(layout)
     }
 
@@ -343,6 +355,42 @@ fn env_path(key: &str) -> Result<PathBuf, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Locally-hosted seats
+// ---------------------------------------------------------------------------
+
+/// A faction seat this machine fills, and the program that fills it.
+///
+/// A seat is the sim's entire model of "who is playing": occupied by whatever
+/// connection claimed it, or vacant. Nothing downstream of the socket knows what
+/// kind of program is on the other end, so the launcher's job is only to start
+/// one process per seat *this machine* hosts and keep them alive together.
+struct LocalSeat<'a> {
+    /// Program run to fill the seat.
+    program: &'a Path,
+    /// How failures involving this process are phrased to the player.
+    what: &'a str,
+}
+
+/// Every seat this launcher fills on this machine, in the order it starts them.
+///
+/// **Today the list holds exactly one entry** — the human at this keyboard, in
+/// the Godot client. The client claims its own seat over the command socket at
+/// handshake (`SeatClaim.gd`), so the launcher passes no seat identity: the only
+/// thing it has to decide is *how many processes to start and how to reap them*.
+///
+/// **Rival seats are left vacant.** There is no AI player program to launch yet
+/// (#645), and a vacant seat is auto-submitted immediately by the server's turn
+/// scheduler, so a world with N rival seats paces exactly as single-player
+/// always has. Adding one is adding an entry here, not a second code path: the
+/// human's client is spawned through the same `fill_seat` as any other occupant.
+fn local_seats(layout: &Layout) -> Vec<LocalSeat<'_>> {
+    vec![LocalSeat {
+        program: &layout.client,
+        what: HUMAN_PLAYER_LABEL,
+    }]
+}
+
+// ---------------------------------------------------------------------------
 // Readiness
 // ---------------------------------------------------------------------------
 
@@ -430,30 +478,105 @@ fn server_exit_message(code: Option<i32>) -> String {
 // Shutdown
 // ---------------------------------------------------------------------------
 
-/// Owns the running server for the rest of the launcher's life.
+/// Owns every child the launcher started — the server and one process per
+/// locally-hosted seat — for the rest of the launcher's life.
 ///
 /// Cleanup lives in `Drop` rather than at each `return` so that every failure
-/// path after the spawn — readiness timeout, client spawn failure, or an
-/// ordinary quit — reaps the server and clears the handshake file exactly once.
+/// path after the first spawn — readiness timeout, a seat's program failing to
+/// start, or an ordinary quit — reaps **all** of them and clears the handshake
+/// file exactly once. A child that escaped this guard would outlive the launcher
+/// holding the ports, which is the orphaned-server bug this binary exists to
+/// prevent; so a player process is only ever spawned through [`fill_seat`],
+/// which moves it in here in the same expression that starts it.
+///
+/// [`fill_seat`]: Session::fill_seat
 struct Session {
     server: Child,
+    /// One per filled seat, in start order.
+    players: Vec<Child>,
     ports_file: PathBuf,
 }
 
 impl Session {
     fn new(server: Child, ports_file: PathBuf) -> Self {
-        Self { server, ports_file }
+        Self {
+            server,
+            players: Vec::new(),
+            ports_file,
+        }
     }
 
     fn server(&mut self) -> &mut Child {
         &mut self.server
     }
+
+    /// Starts `seat`'s program, takes ownership of it, and puts it in the
+    /// process group.
+    ///
+    /// Ownership transfers before the group call so that a job-object failure
+    /// still leaves the process reaped by [`Session::drop`].
+    fn fill_seat(
+        &mut self,
+        seat: &LocalSeat<'_>,
+        data_dir: &Path,
+        ports_file: &Path,
+        group: &ProcessGroup,
+    ) -> Result<(), String> {
+        let player = Command::new(seat.program)
+            .current_dir(data_dir)
+            .env(ENV_PORTS_FILE, ports_file)
+            // A player program is a GUI app or a headless bot; inheriting stdio
+            // is harmless but noisy when the launcher is run from a terminal,
+            // and meaningless otherwise.
+            .stdin(Stdio::null())
+            .spawn()
+            .map_err(|err| {
+                format!(
+                    "Could not start {}:\n{}\n\n{err}",
+                    seat.what,
+                    seat.program.display()
+                )
+            })?;
+        group.adopt(self.adopt_player(player), seat.what)
+    }
+
+    /// Takes ownership of an already-started player process, and hands back the
+    /// borrow the caller needs to finish setting it up.
+    fn adopt_player(&mut self, player: Child) -> &mut Child {
+        self.players.push(player);
+        self.players
+            .last_mut()
+            .expect("the player just pushed is the last one")
+    }
+
+    /// Blocks until every locally-hosted player process has exited.
+    ///
+    /// With the single seat that exists today this is exactly the old "wait for
+    /// the game window to close": the launcher returns, and `Drop` reaps the
+    /// server behind it.
+    fn wait_for_players(&mut self) -> Result<(), String> {
+        for player in &mut self.players {
+            player
+                .wait()
+                .map_err(|err| format!("Lost track of the game process: {err}"))?;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // Both calls are best-effort: an already-exited server makes `kill`
-        // fail, which is exactly the state we want anyway.
+        // Players before the server: a player outliving the sim it was talking
+        // to would spend its last moments reporting a dropped connection, which
+        // is a confusing thing to show on the way out of a clean quit.
+        //
+        // Every call is best-effort — an already-exited child makes `kill` fail,
+        // which is exactly the state we want anyway — and none may short-circuit
+        // the rest, because a stop halfway down this list is an orphan.
+        for player in &mut self.players {
+            let _ = player.kill();
+            let _ = player.wait();
+        }
         let _ = self.server.kill();
         let _ = self.server.wait();
         remove_ports_file(&self.ports_file);
@@ -487,19 +610,26 @@ mod process_group {
     ///
     /// This is the correctness win over `run.bat`, whose `taskkill` only ran on
     /// the clean exit path: because closing the handle is what triggers the
-    /// kill, and the OS closes every handle of a dying process, the server is
+    /// kill, and the OS closes every handle of a dying process, the members are
     /// reaped even if the launcher is force-killed or crashes. The handle must
     /// therefore stay alive for the launcher's entire run — dropping this value
-    /// early kills the server.
+    /// early kills them.
+    ///
+    /// **Membership is per child and explicit.** The group is created empty and
+    /// each child joins it through [`ProcessGroup::adopt`] right after it is
+    /// spawned, because job membership is not inherited from the launcher: a
+    /// seat's process left out of the group would survive a force-kill of the
+    /// launcher exactly the way the orphaned server used to.
     pub struct ProcessGroup {
         handle: HANDLE,
     }
 
     impl ProcessGroup {
-        pub fn kill_on_close(child: &mut Child) -> Result<Self, String> {
-            // SAFETY: all three calls take either null (default security
-            // attributes / unnamed job) or pointers to locals that outlive the
-            // call, and every result is checked before use.
+        /// Creates the (empty) kill-on-close group.
+        pub fn kill_on_close() -> Result<Self, String> {
+            // SAFETY: both calls take either null (default security attributes /
+            // unnamed job) or pointers to locals that outlive the call, and
+            // every result is checked before use.
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() {
@@ -518,12 +648,22 @@ mod process_group {
                 if ok == 0 {
                     return Err(last_error("configure the process group"));
                 }
-
-                if AssignProcessToJobObject(group.handle, child.as_raw_handle() as HANDLE) == 0 {
-                    return Err(last_error("add the server to the process group"));
-                }
                 Ok(group)
             }
+        }
+
+        /// Adds one running child to the group. `what` names it the way the
+        /// player would ("the server", "the game").
+        pub fn adopt(&self, child: &mut Child, what: &str) -> Result<(), String> {
+            // SAFETY: `handle` is a live job object created above, and the raw
+            // handle belongs to a `Child` the caller still owns, so it outlives
+            // the call.
+            unsafe {
+                if AssignProcessToJobObject(self.handle, child.as_raw_handle() as HANDLE) == 0 {
+                    return Err(last_error(&format!("add {what} to the process group")));
+                }
+            }
+            Ok(())
         }
     }
 
@@ -553,8 +693,12 @@ mod process_group {
     pub struct ProcessGroup;
 
     impl ProcessGroup {
-        pub fn kill_on_close(_child: &mut Child) -> Result<Self, String> {
+        pub fn kill_on_close() -> Result<Self, String> {
             Ok(Self)
+        }
+
+        pub fn adopt(&self, _child: &mut Child, _what: &str) -> Result<(), String> {
+            Ok(())
         }
     }
 }
@@ -633,3 +777,108 @@ fn applescript_escape(value: &str) -> String {
 /// carries the message.
 #[cfg(not(any(windows, target_os = "macos")))]
 fn show_error_dialog(_message: &str) {}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A package layout pointing at names that need not exist: nothing here
+    /// spawns `Layout`'s programs.
+    fn fake_layout() -> Layout {
+        Layout {
+            server: PathBuf::from("server"),
+            client: PathBuf::from("ShadowScaleClient"),
+        }
+    }
+
+    /// The human is a *seat*, not a special case — and the rivals are vacant,
+    /// because there is no player program to fill them with yet (#645). Both
+    /// halves of that sentence are what keeps a single-player launch identical
+    /// to what it has always been.
+    #[test]
+    fn the_only_local_seat_today_is_the_humans_client() {
+        let layout = fake_layout();
+        let seats = local_seats(&layout);
+
+        assert_eq!(seats.len(), 1, "rival seats are left vacant");
+        assert_eq!(seats[0].program, layout.client.as_path());
+    }
+
+    /// The reaping guarantee, exercised on N children rather than argued about:
+    /// a session holding a server and several players kills and waits for every
+    /// one of them, and clears the handshake file.
+    ///
+    /// Unix-only for its stand-in child (`sleep`); the Windows side of the
+    /// guarantee is the job object, which needs a real Windows host to mean
+    /// anything and is not simulated here.
+    #[cfg(unix)]
+    #[test]
+    fn every_child_is_reaped_when_the_session_drops() {
+        /// More than one, because a reap that stops at the first child is
+        /// exactly the regression this guards.
+        const PLAYER_COUNT: usize = 2;
+
+        let ports_file = std::env::temp_dir().join(format!(
+            "{PORTS_FILE_PREFIX}test-{}{PORTS_FILE_EXTENSION}",
+            std::process::id()
+        ));
+        fs::write(&ports_file, "{}").expect("write the stand-in handshake file");
+
+        let mut session = Session::new(spawn_sleeper(), ports_file.clone());
+        let mut pids = vec![session.server().id()];
+        for _ in 0..PLAYER_COUNT {
+            pids.push(session.adopt_player(spawn_sleeper()).id());
+        }
+        assert!(pids.iter().all(|pid| process_is_alive(*pid)));
+
+        drop(session);
+
+        for pid in pids {
+            assert!(!process_is_alive(pid), "child {pid} outlived the session");
+        }
+        assert!(
+            !ports_file.exists(),
+            "the handshake file outlived the session"
+        );
+    }
+
+    /// How long a stand-in child would live if nothing killed it. Long enough
+    /// that one observed alive after the drop could only have survived the
+    /// reap, and long enough that a *missed* kill hangs the test on `wait`
+    /// rather than passing by luck.
+    #[cfg(unix)]
+    const CHILD_LIFETIME_SECS: &str = "600";
+
+    /// A child that stays alive until something kills it.
+    ///
+    /// Every stream is detached: a child that survived a broken reap would
+    /// otherwise hold the test harness's captured output pipe open for its whole
+    /// lifetime, turning a clean assertion failure into a ten-minute hang.
+    #[cfg(unix)]
+    fn spawn_sleeper() -> Child {
+        Command::new("sleep")
+            .arg(CHILD_LIFETIME_SECS)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a stand-in child process")
+    }
+
+    #[cfg(unix)]
+    fn process_is_alive(pid: u32) -> bool {
+        Command::new("ps")
+            .arg("-p")
+            .arg(pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+}
