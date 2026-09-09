@@ -1559,6 +1559,20 @@ pub(crate) fn snapshot_forage_patches(
                 withheld_build = patch.without_build_estimate();
                 &withheld_build
             };
+            // ⛔ **THE FIVE RATE BLOCKS THAT BELONG TO THE GROUND, OFF THE MEMO** — resolved once
+            // here, `None` on a patch carrying a commitment or banked work, which then derives every
+            // one of them live. See `WildGroundQuotes` for what each is and
+            // `forage::patch_is_wild_ground` for why bare ground makes them a property of the *tile*:
+            // with no favored crop the basket seams answer the tile's own mix at every rung, so
+            // nothing about where the patch stands can move them.
+            //
+            // **Resolved AFTER the two redactions above, deliberately.** A row whose improvement the
+            // viewer may not read is built from wild ground, so it takes the memo's route — which is
+            // the same reading, and is what keeps the redaction from being detectable by which route
+            // a number came down. See `as_wild_ground`.
+            let wild = crate::forage::patch_is_wild_ground(patch)
+                .then(|| tile_quotes.wild_ground(patch.tile))
+                .flatten();
             // **The measure both rung quotes below are struck per** — one reading, so the price a
             // compose sheet shows and the bill the patch is handed cannot come from two places.
             let tender_loads = crate::forage::patch_tender_loads(tile_capacity, forage);
@@ -1585,15 +1599,29 @@ pub(crate) fn snapshot_forage_patches(
                 .unwrap_or(NO_RUNG_WIDTH);
             let field_work_cost = ladder
                 .rung(RungKey::PlantField)
-                .build_cost(crate::forage::patch_field_cost_multiplier(
-                    patch,
-                    tile_composition,
-                    flora,
-                    forage,
-                    ladder,
+                .build_cost(wild.map_or_else(
+                    || {
+                        crate::forage::patch_field_cost_multiplier(
+                            patch,
+                            tile_composition,
+                            flora,
+                            forage,
+                            ladder,
+                        )
+                    },
+                    |wild| wild.field_cost_multiplier,
                 ))
                 .unwrap_or(NO_RUNG_WIDTH);
-            let forecast = forage_forecast(
+            // **THE CONVERSION RATE, RESOLVED ONCE FOR THE ROW AND THE FORECAST BOTH.** It is
+            // published as `provisionsPerBiomass` *and* is the rate every ceiling the forecast
+            // composes is struck at, so deriving it in both places evaluated one basket average
+            // twice per patch per turn — see `turn-profiling.md` and
+            // `forage::forage_forecast_at_rate`.
+            let provisions_per_biomass = wild.map_or_else(
+                || patch_provisions_per_biomass(patch, tile_composition, flora, forage),
+                |wild| wild.provisions_per_biomass,
+            );
+            let forecast = forage_forecast_at_rate(
                 patch,
                 tile_composition,
                 forage,
@@ -1611,18 +1639,33 @@ pub(crate) fn snapshot_forage_patches(
                 // per species off this one is `share × biomass`, which is why every entry's standing
                 // biomass ships beside the composition.
                 &crate::components::TakeSelection::EVERYTHING,
+                provisions_per_biomass,
             );
             // **The published basket and every vector aligned with it, resolved together** — see
             // the fields below.
             let basket =
-                patch_composition_info(patch, tile_composition, forage, flora, tile_quotes);
+                patch_composition_info(patch, tile_composition, forage, flora, tile_quotes, wild);
             // **ONE decomposition, two rates struck off it.** `material_per_biomass` and
             // `per_worker_material` differ only in the biomass scalar they are quoted per, so the
             // per-species decomposition beneath them is the same value twice. It was computed twice
-            // — and it is not cheap: `patch_material_yields` allocates the patch's live basket
-            // (`patch_composition`) and then a row per species. See `turn-profiling.md`.
-            let material_yields =
-                crate::forage::patch_material_yields(patch, tile_composition, flora, forage);
+            // — and it is not cheap: it allocates a row per named plant per material, each carrying a
+            // deep copy of that plant's characteristic vector. See `turn-profiling.md`.
+            //
+            // **Borrowed off the memo on bare ground**, which is nearly every patch: the rows are a
+            // property of the tile there, so the row's two rates are struck off the memo's own slice
+            // and no decomposition happens on the turn at all.
+            let material_yields: Cow<[crate::materials_config::MaterialYieldDef]> = wild
+                .map_or_else(
+                    || {
+                        Cow::Owned(crate::forage::patch_material_yields(
+                            patch,
+                            tile_composition,
+                            flora,
+                            forage,
+                        ))
+                    },
+                    |wild| Cow::Borrowed(&wild.material_yields[..]),
+                );
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
@@ -1704,17 +1747,10 @@ pub(crate) fn snapshot_forage_patches(
                 // floor: with `biomass` and `carrying_capacity` the client evaluates
                 // `max(0, B − floor·K) × rate` anywhere on the dial. **No dip term** — since §3.1
                 // the build fraction multiplies the crew's throughput, never the ceiling.
-                provisions_per_biomass: patch_provisions_per_biomass(
-                    patch,
-                    tile_composition,
-                    flora,
-                    forage,
-                ),
-                fodder_per_biomass: patch_fodder_per_biomass(
-                    patch,
-                    tile_composition,
-                    flora,
-                    forage,
+                provisions_per_biomass,
+                fodder_per_biomass: wild.map_or_else(
+                    || patch_fodder_per_biomass(patch, tile_composition, flora, forage),
+                    |wild| wild.fodder_per_biomass,
                 ),
                 // **WHAT A GATHER OF THIS PATCH IS MADE OF** (arc #527) — the material twins of the
                 // two rates above, and the **rung-1** half of the material story: `FloraShareInfo`'s
@@ -2027,12 +2063,18 @@ pub(crate) fn snapshot_forage_patches(
 /// reason the memo exists. A crop the tile's realized basket never named (only reachable through a
 /// `Sow` on bare ground, which reads the *affinity* roster) still has to appear, so it is built from
 /// the roster with no payoffs rather than dropped: a Field must never publish an empty basket.
+///
+/// `wild` is the caller's already-resolved bare-ground memo entry (`None` on a patch carrying a
+/// commitment or banked work) — threaded in rather than re-resolved here so the whole row answers
+/// *"is this bare ground"* exactly once. On bare ground the per-species rate rows come off it, which
+/// is what keeps a wild patch's basket free of any per-turn decomposition at all.
 fn patch_composition_info(
     patch: &ForagePatch,
     tile_composition: &[FloraShare],
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     tile_quotes: &FloraQuoteCache,
+    wild: Option<&WildGroundQuotes>,
 ) -> PublishedBasket {
     // **Every per-entry vector is derived from the SAME list that is published**, so all of them are
     // index-aligned by construction rather than by call sites agreeing about which entries survive
@@ -2044,7 +2086,17 @@ fn patch_composition_info(
     // and two `Vec<MaterialPayoff>` per named plant) that the memo exists to avoid, and then dropped
     // it. Handing back the rows alone makes the copy unspellable rather than merely avoided.
     let aligned = |shares: &[FloraShareInfo]| -> AlignedRows {
-        let rates = crate::forage::patch_species_rates(patch, tile_composition, flora, forage);
+        let rates: Cow<[crate::forage::SpeciesRate]> = wild.map_or_else(
+            || {
+                Cow::Owned(crate::forage::patch_species_rates(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                ))
+            },
+            |wild| Cow::Borrowed(&wild.species_rates[..]),
+        );
         // The rate rows come off `patch_composition` too, so they are the same basket in the same
         // order — but only the *published* entries survive the zero-share filter above, so each row
         // is matched **by key** rather than by position. A plant with no row reads `0`, which is what

@@ -59,8 +59,8 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
-        forage_forecast, patch_composition, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
-        ForageRegistry, NO_FORAGE_SEASON,
+        forage_forecast_at_rate, patch_composition, rung_site_refusal, tile_is_fresh_watered,
+        ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},

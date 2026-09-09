@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/turn_profile.rs"
   - "core_sim/src/snapshot/capture.rs"
+  - "core_sim/src/snapshot/flora_quotes.rs"
   - "core_sim/src/snapshot/mod.rs"
   - "core_sim/src/snapshot/publish.rs"
   - "core_sim/src/network.rs"
@@ -131,6 +132,14 @@ rasters were the thing to attack.
 > memo" below); `readouts.forage_patches` and `assemble` both fell when the flora basket stopped
 > being copied per patch per turn, to **0.355** and **0.067** ("The other half of #410" below). Every
 > other row is current. The **growth column is current for all three** — it is the column to read.
+>
+> **⛔ AND TWO OF THOSE THREE HAVE SINCE GROWN BACK — the growth column was right.** On the branch
+> that measured it, `forage_patches` read **3.485** and `assemble` **0.412**, against
+> `snapshot.build` **5.353**: the section was ~65% of the parent, not 14.5%. That is the *published
+> row getting wider* — #527's materials, the harvest floor's continuous terms and standing upkeep each
+> added per-row derivations — and not a regression of the code #410 optimized. "The bare-ground row is
+> a memo" below is the repair and carries the numbers; **whenever this file's absolutes are more than
+> an arc old, re-measure before quoting them.**
 
 ### One more raster costs 0.028 ms — the block is `O(tiles × rasters)` with a tiny constant
 
@@ -178,6 +187,10 @@ memo-off arm forces every tile to miss, so both arms are the same binary and the
 |---|---|---|
 | `snapshot.build.patches` | 1.367 | **0.131** |
 | `snapshot.build` | 3.107 | **1.891** |
+
+**`snapshot.build`'s absolute in that pair is two arcs stale — it reads 3.97 today**, for the reason
+the growth callout above gives. The `patches` pair is current (0.246 with the bare-ground block added
+to the same fill), and it is the pair this change is measured in.
 
 What is left in `patches` is the `plant:field` **site refusal**, which stays per-turn deliberately:
 `tile_is_fresh_watered` reads a tile's *neighbours'* tags, so its input set is not local to the tile
@@ -235,6 +248,93 @@ yield ceilings for any patch outside a band's reach — and *"what would this gr
 band here"* is exactly the move/stay question the ceilings exist to answer. The remaining per-row
 allocations are the two `&'static str`-sourced `String`s (`ecology_phase`, `sow_site_refusal`,
 ~0.08 ms together); they are recorded here so the next reader has the number rather than the hunch.
+
+### The BARE-GROUND row is a memo too — `WildGroundQuotes`
+
+`readouts.forage_patches` came back as **3.485 ms at 80×52, ~65% of `snapshot.build`**, against the
+**0.355** recorded above. **What grew is the published row, not the code #410 optimized**: #527 put a
+per-species material decomposition on every patch, the harvest floor put continuous per-biomass rate
+terms on it, and standing upkeep put a keeping block on it. At 1,652 ns per patch row over 2,110
+patches, the section was doing ~20 derivations per row per turn.
+
+> #### THE DUPLICATED-DERIVATION READING WAS WRONG, AND THE MEASUREMENT IS THE ONLY REASON WE KNOW
+>
+> The obvious suspect was `forage::patch_composition` — it returns a `Cow` and blends two rung baskets
+> — reached from six seams per row. **Measured, it is 17 ns per row, which is the profiler's own
+> overhead floor**, because it takes `Cow::Borrowed` on a patch with no committed species and
+> **>99% of patches have none**. Threading one derivation down would have bought ~nothing.
+>
+> The method that found the real distribution was a **throwaway per-seam clock accumulator** inside
+> the row (one `Instant` pair per seam per patch, ~15 ns each, so every figure carries that floor and
+> is read net of it), followed by a **ceiling ablation**: hoist the candidate seams to a first-patch
+> `Cell`/leaked-slice cache so they are evaluated once per frame instead of once per row, and measure
+> what the section *could* fall to. The ablation predicted 2.09; the shipped memo lands at 2.04.
+> **A duplicated-derivation hypothesis on this path needs the ablation before the refactor** — the
+> per-row seam list reads like duplication and mostly is not.
+
+**Five values on a patch row reduce to a function of the GROUND the moment the patch is bare**, and
+`forage::patch_is_wild_ground` (no committed species, nothing banked on the ladder) is the seam that
+says so. With no favored crop, `composition_for_rung` returns the tile's own basket at every rung and
+`basket_rate` applies the conversion gain to nothing — so the rate is rung-**independent**,
+`interpolate` over it is the identity, and where the patch stands cannot move any of them:
+
+| the row's value | what it costs live, per patch, net of probe overhead |
+|---|---|
+| `patch_species_rates` (the per-species rate rows, `String` clone + a `BTreeMap` merge each) | ~150 ns |
+| `patch_field_cost_multiplier` (`default_species_for_rung` + a `weeded` basket allocation) | ~130 ns |
+| `patch_material_yields` (a row per species per material, each deep-copying a `BTreeMap<String, f32>` characteristic vector) | ~100 ns |
+| `patch_provisions_per_biomass` | ~68 ns |
+| `patch_fodder_per_biomass` | ~66 ns |
+
+They now ride `FloraQuoteCache` as `WildGroundQuotes`, filled by the same per-tile sweep and under the
+**same invalidation** — the world-level identity plus the per-entry `terrain` / `resource_terrain`
+check — so the bare-ground block gained **no new invalidation surface at all**. The two lists are
+`Arc<[_]>` and the row borrows them for the length of its own construction (`Cow::Borrowed`), on
+half B's rule: a `String`-bearing `Vec` is paid for once per copy.
+
+**The memo derives them by calling the shipped seams against a bare `ForagePatch::new` on the tile** —
+never a wild-only restatement of their arithmetic — which is `wild_payoff`'s and `commit_payoff`'s own
+rule one field over. That is what makes a retune of any of the five move the memo with it, and it is
+why the guard (`the_bare_ground_quotes_are_what_a_bare_patch_derives_live`) asserts against those seams
+rather than against recorded numbers. The gate's own claim is pinned separately
+(`a_committed_or_worked_patch_is_not_bare_ground`), because a gate that is too *wide* is the failure
+mode: it would answer a reweighted basket's row from the ground's block.
+
+**One genuine duplicate did exist and is threaded rather than memoized.** The row publishes
+`provisionsPerBiomass` *and* `forage_forecast` derives the identical value for its own ceilings, so it
+was evaluated twice per row from identical inputs. `forage::forage_forecast_at_rate` takes the rate;
+`forage_forecast` is the thin wrapper that resolves it, so the six callers with no such value in hand
+are untouched and the rate keeps one definition.
+
+Measured 80×52, release, `map_seed` pinned, publisher shut down, `publish_profile`'s interleaved
+grid sweep:
+
+| | before | after |
+|---|---|---|
+| `snapshot.build.forage_patches` | 3.485 | **2.044** |
+| `snapshot.build` | 5.353 | **3.971** |
+| `snapshot.build.assemble` | 0.412 | 0.419 |
+| `run_turn`, publisher **idle** | 6.652 | **5.143** |
+
+**The section's share of `snapshot.build` fell 65.1% → 51.5%**, which is the figure to carry across
+sessions; per patch row, 1,652 → 969 ns. The same ratio holds at 160×104 (14.279 → 9.073), so it is
+not a fixture-size artifact. `snapshot.build.patches` — where the fill now happens — moved 0.226 →
+0.246, i.e. the five extra per-tile derivations cost ~0.02 ms of the *first* frame's sweep and nothing
+after it.
+
+**`assemble` did not move, and that bounds what is left.** It is 0.42 against half B's 0.067, so the
+`Vec`-typed per-species vectors the row publishes (`compositionProvisionsPerBiomass`,
+`compositionMaterialPerBiomass`, `materialPerBiomass`, `perWorkerMaterial` and friends) are being
+deep-copied a second time by the assembly. `Arc`-ing them the way `composition` already is would be
+the next ~0.25 ms, and it is a wire-state type change rather than a capture-local one.
+
+**Byte-identity is how a change on this path is verified, and diffing structures beats diffing a
+hash.** The check that carried this one was a scratch example printing both `hash_snapshot` of a
+pinned-seed frame **and** the `Debug` rendering of `forage_patches` (6.8 MB at 80×52) plus its own
+hash, run against the modified tree and then against `git checkout HEAD --` of the touched files in
+the same working tree. Both hashes matched exactly. `integration_tests/tests/determinism.rs` proves
+run-to-run reproducibility and cannot see a before/after difference, so it is not sufficient on its
+own for a pure-performance change.
 
 ### Write-side change emission addresses 18% of `snapshot.build`
 
