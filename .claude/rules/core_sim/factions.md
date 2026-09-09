@@ -1,6 +1,8 @@
 ---
 paths:
   - "core_sim/src/orders.rs"
+  - "core_sim/src/seats.rs"
+  - "core_sim/tests/seats.rs"
   - "core_sim/src/start_profile.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/src/data/simulation_config.json"
@@ -302,8 +304,12 @@ clamp the server actually applies.
 
 ## Command authorization
 
-Two gates, at two different distances from the player.
+Three gates, at three different distances from the player.
 
+- **The seat, in the dispatcher, before the log.** `seat_authorizes(&SeatRegistry, ConnectionId,
+  &Command)` (`bin/server.rs`) asks *is this connection the claimant of the faction this command
+  names* — see "Seats" below for the model and for why the gate is in `dispatch_connection_command`
+  rather than inside `apply_command`.
 - **Membership, once, at `apply_command`** (`bin/server.rs`). `commanding_faction(&Command)` names
   the faction *issuing* each command — deliberately exhaustive with no `_` arm, so a new verb must
   state whether it is somebody's order or the server's own business. A command whose faction is not
@@ -323,6 +329,114 @@ Two gates, at two different distances from the player.
 **A faction named inside a payload is not a commanding faction and is not gated.** Espionage verbs
 legitimately name another faction as owner or target, and `resolve_shipment` deliberately never asks
 faction at all — a cross-faction trade destination works by construction.
+
+## Seats — a connection claims the faction it drives
+
+> **The sim knows seats. It never knows who fills one.**
+
+A world has N faction seats — the `FactionRegistry` roster above. A seat is **occupied** by whatever
+command-socket connection has claimed it, or **vacant**, and that sentence is the whole model of "who
+is playing" (`docs/plan_multiplayer_seats.md` §1). A human client and an AI process are the same kind
+of thing: a socket, sending commands. `core_sim/src/seats.rs` holds the model;
+`bin/server.rs` wires it.
+
+**None of it is `SimState`.** A save is a world with N seats, and who sat in them is a fact about
+*this process's sockets*. `SeatRegistry` and `SeatTurnGate` are therefore **main-loop locals** beside
+`world_active` and `command_log`, not `Resource`s — which is also why `sim_state_coverage.rs` has no
+row for them and must not gain one.
+
+### A connection has an identity, and the seat names the faction
+
+`spawn_command_listener` mints a fresh opaque `ConnectionId` per **accepted socket**; the command
+channel carries `(ConnectionId, Command)` rather than a bare `Command`. Before that the faction a
+command acted on was whatever the client wrote on the wire, and the only check was "does this faction
+exist" — so any connection could command any faction.
+
+`ConnectionId::INTERNAL` (0) is the **server's own voice** — the config-file watchers and the
+in-process `CommandSenderResource`. The allocator starts at 1, so it can never collide with a socket,
+and it holds no seat, which is exactly right for what it sends: world verbs that name no faction.
+
+**A claim is `CommandPayload::ClaimSeat` (proto field 71) and its answer rides `QueryReplyEnvelope`**
+— the command socket's one way back, the same envelope a save's answer uses. No new port, no second
+socket. The answer carries the connection id back as `seat_token`: the claim is what ties a seat's
+command socket to its stream socket, and the token is what the stream socket presents once frames are
+delivered per seat rather than broadcast.
+
+Three refusals, all in `SeatRegistry::claim` and all reaching the client as a
+`sim_runtime::commands::seat_error` token:
+
+| Token | When |
+|---|---|
+| `unknown_seat` | The faction id is in no seat of this world's roster |
+| `seat_occupied` | Another live connection holds it — **first claim wins**, and there is no takeover because claiming is not authentication |
+| `already_seated` | This connection already holds a seat. One seat per connection, so even re-claiming the seat it already holds is refused rather than silently moved |
+
+A closing connection's read loop delivers `Command::ReleaseSeat` — not a wire payload, so no client
+can free another's seat — which is what makes "occupied" honest: a crashed player process can
+reconnect and claim again. `retain_claimed_seats` drops the claims a world rebuild (`new_game`,
+`reset_map`, a load) leaves naming a faction the new roster does not have.
+
+### The gate refuses; it never rewrites
+
+A faction-bearing command from a connection that does not hold that faction's seat is **refused and
+logged** (`command.rejected=not_this_connections_seat`), never re-addressed to the seat the connection
+actually holds: a silent correction would apply *something* and hide the client bug that sent it (plan
+§4.1 — *"an error, not a hint"*). It follows that a connection which has claimed no seat may send only
+the commands `commanding_faction` answers `None` for.
+
+> ⛔ **The gate is in `dispatch_connection_command`, ahead of `log_dispatched_command` — deliberately
+> not inside `apply_command`.** The dispatcher logs a command *before* it applies it, and
+> `apply_command` is **also the replay path**. A refusal raised inside `apply_command` would leave the
+> refused command sitting in the timeline, where a replay — which has no connections and no seats —
+> would apply it. A command that was refused never happened, so it never enters the log.
+> `commanding_faction` is still the only place a command's faction is read; the gate only asks the
+> registry about the answer.
+
+**Host verbs go the other way.** `Rollback` and `Turn` move the world for *everyone* — the first
+rewinds it (a debug tool with one player, a grief vector with several, plan §4.4) and the second
+resolves it — so a **seated** connection may not send them. "Host" is defined as *holding no seat*:
+the operator channel (the Inspector, the CLI, `ConnectionId::INTERNAL`). That is as much authority as
+this phase can express, claiming being explicitly not authentication, and it buys the property the
+plan asks for — a *player* cannot rewind the world the other players are in.
+
+After a rollback the world is behind every occupant's memory and plans. The full frame
+`handle_rollback` publishes **is** the `Command::Resync` answer; what the seat protocol adds is naming
+who it was for (`rollback.resync_delivered`, one line per claimant), because delivery is still one
+broadcast to every stream client.
+
+### Waiting is the default; auto-submit is the timeout
+
+`TurnQueue` awaits every registered faction, control-blind, and needs no seat knowledge. The seat
+model decides *which of those the live loop waits for*, in `SeatTurnGate::assess`:
+
+- **A vacant seat never holds the turn.** It is not in the wait set, and the resolve auto-submits it.
+  That is what makes a single-human game with N vacant rivals behave exactly as it always has.
+- **The turn is only in flight once an occupied seat has submitted.** Without that precondition a
+  connected client that never sent orders would find the server resolving turns underneath it every
+  `seat_turn_timeout_seconds`, and a server with no seat claimed would resolve them in a hot loop.
+  *"Somebody is waiting"* is the whole justification for a timeout, so it is also its precondition.
+- **An occupied seat still silent when the wait runs out is auto-submitted** and the turn resolves
+  without it — one mechanism for a wedged AI process and for a human who walked away (plan §4.2). The
+  deadline is per turn, measured once from the first occupied seat's submission, so a later command in
+  the same turn does not push it out.
+
+The main loop blocks on `recv_deadline` when a wait is armed and on plain `recv` when it is not, so an
+idle server is still idle.
+
+> ⛔ **THE TIMEOUT IS A LIVE-PATH SCHEDULING DECISION AND NEVER A RULE INSIDE THE RESOLVE.**
+> `resolve_turn_with_auto_orders` keeps its **unconditional** force-submit because `LogEntry::Turn`
+> re-enters it on replay. A real seat's submission is a logged `Command::Orders`, so a replay finds
+> that faction already submitted and the force-submit catches exactly the seats the original run
+> auto-submitted — the vacant ones and the ones that timed out. **Replay is correct by construction
+> rather than by reproducing a timer**, and nothing on the replay path consults a clock. Auto-submitted
+> orders are deliberately *not* logged: a synthetic `Orders` entry would be a second copy of the same
+> fact, free to disagree with it.
+
+**`handle_order_submission` does not resolve the turn.** It used to, which put a resolution inside
+`apply_command` — the replay path — so that turn carried no `LogEntry::Turn` and
+`CommandLog::prefix_len_for`, which counts those to find "the world at tick N", could not see it: a
+rollback to that tick reported it out of reach. `resolve_and_log_turn` is now the one place the live
+path resolves and logs, and both the host's `Turn` and a seat-driven resolution go through it.
 
 ## Every faction gets land, people and an opening
 
@@ -754,6 +868,7 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 | File | Key | Default | Purpose |
 |---|---|---|---|
 | `src/data/simulation_config.json` | `default_ai_faction_count` | **`null`** | **The pin on the AI count, or `null` for "derive it".** `null` is not `0` — the same distinction the optional `new_game` wire field draws. Unpinned (shipped): the New Game screen pre-selects a share of what the chosen grid seats, and an **unattended** boot takes **no rivals**, because the AI that would drive one does not exist yet and a faction nobody asked for would sit and pass. Pinned to `n`: **both** become `n` — the escape hatch a headless run, a test or a designer uses to boot with rivals without touching the UI. Counts **rivals, not the roster**: 0 is the single-faction world, 2 is three peoples. Clamped by the ceiling above, never refused |
+| `src/data/simulation_config.json` | `seat_turn_timeout_seconds` | **120.0** s | **How long an open turn waits for an OCCUPIED seat that has gone silent** before the server submits `end_turn` for it and resolves. A wedge-breaker, not a chess clock: a turn is legitimately minutes of a human's thinking, so a snug value would end turns players were still taking, and the cost of being generous is that one genuinely dead process holds the others up once, for this long. A **vacant** seat is never waited for, so this has no effect on a single-human game. Read from the live config on every decision, so a hot reload moves it; validated positive and finite at parse (`NonPositiveSeatTurnTimeout`), because 0 would auto-submit for a live player the instant anyone else was ready — not a short wait but no waiting at all |
 | `src/data/simulation_config.json` | `faction_start_min_separation` | **20** tiles | How far apart worldgen tries to put two factions' start tiles — a quarter of the shipped map's width, far enough that two peoples do not open sharing one food shed. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes and warns rather than failing to place a faction. Validated `> 0` at parse (`ZeroFactionStartMinSeparation`), because zero would let two peoples open on the same hex |
 
 ## Saves win over profile edits

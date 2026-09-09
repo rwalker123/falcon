@@ -93,6 +93,10 @@ pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
 /// directions use this one kind: the ask carries `width`/`height`, the answer carries
 /// `default_ai_faction_count` and `max_ai_faction_count`.
 pub(crate) const QUERY_KIND_FACTION_CAPACITY: &str = "faction_capacity";
+/// **The seat claim's answer kind** — *"do I drive this faction?"*. A `ClaimSeatCommand` is a command
+/// that answers on this envelope, exactly as the save verbs do; only the ANSWER direction is decoded
+/// here, because nothing in the client sends a claim yet.
+pub(crate) const QUERY_KIND_SEAT_CLAIM: &str = "seat_claim";
 
 /// **The transport's OWN failure token**, and it is deliberately in the same vocabulary as the
 /// server's `query_error` tokens rather than a free-text string: the seam renders one failure line
@@ -455,6 +459,17 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
                 "max_ai_faction_count",
                 i64::from(reply.max_ai_faction_count),
             );
+        }
+        // Shaped like `save_op`'s: a command's answer riding the query channel, with `ok` from the
+        // reply itself and the server's refusal token (`sim_runtime::commands::seat_error`) in
+        // `error`. `seat_token` is the connection id the STREAM socket will present once frames are
+        // delivered per seat.
+        Ok(QueryReply::SeatClaim(reply)) => {
+            let _ = dict.insert("ok", reply.ok);
+            let _ = dict.insert("kind", QUERY_KIND_SEAT_CLAIM);
+            let _ = dict.insert("faction_id", i64::from(reply.faction_id));
+            let _ = dict.insert("error", reply.error.as_str());
+            let _ = dict.insert("seat_token", reply.seat_token as i64);
         }
         Ok(QueryReply::Error(reason)) => {
             let _ = dict.insert("ok", false);

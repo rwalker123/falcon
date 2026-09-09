@@ -577,6 +577,20 @@ pub enum CommandPayload {
         kits: Vec<StartingKitAllocation>,
         materials: Vec<StartingMaterialAllocation>,
     },
+    /// **A connection says which faction seat it drives.** Proto field 71, and the one payload here
+    /// that is about the *connection* rather than about the world.
+    ///
+    /// After it, the server takes the faction of every command from the **seat** and refuses one
+    /// whose wire `faction_id` disagrees — an error, never a hint. A connection that has claimed no
+    /// seat may send only the payloads that name no faction at all.
+    ///
+    /// Answered with a [`QueryReply::SeatClaim`], because a client that cannot tell whether it holds
+    /// the seat cannot know whether its orders will be obeyed. Not replayable and never logged: a
+    /// claim mutates no world.
+    ClaimSeat {
+        request_id: u64,
+        faction_id: u32,
+    },
 }
 
 /// One line of the kit half of an opening loadout: `count` of an `equipment.json` roster kit. Every
@@ -726,6 +740,52 @@ pub enum QueryReply {
     /// The answer to a save, load or delete. Those are commands rather than queries; they ride this
     /// envelope because it is the socket's one way back, not because they are questions.
     SaveOp(SaveOpReply),
+    /// The answer to a seat claim — a command too, riding here for the same reason.
+    SeatClaim(SeatClaimReply),
+}
+
+/// **Whether this connection now drives that faction.**
+///
+/// A refusal carries a [`seat_error`] token and changes nothing: the connection keeps whatever seat
+/// it already held (which for `ALREADY_SEATED` is the point of the refusal).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SeatClaimReply {
+    pub ok: bool,
+    /// Echoed, so a client can assert the answer is about the seat it asked for.
+    pub faction_id: u32,
+    /// A machine-readable snake_case token when `ok` is false ([`seat_error`]); the client owns the
+    /// prose.
+    pub error: String,
+    /// **The connection's own id, handed back as the token its STREAM socket presents**, so the two
+    /// sockets of one seat can be correlated. [`NO_SEAT_TOKEN`] on a refusal. Nothing reads it while
+    /// frames are broadcast rather than delivered per seat.
+    pub seat_token: u64,
+}
+
+/// **What a refused claim carries instead of a token.** The proto default, and therefore the one
+/// value a client can safely read as *"you were given nothing"*.
+pub const NO_SEAT_TOKEN: u64 = 0;
+
+impl SeatClaimReply {
+    /// The seat is this connection's.
+    pub fn granted(faction_id: u32, seat_token: u64) -> Self {
+        Self {
+            ok: true,
+            faction_id,
+            error: String::new(),
+            seat_token,
+        }
+    }
+
+    /// It is not, and `error` is one of [`seat_error`]'s tokens.
+    pub fn refused(faction_id: u32, error: &str) -> Self {
+        Self {
+            ok: false,
+            faction_id,
+            error: error.to_string(),
+            seat_token: NO_SEAT_TOKEN,
+        }
+    }
 }
 
 /// One row of the save-slot list. Every field comes out of the save's header.
@@ -801,6 +861,21 @@ pub mod save_error {
     /// The bytes on disk are not a save this build can read — wrong magic, wrong format version, or
     /// a payload that would not decode.
     pub const UNREADABLE: &str = "unreadable";
+}
+
+/// **The refusal tokens a [`SeatClaimReply::error`] can carry.** Named constants for the same
+/// reason [`save_error`] and [`query_error`] are: the client's match arms and the server's answers
+/// cannot drift apart.
+pub mod seat_error {
+    /// The requested faction id is in no seat of this world's roster — including on an idle server,
+    /// whose roster is whatever `FactionRegistry` was seeded with before a world exists.
+    pub const UNKNOWN_SEAT: &str = "unknown_seat";
+    /// Another live connection already holds that seat. First claim wins; this is not a takeover
+    /// mechanism, and there is no credential that would make one safe.
+    pub const SEAT_OCCUPIED: &str = "seat_occupied";
+    /// This connection already holds a seat. One seat per connection, so a second claim — even for
+    /// the seat it already holds — is refused rather than silently moving it.
+    pub const ALREADY_SEATED: &str = "already_seated";
 }
 
 /// **The refusal tokens a [`QueryReply::Error`] can carry.** Named constants rather than literals at
@@ -1901,6 +1976,13 @@ impl CommandEnvelope {
                     }),
                 })
             }
+            CommandPayload::ClaimSeat {
+                request_id,
+                faction_id,
+            } => pb::command_envelope::Command::ClaimSeat(pb::ClaimSeatCommand {
+                request_id: *request_id,
+                faction_id: *faction_id,
+            }),
         });
 
         pb::CommandEnvelope {
@@ -2199,6 +2281,10 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
                 fraction: cmd.fraction,
+            },
+            pb::command_envelope::Command::ClaimSeat(cmd) => CommandPayload::ClaimSeat {
+                request_id: cmd.request_id,
+                faction_id: cmd.faction_id,
             },
             pb::command_envelope::Command::AnswerFork(cmd) => CommandPayload::AnswerFork {
                 faction_id: cmd.faction_id,
@@ -2511,6 +2597,14 @@ impl QueryReplyEnvelope {
             QueryReply::SaveOp(reply) => {
                 pb::query_reply_envelope::Reply::SaveOp(save_op_reply_to_proto(reply))
             }
+            QueryReply::SeatClaim(reply) => {
+                pb::query_reply_envelope::Reply::SeatClaim(pb::ClaimSeatReply {
+                    ok: reply.ok,
+                    faction_id: reply.faction_id,
+                    error: reply.error.clone(),
+                    seat_token: reply.seat_token,
+                })
+            }
             QueryReply::FactionCapacity(reply) => {
                 pb::query_reply_envelope::Reply::FactionCapacity(pb::FactionCapacityReply {
                     default_ai_faction_count: reply.default_ai_faction_count,
@@ -2579,6 +2673,14 @@ impl QueryReplyEnvelope {
             ),
             pb::query_reply_envelope::Reply::SaveOp(reply) => {
                 QueryReply::SaveOp(save_op_reply_from_proto(reply))
+            }
+            pb::query_reply_envelope::Reply::SeatClaim(reply) => {
+                QueryReply::SeatClaim(SeatClaimReply {
+                    ok: reply.ok,
+                    faction_id: reply.faction_id,
+                    error: reply.error,
+                    seat_token: reply.seat_token,
+                })
             }
             pb::query_reply_envelope::Reply::FactionCapacity(reply) => {
                 QueryReply::FactionCapacity(FactionCapacityReply {
@@ -2903,6 +3005,54 @@ mod tests {
             assert_eq!(
                 CommandEnvelope::decode(&bytes).expect("decode").payload,
                 payload
+            );
+        }
+    }
+
+    /// **A seat claim and its answer both survive the wire.**
+    ///
+    /// Asserted on the encoded frame in both directions because the claim is the ONE handshake that
+    /// decides which faction a connection may command: a `faction_id` that did not survive would
+    /// seat the connection somewhere else, and a refusal token that did not survive would read as a
+    /// claim that succeeded.
+    #[test]
+    fn a_seat_claim_and_its_answer_round_trip_through_the_wire() {
+        let payload = CommandPayload::ClaimSeat {
+            request_id: 71,
+            faction_id: 1,
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            payload
+        );
+
+        for reply in [
+            QueryReply::SeatClaim(SeatClaimReply {
+                ok: true,
+                faction_id: 1,
+                error: String::new(),
+                seat_token: 4,
+            }),
+            QueryReply::SeatClaim(SeatClaimReply {
+                ok: false,
+                faction_id: 1,
+                error: seat_error::SEAT_OCCUPIED.to_string(),
+                seat_token: 0,
+            }),
+        ] {
+            let answer = QueryReplyEnvelope {
+                request_id: 71,
+                reply,
+            };
+            let bytes = answer.encode_to_vec().expect("the reply encodes");
+            assert_eq!(
+                QueryReplyEnvelope::decode(&bytes).expect("the reply decodes"),
+                answer
             );
         }
     }

@@ -71,6 +71,7 @@ pub mod routes;
 pub mod save;
 pub mod save_store;
 mod scalar;
+pub mod seats;
 mod sedentarization;
 mod sedentarization_config;
 mod settlement_stage_config;
@@ -410,6 +411,10 @@ pub use resources::{
     TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
+pub use seats::{
+    ConnectionId, ConnectionIdAllocator, SeatClaimRefusal, SeatRegistry, SeatTurnGate,
+    SeatTurnLimits, TurnWait,
+};
 pub use snapshot::{
     command_events_to_state, publish_baseline_snapshot, recapture_snapshot_in_place, FrameSink,
     SnapshotHistory, StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
