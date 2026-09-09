@@ -85,7 +85,9 @@ it is — `HudLayer` itself is none of them:**
 - **All-`static`, stateless shared layers** — `SourceForecast`, `HudWidgets`, `HudFormat`,
   `DetailFormat`. New shared math/format/widget code goes here, with state threaded in as
   PARAMETERS (never a `_hud` back-ref).
-- **Vocab modules** (`class_name`d, ALL-`const`, zero funcs/vars) — `HudConst` +
+- **Vocab modules** (`class_name`d, zero vars — `const` leaves apart from a few stateless
+  `static func`s, e.g. `HudConst.is_player_unit`, whose bodies are evaluated on CALL so the leaf
+  stays cycle-safe) — `HudConst` +
   `Hud{Work,Compose,Flora,Expedition,Attention,Selection,Disclosure}Vocab`. **A new label / glyph /
   threshold goes in the matching vocab module — NEVER as a fresh `const` on `HudLayer`.** That block
   WAS the merge-conflict surface the whole arc removed; regrowing it re-creates the problem.
