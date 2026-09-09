@@ -1550,6 +1550,21 @@ func floor_for_forage(band: Dictionary, x: int, y: int) -> float:
 		return DEFAULT_HARVEST_FLOOR
 	return SourceForecast.clamp_floor(float(assignment["floor"]))
 
+## …and the DEPOSIT twin: the floor of the band's existing `extract` row on ONE working, else the
+## default. Keyed through the `(tile, material)` pair for `extract_assignment_of`'s reason.
+##
+## ⛔ **A REOPENED SHEET SEEDS FROM THE ASSIGNMENT, NEVER FROM `DepositState.floor`** — the crop
+## seeding rule one section over, and for its reason. That wire field is the SOURCE's reading, kept at
+## the deepest floor any band cutting the working named, so seeding a dial from it silently adopts
+## another band's order; and on a working nobody has opened it is `0`, which is *strip it bare* — the
+## one value that must never be reached by accident. The assignment is the record of what THIS band
+## asked for, and its absence is exactly when the default is the right answer.
+func floor_for_extract(band: Dictionary, x: int, y: int, material: String) -> float:
+	var assignment := extract_assignment_of(band, x, y, material)
+	if not assignment.has("floor"):
+		return DEFAULT_HARVEST_FLOOR
+	return SourceForecast.clamp_floor(float(assignment["floor"]))
+
 ## **THE SECOND AXIS** (issue #442) — what the band's existing hunt on `herd_id` is BUILDING, or
 ## `IMPROVEMENT_NONE` when it builds nothing. Validated against the animal ladder so a mis-spelled or
 ## cross-web value reads as "building nothing" rather than driving a control the source cannot offer.

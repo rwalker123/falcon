@@ -453,11 +453,16 @@ func _drive_assign_labor_kits() -> void:
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
 	# **THE FOURTH GRAMMAR — the deposit branches' take row** (arc #583).
-	# `assign_labor <f> <b> extract <x> <y> <material> <n>`, where the MATERIAL rides the `species`
-	# token and is not optional: one tile can hold two workings, so a line naming only the tile names
-	# neither of them. It carries no kit — `default_kits.extract` is the bare `none` kit and the
-	# working card mounts no picker — so the tail is closed and this is the exact line the card's
-	# stepper emits.
+	# `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, where the MATERIAL rides the
+	# `species` token and is not optional: one tile can hold two workings, so a line naming only the
+	# tile names neither of them.
+	#
+	# **THE FLOOR ARRIVED WITH THE ESCAPEMENT DIAL** (issue #650) and rides forage's own position after
+	# the material, a validated NUMBER the retired stance words are refused by name against. The client
+	# sends it on BOTH branches — a finite seam has no dial, so it sends the sheet's default, which is
+	# what an omitted token resolves to sim-side. It still carries no kit (`default_kits.extract` is
+	# the bare `none` kit and the working card mounts no picker), so the tail is closed after the
+	# worker count and this is the exact line the sheet's commit emits.
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
@@ -952,7 +957,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## map's quick-hunt, hunt + forage with a `kit <id>` tail, and the deposit branches' `extract`.
 ##
 ## ⛔ **`extract` IS A TARGETED GRAMMAR AND NOT A ROLE, so the sweep below cannot reach it** — it names
-## a tile AND a material, where every role in that list takes a bare worker count. It is driven here
+## a tile, a material AND a floor, where every role in that list takes a bare worker count. It is driven here
 ## for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
 const ASSIGN_LABOR_GRAMMAR_DRIVES := 4

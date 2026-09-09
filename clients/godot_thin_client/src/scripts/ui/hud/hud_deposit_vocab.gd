@@ -21,14 +21,20 @@ class_name HudDepositVocab
 ## and only one of them runs out. `renews()` below is that fork, it is the ONLY fork, and it lives
 ## inside `deposit_row_value` so the card and the roster cannot answer it two ways.
 ##
+## ⛔ **AND IT IS THE FORK THE ESCAPEMENT DIAL IS OFFERED ON TOO** (issue #650). The sim carries a
+## floor on every `extract` row and deliberately does not fork; the client does, here and nowhere
+## else, because rock does not come back and *leave half the seam* on a quarry means never getting
+## half the seam.
+##
 ## ⛔ **NOTHING HERE RE-DERIVES A NUMBER THE SIM ALREADY ANSWERED.** The bill, its shortfall, the
 ## keeper count, the neglect countdown, the runway and the sustainable take are all published fields;
 ## the composers read them and nothing else. `HudRouteVocab`'s rule one branch over, and it is the
 ## same rule for the same reason.
 ##
-## It reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudStyle`
-## **inside functions only, never in a `const`** — the vocab modules' shared contract, so this leaf
-## adds no load cycle.
+## It reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudLoadoutVocab` /
+## `HudComposeVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` **inside functions only,
+## never in a `const`** — the vocab modules' shared contract, so this leaf adds no load cycle even
+## where the reference points back at a module that reads THIS one (`RungGates` does).
 
 # ---- THE FIVE RUNGS --------------------------------------------------------------------------
 #
@@ -160,6 +166,89 @@ static func regrowth_rate_of(deposit: Dictionary) -> float:
 ## it were a bill met.
 static func renews(deposit: Dictionary) -> bool:
 	return regrowth_rate_of(deposit) > REGROWTH_NEVER_RENEWS
+
+# ---- THE ESCAPEMENT FLOOR (issue #650) ---------------------------------------------------------
+
+## **THE RUNG'S OWN FLOOR, AS A FRACTION OF CAPACITY** — `1 − recovery_fraction`, the part of the seam
+## this rung's reach cannot get at. `extraction:gathering` recovers 0.15, so it strands 85% of a rock
+## body and this reads `0.85`; every FORESTRY rung recovers 1.0, so this reads `0` on all three.
+##
+## ⛔ **IT IS COMPOSED WITH THE PLAYER'S FLOOR AS A MAXIMUM AND NEVER AS A SUM** — see
+## `composed_floor`, which is the only place in this client the pair is put together.
+static func rung_floor_fraction_of(deposit: Dictionary) -> float:
+	return clampf(float(deposit.get("rung_floor_fraction", FLOOR_NONE)),
+		SourceForecast.FLOOR_MIN, SourceForecast.FLOOR_MAX)
+
+## **WHAT ONE CUTTER MOVES IN A TURN AT THE RUNG THIS WORKING HOLDS**, in the material's own units —
+## the deposit twin of `ForagePatchState.perWorkerBiomass`, and it is READ rather than transcribed off
+## the catalog for `build_work_per_worker_turn`'s reason: the sim writes worker output as a sum of
+## terms, so a client copy goes stale in silence the day a second one lands.
+##
+## **Never `0` on a live rung** — there is no seasonal weight and no TAKE kit on either deposit
+## branch, so it is the rung's rate flat. A `0` is a client that has not been sent a row, which every
+## quotient here guards on (`SourceForecast.can_price_crew`).
+static func per_worker_biomass_of(deposit: Dictionary) -> float:
+	return maxf(0.0, float(deposit.get("per_worker_biomass", 0.0)))
+
+## **THIS WORKING'S OWN GROWTH CURVE**, sampled across its capacity on the same implicit x-axis the
+## patch and herd curves use. **A quarry's are ALL ZERO — a live reading, not a missing one** — and an
+## EMPTY vector is the different claim *no curve was sent*; `SourceForecast.has_growth_curve` answers
+## `false` for both, which is why the dial forks on `renews()` and never on the curve.
+## **THE COERCION IS THE SHARED ONE** (`SourceForecast.regrowth_samples`), so a wire
+## `PackedFloat32Array` and a harness's plain `Array` of floats are one reading here exactly as they
+## are on a patch — a second acceptance rule is how a fixture comes to exercise a code path the
+## decoder cannot reach.
+static func regrowth_samples_of(deposit: Dictionary) -> PackedFloat32Array:
+	return SourceForecast.regrowth_samples(deposit, HudComposeVocab.BARE_FORECAST_PREFIX)
+
+## **THE FLOOR NEITHER HALF STATES** — the identity of the max below, and what a rung reaching the
+## whole seam publishes for its own floor. Named because it is the composition's identity rather than
+## a "no value" sentinel: a forestry rung really does reach everything.
+const FLOOR_NONE := 0.0
+
+## ⛔ **THE ONE COMPOSITION OF THE TWO FLOORS, AND IT IS A MAXIMUM.** `max(rung floor, the crew's own)`
+## — the sim's `extraction::deposit_effective_floor`, transcribed once here so the projection, the
+## crew targets, the take, the cap and every sentence beside them are read at ONE number.
+##
+## ⛔ **NEVER A SUM AND NEVER TWO CLAMPS.** Both are the same kind of quantity — an amount left
+## standing — so a crew stops at whichever is greater; added, they double-count on every rung and a
+## gathering crew is drawn stopping 85% of a seam short of where it really stops.
+##
+## ⛔ **AND THE ARGUMENT IS THE CREW'S FLOOR, NOT `DepositState.floor`.** That field is the SOURCE's
+## reading — the deepest floor any band cutting it named last turn — so composing this sheet from it
+## would price one band's composition against another band's order. The sheet's own dial is seeded
+## from the band's `extract` row (`HudBandLaborState.floor_for_extract`).
+static func composed_floor(deposit: Dictionary, floor: float) -> float:
+	return maxf(rung_floor_fraction_of(deposit), SourceForecast.clamp_floor(floor))
+
+## **THE WORKING AS `SourceForecast` READS A SOURCE** — the deposit's own fields under the forecast
+## key vocabulary, so the chart, the projection, the two crew targets and the verdict are the SHARED
+## composers rather than deposit copies of them. The prefix is the bare one (`""`), a herd's, because
+## a working publishes its terms unprefixed exactly as a herd row does.
+##
+## **WHAT IT DELIBERATELY DOES NOT CARRY**: no `body_mass` (nothing is quantised here), no engagement
+## and no retreat (nothing is hunted), no ecology phase and no phase cuts — the sim publishes none for
+## a deposit, and `phase_zones` answers `[]` for a source stating none, which the chart already
+## tolerates. Every one of those absences reads as the neutral arm of the shared composer.
+static func forecast_source(deposit: Dictionary) -> Dictionary:
+	return {
+		SourceForecast.FORECAST_BIOMASS_KEY: stock_of(deposit),
+		SourceForecast.FORECAST_CAPACITY_KEY: capacity_of(deposit),
+		SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: per_worker_biomass_of(deposit),
+		SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY: regrowth_samples_of(deposit),
+	}
+
+## **THE ROOM A CREW ACTUALLY HAS NEXT TURN, AT A COMPOSED FLOOR** — this turn's growth first, then
+## what stands above the floor, through the SAME `escapement_room_next_turn` both food webs use. It is
+## what the take, the max-useful cap and the readout are all measured against, so none of them can be
+## composed at a different point on the dial.
+##
+## **ON A FINITE WORKING IT REPRODUCES `reachable` EXACTLY**, by arithmetic rather than by a branch:
+## rock's curve is all zeros, so the growth term is nothing and the room is `stock − rung floor ×
+## capacity`, which is the sim's own `deposit_reachable` at a crew that named no floor.
+static func room_next_turn(deposit: Dictionary, floor: float) -> float:
+	return SourceForecast.escapement_room_next_turn(forecast_source(deposit),
+		HudComposeVocab.BARE_FORECAST_PREFIX, composed_floor(deposit, floor))
 
 ## The rung this working HOLDS.
 static func rung_of(deposit: Dictionary) -> String:
@@ -1088,6 +1177,35 @@ static func offer_label(entry: Dictionary, branch: String) -> String:
 		return ""
 	return DEPOSIT_OFFER_LABEL_FORMAT % [verb.capitalize(), noun]
 
+# ---- WHAT STANDING ON THIS RUNG TEACHES (issue #650) --------------------------------------------
+#
+# The floor's own payoff, and the deposit branches read it off the CATALOG rather than off a keyed
+# table: `earns_knowledge` is config, so a rung added to `intensification_ladder.json` teaches its
+# lesson on this sheet with no client edit. `SourceForecast.RUNG_LESSONS` is the food webs' table and
+# is deliberately not widened — it keys on an improvement ladder neither deposit branch has.
+
+## The lesson the rung this working STANDS on teaches, named from the ladder's own knowledge roster —
+## the same `{id: label}` map the craft gate takes its word from. `""` where the rung teaches nothing
+## (the top of the extraction branch) or the roster carries no name for it yet, which the caller
+## renders as no teaching line rather than as a blank one.
+static func standing_lesson(deposit: Dictionary, ladder: Array[Dictionary],
+		labels: Dictionary) -> String:
+	var earns := catalog_earns_knowledge(ladder_entry_of(ladder, rung_of(deposit)))
+	if earns == RUNG_CATALOG_NONE:
+		return ""
+	return String(labels.get(earns, "")).strip_edges().to_lower()
+
+## …and whether the faction has already finished it, which is what stops the aside teaching a craft
+## the player learned twenty turns ago. The track key IS `earns_knowledge` — a deposit rung's
+## knowledge joins straight to `LadderKnowledgeState.knowledgeId`, so there is no rung→track table
+## here for a second spelling to drift into.
+static func standing_lesson_known(deposit: Dictionary, ladder: Array[Dictionary],
+		knowledge: Dictionary) -> bool:
+	var earns := catalog_earns_knowledge(ladder_entry_of(ladder, rung_of(deposit)))
+	if earns == RUNG_CATALOG_NONE:
+		return true
+	return RungGates.track(knowledge, earns) >= HudConst.KNOWLEDGE_COMPLETE
+
 # ---- THE READOUT BOX ---------------------------------------------------------------------------
 
 ## `ONCE QUARRIED` — the deal row's label, in the readout's own small-print register: the rung's own
@@ -1133,6 +1251,70 @@ static func deal_value(entry: Dictionary, deposit: Dictionary, crew: int) -> Str
 		DetailFormat.format_trimmed(rate * float(crew), CARD_STOCK_DECIMALS),
 		material_of(deposit)]
 
+# ---- WHAT THIS BAND'S CREW WILL CUT, off the ASSIGNMENT and never off the working ---------------
+#
+# ⛔ **`actual_take` IS WRITTEN AT TURN RESOLUTION AND AT NO OTHER TIME**, so a crew the player put on
+# a working THIS turn reads `0` there — `Cutting 0 a turn` and *nobody is cutting it*, directly under
+# a headline stating the rate the same press just committed to. The sim **declined to seed** it and
+# the reasoning is sound (`.claude/rules/core_sim/extraction.md`): it is a `+=` accumulator across
+# bands, so an assign-time write doubles under a re-assign and clobbers under a second band, both
+# silently — and it is the denominator of `turns_remaining` and half the over-cut pair, so seeding it
+# would put a projection on both published readouts.
+#
+# **So the three states are told apart from the ASSIGNMENT ROW, whose terms are all on the wire**:
+# `workers` says whether there is a crew at all, and the SEEDED `material_yield` says the rate that
+# crew will cut at (`core_sim/src/bin/server.rs` → `seed_source_yield`, whose `Extract` arm writes the
+# working's own take through the very seam the turn takes). The runway is then `reachable ÷ that
+# rate` — linear and exact, the same division the sim makes.
+#
+# | state | how it reads |
+# |---|---|
+# | **nobody assigned** | the wire's `RUNWAY_NO_TAKE` sentence — *not being worked* |
+# | **assigned, nothing cut yet** | the FORECAST — this crew's rate, and the runway at it |
+# | **cut last turn** | the realized figure, `actual_take` and the published runway |
+
+## The crew on this band's own `extract` row — `CUTTERS_NONE` for a working it does not hold, which is
+## the first of the three states above.
+static func assigned_cutters(assignment: Dictionary) -> int:
+	return maxi(int(assignment.get("workers", CUTTERS_NONE)), CUTTERS_NONE)
+
+## …and the rate that row will cut at, out of its `material_yield` vector — `TAKE_NONE` where the row
+## states none, which is a crew of zero or a take the seed resolved to nothing.
+##
+## ⛔ **THE MATERIAL IS MATCHED, NEVER SUMMED.** An `extract` row pays exactly one material by
+## construction, but the vector is the shared `MaterialPayoff` shape and a sum would be the first
+## place a second entry became a bigger take rather than a wrong row.
+static func assigned_take(assignment: Dictionary, material: String) -> float:
+	for row_variant in assignment.get("material_yield", []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(SourceForecast.MATERIAL_PAYOFF_ID_KEY, "")) == material:
+			return maxf(0.0, float(row.get(SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY, TAKE_NONE)))
+	return TAKE_NONE
+
+## **THE TAKE A SURFACE SHOULD STATE — the realized figure where there is one, else this crew's
+## forecast.** `actual_take` leads because a resolved turn is a fact and a forecast is a promise; the
+## seeded rate is what stands in for it during the one frame between the press and the turn.
+static func stated_take(deposit: Dictionary, assignment: Dictionary) -> float:
+	var actual := actual_take_of(deposit)
+	if actual > TAKE_NONE:
+		return actual
+	return assigned_take(assignment, material_of(deposit))
+
+## **THE RUNWAY THIS SURFACE SHOULD STATE**, honouring all three states. The published
+## `turns_remaining` leads — it is the sim's own forward projection off a resolved take — and where
+## that is `RUNWAY_NO_TAKE` the assignment answers instead: a crew with a rate gets `reachable ÷ rate`
+## floored, and a working with no crew keeps the sentinel and its own sentence.
+static func stated_runway(deposit: Dictionary, assignment: Dictionary) -> int:
+	var published := turns_remaining_of(deposit)
+	if published != RUNWAY_NO_TAKE:
+		return published
+	var rate := assigned_take(assignment, material_of(deposit))
+	if assigned_cutters(assignment) <= CUTTERS_NONE or rate <= TAKE_NONE:
+		return RUNWAY_NO_TAKE
+	return int(floor(reachable_of(deposit) / rate))
+
 ## ⛔ **THE SENTENCE THE WHOLE BRANCH TURNS ON, ON A FINITE SEAM** — `Gathering reaches 330 of 2,200. A
 ## quarry would reach 1,870.` Composed from the CATALOG's `recovery_fraction` and the working's own
 ## `capacity`, never from `reachable / capacity`: that ratio clamps to the stock, so it would fall as
@@ -1149,12 +1331,17 @@ const DEPOSIT_VERDICT_WITHIN_FORMAT := "Cutting %s a turn, inside the %s that gr
 ## ⛔ **THE FORK IS `regrowth_rate > 0`, NEVER THE BRANCH** — `renews()`, the one fork, so a renewing
 ## flint scatter and a quarry of the same branch read differently and neither borrows the other's
 ## sentence.
-static func deposit_verdict(deposit: Dictionary, ladder: Array[Dictionary]) -> Dictionary:
+## **`assignment` IS THIS BAND'S `extract` ROW**, threaded in so a crew committed this turn reads its
+## forecast rather than the `0` the working publishes until the turn resolves — see the three-state
+## table above. `{}` is a working no band holds, which keeps the wire's own reading.
+static func deposit_verdict(deposit: Dictionary, ladder: Array[Dictionary],
+		assignment: Dictionary = {}) -> Dictionary:
 	if renews(deposit):
-		var actual := DetailFormat.format_trimmed(actual_take_of(deposit), CARD_STOCK_DECIMALS)
+		var take := stated_take(deposit, assignment)
+		var actual := DetailFormat.format_trimmed(take, CARD_STOCK_DECIMALS)
 		var sustainable := DetailFormat.format_trimmed(
 			sustainable_take_of(deposit), CARD_STOCK_DECIMALS)
-		if actual_take_of(deposit) > sustainable_take_of(deposit):
+		if take > sustainable_take_of(deposit):
 			return {
 				"severity": SourceForecast.VERDICT_BLOCKED,
 				"text": DEPOSIT_VERDICT_OVER_CUT_FORMAT % [actual, sustainable],
@@ -1192,10 +1379,10 @@ const DEPOSIT_RUNWAY_ASIDE_FORMAT := "Runs out in %d turns at this rate."
 const DEPOSIT_RUNWAY_ASIDE_ONE := "Runs out next turn at this rate."
 const DEPOSIT_RUNWAY_ASIDE_IDLE := "Nobody is cutting it, so it is running out at no rate at all."
 
-static func runway_aside(deposit: Dictionary) -> String:
+static func runway_aside(deposit: Dictionary, assignment: Dictionary = {}) -> String:
 	if renews(deposit):
 		return ""
-	var turns := turns_remaining_of(deposit)
+	var turns := stated_runway(deposit, assignment)
 	if turns == RUNWAY_NO_TAKE:
 		return DEPOSIT_RUNWAY_ASIDE_IDLE
 	if turns < 0:
@@ -1204,10 +1391,16 @@ static func runway_aside(deposit: Dictionary) -> String:
 		return DEPOSIT_RUNWAY_ASIDE_ONE
 	return DEPOSIT_RUNWAY_ASIDE_FORMAT % turns
 
-## ⛔ **THE MOST CUTTERS THIS WORKING CAN USE — `reachable / yieldPerWorkerTurn`, rounded UP.** A crew
-## takes `min(crew × rate, reachable)` in a turn, so hands beyond that quotient take nothing and the
-## `+` states so rather than offering them. `CUTTERS_UNCAPPED` where the catalog prices no rate, which
-## is a client that has not been sent one — the cap is then the band's own pool and nothing else.
+## ⛔ **THE MOST CUTTERS THIS WORKING CAN USE — the room above the composed floor over
+## `perWorkerBiomass`, rounded UP.** A crew takes `min(crew × rate, the room)` in a turn, so hands
+## beyond that quotient take nothing and the `+` states so rather than offering them.
+## `CUTTERS_UNCAPPED` where the wire prices no rate, which is a client that has not been sent a row —
+## the cap is then the band's own pool and nothing else.
+##
+## ⛔ **THE ROOM IS THE DIAL'S, NOT `reachable`.** `reachable` is the sim's reading at the floor LAST
+## turn's crews worked to; the sheet is pricing the floor the player is dragging right now, and a cap
+## struck at the old floor would offer hands the composition itself refuses. On a working with no dial
+## the two are the same number (`room_next_turn`).
 const CUTTERS_UNCAPPED := -1
 
 ## **NOBODY IS ON THIS WORKING**, and it is a real and common state rather than an absence: the roster
@@ -1216,11 +1409,11 @@ const CUTTERS_UNCAPPED := -1
 ## rather than a measured nothing. The CREW gate forks on it; see `GATE_KIND_CREW`.
 const CUTTERS_NONE := 0
 
-static func max_useful_cutters(deposit: Dictionary, entry: Dictionary) -> int:
-	var rate := catalog_yield_per_worker_turn(entry)
-	if rate <= RUNG_CATALOG_NO_YIELD:
+static func max_useful_cutters(deposit: Dictionary, floor: float) -> int:
+	var rate := per_worker_biomass_of(deposit)
+	if not SourceForecast.can_price_crew(rate):
 		return CUTTERS_UNCAPPED
-	return int(ceil(reachable_of(deposit) / rate))
+	return int(ceil(room_next_turn(deposit, floor) / rate))
 
 ## The dead commit button's explanation — a crew of zero on a working nobody holds, where the command
 ## would do nothing at all. **A dead button is always explained**, the `+` stepper's cap note being

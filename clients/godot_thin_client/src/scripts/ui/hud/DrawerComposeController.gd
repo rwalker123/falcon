@@ -1145,6 +1145,19 @@ const YIELD_MODEL_AT_LIKELY := "at_likely"
 ## the engagement and the retreat and NOT the fight; on the web where the fight is half the answer
 ## that sentence names the wrong remedy at the wrong size. The plant web has no fight and keeps it.
 const YIELD_MODEL_LIMIT := "binding_limit"
+## **DOES THIS SOURCE RENEW AT ALL?** — the gate on the yields row's `renewable` note, and the reason
+## it is a model key rather than a test at the render: only the model knows, and `_fill_yields_host`
+## draws for three webs.
+##
+## ⛔ **`RENEWABLE` ON A QUARRY IS A LIE, and it is the exact lie the deposit branch's whole readout
+## fork exists to prevent** (`.claude/rules/client/extraction-workings.md` → the `regrowth_rate > 0`
+## table). Rock's rate is zero, so a finite seam renews nothing and states NEITHER the note nor the
+## overdraw flag; what it states instead is the runway.
+##
+## **ABSENT MEANS `true`, and that is a structural fact about the other two webs rather than a
+## fallback**: a patch reseeds and a herd breeds, so neither food model has a `false` to state and
+## every frame either drew before this key existed is unchanged.
+const YIELD_MODEL_RENEWS := "renews"
 
 # ---- WHAT `_hunt_delivered_and_waste` ANSWERS BESIDE THE DELIVERED BIOMASS ----------------------
 ## **THE REPLY HAS NOT LANDED**, told apart from an unavailable take so the caller can state nothing
@@ -2568,8 +2581,13 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
     # the band, and the caption is what keeps them honest beside a sentence that carries a range.
     var at_likely := bool(model.get(YIELD_MODEL_AT_LIKELY, false))
     var overdraws := bool(model[YIELD_MODEL_OVERDRAW])
-    var note := HudComposeVocab.OVERHUNT_FLAG + " " + String(
-        HudComposeVocab.LOCAL_OVERDRAW_NOTES.get(labor_kind, "")) if overdraws         else SourceForecast.YIELD_RENEWABLE_NOTE
+    var renews := bool(model.get(YIELD_MODEL_RENEWS, true))
+    var note := ""
+    if overdraws:
+        note = HudComposeVocab.OVERHUNT_FLAG + " " + String(
+            HudComposeVocab.LOCAL_OVERDRAW_NOTES.get(labor_kind, ""))
+    elif renews:
+        note = SourceForecast.YIELD_RENEWABLE_NOTE
     host.add_child(HudWidgets.build_yields_row(
         model[YIELD_MODEL_ROWS],
         HudStyle.WARN if overdraws else HudStyle.INK,
@@ -5080,14 +5098,16 @@ func open_deposit_compose(deposit: Dictionary) -> void:
     _build_deposit_assign_controls(deposit, content)
     refresh_drawer_actions()
 
-## **THE SHEET, TOP TO BOTTOM** — the forage sheet's spine with the elements a deposit has no concept
-## for simply ABSENT:
+## **THE SHEET, TOP TO BOTTOM** — the forage sheet's spine, with the elements a working has no concept
+## for simply ABSENT and the escapement dial offered on the half of them that grows back:
 ##
 ##   1. the `Band:` picker, unchanged;
-##   2. ⛔ **NO FLOOR PRESETS AND NO CHART, ON EITHER BRANCH.** A deposit has no escapement floor
-##      today, and the chart IS the floor dial — so with no dial there is nothing to draw and a
-##      disabled or empty one would be furniture explaining an absence. Giving the forestry branch a
-##      floor is a live design question and deliberately not answered here;
+##   2. **the floor presets over the draggable chart — ONLY WHERE THE GROUND GROWS BACK**
+##      (`HudDepositVocab.renews`). Rock does not come back, so *leave half the seam* on a quarry
+##      means never getting half the seam; a finite sheet keeps exactly the shape it had, no presets
+##      and no chart, and the chart IS the dial so there is nothing to draw beside them. **The sim
+##      does not fork here** — every `extract` row carries a floor — so this fork is the client's, and
+##      it is the same `regrowth_rate > 0` one every other surface in this arc takes;
 ##   3. the crew row, capped at what the working can actually use;
 ##   4. the `Kit` row, with the crew handed on;
 ##   5. ⛔ **NO SPECIES CHIPS** — a deposit takes one material by construction;
@@ -5126,7 +5146,12 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
     if source_changed or _compose.deposit_seeded_band() != band_entity:
         var staffed := _band_labor.workers_for_extract(band, tile.x, tile.y, material)
-        _compose.seed_deposit(staffed if staffed > 0 else HudConst.WORKER_STEP)
+        # ⛔ **THE FLOOR SEEDS FROM THE ASSIGNMENT, NEVER FROM `DepositState.floor`** — `labor-ui.md`'s
+        # crop rule, and for its reason. That wire field is the SOURCE's reading, kept at the deepest
+        # floor ANY band cutting this working named, so a sheet seeded from it silently adopts another
+        # band's order; and on ground nobody has opened it reads `0`, which is *strip it bare*.
+        _compose.seed_deposit(staffed if staffed > 0 else HudConst.WORKER_STEP,
+            _band_labor.floor_for_extract(band, tile.x, tile.y, material))
     var current := _band_labor.effective_extract_workers(band, tile.x, tile.y, material)
     var crew_pool := _band_labor.source_crew_pool_extract(band, tile.x, tile.y, material)
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
@@ -5134,32 +5159,77 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)))
     var ladder := HudDepositVocab.deposit_ladder(
         _topbar.deposit_rungs() if _topbar != null else [])
-    var standing_entry := HudDepositVocab.ladder_entry_of(ladder, HudDepositVocab.rung_of(deposit))
     var next_entry := HudDepositVocab.ladder_next_entry(ladder, deposit)
-    # ⛔ **THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE.** A crew takes
-    # `min(crew × rate, reachable)` in a turn, so a hand beyond that quotient carries nothing home and
-    # the `+` must not offer it — the forage sheet's max-useful rule, arrived at from the seam rather
-    # than from a forecast this branch does not publish.
+    # ⛔ **THE DIAL IS OFFERED ONLY WHERE THE GROUND GROWS BACK.** `renews` is this arc's one fork and
+    # every surface in it takes the same one; the sim deliberately does not fork, so a finite working
+    # carries a floor on its row and is simply never asked for one here.
+    var offers_floor := HudDepositVocab.renews(deposit)
+    var floor_value := _compose.deposit_floor() if offers_floor \
+        else SourceForecast.DEFAULT_HARVEST_FLOOR
+    # ⛔ **THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE, AND IT IS RESOLVED
+    # BEFORE THE CHART — the order is load-bearing** (the forage sheet's own finding). A crew takes
+    # `min(crew × rate, the room above the composed floor)` in a turn, so a hand beyond that quotient
+    # carries nothing home; the chart, both crew targets and the verdict are then all read against a
+    # count the stepper below will not clamp away.
     var cap := crew_pool
-    var useful := HudDepositVocab.max_useful_cutters(deposit, standing_entry)
+    var useful := HudDepositVocab.max_useful_cutters(deposit, floor_value)
     var capped_by_seam := useful != HudDepositVocab.CUTTERS_UNCAPPED and useful < cap
     if capped_by_seam:
         cap = maxi(useful, 0)
+    # Auto-max on a floor pick — *give me everything this seam can use at that floor*. Only ever set
+    # by a preset or a committed drag, never by a `−`/`+` tick, so a hand-dialled crew survives.
+    if _compose.consume_deposit_autofill():
+        _compose.set_deposit_count(cap)
     _compose.clamp_deposit_count(cap)
+    var live_hosts: Array[Dictionary] = []
+    # **THE FLOOR PRESETS, THROUGH THE SHARED PICKER**, with each preset's own per-turn take on its
+    # hover — the same builder and the same metric shape the forage sheet's picker wears.
+    if offers_floor:
+        target.add_child(HudWidgets.build_floor_picker(func(picked: float) -> void:
+            _compose.set_deposit_floor(picked)
+            _compose.arm_deposit_autofill()
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+            floor_value, _deposit_floor_takes(deposit),
+            HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
+    # **THE CHART — the SHARED instrument, fed a working through `HudDepositVocab.forecast_source`.**
+    # A deposit's sampled curve never goes negative (there is no Allee term), so its projection has the
+    # patch's shape rather than the herd's; that asymmetry comes off the wire, not from here.
+    var chart_model := _deposit_chart_model(deposit, ladder, floor_value, _compose.deposit_count()) \
+        if offers_floor else {}
+    if bool(chart_model.get("known", false)):
+        # A live drag may NOT rebuild the sheet — freeing the chart mid-drag ends the drag on the
+        # first pixel of movement — so every reading that follows the floor is refilled in place.
+        _floor_drag_refill = func(dragged: float) -> void:
+            _refresh_floor_live(live_hosts, _deposit_chart_model(
+                _live_deposit(subject_key, deposit), ladder, dragged, _compose.deposit_count()),
+                _compose.deposit_count())
+        target.add_child(HudWidgets.build_floor_chart(chart_model,
+            func(dragged: float, committed: bool) -> void:
+                _compose.set_deposit_floor(dragged)
+                if committed:
+                    _floor_drag_live = false
+                    _compose.arm_deposit_autofill()
+                    _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)
+                else:
+                    _floor_drag_live = true
+                    _floor_drag_refill.call(dragged)))
     # **THE CREW ROW** — the section label is the branch's crew noun, and the stepper is the TAKE
     # crew. Its hover says so, because a player who staffed it expecting the standing bill to be met
     # would watch the working go back anyway.
     #
-    # ⛔ **NO CREW-TARGET PILLS, and the empty model is what says so.** Both pills are answers about a
-    # FLOOR — *clear it now* and *hold it after* — and a deposit has no floor, so `_mount_crew_row`'s
-    # own `known` gate drops them rather than a branch here.
-    var live_hosts: Array[Dictionary] = []
+    # ⛔ **THE TWO CREW PILLS ARRIVE WITH THE DIAL AND WITH NOTHING ELSE.** Both are answers about a
+    # FLOOR — *clear it now* and *hold it after* — so `_mount_crew_row`'s own `known` gate drops them
+    # on a finite seam, which passes an EMPTY model rather than growing a branch here.
     _mount_crew_row(target, live_hosts, crew_label, _compose.deposit_count(),
         _compose.deposit_count() < cap,
         func(n: int) -> void:
             _compose.set_deposit_count(clampi(n, 0, cap))
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        {}, Callable(), HudDepositVocab.CARD_CREW_HINT)
+        chart_model,
+        func(count: int) -> void:
+            _compose.set_deposit_count(clampi(count, 0, cap))
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+        HudDepositVocab.CARD_CREW_HINT)
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
@@ -5195,9 +5265,11 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         if offer != "":
             target.add_child(_build_deposit_offer_line(offer,
                 HudDepositVocab.catalog_verb(next_entry), crew_label, not is_noop, band))
-    # **THE READOUT** — what this crew brings home next turn, what the next rung would pay once it
-    # stands, the verdict the branch turns on, and the runway under the dashed rule.
-    _mount_deposit_readout(target, deposit, ladder, next_entry, band, _compose.deposit_count())
+    # **THE READOUT** — what this crew brings home next turn (and what it settles at once the seam
+    # reaches the floor), what the next rung would pay once it stands, the verdict the branch turns
+    # on, and the runway under the dashed rule.
+    _mount_deposit_readout(target, live_hosts, deposit, ladder, next_entry, chart_model,
+        _compose.deposit_count())
     # A dead button is always explained, the `+` stepper's cap note being the precedent.
     if is_noop:
         target.add_child(HudWidgets.alloc_hint_label(
@@ -5208,13 +5280,18 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         else HudDepositVocab.commit_verb(branch)
     HudStyle.apply_button(assign_btn, "primary")
     assign_btn.disabled = is_noop
-    # ⛔ **ONE COMMAND, AND IT IS `assign_labor <f> <b> extract <x> <y> <material> <n>`.** The material
-    # rides the `species` token — the slot the sim's own `extract` arm reads it from and half the
-    # optimistic overlay's key. **No floor and no kit token**: a deposit has no escapement floor, and
-    # `extract`'s grammar is closed after the worker count.
+    # ⛔ **ONE COMMAND, AND IT IS `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`.** The
+    # material rides the `species` token — the slot the sim's own `extract` arm reads it from and half
+    # the optimistic overlay's key — and the FLOOR is a validated number in forage's own position and
+    # forage's own decimal precision, the stance words being refused by name at parse.
+    #
+    # **A FINITE WORKING SENDS THE DEFAULT, because it was never asked**: it has no dial, so
+    # `floor_value` is the food peak above and the sim composes it with the rung's own floor as a
+    # maximum exactly as it would an omitted token. **Still no kit token** — the shipped roster
+    # declares no take gear on either branch.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
-            tile.x, tile.y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, material)
+            tile.x, tile.y, "", floor_value, material)
         close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -5239,56 +5316,185 @@ func _build_deposit_offer_line(offer: String, verb: String, crew_label: String,
         func(_meta: String) -> void: _navigate_to_work_tab(
             int(band.get("entity", ComposeState.NO_BAND_ENTITY))))
 
-## **THE READOUT BOX, BUILT DIRECTLY RATHER THAN THROUGH `_mount_readout`.**
+## **THE WORKING'S CHART MODEL — the SHARED instrument, composed ONCE per render and once per drag.**
 ##
-## ⛔ **THAT MOUNT IS THE FLOOR MODEL'S, AND A DEPOSIT HAS NO FLOOR.** Every register it wires is a
-## function of a `floor_chart_model` — the live registry a drag refills, the crew targets, the floor's
-## teaching line, the `now → after` walk — and there is no dial here for any of them to follow. Passing
-## it an empty model would render the box and then silently drop the VERDICT, which on a finite seam is
-## the one sentence the whole branch turns on. So the four SHARED widgets are assembled here, in the
-## same order and the same registers `_mount_readout` puts them in.
+## ⛔ **THE FLOOR IT IS COMPOSED AT IS `HudDepositVocab.composed_floor`, and that is the whole of the
+## `max` rule.** The rung's own floor and the crew's are the same kind of quantity — an amount left
+## standing — so the crew stops at whichever is greater, and the composition happens HERE, once,
+## before anything is projected. Everything downstream reads the model's own `floor`
+## (`_live_floor`), so no second call site can compose the pair differently: added, they would
+## double-count on every rung and draw a gathering crew stopping 85% of a seam short.
 ##
-## The caption is `next turn` — `SourceForecast.yield_row_header`'s own default, since no account here
-## carries a holding rate to arrow toward.
-func _mount_deposit_readout(target: VBoxContainer, deposit: Dictionary,
-        ladder: Array[Dictionary], next_entry: Dictionary, band: Dictionary, crew: int) -> void:
-    var column := HudWidgets.build_readout_box(target)
-    # **THE TAKE, WITH THE MATERIAL AS THE ACCOUNT NAME.** `yield_rows` puts a material's own id in
-    # the account slot precisely because a material names itself, so `6.60 STONE` needs no new
-    # vocabulary — and the render-only-where-the-vector-pays rule stays in one place.
-    var rate := HudDepositVocab.catalog_yield_per_worker_turn(
-        HudDepositVocab.ladder_entry_of(ladder, HudDepositVocab.rung_of(deposit)))
-    var take := minf(rate * float(crew), HudDepositVocab.reachable_of(deposit))
-    var rows := SourceForecast.yield_rows(0.0, 0.0, SourceForecast.YIELD_ACCOUNT_NONE, {}, [{
-        SourceForecast.MATERIAL_PAYOFF_ID_KEY: HudDepositVocab.material_of(deposit),
+## ⛔ **THE TEACHING LINE IS THE ONE READING TAKEN AT THE PLAYER'S FLOOR RATHER THAN THE COMPOSED
+## ONE**, because that is the floor the SIM prices the lesson at (`systems::labor`'s `Extract` arm
+## passes the ROW's own floor to `intensification::learn_multiplier`, while the rung's floor reaches
+## only the workability predicate through `reachable_before`). A line composed at the max would
+## promise a gathering crew ×1.70 for a dial they set to zero.
+func _deposit_chart_model(deposit: Dictionary, ladder: Array[Dictionary], floor: float,
+        crew: int) -> Dictionary:
+    var labels: Dictionary = _topbar.knowledge_labels() if _topbar != null else {}
+    var lesson_known := HudDepositVocab.standing_lesson_known(deposit, ladder, _player_knowledge())
+    var model := SourceForecast.floor_chart_model(HudDepositVocab.forecast_source(deposit),
+        SourceForecast.SOURCE_KIND_DEPOSIT, HudComposeVocab.BARE_FORECAST_PREFIX,
+        HudDepositVocab.composed_floor(deposit, floor), crew,
+        HudDepositVocab.crew_noun(HudDepositVocab.branch_of(deposit)).to_lower(), lesson_known)
+    if not bool(model.get("known", false)):
+        return model
+    model["teaching_note"] = SourceForecast.teaching_note(
+        HudDepositVocab.standing_lesson(deposit, ladder, labels),
+        SourceForecast.clamp_floor(floor),
+        SourceForecast.crew_is_taking_next_turn(crew,
+            HudDepositVocab.room_next_turn(deposit, floor)), lesson_known)
+    return model
+
+## **PER-PRESET TAKES FOR THE PICKER'S HOVERS** — what the seam offers above each preset's floor, in
+## the working's own material. The forage picker's metric shape (`extractive_take_pair`), asked of a
+## working: the metric is the ROOM that floor frees, which is takeable once, exactly as it is there.
+func _deposit_floor_takes(deposit: Dictionary) -> Dictionary:
+    var takes := {}
+    var material := HudDepositVocab.material_of(deposit)
+    if material == HudDepositVocab.MATERIAL_NONE:
+        return takes
+    for preset_variant in SourceForecast.FLOOR_PRESETS:
+        var preset := String(preset_variant)
+        takes[preset] = SourceForecast.extractive_take_pair(0.0, 0.0,
+            SourceForecast.YIELD_ACCOUNT_NONE, [{
+                SourceForecast.MATERIAL_PAYOFF_ID_KEY: material,
+                SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: HudDepositVocab.room_next_turn(
+                    deposit, SourceForecast.floor_for_preset(preset)),
+            }])
+    return takes
+
+## **WHAT THIS CREW CARRIES HOME NEXT TURN, AND WHAT IT SETTLES AT** — the deposit's answer in the
+## shared `YIELD_MODEL_*` shape, so the readout's first register is filled by `_fill_yields_host`
+## exactly as both food webs fill it.
+##
+## **THE HEADLINE IS THE ROOM NEXT TURN, not the room standing now** — the sim regrows a whole stage
+## before it takes, so a seam held at its floor pays its regrowth while the standing room is empty.
+## `HudDepositVocab.room_next_turn` is that projection's first turn, and on a finite working it is
+## `reachable` by arithmetic.
+##
+## **THE `after` READING IS WHAT THE FLOOR MAKES POSSIBLE** — the take once the seam settles at the
+## floor, which is the curve's own value there, capped by what the crew can lift. It is attached only
+## where the walk actually REACHES the floor (`reaches`, the caller's `_live_reaches`), because
+## promising a holding rate to a crew that settles short is the defect that reading exists to fix.
+func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
+        reaches: bool) -> Dictionary:
+    var material := HudDepositVocab.material_of(deposit)
+    var rate := HudDepositVocab.per_worker_biomass_of(deposit)
+    var take := minf(rate * float(crew), HudDepositVocab.room_next_turn(deposit, floor))
+    var after := {}
+    if reaches:
+        # The steady take: what the ground puts back in one turn AT the floor, which is the curve read
+        # at the floor's own stock fraction — the same interpolation the projection walks on.
+        after[material] = minf(rate * float(crew), SourceForecast.regrowth_at(
+            HudDepositVocab.regrowth_samples_of(deposit),
+            HudDepositVocab.composed_floor(deposit, floor)))
+    var rows := SourceForecast.yield_rows(0.0, 0.0, SourceForecast.YIELD_ACCOUNT_NONE, after, [{
+        SourceForecast.MATERIAL_PAYOFF_ID_KEY: material,
         SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: take,
     }])
-    # ⛔ **THE NOTE IS DECIDED BY `regrowth_rate > 0`, NEVER BY THE BRANCH** — `HudDepositVocab.renews`,
-    # the one fork. A renewing working reads the food webs' own `renewable` in HEALTHY, or their own
-    # overdraw flag and word in WARN; a finite one renews nothing and states neither.
-    var overdraws := HudDepositVocab.renews(deposit) \
-        and HudDepositVocab.actual_take_of(deposit) > HudDepositVocab.sustainable_take_of(deposit)
-    var note := ""
-    if HudDepositVocab.renews(deposit):
-        note = HudComposeVocab.OVERHUNT_FLAG + " " + HudDepositVocab.over_cut_word() if overdraws \
-            else SourceForecast.YIELD_RENEWABLE_NOTE
-    if not rows.is_empty():
-        column.add_child(HudWidgets.build_yields_row(rows,
-            HudStyle.WARN if overdraws else HudStyle.INK, note,
-            HudStyle.WARN if overdraws else HudStyle.HEALTHY, ""))
+    return {
+        YIELD_MODEL_ROWS: rows,
+        YIELD_MODEL_TEXT: "",
+        # ⛔ **THE `renewable` NOTE IS THE `regrowth_rate > 0` FORK, HERE AS EVERYWHERE ELSE IN THIS
+        # ARC.** A quarry renews nothing, so it states neither this note nor the overdraw flag beside
+        # it — the runway under the dashed rule is what a finite seam warns with instead.
+        YIELD_MODEL_RENEWS: HudDepositVocab.renews(deposit),
+        # ⛔ **THE OVER-CUT FLAG IS `actual > sustainable` AND ON THIS BRANCH THAT IS CORRECT** — a
+        # deposit take is a RATE with no whole-body lump in it, and there is no `overdraws` flag on
+        # the row to read instead. The take is the ASSIGNMENT's, so a crew committed this turn is
+        # judged on what it will cut rather than on the zero the working still publishes.
+        YIELD_MODEL_OVERDRAW: HudDepositVocab.renews(deposit)
+            and HudDepositVocab.stated_take(deposit,
+                _standing_assignment_extract(HudDepositVocab.tile_of(deposit).x,
+                    HudDepositVocab.tile_of(deposit).y, material))
+                > HudDepositVocab.sustainable_take_of(deposit),
+        YIELD_MODEL_WASTE: "",
+    }
+
+## **THE READOUT BOX, BUILT DIRECTLY RATHER THAN THROUGH `_mount_readout`, AND STILL.**
+##
+## ⛔ **THAT MOUNT DROPS THE VERDICT ON A MODEL THAT IS NOT `known`, which is every FINITE seam.** A
+## quarry publishes an all-zero curve — a live reading, *this does not grow* — so there is no
+## projection to walk and the shared mount would render the box and then silently omit the one
+## sentence the whole branch turns on. This assembles the same four shared widgets in the same order
+## and the same registers, and takes the verdict from the walk where there IS one and from
+## `HudDepositVocab.deposit_verdict` where there is not.
+##
+## The caption is `next turn` unless a `now → after` pair is on the row, which
+## `SourceForecast.yield_row_header` decides from the rows themselves.
+func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictionary,
+        ladder: Array[Dictionary], next_entry: Dictionary, model: Dictionary, crew: int) -> void:
+    var column := HudWidgets.build_readout_box(target)
+    var known := bool(model.get("known", false))
+    var tile := HudDepositVocab.tile_of(deposit)
+    # **THE BAND'S OWN `extract` ROW, resolved once for every reading that needs a rate the working
+    # has not paid out yet.** See `HudDepositVocab`'s three-state table.
+    var assignment := _standing_assignment_extract(tile.x, tile.y,
+        HudDepositVocab.material_of(deposit))
+    var yields_host := VBoxContainer.new()
+    yields_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_child(yields_host)
+    if known:
+        _register_live(hosts, yields_host, model, crew,
+            func(host: Container, live: Dictionary, count: int) -> void:
+                _fill_yields_host(host, _deposit_yield_model(deposit, _live_floor(live), count,
+                    _live_reaches(live)), HudConst.LABOR_KIND_EXTRACT))
+    else:
+        # No dial, no walk, no holding state to promise — the take alone, at the rung's own floor.
+        _fill_yields_host(yields_host, _deposit_yield_model(deposit,
+            SourceForecast.FLOOR_MIN, crew, false), HudConst.LABOR_KIND_EXTRACT)
     # **THE DEAL — ITS OWN BLOCK, NEVER A ROW INSIDE THE YIELDS FLOW.** Two harness contracts read
     # that flow structurally, so a deal term folded in would corrupt both silently; it is
-    # `HudWidgets.IMPROVEMENT_DEAL_META`'s own block for that reason.
+    # `HudWidgets.IMPROVEMENT_DEAL_META`'s own block for that reason. It is deliberately OUT of the
+    # live registry, the shared mount's own rule: a payoff is a property of the finished rung and
+    # nothing in it moves under a floor drag.
     var deal_label := HudDepositVocab.deal_label(next_entry)
     var deal_value := HudDepositVocab.deal_value(next_entry, deposit, crew)
     if deal_label != "" and deal_value != "":
         column.add_child(HudWidgets.build_improvement_deal(deal_label, deal_value))
-    column.add_child(HudWidgets.build_verdict_line(
-        HudDepositVocab.deposit_verdict(deposit, ladder)))
-    var aside := HudDepositVocab.runway_aside(deposit)
-    if aside != "":
-        column.add_child(HudWidgets.build_readout_aside(
-            [HudWidgets.readout_aside_line(aside)]))
+    var verdict_host := VBoxContainer.new()
+    verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_child(verdict_host)
+    if known:
+        # **THE REACHES-THE-FLOOR VERDICT IS THE SHARED COMPOSER'S** (`SourceForecast.harvest_verdict`,
+        # off the projection walk) — the same sentence a patch states, because the question is the
+        # same one: does this crew get the stock down to where it was told to stop.
+        _register_live(hosts, verdict_host, model, crew,
+            func(host: Container, live: Dictionary, _count: int) -> void:
+                host.add_child(HudWidgets.build_verdict_line(live.get("verdict", {}))))
+    else:
+        verdict_host.add_child(HudWidgets.build_verdict_line(
+            HudDepositVocab.deposit_verdict(deposit, ladder, assignment)))
+    var aside_host := VBoxContainer.new()
+    aside_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_child(aside_host)
+    if known:
+        _register_live(hosts, aside_host, model, crew,
+            func(host: Container, live: Dictionary, _count: int) -> void:
+                var lines: Array[Dictionary] = []
+                lines.append(HudWidgets.readout_aside_line(HudFormat.floor_hint(
+                    _live_floor(live), HudConst.LABOR_KIND_EXTRACT)))
+                # **THE TEACHING RATE, and the one aside line that can be CYAN.** It states what
+                # `learn_multiplier` buys, at the floor the SIM prices the lesson at — the dial's own
+                # value, not the composed one. An EMPTY note is a rung that teaches nothing at all,
+                # which is a reason to render no line rather than a blank one.
+                var teaching: Dictionary = live.get("teaching_note", {})
+                var teaching_text := String(teaching.get("text", ""))
+                if teaching_text != "":
+                    lines.append(HudWidgets.readout_aside_line(teaching_text,
+                        HudStyle.SIGNAL if bool(teaching.get("teaching", false))
+                            else HudStyle.INK_FAINT, HudWidgets.READOUT_TEACHING_META))
+                host.add_child(HudWidgets.build_readout_aside(lines)))
+    else:
+        # **THE RUNWAY, on the branch that has one** — and it honours all three states: the published
+        # count where a turn has resolved, this crew's `reachable ÷ rate` where one has been committed
+        # and nothing cut yet, and *nobody is cutting it* where there is no crew at all.
+        var aside := HudDepositVocab.runway_aside(deposit, assignment)
+        if aside != "":
+            aside_host.add_child(HudWidgets.build_readout_aside(
+                [HudWidgets.readout_aside_line(aside)]))
 
 ## The STANDING-SUMMARY child-slot structure shared by both drawers: `[has_summary, warn, has_note,
 ## has_muted]` — the full set of optional summary child slots, so any structural change (summary

@@ -15,7 +15,9 @@ const NO_SOW_WORK_COST: f32 = 0.0;
 /// interpolates over. **An ABSENT vector stays EMPTY** rather than becoming a run of zeros:
 /// "published no curve" and "does not grow" are different claims, and only the first may leave the
 /// chart's projection undrawn.
-fn regrowth_samples_packed(samples: Option<flatbuffers::Vector<'_, f32>>) -> PackedFloat32Array {
+pub(crate) fn regrowth_samples_packed(
+    samples: Option<flatbuffers::Vector<'_, f32>>,
+) -> PackedFloat32Array {
     let mut packed = PackedFloat32Array::new();
     if let Some(samples) = samples {
         for value in samples {

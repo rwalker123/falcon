@@ -152,6 +152,16 @@ const SOURCE_KIND_FORAGE := "forage"
 ## the kind is the queue row's price clause, which resolves it from the entry's own `roadwork` kind.
 const SOURCE_KIND_ROUTE := "route"
 
+## ⛔ **THE FOURTH BRANCH'S SOURCE KIND, AND IT IS STATED SO THAT EVERY KIND-KEYED TABLE ANSWERS ITS
+## NEUTRAL ARM ON PURPOSE RATHER THAN BY FALLING OFF THE END.** A working reaches `floor_chart_model`
+## exactly as a patch does — the same curve, the same projection, the same verdict — but it is neither
+## a plant nor an animal: `FORECAST_MANAGED_FLAG_KEYS` has no row for it (nothing here is ever
+## managed), `RUNG_LESSONS` has none (its lesson is CONFIG, read off the deposit rung catalog by
+## `HudDepositVocab.standing_lesson`), and `herd_display_name` is not asked. `source_kind_for_labor`
+## deliberately does not answer it, for the road's reason: that alias is a two-way map over the food
+## webs and would come back `SOURCE_KIND_HERD`.
+const SOURCE_KIND_DEPOSIT := "deposit"
+
 ## THE ONE MAPPING between the two kind vocabularies — an ASSIGNMENT's `kind` (`LABOR_KIND_*`, the
 ## sim's own word) and a FORECAST's (`SOURCE_KIND_*`). They coincide on the plant web (`"forage"` both
 ## ways) and differ on the animal one (`"hunt"` the labor, `"herd"` the source), which is exactly the

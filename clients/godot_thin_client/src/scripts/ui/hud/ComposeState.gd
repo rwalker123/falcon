@@ -104,11 +104,18 @@ var _forage_seeded_band: int = NO_BAND_ENTITY
 # different branches, so a tile-keyed composition would let the Wood sheet and the Stone sheet
 # overwrite each other's crew. It is the same pair every other join in this arc carries.
 #
-# **THE GROUP IS THREE FIELDS AND NO MORE.** A deposit has no escapement floor, no take species, no
-# commit crop and no second axis — the rung is declared from the Work board — so the forage group's
-# other seven slots have nothing to hold here and are deliberately absent rather than defaulted.
+# **THE GROUP HAS A FLOOR NOW, AND STILL NO TAKE SPECIES AND NO COMMIT CROP** (issue #650). A working
+# takes one material by construction and its rung is declared from the Work board, so the forage
+# group's species, crop and improvement slots have nothing to hold here and stay absent. **The floor
+# is real on both branches and OFFERED on one**: the dial is drawn only where the ground grows back
+# (`HudDepositVocab.renews`), and on a finite seam this member simply stays at its default and rides
+# the command as the sim's own.
 var _deposit_key: String = ""
 var _deposit_count: int = 0
+var _deposit_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
+# The deposit twin of `_forage_autofill` — the same one-shot contract: picking a floor jumps the crew
+# to that floor's max-useful, and a `−`/`+` tick never does.
+var _deposit_autofill := false
 var _deposit_band: int = NO_BAND_ENTITY
 ## The band the composed count was last seeded from — `NO_BAND_ENTITY` until a first seed. The builder
 ## re-seeds when this disagrees with the band it has resolved, which is how switching the ACTOR
@@ -158,6 +165,13 @@ func deposit_key() -> String:
 func deposit_count() -> int:
 	return _deposit_count
 
+## Where this sheet's crew is being told to stop, as a fraction of the working's capacity. It is the
+## CREW's own floor — the sim composes it with the rung's as a maximum
+## (`HudDepositVocab.composed_floor`), and nothing here does that composition: this member is what
+## travels on the command, and the command carries what the player asked for.
+func deposit_floor() -> float:
+	return _deposit_floor
+
 func deposit_band() -> int:
 	return _deposit_band
 
@@ -174,10 +188,13 @@ func begin_deposit_source(key: String, band_entity: int) -> void:
 	_deposit_key = key
 	_deposit_band = band_entity
 
-## Re-seed the composed count from the newly-resolved band's crew on this working, and RECORD which
-## band it came from.
-func seed_deposit(count: int) -> void:
+## Re-seed the composed count AND FLOOR from the newly-resolved band's row on this working, and
+## RECORD which band it came from. **Both come from the ASSIGNMENT** — a crew and a floor are facts
+## about ONE band's standing row, which is why switching the actor re-seeds them exactly as switching
+## the source does.
+func seed_deposit(count: int, floor: float) -> void:
 	_deposit_count = count
+	_deposit_floor = SourceForecast.clamp_floor(floor)
 	_deposit_seeded_band = _deposit_band
 
 ## Forget which working the deposit compose belongs to, so the NEXT render takes the source-changed
@@ -190,6 +207,21 @@ func set_deposit_band(entity: int) -> void:
 
 func set_deposit_count(count: int) -> void:
 	_deposit_count = count
+
+## The dial's value, clamped on the way in — the one entry point for every source of one (a preset
+## button, a chart drag, a rehydrated seed), so an out-of-range value is a clamped dial rather than a
+## negative escapement room.
+func set_deposit_floor(floor: float) -> void:
+	_deposit_floor = SourceForecast.clamp_floor(floor)
+
+## Arm the one-shot: the NEXT render jumps the crew to the max-useful for the floor just picked.
+func arm_deposit_autofill() -> void:
+	_deposit_autofill = true
+
+func consume_deposit_autofill() -> bool:
+	var armed := _deposit_autofill
+	_deposit_autofill = false
+	return armed
 
 func set_deposit_kit_id(kit_id: String) -> void:
 	_deposit_kit_id = kit_id
@@ -211,6 +243,7 @@ var _subject: String = ""
 func _init(default_floor: float) -> void:
 	_forage_floor = SourceForecast.clamp_floor(default_floor)
 	_hunt_floor = SourceForecast.clamp_floor(default_floor)
+	_deposit_floor = SourceForecast.clamp_floor(default_floor)
 
 # ---- Forage read accessors -----------------------------------------------------------------------
 

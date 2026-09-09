@@ -1767,8 +1767,9 @@ position relative to the **food peak** — which is the whole meaning of the dia
 | `untouched` (= 1) | ⊘ | nothing taken — and a crew with nothing standing above its floor learns and builds nothing |
 
 Only **two** facts are composed in rather than tabulated, and both are real: what STRIPPING costs
-differs by web (`FLOOR_STRIP_CONSEQUENCE` — a patch reseeds from bare ground, a herd is gone for good)
-and a detached party accrues no husbandry, so the learning zone's promise is false for a raid
+differs by web (`FLOOR_STRIP_CONSEQUENCE` — a patch reseeds from bare ground, a herd is gone for good,
+and a renewing SEAM is cut to nothing and grows back from a seed, that third entry being read only on
+a working the dial is offered on) and a detached party accrues no husbandry, so the learning zone's promise is false for a raid
 (`FLOOR_LEARNING_HINT_EXPEDITION`). Three glyphs are inherited verbatim from the stances they replace
 (⇊ ♻ 💀 already meant their zone's thing and are legibility-proven at 12–13px); ⬆ was Surplus's and now
 reads as RAISING the floor, which is safe because nothing renders both vocabularies.
@@ -1780,8 +1781,9 @@ standing`.
 
 ### Where a floor is READ, and where it is MARKED
 
-- The compose sheets: `ComposeState.forage_floor()` / `hunt_floor()` (floats, clamped on the way in),
-  seeded from `HudBandLaborState.floor_for_forage` / `floor_for_hunt`.
+- The compose sheets: `ComposeState.forage_floor()` / `hunt_floor()` / **`deposit_floor()`** (floats,
+  clamped on the way in), seeded from `HudBandLaborState.floor_for_forage` / `floor_for_hunt` /
+  **`floor_for_extract`**.
 - A worked row / map yield label: the assignment's own `floor`, marked with its ZONE glyph
   (`FoodIcons.for_floor_zone`). **A continuous number cannot wear one glyph per value**, and the zone
   is the whole of what one mark can honestly say; the exact percent is in the tooltip and in the work
@@ -1792,8 +1794,8 @@ standing`.
 ### The commands
 
 `assign_labor <f> <b> forage <x> <y> [floor] [species] <workers>` / `… hunt <herd_id> [floor]
-<workers>`; `send_hunt_expedition <f> <b> <party> <fauna_id> [floor]`. **The optional token is a
-NUMBER**, formatted to `Main.FLOOR_COMMAND_DECIMALS` (2) — never `str(float)`, which would put
+<workers>` / `… extract <x> <y> <material> [floor] <workers>`;
+`send_hunt_expedition <f> <b> <party> <fauna_id> [floor]`. **The optional token is a NUMBER**, formatted to `Main.FLOOR_COMMAND_DECIMALS` (2) — never `str(float)`, which would put
 `0.30000000000000004` on the line. The four stance words are **rejected by name** at parse
 (`CommandParseError::RetiredStanceToken`), so a stale emitter fails loudly instead of being silently
 reinterpreted as a crop key; the two optional forage tokens stay disjoint because a floor only ever
@@ -8030,27 +8032,40 @@ gated by THIS file and a reader editing the compose spine would otherwise never 
 
 The four things about the pair that constrain edits to this spine:
 
-- **THE GROUP IS THREE FIELDS AND NO MORE** — a source key, a crew, and the acting band beside the
-  band it was seeded from, plus a kit. A deposit has no escapement floor, no take species, no commit
-  crop and no second axis (the rung is declared from the Work board), so the forage group's other
-  seven slots have nothing to hold and are deliberately absent rather than defaulted.
+- **THE GROUP GREW A FLOOR AND ITS AUTOFILL ONE-SHOT, AND NOTHING ELSE** — a source key, a crew, a
+  floor, the acting band beside the band it was seeded from, and a kit. A working takes ONE material
+  by construction and its rung is declared from the Work board, so the forage group's take species,
+  commit crop and second axis still have nothing to hold here and stay absent rather than defaulted.
+  `seed_deposit(count, floor)` seeds both halves from the band's own `extract` row, the crop rule
+  above applied to the floor: a crew and a floor are facts about ONE band's standing assignment, so
+  switching the ACTOR re-seeds them exactly as switching the SOURCE does.
 - ⛔ **THE SOURCE KEY IS `x,y:material`, NOT `x,y`.** A hex carries up to two deposits on two
   branches, so a tile-keyed composition lets one hex's Wood sheet and its Stone sheet overwrite each
   other's crew. Every join in that arc carries the same pair.
-- ⛔ **NO FLOOR PICKER AND NO CHART ON EITHER SHEET, and that is a decision rather than a gap.** The
-  chart IS the floor dial, so with no dial there is nothing to draw; a disabled or empty one would be
-  furniture explaining an absence. `_mount_crew_row`'s own `known` gate is what drops the two crew
-  pills — both are answers about a floor — so the sheet passes an EMPTY model rather than growing a
-  branch here.
+- ⛔ **THE FLOOR PICKER AND THE CHART ARE OFFERED ON A WORKING THAT RENEWS AND ON NO OTHER** (issue
+  #650). The sim carries a floor on every `extract` row and deliberately does not fork; the fork is
+  the CLIENT's, on `HudDepositVocab.renews`, because rock does not come back and *leave half the seam*
+  on a quarry means never getting half the seam. A finite seam therefore passes an EMPTY model, and
+  `_mount_crew_row`'s own `known` gate is what drops the two crew pills — both are answers about a
+  floor — rather than a branch there. The dial's own composition (`max(rungFloorFraction, floor)`) and
+  the teaching line's deliberate exception to it are `extraction-workings.md`'s.
 - **`_mount_crew_row` gained a trailing `label_tooltip`, and the deposit sheets are its one caller.**
   Their crew is the TAKE crew while the hands that HOLD a working are a band-wide pool on another
   panel, and that sheet has nowhere else to say so. `""` for every other caller, which is what they
   all had before the parameter existed.
 
 **Its READOUT is assembled directly rather than through `_mount_readout`, and the reason is worth
-knowing before reaching for that mount on any floorless source**: every register it wires is a
+knowing before reaching for that mount on any floorless source**: every register that mount wires is a
 function of a `floor_chart_model` — the live registry a drag refills, the crew targets, the floor's
-teaching line, the `now → after` walk — so an empty model renders the box and then silently drops the
-**VERDICT**, which on a finite seam is the one sentence the whole branch turns on. The four SHARED
-widgets are assembled in the same order and the same registers instead.
+teaching line, the `now → after` walk — so a model that is not `known` renders the box and then
+silently drops the **VERDICT**, which on a finite seam is the one sentence the whole branch turns on.
+`_mount_deposit_readout` assembles the four SHARED widgets in the same order and the same registers
+instead, and serves BOTH arms: live registers off the walk where there is a dial, static ones where
+there is not.
+
+**AND `_fill_yields_host` GAINED A `YIELD_MODEL_RENEWS` GATE FOR THE SAME REASON.** It composed the
+`renewable` note from the overdraw flag alone, which is true of both food webs by construction and
+false of a quarry — so a finite seam read `1.20 STONE RENEWABLE`. **Absence means `true`**: a patch
+reseeds and a herd breeds, so neither food model has a `false` to state and every frame either drew
+before the key existed is unchanged.
 

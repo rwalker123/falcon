@@ -5,6 +5,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/RungGates.gd"
   - "clients/godot_thin_client/native/src/dict/deposits.rs"
   - "clients/godot_thin_client/tools/ui_preview/chapters/workings.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/DrawerComposeController.gd"
 ---
 
 # Workings — the client half of the wood-and-stone producers
@@ -17,8 +18,8 @@ does with them. Read the sim one first — most of the traps here are its traps,
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/hud_deposit_vocab.gd` (`HudDepositVocab`) | The WORKINGS vocabulary leaf — one reader per field on a `deposits` row, one reader per field on a `deposit_rungs` CATALOG row (`catalog_*`) plus the branch-filtered walks over it (`branch_ladder` / `ladder_next_entry` / `ladder_rung_teaching`), the keeping verdict (`owes_keeping` / `is_short` / `is_at_risk`, the bool-before-the-number rule), and the FIVE composers the three surfaces state a working with: `deposit_lines` (the tile card's rows), `deposit_row_value` (the roster's value cell), `deposit_verdict` / `runway_aside` / `deal_label`+`deal_value` (the sheet's readout). §7's fork lives inside it, once (`renews` → `supply_clause`/`runway_clause`/`deposit_verdict`). A vocab module with static funcs, the `hud_route_vocab.gd` shape: it reads `SourceForecast` / `DetailFormat` / `HudFormat` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudWorkVocab` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
-| `ui/hud/DrawerComposeController.gd` → the `build_deposit_drawer_actions` family | The tile card's TWO compose actions and the sheet behind them (`_fill_deposit_branch` / `_tile_workings_of_branch` / `open_deposit_compose` / `_build_deposit_assign_controls` / `_build_deposit_offer_line` / `_mount_deposit_readout` / `_deposit_source_key`), filling `%ForestryAssignControls` and `%ExtractionAssignControls` — **one container per BRANCH**, since a wooded highland offers both at once. Its commit is the only thing it emits: `assign_labor <f> <b> extract <x> <y> <material> <n>`, through the shared `_emit_assign_labor` |
+| `ui/hud/hud_deposit_vocab.gd` (`HudDepositVocab`) | The WORKINGS vocabulary leaf — one reader per field on a `deposits` row, one reader per field on a `deposit_rungs` CATALOG row (`catalog_*`) plus the branch-filtered walks over it (`branch_ladder` / `ladder_next_entry` / `ladder_rung_teaching`), the keeping verdict (`owes_keeping` / `is_short` / `is_at_risk`, the bool-before-the-number rule), and the FIVE composers the three surfaces state a working with: `deposit_lines` (the tile card's rows), `deposit_row_value` (the roster's value cell), `deposit_verdict` / `runway_aside` / `deal_label`+`deal_value` (the sheet's readout). §7's fork lives inside it, once (`renews` → `supply_clause`/`runway_clause`/`deposit_verdict`/the DIAL). It also owns the ESCAPEMENT layer (issue #650): `rung_floor_fraction_of` / `per_worker_biomass_of` / `regrowth_samples_of`, the ONE `max` composition (`composed_floor`), the forecast-shaped view of a working (`forecast_source`) and the room above the dial (`room_next_turn`), plus the three-state take/runway readers (`assigned_cutters` / `assigned_take` / `stated_take` / `stated_runway`) and the standing rung's lesson (`standing_lesson` / `standing_lesson_known`). A vocab module with static funcs, the `hud_route_vocab.gd` shape: it reads `SourceForecast` / `DetailFormat` / `HudFormat` / `HudComposeVocab` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
+| `ui/hud/DrawerComposeController.gd` → the `build_deposit_drawer_actions` family | The tile card's TWO compose actions and the sheet behind them (`_fill_deposit_branch` / `_tile_workings_of_branch` / `open_deposit_compose` / `_build_deposit_assign_controls` / `_build_deposit_offer_line` / `_mount_deposit_readout` / `_deposit_source_key`), filling `%ForestryAssignControls` and `%ExtractionAssignControls` — **one container per BRANCH**, since a wooded highland offers both at once. The ESCAPEMENT half is `_deposit_chart_model` (the ONE place the two floors are composed and the teaching note re-priced at the dial's own value), `_deposit_floor_takes` (the presets' hover metric) and `_deposit_yield_model` (the take, the `now → after` pair and the `renews` gate on the yields note). Its commit is the only thing it emits: `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, through the shared `_emit_assign_labor` |
 | `ui/hud/SubjectDrawerController.gd` → `_tile_terrain_lines`' deposit loop | Where the ROWS are appended — with the rivers, **above the Discovered early return**, and the one place the catalog join is resolved and threaded in. The ROAD block is composed on that same fog-safe side and appended LAST on both branches (`roads.md`); the deposits are emitted where they are composed |
 | `ui/hud/RungLadder.gd` → `deposit_track` / `_deposit_pile` / `_deposit_tooltip` / `deposit_building_verb` | The deposit branches' TRACK — `route_track`'s sibling, emitting the same `ROW_*` shape into the SAME `build_track` renderer |
 | `ui/hud/RungGates.gd` → `deposit_gates` / `deposit_gates_for` / `deposit_row_refusal` / `deposit_tooltip_refusals` / `_deposit_crew_refusal` / `_deposit_craft_refusal` | The FIVE refusals, keyed on the RUNG rather than the verb, as `{kind, short, long}` records in the route branch's own shape. `cutters` is a REQUIRED parameter, a `deposits` row publishing no crew — see "the gates" below |
@@ -28,9 +29,10 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/HudWidgets.gd` → `zone_head`'s trailing `title_tooltip` | The one shared-layer change the roster made: a head whose readout is a CONDITIONAL mark needs its hover on the TITLE, because `readout_tooltip` rides a Label built only where a readout is stated |
 | `ui/hud/DetailFormat.gd` → `Context.deposit_rows` + its `_value_hex` arm | ⛔ **THE ONE ARM OF THAT DISPATCH KEYED ON MEMBERSHIP RATHER THAN ON A LITERAL.** Every other row key is a constant; a working's is `Wood` or `Stone` — `materials.json`'s ids, config this client may not spell — so the PRODUCER says which keys it wrote, exactly as `row_tooltips` does |
 | `ui/hud/HudBandLaborState.gd` → `set_deposits` / `deposits` / `quarrywork_pool_state` / `extract_assignment_of` / `workers_for_extract` / `effective_extract_workers` / `source_crew_pool_extract` | The section held WHOLE (the roster asks a whole-list question), the pool's three cohort fields read with no arithmetic, and the per-working readers — each matching on the tile **and** the material, because that pair is the row's identity |
-| `ui/hud/ComposeState.gd` → the `deposit_*` group | The composition: a source key, a crew, the acting band and the band it was seeded from, and a kit. **Three fields and no more** — a deposit has no floor, no take species, no commit crop and no second axis, so the forage group's other seven slots have nothing to hold here |
+| `ui/hud/ComposeState.gd` → the `deposit_*` group | The composition: a source key, a crew, **a floor and its autofill one-shot**, the acting band and the band it was seeded from, and a kit. Still **no take species, no commit crop and no second axis** — a working takes one material and its rung is declared from the Work board. The floor is real on BOTH branches and offered on one: on a finite seam the member sits at its default and rides the command as the sim's own. `seed_deposit(count, floor)` seeds both from the band's own `extract` row |
+| `ui/hud/HudBandLaborState.gd` → `floor_for_extract` | The dial's SEED, and the rule it exists to keep: a reopened sheet seeds from the ASSIGNMENT, never from `DepositState.floor` (see the note under the decoder's row) |
 | `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the card's rows and its two actions read out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here — and it holds the frame's rows **by reference** with its own profile span (`layers.deposits`), this being the widest section the client ingests |
-| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract |
+| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement four are appended last: `floor` · `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*) |
 
 ## ⛔ THE WORD "QUARRY" IS TAKEN, AND IT MEANS THE HUNTED ANIMAL
 
@@ -210,16 +212,40 @@ UNITS, not the figures, so a seeded row renders more information through the sam
 than failing them. `_working_band_fixture` was corrected with it: it carried the take in
 `actual_yield`, the FOOD account, which no `Extract` row can pay.
 
+## ⛔ `DepositState.floor` IS A REPORT, AND NOTHING ON THE SHEET SEEDS FROM IT
+
+The wire's `floor` is where THIS TURN's crews stopped, kept at the DEEPEST floor any band cutting the
+working named (`DepositSource::last_floor`, a minimum because a floor is not additive), and `0` where
+nobody cut it — the identity of the composition's `max` rather than a strip order.
+
+⛔ **A COMPOSE SHEET STATES WHAT *ONE BAND* IS ASKING FOR, so its dial seeds from that band's own
+`extract` row** (`HudBandLaborState.floor_for_extract`), which is `labor-ui.md`'s crop-seeding rule
+applied to the floor. Seeding from the source-level field would silently adopt another band's deeper
+order; and on ground nobody has opened it reads `0`, which is *strip it bare* — the one value that
+must never be reached by accident, which is exactly why `floor_for_extract` answers the DEFAULT for an
+absent assignment rather than the wire's zero.
+
+**Its consequence is already `reachable`**, which the sim composes at exactly this value — so the
+field is decoded for the row's completeness and has no GDScript reader. Adding one is not the way to
+answer a question about a composition.
+
 ## ⛔ THE READOUT IS DECIDED BY `regrowth_rate > 0`, NEVER BY `branch`
 
 A flint scatter and a quarry are **both `extraction`** and read differently — same skill, same ladder,
 and only one of them runs out. `HudDepositVocab.renews` is that fork, it is the only fork, and every
 composer that needs it calls it rather than re-deriving:
 
-| `regrowth_rate` | the tile row / the roster cell | the sheet's readout note | the sheet's verdict | the sheet's aside |
-|---|---|---|---|---|
-| `> 0` | the OVER-CUT word — `⚠ overdrawing` | `renewable` (HEALTHY), or the overdraw flag + word (WARN) | *Cutting 7.2 a turn against 4.5 that grows back.* | none — a renewing seam has no runway |
-| `== 0` | the RUNWAY — `75 turns left` (roster only) | nothing: it renews nothing | *Gathering reaches 330 of 2,200. A quarry would reach 1,870.* | *Runs out in 275 turns at this rate.* |
+| `regrowth_rate` | the tile row / the roster cell | the FLOOR DIAL | the sheet's readout note | the sheet's verdict | the sheet's aside |
+|---|---|---|---|---|---|
+| `> 0` | the OVER-CUT word — `⚠ overdrawing` | offered — presets + chart | `renewable` (HEALTHY), or the overdraw flag + the SHEET's noun (WARN) | the SHARED harvest one — *Reaches the floor in 19 turns.* / *At the floor and holding it* / *settles at 64% — 7 foresters would reach the floor* | the floor hint and the teaching line |
+| `== 0` | the RUNWAY — `75 turns left` (roster only) | none: rock does not come back | nothing: it renews nothing | *Gathering reaches 330 of 2,200. A quarry would reach 1,870.* | *Runs out in 275 turns at this rate.* |
+
+⛔ **THE RENEWING SHEET'S VERDICT USED TO BE THE OVER-CUT SENTENCE AND IS NOT ANY MORE** (issue #650).
+*Cutting 7.2 a turn against 4.5 that grows back* is true and is an OBSERVATION; with a dial there is a
+question to answer instead — does THIS crew get the stand down to where it was told to stop, and if
+not how many hands would. **The over-cut fact is not lost**: it is the `⚠` on the yields row directly
+above. `HudDepositVocab.deposit_verdict`'s renewing arm still ships and is still reached — a renewing
+working the wire sent no CURVE for has no walk, and that arm is what the readout falls back to.
 
 **Forking on `branch` paints a renewing scatter with a runway that never moves**, and quotes a
 quarry's `sustainable_take` of `0` as though it were a bill met. `ui_preview`'s `workings` chapter
@@ -240,6 +266,41 @@ to read instead.
 idiom — so the deposit row and the food row's hover cannot drift into two words for one idea. Taking
 more than a source renews is one idea.
 
+**IN TWO REGISTERS, AND THE SHEET TAKES THE ONE ITS NEIGHBOURS TAKE.** A one-line clause on the tile
+card or the roster states the bare adjective (`over_cut_word`, *overdrawing*); a compose readout states
+the consequence in the source's own noun (`HudComposeVocab.LOCAL_OVERDRAW_NOTES` — *overdraws the
+patch* / *the herd* / *the seam*). The deposit readout is the same widget as the other two sheets now,
+so it wears their register; `LOCAL_EXTRACT_OVERDRAW_NOTE` is a third ROW of that table rather than a
+word this vocabulary spells for itself.
+
+### ⛔ AND THE TAKE IT COMPARES IS THE ASSIGNMENT'S, BECAUSE `actualTake` IS WRITTEN AT TURN RESOLUTION
+
+`DepositState.actualTake` is `0` for the whole frame between the press and the turn, so the sheet read
+`Cutting 0 a turn` and *Nobody is cutting it* directly under a headline stating the rate that same
+press had just committed to. **The sim declined to seed it and the reasoning is sound**
+(`.claude/rules/core_sim/extraction.md`): it is a `+=` accumulator across bands, so an assign-time
+write doubles under a re-assign and clobbers under a second band, both silently — and it is the
+denominator of `turnsRemaining` and half the over-cut pair, so seeding it would put a projection on
+both published readouts.
+
+**So the three states are told apart from the ASSIGNMENT ROW, whose terms are all on the wire** —
+`workers`, and the SEEDED `materialYield` (`core_sim/src/bin/server.rs` → `seed_source_yield`, whose
+`Extract` arm prices the take through the very seam the turn takes). `HudDepositVocab.stated_take` and
+`stated_runway` are the two readers, and the runway is `reachable ÷ that rate`, floored — linear and
+exact, the same division the sim makes.
+
+| state | how it reads |
+|---|---|
+| **nobody assigned** | the wire's `RUNWAY_NO_TAKE` sentence — *not being worked* / *Nobody is cutting it* |
+| **assigned, nothing cut yet** | the FORECAST — this crew's seeded rate, and the runway at it |
+| **cut last turn** | the realized figure — `actualTake` and the published `turnsRemaining` |
+
+⛔ **THE PUBLISHED READING LEADS AND THE ASSIGNMENT IS THE FALLBACK, never the other way round.** A
+resolved turn is a fact and a forecast is a promise; the seeded rate stands in for it only where
+nothing came out at all. That ordering is also what keeps the SOURCE-level figures honest on a working
+two bands cut: `actualTake` sums every band, and the assignment arm — one band's row — is reached only
+when the working paid out nothing, where there is at most this turn's new crew to describe.
+
 ### The runway's two negatives are two sentences
 
 `-1` (`RUNWAY_NOT_APPLICABLE`) means *this deposit RENEWS* and **cannot reach the runway arm by
@@ -251,6 +312,12 @@ reading for it.
 and `DEPOSIT_RUNWAY_ASIDE_IDLE` on the sheet, **never `0 turns left` and never `Runs out in 0 turns`**.
 The working WILL run out, just not while it stands idle; a zero there announces an exhaustion that has
 not happened.
+
+**It is also the sentinel `stated_runway` forks on**, and the two readings it now covers are the top
+two rows of the table above: a `-2` beside a crewed assignment is the FORECAST's cue, and a `-2` beside
+no assignment at all is the only place the idle sentence still renders. **The ROSTER and the TILE CARD
+keep the wire's own reading** — `runway_clause` / `supply_clause` take no assignment — so a working a
+band has just crewed still reads *not being worked* there for one frame.
 
 ## THE TILE CARD: ONE ROW PER MATERIAL, AND FOUR SHAPES IN ALL
 
@@ -325,29 +392,37 @@ Every other arm of that dispatch compares against a literal row key. A working's
 and `DetailFormat.Context.deposit_rows` is how the producer says which keys it wrote. `row_tooltips`
 one field up is the same shape for the same reason: only the producer knows.
 
-## THE TWO COMPOSE SHEETS — the forage sheet's spine, with the absences deliberate
+## THE TWO COMPOSE SHEETS — the forage sheet's spine, and one of them has the dial
 
 ⛔ **AND NOT THE ROAD LADDER CARD'S SHAPE, WHICH IS WHAT THE POPUP WAS.** A working is worked, so the
-thing the player is composing is a CREW — which is exactly what a compose sheet is for. What the
-earlier reading got right is that a deposit has no stance, no escapement floor, no policy ceiling and
-no take-species chooser; what it got wrong is concluding from that that the sheet was the wrong shape.
-**The sheet with those elements ABSENT is the right shape**; a Window with a stepper in it was a
-fourth one.
+thing the player is composing is a CREW — which is exactly what a compose sheet is for. A deposit has
+no stance, no policy ceiling and no take-species chooser, and **the sheet with those elements ABSENT
+is the right shape**; a Window with a stepper in it was a fourth one.
+
+⛔ **THE ESCAPEMENT FLOOR IS NO LONGER ONE OF THE ABSENCES, AND IT IS NOT ABSENT ON ONE BRANCH AND
+PRESENT ON THE OTHER EITHER** (issue #650). Every `extract` row carries a floor — the sim deliberately
+does not fork — and the FORK IS THE CLIENT'S: the dial is offered where `HudDepositVocab.renews` is
+true and nowhere else, because rock does not come back and *leave half the seam* on a quarry means
+never getting half the seam. So the forestry sheet grew the three intent presets over the draggable
+chart, the renewing half of the EXTRACTION branch grew them too (a flint scatter is `extraction` and
+renews), and a finite seam keeps exactly the shape it had.
 
 Top to bottom, with `_build_deposit_assign_controls` the one builder:
 
 1. **the `Band:` picker**, through the compose sheet's own `_build_band_picker`, so `Band:` here and
    `Band:` there line their value controls up at one declared key width. The actor defaults through
    the shared `_band_working_source` ladder, asked with the `(tile, material)` pair.
-2. ⛔ **NO FLOOR PRESETS AND NO CHART, ON EITHER BRANCH.** A deposit has no escapement floor today,
-   and **the chart IS the floor dial** — with no dial there is nothing to draw, and a disabled or
-   empty one would be furniture explaining an absence. *Giving the forestry branch a floor is a live
-   design question and is not answered here.*
+2. **the FLOOR PRESETS over the DRAGGABLE CHART, on a working that renews and on no other** — the
+   SHARED `HudWidgets.build_floor_picker` / `build_floor_chart` fed a `SourceForecast.floor_chart_model`,
+   the same three builders the forage sheet mounts, so a floor means the same thing on a wood as on a
+   patch. **The chart IS the dial**, so a finite seam draws neither: a disabled or empty one would be
+   furniture explaining an absence.
 3. **the crew row** through `_mount_crew_row`, its section label the branch's crew noun uppercased.
-   ⛔ **NO CREW-TARGET PILLS, and the EMPTY MODEL is what says so**: both pills are answers about a
-   FLOOR (*clear it now* / *hold it after*), so `_mount_crew_row`'s own `known` gate drops them rather
-   than a branch here. That mount gained a trailing `label_tooltip` for `CARD_CREW_HINT`, the sheet's
-   one place to say that these hands CUT and the hands that HOLD are a pool on another panel.
+   **The two CREW-TARGET PILLS arrive with the dial and with nothing else** — both are answers about a
+   FLOOR (*clear it now* / *hold it after*), so a finite seam passes an EMPTY model and
+   `_mount_crew_row`'s own `known` gate drops them rather than a branch here. That mount's trailing
+   `label_tooltip` carries `CARD_CREW_HINT`, the sheet's one place to say that these hands CUT and the
+   hands that HOLD are a pool on another panel.
 4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`. **The shipped roster
    declares no take gear on either branch**, so `build_kit_row` mounts nothing today — the honest
    answer rather than an empty picker, and the row appears by itself the day a felling axe declares a
@@ -362,21 +437,66 @@ Top to bottom, with `_build_deposit_assign_controls` the one builder:
    which is the shipped contract and is not being reopened. Where the band works nothing here the line
    takes its UNWORKED arm (*Send diggers here first, then …*), the sim's rule being that an
    improvement verb reaches only bands already working the source.
-7. **the readout box** — `next turn` (`SourceForecast.yield_row_header`'s own default, no account here
-   carrying a holding rate), the take with the MATERIAL as the account name, the DEAL as its own
-   `IMPROVEMENT_DEAL_META` block, the VERDICT, and the runway under the dashed rule.
+7. **the readout box** — the take with the MATERIAL as the account name (and `next turn · now →
+   after` where there is a floor to settle at), the DEAL as its own `IMPROVEMENT_DEAL_META` block, the
+   VERDICT, and — on a finite seam — the runway under the dashed rule.
 8. **the commit button** — `Cut` / `Dig` at a crew above zero, `Unassign` at zero on a working this
    band holds, dead with a hint at zero on one it does not. The forage sheet's two zero-crew cases,
-   verbatim.
+   verbatim. **It sends the floor** in forage's own position and forage's own decimal precision:
+   `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`. A finite working sends the sheet's
+   DEFAULT rather than omitting the token, which resolves to the same number sim-side and keeps the
+   line one shape.
 
-### ⛔ THE READOUT IS BUILT DIRECTLY, NOT THROUGH `_mount_readout`
+### ⛔ `max(rungFloorFraction, floor)` — ONE COMPOSITION, IN ONE NAMED FUNCTION
 
-That mount is the FLOOR MODEL's: the live registry a drag refills, the crew targets, the floor's
-teaching line and the `now → after` walk are all functions of a `floor_chart_model`, and there is no
-dial here for any of them to follow. Passing it an empty model renders the box and then silently drops
-the **VERDICT** — which on a finite seam is the one sentence the whole branch turns on. So
+**`HudDepositVocab.composed_floor` is the only place in this client the two floors are put together**,
+and everything downstream reads the model's own `floor` back through `_live_floor` rather than
+composing the pair a second time. The rung's floor is `1 − recovery_fraction` — what the standing rung
+cannot reach — and the crew's is the dial; both are *an amount left standing*, so a crew stops at
+whichever is GREATER.
+
+⛔ **ADDED, THEY DOUBLE-COUNT ON EVERY RUNG.** `extraction:gathering` strands 85% of a rock body, so a
+sum would draw a gathering crew stopping 85% of the seam short of where it really stops — at every
+dial position, on the one ground where the composition is not a no-op. **Every FORESTRY rung recovers
+`1.0`**, so the `max` is the identity on the branch that most obviously has the dial and load-bearing
+on the renewing extraction ground beside it; `_scatter_working` in the harness is that fixture.
+
+`DrawerComposeController._deposit_chart_model` composes it once per render and once per live drag, and
+feeds the result to `floor_chart_model` — which is what hands it to `project_stock`, to both crew
+targets, to the verdict and to `HudDepositVocab.room_next_turn`.
+
+⛔ **THE TEACHING LINE IS THE ONE READING TAKEN AT THE PLAYER'S FLOOR INSTEAD.** `systems::labor`'s
+`Extract` arm passes the ROW's own floor to `intensification::learn_multiplier` and reaches the rung's
+floor only through the workability predicate (`reachable_before`), so a line composed at the max would
+promise a gathering crew ×1.70 for a dial they set to zero.
+
+### ⛔ THE ROOM IS THE DIAL'S, AND ON A FINITE SEAM IT REPRODUCES `reachable`
+
+`HudDepositVocab.room_next_turn` is the shared `escapement_room_next_turn` asked of a working — this
+turn's growth first, then what stands above the COMPOSED floor — and it is what the take, the
+max-useful cap and the readout are all measured against, so none of them can be struck at a different
+point on the dial. `reachable` on the wire is the sim's reading at the floor LAST turn's crews worked
+to, which is the wrong number to cap a composition with.
+
+**On a finite working the two are the same figure by ARITHMETIC rather than by a branch**: rock's curve
+is all zeros, so the growth term is nothing and the room is `stock − rung floor × capacity`, which is
+`extraction::deposit_reachable` at a crew that named no floor. What still reads `reachable` is the
+RUNWAY, whose numerator it is.
+
+### ⛔ THE READOUT IS BUILT DIRECTLY, NOT THROUGH `_mount_readout` — AND STILL
+
+The shared mount wires every register off a `floor_chart_model` and drops the **VERDICT** outright
+when that model is not `known` — which is every FINITE seam, since a quarry publishes an all-zero
+curve and has no projection to walk. That verdict is the one sentence the whole branch turns on. So
 `_mount_deposit_readout` assembles the four SHARED widgets in the same order and the same registers,
-and reuses every one of them.
+takes the verdict from the walk where there is one and from `HudDepositVocab.deposit_verdict` where
+there is not, and puts the runway aside under the finite arm alone.
+
+⛔ **AND THE `renewable` NOTE ON THE YIELDS ROW IS THE SAME FORK.** `_fill_yields_host` draws for
+three webs and composed that note from the overdraw flag alone, so a quarry read `1.20 STONE
+RENEWABLE`. `YIELD_MODEL_RENEWS` is the gate; **its absence means `true`, which is a structural fact
+about the two food webs rather than a fallback** — a patch reseeds and a herd breeds, so neither has a
+`false` to state.
 
 **The deal row is its own block and never a row inside the yields flow** — two harness contracts read
 that flow structurally, so a deal term folded in would corrupt both silently. Its label is the rung's
@@ -397,12 +517,21 @@ repeat the material.
 
 ### ⛔ THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE
 
-A crew takes `min(crew × yieldPerWorkerTurn, reachable)` in a turn, so a hand beyond
-`ceil(reachable / rate)` carries nothing home and the `+` must not offer it —
-`HudDepositVocab.max_useful_cutters`, with `CUTTERS_UNCAPPED` where the catalog prices no rate (a
-client that has not been sent one), which leaves the band's own pool as the only ceiling. The forage
-sheet's max-useful rule, arrived at from the SEAM rather than from a forecast this branch does not
-publish.
+A crew takes `min(crew × perWorkerBiomass, the room above the composed floor)` in a turn, so a hand
+beyond that quotient carries nothing home and the `+` must not offer it —
+`HudDepositVocab.max_useful_cutters`, with `CUTTERS_UNCAPPED` where the wire prices no rate (a client
+that has not been sent a row), which leaves the band's own pool as the only ceiling. The forage sheet's
+max-useful rule, arrived at from the SEAM rather than from a forecast this branch does not publish.
+
+⛔ **THE RATE IS `DepositState.perWorkerBiomass`, NOT THE CATALOG'S `yieldPerWorkerTurn`.** They are
+the same number for the rung the working STANDS on, and the wire one is published for
+`build_work_per_worker_turn`'s reason: the sim writes worker output as a sum of terms, so a client
+reading the config's figure goes stale in silence the day a second term lands. The catalog rate
+survives on the DEAL row, which quotes a rung nobody stands on yet and has no published throughput.
+
+**AND IT IS RESOLVED BEFORE THE CHART** — the forage sheet's own load-bearing order. The chart, both
+crew targets and the verdict are read against a CREW, and reading them against a count the stepper is
+about to clamp away makes the panel state a verdict for a crew it then refuses to show.
 
 ## THE LADDER — the deposit branches' two tracks, on the Work board
 
@@ -768,13 +897,17 @@ anywhere.
 
 - **`quarrywork` joins the closed role arm** (`"scout" | "warrior" | "agriculture" | "husbandry" |
   "roadwork" | "quarrywork" | "builders"`), a bare worker count and no tail but the kit.
-- **`extract` is a TARGETED grammar of its own** — `extract <x> <y> <material> <workers>` — and **the
-  material is not optional**: one tile can hold two workings, so a line naming only the tile names
-  neither. It rides the **`species` token**, which is where the sim's own `extract` arm reads it from
-  and which means the same kind of thing on a forage row (*which of the things on this ground are you
-  here for*). No floor and no kit token: a deposit has no escapement floor to leave standing, and
-  `default_kits.extract` is the bare `none` kit with no picker anywhere in reach, so the tail is
-  closed and the line is byte-stable.
+- **`extract` is a TARGETED grammar of its own** — `extract <x> <y> <material> [floor] <workers>` —
+  and **the material is not optional**: one tile can hold two workings, so a line naming only the tile
+  names neither. It rides the **`species` token**, which is where the sim's own `extract` arm reads it
+  from and which means the same kind of thing on a forage row (*which of the things on this ground are
+  you here for*). **The FLOOR follows it in forage's own position** (issue #650), a validated NUMBER at
+  `Main.FLOOR_COMMAND_DECIMALS` — never `str(float)` — with the four retired stance words refused BY
+  NAME at parse. Still no kit token: `default_kits.extract` is the bare `none` kit with no picker
+  anywhere in reach, so the tail is closed after the worker count.
+- ⛔ **THE FLOOR IS SENT ON BOTH BRANCHES EVEN THOUGH ONLY ONE IS ASKED FOR ONE.** A finite seam has no
+  dial, so its payload carries the sheet's default — which is what an omitted token resolves to
+  sim-side (`DEFAULT_ESCAPEMENT_FLOOR`) — and the line keeps ONE shape rather than two.
 
 ⛔ **THE SHEET'S KIT ROW IS MOUNTED AND ITS SELECTION HAS NO TOKEN TO RIDE.** `extract`'s grammar is
 closed after the worker count, and the shipped roster offers `extract` no kit at all — so the row
@@ -794,17 +927,29 @@ runtime from the list, so the literal cannot go stale unnoticed.
 
 ### The three surfaces — `ui_preview`'s `workings` chapter
 
-`tools/ui_preview/chapters/workings.gd`, appended LAST in `CHAPTERS` so no existing frame moves. Five
-frames and forty-three checkpoints; it pushes its own rung CATALOG through the real ingest, stages its
-own band (see below), and hands the hex back bare on the way out — and an EMPTY `deposits` array there
-means the ground holds nothing rather than nobody having worked it.
+`tools/ui_preview/chapters/workings.gd`, appended LAST in `CHAPTERS` so no existing frame moves. It
+pushes its own rung CATALOG **and its own knowledge ROSTER** through the real ingest — the three
+deposit crafts are absent from the shared `fixtures_knowledge.gd` ladder, and a craft's word is what a
+gate's refusal and the sheet's teaching line both take their name from — stages its own band (see
+below), and hands the hex back bare on the way out; an EMPTY `deposits` array there means the ground
+holds nothing rather than nobody having worked it.
+
+⛔ **THE FIXTURES CARRY THE ESCAPEMENT FOUR AT THE SHIPPED CONFIG FIGURES**, and the curve is built the
+way the SIM builds it (`_deposit_regrowth_samples` — the seed read INSIDE the logistic term, never
+lifted onto the stock), so rock's samples come back all-zero by the same arithmetic that keeps a
+quarry at zero. `_scatter_working` is the one fixture where the `max` composition is not a no-op: it
+renews, so it is offered the dial, and it stands on a rung that strands 85% of the scatter.
 
 | frame | what only IT can say |
 |---|---|
 | `workings_tile_card` | ONE hex, TWO material rows, each keyed by its own material — the claim a tile-keyed surface cannot make — plus the row's `stock · rung · hazard` shape, the rung named by the WIRE, **no bill, countdown or shortfall figure anywhere on the card**, those figures present on the block's HOVER, the countdown on the ROSTER's hover and not on this one, and no payoff row on two rungs that buy nothing |
 | `workings_payoff_rows` | the blank-key row, BOTH of them — `reaches 85% of the seam` on the quarry and `grows back twice as fast` on the coppice, the two AXES the two branches' ladders buy — and the structural claim: the rendered markup keeps exactly ONE `[table=`, which is the only place a keyless payoff's table split is visible |
-| `workings_forestry_sheet` | `Assign foresters ▸` — the eyebrow naming the BRANCH's crew, the crew row naming it again, **no floor preset and no chart**, the pointer line naming the next rung and linking the Work tab, the deal row at the composed crew, the renewing arm's own note and verdict, and the commit verb `Cut` |
-| `workings_extraction_sheet` | `Assign diggers ▸` on the rock beside it — the OTHER branch's noun, the verdict the finite ladder turns on (*Gathering reaches 330 of 2200. A quarry would reach 1870.*), the runway aside at this rate, the IDLE seam's own sentence beside it (never `Runs out in 0 turns`), and `Dig` |
+| `workings_forestry_sheet` | `Assign foresters ▸` — the eyebrow naming the BRANCH's crew, the crew row naming it again, **the floor presets AND the chart, because the ground grows back**, the pointer line naming the next rung and linking the Work tab, the deal row at the composed crew, the sheet's own overdraw note, the SHARED harvest verdict, and the commit verb `Cut`. It also asserts the arm that verdict REPLACED still composes — `deposit_verdict` on a curveless working — which no frame can show beside it |
+| `workings_extraction_sheet` | `Assign diggers ▸` on the rock beside it — the OTHER branch's noun, **neither preset nor chart nor crew pill**, the verdict the finite ladder turns on (*Gathering reaches 330 of 2200. A quarry would reach 1870.*), the runway aside at this rate, the IDLE seam's own sentence beside it (never `Runs out in 0 turns`), and `Dig`. **It is the NEGATIVE that makes the forestry sheet's dial mean something**: same chapter, same hex, one fork |
+| `workings_floor_strip` / `_peak` / `_learn` | the dial at each of the three intent presets on ONE stand — the preset lit, the chart drawn, the take in the working's own MATERIAL at every position, the `now → after` arrow agreeing with the sheet's own verdict (both gated on the same walk), and the teaching line at the shared `learn_multiplier` for that floor. **The stand is a nearly-full one on purpose**: the chapter's working fixture sits BELOW the top preset's floor, so on it the third frame would be empty for a reason that has nothing to do with the dial |
+| `workings_floor_held` | a wood standing EXACTLY at its floor — the shared *At the floor and holding it*, the take collapsing to what the stand puts back, and NO arrow, the two readings being one number. The crew is read BACK off the sheet, since a reopened sheet seeds from the band's own row |
+| `workings_floor_stripped` | the dial DRAGGED to the bottom, live (`committed = false`) — the chart the pointer holds still alive, the readings refilled in place, the `⚠ overdraws the seam` mark and the strip consequence in the working's own noun |
+| `workings_fresh_runway` | **a crew committed this turn on a seam that has cut nothing** — the FORECAST runway (`reachable ÷ the seeded rate`) where the sheet used to read *Nobody is cutting it*, the same seam with no crew still reading it, and the renewing verdict quoting the SEEDED take rather than a zero. Three states, three readings, one frame plus two producer claims |
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |
 
 **The LADDER's row states are asserted over the PRODUCER, without a frame**: the SITE gate on a

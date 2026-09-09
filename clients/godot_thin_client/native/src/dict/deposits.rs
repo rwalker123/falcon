@@ -192,6 +192,50 @@ pub(crate) fn deposits_to_array(
         // re-derived on the client.
         let _ = dict.insert("upkeep_kit_id", deposit.upkeepKitId().unwrap_or_default());
         let _ = dict.insert("upkeep_kit_named", deposit.upkeepKitNamed());
+        // --- THE ESCAPEMENT FLOOR AND THE CURVE IT IS DRAGGED ON (issue #650) -------------------
+        // WHERE THIS TURN'S CREWS STOPPED, as a fraction of `capacity` — the working's own reading
+        // of the dial, kept at the DEEPEST floor any band cutting it named. `0` where nobody cut it,
+        // which is the identity of the max below rather than a strip order.
+        //
+        // ⛔ **NOTHING ON THE SHEET SEEDS FROM IT.** A compose sheet states what ONE band is asking
+        // for, and that is `LaborAssignment.floor` on that band's own `extract` row
+        // (`HudBandLaborState.floor_for_extract`); this is the SOURCE-level minimum across every band
+        // on the working, so seeding a dial from it would silently adopt another band's deeper floor.
+        // Its consequence is already `reachable` above, which the sim composes at exactly this value.
+        let _ = dict.insert("floor", f64::from(deposit.floor()));
+        // THE RUNG'S OWN FLOOR, IN THE SAME UNITS — `1 - recovery_fraction`, what this rung's reach
+        // cannot get at. `extraction:gathering` recovers 0.15, so it strands 85% of a rock body and
+        // this reads 0.85; every FORESTRY rung recovers 1.0, so this reads 0.
+        //
+        // ⛔ **COMPOSE IT WITH THE PLAYER'S FLOOR AS A MAXIMUM, NEVER AS A SUM.** Both are the same
+        // kind of quantity — an amount left standing — so a crew stops at whichever is greater
+        // (`HudDepositVocab.composed_floor`, the client's ONE composition of the pair). Added, they
+        // double-count on every rung: a gathering crew would be drawn stopping 85% of a seam short of
+        // where it really stops.
+        let _ = dict.insert(
+            "rung_floor_fraction",
+            f64::from(deposit.rungFloorFraction()),
+        );
+        // **WHAT ONE CUTTER MOVES PER TURN AT THE RUNG THIS WORKING HOLDS**, in the material's own
+        // units — the deposit twin of `ForagePatchState.perWorkerBiomass` and named after it, because
+        // the crew arithmetic it feeds (*clear it now* / *hold it after*) is the same division on
+        // every web. Never `0` on a live rung: there is no seasonal weight and no TAKE kit on either
+        // deposit branch, so it is the rung's rate flat.
+        let _ = dict.insert("per_worker_biomass", f64::from(deposit.perWorkerBiomass()));
+        // **THE SAMPLED REGROWTH CURVE** — the third on the wire beside the patch's and the herd's,
+        // on the same implicit x-axis: sample `i` of `n` is the one-turn delta at
+        // `stock = i/(n-1) × capacity`. No sample is ever negative (a deposit has no Allee term), so
+        // it is the plant curve's shape rather than the herd's.
+        //
+        // ⛔ **A QUARRY'S ARE ALL ZERO AND THAT IS AN ANSWER RATHER THAN AN ABSENCE.** Rock's rate is
+        // zero, so the delta is exactly `0` everywhere — *this does not grow*. An EMPTY vector is the
+        // different claim *no curve was sent*, and `regrowth_samples_packed` keeps the two apart:
+        // `SourceForecast.has_growth_curve` is false for both, which is why the client's dial forks
+        // on `regrowth_rate` and never on the curve.
+        let _ = dict.insert(
+            "regrowth_samples",
+            &crate::dict::subsistence::regrowth_samples_packed(deposit.regrowthSamples()),
+        );
         array.push(&dict.to_variant());
     }
     array

@@ -34,7 +34,7 @@ const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 66
+const EXPECTED_CHECKPOINTS := 91
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -106,6 +106,37 @@ const STONE_RUNWAY := 75
 ## sentinel the reader does not know.
 const RUNWAY_IDLE := HudDepositVocab.RUNWAY_NO_TAKE
 const RUNWAY_RENEWS := HudDepositVocab.RUNWAY_NOT_APPLICABLE
+
+# ---- THE ESCAPEMENT FLOOR'S FOUR APPENDED FIELDS (issue #650) ------------------------------------
+#
+# Every figure here is `intensification_ladder.json` / `extraction.json` at the values that ship, so a
+# claim made about the sheet is a claim about the wire and not about a table this chapter invented.
+
+## `1 − recovery_fraction`, per shipped rung. **EVERY FORESTRY RUNG REACHES THE WHOLE SEAM** (recovery
+## 1.0), which is what makes the composition's `max` a no-op on the branch that gets the dial and
+## load-bearing on the renewing EXTRACTION ground beside it — the scatter below, whose gathering rung
+## strands 85% of the stone before the player's dial is consulted at all.
+const FORESTRY_RUNG_FLOOR := 0.0
+const GATHERING_RUNG_FLOOR := 0.85
+const QUARRY_RUNG_FLOOR := 0.15
+
+## `yield_per_worker_turn` per shipped rung — what ONE cutter moves in a turn, which the wire
+## publishes on the working as `perWorkerBiomass` rather than leaving the client to read off the
+## catalog.
+const FELLING_PER_WORKER := 2.0
+const COPPICE_PER_WORKER := 2.5
+const GATHERING_PER_WORKER := 0.4
+const QUARRY_PER_WORKER := 2.2
+
+## **WHERE THIS TURN'S CREWS STOPPED** — `0` on every fixture here, which is the identity of the
+## composition's `max` and the reading for a working nobody cut. It is NOT a strip order, and nothing
+## on the sheet seeds a dial from it.
+const NOBODY_CUT_FLOOR := 0.0
+
+## `extraction.json`'s `seed_fraction` and the wire's curve resolution — the two terms the sampled
+## curve below is built from, so a fixture curve is the sim's own arithmetic rather than a shape.
+const DEPOSIT_SEED_FRACTION := 0.02
+const REGROWTH_SAMPLE_COUNT := 11
 
 ## **A FLINT SCATTER: `extraction` AND RENEWING.** Rock's rate is zero and a loose-stone scatter's is
 ## not, so this row shares the quarry's branch and must take the OVER-CUT arm — the one fixture that
@@ -192,6 +223,11 @@ func run(harness) -> void:
 	# it buys and every gate. Pushed through the real ingest so a claim made below is a claim about
 	# the wire rather than about a table this chapter holds.
 	h._hud.update_deposit_rungs(_deposit_catalog())
+	# **AND THE KNOWLEDGE ROSTER BESIDE IT** — the `{knowledge_id: display_name}` map every craft on
+	# these branches is NAMED from, both in a gate's refusal and in the sheet's teaching line. It is
+	# pushed through the real ingest for the catalog's reason: a name this chapter typed for itself
+	# would prove nothing about the wire.
+	h._hud.update_ladder_knowledge(_deposit_knowledge_roster())
 	await h._settle()
 
 	# ⛔ **STATE workings-tile-card — ONE ROW PER MATERIAL, AND THAT IS THE KEY SPEAKING.** The
@@ -319,11 +355,13 @@ func run(harness) -> void:
 		h._assert_hud("…and the crew row is that same noun (%s)" % Readout.crew_row_label(sheet),
 			Readout.crew_row_label(sheet)
 				== HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_upper())
-		# ⛔ **NO FLOOR DIAL AND NO CHART ON EITHER BRANCH**, and a disabled or empty one would be
-		# furniture explaining an absence rather than an honest silence.
-		h._assert_hud("…and neither a floor preset nor its chart is drawn at all",
-			_first_meta(sheet, HudWidgets.POLICY_RUNG_META) == null
-				and _first_meta(sheet, HudWidgets.FLOOR_CHART_META) == null)
+		# ⛔ **THE DIAL IS OFFERED HERE BECAUSE THE GROUND GROWS BACK** (issue #650) — the three intent
+		# presets over the draggable chart, through the SAME builders the forage sheet uses. The
+		# negative that makes this mean something is the digger sheet below, on rock, which draws
+		# neither.
+		h._assert_hud("…and a RENEWING seam is offered the floor presets AND the chart",
+			_first_meta(sheet, HudWidgets.POLICY_RUNG_META) != null
+				and _first_meta(sheet, HudWidgets.FLOOR_CHART_META) != null)
 		# **THE POINTER LINE — the sheet emits no improvement verb, so it NAMES the board that does.**
 		h._assert_hud("…and the pointer line names the next rung and links the Work tab (%s)"
 				% _offer_text(sheet),
@@ -344,15 +382,38 @@ func run(harness) -> void:
 		# **THE NOTE RIDES THE ROW, IN THE READOUT'S SMALL-PRINT UPPERCASE** — `_readout_unit_label`
 		# upper-cases every annotation it draws, so the needle is the vocabulary's own word in the
 		# case the row states it, never a second spelling.
-		h._assert_hud("…and a renewing seam cut over its renewal reads the food webs' own word (%s)"
+		#
+		# ⛔ **AND IT IS THE COMPOSE SHEET'S WORD, NOT THE TILE CARD'S** (issue #650). A sheet states
+		# the consequence in the source's own noun — *overdraws the patch* / *the herd* / *the seam*,
+		# `HudComposeVocab.LOCAL_OVERDRAW_NOTES` — while the card's one-line clause states the bare
+		# adjective (`HudDepositVocab.over_cut_word`). Two registers of one idea, and the deposit
+		# readout takes the register its two neighbours take because it is now the same widget.
+		h._assert_hud("…and a renewing seam cut over its renewal wears the SHEET's overdraw note (%s)"
 				% Readout.yields_text(sheet),
-			Readout.yields_text(sheet).contains(HudDepositVocab.over_cut_word().to_upper()))
-		h._assert_hud("…and its verdict is the over-cut sentence, not a reach (%s)"
+			Readout.yields_text(sheet).contains(
+				HudComposeVocab.LOCAL_EXTRACT_OVERDRAW_NOTE.to_upper()))
+		# ⛔ **AND ITS VERDICT IS THE SHARED REACHING ONE, WHICH IS WHAT THE FLOOR BOUGHT** (issue
+		# #650). It was `Cutting 7.2 a turn against 4.5 that grows back` — true, and an observation
+		# rather than a decision. With a dial there is a question to answer instead: does THIS crew get
+		# the stand down to where you told it to stop, and if not how many hands would. The over-cut
+		# fact is not lost — it is the ⚠ on the row above, asserted a line up.
+		#
+		# **`deposit_verdict`'s renewing arm still ships and is still reached** — a renewing working
+		# the wire sent no curve for has no walk to read, and that arm is what it falls back to.
+		var over_cut_sentence := HudDepositVocab.DEPOSIT_VERDICT_OVER_CUT_FORMAT % [
+			DetailFormat.format_trimmed(WOOD_OVER_CUT, HudDepositVocab.CARD_STOCK_DECIMALS),
+			DetailFormat.format_trimmed(WOOD_SUSTAINABLE, HudDepositVocab.CARD_STOCK_DECIMALS)]
+		h._assert_hud("…and its verdict is the SHARED harvest one, off the projection walk (%s)"
 				% Readout.verdict_text(sheet),
-			Readout.verdict_text(sheet).contains(
-				HudDepositVocab.DEPOSIT_VERDICT_OVER_CUT_FORMAT % [
-				DetailFormat.format_trimmed(WOOD_OVER_CUT, HudDepositVocab.CARD_STOCK_DECIMALS),
-				DetailFormat.format_trimmed(WOOD_SUSTAINABLE, HudDepositVocab.CARD_STOCK_DECIMALS)]))
+			Readout.verdict_text(sheet) != ""
+				and not Readout.verdict_text(sheet).contains(over_cut_sentence))
+		# **AND THE ARM IT REPLACED IS STILL REACHED** — a renewing working the wire published no
+		# curve for has no walk, and `deposit_verdict` is what the readout falls back to there. The
+		# claim is the PRODUCER rather than a frame: no fixture can show both verdicts at once.
+		h._assert_hud("…while a curveless working still composes the over-cut sentence (%s)"
+				% String(HudDepositVocab.deposit_verdict(_curveless_wood(), _ladder()).get("text", "")),
+			String(HudDepositVocab.deposit_verdict(_curveless_wood(), _ladder()).get("text", ""))
+				== over_cut_sentence)
 		h._assert_hud("…and its commit button is the branch's own verb (%s)" % _commit_face(sheet),
 			_commit_face(sheet) == HudDepositVocab.commit_verb(HudDepositVocab.BRANCH_FORESTRY))
 		await h._save("workings_forestry_sheet")
@@ -380,6 +441,21 @@ func run(harness) -> void:
 				% Readout.crew_row_label(sheet),
 			Readout.crew_row_label(sheet)
 				== HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_EXTRACTION).to_upper())
+		# ⛔ **AND ROCK IS OFFERED NO DIAL AT ALL — the fork is the CLIENT'S, and it is
+		# `regrowth_rate > 0`.** The sim publishes a floor on every `extract` row; what a finite seam
+		# must never be offered is the CHOICE, because *leave half the seam* on ground that never grows
+		# back means never getting half the seam. A disabled or empty chart would be furniture
+		# explaining an absence, so the sheet keeps exactly the shape it had.
+		h._assert_hud("…and a FINITE seam is offered neither a floor preset nor a chart",
+			_first_meta(sheet, HudWidgets.POLICY_RUNG_META) == null
+				and _first_meta(sheet, HudWidgets.FLOOR_CHART_META) == null)
+		# ⛔ **NOR ANY CREW-TARGET PILL** — both pills are answers about a FLOOR, so the empty chart
+		# model is what drops them rather than a branch in the deposit builder.
+		h._assert_hud("…and neither crew-target pill, both being answers about a floor",
+			Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR)
+					== Readout.CREW_TARGET_ABSENT
+				and Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD)
+					== Readout.CREW_TARGET_ABSENT)
 		h._assert_hud("…and its verdict states what this rung reaches AND what the next would (%s)"
 				% Readout.verdict_text(sheet),
 			Readout.verdict_text(sheet).contains((HudDepositVocab.DEPOSIT_VERDICT_REACH_FORMAT % [
@@ -677,30 +753,199 @@ func run(harness) -> void:
 	h._assert_hud("a crew put on the PATCH this turn states a seeded food rate (%s)" % fresh_forage,
 		fresh_forage.contains(SourceForecast.YIELD_PER_TURN_SUFFIX)
 			and not fresh_forage.contains(SourceForecast.format_signed(0.0)))
-	# **THE DEPOSIT HALF — THE SAME LINE IN THE WORKING'S OWN ACCOUNT.**
-	h._assert_hud("…and a crew put on the WORKING states its material, not the food unit (%s)"
+	# **THE DEPOSIT HALF — THE SAME LINE IN THE WORKING'S OWN ACCOUNT, AND A REAL FIGURE IN IT.** The
+	# unit was the whole claim while the sim declined to seed an `Extract` row; it seeds one now, so
+	# the frame states both halves: the working's own material, and never the food unit beside it.
+	h._assert_hud("…and a crew put on the WORKING states its material at a seeded rate (%s)"
 			% fresh_wood,
 		fresh_wood.contains(WOOD_MATERIAL_ID)
+			and fresh_wood.contains(SourceForecast.format_signed(FRESH_WOOD_SEED))
 			and not fresh_wood.contains(SourceForecast.YIELD_PER_TURN_SUFFIX))
 	# **AND BOTH ARE SUMMARIES AT ALL**, which is what makes the pair a comparison rather than two
 	# separate readings: a missing second line would satisfy the two negatives above on its own.
-	# ⛔ **AND THE HOVER ON A WORKING THAT HAS TAKEN NOTHING SAYS NOTHING**, which is the whole of what
-	# it honestly can. Every clause it used to carry — the average, this turn's figure, the sustainable
-	# ceiling — is the FOOD account, and `systems/labor.rs`' `Extract` arm leaves that at
-	# `SourceYield::ZERO` by construction, so the sentence a player read there was three zeros in an
-	# account the ground does not pay. The material clause is the one true thing this hover has to say
-	# and there is no take to say it about yet. **The face and the hover therefore still agree**: both
-	# name the working's own account and neither names food.
+	# ⛔ **AND THE HOVER STATES THE SEEDED TAKE AND NOTHING ELSE.** Every clause it used to carry — the
+	# average, this turn's figure, the sustainable ceiling — is the FOOD account, and
+	# `systems/labor.rs`' `Extract` arm leaves that at `SourceYield::ZERO` by construction, so the
+	# sentence a player read there was three zeros in an account the ground does not pay. **Asserted by
+	# EQUALITY against the composed material clause**, which is the only form that proves both halves
+	# at once: the material clause is present, and no food clause survives beside it.
 	var fresh_wood_hover := _assign_button(h._hud.forestry_assign_controls,
 		HudDepositVocab.BRANCH_FORESTRY).tooltip_text
-	h._assert_hud("…and the hover on a working with nothing taken states no food sentence (%s)"
-			% fresh_wood_hover,
-		fresh_wood_hover == "")
+	h._assert_hud("…and its hover is that seeded take and nothing else (%s)" % fresh_wood_hover,
+		fresh_wood_hover == SourceForecast.POLICY_CAP_MATERIAL_FORMAT % [
+			SourceForecast.format_signed(FRESH_WOOD_SEED), WOOD_MATERIAL_ID])
 	h._assert_hud("…with both controls carrying a second line on the same card (%s | %s)"
 			% [fresh_forage, fresh_wood],
 		fresh_forage.contains(HudComposeVocab.HARVEST_CREW_LABEL.to_lower())
 			and fresh_wood.contains(
 				HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower()))
+
+	# ⛔⛔ **STATE workings-floor-* — THE ESCAPEMENT FLOOR ON THE FORESTRY SHEET** (issue #650). The
+	# three intent presets over the draggable chart, above the crew row, through the SAME
+	# `HudWidgets.build_floor_picker` / `build_floor_chart` / `SourceForecast.floor_chart_model` the
+	# forage sheet uses. What the dial buys a WOOD is what it buys a patch: the take now, the take once
+	# the stand settles, and a faster lesson for leaving more standing.
+	#
+	# ⛔ **THE WALK RUNS ON A NEARLY-FULL STAND, AND THAT IS NOT COSMETIC.** The chapter's working
+	# fixture stands at 412 of 600 — BELOW the top preset's own floor of 480 — so at `Learn from it`
+	# it honestly takes nothing until the stand grows past the line, and the frame would show an empty
+	# readout for a true reason that has nothing to do with the dial. A stand above every preset's
+	# floor is what makes the three frames a comparison of the DIAL rather than of the stock.
+	h._hud.update_band_alerts([_working_band_fixture()])
+	h._show_tile(_workings_tile([_standing_wood(), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_standing_wood())
+	await h._settle()
+	h._hud._compose.set_deposit_count(SHEET_CREW)
+	for preset_variant in SourceForecast.FLOOR_PRESETS:
+		var preset := String(preset_variant)
+		# **DRIVEN AS THE PRESET BUTTON DRIVES IT** — the dial, then the autofill one-shot, then the
+		# rebuild. Not through the button's face, which is the picker's own text and would make this a
+		# claim about a label.
+		h._hud._compose.set_deposit_floor(SourceForecast.floor_for_preset(preset))
+		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._drawercompose.open_deposit_compose(_standing_wood())
+		await h._settle()
+		var floor_sheet: Node = h._hud._drawercompose._compose_sheet
+		h._assert_hud("the wood sheet at `%s` lights that preset and draws its chart" % preset,
+			SourceForecast.floor_preset_for(h._hud._compose.deposit_floor()) == preset
+				and _first_meta(floor_sheet, HudWidgets.FLOOR_CHART_META) != null)
+		# **THE TAKE IS STATED IN THE WORKING'S OWN MATERIAL, at every position on the dial** — a
+		# working pays no food, so a `/turn` suffix here would be the account defect this arc already
+		# corrected once on the button's second line.
+		h._assert_hud("…and states its take in %s, never in the food unit (%s)"
+				% [WOOD_MATERIAL_ID, Readout.yields_text(floor_sheet)],
+			Readout.yields_text(floor_sheet).contains(WOOD_MATERIAL_ID.to_upper())
+				and not Readout.yields_text(floor_sheet).contains(
+					SourceForecast.YIELD_PER_TURN_SUFFIX))
+		# **THE `now → after` PAIR IS WHAT THE FLOOR MAKES POSSIBLE** — the take now against the take
+		# once the stand settles where the crew was told to stop. It exists only because there is a
+		# floor to settle AT.
+		#
+		# ⛔ **THE CLAIM IS THAT THE ARROW AND THE SENTENCE CANNOT DISAGREE**, not a per-preset table
+		# of which frames have one: both are gated on the SAME walk (`_live_reaches` and
+		# `harvest_verdict`'s `reached_turn`), so a crew that settles short must be promised no holding
+		# rate. On this stand only the top preset is close enough to reach, which is a fact about the
+		# stock and would be re-authored every time the fixture moved — the pairing is not.
+		h._assert_hud("…and its `now → after` arrow agrees with its own verdict (%s | %s)"
+				% [Readout.yields_text(floor_sheet), Readout.verdict_text(floor_sheet)],
+			Readout.yields_show_a_transition(floor_sheet)
+				== Readout.verdict_text(floor_sheet).contains(
+					SourceForecast.VERDICT_REACHES_FORMAT.get_slice("%", 0)))
+		await h._save("workings_floor_%s" % preset)
+	# ⛔ **THE TEACHING LINE IS PRICED AT THE PLAYER'S FLOOR, THROUGH THE SHARED `learn_multiplier`** —
+	# and at the top preset that is `0.80 / 0.50`, the same ×1.60 a patch reads there. The rung's own
+	# floor reaches the WORKABILITY predicate and not this one (`systems::labor`'s `Extract` arm passes
+	# the ROW's floor to `intensification::learn_multiplier`), which is why the composition's `max` is
+	# deliberately not applied to it.
+	var learn_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("…and the aside teaches at the shared multiplier for that floor (%s)"
+			% Readout.teaching_line(learn_sheet),
+		Readout.teaching_line(learn_sheet).contains(SourceForecast.TEACHING_RATE_FORMAT % [
+			CATALOG_CONSERVATIONISM, SourceForecast.learn_multiplier(
+				SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_LEARN))]))
+
+	# ⛔⛔ **STATE workings-floor-held — A WOOD STANDING EXACTLY AT ITS FLOOR.** The state the dial
+	# exists to produce, and the one where the `now → after` pair collapses: the crew takes what the
+	# stand puts back and nothing more, so the two readings coincide and `yield_rows` drops the arrow
+	# itself rather than drawing one between two identical numbers.
+	# **THE CARD BENEATH SHOWS THE SAME WORKING THE SHEET IS COMPOSED ON.** A sheet opened on a
+	# fixture the selected hex does not carry renders coherently and reads as two pieces of ground.
+	h._show_tile(_workings_tile([_wood_at_its_floor(), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	h._hud._compose.set_deposit_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._hud._compose.set_deposit_count(SHEET_CREW)
+	h._hud._drawercompose.open_deposit_compose(_wood_at_its_floor())
+	await h._settle()
+	var held_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a wood standing at its floor reads the SHARED at-the-floor verdict (%s)"
+			% Readout.verdict_text(held_sheet),
+		Readout.verdict_text(held_sheet).contains(SourceForecast.VERDICT_HOLDS_AT_FLOOR))
+	# **THE TAKE IS THE REGROWTH AT THAT FLOOR, capped by what the crew can lift** — the curve's own
+	# value at `floor × capacity`, which is the peak this wood renews at and the figure the tile card
+	# has been calling `sustainable_take` all along. Nothing more is reachable: the stock IS the floor,
+	# so the only wood on offer next turn is the wood that grows between now and then.
+	#
+	# ⛔ **THE CREW IS READ BACK RATHER THAN ASSUMED**, the forestry sheet's own rule one state up: a
+	# reopened sheet seeds from the band's standing row, so the count is the band's and asserting a
+	# take at a count the sheet refused would be asserting a number nothing on screen shows.
+	var held_crew: int = h._hud._compose.deposit_count()
+	h._assert_hud("…and its take is `min(crew × rate, what the stand puts back)` at %d (%s)"
+			% [held_crew, Readout.yields_text(held_sheet)],
+		held_crew > 0 and Readout.yields_text(held_sheet).contains(
+			SourceForecast.format_magnitude(
+				minf(float(held_crew) * FELLING_PER_WORKER, WOOD_SUSTAINABLE))))
+	h._assert_hud("…and draws no `now → after` arrow, the two readings being one number",
+		not Readout.yields_show_a_transition(held_sheet))
+	await h._save("workings_floor_held")
+
+	# ⛔⛔ **STATE workings-floor-stripped — THE DIAL DRAGGED TO THE BOTTOM ON AN OVER-CUT WOOD.** The
+	# drag is LIVE (`committed = false`), so the readings refill in place and the chart the pointer is
+	# holding is never freed — a rebuild mid-drag ends the drag on the first pixel of movement.
+	h._show_tile(_workings_tile([_over_cut_standing_wood(), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_over_cut_standing_wood())
+	await h._settle()
+	var strip_sheet: Node = h._hud._drawercompose._compose_sheet
+	var strip_chart = Q.find_meta_node(strip_sheet, HudWidgets.FLOOR_CHART_META)
+	h._assert_hud("the over-cut wood draws a chart to drag at all", strip_chart != null)
+	if strip_chart != null:
+		strip_chart.emit_signal("floor_changed", SourceForecast.FLOOR_MIN, false)
+		await h._settle()
+		h._assert_hud("…and the drag did not rebuild the sheet out from under itself",
+			is_instance_valid(strip_chart))
+		# ⛔ **THE OVER-CUT WORD IS THE FOOD WEBS' OWN**, in the working's own noun — one idea, one
+		# word, wherever it is stated.
+		h._assert_hud("…a seam cut over its renewal wears the shared overdraw mark (%s)"
+				% Readout.yields_text(strip_sheet),
+			Readout.yields_text(strip_sheet).contains(
+				HudComposeVocab.LOCAL_EXTRACT_OVERDRAW_NOTE.to_upper()))
+		# **AND FLOOR 0 TEACHES NOTHING**, which is the sim's own self-limit read back: the multiplier
+		# is `floor / the food peak`, so a crew told to leave nothing standing learns at ×0.
+		h._assert_hud("…and at floor 0 the aside says the lesson is not being earned (%s)"
+				% Readout.teaching_line(strip_sheet),
+			Readout.teaching_line(strip_sheet) == SourceForecast.TEACHING_NOTHING_STRIPPED)
+		await h._save("workings_floor_stripped")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+
+	# ⛔⛔ **STATE workings-fresh-runway — A CREW COMMITTED THIS TURN, ON A SEAM THAT HAS CUT NOTHING.**
+	# `DepositState.actualTake` is written at turn resolution and at no other time, so the working
+	# publishes `0` and `RUNWAY_NO_TAKE` for the whole frame between the press and the turn — and the
+	# sheet read *Nobody is cutting it* over a headline stating the rate that same press committed to.
+	# The sim declined to seed `actualTake` (a `+=` accumulator across bands doubles under a re-assign
+	# and clobbers under a second band), so the three states are told apart from the ASSIGNMENT ROW.
+	h._hud.update_band_alerts([_fresh_stone_band_fixture()])
+	h._show_tile(_workings_tile([_idle_stone_working()]))
+	await h._settle()
+	h._hud._compose.set_deposit_count(FRESH_STONE_CUTTERS)
+	h._hud._drawercompose.open_deposit_compose(_idle_stone_working())
+	await h._settle()
+	var fresh_sheet: Node = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a freshly-crewed seam states the FORECAST runway, not `%s` (%s)"
+			% [HudDepositVocab.DEPOSIT_RUNWAY_ASIDE_IDLE, Readout.readout_aside_text(fresh_sheet)],
+		Readout.readout_aside_text(fresh_sheet).contains(
+				HudDepositVocab.DEPOSIT_RUNWAY_ASIDE_FORMAT % FRESH_STONE_RUNWAY)
+			and not Readout.readout_aside_text(fresh_sheet).contains(
+				HudDepositVocab.DEPOSIT_RUNWAY_ASIDE_IDLE))
+	await h._save("workings_fresh_runway")
+	# **AND THE THIRD STATE IS STILL ITS OWN SENTENCE** — the same seam with nobody on it reads *not
+	# being worked*, which is what makes the forecast above a distinction rather than a replacement.
+	h._assert_hud("…while the SAME seam with no crew keeps the idle sentence (%s)"
+			% HudDepositVocab.runway_aside(_idle_stone_working()),
+		HudDepositVocab.runway_aside(_idle_stone_working())
+			== HudDepositVocab.DEPOSIT_RUNWAY_ASIDE_IDLE)
+	# ⛔ **AND THE VERDICT STOPS SAYING `Cutting 0`.** A renewing seam's over-cut sentence reads the
+	# same three states: the realized take where a turn has resolved, this crew's seeded rate where one
+	# has not, and the wire's own zero only where nobody is on it.
+	h._assert_hud("…and a renewing seam's verdict quotes the SEEDED take, never a zero (%s)"
+			% String(HudDepositVocab.deposit_verdict(_fresh_scatter_working(), _ladder(),
+				_fresh_scatter_assignment()).get("text", "")),
+		String(HudDepositVocab.deposit_verdict(_fresh_scatter_working(), _ladder(),
+				_fresh_scatter_assignment()).get("text", "")).contains(
+			DetailFormat.format_trimmed(FRESH_SCATTER_SEED, HudDepositVocab.CARD_STOCK_DECIMALS)))
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
 
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked
@@ -728,6 +973,12 @@ const CATALOG_QUARRY_NAME := "Quarry"
 const CATALOG_WOODCRAFT := "woodcraft"
 const CATALOG_CONSERVATIONISM := "conservationism"
 const CATALOG_QUARRYING := "quarrying"
+
+## …and the roster's display name for each — the word a gate's refusal and the sheet's teaching line
+## both take the craft from. **The lesson line lower-cases it**, so `Conservationism` here is
+## `conservationism` in the sentence, which is the shared composer's own register.
+const CATALOG_WOODCRAFT_LABEL := "Woodcraft"
+const CATALOG_CONSERVATIONISM_LABEL := "Conservationism"
 const CATALOG_QUARRYING_LABEL := "Quarrying"
 
 ## `forestry:coppice`'s take rate, which the forestry sheet's deal row quotes at the composed crew.
@@ -807,9 +1058,31 @@ func _knowledge(quarrying: float) -> Dictionary:
 		CATALOG_QUARRYING: quarrying,
 	}
 
-## …and the roster's display names for them, which is where a gate reason takes the craft's word from.
+## …and the roster's display names for them, **read back off the HUD's own ingest** rather than
+## restated here: the gate's refusal and the sheet's teaching line must name a craft with one word,
+## and a second table in this file is exactly how they would come to name it with two.
 func _knowledge_labels() -> Dictionary:
-	return {CATALOG_QUARRYING: CATALOG_QUARRYING_LABEL}
+	return h._hud._topbar.knowledge_labels()
+
+## **THE `ladder_knowledge` ROSTER FOR THE TWO DEPOSIT BRANCHES**, in `native/src/dict/knowledge.rs`'
+## own row shape. The shared `fixtures_knowledge.gd` roster carries the plant, animal and route
+## ladders and none of these, so this chapter states its own three: a knowledge roster is per WORLD,
+## and this chapter runs last.
+func _deposit_knowledge_roster() -> Array:
+	return [
+		_knowledge_row(CATALOG_WOODCRAFT, CATALOG_WOODCRAFT_LABEL,
+			HudDepositVocab.BRANCH_FORESTRY, 1),
+		_knowledge_row(CATALOG_CONSERVATIONISM, CATALOG_CONSERVATIONISM_LABEL,
+			HudDepositVocab.BRANCH_FORESTRY, 2),
+		_knowledge_row(CATALOG_QUARRYING, CATALOG_QUARRYING_LABEL,
+			HudDepositVocab.BRANCH_EXTRACTION, 1),
+	]
+
+func _knowledge_row(id: String, display: String, branch: String, order: int) -> Dictionary:
+	return {
+		"knowledge_id": id, "display_name": display, "branch": branch,
+		"order": order, "is_step": true,
+	}
 
 # ---- FIXTURES ---------------------------------------------------------------------------------
 #
@@ -911,6 +1184,20 @@ func _workings_tile(workings: Array) -> Dictionary:
 		"deposits": workings,
 	}
 
+## **THE SAMPLED GROWTH CURVE, BUILT THE WAY THE SIM BUILDS IT** — `deposit_regrowth(s) − s` at
+## `s = i/(n−1) × capacity`, with the seed read INSIDE the logistic term rather than lifted onto the
+## stock. That is the whole of why rock stays at zero: the seed is multiplied by the deposit's own
+## rate, so a rate of `0` seeds exactly nothing and every sample comes back `0` — a live reading of
+## *this does not grow*, which is a different claim from the EMPTY vector meaning *no curve was sent*.
+func _deposit_regrowth_samples(capacity: float, rate: float) -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	for index in range(REGROWTH_SAMPLE_COUNT):
+		var stock := float(index) / float(REGROWTH_SAMPLE_COUNT - 1) * capacity
+		var seeded := maxf(stock, DEPOSIT_SEED_FRACTION * capacity)
+		var delta := maxf(rate * seeded * (1.0 - seeded / capacity), 0.0)
+		samples.push_back(minf(stock + delta, capacity) - stock)
+	return samples
+
 ## A FELLING working on mixed woodland, cut at whatever rate the caller names. Its keeping is SHORT,
 ## which is what puts the hazard word on the row and the bill on the hover.
 func _wood_working(actual_take: float) -> Dictionary:
@@ -940,6 +1227,10 @@ func _wood_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
+		"floor": NOBODY_CUT_FLOOR,
+		"rung_floor_fraction": FORESTRY_RUNG_FLOOR,
+		"per_worker_biomass": FELLING_PER_WORKER,
+		"regrowth_samples": _deposit_regrowth_samples(WOOD_CAPACITY, WOOD_REGROWTH),
 	}
 
 ## …and the same wood raised to its branch's top, which is the rung whose payoff is RENEWAL.
@@ -948,6 +1239,11 @@ func _coppiced_wood() -> Dictionary:
 	working["rung"] = HudDepositVocab.RUNG_KEY_COPPICE
 	working["build_fraction"] = METER_NOTHING_RISING
 	working["regrowth_rate"] = WOOD_REGROWTH * 2.0
+	working["per_worker_biomass"] = COPPICE_PER_WORKER
+	# **THE CURVE IS THE ONE THE RUNG BOUGHT** — the coppice doubles the ground's own rate, and the
+	# samples are what the client draws, so a fixture leaving the felling curve here would render a
+	# managed wood as an unmanaged one on the only surface that shows the payoff.
+	working["regrowth_samples"] = _deposit_regrowth_samples(WOOD_CAPACITY, WOOD_REGROWTH * 2.0)
 	return working
 
 ## A GATHERING working on the rock body beneath — the extraction branch's FREE FLOOR, so it owes
@@ -980,6 +1276,13 @@ func _stone_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
+		"floor": NOBODY_CUT_FLOOR,
+		"rung_floor_fraction": GATHERING_RUNG_FLOOR,
+		"per_worker_biomass": GATHERING_PER_WORKER,
+		# **ALL ZEROS, AND THAT IS A READING RATHER THAN AN ABSENCE.** Rock's rate is zero, so every
+		# sample is exactly `0` — and the client's dial forks on `regrowth_rate` rather than on this,
+		# which is what keeps a renewing flint scatter of the SAME branch on the other side of the fork.
+		"regrowth_samples": _deposit_regrowth_samples(STONE_CAPACITY, STONE_REGROWTH),
 	}
 
 ## …and the same body once a quarry stands on it, drawn down: the row that states the reach the ladder
@@ -989,6 +1292,8 @@ func _quarried_stone() -> Dictionary:
 	working["rung"] = HudDepositVocab.RUNG_KEY_QUARRY
 	working["stock"] = QUARRY_STOCK
 	working["reachable"] = QUARRY_REACHABLE
+	working["rung_floor_fraction"] = QUARRY_RUNG_FLOOR
+	working["per_worker_biomass"] = QUARRY_PER_WORKER
 	return working
 
 ## …the same quarry with NOBODY cutting it: `-2` on the runway and a take of nothing.
@@ -1036,6 +1341,89 @@ func _unopened_stone() -> Dictionary:
 	deposit["turns_remaining"] = RUNWAY_IDLE
 	return deposit
 
+## **THE SAME WOOD WITH NO CURVE ON THE WIRE** — an EMPTY sample vector, which is the claim *no curve
+## was sent* rather than *this does not grow*. It is what has no projection to walk, and therefore the
+## one state where the sheet's verdict is `deposit_verdict`'s own renewing arm.
+func _curveless_wood() -> Dictionary:
+	var working := _wood_working(WOOD_OVER_CUT)
+	working["regrowth_samples"] = PackedFloat32Array()
+	return working
+
+## **A WOOD STANDING ABOVE EVERY PRESET'S FLOOR** — the stand the dial is compared ON, so the three
+## preset frames differ by the FLOOR and by nothing else. Its take is inside its own renewal, which is
+## also what puts the shared `renewable` note on the row where the over-cut fixture wears the ⚠.
+const STANDING_WOOD_STOCK := 552.0
+
+func _standing_wood() -> Dictionary:
+	var working := _wood_working(WOOD_SAFE_TAKE)
+	working["stock"] = STANDING_WOOD_STOCK
+	working["reachable"] = STANDING_WOOD_STOCK
+	return working
+
+## …and the same stand being cut over its renewal, which is what puts the ⚠ on the readout's row while
+## the dial is dragged. The stock is the standing one so the drag has room to move in; only the TAKE
+## differs, which is the term the over-cut predicate reads.
+func _over_cut_standing_wood() -> Dictionary:
+	var working := _standing_wood()
+	working["actual_take"] = WOOD_OVER_CUT
+	return working
+
+## **THE SAME WOOD STANDING EXACTLY AT THE FOOD PEAK** — `floor × capacity` of stock, which is the
+## steady state a Sustain dial produces and the one the `now → after` pair collapses at. Its floor
+## field states where this turn's crews stopped, which on a working actually held there is the dial's
+## own value rather than the `0` an uncut seam publishes.
+func _wood_at_its_floor() -> Dictionary:
+	var working := _wood_working(WOOD_SUSTAINABLE)
+	working["stock"] = SourceForecast.FLOOR_FOOD_PEAK * WOOD_CAPACITY
+	working["reachable"] = 0.0
+	working["floor"] = SourceForecast.FLOOR_FOOD_PEAK
+	return working
+
+## **A BAND THAT HAS JUST PUT DIGGERS ON THE ROCK AND CUT NOTHING YET** — the `extract` row carries
+## the crew and the SEEDED rate, which is all three of the terms the runway is told apart by.
+func _fresh_stone_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": FRESH_STONE_CUTTERS,
+		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+		"material": "stone",
+		"floor": SourceForecast.DEFAULT_HARVEST_FLOOR,
+		"actual_yield": 0.0,
+		"sustainable_yield": 0.0,
+		"material_yield": [{"material_id": "stone", "amount": FRESH_STONE_SEED}],
+		"workers_needed": 0,
+	})
+	return band
+
+## Two diggers at `extraction:gathering`'s shipped `0.4` a worker-turn, and the runway that buys on a
+## seam with 330 units inside the rung's reach: `floor(330 / 0.8)`. Stated rather than computed, so the
+## frame asserts against the sim's own division rather than against a second copy of it.
+const FRESH_STONE_CUTTERS := 2
+const FRESH_STONE_SEED := 0.8
+const FRESH_STONE_RUNWAY := 412
+
+## …and the RENEWING half of the same state: a scatter nobody has cut yet, with a crew committed to it
+## this turn. It is what makes the over-cut verdict's three states testable — the wire's `actual_take`
+## is `0` here, and the sentence must quote the seeded rate instead.
+const FRESH_SCATTER_SEED := 1.2
+
+func _fresh_scatter_working() -> Dictionary:
+	var working := _scatter_working()
+	working["actual_take"] = HudDepositVocab.TAKE_NONE
+	working["turns_remaining"] = RUNWAY_RENEWS
+	return working
+
+func _fresh_scatter_assignment() -> Dictionary:
+	return {
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": FRESH_STONE_CUTTERS,
+		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+		"material": "flint",
+		"material_yield": [{"material_id": "flint", "amount": FRESH_SCATTER_SEED}],
+	}
+
 ## **A LOOSE-STONE SCATTER — `extraction` AND RENEWING, AND TOO SMALL FOR A QUARRY.** The one fixture
 ## that tells a `regrowth_rate` fork from a `branch` fork, and the ground the SITE gate refuses.
 func _scatter_working() -> Dictionary:
@@ -1047,6 +1435,11 @@ func _scatter_working() -> Dictionary:
 	working["regrowth_rate"] = SCATTER_REGROWTH
 	working["sustainable_take"] = SCATTER_SUSTAINABLE
 	working["turns_remaining"] = RUNWAY_RENEWS
+	# ⛔ **THE ONE FIXTURE WHERE THE COMPOSITION'S `max` IS NOT A NO-OP.** It renews, so it is offered
+	# the dial — and it stands on `extraction:gathering`, whose own floor strands 85% of the scatter.
+	# A client that ADDED the two floors instead of taking the greater draws this crew stopping 85% of
+	# the ground short of where it really stops, on every dial position.
+	working["regrowth_samples"] = _deposit_regrowth_samples(SCATTER_CAPACITY, SCATTER_REGROWTH)
 	return working
 
 # ---- READING THE SURFACES ---------------------------------------------------------------------
@@ -1069,11 +1462,16 @@ func _payoff_values(lines: Array[String]) -> Array[String]:
 ## `BaseFx.food_tile_fixture()`, so the fixture quotes the tile card's own numbers rather than a
 ## figure invented here.
 ##
-## The EXTRACT row carries what the wire actually sends for a working nobody has resolved: a zero food
-## account (`systems/labor.rs`' `Extract` arm leaves `SourceYield::ZERO` there deliberately) and an
-## EMPTY material vector — the seed returns early on `Extract`, so there is nothing in either account
-## yet. **That emptiness is the fixture's whole point**; a row carrying a take here would stage the
-## resolved state the frame above already covers.
+## The EXTRACT row carries what the wire sends for a working nobody has RESOLVED but somebody has
+## committed to: a zero food account (`systems/labor.rs`' `Extract` arm leaves `SourceYield::ZERO`
+## there deliberately, so a deposit cannot pollute `food_income`) and a SEEDED material vector.
+##
+## ⛔ **THE SEED IS NEW AND THIS FIXTURE STATED ITS ABSENCE** (issue #650). `seed_source_yield`
+## returned early on `Extract` when this state was authored, so the row here carried an EMPTY material
+## vector and the frame's whole claim was the UNIT. The sim's `Extract` arm now prices the take
+## through the very seam the turn takes — `min(hands, the reach above the composed floor)` on a
+## regrown clone of the working — so the honest fixture states a FIGURE, and what the frame proves is
+## that both webs answer a crew committed this turn with a real rate in their own account.
 func _just_assigned_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["labor_assignments"] = [
@@ -1093,13 +1491,19 @@ func _just_assigned_band_fixture() -> Dictionary:
 			"workers": WORKED_BUTTON_CUTTERS,
 			"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
 			"material": WOOD_MATERIAL_ID,
+			"floor": SourceForecast.DEFAULT_HARVEST_FLOOR,
 			"actual_yield": 0.0,
 			"sustainable_yield": 0.0,
-			"material_yield": [],
+			"material_yield": [{"material_id": WOOD_MATERIAL_ID, "amount": FRESH_WOOD_SEED}],
 			"workers_needed": 0,
 		},
 	]
 	return band
+
+## What the seed pays those two cutters on the hex's UNOPENED wood: `2 × 0.3` at
+## `forestry:deadfall`'s shipped bare-handed rate, which the whole material economy bootstraps
+## through. Stated rather than computed so the frame asserts against the sim's arithmetic.
+const FRESH_WOOD_SEED := 0.6
 
 ## The gatherers on that patch and what the seed pays them: `min(3 × 0.32, 0.96)` at the shipped
 ## `food_tile_fixture` rates, i.e. the patch's whole Sustain ceiling. Stated rather than computed here

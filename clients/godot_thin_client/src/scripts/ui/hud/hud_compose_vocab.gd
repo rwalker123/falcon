@@ -56,9 +56,14 @@ const FLOOR_ZONE_HINTS := {
 # The per-WEB half of the strip-it warning, and the reason it is a clause rather than a second table:
 # everything else about floor 0 is identical on both webs. A plant stand grows back from its reseed
 # floor; a herd taken to nothing is EXTINCT, which is permanent and shared with every other faction.
+# **THE DEPOSIT BRANCHES' ENTRY IS ONLY EVER READ ON A RENEWING WORKING** (issue #650): rock does not
+# grow back, so a finite seam is offered no dial at all and never reaches this line. What floor 0 costs
+# a WOOD is the plant web's consequence in the working's own noun — the sim's growth term reads its
+# curve at a seeded stock (`extraction::deposit_regrowth`), so a seam cut clean does come back, slowly.
 const FLOOR_STRIP_CONSEQUENCE := {
 	"forage": "The patch is stripped bare and has to reseed itself from nothing.",
 	"hunt": "It is the last hunt: the herd is gone for good, for you and for everyone else.",
+	"extract": "The seam is cut to nothing and has to grow back from a seed.",
 }
 
 # The one thing a detached party changes about the rule above: an expedition's Hunting arm banks BOTH
@@ -1869,9 +1874,15 @@ const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — " + LOCAL_FORAGE_OVERDRAW_NOTE
 # small-print part beside the number rather than joining it into the sentence above. Keyed exactly as
 # `FLOOR_STRIP_CONSEQUENCE` is (the `SourceForecast.LABOR_KIND_*` values), so one lookup answers "what
 # does overdrawing this web cost?" wherever it is asked.
+# The DEPOSIT twin, in the working's own noun. It is the same idea the other two state — a take above
+# what the source renews draws it down — so it is a third row of this table rather than a word the
+# deposit vocabulary spells for itself.
+const LOCAL_EXTRACT_OVERDRAW_NOTE := "overdraws the seam"
+
 const LOCAL_OVERDRAW_NOTES := {
 	"forage": LOCAL_FORAGE_OVERDRAW_NOTE,
 	"hunt": LOCAL_HUNT_OVERDRAW_NOTE,
+	"extract": LOCAL_EXTRACT_OVERDRAW_NOTE,
 }
 
 # CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an

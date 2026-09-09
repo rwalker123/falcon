@@ -1193,19 +1193,28 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # with no material names neither of them and the sim refuses it by name; declining to
             # build a line here is the honest answer rather than emitting a refusal.
             #
-            # **NO FLOOR AND NO KIT TOKEN.** A deposit has no escapement floor to leave standing, and
-            # `default_kits.extract` is the bare `none` kit with no picker anywhere on the working
-            # card — so the tail is closed and the line is byte-stable.
+            # **THE FLOOR RIDES AFTER THE MATERIAL, AND IT IS FORAGE'S OWN TOKEN** (issue #650) —
+            # `extract <x> <y> <material> [floor] <workers>`, a validated NUMBER at
+            # `FLOOR_COMMAND_DECIMALS`, never `str(float)`. The four retired stance words are rejected
+            # BY NAME at parse, so a stale emitter fails loudly rather than being reinterpreted.
+            #
+            # **IT IS SENT ON BOTH BRANCHES even though only one is asked for one**: a finite working
+            # has no dial, so its payload carries the sheet's default — which is exactly what an
+            # omitted token resolves to sim-side — and the line stays one shape rather than two.
+            #
+            # **STILL NO KIT TOKEN**: `default_kits.extract` is the bare `none` kit with no picker
+            # anywhere on the working card, so the tail is closed after the worker count.
             var ex := int(payload.get("x", -1))
             var ey := int(payload.get("y", -1))
             var material := String(payload.get("species", "")).strip_edges().to_lower()
             if ex < 0 or ey < 0 or material == "":
                 return {}
             return {
-                "line": "assign_labor %d %d extract %d %d %s %d" % [
-                    faction, band_id, ex, ey, material, workers],
-                "message": "Assign %d worker%s to the %s working at (%d, %d)." % [
-                    workers, "" if workers == 1 else "s", material, ex, ey],
+                "line": "assign_labor %d %d extract %d %d %s %s %d" % [
+                    faction, band_id, ex, ey, material, _format_floor(payload), workers],
+                "message": "Assign %d worker%s to the %s working at (%d, %d), leaving %s standing." % [
+                    workers, "" if workers == 1 else "s", material, ex, ey,
+                    _floor_percent_text(payload)],
             }
         "scout", "warrior", "agriculture", "husbandry", "roadwork", "quarrywork", "builders":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
