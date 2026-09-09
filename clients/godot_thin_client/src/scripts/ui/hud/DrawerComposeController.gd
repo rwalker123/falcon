@@ -4947,9 +4947,10 @@ func _ensure_road_ladder() -> PopupPanel:
 # `Assign diggers ▸`, each in its own container, and each opens a sheet about ONE working. A single
 # action for the pair is exactly the tile-keyed collapse the `material` field exists to prevent.
 #
-# ⛔ **THE WORD "QUARRY" APPEARS ON NOTHING HERE.** In this client `Quarry` is the HUNTED ANIMAL — it
-# is one of this very sheet's field rows — so the crew nouns are `Foresters` and `Diggers` and the
-# material names the thing being worked. `quarrywork` survives only as the server's command token.
+# ⛔ **THE WORD "QUARRY" APPEARS ON NOTHING HERE.** `Quarry` is ONE RUNG of ONE branch, and a sheet
+# that opens on any working of either would be naming a coppice after a pit — so the crew nouns are
+# `Foresters` and `Diggers` and the material names the thing being worked. `quarrywork` survives only
+# as the server's command token.
 
 ## The tile-card key the working rows travel under, stamped by `MapView._tile_info_at` off
 ## `deposit_tile_lookup`. Spelled once here because a typo is a silently absent action.

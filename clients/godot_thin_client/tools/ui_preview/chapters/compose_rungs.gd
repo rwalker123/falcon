@@ -785,7 +785,7 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 		unstated == "")
 
 # =====================================================================================
-#  A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO
+#  A KIT THAT CANNOT WORK ON THIS PREY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO
 # =====================================================================================
 # Reported from play on the expanded roster. The compose sheet offered the trapping kit and a
 # weaponless handling kit against a Red Deer as ordinary choices — pricing the trap's `dispersion 0` (nothing flees, so the take looks

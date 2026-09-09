@@ -7,7 +7,7 @@
   "_comment_seed_fraction": "WHAT A DEPOSIT REGROWS FROM WHEN IT HAS BEEN TAKEN TO NOTHING. The logistic term is zero at a stock of zero, so a wood cut clean would stick at zero for ever - the same trap forage.reseed_floor_fraction exists to close for a stripped patch. IT MAY NOT BE A LIFT ON THE STOCK THE WAY THE PLANT WEB'S IS: a `max(stock, fraction x capacity)` would raise a QUARRY off zero and break the one invariant this whole file is built on. So the seed is evaluated INSIDE the growth term instead - the curve is read at `stock + seed_fraction x capacity` and the delta is added to the real stock - which means it is multiplied by the deposit's own rate and a rate of zero seeds exactly nothing. Rock stays monotonically non-increasing by the same arithmetic that makes everything else on this branch work. 0.02 of capacity is the smallest seed that recovers a cleared wood in a bearable number of turns; PROVISIONAL.",
   "seed_fraction": 0.02,
   "_comment_stone_by_terrain": "TWO POPULATIONS IN ONE TABLE, AND THE RATE IS THE ONLY THING THAT SEPARATES THEM. The rock bodies - mountain, plateau, karst, badlands, lava, the crater and cavern country - carry capacities in the low thousands at rate 0.0: they are worked out, never renewed, and a quarry is the only rung that reaches most of one. THE RATE IS WHAT SPLITS THE TWO POPULATIONS AND THE THRESHOLD FOLLOWS IT: extraction:quarry's `min_deposit_capacity` of 100 sits in the gap between the smallest finite row (an ash plain at 120) and the largest renewing one (a periglacial 70), so EVERY rate-0 row is quarryable and no scatter is. That is not a tuning choice - a rate-0 row below the threshold is a dead work site that still accepts a crew, since its stock never returns and the rung that would reach deeper is refused for ever. Everything else carries TENS of units at a small positive rate - loose stone the ground keeps turning up - which is what makes knapping flint available nearly anywhere. SIZED AGAINST THE ONE CONSUMER: a paved road tile eats 20 stone plus 0.1667 a turn to hold, so a 900-unit hill quarry at extraction:quarry's 0.85 recovery yields 765 - about 38 paved tiles - and a 40-unit steppe scatter at extraction:gathering's 0.15 recovery yields 6 before it is down to its floor and living on its own regrowth of about a tenth of a unit a turn. PROVISIONAL OPENING VALUES.",
-  "_comment_wood_by_terrain": "STANDING TIMBER, AND EVERY ROW REGROWS - there is no rate of 0.0 anywhere in this table, which is the other half of what the shared model buys: the same three dials describe a wood and a quarry, and only the numbers differ. Capacity is what the land supports at maturity, so a closed woodland canopy carries 600 and a few stands along a steppe draw carry 25; the wet rows (marsh, delta, floodplain) carry LESS timber than the woodland but regrow fastest, because withy and willow are cut and back in three years. SIZED AGAINST THE THREE CONSUMERS: a pen is 24 wood (6 hurdles x 4 wood each), each of the two road tools is 3 wood, and opening an extraction:quarry is timbered with 8 wood of props, ramps and sleds. So a mixed woodland at forestry:felling's 2.0 a worker-turn pays a pen in 12 worker-turns and ONE road tool in under two, while the same wood at the free floor's 0.3 pays them in 80 and 10 - the free floor is a real producer and a slow one, which is what makes the felling rung worth its 60 units of work. PROVISIONAL OPENING VALUES.",
+  "_comment_wood_by_terrain": "STANDING TIMBER, AND EVERY ROW REGROWS - there is no rate of 0.0 anywhere in this table, which is the other half of what the shared model buys: the same three dials describe a wood and a quarry, and only the numbers differ. Capacity is what the land supports at maturity, so a closed woodland canopy carries 600 and the thinnest row that is still a wood - dwarf birch on an alpine shoulder - carries 50; the wet rows (marsh, delta, floodplain) carry LESS timber than the woodland but regrow fastest, because withy and willow are cut and back in three years. THE TABLE STOPS AT 50 AND THE FLOOR IS DELIBERATE (issue #650). Eight rows under it were deleted rather than tuned down - canyon badlands and tundra at 15, periglacial steppe 20, prairie steppe 25, the crater fields 30, high plateau and semi-arid scrub 40, sinkhole field 45 - because a wood a bare-handed crew works out in a few dozen turns is a row that costs the player a decision and pays them nothing. ABSENCE IS THE ANSWER, so there is no threshold in any code: those terrains simply hold no timber, and a band that wants wood on a badlands rock body carries it in, which is the same thing the five rock rows that never had a wood row (basalt, volcano slope, rocky reg, fumarole, ash plain) have always asked for. THE STONE TABLE'S SMALL ROWS ARE NOT THE SAME CASE AND WERE LEFT ALONE - see _comment_stone_by_terrain: loose stone at capacity 5-70 is what makes knapping flint available nearly anywhere, and a positive rate means a scatter keeps turning up more. SIZED AGAINST THE THREE CONSUMERS: a pen is 24 wood (6 hurdles x 4 wood each), each of the two road tools is 3 wood, and opening an extraction:quarry is timbered with 8 wood of props, ramps and sleds. So a mixed woodland at forestry:felling's 2.0 a worker-turn pays a pen in 12 worker-turns and ONE road tool in under two, while the same wood at the free floor's 0.3 pays them in 80 and 10 - the free floor is a real producer and a slow one, which is what makes the felling rung worth its 60 units of work. PROVISIONAL OPENING VALUES.",
   "deposits": {
     "stone": {
       "branch": "extraction",
@@ -378,73 +378,9 @@
             "hardness": 0.55,
             "pliancy": 0.4
           }
-        },
-        "SinkholeField": {
-          "capacity": 45.0,
-          "regrowth_rate": 0.02,
-          "characteristics": {
-            "hardness": 0.55,
-            "pliancy": 0.45
-          }
-        },
-        "HighPlateau": {
-          "capacity": 40.0,
-          "regrowth_rate": 0.012,
-          "characteristics": {
-            "hardness": 0.5,
-            "pliancy": 0.4
-          }
-        },
-        "SemiAridScrub": {
-          "capacity": 40.0,
-          "regrowth_rate": 0.01,
-          "characteristics": {
-            "hardness": 0.7,
-            "pliancy": 0.2
-          }
-        },
-        "ImpactCraterField": {
-          "capacity": 30.0,
-          "regrowth_rate": 0.015,
-          "characteristics": {
-            "hardness": 0.5,
-            "pliancy": 0.5
-          }
-        },
-        "PrairieSteppe": {
-          "capacity": 25.0,
-          "regrowth_rate": 0.02,
-          "characteristics": {
-            "hardness": 0.45,
-            "pliancy": 0.6
-          }
-        },
-        "PeriglacialSteppe": {
-          "capacity": 20.0,
-          "regrowth_rate": 0.006,
-          "characteristics": {
-            "hardness": 0.3,
-            "pliancy": 0.7
-          }
-        },
-        "CanyonBadlands": {
-          "capacity": 15.0,
-          "regrowth_rate": 0.01,
-          "characteristics": {
-            "hardness": 0.65,
-            "pliancy": 0.25
-          }
-        },
-        "Tundra": {
-          "capacity": 15.0,
-          "regrowth_rate": 0.005,
-          "characteristics": {
-            "hardness": 0.25,
-            "pliancy": 0.8
-          }
         }
       }
     }
   },
-  "_comment_capacity_per_keeper": "HOW MUCH OF A DEPOSIT ONE KEEPER LOOKS AFTER - the divisor that turns a tile's own capacity into the KEEPER-LOADS both branches' rungs quote their upkeep.work_per_turn per, and the per-material twin of fauna_config's animals_per_herder and labor_config's capacity_per_tender: THE WEB OWNS THE RATIO, THE RUNG OWNS THE RATE. Each is ANCHORED ON A REFERENCE TERRAIN'S OWN CAPACITY, which is what makes the move onto the scale provably pacing-neutral there, exactly as 195.0 is AlluvialPlain's own K. Wood's 600 is MixedWoodland's - the reference forest - so a felling working on closed woodland is exactly 1.0 load and owes exactly the rung's declared rate, while a Tundra stand of dwarf willow (15) is 0.025 of a load and costs essentially nothing to hold, which is right. Stone's 3000 is KarstHighland's - limestone, the classic quarry stone, and the middle of the rock bodies - so a karst quarry is 1.0 load, rolling hills (900) is 0.3 and an alpine mountain (4200) is 1.4. THE MEASURE IS DELIBERATELY POSITION-FREE AND CAPACITY IS THE TERRAIN'S: the obvious alternative, 'how much of the deposit this rung can reach', interpolates on the ladder position and so does work_per_turn, and multiplying both is the compounding capacity_per_tender's own note exists to prevent. PLAYTEST DIALS."
+  "_comment_capacity_per_keeper": "HOW MUCH OF A DEPOSIT ONE KEEPER LOOKS AFTER - the divisor that turns a tile's own capacity into the KEEPER-LOADS both branches' rungs quote their upkeep.work_per_turn per, and the per-material twin of fauna_config's animals_per_herder and labor_config's capacity_per_tender: THE WEB OWNS THE RATIO, THE RUNG OWNS THE RATE. Each is ANCHORED ON A REFERENCE TERRAIN'S OWN CAPACITY, which is what makes the move onto the scale provably pacing-neutral there, exactly as 195.0 is AlluvialPlain's own K. Wood's 600 is MixedWoodland's - the reference forest - so a felling working on closed woodland is exactly 1.0 load and owes exactly the rung's declared rate, while the thinnest wood the table still carries - an alpine shoulder of dwarf birch at 50 - is 0.083 of a load and costs essentially nothing to hold, which is right. Stone's 3000 is KarstHighland's - limestone, the classic quarry stone, and the middle of the rock bodies - so a karst quarry is 1.0 load, rolling hills (900) is 0.3 and an alpine mountain (4200) is 1.4. THE MEASURE IS DELIBERATELY POSITION-FREE AND CAPACITY IS THE TERRAIN'S: the obvious alternative, 'how much of the deposit this rung can reach', interpolates on the ladder position and so does work_per_turn, and multiplying both is the compounding capacity_per_tender's own note exists to prevent. PLAYTEST DIALS."
 }

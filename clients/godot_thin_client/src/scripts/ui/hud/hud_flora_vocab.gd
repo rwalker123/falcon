@@ -392,7 +392,7 @@ const FLORA_CROP_ROW_PADDING_V := HudStyle.WORK_ROW_PADDING_V
 # are 256px, which a Button reserves IN FULL, so an uncapped icon would set the row's minimum height
 # and the MEASURED `FLORA_CROP_LIST_MAX_HEIGHT` below — derived from `FLORA_CROP_ROW_HEIGHT` — would
 # then describe rows that no longer exist. Held under that 22.0 row height deliberately, with room
-# for the row's own padding; `COMPOSE_QUARRY_ICON_MAX_WIDTH` records the same trap on the compose
+# for the row's own padding; `COMPOSE_PREY_ICON_MAX_WIDTH` records the same trap on the compose
 # row's WIDTH.
 const FLORA_CROP_ICON_MAX_WIDTH := 16
 

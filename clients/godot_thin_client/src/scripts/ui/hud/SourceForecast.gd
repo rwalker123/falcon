@@ -1872,7 +1872,7 @@ const HUNT_EMPTY_REFUSALS := {
     TRIP_BOUND_HERD_LOST: {
         "line": "%s is gone before the party can make up a load",
         "button": "Nothing left to raid",
-        "reason": "%s collapses before your party lands anything — the raid would return empty. Leave it standing and find another quarry.",
+        "reason": "%s collapses before your party lands anything — the raid would return empty. Leave it standing and find other prey.",
     },
     # THE UNATTRIBUTED REFUSAL, keyed on `TRIP_BOUND_NONE` and used for every bound this branch cannot
     # explain — an estimate row carrying no bound at all, or one of the two party-side stops, which are

@@ -4,11 +4,14 @@ class_name HudDepositVocab
 ## `docs/plan_extraction.md`, `.claude/rules/core_sim/extraction.md`). The rung names, the readers for
 ## every field on a `deposits` row, and the one composer behind the working's state.
 ##
-## ⛔ **THE PLAYER-FACING NOUN IS "WORKING", NEVER "QUARRY".** `Quarry` in this client already means
-## the HUNTED ANIMAL — it is one of the compose sheet's own field rows (`Band:` · `Kit` · `Quarry`) —
-## so a second meaning on a second surface would put one word on two unrelated things. The sim's own
-## word for a live deposit a band has opened is a **working**, and `quarrywork` survives only as the
-## server's command token, which no player reads.
+## ⛔ **THE PLAYER-FACING NOUN IS "WORKING", NEVER "QUARRY".** `Quarry` is ONE RUNG on ONE of the two
+## branches (`RUNG_KEY_QUARRY`), so the word names a coppice, a woodlot and a flint scatter after a
+## thing none of them is. The sim's own word for a live deposit a band has opened is a **working**,
+## and `quarrywork` survives only as the server's command token, which no player reads.
+##
+## The hunt's own row no longer competes for the word: the compose sheet's field row reads `Prey`
+## (issue #650, `HudComposeVocab.COMPOSE_FIELD_PREY`), which is what leaves `quarry` free to mean the
+## pit on every surface here.
 ##
 ## ⛔ **A WORKING IS KEYED `(tile, material)`, AND THE PAIR IS INDIVISIBLE.** One tile can hold two —
 ## a wooded highland holds timber and rock, and working the timber is not working the rock — so every

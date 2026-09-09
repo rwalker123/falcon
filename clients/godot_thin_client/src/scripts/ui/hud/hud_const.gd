@@ -90,10 +90,11 @@ const LABOR_KIND_ROADWORK := "roadwork"
 # WORKING this band has opened on either deposit branch, worked or idle. `0` stops holding them at
 # all, after which each slides back down its ladder.
 #
-# ⛔ **THE TOKEN IS THE SIM'S GRAMMAR AND THE PLAYER NEVER SEES IT.** `Quarry` in this client means
-# the HUNTED ANIMAL — the compose sheet's own field row — so every player-facing string for this
-# pool, its roster and its cards says **Workings**, which is the sim's own word for the thing being
-# held. See `HudWorkVocab.ROLE_NAME_QUARRYWORK`.
+# ⛔ **THE TOKEN IS THE SIM'S GRAMMAR AND THE PLAYER NEVER SEES IT.** `Quarry` is ONE RUNG of ONE of
+# the two branches this pool holds — a coppice and a flint scatter are neither quarries nor
+# quarrywork — so every player-facing string for this pool, its roster and its cards says
+# **Workings**, which is the sim's own word for the thing being held. See
+# `HudWorkVocab.ROLE_NAME_QUARRYWORK`.
 #
 # **ONE ROLE FOR BOTH BRANCHES.** Forestry and extraction split on KNOWLEDGE and on nothing a keeper
 # does — *hold the face open, clear what has fallen* is one job — so a second pool would be a

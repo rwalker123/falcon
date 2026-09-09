@@ -7569,12 +7569,12 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     if _compose.party_quarry_id() == "":
         # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
         # shown so the shape of the form is legible, and it says why it is not yet pressable.
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_QUARRY_HINT))
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_PREY_HINT))
         var blocked := Button.new()
         blocked.text = SourceForecast.SEND_HUNTING_EXPEDITION_BUTTON
         blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         blocked.disabled = true
-        blocked.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_HINT
+        blocked.tooltip_text = HudComposeVocab.COMPOSE_PREY_HINT
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
@@ -7823,7 +7823,7 @@ func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, ban
 ## (`send_denial_raid`, closed at four tokens) cannot even carry. The player chooses a herd and a
 ## party size; everything else on this sheet is a READOUT.
 ##
-## The quarry row and its picker are the hunt form's, reused verbatim. **THE BEYOND-REACH RULE IS
+## The prey row and its picker are the hunt form's, reused verbatim. **THE BEYOND-REACH RULE IS
 ## NOT**, and this is the one place the two missions genuinely differ about what a quarry is
 ## (`TargetingController.is_expedition_quarry`): a hunting party exists for game the band cannot work
 ## from home, so a nearer herd is a local hunt — but denial is not a way of GETTING food, it is a way
@@ -7844,13 +7844,13 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     sheet.add_child(_build_quarry_row(band, herd))
     if _compose.party_quarry_id() == "":
         # Visible-and-disabled-with-its-reason, the footer's own convention.
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DENY_QUARRY_HINT))
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DENY_PREY_HINT))
         var blocked := Button.new()
         blocked.text = String(SourceForecast.DENIAL_VERDICTS[
             SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"])
         blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         blocked.disabled = true
-        blocked.tooltip_text = HudComposeVocab.COMPOSE_DENY_QUARRY_HINT
+        blocked.tooltip_text = HudComposeVocab.COMPOSE_DENY_PREY_HINT
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
@@ -8117,7 +8117,7 @@ func _blocked_send_button(face: String, reason: String) -> Button:
     return blocked
 
 ## The DESTINATION row — the Band and Kit rows' shape, and a genuine `OptionButton` rather than the
-## quarry row's map-pick button: a tie is a row in a list the sim publishes, so the candidates ARE
+## prey row's map-pick button: a tie is a row in a list the sim publishes, so the candidates ARE
 ## enumerable and a dropdown promises exactly what it delivers.
 func _build_destination_row(band: Dictionary, ties: Array) -> HBoxContainer:
     var row := HBoxContainer.new()
@@ -8806,7 +8806,7 @@ func _clear_trade_manifest() -> void:
 func _clear_party_quarry() -> void:
     _compose.clear_party_quarry()
 
-## The Quarry row — the Band and Kit rows' shape, with a button instead of a picker. Unpicked it
+## The Prey row — the Band and Kit rows' shape, with a button instead of a picker. Unpicked it
 ## invites (`Choose…`, primary); picked it states the herd and stays available for a re-pick (ghost).
 ##
 ## **IT IS PRESENTED AS ONE OF THAT FAMILY AND IT IS NOT ONE OF THEIR KIND, and both halves of that
@@ -8822,7 +8822,7 @@ func _clear_party_quarry() -> void:
 func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_QUARRY))
+    row.add_child(HudWidgets.build_field_key(HudComposeVocab.COMPOSE_FIELD_PREY))
     var pick := Button.new()
     pick.focus_mode = Control.FOCUS_NONE
     # EXPAND_FILL is load-bearing on the picked branch: `clip_text` drops the button's minimum width
@@ -8835,7 +8835,7 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     # rather than at the far end of the button.
     pick.alignment = HORIZONTAL_ALIGNMENT_LEFT
     if herd.is_empty():
-        pick.text = HudComposeVocab.COMPOSE_QUARRY_CHOOSE
+        pick.text = HudComposeVocab.COMPOSE_PREY_CHOOSE
         pick.tooltip_text = HudComposeVocab.SEND_HUNT_EXPEDITION_HINT
         HudStyle.apply_button(pick, "primary")
     else:
@@ -8852,12 +8852,12 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
             pick.icon = quarry_sprite
             pick.expand_icon = true
             pick.add_theme_constant_override("icon_max_width",
-                HudComposeVocab.COMPOSE_QUARRY_ICON_MAX_WIDTH)
+                HudComposeVocab.COMPOSE_PREY_ICON_MAX_WIDTH)
             pick.text = name_text
         else:
-            pick.text = HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
+            pick.text = HudComposeVocab.COMPOSE_PREY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
         pick.clip_text = true
-        pick.tooltip_text = HudComposeVocab.COMPOSE_QUARRY_TOOLTIP_FORMAT % [
+        pick.tooltip_text = HudComposeVocab.COMPOSE_PREY_TOOLTIP_FORMAT % [
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
         ]
         HudStyle.apply_button(pick, "ghost")
@@ -8908,7 +8908,7 @@ func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
         var sprite := FaunaSprites.for_herd(name_text)
         var entry := {
             "label": name_text if sprite != null \
-                else HudComposeVocab.COMPOSE_QUARRY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
+                else HudComposeVocab.COMPOSE_PREY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
             HudWidgets.MENU_ENTRY_CHECKED: String(candidate.get("id", "")) == chosen_id,
             "on_pick": func() -> void: _targeting.choose_quarry(band, candidate, mission),
         }
@@ -8916,7 +8916,7 @@ func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
             entry[HudWidgets.MENU_ENTRY_ICON] = sprite
         entries.append(entry)
     var menu := HudWidgets.build_section_menu(entries,
-        HudComposeVocab.COMPOSE_QUARRY_CHOICES_TOOLTIP)
+        HudComposeVocab.COMPOSE_PREY_CHOICES_TOOLTIP)
     menu.set_meta(HudWidgets.QUARRY_CHOICES_META, true)
     return menu
 
@@ -9019,7 +9019,7 @@ func compose_float() -> BandComposeFloat:
 ## contents have been laid out — measured on the empty hunt form, `col.size.x == 356` (a wholly
 ## plausible reading) beside `col.get_combined_minimum_size().y == 1278`, where the laid-out answer is
 ## 207. 1278 floats that sheet out of every dock this client has, and the high-water mark then holds it
-## there for the rest of the composition, which is exactly the reported picture: `Quarry: Choose…`, one
+## there for the rest of the composition, which is exactly the reported picture: `Prey: Choose…`, one
 ## hint, a disabled Send, floating out of a dock with 800px to spare.
 ##
 ## **AND IT WAITS RATHER THAN GIVING UP AFTER ONE FRAME.** One `process_frame` is the normal cost, but

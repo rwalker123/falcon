@@ -535,6 +535,40 @@ pub fn deposit_effective_floor(
     rung_floor.max((escapement * capacity).max(DEPOSIT_EMPTY))
 }
 
+/// **THE FLOOR A WORKING'S LESSON IS PRICED AT** — the crew's own dial where the escapement
+/// participates, and [`crate::intensification::PRACTICE_AT_THE_PLAIN_RATE`] where it does not
+/// (issue #650).
+///
+/// `intensification::learn_multiplier` prices *what a crew left standing* against *what it learned*.
+/// On a renewing deposit that is the same trade a Forage row makes, so the row's own `escapement`
+/// paces the lesson and a crew told to leave more of a wood standing learns conservationism faster.
+/// On a body at [`NEVER_RENEWS`] it is not a trade at all: [`deposit_effective_floor`] drops the
+/// crew's half of the composed floor there, so the dial the row carries changed nothing about the
+/// take, and paying a bonus for it would price a choice nobody made.
+///
+/// ⛔ **THE CONDITION IS [`deposit_effective_floor`]'S, VERBATIM.** *Which floor the take stopped at*
+/// and *which floor the lesson is paced by* are the same question about the same dial, so the two
+/// must fork on one reading of the ground's rate — un-scaled by
+/// [`RungExtractionPayoff::regrowth_multiplier`], because a rung scales a rate and does not make the
+/// ground finite.
+///
+/// ⛔ **AND IT IS NOT THE COMPOSED FLOOR.** Handing the lesson what the take actually stopped at
+/// would pay the **rung's** own unreachable remainder as though it were restraint:
+/// `extraction:gathering` recovers `0.15`, so its rung floor is `0.85` and every gathering crew on
+/// renewing ground would collect a permanent `×1.7` regardless of its dial — on precisely the rung
+/// that teaches `quarrying`. See [`crate::intensification::PRACTICE_AT_THE_PLAIN_RATE`].
+///
+/// ⛔ **BOTH EARN SITES MUST GO THROUGH IT.** The live credit in `systems::labor`'s `Extract` arm and
+/// `systems::labor::source_is_still_teaching` in the shedding order answer *"what is this working
+/// teaching"* one turn apart; a working that taught at one rate and reported at another would thin a
+/// row it was still paying.
+pub fn deposit_lesson_floor(regrowth_rate: f32, escapement: f32) -> f32 {
+    if regrowth_rate <= NEVER_RENEWS {
+        return crate::intensification::PRACTICE_AT_THE_PLAIN_RATE;
+    }
+    escapement
+}
+
 /// **WHAT IS LEFT ABOVE THE FLOOR FOR THIS CREW TO TAKE** — the deposit's twin of
 /// `forage::patch_take_room`, and what the take is capped by.
 ///

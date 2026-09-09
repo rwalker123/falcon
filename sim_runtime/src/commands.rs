@@ -210,6 +210,30 @@ pub enum CommandPayload {
         /// See [`Self::Fell::material`].
         material: String,
     },
+    /// **PUT DOWN A WORKING** — [`Self::Abandon`]'s deposit twin, and a **separate verb** rather
+    /// than a material token on it (issue #650).
+    ///
+    /// It drops the band's *holding* of the working — the `extract` row **and** its build-queue
+    /// entry — on every band of the faction working it, and leaves the working's own meter alone to
+    /// slide back down at the rung's rate. That is [`Self::Abandon`]'s contract byte for byte.
+    ///
+    /// ⛔ **IT COULD NOT BE A FIELD ON [`Self::Abandon`].** A deposit verb names a **tile and a
+    /// material**, because one hex holds two workings; `abandon` names a *place* and already drops
+    /// **every** holding on it, a forage row included. Widening a destructive verb with an optional
+    /// token would make it quietly more destructive on exactly the hexes where the player meant one
+    /// of two things. So it takes [`Self::Fell`]'s grammar, closed trailing material and all.
+    ///
+    /// **It exists because the row outlives its crew.** A working raised above its free floor is a
+    /// holding, so `assign_labor … extract … 0` is *"stop cutting"* and keeps the row — and the row
+    /// keeps drawing the band's `quarrywork` pool for the whole ~104 turns the meter takes to slide
+    /// back to the free floor, competing with the live workings beside it.
+    AbandonWorking {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        /// See [`Self::Fell::material`].
+        material: String,
+    },
     // **RETIRED: `AbandonImprovement`** — "clear the build verb off every band working this source".
     //
     // The build verb is **derived from the meter** now (`forage::patch_build_verb` /
@@ -1658,6 +1682,17 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 material: material.clone(),
             }),
+            CommandPayload::AbandonWorking {
+                faction_id,
+                target_x,
+                target_y,
+                material,
+            } => pb::command_envelope::Command::AbandonWorking(pb::AbandonWorkingCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                material: material.clone(),
+            }),
             CommandPayload::ExtendPen {
                 faction_id,
                 target_x,
@@ -2169,6 +2204,12 @@ impl CommandEnvelope {
                 material: cmd.material,
             },
             pb::command_envelope::Command::Quarry(cmd) => CommandPayload::Quarry {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                material: cmd.material,
+            },
+            pb::command_envelope::Command::AbandonWorking(cmd) => CommandPayload::AbandonWorking {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,

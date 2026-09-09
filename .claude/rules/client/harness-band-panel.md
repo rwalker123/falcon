@@ -593,7 +593,7 @@ reason on it) and `herd_kit_offer_rabbit`, all three in `chapters/compose_rungs.
 locally-built roster, `BandFx.kit_roster_fixture()` carrying neither a trapping nor a pen-axis kit.
 The dock harness is untouched because its own roster carries no mass-bounded weapon and its quarry
 no pen, so every kit on every one of its sheets is offered exactly as before. Rationale in
-`labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED". The fodder face contributes ONE
+`labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS PREY IS GREYED". The fodder face contributes ONE
 frame and 2 `assert OK` / 12 `PASS` here (`band_panel_work_fodder`, whose two zone assertions are
 the `assert OK` pair, whose `_assert_work_fodder_readouts` + the paired negative on
 `band_panel_work_trade_totals` are eight of the `PASS`es, and whose review pass added
@@ -1243,7 +1243,7 @@ about **which question the harness was in a position to ask**:
 - **No state staged an EMPTY compose form as a composing act of its own.** Every compose fixture writes
   `_party_compose_open` directly and picks a quarry first, so the smallest the sheet ever is — the form
   a player sees the instant they press `🏹 Hunt`, on a band with no parties — was never rendered from
-  that entry point. `band_panel_compose_hunt_no_quarry` looks like it covers this and does not: it
+  that entry point. `band_panel_compose_hunt_no_prey` looks like it covers this and does not: it
   reaches the empty form by CLEARING a quarry mid-act, so it inherits the full form's mark and never
   arms a fresh measurement.
 - **Every render in this harness happens from a coroutine resumed at `process_frame`**, i.e. the most

@@ -569,6 +569,38 @@ message AbandonCommand {
   optional string herd_id = 4;
 }
 
+// PUT DOWN A WORKING - `abandon`'s deposit twin, and a SEPARATE VERB rather than a material token on
+// `abandon` (issue #650).
+//
+// *** A DEPOSIT VERB NAMES A TILE AND A MATERIAL, WHICH IS WHY IT CANNOT RIDE `abandon`. *** The
+// working's key is (tile, material) because one hex holds two - rolling hills carry timber AND rock -
+// so a line naming only the tile names neither. `abandon <f> <x> <y>` already drops EVERY holding on
+// its tile, a forage row included, and its own tile card warns about that in a second line; widening
+// a destructive verb with an optional token would make it quietly more destructive on exactly the
+// hexes where the player meant one of two things. It is `fell`/`coppice`/`quarry`'s grammar instead,
+// with the material as the closed trailing token.
+//
+// WHAT IT DOES, and it is `abandon`'s contract byte for byte: it drops the band's HOLDING of that
+// working - the `extract` row AND its build-queue entry - on every band of the faction working it.
+// THE WORKING'S METER IS UNTOUCHED. The face keeps whatever rung it stands on and, with nobody
+// holding it, slides back down at the rung's own rate over the following turns exactly as an unkept
+// working already does. Nothing is destroyed on the spot, so it needs no confirmation.
+//
+// IT EXISTS BECAUSE A BUILT WORKING IS BILLED TO THE `quarrywork` POOL FOR AS LONG AS THE ROW STANDS,
+// AND THE ROW OUTLIVES ITS CREW. `assign_labor ... extract ... 0` is "stop cutting", never "this band
+// has nothing here" - a working raised above its free floor is a holding and keeps its row - so
+// before this verb an abandoned quarry went on drawing keepers for the whole ~104 turns its meter
+// took to slide back to `extraction:gathering`, competing with the live workings beside it for the
+// same pool, with no command that could stop it.
+message AbandonWorkingCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+  // The deposit's material key (`extraction.json` -> `deposits`), e.g. "wood". REQUIRED - see above
+  // for why a tile alone cannot name a working.
+  string material = 4;
+}
+
 // Drop a source's BUILD-QUEUE ENTRY only, on every band of the faction working it. The row, its take
 // crew, its kit and the meter are all untouched - this is the UNDO for a declaration.
 //
@@ -1368,5 +1400,9 @@ message CommandEnvelope {
     FellCommand fell = 71;
     CoppiceCommand coppice = 72;
     QuarryCommand quarry = 73;
+    // 73 is held by `quarry`, so the working's own walk-away takes 74 (append-only; never renumber).
+    // It is not a field on `abandon` for the reason its message states: a deposit verb names a tile
+    // AND a material, and `abandon` already puts down every holding on its tile.
+    AbandonWorkingCommand abandon_working = 74;
   }
 }

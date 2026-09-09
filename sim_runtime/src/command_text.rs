@@ -234,7 +234,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "fell",
         aliases: &[],
-        summary: "DECLARE a felling working on the wood at a tile: appended to the build queue of every band already working that deposit, and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. IT NAMES A MATERIAL as well as a tile, unlike every other tile verb: one hex can hold two workings (a wooded highland holds timber AND rock), so a line naming only the tile names neither of them - the same token `assign_labor <f> <b> extract <x> <y> <material> <n>` carries. IT NAMES NO BAND, unlike `grade`: a working belongs to a camp exactly as a patch does, so its keeper is whoever already cuts it, and you must have a crew on the deposit before you can raise it. Forestry rung 2, and the rung at which OVER-CUTTING BECOMES POSSIBLE - the take is finally fast enough to outpace what the wood puts back. Needs Woodcraft knowledge, earned by gathering deadfall. Use `unqueue` to withdraw the declaration and `abandon` to put the working down.",
+        summary: "DECLARE a felling working on the wood at a tile: appended to the build queue of every band already working that deposit, and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. IT NAMES A MATERIAL as well as a tile, unlike every other tile verb: one hex can hold two workings (a wooded highland holds timber AND rock), so a line naming only the tile names neither of them - the same token `assign_labor <f> <b> extract <x> <y> <material> <n>` carries. IT NAMES NO BAND, unlike `grade`: a working belongs to a camp exactly as a patch does, so its keeper is whoever already cuts it, and you must have a crew on the deposit before you can raise it. Forestry rung 2, and the rung at which OVER-CUTTING BECOMES POSSIBLE - the take is finally fast enough to outpace what the wood puts back. Needs Woodcraft knowledge, earned by gathering deadfall. Use `unqueue` to withdraw the declaration and `abandon_working` to put the working down - NOT `abandon`, which names a place and drops every holding on that tile.",
         usage: "fell <faction_id> <x> <y> <material>",
     },
     CommandVerbHelp {
@@ -248,6 +248,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         aliases: &[],
         summary: "DECLARE a cut working face on the stone at a tile - the extraction branch's rung-2 verb, declared and funded exactly as `fell` is and naming the material the same way. What it buys is REACH, not rate: a finite deposit has no regrowth to raise, so the rung lowers the floor it can reach beneath instead. IT IS THE ONE RUNG ON EITHER BRANCH THAT ASKS SOMETHING OF THE GROUND - the tile's own capacity for the material must clear the rung's min_deposit_capacity, which is the whole of 'you cannot quarry just anywhere': a scatter of loose stone is not a body of rock, and the refusal says so and names the ground that carries one. Needs Quarrying knowledge, earned by picking loose stone.",
         usage: "quarry <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
+        verb: "abandon_working",
+        aliases: &[],
+        summary: "PUT A WORKING DOWN: drop your bands' holding of the deposit at a tile - the `extract` row AND its build-queue entry - on every band of the faction working it. THE WORKING'S METER IS UNTOUCHED: the face keeps whatever rung it stands on and, with nobody holding it, slides back down at the rung's own rate over the following turns exactly as an unkept working does. Nothing is destroyed on the spot, so it needs no confirmation. IT NAMES A MATERIAL as well as a tile, exactly as `fell`/`coppice`/`quarry` do: one hex can hold two workings, so a line naming only the tile names neither of them. IT IS ITS OWN VERB AND NOT A TOKEN ON `abandon` - `abandon <faction> <x> <y>` names a PLACE and puts down every holding on it, a forage row included, so widening it would make a destructive verb quietly more destructive. WHY YOU NEED IT: a working raised above its free floor is a HOLDING, so `assign_labor <f> <b> extract <x> <y> <material> 0` means 'stop cutting' and keeps the row - and the row goes on drawing your band's `quarrywork` keepers for the hundred-odd turns the meter takes to slide back to the free floor, competing with the workings you still want. This is how you stop paying for a face you have walked away from.",
+        usage: "abandon_working <faction_id> <x> <y> <material>",
     },
     CommandVerbHelp {
         verb: "extend_pen",
@@ -1215,7 +1221,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
         //
         // **The tail is CLOSED.** The material is the last token, so an unnoticed extra would be
         // silently dropped on exactly the verb where a second material name is the plausible typo.
-        verb @ ("fell" | "coppice" | "quarry") => {
+        // **`abandon_working` RIDES THE SAME GRAMMAR, and it is a separate verb from `abandon` for
+        // the reason its help states**: `abandon <f> <x> <y>` names a *place* and drops every
+        // holding on it, so covering a working with an optional trailing material would make a
+        // destructive verb quietly more destructive on exactly the hexes that hold two of them.
+        // Being on this arm is what keeps the material's position and the closed tail identical to
+        // the three rung verbs', which is the whole of *"the two ways of addressing one working read
+        // alike"*.
+        verb @ ("fell" | "coppice" | "quarry" | "abandon_working") => {
             let faction_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
@@ -1248,7 +1261,13 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     target_y,
                     material,
                 },
-                _ => CommandPayload::Quarry {
+                "quarry" => CommandPayload::Quarry {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+                _ => CommandPayload::AbandonWorking {
                     faction_id,
                     target_x,
                     target_y,

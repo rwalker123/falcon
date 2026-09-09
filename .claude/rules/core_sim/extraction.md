@@ -375,6 +375,56 @@ for the verb to declare for, and the verb's own rejection names the crew.
 > The `Command` it comes out as is compared against `commanding_faction`'s own label rather than a
 > hand-written expectation, so a `fell` line that decoded into `Command::Coppice` cannot pass.
 
+## The fourth verb — `abandon_working`, and why it is not a token on `abandon`
+
+`abandon_working <faction> <x> <y> <material>`, on the three rung verbs' grammar exactly: no band
+token, the material as the closed trailing token, and the same *"no band of yours works this"*
+rejection. It drops the band's **holding** — the `extract` row and its build-queue entry — on every
+band of the faction working `(tile, material)`, through the same `drop_holding_and_cancel_ring` a
+patch's `abandon` goes through, and **leaves the working's meter alone** to slide back at the rung's
+own rate. Nothing is destroyed on the spot, so it needs no confirmation, and there is no `validate_*`
+to run: putting a thing down asks nothing of the ground, the knowledge or the rung.
+
+**THE ROW OUTLIVES ITS CREW, AND THE ROW IS WHAT IS BILLED.** A working raised above its free floor
+is a holding (`source_has_a_meter_at_risk`), so `assign_labor … extract … 0` is *"stop cutting"* and
+keeps the row; `extraction_keeping_claims`' catchment is that row, so the band goes on owing the
+working's `quarrywork` bill for as long as it stands. **Measured** on a seated `extraction:quarry` at
+`AlpineMountain` with crew and keepers both at zero: 4 turns of grace at **2.10** work a turn, then a
+linear slide to **0.06** by turn 103, at which point the position reaches zero, the row prunes itself
+and the billing stops — **104 turns**. `forestry:felling` is the same shape at **1.0 → 0** over 103
+turns; `forestry:coppice` slides through `felling` on the way and takes **202**.
+
+**So it is not a bill that runs for ever — it is a bill that cannot be stopped, on a pool that is
+shared.** Under the default `UpkeepFundMode::Spread` the abandoned working takes its proportional
+share of the band's one pool, so the workings the band still wants are funded short for as long as it
+sits there. Measured on the reference wood, where one keeper covers one `forestry:felling` working
+exactly: a live working holds at its seated **60.0** for ever alone, and slides to **49.96 in 40
+turns** the moment a walked-away sibling sits beside it. That is the leak, and before this verb no
+command could drop the sibling.
+
+> ### ⛔ IT MAY NOT BE AN OPTIONAL MATERIAL ON `abandon`
+>
+> `abandon <faction> <x> <y>` names a **place**: it drops every band's holding on that tile, a forage
+> row included, *and* releases the faction's road keeping there — which its own tile card already
+> warns about in a second line. A deposit verb names a tile **and** a material, because one hex holds
+> two workings, so covering one with an optional token would make an already-destructive verb quietly
+> more destructive on exactly the hexes where the player meant one of two things. The two verbs are
+> therefore siblings rather than one verb with a tail, and `abandon_working` rides
+> `command_text.rs`'s `fell | coppice | quarry` arm so the material's position and the closed tail
+> cannot drift from the rung verbs' — which is the whole of *"the two ways of addressing one working
+> read alike"*.
+>
+> **Nothing was widened to carry it**: proto field **74**, its own `CommandPayload` variant, its own
+> `Command` variant, its own `handle_abandon_working`. `abandon`'s message, grammar and handler are
+> untouched.
+>
+> `server::tests::abandon_working_drops_one_workings_holding_and_leaves_its_neighbour` drives the
+> line through the **encoded** envelope on a hex carrying timber and rock at once, both staffed and
+> both declared, so a verb resolving the working by tile alone fails there rather than passing a
+> single-deposit fixture. `extraction::putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding`
+> pins the gameplay claim against the measurement above: the leak arm and the fix arm one drive
+> apart, plus that the put-down working's meter still slides — untouched, not destroyed.
+
 ## What a working costs to HOLD — the `quarrywork` pool
 
 Every **built** rung on both branches owes work per turn, drawn from `LaborTarget::Quarrywork` — the
@@ -506,6 +556,15 @@ whose stone rate is real because *re-dressing a road is not re-laying it*. It al
 branches in the right order for a faction with nothing: you must have worked a wood before you can
 open a quarry.
 
+**On nine of the fourteen quarryable terrains that wood has to be CARRIED IN, and the pile is drawn
+from the band's own store rather than from the ground it stands on.** Basalt, volcano slope, rocky
+reg, fumarole and ash plain have never held timber; the #650 deletions add canyon badlands, high
+plateau, the crater fields and the sinkhole field, whose wood rows were 15–45 and could bootstrap the
+8-unit pile only over dozens of bare-handed turns. **No rung became unbuildable** — a band carries its
+`LocalStore` when it moves, and the supply network pools between linked camps — so what changed is
+that four more rock bodies now ask for the trip the other five always asked for, which is the same
+ordering this section already states.
+
 **Neither branch settles a standing material**, so `validate_upkeep` **rejects an `upkeep.materials`
 on a deposit rung outright**. A rate there would parse, validate, publish a demand and be paid by
 nobody — the *"looks live but isn't"* failure, and exactly what `route:paved_road` shipped for one
@@ -527,19 +586,46 @@ Three lessons, on the ladder's own *practise rung N to unlock rung N+1* shape. D
 **Conservationism is learned by being in a position to ruin a wood**, which is why `felling` teaches
 it: `felling` is the first rung on either branch at which over-cutting is possible.
 
-**A deposit crew's lesson rides its own floor, through the seam both food webs go through.**
-`intensification::learn_multiplier` is `floor / MSY_BIOMASS_FRACTION` and belongs to no web: it
-prices *what you left standing* against *what you learned*, and an `extract` row carries the same
-dial a Forage row does. So a crew told to leave more of a wood standing learns conservationism
-faster, in proportion; one told to strip it learns nothing (`learn_multiplier(0)` is `0`), and one at
-the top of the dial has no escapement room, so the work predicate is false and watching teaches
-nothing either. Both earn sites — the live credit in the `Extract` arm and
-`source_is_still_teaching` in the shedding order — pass the row's floor.
+**A deposit crew's lesson rides its own floor WHERE THE DIAL PARTICIPATES, through the seam both
+food webs go through.** `intensification::learn_multiplier` is `floor / MSY_BIOMASS_FRACTION` and
+belongs to no web: it prices *what you left standing* against *what you learned*, and an `extract`
+row on renewing ground carries the same dial a Forage row does. So a crew told to leave more of a
+wood standing learns conservationism faster, in proportion; one told to strip it learns nothing
+(`learn_multiplier(0)` is `0`), and one at the top of the dial has no escapement room, so the work
+predicate is false and watching teaches nothing either.
 
-`intensification::PRACTICE_AT_THE_PLAIN_RATE` was the named fixed point they passed instead, on the
-reading that *a deposit carries no floor*. That reading is what #650 removed, so the constant went
-with it — a named fixed point with no caller is a second answer waiting to be reached for. The
-surviving *"this source has no dial"* reading is `systems::labor::credit_managed_rung_lesson`'s, and
+### ⛔ A working whose dial is not offered learns at the PLAIN RATE
+
+`intensification::PRACTICE_AT_THE_PLAIN_RATE` is `learn_multiplier`'s fixed point, and what a working
+at `NEVER_RENEWS` passes. The escapement is offered only where a deposit renews — the same condition
+`deposit_effective_floor` carries — so on a rock body the row's floor is **stored, published and
+inert**, and pricing the lesson off it would pay a crew a learning bonus calibrated to a choice
+nobody made: the client omits the token there, the sim resolves the omission to
+`DEFAULT_ESCAPEMENT_FLOOR` (0.5), and that lands on the row. Where it bites is
+`extraction:gathering`, which earns `quarrying` and is a live teaching rung on a body that is finite.
+
+`extraction::deposit_lesson_floor` is the only place the fork lives — the crew's own dial where the
+escapement participates, the fixed point where it does not — and **both earn sites go through it**:
+the live credit in the `Extract` arm and `source_is_still_teaching` in the shedding order, which
+answer one turn apart and would otherwise let a working teach at one rate and report another.
+`resolve_shed_facts` takes a `deposit_renewal_of` closure for that, `tile_capacity_of`'s twin one
+branch over, because the tile query and the deposits config are the caller's to hand.
+
+> ⛔ **AND IT IS NOT THE COMPOSED FLOOR.** The other option was to price the lesson off whatever the
+> take actually stopped at, and it is wrong on the renewing side rather than the finite one: on a
+> renewing scatter `extraction:gathering`'s rung floor is `0.85`, so composing would hand every
+> gathering crew a permanent **×1.7** regardless of its dial — which makes the dial irrelevant to
+> learning on the one rung that teaches `quarrying`. A rung's unreachable remainder is not a
+> conservation choice and may not be paid for as one. **The renewing branch keeps pricing the lesson
+> off the player's own dial, unchanged.**
+>
+> `extraction::a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial` pins both
+> sides on **one rung**, `extraction:gathering`, because the stone table is two populations and this
+> is the one place both readings are live. It asserts the plain rate as a **value** — a rock crew
+> earns exactly what a renewing crew at the fixed point earns — since equal-to-each-other alone would
+> pass against a lesson that had stopped being credited at all.
+
+The other *"this source has no dial"* reading is `systems::labor::credit_managed_rung_lesson`'s, and
 it belongs to **rung 3**, which is a claim about a take that draws nothing down rather than about a
 branch.
 
@@ -547,7 +633,7 @@ branch.
 
 | File | Purpose |
 |---|---|
-| `src/data/extraction.json` | **THE DEPOSITS** (`extraction_config.rs`, env override **`EXTRACTION_CONFIG_PATH`**). `seed_fraction` **0.02** — what a deposit regrows from when it has been taken to nothing, evaluated *inside* the growth term so a rate of zero seeds nothing. Then one `deposits` row per material: its `branch`, and a `by_terrain` table of `{ capacity, regrowth_rate, characteristics }`. **A terrain absent from `by_terrain` holds none of that material** — absence is the answer, so there is no `enabled` flag and no parked `0.0` row, and every water terrain is absent from both tables deliberately. `DepositDef` and `DepositTerrain` are **`deny_unknown_fields`**, so the file's prose lives at file level in `_comment_*` keys, `materials.json`'s discipline. **Stone is two populations in one table**: rock bodies in the low thousands at rate `0.0` (alpine 4200, karst 3000, basalt 2600 … rolling hills 900) and loose-stone scatters in the tens at a small positive rate (periglacial 70 … mangrove 5). **Wood regrows on every row** — mixed woodland 600 at 0.03, boreal taiga 450 at 0.015, marsh withy 90 at 0.055 — because a forest that is worked out is not a forest. **The characteristic ratings are the provisional half of the file**: nothing reads either material's axes today (`docs/plan_extraction.md` §5b — a *recipe* will, when stone tools land), so they are authored for the shape the pair is meant to have — genuinely opposed, no best deposit — rather than tuned against a consumer that does not exist. **`capacity_per_keeper`** is the divisor that turns a tile's capacity into the keeper-loads the rungs quote their `work_per_turn` per — wood **600** (`MixedWoodland`'s own capacity, so a felling working on closed woodland is exactly one load) and stone **3000** (`KarstHighland`'s — limestone, the classic quarry stone, and the middle of the rock bodies, so rolling hills reads 0.3 and an alpine mountain 1.4). Every number is a **playtest dial** |
+| `src/data/extraction.json` | **THE DEPOSITS** (`extraction_config.rs`, env override **`EXTRACTION_CONFIG_PATH`**). `seed_fraction` **0.02** — what a deposit regrows from when it has been taken to nothing, evaluated *inside* the growth term so a rate of zero seeds nothing. Then one `deposits` row per material: its `branch`, and a `by_terrain` table of `{ capacity, regrowth_rate, characteristics }`. **A terrain absent from `by_terrain` holds none of that material** — absence is the answer, so there is no `enabled` flag and no parked `0.0` row, and every water terrain is absent from both tables deliberately. `DepositDef` and `DepositTerrain` are **`deny_unknown_fields`**, so the file's prose lives at file level in `_comment_*` keys, `materials.json`'s discipline. **Stone is two populations in one table**: rock bodies in the low thousands at rate `0.0` (alpine 4200, karst 3000, basalt 2600 … rolling hills 900) and loose-stone scatters in the tens at a small positive rate (periglacial 70 … mangrove 5). **Wood regrows on every row** — mixed woodland 600 at 0.03, boreal taiga 450 at 0.015, marsh withy 90 at 0.055 — because a forest that is worked out is not a forest. **The wood table stops at 50 and the floor is a design line, not a tuning one** (issue #650): eight rows under it were **deleted** rather than tuned down — canyon badlands and tundra 15, periglacial steppe 20, prairie steppe 25, crater fields 30, high plateau and semi-arid scrub 40, sinkhole field 45 — because a wood a bare-handed crew works out in a few dozen turns costs the player a decision and pays them nothing. **Absence is the config's own mechanism**, so no code carries a threshold; the terrains simply hold no timber, and each of the eight keeps its stone row, so **nothing is left holding neither material** (the only rows absent from both tables are the six water terrains and `Glacier`, deliberately). **⛔ THE STONE TABLE'S SMALL ROWS ARE THE OPPOSITE CASE AND WERE LEFT ALONE** — the low-capacity **positive-rate** scatters are *loose stone the ground keeps turning up*, which is what makes knapping flint available nearly anywhere, and a scatter that regrows is never worked out the way a 15-unit copse is. **The characteristic ratings are the provisional half of the file**: nothing reads either material's axes today (`docs/plan_extraction.md` §5b — a *recipe* will, when stone tools land), so they are authored for the shape the pair is meant to have — genuinely opposed, no best deposit — rather than tuned against a consumer that does not exist. **`capacity_per_keeper`** is the divisor that turns a tile's capacity into the keeper-loads the rungs quote their `work_per_turn` per — wood **600** (`MixedWoodland`'s own capacity, so a felling working on closed woodland is exactly one load) and stone **3000** (`KarstHighland`'s — limestone, the classic quarry stone, and the middle of the rock bodies, so rolling hills reads 0.3 and an alpine mountain 1.4). Every number is a **playtest dial** |
 | `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
 | `src/data/equipment.json` | `default_kits.extract` and `default_kits.quarrywork` both `"none"`, the `none` kit's `jobs` gains both, and `stone_dressing`'s flint tier gains its second `build_work` effect on `extraction:quarry` |
 

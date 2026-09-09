@@ -273,7 +273,7 @@ const QUARRY_HOME_Y := 18
 const QUARRY_HOME_OUTBOUND_TRAVEL_TURNS := 0
 ## **TWO HERDS ON ONE HEX** — the reported pair. A tile can hold more than one herd and a map click
 ## names only the TILE, so the pick resolves to whichever the snapshot lists first and re-clicking
-## resolves to the same one; the Quarry row's chooser is the way to the other. The pair is
+## resolves to the same one; the Prey row's chooser is the way to the other. The pair is
 ## deliberately a food quarry beside an INEDIBLE one: they differ in art, in name and in what the
 ## raid brings home, so a chooser that offered one herd twice could not pass. Same row as the band
 ## (71, 18) and seven columns out, i.e. far beyond `QUARRY_BAND_HUNT_REACH`.
@@ -1820,7 +1820,7 @@ func _ready() -> void:
 	await _save("band_panel_compose_hunt_short")
 	# **THE FIT IS ASSERTED HERE NOW, AND IT IS ASSERTED IN THREE PLACES AT ONCE.** An open parties
 	# compose sheet does not fit a height-capped horizontal dock at all — measured at 641px of a 265px
-	# box WITHOUT the chart (quarry row, presets, floor hint, party stepper, kit row, forecast and
+	# box WITHOUT the chart (prey row, presets, floor hint, party stepper, kit row, forecast and
 	# send, none of which this tier drops), which is why this state used to REPORT its extent instead
 	# of asserting it. The sheet renders in `BandComposeFloat` there now, so the claim can be made —
 	# but only as a set: `_assert_zone_content_fits` alone passes TRIVIALLY once the sheet leaves the
@@ -1856,9 +1856,9 @@ func _ready() -> void:
 			SourceForecast.TRIP_BOUND_PACK_FULL]))
 	# **ONE QUARRY ON THE HEX GETS NO CHOOSER, and this frame is the whole guarantee that the common
 	# case did not grow chrome for the rare one.** The boar stands alone on (75, 18); the paired
-	# positive is `band_panel_compose_deny_two_quarries`, without which a chooser rendered on every
+	# positive is `band_panel_compose_deny_two_prey`, without which a chooser rendered on every
 	# sheet would satisfy every claim there.
-	_assert_band_panel("a lone quarry on the hex gets NO chooser on the Quarry row",
+	_assert_band_panel("a lone herd on the hex gets NO chooser on the Prey row",
 		_find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) == null)
 
 	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
@@ -1874,12 +1874,12 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_hud._bandpanel._send_hunt_floor = SourceForecast.DEFAULT_HARVEST_FLOOR
 
-	# The same sheet with NO quarry yet: the "Choose…" row, the hint, a disabled Send — and nothing
+	# The same sheet with NO prey yet: the "Choose…" row, the hint, a disabled Send — and nothing
 	# below it, since policy/party/forecast are all unanswerable without a herd.
 	_hud._compose.clear_party_quarry()
 	_hud._bandpanel.rerender()
 	await _settle()
-	await _save("band_panel_compose_hunt_no_quarry")
+	await _save("band_panel_compose_hunt_no_prey")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -1913,7 +1913,7 @@ func _ready() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 
-	# Same sheet under Scout: scouting title, NO quarry row, NO policy picker, "Send scouting party…".
+	# Same sheet under Scout: scouting title, NO prey row, NO policy picker, "Send scouting party…".
 	_hud._bandpanel._party_compose_mission = "scout"
 	_hud._bandpanel.rerender()
 	await _settle()
@@ -2035,7 +2035,7 @@ func _ready() -> void:
 
 	# **TWO HERDS ON ONE HEX** — the reported gap. The map click names a TILE, so a warren sharing a
 	# hex with a wolf pack resolves to whichever the snapshot lists first and re-clicking resolves to
-	# the same one; the Quarry row's `⋯` chooser is the way to the other. Rendered on the DENIAL form
+	# the same one; the Prey row's `⋯` chooser is the way to the other. Rendered on the DENIAL form
 	# because that is where it was reported, and the row is shared, so the hunt form gets the identical
 	# control from the identical builder. The pair reads differently on purpose — a warren pays meat,
 	# a wolf pays pelts alone — so the chooser is judged on two rows that could not be confused.
@@ -2043,7 +2043,7 @@ func _ready() -> void:
 	_hud._compose.set_party_quarry(SHARED_TILE_FOOD_HERD_ID)
 	_hud._bandpanel.rerender()
 	await _settle()
-	await _save("band_panel_compose_deny_two_quarries")
+	await _save("band_panel_compose_deny_two_prey")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -14215,7 +14215,7 @@ func _assert_denial_short_handed() -> void:
 		not _has_label_containing(_panel, counted))
 
 ## **THE CHOOSER APPEARS ONLY WHERE THERE IS A CHOICE, AND CHOOSING RE-TARGETS.** Both halves are
-## behavioural: a PNG can show that a `⋯` is on the Quarry row, but not what its menu holds, not which
+## behavioural: a PNG can show that a `⋯` is on the Prey row, but not what its menu holds, not which
 ## herd it marks as current, and not what a pick does. The frame under it is the picture; this is the
 ## claim.
 ##
@@ -14224,7 +14224,7 @@ func _assert_denial_short_handed() -> void:
 ## satisfies every assertion here on its own.
 func _assert_quarry_chooser() -> void:
 	var menu := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
-	_assert_band_panel("two herds on one hex put a chooser on the Quarry row", menu != null)
+	_assert_band_panel("two herds on one hex put a chooser on the Prey row", menu != null)
 	if menu == null:
 		return
 	var popup := menu.get_popup()

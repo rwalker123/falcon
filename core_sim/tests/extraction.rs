@@ -440,6 +440,119 @@ fn a_deeper_floor_teaches_the_deposit_branch_faster() {
 /// statement about float layout rather than about the multiplier.
 const A_CLOSE_ENOUGH_RATIO: f32 = 1e-3;
 
+/// ⛔ **A WORKING WHOSE DIAL IS NOT OFFERED LEARNS AT THE PLAIN RATE, AND A RENEWING ONE STILL
+/// LEARNS AT THE PLAYER'S** (issue #650).
+///
+/// The escapement dial participates only where the deposit renews
+/// (`extraction::deposit_effective_floor`), so on a rate-0 body the row's floor is stored, published
+/// and inert. A lesson priced off it would pay a crew a learning bonus calibrated to a choice that
+/// changed nothing about the take — and `extraction:gathering` is exactly where that bites, because
+/// picking loose stone off a mountain is a live teaching rung and a rock body is finite.
+///
+/// **One rung, two grounds, and that is the whole design of the fixture.** Both arms stand on
+/// `extraction:gathering` earning `quarrying`, so nothing but the terrain's own rate differs: the
+/// shipped stone table is two populations, and this rung is the one place both readings are live.
+///
+/// **The plain rate is pinned as a VALUE, not merely as invariance.** A rock crew asked to leave
+/// nothing and one asked to leave almost everything must learn the same amount *and* that amount
+/// must be what a renewing crew at [`core_sim::PRACTICE_AT_THE_PLAIN_RATE`] earns — an
+/// equal-to-each-other assertion alone passes against a lesson that has stopped being credited.
+#[test]
+fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial() {
+    /// Long enough for the accrual to be a rate, short enough that no arm clamps at `1.0` and
+    /// flattens every comparison below.
+    const A_SPELL_OF_PICKING: u32 = 5;
+    /// Two floors either side of the food peak, so one multiplier is under `1.0` and one over it.
+    const A_SHALLOW_FLOOR: f32 = 0.4;
+    const A_DEEP_FLOOR: f32 = 0.8;
+
+    let practice_on = |terrain: TerrainType, floor: f32| {
+        let (mut world, home) = world_of(terrain);
+        let band = spawn_band_of(&mut world, home, STONE, 20, 6);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments[0].target = LaborTarget::Extract {
+                tile: UVec2::new(0, 0),
+                material: STONE.to_string(),
+                floor,
+            };
+        }
+        for _ in 0..A_SPELL_OF_PICKING {
+            run_turn(&mut world);
+        }
+        world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FACTION, core_sim::extraction::QUARRYING_DISCOVERY_ID)
+            .to_f32()
+    };
+
+    // **The fixture's own precondition**: the two grounds really do fall on opposite sides of the
+    // condition `deposit_effective_floor` forks on. Without this the whole test could be two
+    // readings of one population.
+    let config = ExtractionConfig::builtin();
+    let rate_of = |terrain: TerrainType| {
+        tile_deposit_regrowth(
+            &config,
+            STONE,
+            &Tile {
+                position: UVec2::new(0, 0),
+                terrain,
+                ..Default::default()
+            },
+        )
+    };
+    assert_eq!(
+        rate_of(ROCK),
+        core_sim::NEVER_RENEWS,
+        "fixture: the finite arm must stand on a rock body"
+    );
+    assert!(
+        rate_of(A_STONE_SCATTER) > core_sim::NEVER_RENEWS,
+        "fixture: the renewing arm must stand on a scatter that comes back"
+    );
+
+    let finite_shallow = practice_on(ROCK, A_SHALLOW_FLOOR);
+    let finite_deep = practice_on(ROCK, A_DEEP_FLOOR);
+    assert!(
+        finite_shallow > 0.0 && finite_deep < 1.0,
+        "**LIVENESS**: the rock crews must still be learning and must not have finished, or the \
+         equality below is a statement about zero or about the clamp: {finite_shallow} / \
+         {finite_deep}"
+    );
+    assert_eq!(
+        finite_shallow, finite_deep,
+        "a working whose dial does not participate must learn the same whatever the row carries"
+    );
+
+    let renewing_shallow = practice_on(A_STONE_SCATTER, A_SHALLOW_FLOOR);
+    let renewing_deep = practice_on(A_STONE_SCATTER, A_DEEP_FLOOR);
+    let expected =
+        core_sim::learn_multiplier(A_DEEP_FLOOR) / core_sim::learn_multiplier(A_SHALLOW_FLOOR);
+    assert!(
+        (renewing_deep / renewing_shallow - expected).abs() < A_CLOSE_ENOUGH_RATIO,
+        "a renewing working must still be paced by the player's own dial: {renewing_deep} against \
+         {renewing_shallow} is {ratio}, expected {expected}",
+        ratio = renewing_deep / renewing_shallow
+    );
+
+    // **And the plain rate is exactly the identity, not merely a constant.** The renewing arm at the
+    // fixed point is what a rock crew earns, which is what makes this a bonus of neither sign.
+    let renewing_at_the_fixed_point =
+        practice_on(A_STONE_SCATTER, core_sim::PRACTICE_AT_THE_PLAIN_RATE);
+    assert!(
+        (finite_shallow - renewing_at_the_fixed_point).abs() < A_CLOSE_ENOUGH_RATIO,
+        "the plain rate is `learn_multiplier`'s fixed point, so a rock crew must earn exactly what \
+         a renewing crew earns there: {finite_shallow} against {renewing_at_the_fixed_point}"
+    );
+}
+
+/// **A SCATTER OF LOOSE STONE THAT COMES BACK** — the renewing half of the shipped stone table
+/// (periglacial steppe, 70 units at `0.015`), against [`ROCK`]'s rate of zero. Named because what
+/// the fixture wants of it is the *rate*, not the terrain.
+const A_STONE_SCATTER: TerrainType = TerrainType::PeriglacialSteppe;
+
 /// ⛔ **THE LADDER IS REACHABLE FROM A STANDING START, THROUGH THE ORDINARY BUILD QUEUE** — the
 /// liveness check every gate above is worth nothing without.
 ///
@@ -1446,6 +1559,104 @@ fn a_working_whose_keeping_is_short_quotes_a_rotting_meter() {
         matches!(turns, Some(core_sim::BuildTurns::Turns(_))),
         "and the same one builder then finishes it, so the Rotting above is about the KEEPING and \
          not about the crew: got {turns:?}"
+    );
+}
+
+/// ⛔ **PUTTING A WORKING DOWN STOPS THE BILL AT ONCE, AND ITS NEIGHBOUR STOPS SLIDING**
+/// (issue #650) — the gameplay claim `abandon_working` exists for, measured against the leak it
+/// closes.
+///
+/// **The leak.** A working raised above its free floor is a *holding*
+/// (`systems::labor::source_has_a_meter_at_risk`), so a crew of zero keeps the row —
+/// `assign_labor … extract … 0` is *"stop cutting"*, never *"this band has nothing here"*. And
+/// `extraction_keeping_claims` reads the **row**, so an abandoned working goes on claiming its share
+/// of the band's one `quarrywork` pool for the whole ~104 turns its meter takes to slide back to the
+/// free floor. Under the default `UpkeepFundMode::Spread` that share comes out of the workings the
+/// band still wants.
+///
+/// **Measured on this fixture, before the verb existed**: one keeper covers one `forestry:felling`
+/// working on the reference wood exactly (1.0 work a turn), so the live working holds at its seated
+/// **60.0** for ever alone — and slides to **49.96 in 40 turns** the moment a walked-away sibling
+/// sits beside it, with no command able to drop the sibling.
+///
+/// **The two arms are one drive apart**, because either alone is weak: an arm that only asserted the
+/// held reading describes a fixture where nothing was ever at risk, and one that only asserted the
+/// slide describes a keeping pool that pays nothing.
+#[test]
+fn putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding() {
+    /// Long enough for the slide to be unmistakable and short of the grace-plus-bleed the sibling
+    /// needs to reach its own free floor, so the leak is still running when the arm ends.
+    const A_SPELL_OF_NEGLECT: u32 = 40;
+
+    let live = UVec2::new(0, 0);
+    let walked_away = UVec2::new(1, 0);
+    let drive = |put_it_down: bool| {
+        let (mut world, home) = world_of(WOODED);
+        seat_working(&mut world, live, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut world, walked_away, WOOD, RungKey::ForestryFelling);
+        let band = spawn_keepers(
+            &mut world,
+            home,
+            &[(live, WOOD), (walked_away, WOOD)],
+            2,
+            // One keeper: exactly one felling working's bill on the reference wood, so the second
+            // working is the whole of what makes the pool short.
+            1,
+        );
+        if put_it_down {
+            // **The verb's own seam**, which is what `handle_abandon_working` calls per band: the
+            // row goes and `drop_source_row`'s prune takes the working's queue entry with it.
+            core_sim::drop_holding_and_cancel_ring(
+                &mut world,
+                band,
+                &LaborTarget::Extract {
+                    tile: walked_away,
+                    material: WOOD.to_string(),
+                    floor: A_FRESH_ASSIGNMENTS_FLOOR,
+                },
+            );
+        }
+        for _ in 0..A_SPELL_OF_NEGLECT {
+            run_full_turn(&mut world);
+        }
+        let demand = world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture band survives the drive")
+            .last_quarrywork_demand;
+        (
+            position(&world, live, WOOD),
+            position(&world, walked_away, WOOD),
+            demand,
+        )
+    };
+
+    let (kept_live, _, kept_demand) = drive(false);
+    let seated = {
+        let (mut world, _) = world_of(WOODED);
+        seat_working(&mut world, live, WOOD, RungKey::ForestryFelling);
+        position(&world, live, WOOD)
+    };
+    assert!(
+        kept_live < seated,
+        "**THE LEAK**: while the band still holds the walked-away working, the one it wants slides \
+         — {kept_live} against a seated {seated}"
+    );
+
+    let (dropped_live, dropped_walked, dropped_demand) = drive(true);
+    assert_eq!(
+        dropped_live, seated,
+        "with the walked-away working put down, the one keeper covers what is left and the live \
+         working holds: {dropped_live} against {seated}"
+    );
+    assert!(
+        dropped_demand < kept_demand,
+        "and the band's bill falls to one working's: {dropped_demand} against {kept_demand}"
+    );
+    assert!(
+        dropped_walked < seated,
+        "**THE METER IS UNTOUCHED, NOT DESTROYED**: nobody holds the walked-away working now, so \
+         `advance_deposits` slides it back at the rung's own rate exactly as it slides an unkept \
+         one — {dropped_walked} against a seated {seated}"
     );
 }
 

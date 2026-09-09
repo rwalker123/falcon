@@ -689,7 +689,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   intermediate `Send a party…` page that only existed to ask which mission.
   **The HUNT form asks QUARRY → POLICY → PARTY**, in the order the decision is actually made: the herd
   sets the per-policy take, the useful party size and the trip length, so every field under it is
-  unanswerable without it. The `Quarry` row mirrors the `Party` row's shape with a button instead of a
+  unanswerable without it. The `Prey` row mirrors the `Party` row's shape with a button instead of a
   stepper (`Choose…` primary when empty, `🐗 Wild Boar` ghost once picked, either way opening the map
   quarry picker); with no quarry the sheet renders the hint plus a **visible, disabled** Send and nothing
   else. **A quarry must lie strictly BEYOND the band's `hunt_reach`** — a hunting party exists for game
@@ -698,7 +698,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `TargetingController.is_expedition_quarry` is the ONE definition (`SourceForecast.band_tile` + `_hex_distance_wrapped`, the herd drawer's own split) and all three sites
   route through it: MapView's glow rings only eligible herds (via `min_distance` — see Command
   Targeting), `_try_pick_quarry` REFUSES an in-reach herd and stays in targeting with a
-  `QUARRY_WITHIN_REACH_FORMAT` nudge naming the herd, the distance, the reach and the local alternative
+  `PREY_WITHIN_REACH_FORMAT` nudge naming the herd, the distance, the reach and the local alternative
   (the split is invisible on the map, so the refusal is where it gets taught), and the sheet
   re-validates every render, so a herd that MIGRATES into reach falls back to `Choose…` rather than
   forecasting a raid the player should not make. With one, the policy rungs finally carry their ascending metric, the party stepper caps at the
@@ -822,14 +822,14 @@ stretch, and widening it into that gap would put it over a live HUD column.
   + the permanent end state, and
   the raid line below it delivers `~52 food` under an ordinary primary Send — no
   denial anywhere, #337) ·
-  `band_panel_compose_hunt_no_quarry` (the empty state: `Choose…`, the hint, a disabled Send, nothing
+  `band_panel_compose_hunt_no_prey` (the empty state: `Choose…`, the hint, a disabled Send, nothing
   below — reached by CLEARING a composed quarry, so it inherits the full form's mark) ·
   **`band_panel_compose_hunt_empty`** (the same form reached the way a PLAYER reaches it — a band with
   no parties, the composing act closed and reopened through the REAL `🏹 Hunt` footer button, in the
   tall LEFT dock. It is the state that was missing when the floating-sheet defect was reported the
   second time: every other compose fixture writes `_party_compose_open` and picks a quarry first, so
   the harness never rendered the smallest the sheet ever is) ·
-  `band_panel_compose_scout` (the same sheet under Scout — no quarry row, no policy picker). A
+  `band_panel_compose_scout` (the same sheet under Scout — no prey row, no policy picker). A
   BEHAVIOURAL assertion rides beside them: `_assert_quarry_eligibility` drives the real
   `_try_pick_quarry` with a herd INSIDE the fixture band's `hunt_reach` (must leave
   `_send_party_quarry_id` empty and stay armed) and one beyond it (must set it) — verified to FAIL
@@ -5067,7 +5067,7 @@ quoted requirement is a fact about the repelled rows.
 ### The BEYOND-REACH rule is the hunt's, and denial does not inherit it
 
 Reported from play: deer and rabbit a few tiles from camp were not offered as denial targets while
-herds further out were. The quarry row, its picker and its chooser are the hunt form's reused
+herds further out were. The prey row, its picker and its chooser are the hunt form's reused
 verbatim — **the eligibility rule is not**. A hunting party exists for game the band cannot work from
 home, so a nearer herd is a local hunt and that split is correct for it. Denial is not a way of
 GETTING food: it is a way of ERASING a herd, and hunting the warren next door at `floor 0` cannot
@@ -5330,7 +5330,7 @@ equally green to the bounds assertion — a clipped chart still reports a rect i
 ### A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE
 
 An OPEN parties compose sheet does not fit a height-capped horizontal dock at all — **641px of a 265px
-box WITHOUT the chart** (593px before it took the boxed readout): quarry row, presets, floor hint,
+box WITHOUT the chart** (593px before it took the boxed readout): prey row, presets, floor hint,
 party stepper, kit row, forecast and send, none of which the SHORT tier drops, and the zone hosts
 `clip_contents`, so what shipped was a silently sliced form with the Send button in the slice. Gating
 the chart is necessary and nowhere near sufficient — trimming the remaining ~380px means deleting most
@@ -5384,7 +5384,7 @@ columns makes a THIRD layout of a form two recent passes made identical across i
   a sane LAYOUT guess for the no-dock host and nothing like the ~1055px a tall side dock really offers.
   Deciding the fork against it turns *"I do not know yet"* into *"this overflows"*, and the high-water
   mark then latches it ON for the rest of the composing act: reported from play as an EMPTY hunt sheet
-  (`Quarry: Choose…`, a hint, a disabled Send) floating out of a left dock that holds it four times
+  (`Prey: Choose…`, a hint, a disabled Send) floating out of a left dock that holds it four times
   over. `_party_compose_floats` reads **`_parties_zone_box_known()`**, which states the absence, and
   answers `false` there. **The asymmetry is the point** — floating is the drastic, instantly-visible
   branch and must be positively justified, where the worst case of staying inline is one clipped frame,
@@ -5695,18 +5695,18 @@ floating surface over the map during targeting, which §15 rules out for the com
   aimed at, which is half of what the control is for.
 - **It appears only where there is a choice** — two or more ELIGIBLE quarries on the picked quarry's
   own hex. One herd is the common case and its row is byte-identical to before, which the frame pair
-  `band_panel_compose_hunt` (absence) / `band_panel_compose_deny_two_quarries` (presence) is what
+  `band_panel_compose_hunt` (absence) / `band_panel_compose_deny_two_prey` (presence) is what
   pins; either claim alone passes on a control rendered unconditionally.
 - **The row was ALREADY a live control and the report's "inert" premise is false** — the picked-quarry
   button re-enters the map pick on both branches. What it could not do was reach a herd the map cannot
   address, which is why the fix is a second control rather than a wiring repair.
-- **The chooser's width comes out of the PICK, not out of the key.** `Quarry` and the pick both used
+- **The chooser's width comes out of the PICK, not out of the key.** The key and the pick both used
   to `EXPAND_FILL`, so a third child halved what the name got — measured, `🐇 Rabbit Warren` came back
   clipped to `Rabbit Warre` on the very frame the chooser exists to serve — and the cure was a
   `SIZE_FILL` written into that branch alone. That special case is **gone**: the key is
   `HudWidgets.build_field_key` now, which takes a DECLARED width and never expands, so the pick is the
   row's only expanding child whether the row has two children or three. The whole field-row family
-  (`Band:` · `Kit` · `Quarry`) is specified in `labor-ui.md` → "The compose sheet's FIELD ROWS are one
+  (`Band:` · `Kit` · `Prey`) is specified in `labor-ui.md` → "The compose sheet's FIELD ROWS are one
   family", **including the rule that this row takes the family's chrome and must never take its
   ARROW** — pressing it arms a map pick, and an arrow would promise a list that does not open.
 - **`TargetingController.choose_quarry` is THE one adoption of a quarry**, shared by the map click and
@@ -5734,7 +5734,7 @@ through it — a re-pick on the map — carried the previous herd's value onto t
 
 ### Frames
 
-`band_panel_compose_deny_two_quarries` — a warren and a wolf pack on ONE hex beyond the band's reach,
+`band_panel_compose_deny_two_prey` — a warren and a wolf pack on ONE hex beyond the band's reach,
 rendered on the DENIAL form because that is where it was reported (the row is shared, so the hunt form
 takes the identical control from the identical builder). The pair is deliberately a food quarry beside
 an **inedible** one: they differ in art, in name and in what the raid brings home, so a chooser that

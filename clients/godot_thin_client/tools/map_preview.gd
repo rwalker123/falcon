@@ -1122,7 +1122,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_hunt_expeditions")
 
-	# State M2 — QUARRY targeting: the party compose sheet asks for a herd, and the map glows the
+	# State M2 — PREY targeting (the frame's name predates the row's rename, issue #650): the party
+	# compose sheet asks for a herd, and the map glows the
 	# VALID ones. A hunting party is for game the band cannot work from home, so only a herd strictly
 	# beyond the band's `hunt_reach` qualifies — carried on the targeting info as `min_distance`, the
 	# render-side mirror of `TargetingController.is_expedition_quarry`. Both herds here are huntable and visible;
@@ -1133,7 +1134,7 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	_map.set_targeting({
-		"active": true, "command": "quarry", "need": "herd",
+		"active": true, "command": TargetingController.PICK_PREY_COMMAND, "need": "herd",
 		"origin_x": BAND_X, "origin_y": BAND_Y,
 		"min_distance": QUARRY_HUNT_REACH, "context_label": "Band 1",
 	})

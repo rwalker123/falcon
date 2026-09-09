@@ -396,7 +396,7 @@ paths:
   (`sprites-widgets.md` → "The host widget decides the mechanism"). Set **only when the texture is
   non-null**, so a no-art build is byte-identical rather than merely equivalent — with `expand_icon`
   and `HudFloraVocab.FLORA_CROP_ICON_MAX_WIDTH` (16), held under the 22.0 `FLORA_CROP_ROW_HEIGHT` so a
-  256px source cannot set the row's minimum and break the MEASURED cap below; `COMPOSE_QUARRY_ICON_MAX_WIDTH`
+  256px source cannot set the row's minimum and break the MEASURED cap below; `COMPOSE_PREY_ICON_MAX_WIDTH`
   records the same trap on the compose row's WIDTH. Drawn UNTINTED — nothing may set `modulate` on it,
   the map markers' rule — a plant carrying no state and a row's state riding its ink and chrome.
 

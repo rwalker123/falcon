@@ -34,14 +34,18 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the card's rows and its two actions read out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here — and it holds the frame's rows **by reference** with its own profile span (`layers.deposits`), this being the widest section the client ingests |
 | `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement four are appended last: `floor` · `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*) |
 
-## ⛔ THE WORD "QUARRY" IS TAKEN, AND IT MEANS THE HUNTED ANIMAL
+## ⛔ THE WORD "QUARRY" NAMES ONE RUNG, NEVER THIS BRANCH
 
-The compose sheet's field rows are `Band:` · `Kit` · `Quarry`, and `Quarry` there is the PREY
-(`labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED"). A player reads both surfaces in
-the same minute, so **no player-facing string in this arc may use the word for a deposit, a pool or a
-roster.** The crew nouns are **`Foresters`** and **`Diggers`**, the pool's noun is **`Workings`** —
-the sim's own word for a live deposit a band has opened — and the MATERIAL names the thing being
-worked (`Wood`, `Stone`).
+`quarry` is `extraction:quarry` — one rung of one branch — so a coppice, a woodlot and a flint
+scatter are all workings and none of them is a quarry. **No player-facing string in this arc may use
+the word for a deposit, a pool or a roster.** The crew nouns are **`Foresters`** and **`Diggers`**,
+the pool's noun is **`Workings`** — the sim's own word for a live deposit a band has opened — and the
+MATERIAL names the thing being worked (`Wood`, `Stone`).
+
+**The hunt no longer competes for the word.** The compose sheet's field rows are `Band:` · `Kit` ·
+`Prey` (issue #650, `labor-ui.md` → "The compose sheet's FIELD ROWS are one family"), and the herd
+picker's targeting banner reads `PREY`, so the animal being chased and the pit being dug are two
+words on two surfaces.
 
 **The RUNG's own name is the exception, and it is not a violation**: `extraction:quarry`'s
 `display_name` is `Quarry` on the wire, so the ladder row, the pointer line's verb and the deal row's

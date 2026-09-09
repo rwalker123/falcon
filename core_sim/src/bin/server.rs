@@ -744,6 +744,20 @@ enum Command {
         target_y: u32,
         material: String,
     },
+    /// **PUT A WORKING DOWN** — [`Command::Abandon`]'s deposit twin, on the three verbs' own
+    /// grammar: it drops the `extract` row and its queue entry on every band of the faction working
+    /// `(tile, material)`, and leaves the working's meter to slide back at the rung's own rate.
+    ///
+    /// ⛔ **IT IS ITS OWN VERB RATHER THAN A MATERIAL TOKEN ON [`Command::Abandon`]** (issue #650).
+    /// `abandon` names a **place** and puts down *every* holding on that tile — a forage row and the
+    /// faction's road keeping included — so widening it would make a destructive verb quietly more
+    /// destructive on exactly the hexes that carry two workings.
+    AbandonWorking {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+        material: String,
+    },
     // **RETIRED: `AbandonImprovement`.** The build verb is derived from the meter
     // (`forage::patch_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so there was no stored
     // authority for it to clear. What came back in its place is **disposal**, not arbitration:
@@ -4669,7 +4683,12 @@ fn describe_denial_ledger(forecast: &core_sim::DenialForecast) -> String {
     }
     if ledger.is_empty() {
         // Neither meat nor material: the raid destroys animals and genuinely brings nothing back.
-        return "nothing worth hauling from this quarry".to_string();
+        //
+        // **It says PREY, not "quarry".** `quarry` is a rung id, a build verb and a deposit readout
+        // throughout this arc, and one word naming both the animal you chase and the pit you dig is
+        // a bug report waiting to happen — the client's compose sheet renamed its own row for the
+        // same reason. `home` is carried over from the clauses above so the two read as one ledger.
+        return "nothing worth hauling home from this prey".to_string();
     }
     ledger.join("; ")
 }
@@ -4947,8 +4966,9 @@ fn handle_send_hunt_expedition(
         // and the species decides the product, so a floor-`0` raid on a deer reports its windfall
         // like any other rung, and only a wolf lands here.
         Some(_f) if !_f.delivers_food => (
-            " — no food from this quarry: the party brings back hides and bone, not meat"
-                .to_string(),
+            // **PREY, not "quarry"** — `describe_denial_ledger`'s reason one clause over: the word
+            // belongs to the deposit branch throughout this arc.
+            " — no food from this prey: the party brings back hides and bone, not meat".to_string(),
             " eta_turns=none viability=inedible".to_string(),
         ),
         // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
@@ -6852,6 +6872,104 @@ fn handle_deposit_verb(
         Some(format!(
             "status=declared action={verb} x={} y={} material={material} bands={declared}",
             tile.x, tile.y
+        )),
+    );
+}
+
+/// **PUT A WORKING DOWN** — `abandon_working <faction> <x> <y> <material>`, and
+/// [`handle_abandon`]'s body one branch over: drop the band's *holding* of `(tile, material)` — the
+/// `extract` row **and** its build-queue entry — on every band of the faction working it.
+///
+/// **The working's meter is untouched**, exactly as a patch's is. The face keeps whatever rung it
+/// stands on and, with nobody holding it, [`core_sim::advance_deposits`]' phase 2 slides it back down
+/// at the rung's own rate over the following turns — the same decay an unkept working already takes.
+/// Nothing is destroyed on the spot, so it needs no confirmation.
+///
+/// # ⛔ IT EXISTS BECAUSE THE ROW OUTLIVES ITS CREW, AND THE ROW IS WHAT IS BILLED
+///
+/// A working raised above its free floor is a **holding** (`source_has_a_meter_at_risk`), so
+/// `assign_labor … extract … 0` is *"stop cutting"* and keeps the row — and
+/// `extraction_keeping_claims` reads the **row**, so the band goes on owing that working's
+/// `quarrywork` bill for as long as it stands. Measured on a seated `extraction:quarry` at
+/// `AlpineMountain` with the crew and the keepers both at zero: the bill runs from **2.10** work a
+/// turn down to **0.06** over the 104 turns the meter takes to reach `extraction:gathering`, and only
+/// then does the row prune itself and the billing stop. That is not a rot the player can wait out
+/// quietly: under the default `UpkeepFundMode::Spread` the abandoned working takes its share of the
+/// **same pool** the live ones draw from, so a band with one keeper holding one felling working
+/// (steady at position 60.0 alone) slides to **49.96 in 40 turns** the moment a walked-away sibling
+/// sits beside it. Before this verb there was no command that could drop the sibling.
+///
+/// # ⛔ IT IS NOT A MATERIAL TOKEN ON `abandon`, AND THAT IS THE DESIGN AND NOT A CONVENIENCE
+///
+/// [`handle_abandon`] resolves a **place**: it drops every band's holding on that tile, a forage row
+/// included, *and* releases the faction's road keeping there. Adding an optional material to it would
+/// make a verb that is already destructive quietly more so on exactly the hexes that carry two
+/// workings. So this takes `fell`/`coppice`/`quarry`'s grammar — tile, then the closed trailing
+/// material — which is also what makes the two ways of addressing one working read alike.
+///
+/// **There is no `validate_*` gate to run.** Putting a thing down asks nothing of the ground, the
+/// knowledge or the rung; the only way to fail is to hold nothing there, which is what the count
+/// below reports.
+fn handle_abandon_working(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    material: &str,
+) {
+    let target = LaborTarget::Extract {
+        tile,
+        material: material.to_string(),
+        // [`handle_deposit_verb`]'s convention: this target says *which working* and nothing about
+        // how it was worked, and `LaborTarget::same_source` keys on the tile and the material alone.
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
+    };
+    let bands = bands_working_source(app, faction, &target);
+    if bands.is_empty() {
+        emit_command_failure(
+            app,
+            CommandEventKind::Extraction,
+            faction,
+            format!(
+                "No band of yours works the {material} at ({}, {}), so there is nothing to put \
+                 down.",
+                tile.x, tile.y
+            ),
+        );
+        return;
+    }
+    for band in &bands {
+        // The shared drop: the row goes, and `drop_source_row`'s own prune takes the working's queue
+        // entry with it. The ring arm inside is a no-op on a deposit entry — rings belong to pens —
+        // and going through the one seam is what keeps this from becoming a second definition of
+        // *"put a holding down"*.
+        core_sim::drop_holding_and_cancel_ring(&mut app.world, *band, &target);
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "abandon_working",
+        faction = %faction.0,
+        x = tile.x,
+        y = tile.y,
+        material,
+        bands = bands.len(),
+        "command.deposit.abandoned"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Extraction,
+        faction,
+        format!(
+            "Put down the {material} working at ({}, {}) — the face is left to slide back to the \
+             free floor",
+            tile.x, tile.y
+        ),
+        Some(format!(
+            "status=applied action=abandon_working x={} y={} material={material} bands={}",
+            tile.x,
+            tile.y,
+            bands.len()
         )),
     );
 }
@@ -9423,6 +9541,17 @@ fn command_from_payload(
             target_y,
             material,
         }),
+        ProtoCommandPayload::AbandonWorking {
+            faction_id,
+            target_x,
+            target_y,
+            material,
+        } => Some(Command::AbandonWorking {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            material,
+        }),
         ProtoCommandPayload::Abandon {
             faction_id,
             target_x,
@@ -10220,6 +10349,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Fell { faction, .. } => Some((*faction, "fell")),
         Command::Coppice { faction, .. } => Some((*faction, "coppice")),
         Command::Quarry { faction, .. } => Some((*faction, "quarry")),
+        Command::AbandonWorking { faction, .. } => Some((*faction, "abandon_working")),
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::BuildOrder { faction, .. } => Some((*faction, "build_order")),
@@ -10654,6 +10784,14 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 &material,
                 Improvement::Quarry,
             );
+        }
+        Command::AbandonWorking {
+            faction,
+            target_x,
+            target_y,
+            material,
+        } => {
+            handle_abandon_working(app, faction, UVec2::new(target_x, target_y), &material);
         }
         Command::Abandon { faction, source } => {
             handle_abandon(app, faction, source);
@@ -18878,7 +19016,7 @@ mod tests {
         let barren = inedible_denial_forecast(Vec::new());
         assert_eq!(
             describe_denial_ledger(&barren),
-            "nothing worth hauling from this quarry",
+            "nothing worth hauling home from this prey",
             "a raid that really does bring nothing back still says so"
         );
     }
@@ -20921,6 +21059,105 @@ mod tests {
                 extraction_failure_reasons(&app)
             );
         }
+    }
+
+    /// ⛔ **`abandon_working` PUTS ONE WORKING DOWN AND LEAVES ITS NEIGHBOUR ON THE SAME HEX
+    /// STANDING** (issue #650).
+    ///
+    /// The verb exists because a working raised above its free floor is a *holding*, so
+    /// `assign_labor … extract … 0` keeps the row and the band goes on owing that working's
+    /// `quarrywork` bill for the ~104 turns the meter takes to slide back down. What it must
+    /// therefore drop is the **row and the queue entry together**, and — because a deposit verb
+    /// names a tile *and* a material — it must drop exactly the one it was given.
+    ///
+    /// **The two-material hex is the fixture for a reason**: a verb that resolved the working by
+    /// tile alone would pass a single-deposit test and silently put down whichever the registry
+    /// answered with first. Both rows are staffed and both carry a declaration, so nothing but the
+    /// trailing token separates them.
+    #[test]
+    fn abandon_working_drops_one_workings_holding_and_leaves_its_neighbour() {
+        let (mut app, faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        also_work(&mut app, band, "stone");
+        grant_deposit_knowledge(
+            &mut app,
+            faction,
+            core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+        );
+        grant_deposit_knowledge(
+            &mut app,
+            faction,
+            core_sim::extraction::QUARRYING_DISCOVERY_ID,
+        );
+        send_command_line(
+            &mut app,
+            &format!("fell 0 {} {} wood", WORKING.x, WORKING.y),
+        );
+        send_command_line(
+            &mut app,
+            &format!("quarry 0 {} {} stone", WORKING.x, WORKING.y),
+        );
+
+        let rows = |app: &bevy::prelude::App| -> Vec<String> {
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the band has an allocation")
+                .assignments
+                .iter()
+                .filter_map(|a| match &a.target {
+                    LaborTarget::Extract { material, .. } => Some(material.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            rows(&app),
+            vec!["wood".to_string(), "stone".to_string()],
+            "fixture: the band must hold both workings before one is put down"
+        );
+
+        send_command_line(
+            &mut app,
+            &format!("abandon_working 0 {} {} wood", WORKING.x, WORKING.y),
+        );
+        assert_eq!(
+            rows(&app),
+            vec!["stone".to_string()],
+            "the timber row goes and the rock on the same hex is untouched; the feed said {:?}",
+            extraction_failure_reasons(&app)
+        );
+        assert_eq!(
+            declared_workings(&app, band),
+            vec![(WORKING, "stone".to_string(), Some(Improvement::Quarry))],
+            "and the timber's queue entry goes with its row, because an entry needs a row"
+        );
+    }
+
+    /// ⛔ **A WORKING NOBODY HOLDS IS REFUSED BY NAME, rather than silently doing nothing.**
+    ///
+    /// It is the one way `abandon_working` can fail — putting a thing down asks nothing of the
+    /// ground, the knowledge or the rung — so it is the whole of the verb's refusal surface.
+    #[test]
+    fn abandon_working_refuses_a_working_this_faction_does_not_hold() {
+        let (mut app, _faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        send_command_line(
+            &mut app,
+            &format!("abandon_working 0 {} {} stone", WORKING.x, WORKING.y),
+        );
+        assert!(
+            extraction_failure_contains(&app, "nothing to put"),
+            "a band that works the timber and not the rock is told so; the feed said {:?}",
+            extraction_failure_reasons(&app)
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the band has an allocation")
+                .assignments
+                .len(),
+            1,
+            "**LIVENESS**: and the row it really does hold is untouched, so the refusal is a \
+             refusal rather than the verb failing to find anything at all"
+        );
     }
 
     /// ⛔ **A TILE HOLDING TWO DEPOSITS RAISES THE ONE THE VERB NAMES, AND NOT THE OTHER.**

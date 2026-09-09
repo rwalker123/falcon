@@ -1565,6 +1565,13 @@ fn resolve_shed_facts(
     herds: &HerdRegistry,
     deposits: &crate::extraction::DepositRegistry,
     tile_capacity_of: &dyn Fn(UVec2) -> f32,
+    // **THE GROUND'S OWN RENEWAL RATE FOR ONE WORKING**, resolved by the caller through
+    // [`crate::extraction::tile_deposit_regrowth`] for `tile_capacity_of`'s reason: the tile query
+    // and the deposits config are the caller's to hand. It is what decides whether an `extract`
+    // row's escapement dial paces its lesson or the plain rate does
+    // ([`crate::extraction::deposit_lesson_floor`]) — the same fork the live credit takes, so the
+    // shedding order cannot report a rate the turn will not pay.
+    deposit_renewal_of: &dyn Fn(UVec2, &str) -> f32,
     forage: &crate::labor_config::ForageLaborConfig,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
@@ -1640,9 +1647,15 @@ fn resolve_shed_facts(
                         accruing_knowledge: source_is_still_teaching(
                             ladder.rung(source.rung()),
                             // **A deposit crew's floor prices its lesson exactly as a gatherer's
-                            // does** (issue #650) — the shared `intensification::learn_multiplier`,
-                            // read off this row rather than off a named fixed point.
-                            *floor,
+                            // does WHERE THE DIAL PARTICIPATES** (issue #650) — the shared
+                            // `intensification::learn_multiplier`, read off this row. On ground that
+                            // never renews the dial is inert, so the lesson is paced at the plain
+                            // rate; `deposit_lesson_floor` is the one seam that forks, and the live
+                            // credit in the `Extract` arm reads the same one.
+                            crate::extraction::deposit_lesson_floor(
+                                deposit_renewal_of(*tile, material),
+                                *floor,
+                            ),
                             faction,
                             discovery,
                             knowledge_threshold,
@@ -3421,6 +3434,19 @@ pub fn advance_labor_allocation(
             &extraction_cfg,
             &ladder,
         );
+        // **THE GROUND'S OWN RATE UNDER ONE WORKING** — `tile_capacity_of`'s twin one branch over,
+        // resolved here for its reason: the tile index and the deposits config are this loop's to
+        // hand, and the shedding order needs the fork `extraction::deposit_lesson_floor` takes.
+        // Ground that is off the map holds no deposit, so it answers `NEVER_RENEWS` — the same
+        // reading `tile_deposit_regrowth` gives a terrain absent from the table.
+        let deposit_renewal_of = |coord: UVec2, material: &str| {
+            tile_registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map_or(crate::extraction_config::NEVER_RENEWS, |tile| {
+                    crate::extraction::tile_deposit_regrowth(&extraction_cfg, material, tile)
+                })
+        };
         let shed_facts = resolve_shed_facts(
             &allocation,
             &shed_banking,
@@ -3430,6 +3456,7 @@ pub fn advance_labor_allocation(
             &registry,
             &deposits,
             &tile_capacity_of,
+            &deposit_renewal_of,
             &labor.forage,
             &fauna,
             &ladder,
@@ -6868,13 +6895,26 @@ pub fn advance_labor_allocation(
                     // nothing without a second test saying so.
                     credit_rung_lesson(
                         ladder.rung(standing.held),
-                        // **THE ROW'S OWN FLOOR PRICES THE LESSON**, through the shared
-                        // `intensification::learn_multiplier` both food webs go through: a crew told
-                        // to leave more of a wood standing learns conservationism faster, in
-                        // proportion, and one told to strip it learns nothing. The predicate below
-                        // is the other end of the same dial — at a floor of `1.0` there is no room
-                        // above it, so watching teaches nothing either.
-                        *floor,
+                        // **THE ROW'S OWN FLOOR PRICES THE LESSON WHERE THE DIAL PARTICIPATES**,
+                        // through the shared `intensification::learn_multiplier` both food webs go
+                        // through: a crew told to leave more of a wood standing learns
+                        // conservationism faster, in proportion, and one told to strip it learns
+                        // nothing. The predicate below is the other end of the same dial — at a
+                        // floor of `1.0` there is no room above it, so watching teaches nothing
+                        // either.
+                        //
+                        // **And on ground that never renews the dial does not participate**, so the
+                        // lesson is paced at `PRACTICE_AT_THE_PLAIN_RATE` — the one seam
+                        // `source_is_still_teaching` reads too, because a working that taught at one
+                        // rate and reported at another would thin a row it was still paying.
+                        crate::extraction::deposit_lesson_floor(
+                            crate::extraction::tile_deposit_regrowth(
+                                &extraction_cfg,
+                                material,
+                                ground,
+                            ),
+                            *floor,
+                        ),
                         take_crew_present && source_is_workable(outcome.reachable_before),
                         &ladder.knowledge,
                         faction,
