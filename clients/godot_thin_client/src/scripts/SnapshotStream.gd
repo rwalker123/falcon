@@ -12,12 +12,30 @@ const HEADER_SIZE := 4
 ## `presented no seat token` line in the SERVER's log. So the two constants must move together.
 const SEAT_TOKEN_BYTES := 8
 
-## The greeting meaning *"I hold no seat"* — `core_sim::ConnectionId::INTERNAL`. A connection that
-## sends it is registered unseated immediately instead of sitting out the server's handshake timeout
+## The greeting meaning *"I hold no seat"* — `core_sim::SeatToken::NONE`. A connection that sends it is
+## registered unseated immediately instead of sitting out the server's handshake timeout
 ## (`core_sim::network::DEFAULT_HANDSHAKE_TIMEOUT`), which is what a watching tool wants. It is also
 ## this seam's "no token known yet" value, so a stream opened without one still says something rather
 ## than stalling every other client's accept.
+##
+## **It is the one token value that is not a secret**, which is why it is spelled here and the others
+## are never printed (see `SEAT_TOKEN_LOG_REDACTION`).
 const NO_SEAT_TOKEN := 0
+
+## **THE TOKEN NEVER GOES IN A LOG LINE — this is what goes there instead.**
+##
+## A `SeatToken` is minted per CLAIM from a CSPRNG and is the whole of what the stream socket presents
+## to be sent this seat's frames (`core_sim::SeatToken`), so it is a bearer secret: anything holding
+## one can read another player's world. The server logs no token at all — `SeatToken` has no `Display`
+## and its `Debug` renders `SeatToken(redacted)` — and a client that printed the value would be the
+## only way to correlate a greeting with a claim by reading logs, which is exactly the hole the server
+## side closed.
+##
+## **A truncation or a hash would be no better**: a partial secret is still a secret, and a stable
+## fingerprint is a correlator, which is the whole of what an attacker reading logs wants. So the
+## EVENT is logged and the VALUE never is — the handshake lines below are how both transport bugs on
+## this branch were diagnosed, so losing them would cost more than the secret is worth.
+const SEAT_TOKEN_LOG_REDACTION := "<redacted>"
 
 var tcp: StreamPeerTCP = StreamPeerTCP.new()
 var buffer: PackedByteArray = PackedByteArray()
@@ -134,7 +152,7 @@ func _present_seat_token() -> void:
         return
     _greeting_sent = true
     _warned_greeting_failed = false
-    print("SnapshotStream: presented seat token %d to %s:%d" % [seat_token, host, port])
+    print("SnapshotStream: presented its seat token %s to %s:%d" % [SEAT_TOKEN_LOG_REDACTION, host, port])
 
 func _read_u32_le(data: PackedByteArray, idx: int) -> int:
     return data[idx] | (data[idx + 1] << 8) | (data[idx + 2] << 16) | (data[idx + 3] << 24)

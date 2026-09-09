@@ -69,7 +69,7 @@ func consume_poll_profile() -> bool:
 ## caller must have the claim's answer in hand before calling this; see
 ## `.claude/rules/client/command-transport.md` → "The snapshot stream greets with the seat token".
 func enable_stream(host: String, port: int, seat_token: int = SnapshotStream.NO_SEAT_TOKEN) -> Error:
-    print("SnapshotLoader: attempting stream connection to %s:%d (seat token %d)" % [host, port, seat_token])
+    print("SnapshotLoader: attempting stream connection to %s:%d (seat token %s)" % [host, port, SnapshotStream.SEAT_TOKEN_LOG_REDACTION])
     stream = SnapshotStream.new()
     var err_variant: Variant = stream.call("connect_to", host, port, seat_token)
     var err: Error = err_variant if typeof(err_variant) == TYPE_INT else ERR_BUG

@@ -93,6 +93,14 @@ var _new_game_elapsed: float = 0.0
 var _new_game_answer_accum: float = 0.0
 ## Seconds since a `resync` was sent with no full snapshot applied yet; negative means none pending.
 var _resync_pending_accum: float = -1.0
+## How many `resync` asks have gone out since the last full snapshot landed. Reset by the answer, so
+## it counts CONSECUTIVE unanswered asks and never the session's total.
+var _resync_unanswered_attempts: int = 0
+## The client has stopped asking: `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks went unanswered, which on a
+## reachable server means it holds no world for this seat (see `_abandon_resync`). Latched so the
+## conclusion is reported once and nothing re-arms the clock; a full frame — the world coming back —
+## is the only thing that clears it.
+var _resync_abandoned: bool = false
 
 # Dev-default world when Main.tscn is launched directly (no landing screen handoff): so a bare
 # `godot res://src/Main.tscn` still generates a playable map now that the server boots idle.
@@ -173,6 +181,18 @@ const SEAT_RECOVERED_MESSAGE = "Your people's seat is held again — orders are 
 ## Why a `resync` went out that the player did not cause: the snapshot socket was replaced because the
 ## seat came back under a new token, and the new socket has no baseline to apply deltas onto.
 const STREAM_REOPEN_RESYNC_MESSAGE := "resync requested (snapshot stream re-opened for a new seat token)"
+## **WHAT THE PLAYER IS TOLD WHEN THE WORLD STOPS ARRIVING** — the report `_abandon_resync` makes,
+## once. It says the world is GONE rather than that the client is still trying, because after a
+## server restart it genuinely is: the process holding it exited, and the fresh one boots idle.
+const RESYNC_ABANDONED_HEADLINE := "The server is no longer running this world."
+## `%s` is the silence that was measured, in seconds, so the sentence carries its own evidence. The
+## second half is the only thing left to do about it, and both places it can be done from are one
+## keypress away — the pause menu this raises loads a save, and Abandon returns to the landing screen
+## that owns New Game.
+const RESYNC_ABANDONED_DETAIL_FORMAT := "Asked for a fresh copy of the world for %s seconds with no answer, so nothing more is coming and the map on screen is the last frame. Load a save or start a new game to play on."
+## The retraction, on the same channel — a full frame after we said the world was gone means it is
+## back, and a standing alert that has become false is the fault `SEAT_RECOVERED_MESSAGE` exists for.
+const RESYNC_RECOVERED_MESSAGE := "The world is arriving again — the server is streaming this seat."
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
@@ -236,6 +256,22 @@ const NEW_GAME_ANSWER_TIMEOUT := 30.0
 ## redundant `resync` costs the server one full encode. Much shorter than the new_game timeout
 ## because nothing has to be generated — the server already holds the world and only re-encodes it.
 const RESYNC_ANSWER_TIMEOUT := 2.0
+## **HOW MANY UNANSWERED `resync` ASKS BEFORE THE CLIENT STOPS ASKING.**
+##
+## The retry above used to be unbounded, which is right for a slow answer and wrong for an ABSENT
+## one: a developer who restarts the server mid-session leaves the client talking to a process that
+## boots idle, and an idle server answers `resync` by logging `resync.no_world` and sending nothing.
+## Retrying that cannot help — nothing changes until somebody starts or loads a game — so the ask
+## repeated every two seconds forever, writing a System-channel line each time.
+##
+## **IT IS A COUNT BECAUSE THE ANSWER IS NOT SPELLED ON THE WIRE.** `resync` is a fire-and-forget
+## command; the server's `resync.no_world` is a log line on its side and reaches nothing here, so the
+## only evidence available to the client is silence. This budget is what turns silence into a
+## conclusion, and it is deliberately far past any legitimate delay: the answer is a re-encode of a
+## world the server already holds, so the only thing that can hold one up is the command loop being
+## busy inside a turn, and 6 x 2s is well past the heaviest single thing that loop does (a full
+## worldgen for the largest offered map, ~4.4s in the debug build — see NEW_GAME_ANSWER_TIMEOUT).
+const RESYNC_UNANSWERED_ATTEMPT_BUDGET := 6
 ## The config-drift notice sits above the HUD and the Inspector but BELOW the pause menu: it is a
 ## thing to read about the world, not a modal that should outrank ESC.
 const DRIFT_NOTICE_LAYER := 150
@@ -800,6 +836,10 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if not is_delta:
         # A full frame is the answer a pending `resync` was waiting for, whoever caused it.
         _resync_pending_accum = -1.0
+        _resync_unanswered_attempts = 0
+        if _resync_abandoned:
+            _resync_abandoned = false
+            _note_system_event(RESYNC_RECOVERED_MESSAGE, "", false, HudEventVocab.KIND_SYSTEM)
     if not is_delta and snapshot.has("world_epoch"):
         var snapshot_epoch := int(snapshot["world_epoch"])
         if snapshot_epoch != _world_epoch_applied:
@@ -3081,7 +3121,7 @@ func _claim_seat(faction_id: int, request_id: int) -> bool:
 ## **…and it is what the snapshot stream needs.** Frames are addressed per seat, so opening the stream
 ## is part of being seated, not a separate boot step: see `_open_snapshot_stream`.
 func _on_seat_seated(faction_id: int, seat_token: int) -> void:
-    print("[Seat] faction %d seated on the command connection (token %d)." % [faction_id, seat_token])
+    print("[Seat] faction %d seated on the command connection (token %s)." % [faction_id, SnapshotStream.SEAT_TOKEN_LOG_REDACTION])
     _open_snapshot_stream(seat_token)
     if not _seat_refusal_reported:
         return
@@ -3117,7 +3157,7 @@ func _open_snapshot_stream(seat_token: int) -> void:
         return
     var replacing := _stream_seat_token != SnapshotStream.NO_SEAT_TOKEN
     if replacing:
-        print("[Seat] snapshot stream token changed (%d -> %d); reconnecting the stream." % [_stream_seat_token, seat_token])
+        print("[Seat] snapshot stream token changed (a fresh seat token was granted); reconnecting the stream.")
         snapshot_loader.disable_stream()
     _stream_seat_token = seat_token
     var err: Error = snapshot_loader.enable_stream(_stream_host, _stream_port, seat_token)
@@ -3135,12 +3175,12 @@ func _open_snapshot_stream(seat_token: int) -> void:
 ##
 ## Piggybacks on the `resync` bookkeeping rather than adding a second one: arming
 ## `_resync_pending_accum` is what makes `_tick_resync` chase the answer, and an already-outstanding
-## resync needs no second ask.
+## resync needs no second ask. **A session that has already concluded the server holds no world asks
+## nothing** — the stream re-opening is not new evidence about the world (see `_abandon_resync`).
 func _request_stream_baseline() -> void:
-    if _resync_pending_accum >= 0.0:
+    if _resync_pending_accum >= 0.0 or _resync_abandoned:
         return
-    _send_runtime_command("resync", STREAM_REOPEN_RESYNC_MESSAGE, HudEventVocab.KIND_SYSTEM)
-    _resync_pending_accum = 0.0
+    _ask_for_resync(STREAM_REOPEN_RESYNC_MESSAGE)
 
 
 ## **THE SEAT IS NOT OURS, AND THIS IS THE ONE PLACE THE PLAYER LEARNS IT.**
@@ -3250,33 +3290,78 @@ func _process(delta: float) -> void:
                 else:
                     _try_reveal_world(streamed)
 
-## Ask the server to republish a full world when the decoder dropped a delta it could not apply,
-## and keep asking until one lands.
+## Ask the server to republish a full world when the decoder dropped a delta it could not apply, and
+## keep asking until one lands — or until `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks have gone unanswered,
+## at which point there is no world to land and `_abandon_resync` says so and stops.
 ##
 ## The drop itself is correct and deliberate — merging a delta onto the wrong baseline produces a
 ## world that is silently wrong rather than visibly broken (`docs/plan_delta_streaming.md` §3.3).
 ## But dropping alone leaves the client frozen, so the request is the other half of that contract.
 ##
-## **BOTH SENDS STATE `KIND_SYSTEM` RATHER THAN TAKING THE ECHO DEFAULT.** A resync is not a receipt
+## **EVERY SEND STATES `KIND_SYSTEM` RATHER THAN TAKING THE ECHO DEFAULT.** A resync is not a receipt
 ## for anything the player did — the client sent it because a frame could not be applied — so it is a
 ## fault report, and the System channel is where a fault report belongs.
 func _tick_resync(delta: float) -> void:
     if snapshot_loader == null:
         return
     if snapshot_loader.resync_needed:
+        # Cleared whatever we do with it: a request that is not going to be made must not leave a
+        # flag standing that the next frame would read as a fresh drop.
         snapshot_loader.resync_needed = false
-        if _resync_pending_accum < 0.0:
-            _send_runtime_command("resync", "resync requested (unapplicable delta)",
-                HudEventVocab.KIND_SYSTEM)
-            _resync_pending_accum = 0.0
+        if _resync_pending_accum < 0.0 and not _resync_abandoned:
+            _ask_for_resync("resync requested (unapplicable delta)")
         return
     if _resync_pending_accum < 0.0:
         return
     _resync_pending_accum += delta
-    if _resync_pending_accum >= RESYNC_ANSWER_TIMEOUT:
-        _resync_pending_accum = 0.0
-        _send_runtime_command("resync", "resync retry (still no baseline)",
-            HudEventVocab.KIND_SYSTEM)
+    if _resync_pending_accum < RESYNC_ANSWER_TIMEOUT:
+        return
+    if _resync_unanswered_attempts >= RESYNC_UNANSWERED_ATTEMPT_BUDGET:
+        _abandon_resync()
+        return
+    _resync_pending_accum = 0.0
+    _ask_for_resync("resync retry (still no baseline)")
+
+
+## Put one `resync` on the wire and start the clock on its answer. **The only place that ask is
+## made**, so the attempt count cannot drift from the number of asks that actually went out.
+func _ask_for_resync(message: String) -> void:
+    _send_runtime_command("resync", message, HudEventVocab.KIND_SYSTEM)
+    _resync_pending_accum = 0.0
+    _resync_unanswered_attempts += 1
+
+
+## **STOP ASKING: THE SERVER HOLDS NO WORLD FOR THIS SEAT, AND THAT IS AN ANSWER RATHER THAN A FAILED
+## ATTEMPT.**
+##
+## `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks have gone unanswered on a link that is up — the command
+## socket reconnected and the seat was re-granted, or nothing would have re-opened the stream. The one
+## thing that produces that is a server with no active world: it boots idle after a restart, and it
+## answers `resync` by logging `resync.no_world` and publishing nothing. Nothing will change until a
+## human starts or loads a game, so retrying is not patience, it is a spin.
+##
+## **THE PLAYER IS LEFT WHERE THEY CAN ACT, AND THE RUN IS NOT TAKEN AWAY FROM THEM.** The report goes
+## to the event dock's System channel as an ALERT — the standing surface for a fault the player did not
+## cause, the same one a refused seat and a dropped command socket use — and the pause menu is opened
+## on top of it, because that menu is the only surface holding both moves that resolve this: `Load —
+## discards this run`, and `Abandon`, which returns to the landing screen that owns New Game.
+##
+## **Deliberately NOT a scene change to the landing screen.** The detection is inferred from silence
+## rather than read off the wire (see `RESYNC_UNANSWERED_ATTEMPT_BUDGET`), so it can in principle fire
+## on a server that was merely wedged for the length of that budget — and being wrong must not cost the
+## player a run in progress. An opened menu is dismissible with ESC and leaves the last frame
+## on screen behind it; a `change_scene_to_file` is not undoable. If the world does come back, the full
+## frame that carries it clears this latch and retracts the alert.
+func _abandon_resync() -> void:
+    _resync_abandoned = true
+    _resync_pending_accum = -1.0
+    var silence := RESYNC_ANSWER_TIMEOUT * float(RESYNC_UNANSWERED_ATTEMPT_BUDGET)
+    _resync_unanswered_attempts = 0
+    push_warning("resync went unanswered %d times over %.0fs; the server holds no world for this seat, so the client has stopped asking." % [
+        RESYNC_UNANSWERED_ATTEMPT_BUDGET, silence])
+    _note_system_event(RESYNC_ABANDONED_HEADLINE,
+        RESYNC_ABANDONED_DETAIL_FORMAT % ("%.0f" % silence), true, HudEventVocab.KIND_SYSTEM)
+    _show_pause_menu()
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
 ## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).

@@ -63,9 +63,11 @@ var _request_id: int = NO_REQUEST_ID
 var _faction_id: int = HudConst.NO_FACTION_ID
 ## Whether the last answer granted the seat. Read by the owner rather than tracked twice.
 var seated_now: bool = false
-## **The token the grant came with**, i.e. the id of the connection that holds the seat, and the eight
-## bytes the snapshot stream greets with. `SnapshotStream.NO_SEAT_TOKEN` while no seat is held — the
-## same "I hold no seat" value the server reads as `ConnectionId::INTERNAL`.
+## **The token the grant came with** — a per-claim `core_sim::SeatToken`, minted fresh from a CSPRNG on
+## every grant, and the eight bytes the snapshot stream greets with. It says *which claim*, not which
+## connection: it is a bearer SECRET, so it is never logged (`SnapshotStream.SEAT_TOKEN_LOG_REDACTION`).
+## `SnapshotStream.NO_SEAT_TOKEN` while no seat is held — the same "I hold no seat" value the server
+## reads as `SeatToken::NONE`.
 var seat_token: int = SnapshotStream.NO_SEAT_TOKEN
 ## The last refusal token, `""` while the seat is held or nothing has been asked.
 var refusal: String = ""

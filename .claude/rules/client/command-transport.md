@@ -189,7 +189,7 @@ The greeting is **exactly `SEAT_TOKEN_BYTES` = 8 little-endian bytes and nothing
 no length prefix, no reply. `SnapshotStream.SEAT_TOKEN_BYTES` mirrors `core_sim::network`'s constant
 of the same name and the two must move together: a width disagreement is unobservable from the client
 side, because the server simply reads a token nobody holds and the map stays blank. `0`
-(`SnapshotStream.NO_SEAT_TOKEN` = `ConnectionId::INTERNAL`) is the explicit *"I hold no seat"*, which
+(`SnapshotStream.NO_SEAT_TOKEN` = `core_sim::SeatToken::NONE`) is the explicit *"I hold no seat"*, which
 registers a watching tool as unseated at once instead of making it sit out the server's
 `DEFAULT_HANDSHAKE_TIMEOUT`.
 
@@ -206,8 +206,10 @@ therefore opens no stream at all, which is honest: an unseated connection would 
 it anyway, and the refusal is already on the overlay and the System channel.
 
 **A reconnect mints a NEW token, so the stream is replaced.** The seat belongs to the command
-connection; when the seated link reconnects it re-claims and the server hands out a fresh
-`ConnectionId`. The old token then names a connection the server has forgotten, and every later frame
+connection; when the seated link reconnects it re-claims, and every granted claim mints a fresh random
+`SeatToken` (`core_sim/.../factions.md` → "A token is a secret; the connection id is an identity") —
+the token is a per-claim secret, not the connection's id, so a client cannot predict or reuse one.
+The old token then names a claim the server has forgotten, and every later frame
 is addressed past us — the same dead stream as the no-token case, wearing a different hat. So
 `Main._open_snapshot_stream` compares the granted token with the one the open socket greeted with and,
 when they differ, closes the socket and greets again with the new one. It is idempotent when the token
@@ -223,11 +225,81 @@ delivered — the race `_tick_new_game_retry`'s phase 2 exists to recover from. 
 removes it instead. Waiting is not a rejection, so phase 1's bounded retry burst does not tick down
 while the claim is outstanding.
 
+## The client logs the seat HANDSHAKE and never the TOKEN
+
+A `SeatToken` is minted per claim from a CSPRNG and is the whole of what the stream socket presents to
+be sent this seat's frames, so it is a **bearer secret**: anything holding one can read another
+player's world. The server logs none — `SeatToken` has no `Display` and its `Debug` renders
+`SeatToken(redacted)` — so a client that printed the value would be the only way to correlate a
+greeting with a claim by reading logs, which is the hole the server side closed.
+
+**Every client-side line about a token therefore prints
+`SnapshotStream.SEAT_TOKEN_LOG_REDACTION` in place of the value**, and there are four of them:
+`SnapshotStream`'s "presented its seat token", `SnapshotLoader`'s connect line, `Main`'s
+"faction N seated", and `Main`'s "snapshot stream token changed", which names no value at all. The
+harnesses are held to the same rule — `live_seat_probe` prints `token_granted=true`, not the token.
+
+**The events stay, because they are how both transport regressions on this branch were diagnosed**: a
+stream that greeted with a stale token is a live socket receiving nothing, and the only trace of it is
+the reconnect line. So the EVENT is logged and the VALUE never is.
+
+**A truncation or a fingerprint is not a middle ground.** A partial secret is still a secret, and a
+stable hash is a correlator — which is the whole of what reading logs would buy. `NO_SEAT_TOKEN` (`0`,
+`SeatToken::NONE`) is the one value that is not a secret, which is why it may be named.
+
+## "The server holds no world" is an ANSWER, so the client stops asking
+
+A `resync` is retried until it is answered (`Main._tick_resync`, `RESYNC_ANSWER_TIMEOUT` = 2 s),
+because a client with no applicable baseline renders a frozen world and cannot recover on its own.
+That retry used to be **unbounded**, and a developer restarting the server mid-session is what showed
+why it cannot be: the fresh process boots idle, `Resync` finds no world to publish and logs
+`resync.no_world`, and the client asked again every two seconds for the rest of the session — writing a
+System-channel line each time. Retrying could never help, because nothing changes until a human starts
+or loads a game.
+
+**The answer is not on the wire, which is why the client counts.** `resync` is a fire-and-forget
+command: the server's `resync.no_world` is a line in *its* log and reaches nothing here, and no reply
+channel exists for a runtime command (only `Query`, `ClaimSeat` and the save verbs are answered). The
+only evidence available to the client is silence, so `RESYNC_UNANSWERED_ATTEMPT_BUDGET` (6, i.e. 12 s)
+is what turns silence into a conclusion. It is sized far past any legitimate delay — the answer is a
+re-encode of a world the server already holds, so the only thing that can hold one up is the command
+loop being inside a turn.
+
+**It is bounded, not widened.** A dropped socket keeps its own retry: the seated link reconnects with
+`RECONNECT_BACKOFF` forever and re-claims, and that is correct because a transport failure says nothing
+about whether a world exists. What stops is the *ask about the world*. The rest of the client already
+splits this way and `_tick_resync` was the outlier:
+
+| Seam | Re-asked | Never re-asked |
+|---|---|---|
+| `ForecastQuery` | `QUERY_ERROR_TRANSPORT`, after `TRANSPORT_RETRY_AFTER_MSEC` | every token the server spelled, `no_active_world` among them |
+| `Main._on_save_op_finished` (a load) | `SaveSlots.ERROR_TRANSPORT` | `no_such_slot`, `unreadable` — a statement about THIS slot |
+| `command_link`'s claim | `seat_occupied`, `SEAT_CLAIM_ATTEMPTS` times with a backoff | `unknown_seat`, `already_seated` |
+| `Main._tick_resync` | nothing, once the budget is spent | silence past `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks |
+
+`_tick_new_game_retry`'s phase 2 is deliberately still unbounded and is **not** the same shape: a
+re-sent `new_game` makes the server *build* a world, so retrying is progress rather than a spin, and a
+permanently stuck loading screen is the unrecoverable state it exists to prevent.
+
+**The player is left where they can act, and the run is not taken from them.** `_abandon_resync` reports
+once on the event dock's System channel as an ALERT — the standing surface for a fault the player did
+not cause, the same one a refused seat and a dropped command socket use — and opens the **pause menu**,
+which is the only surface holding both moves that resolve this: `Load — discards this run`, and
+`Abandon`, which returns to the landing screen that owns New Game. It deliberately does **not** change
+scene to the landing screen itself: the detection is inferred from silence, so it can in principle fire
+on a server that was merely wedged, and being wrong must not destroy a run in progress. An opened menu
+is dismissible with ESC and leaves the last frame standing behind it.
+
+**And the alert is retracted if the world comes back**, on the same channel and for the same reason
+`SEAT_RECOVERED_MESSAGE` exists: a full frame clears the latch, so a standing "this world is gone" that
+has become false does not outlive the fact. The message says the world is *gone* rather than that the
+client is still trying, because after a server restart it is.
+
 ## Key scripts
 
 | Script | Holds |
 |---|---|
-| `SnapshotStream.gd` | The snapshot socket: `SEAT_TOKEN_BYTES` / `NO_SEAT_TOKEN`, the greeting written on the first `STATUS_CONNECTED` poll and retried until it lands, and `seat_token_presented` |
+| `SnapshotStream.gd` | The snapshot socket: `SEAT_TOKEN_BYTES` / `NO_SEAT_TOKEN`, `SEAT_TOKEN_LOG_REDACTION` (the token is never printed), the greeting written on the first `STATUS_CONNECTED` poll and retried until it lands, and `seat_token_presented` |
 | `SnapshotLoader.gd` | `enable_stream(host, port, seat_token)` and `stream_presented_seat_token` — the loader is where the token reaches the socket |
 | `native/src/bridge/command_link.rs` | The seated link: the worker that owns the socket and the seat, the reader thread, the reconnect/re-claim clock, `dispatch`'s two-arm routing, and the one-shot transmit the host verbs use. It also carries the faction-bearing QUESTIONS (`send_query`) and the deadline per outstanding one. The levers are `RECONNECT_BACKOFF`, `SEAT_CLAIM_REPLY_TIMEOUT`, `SEAT_CLAIM_RETRY_BACKOFF`, `SEAT_CLAIM_ATTEMPTS`, `LINK_ACK_TIMEOUT` |
 | `native/src/bridge/query.rs` | The query channel and the split above: `names_a_faction` (exhaustive over `QueryPayload`), `routes_over_seated_link`, and the per-round-trip worker the faction-free questions still use with their own `QUERY_REPLY_TIMEOUT` / `SAVE_REPLY_TIMEOUT` |
@@ -235,4 +307,4 @@ while the claim is outstanding.
 | `native/src/runtime.rs` | The embedded script host. Its `commands.issue` path takes the SAME `command_link::dispatch`, so a script's faction-bearing command is seated like a panel's |
 | `CommandClient.gd` | The GDScript face of the bridge: endpoint precedence, `send_line`'s two-error contract, `send_query`, `claim_seat` |
 | `SeatClaim.gd` | The seat seam: one reserved request id, the refusal tokens and their prose, `seated(faction_id, seat_token)` / `refused`. Asked once — the link re-claims by itself, and each re-grant carries a new token |
-| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal on the two surfaces above, opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn |
+| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal on the two surfaces above, opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync` |

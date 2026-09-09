@@ -38,6 +38,7 @@ keeps two worktrees adding states to different harnesses off the same file.
 | `harness-map-probes.md` | `map_preview` marker states, `blend_probe` edge blending | `map_preview.gd`, `blend_probe.gd` |
 | `harness-menu-workbench.md` | `MenuShell`, the workbench, the shell budget gate | `menu_preview.gd`, `workbench_*.gd` |
 | `harness-headless-guards.md` | The `--headless` decode/field/alias guards | `decode_guard.gd` + the five other `tools/*_guard.gd`/`.tscn` pairs it lists |
+| `harness-live-seat.md` | `live_seat_probe` — the ONE harness that needs a running server: the seated link, one faction-bearing command, one turn | `live_seat_probe.gd`, `live_seat_probe.tscn` |
 
 ## `tools/preview_watchdog.gd`
 
@@ -125,6 +126,13 @@ every headless guard in `harness-headless-guards.md` (`decode_guard`, `stream_fr
 `snapshot_alias_guard`, `party_removal_guard`, `inspector_hidden_guard`, `workbench_shell_budget`).
 They sit outside the `_fail`/`_finish` shape and are correct that way — a gate whose entire output is
 one verdict has nothing for a tally to add.
+
+**`live_seat_probe` writes no PNG and still keeps the `_fail`/`_finish` pair** (`harness-live-seat.md`).
+It renders nothing to compare, so there is no frame tally — but it runs its whole walk inside one
+`await`ing `_ready()` against a live server, which is the shape the sink and the hang guard exist for.
+It is also the one harness whose failure can be the *environment*: no server on the block it was given
+is a `FAIL`, deliberately, because a probe that passes when it proved nothing is the failure this whole
+section is about.
 
 ## The harness window is quiet, the GAME's is not
 

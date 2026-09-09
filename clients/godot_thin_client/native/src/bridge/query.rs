@@ -554,8 +554,12 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
         }
         // Shaped like `save_op`'s: a command's answer riding the query channel, with `ok` from the
         // reply itself and the server's refusal token (`sim_runtime::commands::seat_error`) in
-        // `error`. `seat_token` is the connection id the STREAM socket will present once frames are
-        // delivered per seat.
+        // `error`. `seat_token` is the per-claim `core_sim::SeatToken` the STREAM socket presents to
+        // be sent this seat's frames — minted fresh from a CSPRNG on every grant, so it is a bearer
+        // SECRET and not the sending connection's identity. It is carried up as an `i64` because that
+        // is the widest integer a Godot Variant holds: the bits are the `u64` reinterpreted, and only
+        // `encode_s64` on the GDScript side writes a high-bit token back out unchanged. Nothing on
+        // either side may LOG the value (`SnapshotStream.SEAT_TOKEN_LOG_REDACTION`).
         Ok(QueryReply::SeatClaim(reply)) => {
             let _ = dict.insert("ok", reply.ok);
             let _ = dict.insert("kind", QUERY_KIND_SEAT_CLAIM);
