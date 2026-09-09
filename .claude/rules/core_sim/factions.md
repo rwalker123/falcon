@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/orders.rs"
   - "core_sim/src/seats.rs"
   - "core_sim/tests/seats.rs"
+  - "core_sim/tests/query_seat_gate.rs"
   - "core_sim/src/start_profile.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/src/data/simulation_config.json"
@@ -304,12 +305,16 @@ clamp the server actually applies.
 
 ## Command authorization
 
-Three gates, at three different distances from the player.
+Four gates, at four different distances from the player.
 
 - **The seat, in the dispatcher, before the log.** `seat_authorizes(&SeatRegistry, ConnectionId,
   &Command)` (`bin/server.rs`) asks *is this connection the claimant of the faction this command
   names* — see "Seats" below for the model and for why the gate is in `dispatch_connection_command`
   rather than inside `apply_command`.
+- **The seat again, on the query channel.** `query_seat_refusal(&SeatRegistry, ConnectionId,
+  &QueryPayload)` (`bin/server.rs`) applies the same rule to the faction a *question* reads. A query
+  is answered rather than applied, so it never passes the gate above; without this one the fog the
+  per-seat frame buys is undone one channel over — see "A question is gated too" below.
 - **Membership, once, at `apply_command`** (`bin/server.rs`). `commanding_faction(&Command)` names
   the faction *issuing* each command — deliberately exhaustive with no `_` arm, so a new verb must
   state whether it is somebody's order or the server's own business. A command whose faction is not
@@ -404,6 +409,44 @@ After a rollback the world is behind every occupant's memory and plans. The full
 `handle_rollback` publishes **is** the `Command::Resync` answer; what the seat protocol adds is naming
 who it was for (`rollback.resync_delivered`, one line per claimant), because delivery is still one
 broadcast to every stream client.
+
+### A question is gated too, and a refusal comes back as a reply
+
+Three of the five queries carry a client-supplied `faction_id` and are answered out of that faction's
+private state — `HuntTripForecastQuery` (a named band's live equipment wear, its idle workers, its
+forecast), `DenialRaidForecastQuery` (the party needed to break a herd, bounded by that band's
+workers) and `HuntCrewTakeQuery` (a per-crew-size take curve). A connection asking one of them about
+another seat's faction is refused: same disclosure class as a foreign band's internals on the frame,
+one channel over.
+
+**A query is not an order, so it has its own classifier.** `Command::Query` is in
+`commanding_faction`'s `None` set deliberately — the same precedent `ClaimSeat` sets beside it — and
+routing a question through the order path would put it in the replay log, in the command-failure feed
+and through `apply_command`'s membership check, none of which a question belongs in. So
+`querying_faction(&QueryPayload)` names the faction a *question reads*, and `query_seat_refusal` asks
+`SeatRegistry` about the answer in the loop's `Command::Query` arm, ahead of `answer_query`. Like
+`commanding_faction` it is an **exhaustive match with no `_` arm**: a sixth question is a compile
+error until it declares whether it names a faction, because the leak a wildcard allows is invisible
+in a single-seat game.
+
+| Asked by | About | Answer |
+|---|---|---|
+| the connection holding that faction's seat | its own faction | answered on the merits, exactly as before seats existed |
+| any other connection, seated or not | someone else's faction | `QueryReply::Error(query_error::NOT_YOUR_SEAT)`, logged `query.refused=not_this_connections_seat` |
+| any connection at all | `ListSaves`, `FactionCapacity` | answered — neither names a faction |
+
+⛔ **The refusal is delivered, never dropped.** A refused *command* returns silently (the client learns
+from the world not changing), but a client that asked a question is holding a forecast sheet open
+waiting for the answer, so a dropped query is a sheet that spins forever. The refusal rides
+`QueryReplyEnvelope` like any other, and `ForecastQuery.gd` renders the token through the same failure
+line it renders `unknown_herd` with.
+
+`ListSaves` and `FactionCapacity` are exempt because they name no faction *and* are asked from
+`LandingScreen.gd` before `Main` exists — before a world, and therefore before any seat — and are
+answered ahead of the `world_active` gate so the load menu opens with no world. The client mirrors
+this split from the other end in `bridge/query.rs`'s `names_a_faction`, which puts the three
+faction-bearing questions on the seated command link and keeps the two faction-free ones on a
+connection per round trip.
 
 ### Waiting is the default; auto-submit is the timeout
 

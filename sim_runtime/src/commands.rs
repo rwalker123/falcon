@@ -909,6 +909,14 @@ pub mod query_error {
     /// from a world. It exists so a mis-routed query says so instead of returning a plausible empty
     /// answer.
     pub const WRONG_ANSWERER: &str = "wrong_answerer";
+    /// **The question named a faction this connection does not sit at.** Three of the questions are
+    /// answered out of one faction's private state — a named band's live equipment wear, its idle
+    /// workers, its take curve — so the seat gate that decides a *command*'s faction decides a
+    /// question's too, and a mismatch is refused rather than answered.
+    ///
+    /// Also what an **unseated** connection is told when it asks one of the three: holding no seat
+    /// is holding nobody's private state.
+    pub const NOT_YOUR_SEAT: &str = "not_your_seat";
 }
 
 /// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s

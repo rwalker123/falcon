@@ -459,7 +459,14 @@ fn main() {
                 query,
                 reply,
             } => {
-                let answer = answer_query(world_active, &mut app.world, &query);
+                // **The seat gate, on the channel a question comes back on.** Three of the five
+                // questions are answered out of one faction's private state, so the connection that
+                // asks must be the one sitting at that seat — and a mismatch is answered with a
+                // refusal rather than dropped, because the client is holding a sheet open for it.
+                let answer = match query_seat_refusal(&seats, connection, &query) {
+                    Some(token) => QueryReply::Error(token.to_string()),
+                    None => answer_query(world_active, &mut app.world, &query),
+                };
                 // A send failure means the asking connection is gone. Nothing to recover: the
                 // question died with it.
                 if reply
@@ -699,6 +706,39 @@ fn seat_authorizes(seats: &SeatRegistry, connection: ConnectionId, command: &Com
         return false;
     }
     true
+}
+
+/// **May this connection ask this question?** The query channel's half of the seat gate — `None` to
+/// answer it, or the [`query_error`] token to refuse it with.
+///
+/// The same rule [`seat_authorizes`] applies to a command, applied to the faction a question *reads*
+/// ([`querying_faction`]): a forecast is answered out of one faction's private state, so only the
+/// connection sitting at that seat may have it. There is no point scoping a frame per seat if the
+/// query channel answers anything.
+///
+/// ⛔ **A refusal is DELIVERED, not dropped.** A refused command returns silently — the client learns
+/// from the world not changing — but a question's client is holding a sheet open waiting for its
+/// answer, and a dropped query is a sheet that spins forever. So this returns a token the caller puts
+/// on [`QueryReplyEnvelope`] like any other refusal, and the client renders it exactly as it renders
+/// `unknown_herd`.
+fn query_seat_refusal(
+    seats: &SeatRegistry,
+    connection: ConnectionId,
+    query: &QueryPayload,
+) -> Option<&'static str> {
+    let (faction, label) = querying_faction(query)?;
+    if seats.commands_faction(connection, faction) {
+        return None;
+    }
+    warn!(
+        target: "shadow_scale::command",
+        query = label,
+        faction = %faction.0,
+        %connection,
+        claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+        "query.refused=not_this_connections_seat"
+    );
+    Some(query_error::NOT_YOUR_SEAT)
 }
 
 /// **The verbs that move the world for EVERYONE, and are therefore not a seat's to send.**
@@ -10505,6 +10545,43 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         // is the server's own bookkeeping and names no faction at all.
         | Command::ClaimSeat { .. }
         | Command::ReleaseSeat => None,
+    }
+}
+
+/// **The faction a QUESTION reads, and what to call it in the log** — `None` for the questions that
+/// read no faction's state at all.
+///
+/// ⛔ **A query is not an order, which is why this is its own classifier.** `Command::Query` is in
+/// [`commanding_faction`]'s `None` set deliberately (the same precedent [`Command::ClaimSeat`] sets
+/// beside it): the order path logs to the replay timeline, files command failures into a faction's
+/// feed and runs the membership check in `apply_command`, and a question belongs in none of them. So
+/// the seat gate reads the *question's* faction here and refuses on the query channel's own reply.
+///
+/// ⛔ **Deliberately exhaustive, with no `_` arm** — the property that makes [`commanding_faction`]
+/// trustworthy, for the same reason: a sixth question is a compile error until it states whether it
+/// names a faction. The failure a wildcard would allow is invisible in a single-seat game — a
+/// faction-bearing question asked from another seat's connection compiles, runs and answers, and
+/// only leaks once a second player exists.
+///
+/// The client mirrors this match in `bridge/query.rs`'s `names_a_faction`, which decides the *same*
+/// split from the other end: the three that name a faction go out on the seated command link, and
+/// the two that do not keep a connection of their own because `LandingScreen` asks them before any
+/// seat exists.
+fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
+    match query {
+        // Each carries a client-supplied `faction_id` and is answered out of that faction's private
+        // state: a named band's live equipment wear, its idle workers, its take curve.
+        QueryPayload::HuntTripForecast(ask) => {
+            Some((FactionId(ask.faction_id), "hunt_trip_forecast"))
+        }
+        QueryPayload::DenialRaidForecast(ask) => {
+            Some((FactionId(ask.faction_id), "denial_raid_forecast"))
+        }
+        QueryPayload::HuntCrewTake(ask) => Some((FactionId(ask.faction_id), "hunt_crew_take")),
+        // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
+        // faction's state, and both are asked from the landing screen — before a world, and
+        // therefore before any seat — so a gate applied to them would close the load menu.
+        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => None,
     }
 }
 
@@ -20970,6 +21047,10 @@ mod tests {
     const RIVAL_CLIENT: ConnectionId = ConnectionId(12);
     const UNSEATED_CLIENT: ConnectionId = ConnectionId(13);
 
+    /// The grid a `faction_capacity` question asks about in the seat-gate case. Any grid does: the
+    /// case is about whether that question passes the gate, never about the ceiling it answers.
+    const QUERY_GATE_GRID: UVec2 = UVec2::new(24, 16);
+
     /// **A wait short enough to run out inside a test.** Injected through the live config, which is
     /// where `settle_open_turn` reads it, so the test exercises the shipped lever rather than a
     /// parallel one.
@@ -21201,6 +21282,123 @@ mod tests {
             origin_tick,
             "and from the host it rewinds the world"
         );
+    }
+
+    /// The three questions that name a faction, built for `faction` — one shape each, so the gate is
+    /// asserted over the whole faction-bearing surface rather than over the one query that happened
+    /// to be handy. The values never reach a world: the gate decides before anything is computed.
+    fn faction_bearing_queries(faction: FactionId) -> Vec<(&'static str, QueryPayload)> {
+        let herd_id = "game_seat_gate".to_string();
+        let kit_id = "big_game".to_string();
+        vec![
+            (
+                "hunt_trip_forecast",
+                QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    herd_id: herd_id.clone(),
+                    kit_id: kit_id.clone(),
+                    party_workers: 3,
+                    floor: 0.25,
+                    preset_floors: vec![0.0, 0.5],
+                    max_party_workers: 0,
+                }),
+            ),
+            (
+                "denial_raid_forecast",
+                QueryPayload::DenialRaidForecast(sim_runtime::commands::DenialRaidForecastQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    herd_id: herd_id.clone(),
+                    kit_id: kit_id.clone(),
+                    party_workers: 3,
+                    max_party_workers: 0,
+                }),
+            ),
+            (
+                "hunt_crew_take",
+                QueryPayload::HuntCrewTake(sim_runtime::commands::HuntCrewTakeQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    herd_id,
+                    kit_id,
+                    floor: 0.25,
+                    max_workers: 4,
+                }),
+            ),
+        ]
+    }
+
+    /// ⛔ **A QUESTION IS GATED BY THE SEAT THE ASKER SITS AT, AND THE FACTION-FREE ONES ARE NOT
+    /// GATED AT ALL.**
+    ///
+    /// Three arms, because each one alone is satisfiable by a gate that is wrong in the other
+    /// direction: a gate that refuses everything passes the mismatch arm, a gate that refuses
+    /// nothing passes the own-seat arm, and either of them can still break the load menu — whose
+    /// `ListSaves` is asked from a connection holding no seat, before a world exists.
+    ///
+    /// The refusal is a **token**, not a drop: a refused command returns silently, but a client
+    /// holding a forecast sheet open is waiting for an answer, and a dropped query is a sheet that
+    /// waits forever.
+    #[test]
+    fn a_question_is_answered_only_for_the_seat_that_asked_it() {
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival's client");
+
+        for (label, query) in faction_bearing_queries(HOME) {
+            assert_eq!(
+                query_seat_refusal(&seats, HOME_CLIENT, &query),
+                None,
+                "{label} about faction {HOME:?} is the home seat's own question and must be \
+                 answered exactly as it was before seats existed"
+            );
+            assert_eq!(
+                query_seat_refusal(&seats, RIVAL_CLIENT, &query),
+                Some(query_error::NOT_YOUR_SEAT),
+                "{label} let the rival's client read faction {HOME:?}'s private state — the \
+                 disclosure the per-seat frame closes, one channel over"
+            );
+            assert_eq!(
+                query_seat_refusal(&seats, UNSEATED_CLIENT, &query),
+                Some(query_error::NOT_YOUR_SEAT),
+                "{label} was answered for a connection holding no seat at all"
+            );
+        }
+
+        // And the faction comes off the QUESTION rather than being assumed: the same connection is
+        // refused the home seat's questions and answered its own.
+        for (label, query) in faction_bearing_queries(RIVAL) {
+            assert_eq!(
+                query_seat_refusal(&seats, RIVAL_CLIENT, &query),
+                None,
+                "{label} about faction {RIVAL:?} is the rival client's own question"
+            );
+        }
+
+        // ⛔ **The load menu's guard.** Both of these are asked from `LandingScreen` before `Main`
+        // exists — no world, and therefore no seat — and are answered ahead of the `world_active`
+        // gate. A gate that reached them would make the load menu unopenable.
+        for query in [
+            QueryPayload::ListSaves,
+            QueryPayload::FactionCapacity(sim_runtime::commands::FactionCapacityQuery {
+                width: QUERY_GATE_GRID.x,
+                height: QUERY_GATE_GRID.y,
+            }),
+        ] {
+            for asker in [UNSEATED_CLIENT, HOME_CLIENT, ConnectionId::INTERNAL] {
+                assert_eq!(
+                    query_seat_refusal(&seats, asker, &query),
+                    None,
+                    "{query:?} names no faction, so connection {asker} must be answered whether or \
+                     not it holds a seat"
+                );
+            }
+        }
     }
 
     /// ⛔ **A TURN WAITS FOR AN OCCUPIED SEAT, AND RESOLVES THE MOMENT THE LAST ONE SUBMITS.**

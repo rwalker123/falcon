@@ -910,6 +910,12 @@ message SaveOpReply {
 //
 // A query is answered from the LIVE world: this band's own equipment wear, this kit, this party
 // size, this floor.
+//
+// ⛔ THE THREE FORECAST QUESTIONS CARRY A `faction_id` AND ARE SEAT-GATED. Each is answered out of
+// that faction's private state, so it must be asked on the connection holding that faction's seat
+// (`ClaimSeatCommand`); anyone else is answered "not_your_seat". `list_saves` and `faction_capacity`
+// name no faction and are deliberately NOT gated — they are asked from the landing screen before a
+// world, and therefore before any seat, exists.
 message QueryCommand {
   // Correlates the reply. The client owns the numbering; the server only echoes it.
   uint64 request_id = 1;
@@ -1059,7 +1065,7 @@ message QueryReplyEnvelope {
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token
 // ("no_active_world", "unknown_herd", "unknown_band", "unknown_kit", "kit_wrong_job",
-// "invalid_floor", "invalid_party") — the client owns the prose.
+// "invalid_floor", "invalid_party", "not_your_seat") — the client owns the prose.
 message QueryError {
   string reason = 1;
 }
