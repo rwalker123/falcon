@@ -34,7 +34,7 @@ const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 91
+const EXPECTED_CHECKPOINTS := 104
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -83,6 +83,37 @@ const STONE_REACHABLE := 330.0
 ## …and the same body once a quarry stands on it: `recovery_fraction` 0.85 of 2200.
 const QUARRY_STOCK := 1870.0
 const QUARRY_REACHABLE := 1870.0
+
+## ⛔ **A QUARRY WORKED DOWN PAST THE OMITTED-TOKEN DEFAULT, WHICH IS THE ONE GROUND THE CLIENT'S
+## COMPOSITION USED TO DIVERGE ON** (issue #650). A finite seam is offered no dial, so the sheet
+## composes at `SourceForecast.DEFAULT_HARVEST_FLOOR` — 0.5, the value an omitted command token
+## resolves to sim-side — and an unconditional `max` let that bind ABOVE `extraction:quarry`'s own
+## 0.15 rung floor. The sim stopped composing the crew's half on ground that never renews; the client
+## composes it in ONE place (`HudDepositVocab.composed_floor`) and had to follow.
+##
+## **THE STOCK IS CHOSEN TO LAND BETWEEN THE TWO FLOORS**, which is what makes the divergence
+## VISIBLE rather than merely wrong: `0.15 × 2200` = 330 of rock stands below it and `0.5 × 2200`
+## = 1100 stands above it. Composed at the rung's own floor the seam has 370 units left to cut;
+## composed at the default it has NONE, and the sheet quotes a take of nothing and a cap of nobody
+## on a quarry the sim will happily work for another fifty turns.
+const WORKED_QUARRY_STOCK := 700.0
+## `stock − rung_floor_fraction × capacity`, the sim's own `deposit_reachable` at a crew that named
+## no floor — and the figure `room_next_turn` must reproduce, rock's curve being all zeros so the
+## growth term is nothing.
+const WORKED_QUARRY_REACHABLE := 370.0
+## `ceil(370 / 2.2)` — the most cutters the seam can use, `max_useful_cutters`' own division.
+const WORKED_QUARRY_MAX_CUTTERS := 169
+## The crew the band has on it, and the take it lifts: `3 × QUARRY_PER_WORKER`, comfortably inside
+## the room above, so what the sheet quotes is the CREW's arithmetic rather than a clamp.
+const WORKED_QUARRY_CUTTERS := 3
+const WORKED_QUARRY_TAKE := 6.6
+## `floor(370 / 6.6)` — the sim's own runway at that crew, passed through verbatim like `STONE_RUNWAY`.
+const WORKED_QUARRY_RUNWAY := 56
+
+## **A DIAL DRIVEN BELOW THE GATHERING RUNG'S OWN FLOOR AND ABOVE IT** — the pair that pins the fix
+## NARROW. On the renewing scatter the `max` must still compose exactly as it did: the rung's 0.85
+## wins at the default, and a player floor of 0.9 wins over the rung.
+const SCATTER_DEEP_FLOOR := 0.9
 
 ## **THE OVER-CUT PAIR.** `sustainable_take` is the deposit's MSY — the growth term at the PEAK of its
 ## curve, never at today's stock — which is why one figure serves a drawn-down seam and a full one
@@ -947,6 +978,82 @@ func run(harness) -> void:
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
 
+	# ⛔⛔ **STATE workings-quarry-reach — THE CREW'S FLOOR IS DISCARDED WHERE THE GROUND NEVER RENEWS.**
+	# The sim's `extraction::deposit_effective_floor` returns the rung's floor alone at `NEVER_RENEWS`;
+	# `HudDepositVocab.composed_floor` mirrors it, and this is the state where the two used to disagree.
+	# A finite seam is offered no dial, so the sheet composes at `DEFAULT_HARVEST_FLOOR` — and an
+	# unconditional `max` let that 0.5 bind above `extraction:quarry`'s 0.15, under-reporting the take,
+	# the cap and the runway on every stone sheet in the game.
+	#
+	# ⛔ **THE FORK IS TAKEN ON THE PUBLISHED `regrowth_rate`, WHICH IS THE RUNG-SCALED ONE, AND THAT
+	# IS EXACT RATHER THAN LUCKY.** The sim forks on the GROUND's un-scaled rate; the wire carries it
+	# multiplied by the rung's `regrowthMultiplier`, which `intensification`'s config validation floors
+	# at `REGROWTH_UNCHANGED` (1.0). A never-zero multiplier makes `ground × multiplier > 0` true
+	# exactly when `ground > 0`, so the two predicates cannot part company — see `renews()`.
+	h._hud.update_band_alerts([_worked_quarry_band_fixture()])
+	h._show_tile(_workings_tile([_worked_down_quarry()]))
+	await h._settle()
+	# **THE PRECONDITION, WITHOUT WHICH EVERY CLAIM BELOW IS VACUOUS** — the sheet's default really
+	# must stand ABOVE this rung's own floor, or the `max` was a no-op here and nothing is being
+	# tested. It is the whole reason the quarry rung is the one that diverged and gathering was not.
+	h._assert_hud("the sheet's default floor stands ABOVE the quarry rung's own (%.2f > %.2f)"
+			% [SourceForecast.DEFAULT_HARVEST_FLOOR, QUARRY_RUNG_FLOOR],
+		SourceForecast.DEFAULT_HARVEST_FLOOR > QUARRY_RUNG_FLOOR)
+	h._assert_hud("…and a working that NEVER RENEWS composes at the rung's floor alone, never %.2f (%.2f)"
+			% [SourceForecast.DEFAULT_HARVEST_FLOOR,
+				HudDepositVocab.composed_floor(_worked_down_quarry(),
+					SourceForecast.DEFAULT_HARVEST_FLOOR)],
+		is_equal_approx(HudDepositVocab.composed_floor(_worked_down_quarry(),
+			SourceForecast.DEFAULT_HARVEST_FLOOR), QUARRY_RUNG_FLOOR))
+	# ⛔ **AND THE ROOM REPRODUCES THE WIRE'S OWN `reachable` BY ARITHMETIC** — rock's curve is all
+	# zeros, so the growth term is nothing and the room is `stock − rung floor × capacity`, which is
+	# `extraction::deposit_reachable` at a crew that named no floor. Asserted against the PUBLISHED
+	# field rather than against a second copy of that subtraction.
+	h._assert_hud("…so the room above it reproduces the sim's published `reachable` (%.1f of %.1f)"
+			% [HudDepositVocab.room_next_turn(_worked_down_quarry(),
+					SourceForecast.DEFAULT_HARVEST_FLOOR),
+				WORKED_QUARRY_REACHABLE],
+		is_equal_approx(HudDepositVocab.room_next_turn(_worked_down_quarry(),
+			SourceForecast.DEFAULT_HARVEST_FLOOR), WORKED_QUARRY_REACHABLE))
+	h._assert_hud("…and the cap is the rung's own recovery over the rate, %d cutters (%d)"
+			% [WORKED_QUARRY_MAX_CUTTERS,
+				HudDepositVocab.max_useful_cutters(_worked_down_quarry(),
+					SourceForecast.DEFAULT_HARVEST_FLOOR)],
+		HudDepositVocab.max_useful_cutters(_worked_down_quarry(),
+			SourceForecast.DEFAULT_HARVEST_FLOOR) == WORKED_QUARRY_MAX_CUTTERS)
+	h._hud._drawercompose.open_deposit_compose(_worked_down_quarry())
+	await h._settle()
+	var reach_sheet: Node = h._hud._drawercompose._compose_sheet
+	# ⛔ **THE CREW IS READ BACK RATHER THAN ASSUMED**, this chapter's rule: the sheet seeds from the
+	# band's own `extract` row, and a take asserted at a count the sheet refused is a claim about a
+	# number nothing on screen shows. Composed at the 0.5 default the cap was ZERO, so the stepper
+	# clamped the crew away and the sheet quoted a take of nothing — which is what this reads back.
+	var reach_crew: int = h._hud._compose.deposit_count()
+	h._assert_hud("…so the sheet staffs the band's own %d diggers rather than clamping them away (%d)"
+			% [WORKED_QUARRY_CUTTERS, reach_crew],
+		reach_crew == WORKED_QUARRY_CUTTERS)
+	h._assert_hud("…and quotes their whole take, the room being far above it (%s)"
+			% Readout.yields_text(reach_sheet),
+		Readout.yields_text(reach_sheet).contains(SourceForecast.format_magnitude(
+			minf(float(reach_crew) * QUARRY_PER_WORKER, WORKED_QUARRY_REACHABLE))))
+	await h._save("workings_quarry_reach")
+	h._hud._drawercompose.close_compose_sheet()
+	await h._settle()
+	# ⛔ **AND THE FIX IS NARROW: ON GROUND THAT RENEWS THE `max` IS EXACTLY WHAT IT WAS.** The scatter
+	# is the one fixture here where the composition is not a no-op — it renews, so it keeps its dial,
+	# and it stands on the gathering rung whose own floor strands 85% of the stone. Both directions,
+	# because either alone passes on a composition that has stopped taking a maximum at all.
+	h._assert_hud("a RENEWING working still composes the greater of the two — the rung's %.2f over the dial's %.2f (%.2f)"
+			% [GATHERING_RUNG_FLOOR, SourceForecast.DEFAULT_HARVEST_FLOOR,
+				HudDepositVocab.composed_floor(_scatter_working(),
+					SourceForecast.DEFAULT_HARVEST_FLOOR)],
+		is_equal_approx(HudDepositVocab.composed_floor(_scatter_working(),
+			SourceForecast.DEFAULT_HARVEST_FLOOR), GATHERING_RUNG_FLOOR))
+	h._assert_hud("…and the player's floor still BINDS where it is asked deeper than the rung (%.2f)"
+			% HudDepositVocab.composed_floor(_scatter_working(), SCATTER_DEEP_FLOOR),
+		is_equal_approx(HudDepositVocab.composed_floor(_scatter_working(), SCATTER_DEEP_FLOOR),
+			SCATTER_DEEP_FLOOR))
+
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked
 	# it*, which is a row like any other.
@@ -1295,6 +1402,41 @@ func _quarried_stone() -> Dictionary:
 	working["rung_floor_fraction"] = QUARRY_RUNG_FLOOR
 	working["per_worker_biomass"] = QUARRY_PER_WORKER
 	return working
+
+## ⛔ **THE SAME QUARRY WORKED DOWN BETWEEN THE TWO FLOORS** — the regression fixture for issue #650's
+## client half, and the one working in this chapter on which `composed_floor`'s *"only where it
+## renews"* condition changes an answer. See `WORKED_QUARRY_STOCK` for why this stock and no other.
+## Its `reachable` is the sim's own `deposit_reachable` at the rung's floor, so the room the sheet
+## composes and the reach the wire published are one number rather than two.
+func _worked_down_quarry() -> Dictionary:
+	var working := _quarried_stone()
+	working["stock"] = WORKED_QUARRY_STOCK
+	working["reachable"] = WORKED_QUARRY_REACHABLE
+	working["actual_take"] = WORKED_QUARRY_TAKE
+	working["turns_remaining"] = WORKED_QUARRY_RUNWAY
+	return working
+
+## **A BAND WITH THREE DIGGERS STANDING ON IT** — so the sheet SEEDS at that crew rather than at the
+## `WORKER_STEP` floor, and the take it quotes is a figure this fixture states rather than one the
+## stepper happened to land on.
+func _worked_quarry_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": WORKED_QUARRY_CUTTERS,
+		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+		"material": "stone",
+		# ⛔ **THE FLOOR THE SHEET WILL COMPOSE AT, and it is the whole defect in one field.** A finite
+		# seam is offered no dial, so the row carries the sim's own omitted-token default — inert
+		# sim-side since #650, and what the client used to compose above the rung's floor anyway.
+		"floor": SourceForecast.DEFAULT_HARVEST_FLOOR,
+		"actual_yield": 0.0,
+		"sustainable_yield": 0.0,
+		"material_yield": [{"material_id": "stone", "amount": WORKED_QUARRY_TAKE}],
+		"workers_needed": WORKED_QUARRY_CUTTERS,
+	})
+	return band
 
 ## …the same quarry with NOBODY cutting it: `-2` on the runway and a take of nothing.
 func _idle_stone_working() -> Dictionary:

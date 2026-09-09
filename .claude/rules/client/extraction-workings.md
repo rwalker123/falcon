@@ -465,10 +465,44 @@ on the renewing extraction ground beside it; `_scatter_working` in the harness i
 feeds the result to `floor_chart_model` — which is what hands it to `project_stock`, to both crew
 targets, to the verdict and to `HudDepositVocab.room_next_turn`.
 
+#### ⛔ AND THE CREW'S HALF IS DISCARDED WHERE THE GROUND NEVER RENEWS — THIS MIRRORS THE SIM
+
+`composed_floor` returns `rungFloorFraction` ALONE on a working that does not renew, which is
+`extraction::deposit_effective_floor`'s own `if regrowth_rate <= NEVER_RENEWS` arm read back. A floor
+protects REGROWTH: stock left standing on a renewing seam is next year's harvest, and on rock it
+protects a future that does not exist — so it is not a conservation choice at all and must not bind.
+**The two must move together**, and a client composing a floor the sim discards is the divergence that
+renders as WRONG NUMBERS rather than as an error.
+
+⛔ **AND IT BOUND IN PRACTICE, ON EVERY STONE SHEET.** A finite seam is offered no dial, so the sheet
+passes `SourceForecast.DEFAULT_HARVEST_FLOOR` — 0.5, the value an omitted command token resolves to
+sim-side — which sits ABOVE `extraction:quarry`'s own 0.15 and so won the `max`. The chart was never
+the casualty (none is drawn); what under-reported was everything else fed from this one place — the
+take, `stated_runway`, `max_useful_cutters`, the two crew pills and the cap note. On a quarry worked
+below half its body the room composed to NOTHING, and the sheet quoted a take of zero and a cap of
+nobody on ground the sim would work for another fifty turns.
+
+⛔ **THE FORK IS `renews()`, i.e. THE PUBLISHED `regrowth_rate`, WHICH IS THE RUNG-SCALED ONE — AND
+THAT IS EXACT RATHER THAN CONVENIENT.** The sim asks the question of the GROUND's rate, un-scaled by
+`regrowthMultiplier`, because *a rung scales a rate, it does not make the ground finite*. The wire
+carries only the scaled product, and the un-scaled rate is **not** recoverable from it — but the two
+PREDICATES are identical, because `intensification`'s config validation refuses any rung whose
+multiplier is below `REGROWTH_UNCHANGED` (1.0). A never-zero multiplier makes `ground × multiplier > 0`
+true exactly when `ground > 0`, and rock's own rate is `0`, so `0 × anything` keeps a quarry finite
+however the ladder is tuned. **The day a rung is allowed to multiply by nothing, this reading breaks
+silently** and the un-scaled rate has to reach the wire — a wood whose current rung multiplied by zero
+would then read as finite and lose its dial.
+
 ⛔ **THE TEACHING LINE IS THE ONE READING TAKEN AT THE PLAYER'S FLOOR INSTEAD.** `systems::labor`'s
 `Extract` arm passes the ROW's own floor to `intensification::learn_multiplier` and reaches the rung's
 floor only through the workability predicate (`reachable_before`), so a line composed at the max would
 promise a gathering crew ×1.70 for a dial they set to zero.
+
+**The renews condition above leaves that untouched, and doubly so.** The line takes
+`SourceForecast.clamp_floor(floor)` — the raw dial — so it never consulted the composition in the
+first place; and it is mounted only where the chart model is `known`, which a finite working never is
+(a quarry publishes an all-zero curve, so there is no projection to walk). The teaching line is a
+RENEWING sheet's readout, and on renewing ground the composition is byte-for-byte what it was.
 
 ### ⛔ THE ROOM IS THE DIAL'S, AND ON A FINITE SEAM IT REPRODUCES `reachable`
 
@@ -951,6 +985,7 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 | `workings_floor_stripped` | the dial DRAGGED to the bottom, live (`committed = false`) — the chart the pointer holds still alive, the readings refilled in place, the `⚠ overdraws the seam` mark and the strip consequence in the working's own noun |
 | `workings_fresh_runway` | **a crew committed this turn on a seam that has cut nothing** — the FORECAST runway (`reachable ÷ the seeded rate`) where the sheet used to read *Nobody is cutting it*, the same seam with no crew still reading it, and the renewing verdict quoting the SEEDED take rather than a zero. Three states, three readings, one frame plus two producer claims |
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |
+| `workings_quarry_reach` | **THE CLIENT/SIM DIVERGENCE, WITH CHECKABLE NUMBERS** — a quarry worked down to 700 of 2200, i.e. BETWEEN the rung's own 330 of floor and the sheet's default 1100, which is the one stock where `composed_floor`'s renews condition changes an answer. Its four producer claims are read at `DEFAULT_HARVEST_FLOOR` and pin the composition to the rung's 0.15, the room to the wire's own published `reachable` (370), the cap to `ceil(370 / 2.2)` = 169 cutters, and the sheet to the band's own 3 diggers at their whole `6.60 STONE`. Pre-fix every one of them collapsed — floor 0.50, room 0, cap 0, the crew clamped away and the take blank — which is a quarry reporting itself worked out with fifty turns left in it. **The renewing scatter is asserted UNCHANGED beside it, both directions** (the rung's 0.85 winning at the default, a dial of 0.90 winning over the rung), which is what makes the fix narrow rather than a floor that stopped composing |
 
 **The LADDER's row states are asserted over the PRODUCER, without a frame**: the SITE gate on a
 70-unit scatter, the CRAFT gate on a body big enough for a quarry (with the remedy naming the rung

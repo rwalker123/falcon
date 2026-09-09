@@ -164,6 +164,16 @@ static func regrowth_rate_of(deposit: Dictionary) -> float:
 ## the RUNWAY is. **Never `branch`**: forking on the branch string paints a renewing flint scatter
 ## with a runway that never moves, and leaves a quarry quoting a sustainable take of zero as though
 ## it were a bill met.
+##
+## ⛔ **IT IS ALSO THE FORK `composed_floor` TAKES, WHICH MAKES THE SCALED/UN-SCALED READING MATTER.**
+## The sim asks this question of the GROUND's own rate, un-scaled by the rung's `regrowthMultiplier`
+## — *a rung scales a rate, it does not make the ground finite* — while the field on the row is that
+## rate ALREADY SCALED. **The two predicates are nonetheless identical, and that is enforced rather
+## than hoped**: `intensification`'s config validation refuses any rung whose multiplier is below
+## `REGROWTH_UNCHANGED` (1.0), so the multiplier is never zero and `ground × multiplier > 0` exactly
+## when `ground > 0`. Rock's own rate is `0`, so `0 × anything` keeps a quarry finite however the
+## ladder is tuned. **The day a rung is allowed to multiply by nothing this reading breaks silently**
+## and the un-scaled rate would have to reach the wire.
 static func renews(deposit: Dictionary) -> bool:
 	return regrowth_rate_of(deposit) > REGROWTH_NEVER_RENEWS
 
@@ -218,7 +228,23 @@ const FLOOR_NONE := 0.0
 ## reading — the deepest floor any band cutting it named last turn — so composing this sheet from it
 ## would price one band's composition against another band's order. The sheet's own dial is seeded
 ## from the band's `extract` row (`HudBandLaborState.floor_for_extract`).
+##
+## ⛔ **THE CREW'S HALF PARTICIPATES ONLY WHERE THE DEPOSIT RENEWS, AND THIS MIRRORS
+## `extraction::deposit_effective_floor` — IT MUST MOVE WITH IT.** A floor protects REGROWTH: stock
+## left standing on a renewing seam is next year's harvest. On rock there is no future for it to
+## protect, so the crew's floor is not a conservation choice at all and the sim discards it; the
+## rung's own unreachable remainder is the only floor a quarry has. **A client that composed a floor
+## the sim discards is a divergence that renders as WRONG NUMBERS rather than as an error** — the
+## take, the runway, the cap and both crew pills would all quote a quarry short of what it really
+## yields, which is the very defect the sim fix removed one layer down.
+##
+## **AND IT BINDS IN PRACTICE RATHER THAN IN THEORY**: a finite seam is offered no dial, so the sheet
+## passes `SourceForecast.DEFAULT_HARVEST_FLOOR` (0.5) — the same value an omitted command token
+## resolves to — which sits ABOVE `extraction:quarry`'s own 0.15 rung floor and would bind on every
+## stone sheet in the game.
 static func composed_floor(deposit: Dictionary, floor: float) -> float:
+	if not renews(deposit):
+		return rung_floor_fraction_of(deposit)
 	return maxf(rung_floor_fraction_of(deposit), SourceForecast.clamp_floor(floor))
 
 ## **THE WORKING AS `SourceForecast` READS A SOURCE** — the deposit's own fields under the forecast

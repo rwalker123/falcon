@@ -2779,12 +2779,14 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Eight frames and fifty-nine checkpoints**, `EXPECTED_CHECKPOINTS` **59** — RE-MEASURED by raising
-the const to an impossible number and reading `reached` back, as this file's own rule says, and the
-read is why: the declared 43 was already four under the chapter's real count before the two ORDER
-frames below added six and the stacked-button frame added six more, so a delta applied to it would have
-set a floor the chapter could fall through. The chapter's subject is `extraction-workings.md`'s; what belongs here is the shape of the
-drive and the three things it cost.
+**Nine frames and one hundred and four checkpoints**, `EXPECTED_CHECKPOINTS` **104** — RE-MEASURED by
+raising the const to an impossible number and reading `reached` back, as this file's own rule says,
+and the read is why **twice over**: the declared 43 was already four under the chapter's real count
+before the two ORDER frames below added six and the stacked-button frame added six more, and the const
+had since drifted to a declared 91 against a real 95, so the nine checkpoints the quarry-reach block
+adds land on **104** rather than on the 100 a delta would have computed. A delta applied to either
+stale figure would have set a floor the chapter could fall through. The chapter's subject is
+`extraction-workings.md`'s; what belongs here is the shape of the drive and the three things it cost.
 
 **FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
 `workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
@@ -2884,8 +2886,44 @@ carrying two RAISED deposits emits two rows keyed `" "` and the shared reader an
 - **The readout's NOTE is uppercased by `_readout_unit_label`**, so the needle is the vocabulary's own
   word `.to_upper()` — `yields_text` does carry it, the note being a child of the row's own flow.
 
-**A clean run is 438 frames / 2078 `PASS`, exit 0 — MEASURED windowed on this tree.** ⛔ **The
+**A clean run is 446 frames / 2115 `PASS`, exit 0 — MEASURED windowed on this tree.** ⛔ **The
 `--headless` run exits 1 here and that is the dummy renderer, not this chapter**: `button_faces`
 skips two pixel probes for want of a renderer and falls 8 short of its own floor, which is that
 harness's documented headless behaviour. Judge this harness windowed.
+
+### The floor the sim discards, discarded here too (issue #650)
+
+One frame and nine checkpoints appended LAST in `chapters/workings.gd`, before it hands the hex back
+bare, so no earlier state moves. The behaviour is `extraction-workings.md`'s — "AND THE CREW'S HALF IS
+DISCARDED WHERE THE GROUND NEVER RENEWS"; what belongs here is the shape of the drive.
+
+**THE FIXTURE'S STOCK IS THE WHOLE DESIGN.** `_worked_down_quarry` sits at 700 of 2200, which is
+BETWEEN `extraction:quarry`'s own floor (`0.15 × 2200` = 330) and the sheet's omitted-token default
+(`0.5 × 2200` = 1100) — the one band of stock where the discarded floor changes an answer instead of
+losing a `max` it was never going to win. A quarry at full stock composes a plausible number either
+way, which is why the existing `workings_extraction_sheet` could not see this: it stands on
+**gathering**, whose 0.85 rung floor beats the 0.5 default already, so the `max` is unchanged there
+and that state passes with the defect restored.
+
+**THE ROOM IS ASSERTED AGAINST THE PUBLISHED `reachable`, NEVER AGAINST A SECOND SUBTRACTION.** Rock's
+curve is all zeros, so `room_next_turn` reduces to `stock − rung floor × capacity`, which IS
+`extraction::deposit_reachable` at a crew that named no floor — so the fixture states 370 on the wire
+and the claim is that the client's composition arrives at the same figure from the other end. A claim
+recomposing that subtraction in the chapter could only agree with itself.
+
+**THE CREW IS READ BACK, AND THAT IS WHAT MAKES THE TAKE CLAIM POSSIBLE AT ALL.** Composed at the
+default the cap was ZERO, so `clamp_deposit_count` clamped the band's three diggers away and the take
+went blank — a take asserted at an assumed crew would have failed for the wrong reason. The band
+fixture staffs three so the sheet SEEDS there rather than at the `WORKER_STEP` floor.
+
+**THE NARROWNESS CLAIMS ARE A PAIR ON THE RENEWING SCATTER, both directions** — the rung's 0.85
+winning at the default, and a dial of 0.90 winning over the rung. Either alone passes on a
+`composed_floor` that has stopped taking a maximum at all, which is the over-correction the condition
+is one keystroke away from.
+
+**Sabotage-verified** by restoring the unconditional `max`: exactly **five** claims fail and the
+failure text is the defect in its own words — `composes at the rung's floor alone, never 0.50 (0.50)`,
+`room … (0.0 of 370.0)`, `169 cutters (0)`, `3 diggers … (0)` and an empty take. The precondition and
+both renewing claims correctly stay green, which is the decomposition: the condition and the maximum
+are independent, so a defect in one leaves the other's claims standing.
 
