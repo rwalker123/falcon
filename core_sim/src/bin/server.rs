@@ -2698,11 +2698,16 @@ fn seed_source_yield(
             // **The take, through the one seam the turn takes** — `min(hands, what the crew is
             // allowed to reach)`, the reach being the stock above `max(rung floor, this row's
             // floor)`. So raising the floor lowers the seeded figure by exactly what it will lower
-            // the take by, and a floor at or above the standing stock seeds nothing.
+            // the take by, and a floor at or above the standing stock seeds nothing. The ground's
+            // rate rides along because that `max` only takes the row's floor where the deposit
+            // renews, so a quarry's seeded figure is the one its crew will actually cut.
+            let regrowth_rate =
+                core_sim::extraction::tile_deposit_regrowth(&extraction, material, &ground);
             let taken = core_sim::extraction::deposit_take(
                 workers,
                 projected.stock,
                 capacity,
+                regrowth_rate,
                 &payoff,
                 *floor,
             );
@@ -20607,16 +20612,18 @@ mod tests {
         );
     }
 
-    /// **STONE TAKES A FLOOR TOO, AND THE SIM DOES NOT FORK ON THE RATE** — a floor on a rate-0
-    /// deposit is meaningless but harmless (it caps the take), and *whether to offer the dial* is a
-    /// client decision made through the `regrowthRate > 0` fork it already uses everywhere else. A
-    /// sim that refused a floor here would be a second place that fork lives.
+    /// **STONE TAKES A FLOOR AT THE COMMAND BOUNDARY, AND ON A RATE-0 BODY IT IS INERT**
+    /// (issue #650) — read through the whole command path, which is the point of asserting it here
+    /// rather than on `deposit_effective_floor` alone.
     ///
-    /// `extraction:gathering` strands 85% of a rock body on its own, so the floor asserted on is
-    /// **above** the rung's — otherwise this would pass against a build that ignored the dial
-    /// entirely.
+    /// A floor protects **regrowth**, and rock has none for it to protect, so the dial cannot move a
+    /// quarry's take at *any* position — not even at the top of it, which
+    /// [`a_deposit_floor_that_leaves_everything_standing_seeds_no_material`] pins as the setting
+    /// that empties a **renewing** working through this same path. The grammar still accepts the
+    /// token: a script or a raw command line can send one, so the rule lives with the rate and not
+    /// at the boundary.
     #[test]
-    fn a_quarry_takes_a_floor_and_it_caps_the_take() {
+    fn a_floor_on_a_rate_zero_deposit_is_accepted_and_changes_nothing() {
         let mut app = build_test_app();
         let faction = FactionId(0);
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
@@ -20626,42 +20633,31 @@ mod tests {
         let at_the_default_floor = source_materials(&app, band);
         assert!(
             !at_the_default_floor.is_empty(),
-            "**LIVENESS**: a crew on a rock body must cut something, or neither bound below \
-             asserts anything"
+            "**LIVENESS**: a crew on a rock body must cut something, or nothing below asserts \
+             anything"
         );
 
-        // **BELOW THE RUNG'S OWN FLOOR THE DIAL CHANGES NOTHING** — `extraction:gathering` already
-        // strands 85% of the body, so `max(0.85, 0.0)` is `max(0.85, 0.5)` and the take is the same
-        // number. This is the composition read through the whole command path.
-        assign_extract(
-            &mut app,
-            faction,
-            WORKING,
-            "stone",
-            Some(core_sim::STRIP_IT_BARE),
-            BAND_WORKERS,
-        );
-        assert_eq!(
-            source_materials(&app, band),
-            at_the_default_floor,
-            "a player floor BELOW what the rung already cannot reach binds nothing — the two \
-             compose as a maximum, never as a sum"
-        );
-
-        // …and above it, the player's binds. At the top of the dial nothing at all is reachable.
-        assign_extract(
-            &mut app,
-            faction,
-            WORKING,
-            "stone",
-            Some(LEAVE_THE_WHOLE_STAND),
-            BAND_WORKERS,
-        );
-        assert!(
-            source_materials(&app, band).is_empty(),
-            "a floor above the rung's binds instead of it — and stone took one with no branch on \
-             its rate anywhere in the sim"
-        );
+        // **Every position of the dial, including both ends**, against the one figure.
+        for floor in [
+            core_sim::STRIP_IT_BARE,
+            core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            LEAVE_THE_WHOLE_STAND,
+        ] {
+            assign_extract(
+                &mut app,
+                faction,
+                WORKING,
+                "stone",
+                Some(floor),
+                BAND_WORKERS,
+            );
+            assert_eq!(
+                source_materials(&app, band),
+                at_the_default_floor,
+                "a floor of {floor} on a body that never renews is accepted and does not bind — \
+                 the quarry's own rung floor is the only one it has"
+            );
+        }
     }
 
     /// The seeded amount is a product of two config numbers in single precision, so an exact `==`

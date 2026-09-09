@@ -1164,6 +1164,7 @@ fn a_slumped_working_can_be_cut_back_open() {
         core_sim::extraction::deposit_reachable(
             working.stock,
             tile_deposit_capacity(&config, STONE, &ground),
+            core_sim::extraction::tile_deposit_regrowth(&config, STONE, &ground),
             &deposit_payoff(working.standing(), &ladder),
             TAKE_WHAT_THE_RUNG_REACHES,
         )
@@ -1825,6 +1826,11 @@ mod wire {
     /// rather than about the curve.
     const A_CLOSE_ENOUGH_TAKE: f32 = 1e-4;
 
+    /// **The margin on a comparison of WHOLE-DEPOSIT quantities**, where the one above is sized for
+    /// a per-turn take. A rock body is in the thousands, so a single-precision product of a fraction
+    /// and a capacity carries three or four fewer decimal places than one of a rate and a crew.
+    const A_CLOSE_ENOUGH_BODY: f32 = 1e-2;
+
     /// ⛔ **THE ⚠ MUST NOT FIRE ON THE MOST ORDINARY ACTION IN THE FEATURE** (issue #650).
     ///
     /// The sustainable half used to be the growth term read at the deposit's *current* stock. A
@@ -2007,23 +2013,74 @@ mod wire {
             rock.regrowth_samples.iter().all(|delta| *delta == 0.0),
             "rock's rate is zero, so its curve is flat at zero rather than absent: {rock:?}"
         );
-        // ⛔ **AND THE ROCK ROW IS WHERE THE `max` IS DISTINGUISHABLE FROM A SUM.** Its rung
-        // (`extraction:quarry`) strands a real fraction of the body, so the two floors are two
-        // different numbers here where the wood row's are equal — a sum would strand `0.15 + 0.5` of
-        // it and quote a reach a third short of the truth.
+        // ⛔ **AND ON THE ROCK ROW THE CREW'S FLOOR IS PUBLISHED AND DOES NOT BIND** (issue #650).
+        // A floor protects regrowth and rock has none, so `extraction:quarry`'s own remainder is the
+        // only floor a quarry has — even though the row carries the shipped default of 0.5, which is
+        // the *deeper* of the two and would bind on any renewing ground.
         assert!(
-            rock.rung_floor_fraction > 0.0 && rock.rung_floor_fraction != rock.floor,
-            "fixture: the two floors must differ here, or neither assertion below distinguishes a \
-             maximum from a sum: {rock:?}"
-        );
-        let composed = rock.rung_floor_fraction.max(rock.floor);
-        assert!(
-            (rock.reachable - (rock.stock - composed * rock.capacity)).abs() < A_CLOSE_ENOUGH_TAKE,
-            "the deeper of the two binds, and it is the ONLY one that binds: {rock:?}"
+            rock.rung_floor_fraction > 0.0 && rock.floor > rock.rung_floor_fraction,
+            "fixture: the crew's floor must be the DEEPER of the two here, or this asserts nothing \
+             about which one was dropped: {rock:?}"
         );
         assert!(
-            rock.reachable > rock.stock - (rock.rung_floor_fraction + rock.floor) * rock.capacity,
-            "…never their sum, which would strand ground twice over: {rock:?}"
+            (rock.reachable - (rock.stock - rock.rung_floor_fraction * rock.capacity)).abs()
+                < A_CLOSE_ENOUGH_TAKE,
+            "a finite working reaches everything above its RUNG's floor: {rock:?}"
+        );
+        assert!(
+            rock.reachable > rock.stock - rock.floor * rock.capacity,
+            "…and strictly more than the crew's floor would have left it: {rock:?}"
+        );
+    }
+
+    /// ⛔ **A QUARRY REACHES ITS RUNG'S 85% AT THE FLOOR EVERY ROW CARRIES BY DEFAULT** (issue #650),
+    /// and the runway and the take agree with it.
+    ///
+    /// The client offers the dial only where `regrowthRate > 0`, so a finite working's row carries
+    /// the omitted-token default of `0.5` — and `max(rung floor, player floor)` let that bind
+    /// **above** `extraction:quarry`'s own 0.15. A crew stopped at half a rock body while the same
+    /// sheet's verdict promised 85% of it, which is the entire argument for paying 250 work and 8
+    /// wood to open one.
+    ///
+    /// **What is asserted is the SUM** — what the crew has taken plus what it can still reach is the
+    /// rung's whole recovery of the body — because that is the promise the readout makes and it is
+    /// one number rather than a pair that could each drift. Against the defect it read `0.50`.
+    #[test]
+    fn a_quarry_at_the_default_floor_reaches_the_whole_of_what_its_rung_recovers() {
+        let (app, _wood, rock_tile) = a_wood_and_a_quarry();
+        let rock = published_working(&app, rock_tile, STONE);
+
+        assert_eq!(
+            rock.floor, A_FRESH_ASSIGNMENTS_FLOOR,
+            "fixture: the row carries the default the grammar supplies — stored and published on a \
+             finite working, and inert: {rock:?}"
+        );
+        assert!(
+            rock.floor > rock.rung_floor_fraction,
+            "fixture: and it is the DEEPER of the two, or the maximum would never have bound: \
+             {rock:?}"
+        );
+        assert!(
+            rock.actual_take > 0.0,
+            "**LIVENESS**: the crew must actually have cut, or the sum below is the reach alone: \
+             {rock:?}"
+        );
+
+        let recovered = (1.0 - rock.rung_floor_fraction) * rock.capacity;
+        assert!(
+            (rock.reachable + rock.actual_take - recovered).abs() < A_CLOSE_ENOUGH_BODY,
+            "the quarry crew must be able to work {recovered} of the body — what it has cut plus \
+             what it can still reach — not {}: {rock:?}",
+            rock.reachable + rock.actual_take
+        );
+        assert!(
+            rock.reachable > rock.stock - rock.floor * rock.capacity,
+            "…which is strictly more than the sent floor would have left it: {rock:?}"
+        );
+        assert_eq!(
+            rock.turns_remaining,
+            (rock.reachable / rock.actual_take).floor() as i32,
+            "and the runway is projected off that same reach, so the two readouts agree: {rock:?}"
         );
     }
 

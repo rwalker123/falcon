@@ -37,7 +37,8 @@
 //! Logistics  (once per working, `advance_deposits`)
 //!   stock    += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
 //! Population (once per band row on it)
-//!   floor     = max((1 − recovery_fraction(position)) × capacity, escapement × capacity)
+//!   rung      = (1 − recovery_fraction(position)) × capacity
+//!   floor     = if regrowth_rate(terrain) > 0 { max(rung, escapement × capacity) } else { rung }
 //!   reachable = max(0, stock − floor)
 //!   take      = min(workers × yield_per_worker_turn(position), reachable)
 //!   stock    -= take
@@ -47,6 +48,12 @@
 //! issue #650). Both are *an amount left standing* — the first is what this rung's reach cannot get
 //! at, the second is what the player told the crew to leave — so you stop at whichever is higher.
 //! Summing them, or clamping twice, would double-count on every rung.
+//!
+//! **…and the crew's half participates ONLY WHERE THE DEPOSIT RENEWS.** An escapement floor exists
+//! to protect *regrowth*; on a body at [`NEVER_RENEWS`] the stock it holds back is never taken at
+//! all, so it is not a conservation choice and does not bind. Without the condition the omitted-token
+//! default of `0.5` bound **above** `extraction:quarry`'s own 0.15 floor and a quarry crew stopped at
+//! half the rock body the readouts promised it.
 //!
 //! **The growth term runs once per working and the take once per row**, which is the plant web's
 //! split and is load-bearing rather than tidy: renewal inside the take ran `K` times on a working
@@ -260,6 +267,10 @@ impl DepositSource {
     /// The fallback is the **identity** of [`deposit_effective_floor`]'s `max`, not a policy: a
     /// working no band is on is described exactly by its rung's own reach, which is what its row
     /// said before a player floor existed.
+    ///
+    /// **On a working at [`NEVER_RENEWS`] this is stored, published and inert** — a floor guards
+    /// regrowth, and a rock body has none for it to guard, so [`deposit_effective_floor`] drops it
+    /// there. The reading stays honest about what the crews asked for; it simply changes nothing.
     pub fn escapement_floor(&self) -> f32 {
         self.last_floor.unwrap_or(crate::components::STRIP_IT_BARE)
     }
@@ -491,12 +502,37 @@ const WHOLE_DEPOSIT_STANDING: f32 = 1.0;
 /// `escapement` is a fraction of `capacity` (`components::floor_is_valid`'s `0.0..=1.0`, enforced at
 /// the command boundary), which is why it is multiplied by the capacity here rather than compared
 /// against a stock.
+///
+/// ⛔ **THE PLAYER'S FLOOR PARTICIPATES ONLY WHERE THE DEPOSIT RENEWS, AND THAT IS WHAT AN
+/// ESCAPEMENT FLOOR *IS*.** A floor protects **regrowth**: stock left standing on a renewing deposit
+/// is next year's harvest, so leaving it is a conservation choice with a return. On a body at
+/// [`NEVER_RENEWS`] the stock left standing is simply never taken — it protects a future that does
+/// not exist — so the crew's floor is not a conservation choice at all and must not bind. The rung's
+/// own unreachable remainder is the only floor a quarry has.
+///
+/// **The rate is the GROUND's, un-scaled by [`RungExtractionPayoff::regrowth_multiplier`]**, which
+/// is [`deposit_runway`]'s own reading of *"is this working finite"*: a rung scales a rate, it does
+/// not make the ground finite, so a wood whose current rung happens to multiply by nothing is still
+/// a wood whose standing stock comes back.
+///
+/// ⛔ **THE CONDITION LIVES HERE AND NOWHERE ELSE.** It is deliberately not a refusal at the command
+/// boundary and deliberately not the client declining to send a floor: the same
+/// `assign_labor … extract … 0.5 3` can come from a script or a raw command line, and a grammar that
+/// refused the token on one branch would make the two branches' commands differ in shape for a value
+/// that simply has no effect. The row keeps carrying whatever was sent and
+/// [`DepositSource::last_floor`] keeps stamping it — **stored, published, and inert on a finite
+/// working** — because the sim knows the rate and the rule belongs with the fact.
 pub fn deposit_effective_floor(
     capacity: f32,
+    regrowth_rate: f32,
     payoff: &RungExtractionPayoff,
     escapement: f32,
 ) -> f32 {
-    deposit_floor(capacity, payoff).max((escapement * capacity).max(DEPOSIT_EMPTY))
+    let rung_floor = deposit_floor(capacity, payoff);
+    if regrowth_rate <= NEVER_RENEWS {
+        return rung_floor;
+    }
+    rung_floor.max((escapement * capacity).max(DEPOSIT_EMPTY))
 }
 
 /// **WHAT IS LEFT ABOVE THE FLOOR FOR THIS CREW TO TAKE** — the deposit's twin of
@@ -504,14 +540,17 @@ pub fn deposit_effective_floor(
 ///
 /// ⛔ **IT IS THE SINGLE PLACE THE TWO FLOORS ARE COMPOSED** ([`deposit_effective_floor`]), so the
 /// take, the runway, the row's `reachable` and the lesson's work predicate all move together. A
-/// consumer that subtracted a floor of its own would be a second answer to one question.
+/// consumer that subtracted a floor of its own would be a second answer to one question — including
+/// the *"only where it renews"* condition [`deposit_effective_floor`] puts on the crew's half.
 pub fn deposit_reachable(
     stock: f32,
     capacity: f32,
+    regrowth_rate: f32,
     payoff: &RungExtractionPayoff,
     escapement: f32,
 ) -> f32 {
-    (stock - deposit_effective_floor(capacity, payoff, escapement)).max(DEPOSIT_EMPTY)
+    (stock - deposit_effective_floor(capacity, regrowth_rate, payoff, escapement))
+        .max(DEPOSIT_EMPTY)
 }
 
 /// **WHAT A CREW OF `workers` TAKES THIS TURN** — `min(what the hands can lift, what the crew is
@@ -531,13 +570,18 @@ pub fn deposit_take(
     workers: u32,
     stock: f32,
     capacity: f32,
+    regrowth_rate: f32,
     payoff: &RungExtractionPayoff,
     escapement: f32,
 ) -> f32 {
     let labor = workers as f32 * payoff.yield_per_worker_turn;
-    labor
-        .max(DEPOSIT_EMPTY)
-        .min(deposit_reachable(stock, capacity, payoff, escapement))
+    labor.max(DEPOSIT_EMPTY).min(deposit_reachable(
+        stock,
+        capacity,
+        regrowth_rate,
+        payoff,
+        escapement,
+    ))
 }
 
 /// **ONE TURN OF RENEWAL** — the logistic curve every stock in this game grows on, evaluated at a
@@ -775,7 +819,8 @@ pub fn deposit_runway(
     config: &ExtractionConfig,
     ladder: &LadderConfig,
 ) -> i32 {
-    if tile_deposit_regrowth(config, &source.material, ground) > NEVER_RENEWS {
+    let regrowth_rate = tile_deposit_regrowth(config, &source.material, ground);
+    if regrowth_rate > NEVER_RENEWS {
         return sim_schema::DEPOSIT_RUNWAY_NOT_APPLICABLE;
     }
     if source.last_take <= NO_TAKE_THIS_TURN {
@@ -783,10 +828,17 @@ pub fn deposit_runway(
     }
     let capacity = tile_deposit_capacity(config, &source.material, ground);
     let payoff = deposit_payoff(&source.standing, ladder);
-    // **The runway picks the crew's floor up through `deposit_reachable`, not beside it** — the
-    // numerator is what the crews cutting this working can still get at, so raising the floor
-    // shortens the runway by exactly the stock the player asked to leave standing.
-    let reachable = deposit_reachable(source.stock, capacity, &payoff, source.escapement_floor());
+    // **The runway picks the crew's floor up through `deposit_reachable`, not beside it** — so it
+    // inherits [`deposit_effective_floor`]'s *"only where it renews"* condition too, and a floor sent
+    // to a finite working shortens no runway because it shortens no take. The rate is handed down
+    // rather than short-circuited here: one place decides what a floor does.
+    let reachable = deposit_reachable(
+        source.stock,
+        capacity,
+        regrowth_rate,
+        &payoff,
+        source.escapement_floor(),
+    );
     (reachable / source.last_take).floor() as i32
 }
 
@@ -913,8 +965,19 @@ pub fn take_from_deposit(
 ) -> DepositTake {
     let capacity = tile_deposit_capacity(config, &source.material, ground);
     let payoff = deposit_payoff(&source.standing, ladder);
-    let reachable_before = deposit_reachable(source.stock, capacity, &payoff, escapement);
-    let taken = deposit_take(workers, source.stock, capacity, &payoff, escapement);
+    // The ground's own rate, because [`deposit_effective_floor`] lets the crew's floor bind only
+    // where the deposit renews.
+    let regrowth_rate = tile_deposit_regrowth(config, &source.material, ground);
+    let reachable_before =
+        deposit_reachable(source.stock, capacity, regrowth_rate, &payoff, escapement);
+    let taken = deposit_take(
+        workers,
+        source.stock,
+        capacity,
+        regrowth_rate,
+        &payoff,
+        escapement,
+    );
     source.stock = (source.stock - taken).max(DEPOSIT_EMPTY);
     // **The floor this row worked to, kept at the deepest across the bands cutting this working** —
     // stamped here rather than by the caller so the take and the reading every readout is composed
@@ -1076,6 +1139,12 @@ mod tests {
     /// *"strip it"* rather than as *"this test is not about the dial"*.
     const NO_CREW_FLOOR: f32 = crate::components::STRIP_IT_BARE;
 
+    /// **THIS DEPOSIT COMES BACK** — the rate a test passes when what it is asserting about is the
+    /// crew's floor, which [`deposit_effective_floor`] lets bind only on renewing ground. It is
+    /// mixed woodland's shipped rate, named rather than written `0.03` for `NO_CREW_FLOOR`'s reason:
+    /// in that argument a bare number reads as tuning rather than as *"and this one regrows"*.
+    const A_RENEWING_RATE: f32 = 0.03;
+
     /// A payoff stated inline, so each test says exactly what rung shape it is asserting about.
     fn payoff(
         yield_per_worker_turn: f32,
@@ -1150,8 +1219,14 @@ mod tests {
         let deep = payoff(2.2, 0.85, REGROWTH_UNCHANGED);
         assert!(deposit_floor(A_ROCK_BODY, &deep) < deposit_floor(A_ROCK_BODY, &shallow));
         assert!(
-            deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &deep, NO_CREW_FLOOR)
-                > deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &shallow, NO_CREW_FLOOR)
+            deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, NEVER_RENEWS, &deep, NO_CREW_FLOOR)
+                > deposit_reachable(
+                    A_ROCK_BODY,
+                    A_ROCK_BODY,
+                    NEVER_RENEWS,
+                    &shallow,
+                    NO_CREW_FLOOR
+                )
         );
     }
 
@@ -1164,13 +1239,26 @@ mod tests {
     #[test]
     fn the_take_stops_at_the_rungs_floor_however_many_hands_are_on_it() {
         let shallow = payoff(0.4, 0.15, REGROWTH_UNCHANGED);
-        let reach = deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &shallow, NO_CREW_FLOOR);
+        let reach = deposit_reachable(
+            A_ROCK_BODY,
+            A_ROCK_BODY,
+            NEVER_RENEWS,
+            &shallow,
+            NO_CREW_FLOOR,
+        );
         assert!(
             1000.0 * shallow.yield_per_worker_turn > reach,
             "fixture: the crew must outrun the reach, or this asserts nothing"
         );
         assert_eq!(
-            deposit_take(1000, A_ROCK_BODY, A_ROCK_BODY, &shallow, NO_CREW_FLOOR),
+            deposit_take(
+                1000,
+                A_ROCK_BODY,
+                A_ROCK_BODY,
+                NEVER_RENEWS,
+                &shallow,
+                NO_CREW_FLOOR
+            ),
             reach,
             "the rung's floor is the cap, not the crew"
         );
@@ -1186,7 +1274,14 @@ mod tests {
         let mut stock = capacity;
         let mut previous = stock;
         for _ in 0..20 {
-            let taken = deposit_take(10, stock, capacity, &felling, NO_CREW_FLOOR);
+            let taken = deposit_take(
+                10,
+                stock,
+                capacity,
+                A_RENEWING_RATE,
+                &felling,
+                NO_CREW_FLOOR,
+            );
             let after = (stock - taken).max(DEPOSIT_EMPTY);
             stock = deposit_regrowth(after, capacity, 0.03 * felling.regrowth_multiplier, A_SEED);
             assert!(stock < previous, "a wood being over-cut must fall");
@@ -1202,6 +1297,9 @@ mod tests {
     /// *half* changes nothing there, and a crew told to leave nearly all of it binds. `deep`
     /// recovers 0.9 and strands a tenth, so the same half-the-body order binds immediately. One
     /// payoff would have shown only one of those.
+    ///
+    /// It is asserted on **renewing** ground throughout, because that is where the crew's half
+    /// participates at all — see [`the_crews_floor_is_dropped_on_a_deposit_that_never_renews`].
     #[test]
     fn the_rungs_floor_and_the_crews_compose_as_a_maximum() {
         let shallow = payoff(0.4, 0.15, REGROWTH_UNCHANGED);
@@ -1209,19 +1307,43 @@ mod tests {
 
         // **Below the rung's own floor the dial does nothing** — `max(0.85, 0.5) == 0.85`.
         assert_eq!(
-            deposit_effective_floor(A_ROCK_BODY, &shallow, HALF_THE_BODY),
-            deposit_floor(A_ROCK_BODY, &shallow),
+            deposit_effective_floor(A_RENEWING_BODY, A_RENEWING_RATE, &shallow, HALF_THE_BODY),
+            deposit_floor(A_RENEWING_BODY, &shallow),
             "a crew asked to leave less than the rung already cannot reach leaves the rung's floor"
         );
         assert_eq!(
-            deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &shallow, HALF_THE_BODY),
-            deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &shallow, NO_CREW_FLOOR),
+            deposit_reachable(
+                A_RENEWING_BODY,
+                A_RENEWING_BODY,
+                A_RENEWING_RATE,
+                &shallow,
+                HALF_THE_BODY
+            ),
+            deposit_reachable(
+                A_RENEWING_BODY,
+                A_RENEWING_BODY,
+                A_RENEWING_RATE,
+                &shallow,
+                NO_CREW_FLOOR
+            ),
             "…so the reach is the same number it was before anyone touched the dial"
         );
 
         // **Above it the crew's binds** — on a rung that reaches nearly the whole body.
-        let unbid = deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &deep, NO_CREW_FLOOR);
-        let bid = deposit_reachable(A_ROCK_BODY, A_ROCK_BODY, &deep, HALF_THE_BODY);
+        let unbid = deposit_reachable(
+            A_RENEWING_BODY,
+            A_RENEWING_BODY,
+            A_RENEWING_RATE,
+            &deep,
+            NO_CREW_FLOOR,
+        );
+        let bid = deposit_reachable(
+            A_RENEWING_BODY,
+            A_RENEWING_BODY,
+            A_RENEWING_RATE,
+            &deep,
+            HALF_THE_BODY,
+        );
         assert!(
             bid < unbid,
             "a crew asked to leave half a body it could nearly all reach must reach less: \
@@ -1236,15 +1358,99 @@ mod tests {
         // ⛔ **AND IT IS NOT A SUM.** `0.85 + 0.5` of a body is 135% of it, which would strand the
         // whole seam on the shallow rung and read as a working nobody can cut.
         assert!(
-            deposit_effective_floor(A_ROCK_BODY, &shallow, HALF_THE_BODY)
-                < deposit_floor(A_ROCK_BODY, &shallow) + HALF_THE_BODY * A_ROCK_BODY,
+            deposit_effective_floor(A_RENEWING_BODY, A_RENEWING_RATE, &shallow, HALF_THE_BODY)
+                < deposit_floor(A_RENEWING_BODY, &shallow) + HALF_THE_BODY * A_RENEWING_BODY,
             "the two floors must not add"
         );
     }
 
+    /// ⛔ **A FLOOR SENT TO A DEPOSIT THAT NEVER RENEWS DOES NOT BIND** (issue #650) — the arm the
+    /// `max` above must NOT take, stated on both branches so the fix's narrowness is the assertion
+    /// rather than a claim beside it.
+    ///
+    /// The escapement floor's job is to protect **regrowth**; a rock body has none, so what the dial
+    /// would hold back is stock nobody ever takes. The defect was invisible on
+    /// `extraction:gathering`, whose own 0.85 floor swallows the omitted-token default of `0.5` —
+    /// and on `extraction:quarry`, whose floor is 0.15, that default **bound above the rung** and
+    /// stopped a quarry crew at half a body the readouts had promised 85% of.
+    #[test]
+    fn the_crews_floor_is_dropped_on_a_deposit_that_never_renews() {
+        // The two shipped `extraction` rungs, at their config recovery fractions.
+        let gathering = payoff(0.4, 0.15, REGROWTH_UNCHANGED);
+        let quarry = payoff(2.2, 0.85, REGROWTH_UNCHANGED);
+
+        // **THE REGRESSION.** A quarry reaches its own 85% whatever the row carried.
+        assert_eq!(
+            deposit_reachable(
+                A_ROCK_BODY,
+                A_ROCK_BODY,
+                NEVER_RENEWS,
+                &quarry,
+                DEFAULT_ESCAPEMENT_FLOOR
+            ),
+            deposit_reachable(
+                A_ROCK_BODY,
+                A_ROCK_BODY,
+                NEVER_RENEWS,
+                &quarry,
+                NO_CREW_FLOOR
+            ),
+            "a floor on rock must not bind: the quarry's own 0.15 remainder is its only floor"
+        );
+        assert!(
+            (deposit_effective_floor(A_ROCK_BODY, NEVER_RENEWS, &quarry, DEFAULT_ESCAPEMENT_FLOOR)
+                - deposit_floor(A_ROCK_BODY, &quarry))
+            .abs()
+                < A_ROUNDING,
+            "…which is `(1 − 0.85) × capacity`, not `0.5 × capacity`"
+        );
+
+        // **AND THE ARM THAT ALWAYS LOOKED RIGHT still does** — gathering's own floor was already
+        // higher, so nothing there moves either way and the defect hid behind it.
+        assert_eq!(
+            deposit_reachable(
+                A_ROCK_BODY,
+                A_ROCK_BODY,
+                NEVER_RENEWS,
+                &gathering,
+                DEFAULT_ESCAPEMENT_FLOOR
+            ),
+            deposit_reachable(
+                A_ROCK_BODY,
+                A_ROCK_BODY,
+                NEVER_RENEWS,
+                &gathering,
+                NO_CREW_FLOOR
+            ),
+            "a gathering crew was never affected by this floor and still is not"
+        );
+
+        // ⛔ **THE BRANCH THE FLOOR WAS BUILT FOR IS UNTOUCHED.** The same order on the same body at
+        // a renewing rate still stops the crew at half of it.
+        let renewing = deposit_effective_floor(
+            A_RENEWING_BODY,
+            A_RENEWING_RATE,
+            &quarry,
+            DEFAULT_ESCAPEMENT_FLOOR,
+        );
+        assert!(
+            (renewing - DEFAULT_ESCAPEMENT_FLOOR * A_RENEWING_BODY).abs() < A_ROUNDING,
+            "a wood must still hold back exactly what the crew was told to leave: {renewing}"
+        );
+    }
+
+    /// The floor an `extract` row carries when the command omitted the token — the value that
+    /// exposed the defect, read from the command layer rather than transcribed.
+    const DEFAULT_ESCAPEMENT_FLOOR: f32 = crate::components::DEFAULT_ESCAPEMENT_FLOOR;
+
     /// **Half the body left standing** — a floor below `shallow`'s own (0.85) and above `deep`'s
     /// (0.10), which is what lets one number assert both directions of the maximum.
     const HALF_THE_BODY: f32 = 0.5;
+
+    /// **A BODY OF THE SAME SIZE AS [`A_ROCK_BODY`] THAT COMES BACK** — so the renewing/finite pair
+    /// swaps the **rate** and nothing else, which is what makes the difference between them the
+    /// assertion.
+    const A_RENEWING_BODY: f32 = A_ROCK_BODY;
 
     /// **A CREW AT A FLOOR DRAWS DOWN TO IT AND THEN TAKES ONLY WHAT GROWS BACK** — the behaviour
     /// the whole feature exists for, walked far enough that the settling is a fact rather than a
@@ -1265,7 +1471,7 @@ mod tests {
         let mut last_take = 0.0;
         for turn in 0..60 {
             stock = deposit_regrowth(stock, CAPACITY, RATE, A_SEED);
-            let taken = deposit_take(CREW, stock, CAPACITY, &felling, HALF_THE_BODY);
+            let taken = deposit_take(CREW, stock, CAPACITY, RATE, &felling, HALF_THE_BODY);
             stock = (stock - taken).max(DEPOSIT_EMPTY);
             assert!(
                 stock >= floor_stock - A_ROUNDING,
@@ -1301,7 +1507,14 @@ mod tests {
         let none = payoff(5.0, NO_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
         assert_eq!(deposit_floor(A_ROCK_BODY, &none), A_ROCK_BODY);
         assert_eq!(
-            deposit_take(50, A_ROCK_BODY, A_ROCK_BODY, &none, NO_CREW_FLOOR),
+            deposit_take(
+                50,
+                A_ROCK_BODY,
+                A_ROCK_BODY,
+                NEVER_RENEWS,
+                &none,
+                NO_CREW_FLOOR
+            ),
             DEPOSIT_EMPTY
         );
     }
@@ -1319,11 +1532,11 @@ mod tests {
         let felling = payoff(2.0, WHOLE_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
         let capacity = 30.0;
         let mut stock = capacity;
-        let reach = deposit_reachable(stock, capacity, &felling, NO_CREW_FLOOR);
+        let reach = deposit_reachable(stock, capacity, A_RENEWING_RATE, &felling, NO_CREW_FLOOR);
         // Four bands of five, one after another: `4 x 5 x 2.0 = 40` against a reach of 30.
         let mut total = 0.0;
         for _ in 0..4 {
-            let taken = deposit_take(5, stock, capacity, &felling, NO_CREW_FLOOR);
+            let taken = deposit_take(5, stock, capacity, A_RENEWING_RATE, &felling, NO_CREW_FLOOR);
             total += taken;
             stock = (stock - taken).max(DEPOSIT_EMPTY);
         }

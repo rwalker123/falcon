@@ -194,6 +194,10 @@ fn deposit_row(
     let measure = deposit_measure(source, ground, config);
     let demand = deposit_keeping_basis(source, measure, ladder);
     let grace = deposit_neglect_grace_remaining(source, ladder);
+    // **THE GROUND'S OWN RATE, UN-SCALED** — the reading `deposit_effective_floor` forks the crew's
+    // floor on and `deposit_runway` forks the readout on. The field published below scales it by the
+    // rung; these are two different questions off one number, so it is read once.
+    let regrowth_rate = tile_deposit_regrowth(config, &source.material, ground);
     // **A tile nobody has worked is in no queue and carries no kit** — both indexes are keyed
     // `(tile, material)` and answer the empty/false default for a key they do not hold, which is
     // the honest reading rather than a fabricated one.
@@ -210,9 +214,16 @@ fn deposit_row(
         // **What the CREWS ON IT can get at**, which is never simply the stock: a rung that cannot
         // reach the whole seam leaves stock it cannot take, climbing is how you reach deeper — and
         // since #650 a crew told to leave more standing than the rung already cannot reach binds
-        // instead. `deposit_reachable` composes the pair as a maximum, and it is the only place
-        // that is done.
-        reachable: deposit_reachable(source.stock, capacity, &payoff, source.escapement_floor()),
+        // instead — **on a renewing deposit**. `deposit_reachable` composes the pair as a maximum
+        // and drops the crew's half at `NEVER_RENEWS`, and it is the only place either is done, so
+        // the published reach and the take a quarry gets cannot disagree.
+        reachable: deposit_reachable(
+            source.stock,
+            capacity,
+            regrowth_rate,
+            &payoff,
+            source.escapement_floor(),
+        ),
         // **THE FLOOR THIS TURN'S CREWS WORKED TO**, deepest-first across the bands cutting it —
         // the working's own reading of `LaborAssignmentState::floor`, which is per BAND ROW. Both
         // ship: a row says what one band asked for, this says where the stock actually came to rest.
@@ -233,8 +244,7 @@ fn deposit_row(
         // ⛔ **THE FIELD THAT DECIDES WHICH READOUT THE CLIENT DRAWS**, and it is the ground's rate
         // scaled by the rung — not the branch. A flint scatter and a quarry are both `extraction`
         // and land on opposite sides of it.
-        regrowth_rate: tile_deposit_regrowth(config, &source.material, ground)
-            * payoff.regrowth_multiplier,
+        regrowth_rate: regrowth_rate * payoff.regrowth_multiplier,
         // The rung it HOLDS. A client reads this string rather than thresholding the meter beside
         // it, which describes a different rung.
         rung: source.rung().wire_key(),

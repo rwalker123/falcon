@@ -2023,8 +2023,9 @@ pub enum LaborTarget {
     /// **AND IT CARRIES A FLOOR, WHICH DOES NOT CONTRADICT THE RUNG'S** (issue #650). A deposit has
     /// two floors and they are the same kind of quantity — *an amount left standing* — so they
     /// compose as a **maximum**, never as two clamps and never as a sum: you stop at whichever is
-    /// higher of what the rung's reach cannot get at and what the player told the crew to leave.
-    /// `extraction::deposit_effective_floor` is the one place that is said.
+    /// higher of what the rung's reach cannot get at and what the player told the crew to leave —
+    /// **and the crew's half participates only where the deposit renews**.
+    /// `extraction::deposit_effective_floor` is the one place both of those are said.
     Extract {
         tile: UVec2,
         /// The `extraction.json` deposit this crew works — `wood`, `stone`, and whatever the minerals
@@ -2037,11 +2038,17 @@ pub enum LaborTarget {
         /// [`DEFAULT_ESCAPEMENT_FLOOR`] when the player named none; validated `0.0..=1.0` at the
         /// command boundary ([`floor_is_valid`]) and never clamped silently.
         ///
-        /// **It is offered on BOTH deposit branches, and the sim does not fork on `regrowth_rate`.**
-        /// A floor on a rate-0 quarry is meaningless but harmless — it caps the take and shortens the
-        /// runway, both honestly — and *whether to offer the dial* is a client decision the client
-        /// already makes through the `regrowth_rate > 0` fork it uses for every other deposit
-        /// readout. A sim that refused a floor on stone would be a second place that fork lives.
+        /// **THE GRAMMAR ACCEPTS IT ON BOTH DEPOSIT BRANCHES, AND ON A FINITE ONE IT IS STORED,
+        /// PUBLISHED AND INERT** (issue #650). An escapement floor protects **regrowth**, so at
+        /// `NEVER_RENEWS` there is no future for it to protect and
+        /// `extraction::deposit_effective_floor` drops it: it caps no take and shortens no runway.
+        ///
+        /// ⛔ **THE RULE IS THE SIM'S, NOT THE COMMAND BOUNDARY'S AND NOT THE CLIENT'S.** *Whether
+        /// to offer the dial* is a client decision through the `regrowth_rate > 0` fork it already
+        /// makes for every other deposit readout — but a script or a raw command line can send
+        /// `assign_labor … extract … 0.5 3` too, and the sim is what knows the rate. Refusing the
+        /// token here instead would make the two branches' commands differ in shape for a value that
+        /// simply has no effect, so it is accepted uniformly and applied conditionally.
         floor: f32,
     },
 }

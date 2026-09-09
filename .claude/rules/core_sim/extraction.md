@@ -91,7 +91,8 @@ Logistics  — once per WORKING (`advance_deposits`, phase 4)
   stock    += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
 
 Population — once per BAND ROW on it (the `Extract` arm)
-  floor     = max((1 − recovery_fraction(position)) × capacity, escapement × capacity)
+  rung      = (1 − recovery_fraction(position)) × capacity
+  floor     = if regrowth_rate(terrain) > 0 { max(rung, escapement × capacity) } else { rung }
   reachable = max(0, stock − floor)
   take      = min(workers × yield_per_worker_turn(position), reachable)
   stock    -= take
@@ -145,7 +146,9 @@ dial `Forage` and `Hunt` have carried since `docs/plan_harvest_floor.md`. A depo
 > ### ⛔ `max`, NEVER a sum and never two clamps
 >
 > ```text
-> effective_floor = max(deposit_floor(capacity, payoff), escapement × capacity)
+> rung_floor      = deposit_floor(capacity, payoff)
+> effective_floor = if regrowth_rate(terrain) > 0 { max(rung_floor, escapement × capacity) }
+>                   else                          { rung_floor }
 > reachable       = max(0, stock − effective_floor)
 > ```
 >
@@ -163,11 +166,38 @@ dial `Forage` and `Hunt` have carried since `docs/plan_harvest_floor.md`. A depo
 > move together. `extraction::tests::the_rungs_floor_and_the_crews_compose_as_a_maximum` asserts it
 > from both sides *and* against the sum, on two payoffs chosen so one number binds each way.
 
-**The floor is on BOTH branches and the sim does not fork on `regrowth_rate`.** A floor on a rate-0
-quarry is meaningless but harmless — it caps the take and shortens the runway, both honestly — and
-*whether to offer the dial* is a client decision made through the `regrowthRate > 0` fork the client
-already uses for every other deposit readout. A sim that refused a floor on stone would be a second
-place that fork lives.
+### ⛔ The crew's half of that `max` participates ONLY WHERE THE DEPOSIT RENEWS
+
+An escapement floor exists to protect **regrowth**. Stock left standing on a renewing deposit is next
+year's harvest, so leaving it is a conservation choice with a return; stock left standing on a body at
+`NEVER_RENEWS` is simply never taken, protecting a future that does not exist. So on a rate-0 deposit
+the player's floor is not a conservation choice at all and does not bind — **the rung's own
+unreachable remainder is the only floor a quarry has.**
+
+The rate `deposit_effective_floor` forks on is the **ground's**, un-scaled by `regrowth_multiplier`,
+which is `deposit_runway`'s own reading of *"is this working finite"*: a rung scales a rate, it does
+not make the ground finite.
+
+> **Without the condition a quarry crew stopped at HALF the rock body its own readouts promised it.**
+> The client offers the dial only where `regrowthRate > 0` — correct, because rock does not grow
+> back — so a finite working's row carries the omitted-token default `DEFAULT_ESCAPEMENT_FLOOR`
+> (0.5). On `extraction:gathering` (recovery 0.15, rung floor 0.85) the `max` swallowed it and
+> nothing showed; on **`extraction:quarry`** (recovery 0.85, rung floor 0.15) **0.50 bound above the
+> rung**, against a verdict sheet promising 85% of the body for 250 work and 8 wood.
+> `wire::a_quarry_at_the_default_floor_reaches_the_whole_of_what_its_rung_recovers` asserts the
+> **sum** — what the crew has cut plus what it can still reach is the rung's whole recovery — because
+> that is the promise the readout makes, and it read `0.50` against the defect.
+> `extraction::tests::the_crews_floor_is_dropped_on_a_deposit_that_never_renews` pins the same
+> condition beside the two arms it must not touch: the gathering rung, whose own floor was always
+> higher, and a renewing body at the same order, which still stops the crew at half of it.
+
+**The grammar still accepts a floor on a finite working, and the value is stored, published and
+inert.** `deposit_effective_floor` is where the rule lives because **the sim is what knows the rate**:
+a raw command line or a script can send `assign_labor … extract … 0.5 3` as readily as the client can,
+and a client that sent `0` instead would be one producer of the verdict out of several. Refusing the
+token at the command boundary is the other rejected shape — it would make the two branches' commands
+differ in shape for a value that simply has no effect, and `DepositSource::last_floor` stays honest
+about what the crews asked for either way.
 
 **Grammar:** `assign_labor <f> <b> extract <x> <y> <material> [floor] <workers>` — the `hunt` arm's
 shape with a material where the herd id goes, disambiguated **by tail length** because the free-form
@@ -588,8 +618,8 @@ Four fields ride the row for the escapement instrument, and three of them are **
 
 | field | what it is |
 |---|---|
-| `floor` | where **this turn's crews** stopped, as a fraction of `capacity` — `DepositSource::last_floor`, deepest-first across the bands cutting it. Not a restatement of `LaborAssignment.floor`, which is per **band row**: that says what one band asked for, this says where the stock came to rest |
-| `rungFloorFraction` | the **rung's own** floor in the same units, `1 − recovery_fraction`. ⛔ **Compose the two as a MAXIMUM** — a chart that added them would draw a gathering crew stopping 85% of a seam short of where it really stops |
+| `floor` | where **this turn's crews** stopped, as a fraction of `capacity` — `DepositSource::last_floor`, deepest-first across the bands cutting it. Not a restatement of `LaborAssignment.floor`, which is per **band row**: that says what one band asked for, this says where the stock came to rest. On a working at `NEVER_RENEWS` it is what the crews asked for and nothing more: the sim drops it, so the stock came to rest on the rung's floor |
+| `rungFloorFraction` | the **rung's own** floor in the same units, `1 − recovery_fraction`. ⛔ **Compose the two as a MAXIMUM, and only where `regrowthRate > 0`** — a chart that added them would draw a gathering crew stopping 85% of a seam short of where it really stops, and one that took the maximum on a quarry would draw it stopping at the dial the sim ignores there |
 | `perWorkerBiomass` | what ONE cutter moves per turn at the standing rung, in the material's own units. No seasonal weight and no take kit on either branch, so unlike a patch's it is the rung's rate flat and is never `0` on a live rung |
 | `regrowthSamples` | the deposit's own growth curve, sampled on the **same implicit x-axis** as the patch and herd curves (`snapshot::subsistence::regrowth_sample_fraction`), through `deposit_regrowth` — the seam `renew_deposit` advances the stock with, at the rung's scaled rate |
 
