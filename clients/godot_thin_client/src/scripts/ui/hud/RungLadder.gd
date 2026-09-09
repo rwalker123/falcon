@@ -1475,13 +1475,19 @@ static func _outright_bar(kind: String, source: Dictionary, prefix: String,
 ## the rung's pile and its standing bill, neither of which a crew moves. **The row being BUILT is the
 ## one exception**, and it quotes the SIM's chained countdown (`build_value`) rather than an estimate
 ## of this client's.
+## ⛔ **`cutters` AND `builders` ARE TWO DIFFERENT CREWS AND BOTH ARE READ.** `cutters` is the TAKE crew
+## on this working — what the sim's *no band is working this* rule tests, hence the CREW gate — while
+## `builders` is the band-wide pool that would RAISE the rung, which the countdown on a row already in
+## flight is quoted at. `cutters` is required and positional for `RungGates.deposit_gates`' own reason:
+## nothing on a `deposits` row states it, so a default would be a guess.
 static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
-        labels: Dictionary, builders: int = SourceForecast.BUILD_CREW_NONE,
+        labels: Dictionary, cutters: int,
+        builders: int = SourceForecast.BUILD_CREW_NONE,
         band: Dictionary = {}, queue: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var branch := HudDepositVocab.branch_of(deposit)
     var catalog := HudDepositVocab.branch_ladder(ladder, branch)
-    var gates := RungGates.deposit_gates(deposit, ladder, knowledge, labels)
+    var gates := RungGates.deposit_gates(deposit, ladder, knowledge, labels, cutters)
     var standing_order := HudDepositVocab.ladder_order_of(catalog,
         HudDepositVocab.rung_of(deposit))
     var floor_entry := HudDepositVocab.branch_floor_entry(ladder, branch)

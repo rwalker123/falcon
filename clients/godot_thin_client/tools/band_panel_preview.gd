@@ -17083,8 +17083,121 @@ func _assert_the_row_opens_the_rung_track(rows: Array[Control]) -> void:
 		_assert_band_panel("…with the wood it eats stated beneath it as the shared price aside",
 			_rung_track_aside_text().contains(HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT.split(
 				"%s")[0]) and _rung_track_aside_text().contains(WORKINGS_WOOD))
+	await _assert_the_pick_names_the_working()
 	_hud._bandpanel._dismiss_rung_track()
 	await _settle()
+	await _assert_a_crewless_working_says_so()
+
+## ⛔ **THE PICK NAMES A TILE *AND* A MATERIAL, AND THIS IS THE ONLY SURFACE THAT CAN PROVE IT**
+## (issue #650). A working is keyed on the `(tile, material)` PAIR — the near hex holds timber AND
+## rock — so a declaration that carried the tile alone would not merely under-specify the order, it
+## would raise the OTHER working's ladder, and the resulting line parses perfectly. `command_guard`
+## drives `Main.format_improvement` directly and can only assert the PARSE; the click path is here.
+##
+## **THE PRESS IS THE PLAYER'S CHAIN, END TO END** — the roster row's `⌃` (already pressed by the
+## caller), the track row it opened, the payload off `HudLayer.improvement_requested`, and
+## `Main.format_improvement`, the pure static `Main._on_hud_improvement` dispatches to. **The claim is
+## the LINE rather than the payload**, the declare probe's own rule: a payload can carry a perfectly
+## good material and still be formatted into the three-token grammar.
+##
+## **AND THE CARD CLOSES ON THE PRESS**, the rung presses' shared rule: the declaration re-renders the
+## zone this card is anchored to, so a card left standing is anchored to a row that has been freed.
+func _assert_the_pick_names_the_working() -> void:
+	var row := _rung_track_row(WORKINGS_QUARRY_VERB)
+	_assert_band_panel("…and the rock's own quarry row is PRESSABLE, the crew and the craft both there",
+		row != null)
+	if row == null:
+		return
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.improvement_requested.connect(sink)
+	row.pressed.emit()
+	await _settle()
+	_hud.improvement_requested.disconnect(sink)
+	var line := "" if seen.is_empty() \
+		else String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", ""))
+	# ⛔ **THE MATERIAL IS `stone`, WHICH IS THE WHOLE ASSERTION.** The mark was found by the rock's own
+	# `(tile, material)` handle and the near hex's OTHER working is wood, so a declaration that lost
+	# the material — or took the row's neighbour's — reads as a different line here.
+	var wanted := "%s %d %d %d %s" % [WORKINGS_QUARRY_VERB, HudConst.PLAYER_FACTION_ID,
+		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
+	print("band_panel_preview: workings ladder pick -> %s" % line)
+	_assert_band_panel("…and picking it sends `%s`, naming that row's TILE and its MATERIAL (got \"%s\")"
+			% [wanted, line],
+		line == wanted)
+	_assert_band_panel("…and the card closes on the press, the declaration re-rendering the zone it is anchored to",
+		_hud._bandpanel._rung_track == null or not _hud._bandpanel._rung_track.visible)
+	# ⛔ **THE ZONE IS RE-RENDERED BEFORE ANYTHING ELSE READS IT.** The caller found its `⌃` before the
+	# press and the crewless probe below finds its own after, because a declaration re-renders the work
+	# zone and `as Button` on a freed node aborts the walk with no `FAIL` line and an exit status of 0.
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## ⛔ **A WORKING NOBODY HOLDS REFUSES ITS WHOLE LADDER, AND THE CARD IS WHERE IT SAYS SO**
+## (issue #650). `queue_build_on_working_bands` filters `workers > 0` — `cultivate`'s shipped rule
+## applied unchanged — so a working held at a rung with its cutters pulled off cannot be raised until
+## somebody is put back on it. **The roster lists a 0-crew working** (one is still held and still owes,
+## which is the whole reason the pool exists), so the ladder is one click from that state.
+##
+## ⛔ **AND THE ROW IT IS OPENED FROM CANNOT STATE A CREW.** roads.md's per-row prohibition forbids a
+## crew count on a roster row and the sheet that staffs the working is on another surface, so without
+## this gate every rung refuses with nothing anywhere near the card saying why — the defect the gate
+## records exist to prevent.
+##
+## The FAR row is the fixture's own crewless working (`WORKINGS_NO_CUTTERS`), staged there since the
+## roster's membership test needed a row held at nobody.
+func _assert_a_crewless_working_says_so() -> void:
+	var wanted := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]
+	var mark: Button = null
+	for control in _collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_TRACK_META, []):
+		if String(control.get_meta(HudWorkVocab.WORKINGS_ROSTER_TRACK_META)) == wanted \
+				and control is Button:
+			mark = control as Button
+	_assert_band_panel("a working held at NOBODY still carries its declaring mark (%s)" % wanted,
+		mark != null)
+	if mark == null:
+		return
+	mark.pressed.emit()
+	await _settle()
+	await _save("band_panel_workings_track_no_crew")
+	var faces := _rung_track_faces()
+	var quarry_face := String(faces.get(WORKINGS_QUARRY_VERB, ""))
+	# **THE ROW STATES ITS PRICE AND THEN THE REFUSAL**, the branch's own two-clause face: a rung
+	# refused today is still one the player is planning toward, and a price hidden behind a refusal is
+	# a price nobody can plan against.
+	_assert_band_panel("…and its quarry row is refused for want of a CREW — `%s` (\"%s\")"
+			% [HudDepositVocab.GATE_SHORT_NO_CREW, quarry_face],
+		quarry_face.contains(HudDepositVocab.GATE_SHORT_NO_CREW))
+	_assert_band_panel("…leading with its pile all the same, so the price is still plannable (\"%s\")"
+			% quarry_face,
+		quarry_face.begins_with(HudDepositVocab.deposit_ladder_price_face(
+			HudDepositVocab.ladder_entry_of(
+				HudDepositVocab.deposit_ladder(_deposit_rung_catalog()),
+				HudDepositVocab.RUNG_KEY_QUARRY))))
+	# **AND IT IS A `Label`, NOT A GREYED BUTTON** — the shape is the statement, and a press the sim
+	# would refuse must not be reachable at all.
+	_assert_band_panel("…and no press is offered on it, the shape being the statement",
+		_rung_track_row(WORKINGS_QUARRY_VERB) == null)
+	# **THE HOVER NAMES THE REMEDY IN THE BRANCH'S OWN CREW NOUN** — *put diggers on it* on a rock,
+	# never one word for both branches. It is the whole of what makes this refusal explicable, and it
+	# is read off the ROW's `tooltip_text` rather than off the card's labels: a locked rung carries its
+	# short form on the face and its sentence on the hover, so the aside scan sees neither.
+	var hover := String(_rung_track_tooltips().get(WORKINGS_QUARRY_VERB, ""))
+	_assert_band_panel("…and its hover names the remedy in this branch's own crew noun (\"%s\")"
+			% hover,
+		hover.contains(HudDepositVocab.GATE_LONG_NO_CREW_FORMAT
+			% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_EXTRACTION).to_lower()))
+	_hud._bandpanel._dismiss_rung_track()
+	await _settle()
+
+## Every rung row's HOVER, as `improvement -> tooltip_text` — the twin of `_rung_track_faces`, off the
+## meta-carrying row itself. A refusal's SENTENCE lives here and its short form on the face, so a scan
+## of the card's labels testifies about neither.
+func _rung_track_tooltips() -> Dictionary:
+	var out: Dictionary = {}
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		out[String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META))] = control.tooltip_text
+	return out
 
 ## Put the world back the way the states after this one expect it — the road catalogue and the road
 ## network both cleared, exactly as `_restore_road_queue_fixture` does.
@@ -17274,6 +17387,20 @@ const WORKINGS_QUARRY_VERB := "quarry"
 ## queue the press joins, so the row states the two figures no crew moves.
 const WORKINGS_TURNS_ESTIMATE_MARK := "≈"
 
+## **THE STANDING ROW PLUS THE THREE DEPOSIT CRAFTS**, so a rung on either branch is refused for
+## something other than its craft. It is the standing row's own tracks EXTENDED rather than replaced:
+## the states around this block are rendered against those four, and a row carrying only the deposit
+## crafts would re-gate every plant and animal rung this file asserts elsewhere.
+func _workings_knowledge_row() -> Dictionary:
+	var tracks := _standing_knowledge_tracks()
+	for craft in [WORKINGS_CRAFT_WOODCRAFT, WORKINGS_CRAFT_CONSERVATIONISM, WORKINGS_CRAFT_QUARRYING]:
+		tracks[craft] = KNOWLEDGE_COMPLETE
+	return KnowledgeFx.progress_row(0, tracks)
+
+## A craft this faction knows outright — `HudConst.KNOWLEDGE_COMPLETE`, the bar every gate in this
+## client reads a track against, restated here rather than open-coded as a literal `1.0`.
+const KNOWLEDGE_COMPLETE := HudConst.KNOWLEDGE_COMPLETE
+
 ## The three ladder knowledges the deposit branches gate on, and the ground `extraction:quarry` wants.
 const WORKINGS_CRAFT_WOODCRAFT := "woodcraft"
 const WORKINGS_CRAFT_CONSERVATIONISM := "conservationism"
@@ -17344,7 +17471,13 @@ func _workings_row_value(row: Control) -> String:
 	return ""
 
 func _assert_the_workings_roster_names_its_workings() -> void:
-	# **THE CATALOG FIRST**, because every row's value cell and every row's `⌃` is read out of it.
+	# **THE DEPOSIT CRAFTS ARE LEARNED FOR THIS BLOCK, and that is what makes the ladder PRESSABLE.**
+	# The standing row this file renders every other state against carries the four rung-transition
+	# tracks and none of the deposit branches', so a quarry row asked against it is refused on its
+	# CRAFT — a `Label`, which no press can reach — and the declaration claims below would be claims
+	# about a control that is not there. `_restore_workings_roster_fixture` puts the standing row back.
+	_hud.update_intensification([_workings_knowledge_row()])
+	# **THE CATALOG NEXT**, because every row's value cell and every row's `⌃` is read out of it.
 	_hud.update_deposit_rungs(_deposit_rung_catalog())
 	_hud.update_deposits(_workings_rows())
 	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
@@ -17584,6 +17717,9 @@ func _label_titled_under_head(block: Control, title: String) -> Label:
 ## `_restore_roadwork_roster_fixture` idiom one branch over.
 func _restore_workings_roster_fixture() -> void:
 	_hud.update_deposits([])
+	# **AND THE KNOWLEDGE ROW WITH THEM.** A push REPLACES a faction's whole row, so the deposit crafts
+	# this block learns would otherwise ungate every rung on every state after it.
+	_hud.update_intensification([_standing_knowledge_row()])
 	# …and the catalog with them, `_restore_road_queue_fixture`'s own rule one branch over: it is a
 	# per-WORLD constant, so a delta never restates it and a state after this one would inherit it.
 	_hud.update_deposit_rungs([])

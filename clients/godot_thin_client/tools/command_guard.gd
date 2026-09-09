@@ -104,6 +104,13 @@ const BAND_Y := 20
 ## Where `move_band` / `send_expedition` are told to go — inside the grid, away from the band.
 const TARGET_X := 44
 const TARGET_Y := 23
+
+## The working the three deposit verbs are ordered on. **It is a MATERIAL and never a branch**: the
+## wire's `material` field is what `LaborTarget::Extract` keys on, and the same token addresses the
+## same working through `assign_labor extract`. `wood` deliberately — the extraction branch would let
+## `quarry`'s line pass with a forestry material and this guard reads the PARSE, not the pairing, so
+## the one that carries information is that all three verbs spell the tail the same way.
+const DEPOSIT_MATERIAL := "wood"
 const GRID_W := 80
 const GRID_H := 52
 
@@ -250,6 +257,7 @@ func _ready() -> void:
 	await _drive_build_order()
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
+	_drive_deposit_verbs()
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
 
@@ -782,6 +790,49 @@ func _drive_road_verbs() -> void:
 	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
 		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
 
+## ⛔ **THE DEPOSIT BRANCHES' THREE TILE VERBS — the only tile commands that NAME A MATERIAL** (issue
+## #650). `fell <faction> <x> <y> <material>`, and `coppice` / `quarry` likewise: a working is keyed on
+## the `(tile, material)` PAIR because one hex can hold two, so the material rides the tail in
+## `assign_labor extract`'s own position and the two ways of addressing one working read alike. They
+## name NO band — a working is backed by a `LaborTarget::Extract` row, so its keeper is already known —
+## which is `cultivate`'s shape rather than `grade`'s.
+##
+## **THE TRAILING TOKEN IS EXACTLY WHAT THIS GUARD EXISTS FOR, and its failure mode is the sharper of
+## the two the road verbs record.** A builder that dropped the material emits `cultivate`'s three-token
+## form, which the sim refuses outright — so THAT one is caught by the parse alone. What is not is a
+## builder that emits the material of the OTHER working on the hex, which parses perfectly and raises
+## the wrong ladder; the client-side half of that is asserted where the click path is real
+## (`band_panel_preview`'s `_assert_the_row_opens_the_rung_track`, which presses the ladder row on the
+## rock's own roster row and requires the emitted line to name that row's tile AND its material).
+##
+## **DRIVEN THROUGH `Main.format_improvement`, the pure static the ladder's press reaches.** The three
+## verbs have no click path in THIS harness — the ladder is opened from the Band panel's workings
+## roster, which needs a deposits fixture and a rung catalog this guard stands up none of — and the
+## builder is the whole of the client's grammar for them. The Rust half classifies all three
+## `PlaceAddressed`, so what it asserts is the PARSE.
+func _drive_deposit_verbs() -> void:
+	for improvement in SourceForecast.DEPOSIT_IMPROVEMENTS:
+		var payload := {
+			"improvement": improvement,
+			"faction": HudConst.PLAYER_FACTION_ID,
+			"x": TARGET_X,
+			"y": TARGET_Y,
+			"material": DEPOSIT_MATERIAL,
+		}
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+	# **AND A DEPOSIT VERB WITH NO MATERIAL BUILDS NOTHING**, which is a refusal rather than a default:
+	# the material is half the working's identity and guessing one would order a rung on the other
+	# working of the same hex. Asserted here rather than left to the parser for the road verbs' own
+	# reason — a line missing its trailing token is a shorter line some other verb's grammar accepts.
+	var materialless := {
+		"improvement": SourceForecast.IMPROVEMENT_FELL,
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+	}
+	if not MAIN_SCRIPT.format_improvement(materialless).is_empty():
+		_fail("fell: a deposit verb with no material built a line — the material token is not optional")
+
 ## ⛔ **`abandon <faction> <x> <y>` — THE ONE VERB THIS GUARD DRIVES THAT NAMES NO BAND AT ALL**, and
 ## that is the sim's grammar rather than an omission: it drops every band-of-that-faction's holding on
 ## the tile, a forage assignment there included. The Rust half classifies it `PlaceAddressed` for the
@@ -991,6 +1042,12 @@ const EXPECTED_KINDS := {
 	# the BAND token in the middle. See `_drive_road_verbs`.
 	"grade": 1,
 	"pave": 1,
+	# ONE EACH — the deposit branches' three tile verbs, whose whole difference from `cultivate`/`sow`
+	# is the MATERIAL token on the tail. A verb dropped from the client's own list emits nothing and
+	# fails here by count. See `_drive_deposit_verbs`.
+	"fell": 1,
+	"coppice": 1,
+	"quarry": 1,
 	# ONE — the roadwork roster's `✕`, the route branch's only `abandon` emitter and the only command
 	# here that names a PLACE rather than a band.
 	"abandon": 1,

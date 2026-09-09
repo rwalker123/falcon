@@ -151,6 +151,17 @@ const SHEET_CREW := 3
 const KNOWLEDGE_LEARNED := 1.0
 const KNOWLEDGE_UNLEARNED := 0.35
 
+## ⛔ **THE CREW EVERY OTHER LADDER CLAIM IS MADE AT, and it is stated rather than defaulted.** The CREW
+## gate refuses every ordered rung on a working nobody holds, so a track asked at zero would render
+## `no crew` on the very rows the site, craft, ground and price claims below are about — each of them
+## would then pass or fail for a reason that has nothing to do with what it names. One hand is enough:
+## the gate forks on `> 0` and nothing else here divides by it.
+const LADDER_CUTTERS := 1
+
+## …and the state that gate is FOR — a working the roster lists at nobody, which is the shape
+## `_workings_band_fixture`'s far row already stages on the band panel.
+const LADDER_NO_CUTTERS := 0
+
 func run(harness) -> void:
 	h = harness
 	# ⛔ **THE CHAPTER STAGES ITS OWN BAND, AND WITHOUT ONE EVERY SHEET CLAIM IS ABOUT A CREW OF
@@ -388,7 +399,7 @@ func run(harness) -> void:
 	# What is asserted here is the PRODUCER: the four states a deposit branch can reach, each of which
 	# a rendered frame could only show one of.
 	var scatter_rows := RungLadder.deposit_track(_scatter_working(), _ladder(),
-		_knowledge(KNOWLEDGE_UNLEARNED), _knowledge_labels())
+		_knowledge(KNOWLEDGE_UNLEARNED), _knowledge_labels(), LADDER_CUTTERS)
 	# ⛔ **THE SITE GATE IS NEW TO THIS BRANCH** — the route branch has no placement rule at all — and
 	# it OUTRANKS the craft, because no amount of learning ever makes a 70-unit scatter big enough.
 	h._assert_hud("a quarry on a scatter too small for it is refused for its SIZE, not its craft (%s)"
@@ -404,7 +415,7 @@ func run(harness) -> void:
 				DetailFormat.format_trimmed(SCATTER_CAPACITY,
 					HudDepositVocab.CARD_STOCK_DECIMALS)]))
 	var stone_rows := RungLadder.deposit_track(_stone_working(STONE_TAKE), _ladder(),
-		_knowledge(KNOWLEDGE_UNLEARNED), _knowledge_labels())
+		_knowledge(KNOWLEDGE_UNLEARNED), _knowledge_labels(), LADDER_CUTTERS)
 	h._assert_hud("…while a body big enough for one is refused on the CRAFT instead (%s)"
 			% _row_face(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY),
 		_row_face(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY).contains(
@@ -422,7 +433,7 @@ func run(harness) -> void:
 		_row_state(stone_rows, HudDepositVocab.RUNG_KEY_GATHERING) == RungLadder.STATE_STANDING
 			and not _row_selectable(stone_rows, HudDepositVocab.RUNG_KEY_GATHERING))
 	var open_rows := RungLadder.deposit_track(_stone_working(STONE_TAKE), _ladder(),
-		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels())
+		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels(), LADDER_CUTTERS)
 	# ⛔ **A PRICED ROW QUOTES ITS PILE AND ITS STANDING BILL, AND NO TURNS.** The estimate would be
 	# divided by a builders pool that may be on another job and would ignore the queue the press joins.
 	h._assert_hud("a rung within reach leads with its price and its upkeep, and quotes no turns (%s)"
@@ -439,11 +450,47 @@ func run(harness) -> void:
 	# rung already ordered is not a purchase being weighed, and `0%` is the receipt that the press
 	# landed.
 	var building_rows := RungLadder.deposit_track(_queued_stone_working(), _ladder(),
-		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels())
+		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels(), LADDER_CUTTERS)
 	h._assert_hud("…and a rung already ordered quotes its meter and the sim's date instead (%s)"
 			% _row_face(building_rows, HudDepositVocab.RUNG_KEY_QUARRY),
 		_row_face(building_rows, HudDepositVocab.RUNG_KEY_QUARRY)
 			== HudDepositVocab.build_value(_queued_stone_working(), 0))
+	# ⛔ **THE CREW GATE — a working nobody holds refuses its whole ladder, and the card says so.** The
+	# sim reaches a deposit verb only through a band's staffed `extract` row
+	# (`queue_build_on_working_bands` filters `workers > 0`), and the roster lists a 0-crew working, so
+	# the ladder opens on one in a click. The A/B is the claim: the SAME working, the SAME learned
+	# craft, only the crew moving — a gate that refused unconditionally would satisfy the locked half
+	# on its own.
+	var idle_rows := RungLadder.deposit_track(_stone_working(STONE_TAKE), _ladder(),
+		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels(), LADDER_NO_CUTTERS)
+	h._assert_hud("a working with nobody on it refuses the rung above it for want of a CREW (%s)"
+			% _row_face(idle_rows, HudDepositVocab.RUNG_KEY_QUARRY),
+		_row_face(idle_rows, HudDepositVocab.RUNG_KEY_QUARRY).contains(
+			HudDepositVocab.GATE_SHORT_NO_CREW)
+			and not _row_selectable(idle_rows, HudDepositVocab.RUNG_KEY_QUARRY))
+	# **THE HOVER NAMES THE BRANCH'S OWN CREW, which is the whole of the remedy** — *diggers* on a rock
+	# and *foresters* on a wood, never one word for both.
+	h._assert_hud("…and its hover names the remedy in this branch's own crew noun (%s)"
+			% _row_tooltip(idle_rows, HudDepositVocab.RUNG_KEY_QUARRY),
+		_row_tooltip(idle_rows, HudDepositVocab.RUNG_KEY_QUARRY).contains(
+			HudDepositVocab.GATE_LONG_NO_CREW_FORMAT % HudDepositVocab.crew_noun(
+				HudDepositVocab.BRANCH_EXTRACTION).to_lower()))
+	# ⛔ **AND THE SITE GATE STILL OUTRANKS IT.** A 70-unit scatter will never take a quarry however
+	# many diggers stand on it, so *put diggers on it* is wrong advice there — the row states its size
+	# and keeps the crew refusal for the hover.
+	var idle_scatter := RungLadder.deposit_track(_scatter_working(), _ladder(),
+		_knowledge(KNOWLEDGE_LEARNED), _knowledge_labels(), LADDER_NO_CUTTERS)
+	h._assert_hud("…while ground too small for a quarry still leads with its SIZE, crew or no crew (%s)"
+			% _row_face(idle_scatter, HudDepositVocab.RUNG_KEY_QUARRY),
+		_row_face(idle_scatter, HudDepositVocab.RUNG_KEY_QUARRY).contains(
+				HudDepositVocab.GATE_SHORT_TOO_SMALL)
+			and not _row_face(idle_scatter, HudDepositVocab.RUNG_KEY_QUARRY).contains(
+				HudDepositVocab.GATE_SHORT_NO_CREW))
+	# **AND THE FREE FLOOR IS UNTOUCHED BY IT** — nobody declares that rung, so there is no order a
+	# crew could be wanted for, and gate 1 is still stated ALONE.
+	h._assert_hud("…and the rung nobody declares still states its own word alone (%s)"
+			% _row_face(idle_rows, HudDepositVocab.RUNG_KEY_GATHERING),
+		_row_state(idle_rows, HudDepositVocab.RUNG_KEY_GATHERING) == RungLadder.STATE_STANDING)
 
 	# ⛔ **AND UNTOUCHED GROUND IS STILL A ROW, WITH NO WARNING ON IT.** The section stands a row on
 	# every discovered deposit-bearing tile, so most rows on a revealed map describe ground nobody has

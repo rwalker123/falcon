@@ -21,8 +21,9 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/DrawerComposeController.gd` → the `build_deposit_drawer_actions` family | The tile card's TWO compose actions and the sheet behind them (`_fill_deposit_branch` / `_tile_workings_of_branch` / `open_deposit_compose` / `_build_deposit_assign_controls` / `_build_deposit_offer_line` / `_mount_deposit_readout` / `_deposit_source_key`), filling `%ForestryAssignControls` and `%ExtractionAssignControls` — **one container per BRANCH**, since a wooded highland offers both at once. Its commit is the only thing it emits: `assign_labor <f> <b> extract <x> <y> <material> <n>`, through the shared `_emit_assign_labor` |
 | `ui/hud/SubjectDrawerController.gd` → `_tile_terrain_lines`' deposit loop | Where the ROWS are appended — with the rivers and the roads, **above the Discovered early return**, and the one place the catalog join is resolved and threaded in |
 | `ui/hud/RungLadder.gd` → `deposit_track` / `_deposit_pile` / `_deposit_tooltip` / `deposit_building_verb` | The deposit branches' TRACK — `route_track`'s sibling, emitting the same `ROW_*` shape into the SAME `build_track` renderer |
-| `ui/hud/RungGates.gd` → `deposit_gates` / `deposit_gates_for` / `deposit_row_refusal` / `deposit_tooltip_refusals` / `_deposit_craft_refusal` | The four refusals, keyed on the RUNG rather than the verb, as `{kind, short, long}` records in the route branch's own shape |
-| `ui/hud/BandPanelController.gd` → the `_workings_roster_*` family + `_open_deposit_track` / `_emit_deposit_declaration` / `_deposit_track_queue` / `_deposit_ladder` | **THE WORKINGS ROSTER, WHOSE HEAD IS THE `Workings` POOL AND WHOSE ROWS DECLARE** — `_workings_roster_models` (the band's own `extract` row as the membership filter, the material-led locator, the stable nearest-first sort), `_workings_roster_unseen` (case 2, off the cohort's published `quarrywork_demand`), `_build_workings_roster_head` (the title, the shortfall mark, and the pool's compact stepper — the ONLY control that staffs `quarrywork`), `_build_workings_roster_block` / `_row`. Each ROW carries the declaring `⌃` and nothing else. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
+| `ui/hud/RungGates.gd` → `deposit_gates` / `deposit_gates_for` / `deposit_row_refusal` / `deposit_tooltip_refusals` / `_deposit_crew_refusal` / `_deposit_craft_refusal` | The FIVE refusals, keyed on the RUNG rather than the verb, as `{kind, short, long}` records in the route branch's own shape. `cutters` is a REQUIRED parameter, a `deposits` row publishing no crew — see "the gates" below |
+| `Main.gd` → `format_improvement`'s `IMPROVEMENT_MATERIAL_TARGETED` arm | The three verbs' GRAMMAR — `fell|coppice|quarry <faction> <x> <y> <material>`, `cultivate`'s shape with the material on `assign_labor extract`'s own trailing position. A fourth ARM beside the herd-targeted and band-targeted ones, refusing on an empty material as the band arm refuses on `IMPROVEMENT_NO_BAND`. The verb list is `SourceForecast.DEPOSIT_IMPROVEMENTS`, which exists because a token SHAPE is not something the wire's rung catalog states |
+| `ui/hud/BandPanelController.gd` → the `_workings_roster_*` family + `_open_deposit_track` / `_emit_deposit_declaration` / `_workings_roster_cutters` / `_deposit_track_queue` / `_deposit_ladder` | **THE WORKINGS ROSTER, WHOSE HEAD IS THE `Workings` POOL AND WHOSE ROWS DECLARE** — `_workings_roster_models` (the band's own `extract` row as the membership filter, the material-led locator, the stable nearest-first sort), `_workings_roster_unseen` (case 2, off the cohort's published `quarrywork_demand`), `_build_workings_roster_head` (the title, the shortfall mark, and the pool's compact stepper — the ONLY control that staffs `quarrywork`), `_build_workings_roster_block` / `_row`. Each ROW carries the declaring `⌃` and nothing else. `_workings_roster_cutters` is the CREW gate's whole input — the take crew on one working, keyed through the `(tile, material)` pair like every other join here, and pending-aware; it is resolved at BOTH call sites (the row's `has_track` probe and the open), because a mark that appeared on a working the card would refuse is the disagreement the gate exists to end. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
 | `ui/hud/hud_work_vocab.gd` → the `WORKINGS_ROSTER_*` family + `ROLE_NAME_QUARRYWORK` + `RUNG_TRACK_STATE_GROUND_GIVES` | The roster's words, metas, its `WORKINGS_ROSTER_HEAD_HEIGHT` (21, measured), its `workings_roster_height`, the pool's own name/hint/coverage sentence, the row mark's own handle and hover, and the seventh rung state's SECOND word. They live here rather than in `HudDepositVocab` because the geometry of the Work zone belongs beside the three blocks that share it and the state enumeration is one table |
 | `ui/hud/HudWidgets.gd` → `zone_head`'s trailing `title_tooltip` | The one shared-layer change the roster made: a head whose readout is a CONDITIONAL mark needs its hover on the TITLE, because `readout_tooltip` rides a Label built only where a readout is stated |
 | `ui/hud/DetailFormat.gd` → `Context.deposit_rows` + its `_value_hex` arm | ⛔ **THE ONE ARM OF THAT DISPATCH KEYED ON MEMBERSHIP RATHER THAN ON A LITERAL.** Every other row key is a constant; a working's is `Wood` or `Stone` — `materials.json`'s ids, config this client may not spell — so the PRODUCER says which keys it wrote, exactly as `row_tooltips` does |
@@ -444,8 +445,9 @@ PRIORITY is per branch (`HudDepositVocab.GATE_ROW_PRIORITY`).
 |---|---|---|---|
 | 1 | **nobody declares it** — `verb == ""` | *(the state's own word)* | the ground already offers this; there is nothing to order. **Stated ALONE**, the loop `continue`s past every other gate |
 | 2 | ⛔ **the SITE** — `minDepositCapacity` above this tile's `capacity` | `too small` | `Wants ground holding 100; this one holds 70.` |
-| 3 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | `needs Quarrying` | the live %, plus the learn-it-from remedy where a rung on this branch teaches it |
-| 4 | **the ground** — `requiresRung` above the standing rung | `needs a felling` | `Needs a felling first.` |
+| 3 | ⛔ **the CREW** — nobody on the working | `no crew` | `Nobody is on this working. Put diggers on it before you order a rung.` |
+| 4 | **the craft** — `unlockKnowledge` below `KNOWLEDGE_COMPLETE` | `needs Quarrying` | the live %, plus the learn-it-from remedy where a rung on this branch teaches it |
+| 5 | **the ground** — `requiresRung` above the standing rung | `needs a felling` | `Needs a felling first.` |
 
 ⛔ **THE SITE GATE IS NEW TO THIS BRANCH** — the route branch has no placement rule at all — and it is
 the whole of *you cannot quarry just anywhere*: it is what refuses a quarry on a 70-unit periglacial
@@ -457,34 +459,91 @@ will ever close — this ground will never take a quarry — so telling a player
 for a 70-unit scatter is wrong advice. The GROUND gate sinks to LAST for the route branch's own
 reason: it names a rung the track is already displaying one line up.
 
+⛔ **THE CREW GATE IS THE ONLY REFUSAL ON THIS CARD WHOSE CAUSE IS NOWHERE ON THE SURFACE IT IS READ
+FROM.** `queue_build_on_working_bands` filters `workers > 0` — `cultivate`'s shipped rule applied
+unchanged, and the sim helper is not touched — so a working held at `felling` with its cutters pulled
+off cannot be `coppice`d until somebody is put back on it. And the roster lists a 0-crew working (one
+is still held and still owes, which is the whole reason the pool exists), so **the ladder opens on
+that state in one click**. The roads.md per-row prohibition forbids a crew count on the row it is
+opened from and the sheet that staffs the working is on another surface, so without the gate every
+rung refuses with nothing anywhere near the card saying why.
+
+⛔ **IT SITS BELOW THE SITE GATE AND ABOVE THE CRAFT**, which is the site gate's own argument read
+twice. A 70-unit scatter will never take a quarry however many diggers stand on it, so *put diggers on
+it* is wrong advice there and the SITE keeps the row. A craft, by contrast, is the branch's long game
+while this bites TODAY and closes in one gesture — and it is the one refusal a player cannot see the
+cause of from here, the craft's own progress being on the knowledge screen.
+
+**THE REMEDY NAMES THE BRANCH'S OWN CREW NOUN**, lowercased into the sentence: *put foresters on it* on
+a wood, *put diggers on it* on a rock, off the same `BRANCH_CREW_NOUNS` table the two compose sheets
+title themselves with. A branch this client has never heard of takes the unnamed form (*a crew*) rather
+than printing a blank — the craft gate's own named/unnamed pair, one gate over.
+
+**IT IS A FACT ABOUT THE WORKING RATHER THAN ABOUT THE RUNG**, so every ordered row carries the
+identical refusal and the card reads as one statement; it is appended per rung anyway, the gate record
+shape being per rung. The **free floor is untouched**: gate 1 declares no verb and `continue`s past
+every other gate, so a rung nobody orders is never refused for want of a crew to order it with.
+
+⛔ **THE CREW IS THE TAKE CREW, PENDING-AWARE, AND IT IS A REQUIRED PARAMETER** on both
+`RungGates.deposit_gates` and `RungLadder.deposit_track`. A `deposits` row publishes no crew —
+membership is the band's own `extract` row on the `(tile, material)` pair — so a defaulted argument
+would be this client guessing at the one input it cannot read, and the roster's own membership filter
+and this gate would then answer differently about the same working. `effective_extract_workers` is what
+every caller resolves it through, and pending-aware is the CORRECT reading rather than merely the kind
+one: `handle_assign_labor` mutates the band's `LaborAllocation` the moment the command arrives, so a
+crew staffed this frame is a crew the verb sent next frame will find.
+
 ⛔ **THE CRAFT'S REMEDY NAMES THE RUNG THAT *TEACHES* IT, LOOKED UP THROUGH `earnsKnowledge`** — never
 `requiresRung`. The two coincide on the five shipped rungs, which is exactly why reading the wrong one
 looks correct; a gate reason is a REMEDY, so naming the wrong rung sends the player to stand on the
 wrong ground. `""` — nothing on this branch teaches it — drops the remedy clause entirely, that being
 a real state.
 
-### ⛔ THE PRESS HAS NO COMMAND TO SEND YET, AND THAT IS SERVER-SIDE WORK
+### THE PRESS — `fell|coppice|quarry <faction> <x> <y> <material>`
 
 The row's press emits the rung's verb through the existing improvement path
-(`BandPanelController.improvement_requested` → `Main.format_improvement`'s tile-targeted arm, exactly
-as `cultivate` does) and carries no `pending_entity`, the declaration landing on the working's own
-build meter rather than on the row's crew — the road ladder's relay shape.
+(`BandPanelController.improvement_requested` → `Main.format_improvement`) and carries no
+`pending_entity`, the declaration landing on the working's own build meter rather than on the row's
+crew — the road ladder's relay shape.
 
-⛔ **`fell`, `coppice` AND `quarry` REACH NO COMMAND AT ALL.** They exist as
-`components::Improvement` variants, `intensification::RungKey` maps them, and
-`validate_improvement`'s `LaborTarget::Extract` arm + `validate_deposit_verb` are written and waiting
-— but there is **no `CommandPayload` variant, no proto message, no `core_sim::Command` variant, no
-dispatch arm and nothing in `sim_runtime::command_text`'s grammar**. The native bridge parses a line
-BEFORE it sends, so the press is refused inside the client with nothing failing anywhere: `builders`,
-`roadwork`, `extract` and `quarrywork` have each shipped through exactly that hole, and this is a
-wider version of it — the grammar cannot be filled in isolation, because `parse_command_line` has no
-payload to return.
+⛔ **THE MATERIAL IS THE POINT, AND ITS PRESENCE IS STRUCTURAL RATHER THAN INCIDENTAL.** A working is
+keyed on the `(tile, material)` PAIR because one hex holds two — a wooded highland holds timber AND
+rock — so a declaration carrying the tile alone does not merely under-specify the order, it raises the
+OTHER working's ladder, and the resulting line parses perfectly. So the pair is refused in three
+places rather than appended in one:
 
-**Everything the client half needs is in place**: the verbs come off the catalog, the gates refuse the
-rungs the sim would refuse, and the payload is `Main.format_improvement`'s existing tile-targeted
-shape. What remains is one `CommandPayload` variant per verb (or one carrying the verb), its proto
-message, the `core_sim` `Command` variant and the `handle_*` that calls `validate_improvement`, and
-the three verbs in `command_text`'s grammar with `command_guard`'s sweep extended to cover them.
+- **`Main.IMPROVEMENT_MATERIAL_TARGETED`** is a fourth ARM of `format_improvement`, beside the
+  herd-targeted (`tame`) and band-targeted (`grade`/`pave`) ones, and it answers `{}` on an empty
+  material exactly as the band arm answers `{}` on `IMPROVEMENT_NO_BAND`. **The arm is chosen on the
+  VERB, off `SourceForecast.DEPOSIT_IMPROVEMENTS`, never on whether the payload happens to carry a
+  material** — a payload-shape test would let a stripped payload fall through to the three-token arm
+  and emit a line the parser rejects for a reason nothing on screen explains.
+- **`_emit_deposit_declaration` reads the PAIR off the `deposits` row itself** (`tile_of` /
+  `material_of`) and returns on `MATERIAL_NONE` beside its existing return on a negative tile, so what
+  is sent is what the card was built from rather than anything recovered from the roster row's label.
+- **`command_guard` drives all three verbs** through `Main.format_improvement` and asserts the
+  materialless refusal, so every one of them is parsed by the REAL server parser
+  (`sim_runtime::command_text::parse_command_line`) and a verb dropped from the client's own list fails
+  by count. The Rust half classifies them `PlaceAddressed`, so what it proves is the PARSE.
+
+**THE `command_guard` HALF CANNOT SEE A WRONG MATERIAL, only a missing one** — a line naming the other
+working of the same hex parses — so the click path's claim lives where the click path is real:
+`band_panel_preview` finds the rock's `⌃` by its own `(tile, material)` handle, presses the ladder row
+it opens, and asserts the emitted line is `quarry 0 72 18 stone` by EQUALITY. The near hex's other
+working is wood, so a declaration that lost the material, or took its neighbour's, reads as a different
+line there.
+
+**THE PRESS CLOSES THE CARD AND NAVIGATES NOWHERE**, which is the road ladder's press with its second
+half dropped rather than a departure from it. That press ends on the acting band's Work tab because
+the card it is made from floats over the tile drawer and the queue it joins is a panel away; this card
+is anchored to a row of the Work tab's own workings roster, so the board the declaration lands on is
+already the surface under the card and a `show_work_tab` would re-render the zone the player is looking
+at to put them where they already are.
+
+⛔ **NO `assign_labor` RIDES WITH IT.** This band demonstrably works this working — that is why the
+roster lists it — which is the whole of the sim's *an improvement command reaches only bands already
+working the source* rule. The one state where that is not enough is a working held at ZERO cutters,
+and the CREW gate is what states it (above).
 
 ## THE `Workings` POOL, AND WHAT A FIFTH CARD COST
 
@@ -725,12 +784,26 @@ means the ground holds nothing rather than nobody having worked it.
 | `workings_extraction_sheet` | `Assign diggers ▸` on the rock beside it — the OTHER branch's noun, the verdict the finite ladder turns on (*Gathering reaches 330 of 2200. A quarry would reach 1870.*), the runway aside at this rate, the IDLE seam's own sentence beside it (never `Runs out in 0 turns`), and `Dig` |
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |
 
-**The LADDER's four row states are asserted over the PRODUCER, without a frame**: the SITE gate on a
+**The LADDER's row states are asserted over the PRODUCER, without a frame**: the SITE gate on a
 70-unit scatter, the CRAFT gate on a body big enough for a quarry (with the remedy naming the rung
 that TEACHES it), the free floor as a FACT, a priced row leading with its pile and its standing bill
 and quoting no turns, its material aside, and a row mid-build quoting the sim's own countdown. **A
-frame can show one of those and the branch has four** — and the rendered one lives in
+frame can show one of those and the branch has five** — and the rendered ones live in
 `band_panel_preview`, the track being opened from the Work board.
+
+⛔ **THE CREW GATE IS ASSERTED AS AN A/B OVER ONE WORKING**, which is what makes the claim about the
+CREW rather than about a gate that refuses unconditionally: the same rock, the same learned craft, only
+`LADDER_CUTTERS` → `LADDER_NO_CUTTERS` moving. Three claims ride it — the row states `no crew` and
+offers no press, the hover names the remedy in the EXTRACTION branch's own crew noun, and the free
+floor is untouched by it (gate 1 declares no verb, so a rung nobody orders is never refused for want of
+a crew to order it with). **The SITE gate's precedence is asserted beside them**, on the 70-unit
+scatter at zero cutters: the row must lead with its SIZE and must NOT carry the crew's short form,
+because *put diggers on it* is wrong advice on ground that will never take a quarry.
+
+⛔ **EVERY OTHER LADDER CLAIM IN THE CHAPTER NOW STATES `LADDER_CUTTERS` EXPLICITLY, and a default
+would have silenced them all.** The crew gate refuses every ordered rung on a working nobody holds, so
+a track asked at zero renders `no crew` on the very rows the site, craft, ground and price claims are
+about — each would then pass or fail for a reason that has nothing to do with what it names.
 
 ⛔ **THE CHAPTER STAGES ITS OWN BAND, AND WITHOUT ONE EVERY SHEET CLAIM IS ABOUT A CREW OF ZERO.** It
 runs LAST, after twenty-five other chapters, so the roster it inherits is whichever one the previous
@@ -769,6 +842,30 @@ asserts one mark per row with somewhere left to go, each keyed to its own `(tile
 branch's own two rungs and no more (the two ladders are ONE vector, so a walk that forgot to filter on
 `branch` would offer a coppice here), the floor stated as a FACT rather than a price of zero, the
 quarry LEADING with its pile and its standing bill, **no `≈` estimate on it**, and its material aside.
+
+⛔ **AND THE PICK, WHICH IS THE ONE CLAIM NO OTHER SURFACE CAN MAKE.** The chain is the player's: the
+roster row's `⌃`, the track row it opens, the payload off `HudLayer.improvement_requested`, and
+`Main.format_improvement` — with the LINE asserted by equality (`quarry 0 72 18 stone`), because a
+payload can carry a perfectly good material and still be formatted into the three-token grammar. The
+mark is found by the rock's own `(tile, material)` handle and the near hex's other working is wood, so
+a declaration that lost the material or took its neighbour's reads as a different line. The card
+closing on the press is asserted beside it.
+
+⛔ **THE BLOCK LEARNS THE THREE DEPOSIT CRAFTS, AND THAT IS WHAT MAKES THE PICK REACHABLE.** The
+standing knowledge row this harness renders every other state against carries the four
+rung-transition tracks and none of the deposit branches', so a quarry row asked against it is refused
+on its CRAFT — a `Label`, which no press can reach. `_workings_knowledge_row` EXTENDS that row rather
+than replacing it (the states around this block are rendered against those four), and
+`_restore_workings_roster_fixture` pushes the standing row back: a push replaces a faction's whole
+row, so the crafts learned here would otherwise ungate every rung on every state after it.
+
+**`band_panel_workings_track_no_crew` is the CREW gate's own frame**, opened on the FAR row — the
+fixture's crewless working, staged at `WORKINGS_NO_CUTTERS` since the roster's membership test needed a
+row held at nobody. It asserts the mark still DRAWS on it (a working with nobody on it is still held,
+so hiding the mark would be a different lie), the quarry row refused for want of a crew, that row still
+LEADING with its pile (a rung refused today is one the player is planning toward, and a price hidden
+behind a refusal is a price nobody can plan against), that it is a `Label` and offers no press at all,
+and the hover naming the remedy in the branch's own crew noun.
 
 ⛔ **THE CARD IS A `PopupPanel`, i.e. a `Window`, so a `Control`-rooted finder walks straight past
 it** — the road ladder's own trap. Its rows are read through the same `_rung_track_states` /

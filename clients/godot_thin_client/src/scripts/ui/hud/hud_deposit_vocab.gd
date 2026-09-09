@@ -118,8 +118,13 @@ static func tile_of(deposit: Dictionary) -> Vector2i:
 	return Vector2i(int(deposit.get("tile_x", -1)), int(deposit.get("tile_y", -1)))
 
 ## …and its MATERIAL half — `"wood"`, `"stone"`. The other half of the key, never optional.
+## The other half of a working's key when the wire states none — a row this client cannot address, which
+## every caller drops rather than addressing by tile alone. Named because the DECLARATION tests it: a
+## verb carrying no material would raise the wrong ladder on a hex holding two workings.
+const MATERIAL_NONE := ""
+
 static func material_of(deposit: Dictionary) -> String:
-	return String(deposit.get("material", ""))
+	return String(deposit.get("material", MATERIAL_NONE))
 
 ## WHICH LADDER works this deposit — `"forestry"` | `"extraction"`, `RungBranch`'s wire form.
 ##
@@ -1205,6 +1210,12 @@ static func runway_aside(deposit: Dictionary) -> String:
 ## is a client that has not been sent one — the cap is then the band's own pool and nothing else.
 const CUTTERS_UNCAPPED := -1
 
+## **NOBODY IS ON THIS WORKING**, and it is a real and common state rather than an absence: the roster
+## lists a working the moment the band holds an `extract` row on it, at ZERO cutters as readily as at
+## five. Distinct from `CUTTERS_UNCAPPED`, which is a SENTINEL — *the catalog prices no rate here* —
+## rather than a measured nothing. The CREW gate forks on it; see `GATE_KIND_CREW`.
+const CUTTERS_NONE := 0
+
 static func max_useful_cutters(deposit: Dictionary, entry: Dictionary) -> int:
 	var rate := catalog_yield_per_worker_turn(entry)
 	if rate <= RUNG_CATALOG_NO_YIELD:
@@ -1298,11 +1309,13 @@ const DEPOSIT_LADDER_TIP_SEPARATOR := "\n"
 ## telling a player to go and learn Quarrying for a 35-unit scatter is wrong advice.
 const GATE_KIND_WORN_IN := "worn_in"
 const GATE_KIND_SITE := "site"
+const GATE_KIND_CREW := "crew"
 const GATE_KIND_CRAFT := "craft"
 const GATE_KIND_GROUND := "ground"
 const GATE_ROW_PRIORITY := [
 	GATE_KIND_WORN_IN,
 	GATE_KIND_SITE,
+	GATE_KIND_CREW,
 	GATE_KIND_CRAFT,
 	GATE_KIND_GROUND,
 ]
@@ -1335,3 +1348,22 @@ const GATE_LONG_KNOWLEDGE_REMEDY_FORMAT := " Learn it by holding a %s."
 ## transcribes a rule the config owns.
 const GATE_SHORT_TOO_SMALL := "too small"
 const GATE_LONG_TOO_SMALL_FORMAT := "Wants ground holding %s; this one holds %s."
+
+## ⛔ **THE CREW GATE — the one refusal on this card whose CAUSE is nowhere on the surface it is read
+## from.** `queue_build_on_working_bands` filters `workers > 0`, so a working held at a rung with its
+## cutters pulled off refuses every verb on its ladder — `cultivate`'s shipped rule, applied unchanged.
+## And the roster lists a 0-crew working (a working with nobody on it is still held and still owes,
+## which is the whole reason the pool exists), so the ladder opens on one in ONE CLICK.
+##
+## ⛔ **THE ROW CANNOT STATE THE CREW, so this gate has to.** roads.md's per-row prohibition forbids a
+## crew count on a roster row, and the sheet that staffs the working is on another surface — so a
+## player who has pulled the cutters off sees a card of refusals with nothing anywhere near it saying
+## why. A refusal the player cannot explain is the defect the gate records exist to prevent.
+##
+## **IT SITS BELOW THE SITE GATE AND ABOVE THE CRAFT**, which is the SITE gate's own argument read
+## twice: a scatter will never take a quarry however many diggers stand on it, so *put diggers on it*
+## is wrong advice there — but a craft is the branch's long game while this bites TODAY and closes in
+## one gesture, so it leads where both are unmet.
+const GATE_SHORT_NO_CREW := "no crew"
+const GATE_LONG_NO_CREW_FORMAT := "Nobody is on this working. Put %s on it before you order a rung."
+const GATE_LONG_NO_CREW_UNNAMED := "Nobody is on this working. Put a crew on it before you order a rung."

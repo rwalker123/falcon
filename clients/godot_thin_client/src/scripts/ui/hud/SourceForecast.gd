@@ -111,11 +111,25 @@ const IMPROVEMENT_CORRAL := "corral"
 # work row for its keeper to be inferred from. See `Main.format_improvement`.
 const IMPROVEMENT_GRADE := "grade"
 const IMPROVEMENT_PAVE := "pave"
-# The three ladders, each in RUNG ORDER (low → high). Kept apart because no two webs share a rung,
-# and read by nothing that needs "all six".
+# **THE DEPOSIT BRANCHES' THREE VERBS** (issue #650). `fell` raises a wood to a felling and `coppice`
+# to a managed stand; `quarry` raises a rock scatter to a cut face. All three NAME A MATERIAL as well
+# as a tile — a working is keyed `(tile, material)` because one hex can hold two — and NO band, a
+# working's keeper being whoever already cuts it. See `Main.format_improvement`.
+const IMPROVEMENT_FELL := "fell"
+const IMPROVEMENT_COPPICE := "coppice"
+const IMPROVEMENT_QUARRY := "quarry"
+# The four ladders, each in RUNG ORDER (low → high). Kept apart because no two webs share a rung,
+# and read by nothing that needs "all of them".
 const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
 const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
 const ROUTE_IMPROVEMENTS := [IMPROVEMENT_GRADE, IMPROVEMENT_PAVE]
+# ⛔ **THE DEPOSIT SET SPANS BOTH BRANCHES AND IS THEREFORE NOT IN RUNG ORDER** — `fell` and
+# `coppice` are forestry's rungs 2 and 3, `quarry` is extraction's rung 2, and no ordering over the
+# union means anything. Its ONE reader asks *does this verb name a material*, which is a grammar
+# question rather than a ladder walk. The verbs themselves come off the wire's rung CATALOG
+# (`HudDepositVocab.catalog_verb`); this list exists because `Main` must know the token SHAPE of a
+# line before it can build one, which no catalog field states.
+const DEPOSIT_IMPROVEMENTS := [IMPROVEMENT_FELL, IMPROVEMENT_COPPICE, IMPROVEMENT_QUARRY]
 # **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
 # publishes this in the `improvement` slot for a queue entry whose declared job is
 # `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter

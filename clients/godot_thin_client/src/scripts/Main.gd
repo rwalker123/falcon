@@ -1550,6 +1550,24 @@ const IMPROVEMENT_BAND_TARGETED := SourceForecast.ROUTE_IMPROVEMENTS
 ## so this is a REFUSAL rather than a default — see `format_improvement`.
 const IMPROVEMENT_NO_BAND := -1
 
+## ⛔ **THE DEPOSIT BRANCHES' THREE VERBS NAME A TILE *AND* A MATERIAL** (issue #650), which is the one
+## way they differ from every other tile verb here — `fell <faction> <x> <y> <material>`, the material
+## riding `assign_labor extract`'s own trailing position so the two ways of addressing one working read
+## alike. **ONE HEX CAN HOLD TWO WORKINGS** (a wooded highland holds timber AND rock), so a line naming
+## only the tile names neither of them and would raise the wrong ladder.
+##
+## They name NO band, unlike `grade`/`pave`: a working is backed by a `LaborTarget::Extract` row, so its
+## keeper is already known and the sim resolves it through `queue_build_on_working_bands` — the
+## `cultivate`/`sow` precedent, not the road's.
+##
+## Read off `SourceForecast.DEPOSIT_IMPROVEMENTS` rather than restated, so the branch's verbs are
+## spelled once.
+const IMPROVEMENT_MATERIAL_TARGETED := SourceForecast.DEPOSIT_IMPROVEMENTS
+
+## The material a deposit verb names when the payload carries none. A working's key is the
+## `(tile, material)` PAIR, so this is a REFUSAL rather than a default — see `format_improvement`.
+const IMPROVEMENT_NO_MATERIAL := ""
+
 ## ⛔ **NONE OF THESE VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
 ## DECLARE now — the verb appends an entry to a build queue, and the hands stand on
@@ -1583,6 +1601,20 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
             "line": "%s %d %d %d %d" % [improvement, faction, band, x, y],
             "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
                 improvement.capitalize(), x, y],
+        }
+    if improvement in IMPROVEMENT_MATERIAL_TARGETED:
+        # ⛔ **NO MATERIAL, NO COMMAND.** The token is half the working's identity, so an absent one is
+        # refused here rather than dropped — a three-token `fell` does not merely lose the material, it
+        # is a shorter line the parser rejects outright, and guessing one would raise the wrong ladder
+        # on a hex holding two workings. The way an absent band is refused one branch up, and an
+        # absent herd id one branch above that.
+        var material := String(payload.get("material", IMPROVEMENT_NO_MATERIAL)).strip_edges()
+        if material == IMPROVEMENT_NO_MATERIAL:
+            return {}
+        return {
+            "line": "%s %d %d %d %s" % [improvement, faction, x, y, material],
+            "message": "%s the %s at (%d, %d) — queued for this band's builders." % [
+                improvement.capitalize(), material, x, y],
         }
     return {
         "line": "%s %d %d %d" % [improvement, faction, x, y],

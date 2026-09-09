@@ -2717,7 +2717,8 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     # **It renders only where the branch has somewhere left to go** — `RungLadder.has_track` — so a
     # working at the top of its ladder carries no mark rather than a card with nothing on it.
     var rows := RungLadder.deposit_track(deposit, ladder, _player_knowledge(),
-        _topbar.knowledge_labels() if _topbar != null else {})
+        _topbar.knowledge_labels() if _topbar != null else {},
+        _workings_roster_cutters(band, model))
     if RungLadder.has_track(rows):
         var track_btn := Button.new()
         # **THE MARK IS THE CHEVRON PLUS THE NEXT RUNG'''S OWN POLICY GLYPH** (`⌃⛏`), the work board'''s
@@ -2735,9 +2736,23 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
             HudWorkVocab.WORK_PAGER_PADDING_V)
         track_btn.add_theme_color_override("font_color", HudStyle.SIGNAL)
         track_btn.pressed.connect(func() -> void:
-            _open_deposit_track(band, deposit, track_btn))
+            _open_deposit_track(band, deposit, _workings_roster_cutters(band, model), track_btn))
         line.add_child(track_btn)
     return row
+
+## ⛔ **THE TAKE CREW ON ONE WORKING — the CREW gate's whole input, and the one thing the `deposits`
+## row cannot state.** A working publishes no crew; it is held by whichever band has an `extract` row
+## on the `(tile, material)` pair, which is the same membership test `_workings_roster_models` filters
+## on — so this asks the BAND, keyed through the pair for that function's reason (a tile-keyed read
+## would hand the Wood crew's hands to the Stone row beside it).
+##
+## **PENDING-AWARE**, the rule every readout on this panel follows, and here it is also the CORRECT
+## reading rather than merely the kind one: `handle_assign_labor` mutates the band's `LaborAllocation`
+## the moment the command arrives, so a crew staffed this frame is a crew the deposit verb sent the
+## next frame will find.
+func _workings_roster_cutters(band: Dictionary, model: Dictionary) -> int:
+    var tile: Vector2i = model["tile"]
+    return _band_labor.effective_extract_workers(band, tile.x, tile.y, String(model["material"]))
 
 ## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
@@ -2753,11 +2768,19 @@ func _deposit_ladder() -> Array[Dictionary]:
 ## meter, the faction's knowledge and the band's own pool, all of which move per snapshot.
 ##
 ## ⛔ **THE PRESS EMITS THE RUNG'S VERB THROUGH THE EXISTING IMPROVEMENT PATH** —
-## `improvement_requested` → `Main.format_improvement`, the tile-targeted arm, exactly as
-## `cultivate` / `sow` do. **No `assign_labor` rides with it**: this band demonstrably works this
-## working (that is why the roster lists it), which is the whole of the sim's *an improvement command
-## reaches only bands already working the source* rule.
-func _open_deposit_track(band: Dictionary, deposit: Dictionary, anchor: Control) -> void:
+## `improvement_requested` → `Main.format_improvement`, its MATERIAL-targeted arm, on `cultivate` /
+## `sow`'s own path with one token more. **No `assign_labor` rides with it**: this band demonstrably
+## works this working (that is why the roster lists it), which is the whole of the sim's *an
+## improvement command reaches only bands already working the source* rule.
+##
+## **IT CLOSES THE CARD AND NAVIGATES NOWHERE**, which is the road ladder's press with its second half
+## dropped rather than a departure from it. That press ends on the acting band's Work tab because the
+## card it is made from floats over the tile drawer and the queue it joins is a panel away; this card
+## is anchored to a row of the Work tab's own workings roster, so the board the declaration lands on is
+## already the surface under the card. A `show_work_tab` here would re-render the zone the player is
+## looking at to put them where they already are.
+func _open_deposit_track(band: Dictionary, deposit: Dictionary, cutters: int,
+        anchor: Control) -> void:
     var ladder := _deposit_ladder()
     if ladder.is_empty():
         # **THE CATALOG IS PER WORLD AND ARRIVES WITH THE FIRST SNAPSHOT**, so an empty one is a wire
@@ -2767,7 +2790,7 @@ func _open_deposit_track(band: Dictionary, deposit: Dictionary, anchor: Control)
             "on the wire — the track cannot state a single rung")
         return
     var rows := RungLadder.deposit_track(deposit, ladder, _player_knowledge(),
-        _topbar.knowledge_labels() if _topbar != null else {},
+        _topbar.knowledge_labels() if _topbar != null else {}, cutters,
         int(_band_labor.effective_role_workers(
             band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE)),
         band, _deposit_track_queue(band))
@@ -2812,9 +2835,15 @@ func _deposit_track_queue(band: Dictionary) -> Dictionary:
         HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
     }
 
-## **DECLARE A DEPOSIT RUNG — `fell|coppice|quarry <faction> <x> <y>`, through the tile-targeted arm of
-## `Main.format_improvement`.** The verb names a PLACE, exactly as `cultivate` does, and the working it
-## lands on is the one this band already holds there.
+## **DECLARE A DEPOSIT RUNG — `fell|coppice|quarry <faction> <x> <y> <material>`, through the
+## material-targeted arm of `Main.format_improvement`.** The verb names a PLACE, exactly as `cultivate`
+## does, and the working it lands on is the one this band already holds there.
+##
+## ⛔ **THE MATERIAL IS HALF THE SUBJECT AND IS REFUSED WHEN ABSENT, exactly as the tile is.** One hex
+## can hold two workings, so a declaration carrying only the tile does not merely under-specify the
+## order — it names a working the player was not looking at. The pair is read off the `deposits` row
+## itself (`tile_of` / `material_of`), never off the roster row's label, so what is sent is what the
+## card was built from.
 ##
 ## ⛔ **IT CARRIES NO `pending_entity`, so no optimistic overlay is written.** That overlay's entries
 ## are keyed to a band's LABOR ROWS, and this declaration touches the working's own build meter rather
@@ -2825,12 +2854,16 @@ func _emit_deposit_declaration(band: Dictionary, deposit: Dictionary, verb: Stri
     var tile := HudDepositVocab.tile_of(deposit)
     if tile.x < 0 or tile.y < 0:
         return
+    var material := HudDepositVocab.material_of(deposit)
+    if material == HudDepositVocab.MATERIAL_NONE:
+        return
     emit_signal("improvement_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "improvement": verb,
         "kind": HudConst.LABOR_KIND_EXTRACT,
         "x": tile.x,
         "y": tile.y,
+        "material": material,
         "herd_id": "",
     })
 
