@@ -70,6 +70,25 @@ What was intentionally kept (it is simulation/2D data, not 3D rendering):
 
 ---
 
+## Seats & Players — who drives a faction
+
+> **Status: designed, not built.** `docs/plan_multiplayer_seats.md` is the authority; #646 builds it.
+> What is described below as "already true" is as-built; the rest is the decided target.
+
+**The sim knows seats. It never knows who fills one.** A world has N faction seats; a seat is occupied by whatever connection claimed it, or vacant. Human clients, algorithmic AI, an LLM and a test script are all seat occupants, indistinguishable to the server — there is no AI code path and no `is_ai` branch below the socket. Multiplayer is not a layer on top of this; it is this architecture with some processes on other machines.
+
+- **One process per player, including the host's human.** The person who starts the game is a remote player whose process happens to be local. A single code path is the point: an in-thread fast path for the local AI is where a shortcut appears that the socket cannot take, and the AI then plays a different game from the player.
+- **The launcher fills local seats.** `launcher/src/main.rs` already supervises the server and client with a ports handshake and a reaping `Drop` guard; N players is the same job with a loop. The **server never spawns players** — it cannot, since remote seats are on other machines.
+- **A connection claims a seat at handshake**, and the server thereafter takes the faction from the seat rather than from the wire. *Today it does neither:* every accepted socket shares one `Sender<Command>` and the faction is whatever `faction_id` the client wrote, checked only for existence (`apply_command`). Any connection can currently command any faction — harmless with one local trusted client, load-bearing with two parties.
+- **Waiting is the default; auto-submit is the timeout.** `resolve_turn_with_auto_orders` force-submits an end-turn for every faction still awaited, which is why an AI faction passes forever. Under seats the orchestrator waits for each occupied seat and auto-submits only past a timeout — the current code is that design with the timeout at zero. `TurnQueue` already awaits all factions control-blind, so the pacing model needs no change.
+- **One frame per seat, not one broadcast.** `capture_snapshot` reads a single global `ViewerFaction` and `SnapshotServer` sends one frame to every client. Since PR #648 made frames viewer-scoped, a second connected client sees *its own* people as a foreign band. Per-viewer capture is also what makes an AI honest: unseen tiles are not in the bytes it receives, so fog becomes a property of the transport rather than a policy. ⛔ Capture (`snapshot.build`, ~3.16 ms) is ~70% of a ~4.55 ms turn and is the half still **on the turn thread** — hashing, diffing and encoding moved to a publisher thread in #393. So N seats means N captures on the critical path and N diffs/encodes somewhere already parallel; capture-once-then-project-per-viewer-at-publish is the shape that exploits that. See `plan_multiplayer_seats.md` §4.3. (The older "7.6 ms of 8.4 ms" figure predates #393 — do not use it.)
+- **Replay and rollback are unaffected.** A seat emits commands rather than mutating the world, so decisions land in the command log (`LogEntry::Command`) and a rollback replays them without re-consulting the occupant. **A non-deterministic occupant — an LLM, a human — costs the determinism suites nothing.** Rollback does need to become host-only, and an occupant needs to react to `Command::Resync`.
+- **Occupancy is a session fact, never save state.** A save is a world with N seats; who sat in them is not in `SimState`.
+
+**AI-side** (`docs/plan_ai_opponents.md`): a planned `sim_ai` binary crate depends on `sim_runtime` for the wire types and **not** on `core_sim`, so "the AI may not read the simulation directly" is a build error rather than a review comment. The seat's decoded frame *is* its perception — there is deliberately no second representation of what a faction can see.
+
+---
+
 ## Configuration (Map Presets)
 `core_sim/src/data/map_presets.json` adds knobs for physically coherent coasts and biomes:
 - `macro_land`: `{ continents, min_area, target_land_pct, jitter }`
@@ -118,6 +137,8 @@ See `core_sim/CLAUDE.md` for full world generation pipeline details.
 | `sim_schema/README.md` | FlatBuffers schema contracts |
 | `sim_runtime/README.md` | Shared runtime utilities |
 | `docs/godot_inspector_plan.md` | Inspector migration progress |
+| `docs/plan_multiplayer_seats.md` | The seat model — connection identity, turn waiting, per-viewer frames, who launches a player |
+| `docs/plan_ai_opponents.md` | What fills a seat — brain patterns, personality vectors, the LLM path, difficulty |
 
 The engineering **backlog** is not a file — it lives in GitHub Issues + the Falcon Backlog
 project (https://github.com/users/rwalker123/projects/2). See root `CLAUDE.md` → Task Tracking.
