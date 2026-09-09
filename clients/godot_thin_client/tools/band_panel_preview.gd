@@ -17190,6 +17190,211 @@ func _assert_a_crewless_working_says_so() -> void:
 	_hud._bandpanel._dismiss_rung_track()
 	await _settle()
 
+## ⛔ **A WORKING CAN BE PUT DOWN, AND THE READOUT IS WHY A PLAYER WOULD** (issue #650).
+##
+## **THE LEAK THIS STATE STANDS UP.** A working raised above its free floor is a HOLDING, so pulling
+## the cutters off is *"stop cutting"* and never *"this band has nothing here"*: the row stays, the
+## bill stays, and the meter takes about a hundred turns to rot back to the free floor. Under the
+## shipped funding rule that bill comes out of the same one `quarrywork` pool the workings the band
+## still wants are held out of — **a working you walked away from degrades a working you did not** —
+## and until this verb existed there was no command that could stop it.
+##
+## **The board is the roster's own, with ONE working walked away from**: the near wood, held at
+## `felling` with a real bill, a real shortfall and NOBODY on its `extract` row. Every other row is
+## unchanged, so the readout claims below are about that row rather than about the whole block.
+##
+## ⛔ **BOTH EMITTERS ARE DRIVEN, AND THE CLAIM IS THE LINE.** The roster row's `✕` and the ladder
+## card's put-down row send the identical `abandon_working 0 <x> <y> wood`; `command_guard` drives the
+## builder directly and can only assert the PARSE, so this is where the material is proved to ride the
+## press. The near hex's OTHER working is STONE, so a control that lost the material — or took its
+## neighbour's — reads as a different line here.
+func _assert_a_working_can_be_put_down() -> void:
+	_hud.update_deposits(_walked_away_workings_rows())
+	_push_bands([_walked_away_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_walked_away")
+	_assert_zone_content_fits()
+	var rows := _workings_rows_drawn()
+	# **PRECONDITION: the board still draws its three rows**, or the row read out below is somebody
+	# else's and every claim about the readout is a claim about the wrong working.
+	_assert_band_panel("precondition: the walked-away board still draws its three workings (got %d)"
+			% rows.size(),
+		rows.size() == 3)
+	if rows.size() != 3:
+		return
+	var walked := rows[1]
+	var wanted_key := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
+	_assert_band_panel("precondition: the middle row is the walked-away wood (%s)" % wanted_key,
+		String(walked.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META)) == wanted_key)
+	# ⛔ **THE VALUE CELL SAYS THIS BAND HAS NOBODY ON IT.** A cell reading only `Felling · ⚠ going
+	# back` says a bill is unpaid and not that the working is idle, which are two different decisions —
+	# one is *staff the pool*, the other is *stop holding it*.
+	var value := _workings_row_value(walked)
+	_assert_band_panel("a working this band has walked away from says so on its row — `%s` (\"%s\")"
+			% [HudDepositVocab.DEPOSIT_IDLE_WORD, value],
+		value.contains(HudDepositVocab.DEPOSIT_IDLE_WORD))
+	_assert_band_panel("…beside the hazard it is still running, which the idle clause does not replace (\"%s\")"
+			% value,
+		value.contains(HudDepositVocab.DEPOSIT_UNDER_KEPT_WORD))
+	# ⛔ **AND THE HOVER CARRIES THE HALF A ROW CANNOT: THE BILL DOES NOT STOP.** The figures live here
+	# because `land-readouts.md` retired them from the tile card, and the countdown lives on this
+	# surface alone — this is the block whose own head staffs the pool that would end the slide.
+	var hover := _workings_row_tooltip(walked)
+	_assert_band_panel("…and its hover says a crew of zero does not stop the keep (\"%s\")" % hover,
+		hover.contains(HudDepositVocab.DEPOSIT_IDLE_TIP_FORMAT
+			% HudWorkVocab.ROLE_NAME_QUARRYWORK))
+	_assert_band_panel("…naming the pool that pays it, which is the pool its siblings are paid from too",
+		hover.contains(HudWorkVocab.ROLE_NAME_QUARRYWORK))
+	_assert_band_panel("…with the neglect countdown beside it, on this surface and no other (\"%s\")"
+			% hover,
+		hover.contains(HudDepositVocab.DEPOSIT_REVERTING_TIP_FORMAT
+			% HudDepositVocab.reverting_value(_walked_away_workings_row())))
+	await _assert_the_roster_drop_puts_one_working_down(walked)
+	await _assert_the_ladder_offers_the_put_down(walked)
+	# **THE BOARD GOES BACK**, so the states after this one run against the roster's own fixture — the
+	# `_restore_workings_roster_fixture` idiom applied at the state that narrowed it.
+	_hud.update_deposits(_workings_rows())
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## ⛔ **THE ROSTER'S `✕` — the one-click drop, and the hover that must not under-state it.**
+## roads.md: *"a one-click destructive action that under-states what it destroys is worse in a roster
+## than on a card: a roster invites bulk use."* So the claim is BOTH halves of the card's own hover,
+## and the line is asserted by EQUALITY.
+func _assert_the_roster_drop_puts_one_working_down(row: Control) -> void:
+	var drop := _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META) as Button
+	_assert_band_panel("the walked-away row carries the `%s` that puts it down"
+			% HudWorkVocab.WORKINGS_ROSTER_ABANDON_GLYPH,
+		drop != null)
+	if drop == null:
+		return
+	var deposit := _walked_away_workings_row()
+	_assert_band_panel("…whose hover names what it destroys, the banked work included (\"%s\")"
+			% drop.tooltip_text,
+		drop.tooltip_text.contains(HudDepositVocab.WORKING_ABANDON_DROPS_FORMAT
+			% HudDepositVocab.material_label(deposit).to_lower()))
+	_assert_band_panel("…and why a player would want it, which is the SHARED bill rather than tidiness",
+		drop.tooltip_text.contains(HudDepositVocab.WORKING_ABANDON_WHY_FORMAT
+			% HudWorkVocab.ROLE_NAME_QUARRYWORK))
+	var line := await _drive_working_abandon(drop)
+	var wanted := "abandon_working %d %d %d %s" % [HudConst.PLAYER_FACTION_ID,
+		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
+	print("band_panel_preview: workings roster drop -> %s" % line)
+	_assert_band_panel(("…and pressing it sends `%s`, naming that row's TILE and its MATERIAL — never "
+			+ "the rock beside it and never a bare `abandon` (got \"%s\")") % [wanted, line],
+		line == wanted)
+
+## ⛔ **AND THE LADDER CARD CARRIES THE SAME PUT-DOWN, AT THE BOTTOM** — the road ladder's own shape,
+## and the second of the verb's two emitters. **Both converge on one builder**, so what is asserted is
+## that the two lines are the SAME line: a second command path would be a second place for the verb's
+## grammar to drift.
+func _assert_the_ladder_offers_the_put_down(row: Control) -> void:
+	var mark := _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_TRACK_META) as Button
+	_assert_band_panel("the walked-away row still opens its ladder, the crew being forgiven by the mark",
+		mark != null)
+	if mark == null:
+		return
+	mark.pressed.emit()
+	await _settle()
+	await _save("band_panel_workings_put_down")
+	var put_down := _find_meta_control(_hud, HudWorkVocab.WORKINGS_LADDER_ABANDON_META) as Button
+	_assert_band_panel("…and its card offers the put-down row beneath the rungs",
+		put_down != null)
+	if put_down == null:
+		_hud._bandpanel._dismiss_rung_track()
+		await _settle()
+		return
+	_assert_band_panel("…named for the ACT rather than the wire's verb — `%s` (\"%s\")"
+			% [HudDepositVocab.WORKING_ABANDON_LABEL, put_down.text],
+		put_down.text == HudDepositVocab.WORKING_ABANDON_LABEL)
+	# ⛔ **THE CARD'S HOVER AND THE ROSTER'S ARE ONE STRING**, which is the whole of *the roster must
+	# not be quieter than the card*.
+	_assert_band_panel("…carrying the roster's own hover verbatim, so neither surface is quieter",
+		put_down.tooltip_text == HudDepositVocab.working_abandon_tooltip(_walked_away_workings_row()))
+	var line := await _drive_working_abandon(put_down)
+	var wanted := "abandon_working %d %d %d %s" % [HudConst.PLAYER_FACTION_ID,
+		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
+	print("band_panel_preview: workings ladder put-down -> %s" % line)
+	_assert_band_panel("…and it sends the roster's own line, the two emitters converging on one builder (\"%s\")"
+			% line,
+		line == wanted)
+	_assert_band_panel("…and the card closes on the press, the drop re-rendering the zone it is anchored to",
+		_hud._bandpanel._rung_track == null or not _hud._bandpanel._rung_track.visible)
+	# **THE ZONE IS RE-RENDERED BEFORE ANYTHING ELSE READS IT**, the declare probe's own rule: `as
+	# Button` on a freed node aborts the walk with no `FAIL` line and an exit status of 0.
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## Press one of the verb's two controls and format what came out of `HudLayer` — **the player's chain
+## end to end**, through the real relay and the real builder rather than through a payload this file
+## composed. `""` where nothing was emitted, which fails the equality above by being a different line.
+func _drive_working_abandon(control: Button) -> String:
+	var seen: Array = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.abandon_working_requested.connect(sink)
+	control.pressed.emit()
+	await _settle()
+	_hud.abandon_working_requested.disconnect(sink)
+	if seen.is_empty():
+		return ""
+	return String(MAIN_SCRIPT.format_abandon_working(seen[0] as Dictionary).get("line", ""))
+
+## The roster's own three rows with the near WOOD walked away from — held at `felling` with a real
+## bill the pool is not covering, which is the only shape in which a crew of zero is a LEAK rather
+## than merely a pause.
+func _walked_away_workings_rows() -> Array:
+	var rows := _workings_rows()
+	rows[2] = _walked_away_workings_row()
+	return rows
+
+## ⛔ **THE ONE ROW THAT MAKES THE LEAK LEGIBLE**, and every field on it is one the sim writes:
+## `felling` declares an upkeep in this fixture's own catalog, so the bill is real; the pool covers
+## part of it, so the shortfall is the sim's own field and never a subtraction here; and the working
+## carries a meter to lose, which is what `has_neglect_grace` answers before the countdown is read.
+##
+## **NOTHING CAME OUT OF IT LAST TURN**, this band being the only one on it — and a renewing seam
+## answers `RUNWAY_NOT_APPLICABLE` whatever its take, so the row keeps `_workings_row`'s own sentinel
+## and the idle clause has no runway to collide with.
+func _walked_away_workings_row() -> Dictionary:
+	var row := _workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WALKED_AWAY_NO_TAKE)
+	row["upkeep_demand"] = WALKED_AWAY_DEMAND
+	row["upkeep_supplied"] = WALKED_AWAY_SUPPLIED
+	row["upkeep_shortfall"] = WALKED_AWAY_SHORTFALL
+	row["upkeep_workers_needed"] = WALKED_AWAY_KEEPERS
+	row["has_neglect_grace"] = true
+	row["neglect_grace_remaining"] = WALKED_AWAY_GRACE
+	return row
+
+## `forestry:felling`'s own `upkeep_work_per_turn` in `_deposit_rung_catalog`, so the bill on the row
+## is the bill the rung declares rather than a number invented for the frame.
+const WALKED_AWAY_DEMAND := 1.0
+const WALKED_AWAY_SUPPLIED := 0.4
+const WALKED_AWAY_SHORTFALL := 0.6
+const WALKED_AWAY_KEEPERS := 1
+
+## Turns of shortfall this working can still absorb — **the COUNTDOWN, not the counter**, so a `0`
+## would mean *it is sliding now* and this is a working three turns from it.
+const WALKED_AWAY_GRACE := 3
+
+## Nobody is cutting it, which is the state the whole frame is about.
+const WALKED_AWAY_NO_TAKE := 0.0
+
+## …and the band that has walked away from it: the roster's own fixture with the near WOOD's `extract`
+## row emptied of hands. ⛔ **THE ROW SURVIVES THE EMPTYING**, which is the sim's rule and the reason
+## the leak exists at all — a working above its free floor is a holding, so `0` is *stop cutting*.
+func _walked_away_band_fixture() -> Dictionary:
+	var band := _workings_band_fixture(WORKINGS_DEMAND)
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT \
+				and int(row.get("target_x", -1)) == ROSTER_NEAR_TILE.x \
+				and int(row.get("target_y", -1)) == ROSTER_NEAR_TILE.y \
+				and String(row.get("material", "")) == WORKINGS_WOOD:
+			row["workers"] = WORKINGS_NO_CUTTERS
+	return band
+
 ## ⛔ **THE MARK DRAWS ONLY WHERE A PRESS COULD LAND — the FORAGE AND HUNT ROWS' OWN PREDICATE.**
 ##
 ## Ray, reading a Work tab: *"The improvement icon makes it look like we can improve it. In the case of
@@ -17304,10 +17509,12 @@ func _restore_roadwork_roster_fixture() -> void:
 # band's own `extract` ROW is the membership test), and one TILE can hold TWO workings, so the row's
 # identity is `(tile, material)` and a tile-keyed roster silently loses one of them.
 #
-# ⛔ **AND IT CARRIES NO `✕`.** `abandon` resolves a tile to a FORAGE source sim-side
-# (`BuildSourceRef::target` → `forage_source`), which `LaborTarget::same_source` pairs only with
-# another Forage row — so the verb does not reach a working and there is no verb that does. A `✕` here
-# would emit a command that destroys something else on the same hex.
+# ⛔ **AND ITS `✕` IS `abandon_working`, NOT `abandon`** (issue #650). `abandon` resolves a tile to a
+# FORAGE source sim-side (`BuildSourceRef::target` → `forage_source`), which `LaborTarget::same_source`
+# pairs only with another Forage row — so it does not reach a working at all, and it drops every
+# band-of-the-faction's holding on the tile besides. `abandon_working <f> <x> <y> <material>` names the
+# pair and drops this band's hold on the ONE working, which is what `_assert_a_working_can_be_put_down`
+# asserts by EQUALITY on the emitted line.
 
 ## The three workings this band holds, at three DISTANCES — reusing the road roster's own tiles, so
 ## the locators are worked against one stated camp and a move to `_band_fixture` fails both blocks
@@ -17560,6 +17767,12 @@ func _workings_row_value(row: Control) -> String:
 		return (child as Label).text
 	return ""
 
+## …and that same cell's HOVER, which is where every figure the one line cannot carry went.
+func _workings_row_tooltip(row: Control) -> String:
+	for child in row.find_children("*", "Label", true, false):
+		return (child as Label).tooltip_text
+	return ""
+
 func _assert_the_workings_roster_names_its_workings() -> void:
 	# **THE DEPOSIT CRAFTS ARE LEARNED FOR THIS BLOCK, and that is what makes the ladder PRESSABLE.**
 	# The standing row this file renders every other state against carries the four rung-transition
@@ -17663,26 +17876,39 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 		_workings_row_value(rows[0]).contains(
 			HudDepositVocab.DEPOSIT_RUNWAY_FORMAT % WORKINGS_STONE_RUNWAY)
 			and not _workings_row_value(rows[0]).contains(SourceForecast.YIELD_OVERDRAW_WORD))
-	# ⛔ **NO STEPPER AND NO `✕` ON ANY ROW — SCOPED TO THE ROWS, WHICH IS THE WHOLE OF THE RULE.**
-	# roads.md forbids a worker count on a ROW, because a per-working crew here would re-introduce the
-	# per-tile work row §4.13b retired; the pool's own band-wide stepper is on the block's HEAD and is
-	# asserted there. **A block-scoped search would now find that head control and pass or fail for the
-	# wrong reason**, which is why this walks `rows` and not `block`.
+	# ⛔ **NO STEPPER ON ANY ROW — SCOPED TO THE ROWS, WHICH IS THE WHOLE OF THE RULE.** roads.md
+	# forbids a worker COUNT on a ROW, because a per-working crew here would re-introduce the per-tile
+	# work row §4.13b retired; the pool's own band-wide stepper is on the block's HEAD and is asserted
+	# there. **A block-scoped search would now find that head control and pass or fail for the wrong
+	# reason**, which is why this walks `rows` and not `block`.
 	var row_controls: Array = []
 	for row in rows:
 		for control in row.find_children("*", "Button", true, false):
 			var face := (control as Button).text
-			if face == HudWorkVocab.STEPPER_MINUS_FACE or face == HudWorkVocab.STEPPER_PLUS_FACE \
-					or face == HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH:
+			if face == HudWorkVocab.STEPPER_MINUS_FACE or face == HudWorkVocab.STEPPER_PLUS_FACE:
 				row_controls.append(face)
-	_assert_band_panel(("…and no ROW carries a stepper or a `%s` — the hands are elsewhere and no verb "
-			+ "drops a working (found %s)")
-			% [HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH, row_controls],
+	_assert_band_panel("…and no ROW carries a stepper — the hands are elsewhere (found %s)"
+			% [row_controls],
 		row_controls.is_empty())
+	# ⛔ **AND THE `✕` IS ON EVERY ROW, KEYED TO ITS OWN WORKING** (issue #650). A `✕` is none of the
+	# three controls that rule forbids: it names no crew and staffs nobody. It is asserted PRESENT here
+	# and asserted to carry the WORKING's own handle rather than the road roster's, because a roster
+	# reaching for `abandon` would emit a verb that drops a forage assignment on the same hex instead.
+	var drops: Array = []
+	for row in rows:
+		var control := _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)
+		if control != null:
+			drops.append(String(control.get_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)))
+	_assert_band_panel(("…while every row DOES carry a `%s`, keyed to its own (tile, material) — %s "
+			+ "against the rows %s") % [HudWorkVocab.WORKINGS_ROSTER_ABANDON_GLYPH, drops, keys],
+		drops == keys)
+	_assert_band_panel("…and never the ROAD roster's own drop, whose verb names a place rather than a working",
+		_find_meta_control(rows[0], HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) == null)
 	# **AND THE HEAD IS THE POOL**, asserted on this state because it is the one with a live shortfall.
 	_assert_workings_roster_head("band_panel_workings_roster", block, true)
 	await _assert_the_row_opens_the_rung_track(rows)
 	await _assert_the_mark_needs_a_pressable_rung()
+	await _assert_a_working_can_be_put_down()
 
 	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
 	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** The `deposits` rows are fog-filtered

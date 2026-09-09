@@ -18,13 +18,14 @@ does with them. Read the sim one first — most of the traps here are its traps,
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/hud_deposit_vocab.gd` (`HudDepositVocab`) | The WORKINGS vocabulary leaf — one reader per field on a `deposits` row, one reader per field on a `deposit_rungs` CATALOG row (`catalog_*`) plus the branch-filtered walks over it (`branch_ladder` / `ladder_next_entry` / `ladder_rung_teaching`), the keeping verdict (`owes_keeping` / `is_short` / `is_at_risk`, the bool-before-the-number rule), and the FIVE composers the three surfaces state a working with: `deposit_lines` (the tile card's rows), `deposit_row_value` (the roster's value cell), `deposit_verdict` / `runway_aside` / `deal_label`+`deal_value` (the sheet's readout). §7's fork lives inside it, once (`renews` → `supply_clause`/`runway_clause`/`deposit_verdict`/the DIAL). It also owns the ESCAPEMENT layer (issue #650): `rung_floor_fraction_of` / `per_worker_biomass_of` / `regrowth_samples_of`, the ONE `max` composition (`composed_floor`), the forecast-shaped view of a working (`forecast_source`) and the room above the dial (`room_next_turn`), plus the three-state take/runway readers (`assigned_cutters` / `assigned_take` / `stated_take` / `stated_runway`) and the standing rung's lesson (`standing_lesson` / `standing_lesson_known`). A vocab module with static funcs, the `hud_route_vocab.gd` shape: it reads `SourceForecast` / `DetailFormat` / `HudFormat` / `HudComposeVocab` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
+| `ui/hud/hud_deposit_vocab.gd` (`HudDepositVocab`) | The WORKINGS vocabulary leaf — one reader per field on a `deposits` row, one reader per field on a `deposit_rungs` CATALOG row (`catalog_*`) plus the branch-filtered walks over it (`branch_ladder` / `ladder_next_entry` / `ladder_rung_teaching`), the keeping verdict (`owes_keeping` / `is_short` / `is_at_risk`, the bool-before-the-number rule), and the FIVE composers the three surfaces state a working with: `deposit_lines` (the tile card's rows), `deposit_row_value` (the roster's value cell), `deposit_verdict` / `runway_aside` / `deal_label`+`deal_value` (the sheet's readout). §7's fork lives inside it, once (`renews` → `supply_clause`/`runway_clause`/`deposit_verdict`/the DIAL). It also owns the ESCAPEMENT layer (issue #650): `rung_floor_fraction_of` / `per_worker_biomass_of` / `regrowth_samples_of`, the ONE `max` composition (`composed_floor`), the forecast-shaped view of a working (`forecast_source`) and the room above the dial (`room_next_turn`), plus the three-state take/runway readers (`assigned_cutters` / `assigned_take` / `stated_take` / `stated_runway`) and the standing rung's lesson (`standing_lesson` / `standing_lesson_known`), and the PUT-DOWN layer (`DEPOSIT_IDLE_WORD` — which `GATE_SHORT_NO_CREW` reads — `is_idle`, `DEPOSIT_IDLE_TIP_FORMAT`, `WORKING_ABANDON_LABEL` / `_DROPS_FORMAT` / `_WHY_FORMAT` and the one `working_abandon_tooltip` both emitters wear). A vocab module with static funcs, the `hud_route_vocab.gd` shape: it reads `SourceForecast` / `DetailFormat` / `HudFormat` / `HudComposeVocab` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
 | `ui/hud/DrawerComposeController.gd` → the `build_deposit_drawer_actions` family | The tile card's TWO compose actions and the sheet behind them (`_fill_deposit_branch` / `_tile_workings_of_branch` / `open_deposit_compose` / `_build_deposit_assign_controls` / `_build_deposit_offer_line` / `_mount_deposit_readout` / `_deposit_source_key`), filling `%ForestryAssignControls` and `%ExtractionAssignControls` — **one container per BRANCH**, since a wooded highland offers both at once. The ESCAPEMENT half is `_deposit_chart_model` (the ONE place the two floors are composed and the teaching note re-priced at the dial's own value), `_deposit_floor_takes` (the presets' hover metric) and `_deposit_yield_model` (the take, the `now → after` pair and the `renews` gate on the yields note). Its commit is the only thing it emits: `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, through the shared `_emit_assign_labor` |
 | `ui/hud/SubjectDrawerController.gd` → `_tile_terrain_lines`' deposit loop | Where the ROWS are appended — with the rivers, **above the Discovered early return**, and the one place the catalog join is resolved and threaded in. The ROAD block is composed on that same fog-safe side and appended LAST on both branches (`roads.md`); the deposits are emitted where they are composed |
 | `ui/hud/RungLadder.gd` → `deposit_track` / `_deposit_pile` / `_deposit_tooltip` / `deposit_building_verb` | The deposit branches' TRACK — `route_track`'s sibling, emitting the same `ROW_*` shape into the SAME `build_track` renderer |
 | `ui/hud/RungGates.gd` → `deposit_gates` / `deposit_gates_for` / `deposit_row_refusal` / `deposit_tooltip_refusals` / `_deposit_crew_refusal` / `_deposit_craft_refusal` | The FIVE refusals, keyed on the RUNG rather than the verb, as `{kind, short, long}` records in the route branch's own shape. `cutters` is a REQUIRED parameter, a `deposits` row publishing no crew — see "the gates" below |
+| `Main.gd` → `format_abandon_working` | **PUTTING A WORKING DOWN** — `abandon_working <faction> <x> <y> <material>`, its own builder beside `format_abandon` because it is its own verb rather than a widening of one. It refuses an empty material as the material-targeted improvement arm does, the token being half the working's identity. Reached through `_on_hud_abandon_working` off `HudLayer.abandon_working_requested` |
 | `Main.gd` → `format_improvement`'s `IMPROVEMENT_MATERIAL_TARGETED` arm | The three verbs' GRAMMAR — `fell|coppice|quarry <faction> <x> <y> <material>`, `cultivate`'s shape with the material on `assign_labor extract`'s own trailing position. A fourth ARM beside the herd-targeted and band-targeted ones, refusing on an empty material as the band arm refuses on `IMPROVEMENT_NO_BAND`. The verb list is `SourceForecast.DEPOSIT_IMPROVEMENTS`, which exists because a token SHAPE is not something the wire's rung catalog states |
-| `ui/hud/BandPanelController.gd` → the `_workings_roster_*` family + `_open_deposit_track` / `_emit_deposit_declaration` / `_workings_roster_cutters` / `_deposit_track_queue` / `_deposit_ladder` | **THE WORKINGS ROSTER, WHOSE HEAD IS THE `Workings` POOL AND WHOSE ROWS DECLARE** — `_workings_roster_models` (the band's own `extract` row as the membership filter, the material-led locator, the stable nearest-first sort), `_workings_roster_unseen` (case 2, off the cohort's published `quarrywork_demand`), `_build_workings_roster_head` (the title, the shortfall mark, and the pool's compact stepper — the ONLY control that staffs `quarrywork`), `_build_workings_roster_block` / `_row`. Each ROW carries the declaring `⌃` and nothing else. `_workings_roster_cutters` is the CREW gate's whole input — the take crew on one working, keyed through the `(tile, material)` pair like every other join here, and pending-aware; it is resolved at BOTH call sites (the row's `has_track` probe and the open), because a mark that appeared on a working the card would refuse is the disagreement the gate exists to end. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
+| `ui/hud/BandPanelController.gd` → the `_workings_roster_*` family + `_open_deposit_track` / `_emit_deposit_declaration` / `_workings_roster_cutters` / `_deposit_track_queue` / `_deposit_ladder` | **THE WORKINGS ROSTER, WHOSE HEAD IS THE `Workings` POOL AND WHOSE ROWS DECLARE** — `_workings_roster_models` (the band's own `extract` row as the membership filter, the material-led locator, the stable nearest-first sort), `_workings_roster_unseen` (case 2, off the cohort's published `quarrywork_demand`), `_build_workings_roster_head` (the title, the shortfall mark, and the pool's compact stepper — the ONLY control that staffs `quarrywork`), `_build_workings_roster_block` / `_row`. Each ROW carries the declaring `⌃` and the `✕` that puts the working down (`_build_workings_roster_abandon_button` → `_emit_working_abandon`, shared with the ladder card's `_build_working_abandon_row`) and nothing else. `_workings_roster_cutters` is the CREW gate's whole input — the take crew on one working, keyed through the `(tile, material)` pair like every other join here, and pending-aware; it is resolved at BOTH call sites (the row's `has_track` probe and the open), because a mark that appeared on a working the card would refuse is the disagreement the gate exists to end. Its reserved height is resolved once in `_fill_work_zone_column` and spent in BOTH `build_queue_rows_max` and `_work_board_capacity` |
 | `ui/hud/hud_work_vocab.gd` → the `WORKINGS_ROSTER_*` family + `ROLE_NAME_QUARRYWORK` + `RUNG_TRACK_STATE_GROUND_GIVES` | The roster's words, metas, its `WORKINGS_ROSTER_HEAD_HEIGHT` (21, measured), its `workings_roster_height`, the pool's own name/hint/coverage sentence, the row mark's own handle and hover, and the seventh rung state's SECOND word. They live here rather than in `HudDepositVocab` because the geometry of the Work zone belongs beside the three blocks that share it and the state enumeration is one table |
 | `ui/hud/HudWidgets.gd` → `zone_head`'s trailing `title_tooltip` | The one shared-layer change the roster made: a head whose readout is a CONDITIONAL mark needs its hover on the TITLE, because `readout_tooltip` rides a Label built only where a readout is stated |
 | `ui/hud/DetailFormat.gd` → `Context.deposit_rows` + its `_value_hex` arm | ⛔ **THE ONE ARM OF THAT DISPATCH KEYED ON MEMBERSHIP RATHER THAN ON A LITERAL.** Every other row key is a constant; a working's is `Wood` or `Stone` — `materials.json`'s ids, config this client may not spell — so the PRODUCER says which keys it wrote, exactly as `row_tooltips` does |
@@ -909,18 +910,139 @@ roster's**: the two blocks appear independently, so a band with one pays one gap
 pays two, and folding the pair into one term is the 6px disagreement
 `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` exists to prevent, on a second block.
 
-### ⛔ AND IT CARRIES NO `✕`, BECAUSE NO VERB DROPS A WORKING
+### ⛔ ITS `✕` IS `abandon_working`, AND THAT IS A DIFFERENT VERB FROM `abandon`
 
 The road roster's drop is `abandon <faction> <x> <y>`, and `abandon` **does not reach a working** —
 checked, not assumed. `BuildSourceRef::target()` resolves a tile pair to `forage_source(tile)`, i.e. a
 `LaborTarget::Forage`, and `LaborTarget::same_source` pairs an `Extract` row only with another
 `Extract` row of the same `(tile, material)`; `release_roads_at` beside it touches the `RoadRegistry`
-alone. So the verb drops the faction's forage holding and the tile's road and leaves every working
-standing.
+alone. So that verb drops the faction's forage holding and the tile's road and leaves every working
+standing — and widening it to cover a working would make an already destructive command quietly worse
+on exactly the hexes that hold two of them.
 
-**A `✕` here would emit a command that destroys something else on the same hex**, which is worse in a
-roster than on a card — a roster invites bulk use. Unstaffing is the take crew's own `0`, on the
-working's compose sheet. **A working-shaped abandon is server-side work and is not this arc's.**
+`abandon_working <faction> <x> <y> <material>` is the verb the row sends instead. It rides the three
+rung verbs' OWN parser arm, so the material sits in the same trailing position and the tail is closed;
+it names no band, a working's keeper being known from its `Extract` row; and it drops the HOLDING —
+the row and its build-queue entry — through the same `drop_holding_and_cancel_ring` a patch's
+`abandon` uses, leaving the meter to rot.
+
+⛔ **`abandon` ITSELF IS UNCHANGED AND THIS CLIENT NEVER SENDS IT FOR A WORKING.**
+`Main.format_abandon` and `HudLayer.abandon_requested` are the road's path and carry no material;
+`Main.format_abandon_working` and `HudLayer.abandon_working_requested` are this one and require one.
+Routing a working's press onto the wider signal would put a road's blast radius behind a working's
+label.
+
+## PUTTING A WORKING DOWN — TWO EMITTERS, ONE RELAY, ONE BUILDER (issue #650)
+
+⛔ **AND `assign_labor … extract … 0` IS NOT AN UNDO.** `systems::labor`'s
+`source_has_a_meter_at_risk` makes a working raised above its free floor a HOLDING, so a crew of zero
+is *"stop cutting"* and never *"this band has nothing here"*: the row survives, the bill survives, and
+`extraction_keeping_claims` reads the ROW. Measured sim-side: an unstaffed built working does revert
+on its own — a quarry prunes itself at **t103**, a coppice at **t202** — which is a hundred turns of a
+bill nobody could stop. **And the bill is SHARED, which is the decisive fact.** Under the default
+`UpkeepFundMode::Spread` the abandoned working takes its proportional cut of the band's one
+`quarrywork` pool: one keeper holds one felling working at 60.0 for ever alone, and slides to **49.96
+in forty turns** the moment a walked-away sibling sits beside it. **A working you walked away from
+degrades a working you did not.** That measurement is the copy's argument and the control's reason.
+
+The verb has **two surfaces, the road's pair one branch over**:
+
+| surface | control | where |
+|---|---|---|
+| the WORKINGS ROSTER row | a DANGER `✕`, no confirm | `BandPanelController._build_workings_roster_abandon_button` |
+| the deposit LADDER card | `Stop holding this working`, the BOTTOM row under the rungs | `BandPanelController._build_working_abandon_row` |
+
+⛔ **BOTH EMIT `working_abandon_requested` THROUGH ONE `_emit_working_abandon`, AND THAT IS roads.md's
+STATED RULE.** *"Two emitters converging on one relay is what stops the verb's grammar drifting."*
+Here they converge one layer earlier still — both controls live on the same controller — so the chain
+is one function, one signal, one `HudLayer` relay and one `Main.format_abandon_working`.
+
+⛔ **THE MATERIAL RIDES THE EMISSION STRUCTURALLY.** `_emit_working_abandon` reads the pair off the
+`deposits` ROW it was handed (`tile_of` / `material_of`) and returns on `MATERIAL_NONE` beside its
+return on a negative tile — `_emit_deposit_declaration`'s discipline, for its exact reason. One hex
+holds two workings, so a press that lost the material would not merely under-specify the order: it
+would put down the OTHER working, and the resulting line parses perfectly.
+
+### ⛔ NEITHER CONTROL IS GATED, BECAUSE MEMBERSHIP IS THE GATE
+
+The road ladder's abandon row is *"offered ONLY where the keeper is in the player's roster"*. A working
+publishes no keeper — it is held by whichever band has an `extract` row on the pair — so the same
+condition is stated by the surface rather than tested on it: the roster lists exactly the workings
+this band holds, and the ladder card is opened from one of its rows. Every control this verb has is
+therefore already standing on a holding the acting band can drop.
+
+### ⛔ THERE IS NO SECOND WARN LINE, AND THAT IS A DECISION
+
+The road's `✕` carries one (`ROAD_LADDER_ABANDON_ALSO`) because *"a one-click destructive action that
+under-states what it destroys is worse in a roster than on a card: a roster invites bulk use"* — and
+`abandon` really does take a forage assignment down with the road, a consequence its label does not
+name. `abandon_working` names the `(tile, material)` pair: it touches neither the other working on the
+same hex, nor any forage row, nor the road. **The blast radius is exactly what the label says**, so a
+second line would be warning about a reach the verb does not have.
+
+**What the hover says instead is what a player cannot see coming**, in two lines composed once by
+`HudDepositVocab.working_abandon_tooltip`:
+
+- `WORKING_ABANDON_DROPS_FORMAT` — what it destroys, **the banked work included**. The sim drops the
+  holding and its queue entry and leaves the METER to rot, so nothing is demolished and nothing is
+  refunded either; a hover saying only *"drops this band's hold"* would read as reversible, which it
+  stops being the moment work is banked.
+- `WORKING_ABANDON_WHY_FORMAT` — why a player would want it, which is the shared bill above.
+
+⛔ **AND THE ROSTER GETS THE CARD'S WHOLE HOVER, VERBATIM.** That is how the *"must not be quieter"*
+rule is kept here: one composer, both controls, asserted by EQUALITY rather than by containment. The
+card additionally states the WHY as a visible `RungLadder.build_aside`, a card having the room a
+roster row does not.
+
+## THE CREWLESS READOUT — a crew of zero is not an absence of news
+
+A roster row at `0` cutters used to say nothing about either half of what was happening: the working
+is **still billed**, and it goes back on its own once the pool stops covering it. Both halves compose
+client-side from fields already on the wire — **no schema change** — and nothing here derives a figure
+the sim did not publish:
+
+| the reading | the fields |
+|---|---|
+| this band has taken its hands off it | the band's own `extract` row (`effective_extract_workers`), never a `deposits` field |
+| it is still billed, and by how much | `upkeepDemand` / `upkeepWorkersNeeded`, and `upkeepShortfall` where the pool is short |
+| when it starts going back | `hasNeglectGrace` **before** `neglectGraceRemaining`, through the existing `reverting_value` |
+| there is a rung to lose at all | `ladderPosition` / `upkeepDemand` — both free floors owe nothing and have no meter |
+
+⛔ **THE `~104 TURNS` FIGURE IS NOT ON THE WIRE AND IS NOT COMPOSED.** It is the meter's whole bleed
+to the free floor, which no published field states; what the client can honestly say is the GRACE
+(`neglectGraceRemaining`, the countdown the sim does publish) and, where the bill is met, that the
+working simply holds — billing — for ever. Approximating the rest here would be the client re-deriving
+a number the sim already owns, which is this file's standing prohibition.
+
+### ⛔ THE CLAUSE IS THE CREW GATE'S OWN WORD, AND `GATE_SHORT_NO_CREW` READS IT FROM THERE
+
+`HudDepositVocab.DEPOSIT_IDLE_WORD` is `no crew`, and the gate's short form is now
+`const GATE_SHORT_NO_CREW := DEPOSIT_IDLE_WORD`. A working with nobody on it is ONE condition — the
+ladder refuses every rung on it and the roster row states it — so it gets ONE word; two spellings
+would let one working read `nobody on it` on the row and `no crew` on the card it opens. It is also
+SHORT for a measured reason: the value cell `clip_text`s against a control column holding two marks
+now, and the clause that must survive is the HAZARD.
+
+⛔ **THREE SILENCES, AND NONE MAY BE FLATTENED INTO ANOTHER.** `DEPOSIT_UNOPENED_WORD` is ground with
+no working; `DEPOSIT_RUNWAY_IDLE` (*not being worked*) is the SOURCE's reading, i.e. nobody at all is
+cutting it, so there is no rate to carry a runway forward on; `DEPOSIT_IDLE_WORD` is THIS BAND's
+reading of a working it still holds. The last two can disagree — another band may be cutting the same
+seam — **which is why the crew is an ARGUMENT and not a field**.
+
+⛔ **THE BAND'S WORD REPLACES THE SOURCE'S RATHER THAN JOINING IT.** Where both would fire they are
+two clauses spending the row on one silence, so `deposit_row_value` drops `DEPOSIT_RUNWAY_IDLE` and
+keeps the reading the player can act on from this roster.
+
+⛔ **`CUTTERS_UNSTATED` (-1) IS NOT A CREW OF ZERO.** It is the default on `deposit_row_value`,
+`deposit_value_color` and `deposit_roster_tooltip`, and it is what the tile card and every other
+reader with no band in hand gets: a surface that cannot say whose hands are on a working must not
+announce that nobody's are. The WORKINGS ROSTER is the one surface that can state the count, and it
+passes `_workings_roster_cutters` — the same pending-aware reader the CREW gate takes.
+
+**The hover's idle line is composed only where the working OWES a bill** (`owes_keeping`). On either
+free floor there is nothing being spent, so there is nothing to say — the *no row for the absence of a
+bill* rule, one register in. `deposit_roster_tooltip` therefore reads: the §7 take pair or the runway,
+`Holding it: <bill>`, the idle line, then the countdown.
 
 ## THE ROLE HAD TO PASS BOTH GATES, AND THIS IS THE THIRD TIME
 
@@ -1035,7 +1157,7 @@ whose other material this band DOES hold, which a tile-keyed membership test wou
 THREE with two of them on one tile, the nearest-first sort tie-broken by MATERIAL, the material-led
 name cells, the value cell as `deposit_row_value` verbatim **asked with the same catalog the row was
 built from**, the rung named by the catalog rather than by its wire key, §7's fork read off two rows of
-ONE roster, and **no stepper, crew count or `✕` on any ROW** — scoped to the rows.
+ONE roster, **no stepper or crew count on any ROW** — scoped to the rows, since a block-scoped search finds the head's own stepper — and a `✕` on EVERY row keyed to its own `(tile, material)`, never the road roster's `ROADWORK_ROSTER_ABANDON_META`.
 
 ⛔ **IT PUSHES A RUNG CATALOG, AND WITHOUT ONE THE STATE IS EVIDENCE OF NOTHING.** Every value cell
 names its rung out of it, so a roster with no catalog behind it draws `forestry:felling` in each one;
@@ -1078,10 +1200,43 @@ and the hover naming the remedy in the branch's own crew noun.
 it** — the road ladder's own trap. Its rows are read through the same `_rung_track_states` /
 `_rung_track_faces` pair the plant track's states use, which recurse through the Window.
 
-**Frames:** `band_panel_workings_roster` (the head with its stepper and its `⚠` over three rows, under
-a four-card pools block), `band_panel_workings_track` (the ladder open over it) and
-`band_panel_workings_roster_unseen` (case 2 — the head still drawn, the muted line in place of the
-rows).
+**`band_panel_workings_walked_away` IS THE LEAK'S OWN BOARD**, and its fixture is what makes the
+claims mean anything: the roster's three rows with the near WOOD held at `felling`, carrying
+`forestry:felling`'s own bill out of the harness's catalog, a shortfall the pool is not covering, a
+real `has_neglect_grace` and NOBODY on its `extract` row. Every other row is untouched, so the
+readout claims are about that row rather than about the block. It asserts the value cell states the
+crew clause AND keeps the hazard beside it (the idle clause does not replace it), and the hover
+carries the idle line, the pool's name and the countdown.
+
+⛔ **BOTH EMITTERS ARE DRIVEN ON THAT BOARD, AND THE CLAIM IS THE LINE BY EQUALITY.** The roster
+row's `✕` and the ladder card's put-down row each send `abandon_working 0 72 18 wood` through the real
+`HudLayer.abandon_working_requested` relay and the real `Main.format_abandon_working`; the near hex's
+OTHER working is STONE, so a control that lost the material — or took its neighbour's — reads as a
+different line. The card's hover is asserted EQUAL to the roster's, which is the *"must not be
+quieter"* rule made falsifiable, and the card closing on the press is asserted beside it.
+`command_guard` drives the builder directly and can only prove the PARSE.
+
+**Frames:** `band_panel_workings_roster` (the head with its stepper and its `⚠` over three rows, each
+wearing its `⌃` and its `✕`, under a four-card pools block), `band_panel_workings_track` (the ladder
+open over it), `band_panel_workings_walked_away` (the crewless row reading `Felling · no crew · ⚠
+going back`), `band_panel_workings_put_down` (the ladder card with `Stop holding this working` and its
+aside beneath the rungs) and `band_panel_workings_roster_unseen` (case 2 — the head still drawn, the
+muted line in place of the rows).
+
+⛔ **THE HOVERS ARE ASSERTED AS TEXT AND CANNOT BE RENDERED HERE.** Godot's tooltip delay runs on the
+scaled clock and this harness holds `Engine.time_scale` at 0, so no hover ever pops; the strings are
+asserted on `tooltip_text` and printed. The ladder card's aside is the one half of the destructive
+control's copy that IS on a frame.
+
+### The command's own grammar — `command_guard`
+
+`abandon_working` is the FIFTH place-addressed drive, through `Main.format_abandon_working` for
+`_drive_deposit_verbs`' reason: the builder is the whole of the client's grammar for it and the click
+path is real only on the Band panel. The pair is the materialless refusal beside it — a three-token
+`abandon_working` is a shorter line rather than an obviously broken one, so it is refused in the
+builder rather than left to the parser. `EXPECTED_KINDS` gained the verb, and `xtask`'s own
+`band_handle` classifies `CommandPayload::AbandonWorking` `PlaceAddressed` beside the three rung
+verbs — an unlisted variant answers `NotBandAddressed`, which that gate fails.
 
 ## See Also
 

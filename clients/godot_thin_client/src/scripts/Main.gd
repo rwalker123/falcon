@@ -326,6 +326,8 @@ func _ready() -> void:
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
         if hud.has_signal("abandon_requested") and not hud.is_connected("abandon_requested", Callable(self, "_on_hud_abandon")):
             hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
+        if hud.has_signal("abandon_working_requested") and not hud.is_connected("abandon_working_requested", Callable(self, "_on_hud_abandon_working")):
+            hud.connect("abandon_working_requested", Callable(self, "_on_hud_abandon_working"))
         if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
             hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
         if hud.has_signal("upkeep_kit_requested") and not hud.is_connected("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit")):
@@ -1700,6 +1702,38 @@ static func format_abandon(payload: Dictionary) -> Dictionary:
         "message": "Put down what your people hold at (%d, %d)." % [x, y],
     }
 
+## **`abandon_working <faction> <x> <y> <material>` — PUT ONE WORKING DOWN** (issue #650).
+##
+## ⛔ **ITS OWN BUILDER BECAUSE IT IS ITS OWN VERB, AND `abandon` MUST NOT BE WIDENED INTO IT.**
+## `abandon` names a PLACE: `BuildSourceRef::target` resolves a tile pair to a forage source, which
+## `LaborTarget::same_source` never pairs with an `Extract` row — so it does not reach a working at
+## all — and it drops every band-of-the-faction's holding on the tile, a forage assignment there
+## included. Covering a working with an optional trailing material would make an already destructive
+## verb quietly more destructive on exactly the hexes that hold two workings.
+##
+## ⛔ **THE MATERIAL IS HALF THE SUBJECT AND IS REFUSED WHEN ABSENT, exactly as the tile is.** A
+## working's key is the `(tile, material)` PAIR because one hex can hold two, so a three-token line
+## does not merely under-specify the order — and it is refused HERE rather than left to the parser,
+## because a line missing its trailing token is a shorter line another verb's grammar accepts. The
+## `IMPROVEMENT_NO_MATERIAL` refusal one builder up, in the one other place this pair is sent.
+##
+## **THE TAIL IS CLOSED AND THERE IS NO BAND TOKEN.** It rides the three deposit verbs' own parser arm
+## (`sim_runtime::command_text`), so the material sits in the same trailing position; and a working's
+## keeper is known from its `Extract` row, exactly as a patch's is from its forage row.
+static func format_abandon_working(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    var material := String(payload.get("material", IMPROVEMENT_NO_MATERIAL)).strip_edges()
+    if material == IMPROVEMENT_NO_MATERIAL:
+        return {}
+    return {
+        "line": "abandon_working %d %d %d %s" % [faction, x, y, material],
+        "message": "Stop holding the %s working at (%d, %d)." % [material, x, y],
+    }
+
 ## **`build_kit <faction> <x> <y> [kit <id>]` | `build_kit <faction> <herd_id> [kit <id>]` — THE
 ## PER-ENTRY BUILDERS KIT** (`docs/plan_standing_upkeep.md` §4.7a ②). It names a SOURCE and sets a
 ## property of that source's QUEUE ENTRY on every band of the faction that has it queued; the row, its
@@ -2137,6 +2171,12 @@ func _on_hud_unqueue(payload: Dictionary) -> void:
 ## shadow, so there is nothing a refused send would have to take back.
 func _on_hud_abandon(payload: Dictionary) -> void:
     _send_formatted_command(format_abandon(payload))
+
+## PUT ONE WORKING DOWN — the deposit branches' own release, and a different verb from the one above.
+## **No rollback** for the road's reason: nothing optimistic is written for it, and the next snapshot
+## restates the `deposits` section and the band's labor rows together.
+func _on_hud_abandon_working(payload: Dictionary) -> void:
+    _send_formatted_command(format_abandon_working(payload))
 
 ## NAME THE KIT one queued build is raised with (`docs/plan_standing_upkeep.md` §4.7a ②) — its own
 ## handler because its own command and its own scope: it names a SOURCE and sets a property of that

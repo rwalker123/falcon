@@ -2064,12 +2064,12 @@ static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
 # arithmetic. The `deposits` rows are fog-filtered, so a working out of sight would drop out of any
 # total taken here while the band still owes its keeping.
 #
-# ⛔ **AND IT CARRIES NO `✕`.** The road roster's drop is `abandon <faction> <x> <y>`, whose target
-# resolves to a FORAGE source sim-side (`BuildSourceRef::target` → `forage_source`) and is matched by
-# `LaborTarget::same_source`, which pairs an `Extract` row only with another `Extract` row of the same
-# `(tile, material)`. **So `abandon` does not drop a working**, and there is no verb that does:
-# unstaffing is the take crew's own `0`. A `✕` here would emit a command the sim answers by dropping
-# something else on the same hex.
+# ⛔ **AND ITS `✕` IS `abandon_working`, NEVER `abandon`** (issue #650). The road roster's drop is
+# `abandon <faction> <x> <y>`, whose target resolves to a FORAGE source sim-side
+# (`BuildSourceRef::target` → `forage_source`) and which drops every band-of-the-faction's holding on
+# the tile — so it neither reaches a working nor confines itself to one. `abandon_working <faction>
+# <x> <y> <material>` names the `(tile, material)` PAIR and drops this band's hold on that ONE working,
+# which is why the row's control carries the material structurally rather than by label.
 
 ## The block's head, which is also the `quarrywork` pool's only control.
 ##
@@ -2146,6 +2146,29 @@ const WORKINGS_ROSTER_TRACK_TOOLTIP := "Take this ground further up its ladder."
 ## The mark's own width, so the value cell beside it clips against a stable edge rather than against
 ## whichever glyph the row happens to carry.
 const WORKINGS_ROSTER_TRACK_WIDTH := 22.0
+
+## ⛔ **THE DROP — the row's `✕`, and it is the ROADWORK ROSTER'S OWN GLYPH AND COLUMN** (issue
+## #650). A destructive single-item control reads as ONE thing in this client — the build queue's
+## withdrawal, the parties zone's recall, the road roster's drop — so a second glyph or a second width
+## here would make a working's put-down look like a different kind of act from a road's.
+##
+## **It is not the per-row prohibition being broken.** roads.md forbids a stepper, a crew count and a
+## kit picker on a ROW, because a per-working worker count would re-introduce the per-tile work row
+## `docs/plan_standing_upkeep.md` §4.13b retired. A `✕` is none of the three: it names no crew and
+## staffs nobody, and the road roster beside it has carried one since arc #532.
+const WORKINGS_ROSTER_ABANDON_GLYPH := ROADWORK_ROSTER_ABANDON_GLYPH
+const WORKINGS_ROSTER_ABANDON_WIDTH := ROADWORK_ROSTER_ABANDON_WIDTH
+
+## …and its stable handle, valued the row's own `(tile, material)` — the pair the emitted line names,
+## so a harness can say *this working's drop* rather than *a drop somewhere in the block*. Its own
+## constant rather than the road's, because a scan for the road's `✕` is what asserts the road roster
+## draws one and must not find these.
+const WORKINGS_ROSTER_ABANDON_META := "workings_roster_abandon"
+
+## …and the LADDER CARD's own put-down row, which sends the identical command from the other of the
+## verb's two surfaces. **Valued `true` rather than a key**: the card is about exactly one working, so
+## there is nothing for a harness to tell apart, where a roster row's control has its siblings.
+const WORKINGS_LADDER_ABANDON_META := "workings_ladder_abandon"
 
 ## The muted case-2 line's own handle, so its presence is assertable rather than inferred from a row
 ## count.

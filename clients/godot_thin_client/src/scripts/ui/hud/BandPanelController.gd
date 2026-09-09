@@ -147,6 +147,16 @@ signal split_band_requested(payload: Dictionary)
 # its own signal rather than reaching that controller, this panel's rule: controllers never talk to
 # each other, and HudLayer is the one place the two emitters converge on `Main.format_abandon`.
 signal road_abandon_requested(payload: Dictionary)
+# A WORKING was put down (issue #650) — relayed to HudLayer.abandon_working_requested and built by
+# `Main.format_abandon_working`. **TWO emitters, one relay**, the road pair's own rule: the workings
+# roster row's `✕` and the deposit ladder card's put-down row both send this, so the verb's grammar
+# has one place to drift from rather than two.
+#
+# ⛔ **IT IS NOT `abandon_requested`.** That signal carries `abandon <faction> <x> <y>`, which names a
+# PLACE: it resolves to a forage source sim-side and drops every band-of-the-faction's holding on the
+# tile. A working is keyed `(tile, material)`, so its own verb carries the pair and this payload does
+# too — routing it onto the wider signal would put a road's blast radius behind a working's label.
+signal working_abandon_requested(payload: Dictionary)
 # Recenter + select a hex (a zone row / cycler jump) — relayed to HudLayer.alert_focus_requested.
 signal alert_focus_requested(x: int, y: int)
 # Pin an exact occupant on the map after that recenter — relayed to HudLayer.roster_occupant_selected.
@@ -2574,9 +2584,11 @@ func _workings_roster_unseen(band: Dictionary, visible: int) -> bool:
 ## **THE WORKINGS ROSTER BLOCK** — the workings the pool above is paying for. `null` where the band
 ## holds nothing visible AND owes nothing, which is the expeditions block's omit-entirely rule.
 ##
-## ⛔ **NO STEPPER, NO CREW COUNT, NO KIT PICKER — AND NO `✕`.** See
-## `HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER`: the hands are elsewhere on both counts, and there is no
-## verb that drops a working, `abandon` resolving to a FORAGE source sim-side.
+## ⛔ **NO STEPPER, NO CREW COUNT, NO KIT PICKER.** See `HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER`:
+## the hands that CUT a working are on the tile card's compose sheets and the hands that HOLD it are
+## this block's own head. **The row's two controls are the declaring `⌃` and the `✕`** — neither names
+## a crew nor staffs anybody, and the `✕` is `abandon_working`, which reaches exactly the one working
+## its row is about (issue #650).
 func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContainer:
     var unseen := _workings_roster_unseen(band, models.size())
     # ⛔ **CASE 1 DRAWS NOTHING, AND THAT TAKES THE POOL'S STEPPER WITH IT — DELIBERATELY** (arc #583).
@@ -2698,21 +2710,29 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
         func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
     line.add_child(jump)
     var value := Label.new()
-    value.text = HudDepositVocab.deposit_row_value(deposit, ladder)
+    # ⛔ **THE CREW IS AN ARGUMENT, AND THIS IS THE ONE SURFACE THAT KNOWS IT** (issue #650). A
+    # `deposits` row publishes no crew — a working is held by whichever band has an `extract` row on
+    # the `(tile, material)` pair — so *has this band taken its hands off it* is a question only the
+    # roster can ask, and the composer answers `CUTTERS_UNSTATED` for every caller that cannot.
+    var cutters := _workings_roster_cutters(band, model)
+    value.text = HudDepositVocab.deposit_row_value(deposit, ladder, cutters)
     value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     value.add_theme_color_override("font_color",
-        HudDepositVocab.deposit_value_color(deposit, ladder))
+        HudDepositVocab.deposit_value_color(deposit, ladder, cutters))
     value.clip_text = true
     value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # **THE FIGURES THE ONE-LINE CELL CANNOT CARRY RIDE ITS HOVER** — the take pair or the runway, the
-    # standing bill, and the neglect COUNTDOWN, which lives on this surface and no other: this is the
-    # block whose own head staffs the pool that would stop the slide.
-    HudWidgets.set_label_tooltip(value, HudDepositVocab.deposit_roster_tooltip(deposit))
+    # standing bill, the neglect COUNTDOWN, and what a crew of zero does NOT stop. All of them live on
+    # this surface and no other: this is the block whose own head staffs the pool that would stop the
+    # slide, and whose own rows carry the control that ends the bill.
+    HudWidgets.set_label_tooltip(value,
+        HudDepositVocab.deposit_roster_tooltip(deposit, cutters))
     line.add_child(value)
-    # ⛔ **THE DECLARING MARK, AND IT IS THE ONLY CONTROL A ROW CARRIES.** The hands that CUT a working
+    # ⛔ **THE DECLARING MARK, AND THE FIRST OF THE ROW'S TWO CONTROLS.** The hands that CUT a working
     # are the tile card's compose sheet and the hands that HOLD it are this block's own head; what a
-    # row can answer is *take it further up its ladder*, which is the same question the work board's
-    # `⌃` answers one block down and is opened with the same card.
+    # row can answer is *take it further up its ladder* — the same question the work board's `⌃`
+    # answers one block down, opened with the same card — and *stop holding it at all*, which is the
+    # `✕` appended after this one.
     #
     # ⛔ **IT RENDERS ONLY WHERE A PRESS COULD LAND — `RungGates.deposit_rung_ready`, which is the
     # FORAGE AND HUNT ROWS' OWN PREDICATE (`RungGates.next_rung_ready`) asked of a working's ladder.**
@@ -2749,7 +2769,39 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
         track_btn.pressed.connect(func() -> void:
             _open_deposit_track(band, deposit, _workings_roster_cutters(band, model), track_btn))
         line.add_child(track_btn)
+    line.add_child(_build_workings_roster_abandon_button(band, deposit))
     return row
+
+## **THE DROP — `abandon_working <faction> <x> <y> <material>`, and the same emitter the ladder card's
+## put-down row uses** (issue #650). Two controls, one `_emit_working_abandon`, one relay: a second
+## command path would be a second place for the verb's grammar to drift, which is the road pair's own
+## finding arriving one branch over.
+##
+## ⛔ **IT IS UNGATED, BECAUSE MEMBERSHIP IS THE GATE.** This roster lists exactly the workings this
+## band has an `extract` row on, so every row it draws is a holding this band can put down — the road
+## roster's *"offered only where the keeper is in the player's roster"* stated in the one place a
+## working's keeper is knowable.
+##
+## ⛔ **AND ITS HOVER IS THE LADDER CARD'S, VERBATIM.** roads.md: *"a one-click destructive action that
+## under-states what it destroys is worse in a roster than on a card: a roster invites bulk use."* So
+## the roster gets the whole hover rather than a shorter one — what it drops, and why a player would
+## want that.
+func _build_workings_roster_abandon_button(band: Dictionary, deposit: Dictionary) -> Button:
+    var drop := Button.new()
+    drop.set_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META, "%d,%d:%s" % [
+        HudDepositVocab.tile_of(deposit).x, HudDepositVocab.tile_of(deposit).y,
+        HudDepositVocab.material_of(deposit)])
+    drop.text = HudWorkVocab.WORKINGS_ROSTER_ABANDON_GLYPH
+    drop.focus_mode = Control.FOCUS_NONE
+    drop.tooltip_text = HudDepositVocab.working_abandon_tooltip(deposit)
+    drop.custom_minimum_size = Vector2(HudWorkVocab.WORKINGS_ROSTER_ABANDON_WIDTH, 0.0)
+    HudStyle.apply_button(drop, "ghost")
+    HudWidgets.compact(drop, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    drop.add_theme_color_override("font_color", HudStyle.DANGER)
+    # **NO CONFIRM** — the single-item idiom the queue withdrawal, the parties recall and the road
+    # roster's own drop already use.
+    drop.pressed.connect(func() -> void: _emit_working_abandon(band, deposit))
+    return drop
 
 ## ⛔ **THE TAKE CREW ON ONE WORKING — the CREW gate's whole input, and the one thing the `deposits`
 ## row cannot state.** A working publishes no crew; it is held by whichever band has an `extract` row
@@ -2811,7 +2863,12 @@ func _open_deposit_track(band: Dictionary, deposit: Dictionary, cutters: int,
     var margin := _rung_track_body
     HudWidgets.clear_children(margin)
     var building := RungLadder.deposit_building_verb(rows)
-    margin.add_child(RungLadder.build_track(rows, func(verb: String) -> void:
+    # **THE ROWS AND THE PUT-DOWN ROW ARE ONE COLUMN**, the road ladder card's own shape: the ladder
+    # says how much further this working can go and the row beneath it says it need not go anywhere
+    # at all, which are the two ends of one decision.
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
+    column.add_child(RungLadder.build_track(rows, func(verb: String) -> void:
         # The press closes the card BEFORE it emits, the rung presses' own rule: the declaration
         # re-renders the zone this card is anchored to.
         _dismiss_rung_track()
@@ -2820,7 +2877,70 @@ func _open_deposit_track(band: Dictionary, deposit: Dictionary, cutters: int,
         # flight would spend a command to be told no.
         if verb != building:
             _emit_deposit_declaration(band, deposit, verb)))
+    column.add_child(_build_working_abandon_row(band, deposit))
+    margin.add_child(column)
     track.popup(_rung_track_anchor_rect(anchor))
+
+## ⛔ **PUT THE WORKING DOWN — the row at the BOTTOM of its ladder card** (issue #650), the road
+## ladder's own affordance one branch over. `unqueue` withdraws a DECLARATION and a crew of zero is
+## *"stop cutting"*; a working raised above its free floor is a HOLDING, and `abandon_working` is the
+## only thing that ends the bill it carries.
+##
+## **OFFERED UNCONDITIONALLY, BECAUSE THE CARD IS OPENED FROM A HOLDING.** This track is reached from
+## a workings roster row, whose membership test is the band's own `extract` row — so by construction
+## the acting band holds the working the card is about, which is exactly the condition the road row
+## gates on and the one a working can never fail here.
+##
+## **THE ASIDE IS THE *WHY*, VISIBLE; THE HOVER CARRIES BOTH HALVES.** A card has the room to say why
+## a player would press a destructive control, and the reason is the shared bill rather than tidiness
+## — see `HudDepositVocab.WORKING_ABANDON_WHY_FORMAT`.
+func _build_working_abandon_row(band: Dictionary, deposit: Dictionary) -> VBoxContainer:
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
+    var button := Button.new()
+    button.text = HudDepositVocab.WORKING_ABANDON_LABEL
+    button.tooltip_text = HudDepositVocab.working_abandon_tooltip(deposit)
+    button.set_meta(HudWorkVocab.WORKINGS_LADDER_ABANDON_META, true)
+    button.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
+    HudStyle.apply_button(button, "ghost")
+    HudWidgets.compact(button, HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE,
+        HudWorkVocab.WORK_PAGER_PADDING_V)
+    button.pressed.connect(func() -> void:
+        # The press closes the card BEFORE it emits, the rung presses' own rule: the drop re-renders
+        # the zone this card is anchored to, and this card is anchored to the very row that goes.
+        _dismiss_rung_track()
+        _emit_working_abandon(band, deposit))
+    column.add_child(button)
+    column.add_child(RungLadder.build_aside(
+        HudDepositVocab.WORKING_ABANDON_WHY_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK))
+    return column
+
+## **PUT A WORKING DOWN — `abandon_working <faction> <x> <y> <material>`, through
+## `Main.format_abandon_working`.** The ONE emitter behind both controls above.
+##
+## ⛔ **THE PAIR IS READ OFF THE `deposits` ROW ITSELF** (`tile_of` / `material_of`), never off the
+## roster row's label — `_emit_deposit_declaration`'s discipline, and for its exact reason. One hex
+## holds two workings, so a press that lost the material would not merely under-specify the order: it
+## would put down the OTHER working, and the resulting line parses perfectly.
+##
+## ⛔ **IT CARRIES NO `pending_entity`, so no optimistic overlay is written.** That overlay's entries
+## are keyed to a band's labor ROWS; this command drops one, and the next snapshot restates the whole
+## section — the same shape the road ladder's own relay takes.
+func _emit_working_abandon(band: Dictionary, deposit: Dictionary) -> void:
+    if band.is_empty():
+        return
+    var tile := HudDepositVocab.tile_of(deposit)
+    if tile.x < 0 or tile.y < 0:
+        return
+    var material := HudDepositVocab.material_of(deposit)
+    if material == HudDepositVocab.MATERIAL_NONE:
+        return
+    emit_signal("working_abandon_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": tile.x,
+        "y": tile.y,
+        "material": material,
+    })
 
 ## ⛔ **WHAT A PRESS WOULD LAND BEHIND — the acting band's own build queue, as `{ahead, head}`.** The
 ## press DECLARES: it appends an entry, and the whole `builders` pool funds the HEAD of that queue

@@ -497,23 +497,52 @@ const DEPOSIT_RUNWAY_IDLE := "not being worked"
 ## here yet. Lower-case, and it lands after the rung the way every other qualifier does.
 const DEPOSIT_UNOPENED_WORD := "unopened"
 
+## ⛔ **AND THE WORD FOR A WORKING THIS BAND HAS WALKED AWAY FROM** (issue #650) — held, still
+## billed, and with nobody of the band's own on it. It is the THIRD of these three and none of them
+## may be flattened into another: `unopened` is ground with no working, `not being worked` is the
+## SOURCE's reading (nobody at all is cutting it, so there is no rate to carry a runway forward on),
+## and this is THIS BAND's reading of a working it still holds. The two can disagree — another band
+## may be cutting the same seam — which is why the crew is an argument rather than a field.
+##
+## ⛔ **IT IS THE CREW GATE'S OWN WORD, AND `GATE_SHORT_NO_CREW` READS IT FROM HERE.** A working with
+## nobody on it is ONE condition — the ladder refuses every rung on it and the roster row states it —
+## so it gets ONE word, this file's standing rule. Two spellings would let the same working read
+## `nobody on it` on the row and `no crew` on the card it opens.
+##
+## **AND IT IS SHORT BECAUSE THE CELL IS ONE LINE.** The value cell `clip_text`s against a control
+## column that now holds two marks, and the clause it must not push off the end is the HAZARD — a
+## working going back is the louder fact. The figures and the sentence ride the hover.
+const DEPOSIT_IDLE_WORD := "no crew"
+
+## **THE CALLER DID NOT STATE A CREW**, which is the tile card and every other reader that composes a
+## working's line without a band in hand. It is not a crew of zero: a surface that cannot say whose
+## hands are on a working must not announce that nobody's are.
+const CUTTERS_UNSTATED := -1
+
 ## The hazard word for a working whose keeping is short — **its own consequence rather than a shared
 ## adjective**, exactly as the plant web's *slipping* and the animal web's *drifting* are theirs. An
 ## unheld working slides back down its ladder, so what is happening to it is that it is **going back**.
 ## Lower-case: it lands mid-value, after the state clause.
 const DEPOSIT_UNDER_KEPT_WORD := "going back"
 
-## `Felling · 42% to coppice · 8 turns left · ⚠ going back` — **THE ONE COMPOSER, and both surfaces
-## use it.**
-##
-## ⛔ **THE CARD'S STATE LINE AND THE ROSTER'S VALUE CELL ARE THIS FUNCTION**, exactly as
-## `HudRouteVocab.road_row_value` is shared one branch over. One composer, one answer — so the card
-## and the roster cannot disagree about a working's state, and the §7 fork lives here ONCE rather
-## than once per surface.
+## `Felling · 42% to coppice · nobody on it · ⚠ going back` — **THE WORKINGS ROSTER'S VALUE CELL,
+## and the one composer behind it.** The tile card's own row is `deposit_land_value`; the two part on
+## purpose and share their clauses as functions, so the rung's word and the hazard's cannot drift.
 ##
 ## ⛔ **THE RUNG IS THE VALUE AND EVERYTHING ELSE IS A QUALIFIER.** A felling working 42% of the way
 ## to a coppice is a COMPLETE felling working, not a coppice 42% built.
-static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = []) -> String:
+##
+## ⛔ **`cutters` IS THIS BAND'S OWN TAKE CREW, AND `CUTTERS_UNSTATED` IS NOT ZERO** (issue #650). A
+## working publishes no crew — it is held by whichever band has an `extract` row on the
+## `(tile, material)` pair — so the count arrives from the caller or not at all, and a caller that
+## cannot state one gets no idle clause rather than the crewless one.
+##
+## **THE IDLE CLAUSE OUTRANKS THE SOURCE'S OWN `not being worked`.** They are two readings of one
+## silence — *this band has nobody on it* and *nobody at all is cutting it* — and a row carrying both
+## spends two clauses saying one thing. The band's own reading is the one the player can act on from
+## this roster, so it is the one that stays.
+static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [],
+		cutters: int = CUTTERS_UNSTATED) -> String:
 	var clauses: Array[String] = [ladder_rung_name(ladder, rung_of(deposit))]
 	# ⛔ **UNTOUCHED GROUND STATES WHAT IT IS AND STOPS.** Every clause below this line describes
 	# something being DONE to a working — a rung rising, a seam being cut faster than it grows, a
@@ -526,13 +555,22 @@ static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [
 	var progress := progress_clause(deposit, ladder)
 	if progress != "":
 		clauses.append(progress)
+	var idle := is_idle(cutters)
+	if idle:
+		clauses.append(DEPOSIT_IDLE_WORD)
 	var supply := supply_clause(deposit)
-	if supply != "":
+	if supply != "" and not (idle and supply == DEPOSIT_RUNWAY_IDLE):
 		clauses.append(supply)
 	var hazard := hazard_clause(deposit)
 	if hazard != "":
 		clauses.append(hazard)
 	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+
+## **HAS THIS BAND TAKEN ITS HANDS OFF A WORKING IT STILL HOLDS?** — the one test the idle clause and
+## the idle hover are both decided by, so a row and its own tooltip cannot answer it two ways.
+## `CUTTERS_UNSTATED` answers `false`: not knowing is not the same as knowing nobody.
+static func is_idle(cutters: int) -> bool:
+	return cutters == CUTTERS_NONE
 
 ## **THE UNDER-KEPT CLAUSE, AND IT IS ONE SPELLING FOR BOTH SURFACES.** The roster's value cell states
 ## it after the runway; the tile card's material row states it after the rung. Composing it here is
@@ -571,8 +609,9 @@ static func runway_clause(deposit: Dictionary) -> String:
 ## The row's INK, forked on the hazard mark the composer above puts there rather than on a second
 ## reading of the working — `HudRouteVocab.road_value_hex`'s shape, so a working at risk reads in the
 ## same amber a slipping patch does.
-static func deposit_value_color(deposit: Dictionary, ladder: Array[Dictionary] = []) -> Color:
-	return HudStyle.WARN if deposit_row_value(deposit, ladder).contains(
+static func deposit_value_color(deposit: Dictionary, ladder: Array[Dictionary] = [],
+		cutters: int = CUTTERS_UNSTATED) -> Color:
+	return HudStyle.WARN if deposit_row_value(deposit, ladder, cutters).contains(
 		HudSelectionVocab.RUNG_HAZARD_GLYPH) else HudStyle.INK_DIM
 
 # ---- THE FIGURES, AND WHERE THEY GO NOW --------------------------------------------------------
@@ -1121,17 +1160,84 @@ static func deposit_card_tooltip(deposit: Dictionary) -> String:
 ## fact about the working rather than as a row the card is spending a line on.
 const DEPOSIT_UPKEEP_TIP_FORMAT := "Holding it: %s"
 
-## …and the WORK BOARD's version, which is the card's plus the neglect COUNTDOWN. The roster is the one
-## surface that states when a working goes back, because it is the surface whose own head staffs the
-## pool that would stop it.
-static func deposit_roster_tooltip(deposit: Dictionary) -> String:
+## …and the WORK BOARD's version, which is the card's plus the neglect COUNTDOWN and — where this
+## band has taken its hands off the working — what a crew of zero does NOT stop. The roster is the one
+## surface that states either, because it is the surface whose own head staffs the pool that would
+## stop the slide and whose own rows carry the control that ends the bill.
+##
+## ⛔ **A CREW OF ZERO IS NOT AN ABSENCE OF NEWS, AND THAT IS THE WHOLE OF THIS LINE** (issue #650). A
+## working raised above its free floor is a HOLDING, so pulling the cutters off is *"stop cutting"* and
+## never *"this band has nothing here"*: the row stays, the bill stays, and under the shipped funding
+## rule that bill comes out of the same `quarrywork` pool the workings the band still wants are held
+## out of. **A working walked away from degrades a working that was not.** Composed only where the
+## working actually owes a bill — on either free floor there is nothing to spend and nothing to say.
+##
+## `cutters` is `CUTTERS_UNSTATED` for a caller with no band in hand; see `deposit_row_value`.
+static func deposit_roster_tooltip(deposit: Dictionary,
+		cutters: int = CUTTERS_UNSTATED) -> String:
 	var lines: Array[String] = [deposit_card_tooltip(deposit)]
+	if is_idle(cutters) and owes_keeping(deposit):
+		lines.append(DEPOSIT_IDLE_TIP_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK)
 	var countdown := reverting_value(deposit)
 	if countdown != "":
 		lines.append(DEPOSIT_REVERTING_TIP_FORMAT % countdown)
 	return HudFormat.join_tooltip_lines(lines)
 
 const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
+
+## …and the idle working's own line, which names the pool rather than a figure: the bill is already
+## on the line above it (`Holding it: …`), and what this adds is that a crew of zero does not stop it.
+const DEPOSIT_IDLE_TIP_FORMAT := "Nobody is cutting it, and it is still held — its keep goes on " \
+	+ "coming out of %s, the same pool the workings you do want are held out of."
+
+# ---- PUTTING A WORKING DOWN — the undo a HELD working had nowhere else (issue #650) ---------------
+#
+# ⛔ **THE VERB IS `abandon_working`, AND IT IS NOT `abandon`.** `abandon <f> <x> <y>` names a PLACE:
+# it builds a `LaborTarget::Forage`, so it does not reach a working at all, and it drops every band of
+# the faction's holding on the tile, a forage assignment there included. `abandon_working` names the
+# `(tile, material)` PAIR and drops the holding on that ONE working. **This client must not send the
+# wider verb for the narrower act**, which is the road branch's own rule read in the other direction.
+#
+# ⛔ **AND `assign_labor … extract … 0` IS NOT AN UNDO EITHER.** A working raised above its free floor
+# is a holding, so a crew of zero is *"stop cutting"*: the row survives, the bill survives, and the
+# meter takes something like a hundred turns to rot back to the free floor. What ends the bill is this.
+
+## The control, at the BOTTOM of the working's ladder card — under the rows, because putting a working
+## down is the opposite end of the same decision they offer. **It names the ACT rather than the wire's
+## verb**, the road row's own rule: *abandon* reads as walking away from the ground, and a player who
+## walks away is exactly who has NOT pressed this.
+const WORKING_ABANDON_LABEL := "Stop holding this working"
+
+## ⛔ **WHAT IT DESTROYS, FIRST — and the banked work is the half a player cannot see coming.** The sim
+## drops the holding and its build-queue entry and leaves the METER to rot, which is the plant web's
+## own retirement contract: nothing is demolished, and nothing is refunded either. A hover that said
+## only *"drops this band's hold"* would read as reversible, which it is not once work is banked.
+const WORKING_ABANDON_DROPS_FORMAT := "Drops this band's hold on the %s here, and any rung it has " \
+	+ "queued on it. The work already banked is not given back: with nobody holding it, the ground " \
+	+ "slides back to what it gives for free."
+
+## …and WHY a player would want it, which is the shared bill and not tidiness. **The measurement is
+## the argument** (`.claude/rules/core_sim/extraction.md`): one keeper holds one felling working for
+## ever alone, and the moment a walked-away sibling sits beside it the working the band still wants
+## starts sliding — because both take their cut of the one pool.
+const WORKING_ABANDON_WHY_FORMAT := "Until you do, its keep still comes out of %s — so a working " \
+	+ "you have walked away from is taken out of the ones you have not."
+
+## **ONE HOVER, ON BOTH EMITTERS.** The ladder card's row and the roster row's `✕` send the identical
+## command, so they state the identical consequence: roads.md's rule that *"a one-click destructive
+## action that under-states what it destroys is worse in a roster than on a card"* is kept by giving
+## the roster the CARD's whole hover rather than a shorter one.
+##
+## ⛔ **THERE IS NO SECOND WARN LINE, AND THAT IS A DECISION.** The road's `✕` carries one because
+## `abandon` names a place and takes a forage assignment down with the road — a consequence its label
+## does not name. `abandon_working` names the `(tile, material)` pair: it drops this band's hold on
+## THIS working and touches neither the other working on the same hex nor any forage row nor the road.
+## The blast radius is exactly what the label says, so a second line would be warning about a reach
+## the verb does not have.
+static func working_abandon_tooltip(deposit: Dictionary) -> String:
+	return HudFormat.join_tooltip_lines([
+		WORKING_ABANDON_DROPS_FORMAT % material_label(deposit).to_lower(),
+		WORKING_ABANDON_WHY_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK])
 
 ## The material row's INK, forked on the hazard mark the composer put there rather than on a second
 ## reading of the working — `deposit_value_color`'s rule, and the same one.
@@ -1586,6 +1692,6 @@ const GATE_LONG_TOO_SMALL_FORMAT := "Wants ground holding %s; this one holds %s.
 ## twice: a scatter will never take a quarry however many diggers stand on it, so *put diggers on it*
 ## is wrong advice there — but a craft is the branch's long game while this bites TODAY and closes in
 ## one gesture, so it leads where both are unmet.
-const GATE_SHORT_NO_CREW := "no crew"
+const GATE_SHORT_NO_CREW := DEPOSIT_IDLE_WORD
 const GATE_LONG_NO_CREW_FORMAT := "Nobody is on this ground. Put %s on it before you order a rung."
 const GATE_LONG_NO_CREW_UNNAMED := "Nobody is on this ground. Put a crew on it before you order a rung."

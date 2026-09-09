@@ -642,6 +642,29 @@ func run(harness) -> void:
 				HudDepositVocab.DEPOSIT_RUNWAY_IDLE)
 			and not HudDepositVocab.deposit_row_value(_idle_stone_working(), _ladder()).contains(
 				HudDepositVocab.DEPOSIT_UNOPENED_WORD))
+	# ⛔ **AND THE THIRD OF THE THREE SILENCES — a working THIS BAND has taken its hands off** (issue
+	# #650). `unopened` is ground with no working, `not being worked` is the SOURCE's reading (nobody
+	# at all is cutting it, so there is no rate to carry a runway forward on), and the crew clause is
+	# the BAND's. **They are asserted on ONE row asked two ways**, which is the only shape that says
+	# the crew is an argument rather than a field: the same idle quarry reads the source's word with
+	# no crew stated and the band's word with a crew of nobody.
+	var walked_away := HudDepositVocab.deposit_row_value(_idle_stone_working(), _ladder(),
+		LADDER_NO_CUTTERS)
+	h._assert_hud("…and the same working asked about THIS BAND's hands says so in its own word (%s)"
+			% walked_away,
+		walked_away.contains(HudDepositVocab.DEPOSIT_IDLE_WORD))
+	# ⛔ **AND THE BAND'S WORD REPLACES THE SOURCE'S RATHER THAN JOINING IT.** Both describe one
+	# silence, and a row carrying both spends two of its clauses saying one thing — so the reading the
+	# player can act on from the roster is the one that stays.
+	h._assert_hud("…in place of the source's own, never beside it (%s)" % walked_away,
+		not walked_away.contains(HudDepositVocab.DEPOSIT_RUNWAY_IDLE))
+	# **AND `CUTTERS_UNSTATED` IS NOT A CREW OF ZERO**, which is the tile card and every other reader
+	# with no band in hand: not knowing whose hands are on a working must not announce that nobody's
+	# are. The first claim above is asked at the default and would pass vacuously without this.
+	h._assert_hud("…while a surface that cannot state a crew says nothing about one (%s)"
+			% HudDepositVocab.deposit_row_value(_idle_stone_working(), _ladder()),
+		not HudDepositVocab.deposit_row_value(_idle_stone_working(), _ladder()).contains(
+			HudDepositVocab.DEPOSIT_IDLE_WORD))
 	await h._save("workings_unopened")
 
 	# ⛔ **STATE workings-road-last — THE ROAD CLOSES THE CARD.** Ray, reading a live Alluvial Plain

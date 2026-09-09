@@ -258,6 +258,7 @@ func _ready() -> void:
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
 	_drive_deposit_verbs()
+	_drive_abandon_working()
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
 
@@ -838,6 +839,41 @@ func _drive_deposit_verbs() -> void:
 	if not MAIN_SCRIPT.format_improvement(materialless).is_empty():
 		_fail("fell: a deposit verb with no material built a line — the material token is not optional")
 
+## ⛔ **`abandon_working <faction> <x> <y> <material>` — PUTTING ONE WORKING DOWN, AND IT IS NOT
+## `abandon`** (issue #650). That verb names a PLACE: it resolves a tile to a FORAGE source sim-side,
+## so it does not reach a working at all, and it drops every band-of-the-faction's holding on the
+## tile. This one rides the three rung verbs' OWN parser arm, so the material sits in the same
+## trailing position and the tail is closed — which is exactly what this guard proves, the two
+## grammars being one arm apart and therefore able to drift apart in one edit.
+##
+## **DRIVEN THROUGH `Main.format_abandon_working`, the pure static both controls reach** — the
+## workings roster row's `✕` and the deposit ladder card's put-down row, which converge on one
+## `HudLayer.abandon_working_requested` relay. Their CLICK PATH is asserted where it is real
+## (`band_panel_preview`), which is also the only place a wrong material could be caught: a line
+## naming the other working of the same hex parses perfectly here.
+##
+## The Rust half classifies it `PlaceAddressed` beside `abandon` and the three rung verbs, so what
+## this asserts is the PARSE.
+func _drive_abandon_working() -> void:
+	var payload := {
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+		"material": DEPOSIT_MATERIAL,
+	}
+	_record("abandon_working", payload, MAIN_SCRIPT.format_abandon_working(payload))
+	# **AND WITH NO MATERIAL IT BUILDS NOTHING**, the three rung verbs' own refusal: the material is
+	# half the working's identity, so a line carrying only the tile would put down the OTHER working
+	# on a hex that holds two. Asserted here rather than left to the parser, a three-token
+	# `abandon_working` being a shorter line rather than an obviously broken one.
+	var materialless := {
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+	}
+	if not MAIN_SCRIPT.format_abandon_working(materialless).is_empty():
+		_fail("abandon_working: a line was built with no material — the token is not optional")
+
 ## ⛔ **`abandon <faction> <x> <y>` — THE ONE VERB THIS GUARD DRIVES THAT NAMES NO BAND AT ALL**, and
 ## that is the sim's grammar rather than an omission: it drops every band-of-that-faction's holding on
 ## the tile, a forage assignment there included. The Rust half classifies it `PlaceAddressed` for the
@@ -1056,6 +1092,9 @@ const EXPECTED_KINDS := {
 	# ONE — the roadwork roster's `✕`, the route branch's only `abandon` emitter and the only command
 	# here that names a PLACE rather than a band.
 	"abandon": 1,
+	# ONE — the deposit branches' own release, which names a place AND a material. It is a separate
+	# verb from `abandon` rather than a widening of it; see `_drive_abandon_working`.
+	"abandon_working": 1,
 	# ONE — the outfitting card's commit, the only emitter of the verb. It names a band positionally
 	# since every band has a window of its own; see `_drive_set_starting_loadout`.
 	"set_starting_loadout": 1,

@@ -102,6 +102,18 @@ signal unqueue_requested(payload: Dictionary)
 ## built by `Main.format_abandon`.
 signal abandon_requested(payload: Dictionary)
 
+## ⛔ **PUT A WORKING DOWN — `abandon_working <faction> <x> <y> <material>`, which is NOT `abandon`**
+## (issue #650). That verb names a PLACE: it resolves a tile to a forage source sim-side and drops
+## every band-of-the-faction's holding there, a forage assignment included, so it neither reaches a
+## working nor confines itself to one. This one names the `(tile, material)` PAIR — one hex can hold
+## two workings — and drops the acting band's hold on that one, leaving the meter to rot.
+##
+## **TWO EMITTERS, ONE RELAY**: the workings roster row's `✕` and the deposit ladder card's put-down
+## row, both `BandPanelController.working_abandon_requested`, converging here on
+## `Main.format_abandon_working`. **No optimistic overlay write** — the next snapshot restates the
+## whole `deposits` section and the band's own rows with it.
+signal abandon_working_requested(payload: Dictionary)
+
 ## The KIT one queued build is raised with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
 ## formatting `build_kit <faction> <x> <y> [kit <id>]` / `build_kit <faction> <herd_id> [kit <id>]`
 ## (`docs/plan_standing_upkeep.md` §4.7a ②). RELAYED from `BandPanelController`'s queue-row settings
@@ -762,6 +774,13 @@ func _ready() -> void:
     # the drawer's relay above states: a road has no labor row to shadow.
     _bandpanel.road_abandon_requested.connect(
         func(payload: Dictionary) -> void: abandon_requested.emit(payload))
+    # **THE WORKINGS ROSTER'S `✕` AND THE DEPOSIT LADDER'S PUT-DOWN ROW, ONTO ONE BUILDER** (issue
+    # #650). Both controls live on this controller and both emit this one signal, so the pair
+    # converges before it even reaches here; the relay is what keeps `Main.format_abandon_working` the
+    # single place the verb's grammar is spelled. Deliberately NOT folded onto `abandon_requested`:
+    # that verb names a place and drops every holding on it, which is a wider act than this label.
+    _bandpanel.working_abandon_requested.connect(
+        func(payload: Dictionary) -> void: abandon_working_requested.emit(payload))
     _bandpanel.roster_occupant_selected.connect(
         func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
     # MATERIALS & CRAFTING. Constructed after `_bandpanel` because the launch edge comes off it, and

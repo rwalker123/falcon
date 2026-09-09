@@ -417,9 +417,17 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // `cultivate`'s shape with a material token, not `grade`'s with a band one, so the handle
         // assertion has nothing to check and the parse assertion is the whole of what this gate
         // proves about them.
+        //
+        // ⛔ **AND `abandon_working` RIDES THAT SAME ARM, WHICH IS WHY IT IS LISTED WITH THEM.** It
+        // names a faction, a tile and a MATERIAL and no band: a working's keeper is whoever already
+        // cuts it, so the verb drops that band's hold on the one working the pair names. It is a
+        // separate verb from `abandon` — which names a place and drops every holding on it — and
+        // being on this arm is what keeps the material's position and the closed tail identical to
+        // the three rung verbs'.
         CommandPayload::Fell { .. }
         | CommandPayload::Coppice { .. }
-        | CommandPayload::Quarry { .. } => return BandHandle::PlaceAddressed,
+        | CommandPayload::Quarry { .. }
+        | CommandPayload::AbandonWorking { .. } => return BandHandle::PlaceAddressed,
         _ => return BandHandle::NotBandAddressed,
     };
     match optional {
