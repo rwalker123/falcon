@@ -5706,6 +5706,132 @@ table RouteRungState {
   buildMaterialId:string;
 }
 
+// ONE RUNG OF A DEPOSIT BRANCH, AS THE CONFIG DECLARES IT — the two branches' shared CATALOG, once
+// per world and carrying no tile. `RouteRungState` above is the precedent, field for field.
+//
+// ⛔ THIS IS WHAT LETS A CLIENT DRAW A WOOD OR STONE LADDER OF RUNGS NOTHING HAS OPENED YET.
+// `DepositState` answers "where does THIS working stand and what is it taking"; it says nothing
+// about the rungs above it, so no readout could state what a quarry would cost or what it would
+// reach until a working already stood on one. Every field below is DERIVED from
+// `intensification_ladder.json` through the sim's own rung types and nothing here is separately
+// authored, so a rung added to that config appears in the ladder with no client edit and no schema
+// edit. The one exception is `buildWorkPerWorkerTurn`, which is the SIM's rate rather than the
+// rung's — see its own note.
+//
+// TWO BRANCHES IN ONE VECTOR, WITH `branch` ON EVERY ROW — the difference from `RouteRungState`,
+// which needs no such field because it publishes one branch. `forestry` and `extraction` share the
+// payoff block (`extraction_payoff`) and differ only in which of its terms a rung raises, so one
+// table serves both; the rows are grouped by branch and climb within it.
+//
+// IT RIDES THE SECTION AND NOT THE WORKING'S ROW. These are properties of the BRANCH, identical for
+// every wood and every rock body in the world — carried on `DepositState` they would repeat the same
+// five rows on every working.
+table DepositRungState {
+  // The rung's name on the wire, "<branch>:<id>" — "forestry:coppice". The same spelling
+  // `DepositState.rung` carries, so a working's standing joins to its row here.
+  rungKey:string;
+  // WHICH LADDER THIS RUNG IS ON, "forestry" | "extraction" — the config record's own `branch`, the
+  // same vocabulary `DepositState.branch` publishes. One vector carries both branches, so this is
+  // what a reader groups by; without it the rows of two ladders would be one undifferentiated climb.
+  branch:string;
+  // The config record's own `order`: 1 at the branch's floor, climbing. THE ROW ORDER IS THIS ORDER
+  // within a branch — the catalog is published bottom rung first, forestry before extraction.
+  order:uint;
+  // "Coppice" — the rung id with underscores turned to spaces and each word capitalized, resolved
+  // sim-side so no client authors a second spelling of it.
+  displayName:string;
+  // The TILE COMMAND that raises this rung ("fell" / "coppice" / "quarry"), and "" where the rung
+  // declares none. An empty verb is the free floor: deadfall and a stone scatter are what the ground
+  // already offers, so there is no command to name the job and no crew to staff it.
+  verb:string;
+  // The ladder knowledge that gates this rung ("conservationism"), joining to
+  // `LadderKnowledgeState.knowledgeId` for the faction's own progress; "" where the rung waits on
+  // nothing.
+  unlockKnowledge:string;
+  // The wire key of the rung DIRECTLY BENEATH this one, "" at the branch's floor — the chain, so a
+  // client renders the climb without holding a second copy of the order.
+  requiresRung:string;
+  // The ladder knowledge this rung EARNS by being held — "woodcraft" on deadfall — and "" where the
+  // rung teaches nothing, which is the top of each shipped branch.
+  //
+  // ⛔ IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM `requiresRung`, exactly as on
+  // `RouteRungState`: a gate says "you do not know `quarrying` yet", and what a player does about it
+  // is stand on the rung that TEACHES quarrying, which is a different fact from the rung directly
+  // beneath. The two coincide on the shipped five and the config is free to break that pairing.
+  earnsKnowledge:string;
+  // What reaching this rung costs, in work units. 0 where the rung declares no build at all, which
+  // on the shipped ladder is the two free floors and nothing else — nobody builds a deadfall and
+  // nobody builds a stone scatter.
+  workCost:float = 0;
+  // The standing bill a working at this rung owes its keeper, in work units per turn, BEFORE the
+  // working's own keeper-loads scale it (`DepositState.upkeepDemand` is the resolved reading). 0
+  // where the rung declares no upkeep — the free floors, which cost nothing to hold and can
+  // therefore never be short.
+  upkeepWorkPerTurn:float = 0;
+  // WHAT REACHING THIS RUNG COSTS IN MATERIAL — the rung's declared build pile, in units of the
+  // material it eats: 8 wood on `extraction:quarry` (props and ramps, timbered once as the face is
+  // opened), and 0 on every other rung of either branch, which eat nothing at all.
+  //
+  // IT IS A PILE AND NOT A RATE. It is swallowed as the meter climbs, never on completion, and the
+  // slide back down a ladder refunds none of it. There is deliberately no `upkeepMaterialPerTurn`
+  // twin: no rung on either branch declares one and `validate` refuses one.
+  buildMaterialCost:float = 0;
+  // WHICH MATERIAL THAT PILE IS OF — "wood" on `extraction:quarry`, and "" on every rung that eats
+  // nothing. Joins to the ids the band's own stores list publishes.
+  //
+  // *** IT IS READ WITH `buildMaterialCost` OR NOT AT ALL ***, the pair being one reading: an amount
+  // with no noun cannot be rendered into a sentence, and a noun with no amount says nothing. AND THE
+  // CLIENT MUST NOT SUPPLY THE NOUN ITSELF — "a quarry eats wood" is a fact about the CONFIG, so a
+  // transcribed noun is a second authority that goes stale in silence the day a rung is retuned.
+  buildMaterialId:string;
+  // WHAT ONE BARE-HANDED WORKER BANKS IN A TURN — `intensification::PER_WORKER_OUTPUT`, unscaled:
+  // before gear and before any multiplier, in work units per worker per turn. THE SAME FIGURE FOR
+  // EVERY RUNG, which is exactly why it rides the catalog rather than the working's row.
+  //
+  // ⛔ IT IS READ, NEVER ASSUMED, for `RouteRungState.buildWorkPerWorkerTurn`'s reason: the sim
+  // writes worker output as a SUM OF TERMS, so a client left to transcribe the constant goes stale
+  // in silence the day a second term lands. A reader that finds this missing or `0` states NO
+  // ESTIMATE rather than substituting a rate of its own.
+  buildWorkPerWorkerTurn:float = 0;
+  // --- WHAT THIS RUNG BUYS (`extraction_payoff`) -------------------------------------------------
+  // WHAT ONE WORKER TAKES IN A TURN at this rung, in the deposit's material's own units, before the
+  // reachable stock caps it. The free floors carry a real bare-handed rate rather than a zero — the
+  // whole material economy bootstraps through them, and a zero would be a refusal the sim does not
+  // have. `DepositState.actualTake` is what a working's crew actually banked.
+  yieldPerWorkerTurn:float = 0;
+  // HOW MUCH OF THE DEPOSIT THIS RUNG CAN EVER REACH, 0..1 — the escapement floor upside down:
+  // `floor = (1 - recoveryFraction) x capacity`, and climbing LOWERS the floor rather than raising a
+  // ceiling. 1.0 on every forestry rung (a wood can be cut to nothing, which is what makes
+  // over-cutting possible); 0.15 at `extraction:gathering`, which is what makes it a SURFACE rung,
+  // and 0.85 at `extraction:quarry`.
+  //
+  // ⛔ THIS IS THE FIELD THE WHOLE STONE BRANCH TURNS ON, AND IT IS PUBLISHED RATHER THAN DERIVED
+  // FROM `DepositState.reachable / capacity`. That ratio is NOT this fraction: `reachable` clamps to
+  // the STOCK, so the moment a seam is drawn down the ratio stops being the rung's recovery and a
+  // payoff row computing it would silently begin quoting a different number — one that falls as the
+  // rock is worked, on a rung whose reach never moved.
+  recoveryFraction:float = 0;
+  // WHAT THIS RUNG MULTIPLIES THE DEPOSIT'S OWN `regrowthRate` BY. 1.0 = the ground renews as it
+  // always did, which is what every extraction rung declares; 2.0 at `forestry:coppice`, which is
+  // conservationism expressed mechanically — not more per turn, more per turn FOR EVER.
+  //
+  // NO RUNG RAISES CAPACITY AND THERE IS NO FIELD FOR ONE. The multiplier scales the deposit's own
+  // rate, and rock's rate is 0, so "stone's rate is zero" survives as arithmetic rather than as a
+  // rule someone has to remember.
+  regrowthMultiplier:float = 1;
+  // WHAT THE GROUND MUST HOLD FOR THIS RUNG TO BE PLACED THERE — the rung's
+  // `site_requirement.min_deposit_capacity`, struck against the tile's own capacity for the
+  // working's material. 100 at `extraction:quarry`, the one placement rule on either branch and the
+  // whole of "you cannot quarry just anywhere"; 0 where the rung asks nothing of the ground, which
+  // is every other shipped rung.
+  //
+  // It is published so a client can say WHY a rung is refused rather than only that it is: the
+  // capacity a working already publishes (`DepositState.capacity`) is the other half of that
+  // sentence, and a threshold transcribed client-side would be a second authority over a placement
+  // rule the config owns.
+  minDepositCapacity:float = 0;
+}
+
 table SubsistenceSection {
   herds:[HerdTelemetryState];
   foragePatches:[ForagePatchState];
@@ -5779,6 +5905,15 @@ table SubsistenceSection {
   // frame, exactly like `foragePatches`, and like it there is deliberately no `removedDeposits`
   // twin: a working that leaves the viewer's frame leaves by being absent from the next vector.
   deposits:[DepositState];
+  // --- THE TWO DEPOSIT BRANCHES' RUNG CATALOG, once per world (appended last) --------------------
+  // Every rung of `intensification_ladder.json`'s FORESTRY and EXTRACTION branches, grouped by
+  // branch and in climb order within it - see `DepositRungState`. A per-world constant, so it is
+  // diffed whole exactly like `kits`, and it rides beside `routeRungs` because the two are the same
+  // kind of thing: the DECLARATION of what a ladder holds, carrying no faction and no tile.
+  //
+  // The live half is `deposits` above, which is per-working and per-frame; this is what a working
+  // could BECOME, including on ground where nothing has been opened at all.
+  depositRungs:[DepositRungState];
 }
 
 table KnowledgeSection {

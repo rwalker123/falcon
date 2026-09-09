@@ -1345,11 +1345,15 @@ mod wire {
     use bevy::math::UVec2;
     use bevy::prelude::{Entity, With};
 
+    use std::sync::Arc;
+
     use core_sim::extraction::{tile_deposit_capacity, DepositRegistry, DepositSource};
     use core_sim::{
-        build_test_app, BandId, ExtractionConfig, LaborAllocation, LaborTarget, LadderConfig,
+        build_test_app, build_work_per_worker_turn, deposit_rungs_in_climb_order, BandId,
+        ExtractionConfig, LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle,
         PopulationCohort, ResidentBand, RungKey, SnapshotHistory, Tile, TileRegistry,
-        ViewerFaction, VisibilityLedger, MSY_BIOMASS_FRACTION,
+        ViewerFaction, VisibilityLedger, BUILTIN_INTENSIFICATION_LADDER, MSY_BIOMASS_FRACTION,
+        NO_BUILD_GEAR, NO_DEPOSIT_FLOOR, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
     };
     use sim_schema::{TerrainType, DEPOSIT_RUNWAY_NOT_APPLICABLE, DEPOSIT_RUNWAY_NO_TAKE};
 
@@ -2095,6 +2099,409 @@ mod wire {
         assert!(
             published_workings(&app).iter().all(|row| row.tile != home),
             "a glacier is on neither deposit table, so it publishes no row at all"
+        );
+    }
+
+    /// One row of the published deposit rung catalog, read off the encoded envelope.
+    #[derive(Debug, Clone)]
+    struct PublishedRung {
+        rung_key: String,
+        branch: String,
+        order: u32,
+        display_name: String,
+        verb: String,
+        unlock_knowledge: String,
+        requires_rung: String,
+        earns_knowledge: String,
+        work_cost: f32,
+        upkeep_work_per_turn: f32,
+        build_material_cost: f32,
+        build_material_id: String,
+        build_work_per_worker_turn: f32,
+        yield_per_worker_turn: f32,
+        recovery_fraction: f32,
+        regrowth_multiplier: f32,
+        min_deposit_capacity: f32,
+    }
+
+    /// **The `depositRungs` catalog off the encoded envelope**, through the accessor chain a client
+    /// uses. It rides the subsistence section beside `routeRungs` — both are declarations of what a
+    /// ladder holds, carrying no faction and no tile.
+    fn published_deposit_rungs(app: &App) -> Vec<PublishedRung> {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        let bytes = encoded(app);
+        let envelope =
+            fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+        let catalog = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .subsistence()
+            .and_then(|section| section.depositRungs())
+            .expect("the deposit rung catalog is published");
+        catalog
+            .iter()
+            .map(|row| PublishedRung {
+                rung_key: row.rungKey().expect("a rung publishes its key").to_string(),
+                branch: row.branch().expect("a rung names its branch").to_string(),
+                order: row.order(),
+                display_name: row
+                    .displayName()
+                    .expect("a rung publishes a display name")
+                    .to_string(),
+                verb: row
+                    .verb()
+                    .expect("the verb is published, empty or not")
+                    .to_string(),
+                unlock_knowledge: row
+                    .unlockKnowledge()
+                    .expect("the gate is published, empty or not")
+                    .to_string(),
+                requires_rung: row
+                    .requiresRung()
+                    .expect("the rung beneath is published, empty or not")
+                    .to_string(),
+                earns_knowledge: row
+                    .earnsKnowledge()
+                    .expect("the lesson is published, empty or not")
+                    .to_string(),
+                work_cost: row.workCost(),
+                upkeep_work_per_turn: row.upkeepWorkPerTurn(),
+                build_material_cost: row.buildMaterialCost(),
+                build_material_id: row
+                    .buildMaterialId()
+                    .expect("the material id is published, empty or not")
+                    .to_string(),
+                build_work_per_worker_turn: row.buildWorkPerWorkerTurn(),
+                yield_per_worker_turn: row.yieldPerWorkerTurn(),
+                recovery_fraction: row.recoveryFraction(),
+                regrowth_multiplier: row.regrowthMultiplier(),
+                min_deposit_capacity: row.minDepositCapacity(),
+            })
+            .collect()
+    }
+
+    /// The catalog off a world with nothing opened on it — a catalog is a per-world constant, so it
+    /// needs no working anywhere to be published.
+    fn a_world_with_a_catalog() -> App {
+        let mut app = build_test_app();
+        app.update();
+        app
+    }
+
+    fn published_rung(app: &App, key: &str) -> PublishedRung {
+        published_deposit_rungs(app)
+            .into_iter()
+            .find(|row| row.rung_key == key)
+            .unwrap_or_else(|| panic!("{key} is published in the catalog"))
+    }
+
+    /// **The shipped climb, branch by branch** — the keys the config declares today, in the order the
+    /// catalog publishes them. It is a liveness statement and nothing more: the figures below are
+    /// asserted against the *records*, so this list is what fails when the catalog publishes nothing,
+    /// publishes the route branch, or loses a branch's rows.
+    const SHIPPED_DEPOSIT_CLIMB: [&str; 5] = [
+        "forestry:deadfall",
+        "forestry:felling",
+        "forestry:coppice",
+        "extraction:gathering",
+        "extraction:quarry",
+    ];
+
+    /// **The titles the sim resolves for that climb**, beside the keys rather than derived here: a
+    /// client must never author a second spelling of a rung's name, so the wire's answer is pinned as
+    /// text. The derivation itself is pinned by the appended rung below, whose title no shipped rung
+    /// carries.
+    const SHIPPED_DEPOSIT_TITLES: [&str; 5] =
+        ["Deadfall", "Felling", "Coppice", "Gathering", "Quarry"];
+
+    /// ⛔ **THE CATALOG IS `intensification_ladder.json`'S OWN TWO DEPOSIT BRANCHES, IN CLIMB ORDER**
+    /// — one row per rung the config declares, every value read off that rung's record.
+    ///
+    /// **This is what lets a client draw a ladder of rungs nothing has opened yet**, and it is
+    /// asserted against the *records* rather than against literals for the reason the whole catalog
+    /// exists: a rung added to the config, or a figure retuned on one, must reach the wire with no
+    /// edit here and none on the client. The liveness half is `SHIPPED_DEPOSIT_CLIMB` — a catalog
+    /// that published nothing, or published the route branch, fails the count and the keys before any
+    /// figure is read.
+    #[test]
+    fn the_deposit_rung_catalog_is_the_configs_own_two_climbs() {
+        let ladder = LadderConfig::builtin();
+        let declared = deposit_rungs_in_climb_order(&ladder);
+        assert_eq!(
+            declared.len(),
+            SHIPPED_DEPOSIT_CLIMB.len(),
+            "the shipped ladder declares the five deposit rungs the climb above names"
+        );
+
+        let app = a_world_with_a_catalog();
+        let published = published_deposit_rungs(&app);
+        assert_eq!(
+            published.len(),
+            declared.len(),
+            "one published row per rung the config declares"
+        );
+
+        for (index, (row, rung)) in published.iter().zip(declared.iter()).enumerate() {
+            assert_eq!(
+                row.rung_key, SHIPPED_DEPOSIT_CLIMB[index],
+                "row {index} is the rung the climb puts there"
+            );
+            assert_eq!(row.rung_key, rung.wire_key(), "…and the record's own key");
+            assert_eq!(
+                row.branch,
+                rung.branch.as_str(),
+                "{} publishes the branch its record names",
+                row.rung_key
+            );
+            assert_eq!(row.order, rung.order, "the record's own climb order");
+            assert_eq!(
+                row.verb,
+                rung.verb.clone().unwrap_or_default(),
+                "{} publishes the verb its record declares",
+                row.rung_key
+            );
+            assert_eq!(
+                row.unlock_knowledge,
+                rung.unlock_knowledge.clone().unwrap_or_default(),
+                "{} publishes the knowledge its record waits on",
+                row.rung_key
+            );
+            assert_eq!(
+                row.requires_rung,
+                rung.requires_rung_wire_key().unwrap_or_default(),
+                "{} publishes the rung directly beneath it",
+                row.rung_key
+            );
+            assert_eq!(
+                row.earns_knowledge,
+                rung.earns_knowledge.clone().unwrap_or_default(),
+                "{} publishes the lesson standing there teaches",
+                row.rung_key
+            );
+            assert_eq!(
+                row.work_cost,
+                rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+                "{} publishes its record's own build cost",
+                row.rung_key
+            );
+            assert_eq!(
+                row.upkeep_work_per_turn,
+                rung.upkeep
+                    .as_ref()
+                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
+                "{} publishes its record's own standing bill",
+                row.rung_key
+            );
+            let pile = rung.build_materials().next();
+            assert_eq!(
+                row.build_material_cost,
+                pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
+                "{} publishes its record's own pile",
+                row.rung_key
+            );
+            assert_eq!(
+                row.build_material_id,
+                pile.map_or_else(String::new, |(id, _)| id.to_string()),
+                "{} publishes the material that pile is counted in",
+                row.rung_key
+            );
+            let payoff = rung
+                .extraction_payoff
+                .as_ref()
+                .expect("validate requires an extraction_payoff on every deposit rung");
+            assert_eq!(
+                row.yield_per_worker_turn, payoff.yield_per_worker_turn,
+                "{} publishes what one worker takes at it",
+                row.rung_key
+            );
+            assert_eq!(
+                row.recovery_fraction, payoff.recovery_fraction,
+                "{} publishes how far into the body it reaches",
+                row.rung_key
+            );
+            assert_eq!(
+                row.regrowth_multiplier, payoff.regrowth_multiplier,
+                "{} publishes what it multiplies the ground's renewal by",
+                row.rung_key
+            );
+            assert_eq!(
+                row.min_deposit_capacity,
+                rung.site_requirement
+                    .as_ref()
+                    .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
+                "{} publishes what the ground must hold for it",
+                row.rung_key
+            );
+            assert_eq!(
+                row.display_name, SHIPPED_DEPOSIT_TITLES[index],
+                "{} publishes the title the sim resolves, so no client spells it a second way",
+                row.rung_key
+            );
+            assert_eq!(
+                row.build_work_per_worker_turn,
+                build_work_per_worker_turn(NO_BUILD_GEAR),
+                "{} publishes the sim's own bare work rate, so no client transcribes the constant",
+                row.rung_key
+            );
+        }
+    }
+
+    /// **A RUNG NOBODY BUILDS COSTS NOTHING TO REACH** — the `workCost` a rung with no `build` block
+    /// publishes, which on the shipped ladder is the two free floors and nothing else.
+    const NO_BUILD_WORK: f32 = 0.0;
+
+    /// **A RUNG THAT EATS NOTHING SWALLOWS NO PILE** — the `buildMaterialCost` a rung declaring no
+    /// `build.materials` publishes, and it rides with an empty `buildMaterialId`: the pair is one
+    /// reading, so *no amount* and *no noun* are the same answer said twice.
+    const NO_BUILD_MATERIAL: f32 = 0.0;
+
+    /// ⛔ **THE QUARRY IS THE ROW THE WHOLE STONE BRANCH TURNS ON**, so its four prices, its gate, its
+    /// chain, its reach and its placement rule are pinned as **literals** here rather than against the
+    /// record — the one place in this file where a retune should have to be typed twice, because
+    /// every one of these figures is a decision `docs/plan_extraction.md` argues for.
+    #[test]
+    fn the_quarry_publishes_its_price_its_pile_its_reach_and_its_placement_rule() {
+        let app = a_world_with_a_catalog();
+        let quarry = published_rung(&app, "extraction:quarry");
+
+        assert_eq!(quarry.branch, "extraction", "{quarry:?}");
+        assert_eq!(quarry.verb, "quarry", "{quarry:?}");
+        assert_eq!(quarry.work_cost, 250.0, "{quarry:?}");
+        assert_eq!(quarry.build_material_id, "wood", "{quarry:?}");
+        assert_eq!(quarry.build_material_cost, 8.0, "{quarry:?}");
+        assert_eq!(quarry.upkeep_work_per_turn, 1.5, "{quarry:?}");
+        assert_eq!(quarry.recovery_fraction, 0.85, "{quarry:?}");
+        assert_eq!(quarry.unlock_knowledge, "quarrying", "{quarry:?}");
+        assert_eq!(quarry.requires_rung, "extraction:gathering", "{quarry:?}");
+        assert_eq!(
+            quarry.min_deposit_capacity, 100.0,
+            "the one placement rule on either branch, and the whole of *you cannot quarry just \
+             anywhere*: {quarry:?}"
+        );
+    }
+
+    /// ⛔ **A FREE FLOOR IS PRICED AT NOTHING AND STILL CARRIES A REAL PAYOFF.** Nobody builds a
+    /// stone scatter and nobody holds one, so the two prices are zero and there is no verb to name a
+    /// job — but the rung still reaches 15% of the body and pays a bare-handed rate, which is what
+    /// makes it a *rung* rather than the absence of one.
+    #[test]
+    fn the_free_floor_is_priced_at_nothing_and_still_reaches_the_surface() {
+        let app = a_world_with_a_catalog();
+        let gathering = published_rung(&app, "extraction:gathering");
+
+        assert_eq!(gathering.verb, "", "{gathering:?}");
+        assert_eq!(gathering.work_cost, 0.0, "{gathering:?}");
+        assert_eq!(gathering.upkeep_work_per_turn, 0.0, "{gathering:?}");
+        assert_eq!(gathering.build_material_id, "", "{gathering:?}");
+        assert_eq!(gathering.build_material_cost, 0.0, "{gathering:?}");
+        assert_eq!(gathering.requires_rung, "", "{gathering:?}");
+        assert_eq!(
+            gathering.recovery_fraction, 0.15,
+            "a surface rung reaches the scatter and no further: {gathering:?}"
+        );
+        assert!(
+            gathering.yield_per_worker_turn > 0.0,
+            "the floor's rate is bare-handed, never a zero — the whole material economy bootstraps \
+             through it: {gathering:?}"
+        );
+    }
+
+    /// **CONSERVATIONISM EXPRESSED MECHANICALLY** — the coppice is the only rung on either branch
+    /// that moves the ground's own renewal, and the catalog is where a client reads *what this rung
+    /// buys* before anybody has laid one out.
+    #[test]
+    fn a_coppice_publishes_the_regrowth_it_buys() {
+        let app = a_world_with_a_catalog();
+        let coppice = published_rung(&app, "forestry:coppice");
+
+        assert_eq!(
+            coppice.regrowth_multiplier, 2.0,
+            "a managed wood renews twice as fast: {coppice:?}"
+        );
+        assert_eq!(
+            coppice.recovery_fraction, 1.0,
+            "and it reaches the whole wood, like every forestry rung: {coppice:?}"
+        );
+        assert_eq!(coppice.unlock_knowledge, "conservationism", "{coppice:?}");
+    }
+
+    /// The rung the override below appends — a fourth forestry step above the coppice, declaring
+    /// figures no shipped rung carries so its row cannot be confused with one.
+    const AN_APPENDED_RUNG: &str = r#"{
+        "id": "old_growth",
+        "branch": "forestry",
+        "order": 4,
+        "verb": null,
+        "unlock_knowledge": "conservationism",
+        "earns_knowledge": null,
+        "requires_rung": "coppice",
+        "ceiling_required": null,
+        "site_requirement": null,
+        "build": { "work_cost": 400.0, "grace_turns": null },
+        "upkeep": {
+            "work_per_turn": 3.0,
+            "scaled_by": "source_load",
+            "meter_decay": { "per_turn": 4.0 },
+            "grace_turns": 2
+        },
+        "extraction_payoff": {
+            "yield_per_worker_turn": 3.5,
+            "recovery_fraction": 1.0,
+            "regrowth_multiplier": 3.0
+        },
+        "behavior": { "movement": "fixed" }
+    }"#;
+
+    /// ⛔ **A RUNG ADDED TO THE CONFIG APPEARS ON THE WIRE WITH NO CODE CHANGE — THE WHOLE REASON
+    /// THIS CATALOG EXISTS.** The plant and animal branches are drawn from hardcoded client-side rung
+    /// arrays, which is a second authority that goes stale the day a rung is added; this asserts the
+    /// route branch's precedent holds here, and it is not hypothetical — the minerals arc's `mine` is
+    /// already reserved above `extraction:quarry` on the extraction branch.
+    ///
+    /// The rung is appended to the **shipped config's own JSON** and loaded through
+    /// `LadderConfig::from_json_str`, so what is under test is the catalog's derivation and not a
+    /// hand-built `LadderConfig` that could disagree with what a file would produce.
+    #[test]
+    fn a_rung_added_to_the_config_is_published_with_no_code_change() {
+        let mut ladder: serde_json::Value =
+            serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("the builtin parses");
+        ladder["rungs"]
+            .as_array_mut()
+            .expect("the ladder declares its rungs as an array")
+            .push(serde_json::from_str(AN_APPENDED_RUNG).expect("the appended rung parses"));
+        let overridden = LadderConfig::from_json_str(&ladder.to_string())
+            .expect("a ladder with one more forestry rung is a valid ladder");
+
+        let mut app = build_test_app();
+        app.update();
+        app.world
+            .resource_mut::<LadderConfigHandle>()
+            .replace(Arc::new(overridden));
+        app.update();
+
+        let published = published_deposit_rungs(&app);
+        assert_eq!(
+            published.len(),
+            SHIPPED_DEPOSIT_CLIMB.len() + 1,
+            "the appended rung is a row of the catalog: {published:?}"
+        );
+        let appended = published_rung(&app, "forestry:old_growth");
+        assert_eq!(appended.branch, "forestry", "{appended:?}");
+        assert_eq!(appended.order, 4, "{appended:?}");
+        assert_eq!(appended.display_name, "Old Growth", "{appended:?}");
+        assert_eq!(appended.requires_rung, "forestry:coppice", "{appended:?}");
+        assert_eq!(appended.work_cost, 400.0, "{appended:?}");
+        assert_eq!(appended.upkeep_work_per_turn, 3.0, "{appended:?}");
+        assert_eq!(appended.regrowth_multiplier, 3.0, "{appended:?}");
+        assert_eq!(appended.yield_per_worker_turn, 3.5, "{appended:?}");
+        assert_eq!(
+            published
+                .iter()
+                .filter(|row| row.branch == "forestry")
+                .count(),
+            4,
+            "and it climbs on its own branch, leaving the extraction ladder alone: {published:?}"
         );
     }
 }

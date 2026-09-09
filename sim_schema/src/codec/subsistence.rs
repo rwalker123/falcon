@@ -2,10 +2,10 @@
 
 use crate::codec::FbBuilder;
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, DepositState, FloraShareInfo, FoodModuleState,
-    ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState, RouteRungState,
-    SedentarizationState,
+    CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState, FloraShareInfo,
+    FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
+    KitOptionState, LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState,
+    RouteRungState, SedentarizationState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -36,6 +36,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let recipes = create_recipes(builder, &snapshot.recipes);
     let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
     let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
+    let deposit_rungs = create_deposit_rungs(builder, &snapshot.deposit_rungs);
     let deposits = create_deposits(builder, &snapshot.deposits);
     fb::SubsistenceSection::create(
         builder,
@@ -61,6 +62,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             craftKnowledge: Some(craft_knowledge),
             routeRungs: Some(route_rungs),
             deposits: Some(deposits),
+            depositRungs: Some(deposit_rungs),
         },
     )
 }
@@ -141,6 +143,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .route_rungs
         .as_ref()
         .map(|entries| create_route_rungs(builder, entries));
+    let deposit_rungs = delta
+        .deposit_rungs
+        .as_ref()
+        .map(|entries| create_deposit_rungs(builder, entries));
     let deposits = delta
         .deposits
         .as_ref()
@@ -167,6 +173,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             craftKnowledge: craft_knowledge,
             routeRungs: route_rungs,
             deposits,
+            depositRungs: deposit_rungs,
         },
     )
 }
@@ -1037,6 +1044,53 @@ fn create_route_rungs<'a>(
                 buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
                 buildMaterialCost: state.build_material_cost,
                 buildMaterialId: Some(build_material_id),
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
+/// **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — every rung the forestry and extraction branches
+/// declare, grouped by branch and in climb order within it, once per world. A per-world constant,
+/// written whole on a snapshot and only when it moved on a delta, exactly like the route catalog
+/// above.
+fn create_deposit_rungs<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[DepositRungState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DepositRungState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let rung_key = builder.create_string(&state.rung_key);
+        // Which ladder the row is on — one vector carries both branches, so this is what a reader
+        // groups by.
+        let branch = builder.create_string(&state.branch);
+        let display_name = builder.create_string(&state.display_name);
+        let verb = builder.create_string(&state.verb);
+        let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
+        let requires_rung = builder.create_string(&state.requires_rung);
+        let earns_knowledge = builder.create_string(&state.earns_knowledge);
+        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
+        let build_material_id = builder.create_string(&state.build_material_id);
+        entries.push(fb::DepositRungState::create(
+            builder,
+            &fb::DepositRungStateArgs {
+                rungKey: Some(rung_key),
+                branch: Some(branch),
+                order: state.order,
+                displayName: Some(display_name),
+                verb: Some(verb),
+                unlockKnowledge: Some(unlock_knowledge),
+                requiresRung: Some(requires_rung),
+                earnsKnowledge: Some(earns_knowledge),
+                workCost: state.work_cost,
+                upkeepWorkPerTurn: state.upkeep_work_per_turn,
+                buildMaterialCost: state.build_material_cost,
+                buildMaterialId: Some(build_material_id),
+                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
+                yieldPerWorkerTurn: state.yield_per_worker_turn,
+                recoveryFraction: state.recovery_fraction,
+                regrowthMultiplier: state.regrowth_multiplier,
+                minDepositCapacity: state.min_deposit_capacity,
             },
         ));
     }

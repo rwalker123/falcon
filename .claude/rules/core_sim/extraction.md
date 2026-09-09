@@ -547,6 +547,49 @@ never the empty string. `UpkeepKitIds` gains the same key for `upkeepKitId` / `u
 `resolve_upkeep_kits` reads the working's branch off the **source's own rung** rather than off the
 row, because one row kind serves both ladders.
 
+### The rung catalog — what a wood or a rock body MAY become, once per world
+
+`SubsistenceSection.depositRungs` is a `DepositRungState` per rung of the **forestry** and
+**extraction** branches, grouped by branch and climbing within it, built by
+`snapshot::subsistence::snapshot_deposit_rungs` off `extraction::deposit_rungs_in_climb_order`. It is
+a per-world constant on `routeRungs`' own seam — a `Whole<…>` baseline, diffed whole like `kits`, and
+re-sent only on a world rebuild.
+
+**`DepositState` says where a working stands; the catalog says what stands above it.** Without it no
+readout could state what a quarry costs, what it reaches, or why the ground refuses one until a
+working already sat on that rung — which is the same gap `routeRungs` was added to close for roads.
+
+⛔ **IT FOLLOWS THE ROUTE PRECEDENT AND NOT THE PLANT ONE, AND THE DIFFERENCE IS WHO OWNS THE LIST.**
+The plant and animal ladders are drawn from **hardcoded client-side rung arrays**, a second authority
+that goes stale the day a rung is added. Every field here is derived from
+`intensification_ladder.json` through the sim's own rung types — the prices are the record's `build` /
+`upkeep`, the payoff is its `extraction_payoff`, the placement rule is its `site_requirement`, the
+chain is its `requires_rung` — so a rung added to that config reaches the wire and the client's ladder
+with no Rust edit and no client edit. That is not hypothetical on this branch: `extraction:gathering`'s
+own config comment reserves the minerals arc's `mine` above the quarry, on this same ladder.
+`wire::a_rung_added_to_the_config_is_published_with_no_code_change` appends a fourth forestry rung to
+the shipped config's JSON, swaps the `LadderConfigHandle`, and asserts the row appears.
+
+**`branch` on every row is the one field `RouteRungState` has no need of.** One vector carries both
+ladders because they share the payoff block, so a reader groups by it;
+`extraction::DEPOSIT_BRANCHES` fixes the order the groups come in, which a set-walk could not.
+
+⛔ **`recoveryFraction` IS PUBLISHED AND MUST NEVER BE DERIVED FROM `reachable / capacity`.**
+`deposit_reachable` clamps to the **stock**, so that ratio stops being the rung's recovery the moment
+a seam is drawn down: a payoff sub-row computing it would begin quoting a number that *falls as the
+rock is worked*, on a rung whose reach never moved. It is the field the whole stone branch turns on —
+0.15 at the surface, 0.85 at the quarry — and it rides the catalog for that reason.
+
+**`minDepositCapacity` is on the row so a client can say WHY a rung is refused**, not merely that it
+is: the `capacity` a working already publishes is the other half of that sentence, and a threshold
+transcribed client-side would be a second authority over a placement rule the config owns.
+
+**`buildWorkPerWorkerTurn` is the one field that is the SIM's and not the rung's** — the bare
+`PER_WORKER_OUTPUT`, read through `intensification::build_work_per_worker_turn` at `NO_BUILD_GEAR`,
+because worker output is written as a *sum of terms* and a transcribed constant goes stale in silence
+the day a second term lands. It is the same figure for every rung, which is why it rides the catalog
+rather than the working's row.
+
 ## See also
 
 - `docs/plan_extraction.md` — the arc: the gap, the one idea, the two branches, what is out of scope

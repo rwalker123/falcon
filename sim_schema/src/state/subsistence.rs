@@ -2353,6 +2353,143 @@ pub struct RouteRungState {
     pub build_material_id: String,
 }
 
+/// **ONE RUNG OF A DEPOSIT BRANCH, AS THE CONFIG DECLARES IT** — the two branches' shared *catalog*,
+/// once per world and carrying no tile. [`RouteRungState`] above is the precedent, field for field.
+///
+/// ⛔ **THIS IS WHAT LETS A CLIENT DRAW A WOOD OR STONE LADDER OF RUNGS NOTHING HAS OPENED YET.**
+/// [`crate::state::DepositState`] answers *where does this working stand and what is it taking*; it
+/// says nothing about the rungs above it, so no readout could state what a quarry would cost or what
+/// it would reach until a working already stood on one.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`; NOTHING HERE IS AUTHORED
+/// SEPARATELY** — [`RouteRungState`]'s discipline, for its reason: a rung added to that config
+/// appears in the ladder with no client edit and no schema edit. The one exception is
+/// [`Self::build_work_per_worker_turn`], which is the *sim's* rate and not the rung's.
+///
+/// **Two branches in one vector, with [`Self::branch`] on every row** — the one field
+/// [`RouteRungState`] has no need of, because it publishes a single branch. `forestry` and
+/// `extraction` share the payoff block and differ only in which of its terms a rung raises, so one
+/// table serves both; the rows are grouped by branch and climb within it.
+///
+/// **It rides the section and not the working's row.** These are properties of the *branch*,
+/// identical for every wood and every rock body in the world.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DepositRungState {
+    /// The rung's name on the wire, `"<branch>:<id>"` (`"forestry:coppice"`) — the same spelling
+    /// `DepositState::rung` carries, so a working's standing joins to its row here.
+    pub rung_key: String,
+    /// **Which ladder this rung is on**, `"forestry"` | `"extraction"` — the config record's own
+    /// branch, the same vocabulary `DepositState::branch` publishes. One vector carries both, so
+    /// this is what a reader groups by; without it the rows of two ladders would be one
+    /// undifferentiated climb.
+    pub branch: String,
+    /// The config record's own `order`: `1` at the branch's floor, climbing. **The row order is this
+    /// order** within a branch — bottom rung first, forestry before extraction.
+    pub order: u32,
+    /// `"Coppice"` — the rung id with underscores turned to spaces and each word capitalized,
+    /// resolved sim-side so no client authors a second spelling of it.
+    pub display_name: String,
+    /// The **tile command** that raises this rung (`"fell"` / `"coppice"` / `"quarry"`), `""` where
+    /// the rung declares none. An empty verb is a free floor: deadfall and a stone scatter are what
+    /// the ground already offers, so there is no command to name the job and no crew to staff it.
+    pub verb: String,
+    /// The ladder knowledge that gates this rung (`"conservationism"`), joining to
+    /// [`LadderKnowledgeState::knowledge_id`] for the faction's own progress; `""` where the rung
+    /// waits on nothing.
+    pub unlock_knowledge: String,
+    /// The wire key of the rung **directly beneath** this one, `""` at a branch's floor — the chain,
+    /// so a client renders the climb without holding a second copy of the order.
+    pub requires_rung: String,
+    /// **The ladder knowledge standing at this rung TEACHES** (`"woodcraft"` on deadfall), `""`
+    /// where the rung teaches nothing, which is the top of each shipped branch.
+    ///
+    /// ⛔ **IT IS THE REMEDY, AND IT CANNOT BE INFERRED FROM [`Self::requires_rung`]**, exactly as on
+    /// [`RouteRungState::earns_knowledge`]: a gate says *you do not know `quarrying` yet*, and what
+    /// a player does about it is stand on the rung that **teaches** quarrying, which is a different
+    /// fact from the rung directly beneath.
+    #[serde(default)]
+    pub earns_knowledge: String,
+    /// What reaching this rung costs, in work units. `0` where the rung declares no build at all,
+    /// which on the shipped ladder is the two free floors and nothing else — nobody builds a
+    /// deadfall and nobody builds a stone scatter.
+    #[serde(default)]
+    pub work_cost: f32,
+    /// The standing bill a working at this rung owes its keeper, in work units per turn, **before**
+    /// the working's own keeper-loads scale it (`DepositState::upkeep_demand` is the resolved
+    /// reading). `0` where the rung declares no upkeep — the free floors, which cost nothing to hold
+    /// and can therefore never be short.
+    #[serde(default)]
+    pub upkeep_work_per_turn: f32,
+    /// **What reaching this rung costs in material** — the rung's declared build pile, in units of
+    /// the material it eats: `8` wood on `extraction:quarry` (props and ramps, timbered once as the
+    /// face is opened), `0` on every other rung of either branch.
+    ///
+    /// **It is a pile and not a rate**: swallowed as the meter climbs, never on completion, and the
+    /// slide back down a ladder refunds none of it. There is deliberately no
+    /// `upkeep_material_per_turn` twin — no rung on either branch declares one and `validate`
+    /// refuses one.
+    #[serde(default)]
+    pub build_material_cost: f32,
+    /// **Which material [`Self::build_material_cost`] is of** — `"wood"` on `extraction:quarry`, and
+    /// `""` on every rung that eats nothing. Joins to the ids a band's own stores list publishes.
+    ///
+    /// ⛔ **READ IT WITH THE AMOUNT OR NOT AT ALL**, and **the client must not supply the noun
+    /// itself**: *"a quarry eats wood"* is a fact about the **config**, so a transcribed noun is a
+    /// second authority that goes stale in silence the day a rung is retuned.
+    #[serde(default)]
+    pub build_material_id: String,
+    /// **What one bare-handed worker banks in a turn** — `intensification::PER_WORKER_OUTPUT`,
+    /// unscaled: before gear and before any multiplier, in work units per worker per turn. The same
+    /// figure for every rung, which is why it rides the catalog rather than the working's row.
+    ///
+    /// ⛔ **IT IS READ, NEVER ASSUMED**, for [`RouteRungState::build_work_per_worker_turn`]'s
+    /// reason: the sim writes worker output as a *sum of terms*, so a client left to transcribe the
+    /// constant goes stale in silence the day a second term lands. A reader that finds it missing or
+    /// `0` states *no estimate* rather than substituting a rate of its own.
+    #[serde(default)]
+    pub build_work_per_worker_turn: f32,
+    /// **What one worker takes in a turn at this rung**, in the deposit's material's own units,
+    /// before the reachable stock caps it. The free floors carry a real bare-handed rate rather than
+    /// a zero — the whole material economy bootstraps through them, and a zero would be a refusal
+    /// the sim does not have. `DepositState::actual_take` is what a working's crew actually banked.
+    #[serde(default)]
+    pub yield_per_worker_turn: f32,
+    /// **How much of the deposit this rung can ever reach**, `0..=1` — the escapement floor upside
+    /// down: `floor = (1 − recovery_fraction) × capacity`, so climbing **lowers** the floor rather
+    /// than raising a ceiling. `1.0` on every forestry rung (a wood can be cut to nothing, which is
+    /// what makes over-cutting possible); `0.15` at `extraction:gathering`, which is what makes it a
+    /// *surface* rung, and `0.85` at `extraction:quarry`.
+    ///
+    /// ⛔ **THIS IS THE FIELD THE WHOLE STONE BRANCH TURNS ON, AND IT IS PUBLISHED RATHER THAN
+    /// DERIVED FROM `DepositState::reachable` / `DepositState::capacity`.** That ratio is *not* this
+    /// fraction: `reachable` clamps to the **stock**, so the moment a seam is drawn down the ratio
+    /// stops being the rung's recovery, and a payoff row computing it would silently begin quoting a
+    /// different number — one that falls as the rock is worked, on a rung whose reach never moved.
+    #[serde(default)]
+    pub recovery_fraction: f32,
+    /// **What this rung multiplies the deposit's own `regrowth_rate` by.** `1.0` = the ground renews
+    /// as it always did, which is what every extraction rung declares; `2.0` at `forestry:coppice`,
+    /// which is conservationism expressed mechanically — not more per turn, more per turn *for
+    /// ever*.
+    ///
+    /// **No rung raises capacity and there is no field for one.** The multiplier scales the
+    /// deposit's own rate and rock's rate is `0`, so *stone's rate is zero* survives as arithmetic
+    /// rather than as a rule someone has to remember.
+    #[serde(default)]
+    pub regrowth_multiplier: f32,
+    /// **What the ground must hold for this rung to be placed there** — the rung's
+    /// `site_requirement.min_deposit_capacity`, struck against the tile's own capacity for the
+    /// working's material. `100` at `extraction:quarry`, the one placement rule on either branch and
+    /// the whole of *"you cannot quarry just anywhere"*; `0` where the rung asks nothing of the
+    /// ground, which is every other shipped rung.
+    ///
+    /// It is published so a client can say **why** a rung is refused rather than only that it is:
+    /// `DepositState::capacity` is the other half of that sentence, and a threshold transcribed
+    /// client-side would be a second authority over a placement rule the config owns.
+    #[serde(default)]
+    pub min_deposit_capacity: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,

@@ -32,9 +32,9 @@ use crate::state::population::{
 };
 use crate::state::routes::RouteState;
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, DepositState, FoodModuleState, ForagePatchState,
-    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderKnowledgeState,
-    MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
+    CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState, FoodModuleState,
+    ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
+    LadderKnowledgeState, MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -250,6 +250,12 @@ pub struct WorldSnapshot {
     /// A per-world constant, diffed whole like [`Self::ladder_knowledge`]. See [`RouteRungState`].
     #[serde(default)]
     pub route_rungs: Vec<RouteRungState>,
+    /// **The two deposit branches' rung catalog** — every rung of `intensification_ladder.json`'s
+    /// forestry and extraction branches, grouped by branch and in climb order within it, so a client
+    /// can draw a wood or stone ladder of rungs nothing has opened yet. A per-world constant, diffed
+    /// whole like [`Self::route_rungs`] beside it. See [`DepositRungState`].
+    #[serde(default)]
+    pub deposit_rungs: Vec<DepositRungState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -391,6 +397,10 @@ pub struct WorldDelta {
     /// world is rebuilt. `None` means unchanged.
     #[serde(default)]
     pub route_rungs: Option<Vec<RouteRungState>>,
+    /// The two deposit branches' rung catalog; a per-world constant, so a delta re-sends it only
+    /// when the world is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub deposit_rungs: Option<Vec<DepositRungState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

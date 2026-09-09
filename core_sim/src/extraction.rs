@@ -65,7 +65,7 @@ use crate::{
     extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_span, rung_work_done, BuildGate,
-        BuildTurns, LadderConfig, RungBranch, RungExtractionPayoff, RungKey, RungStanding,
+        BuildTurns, LadderConfig, RungBranch, RungDef, RungExtractionPayoff, RungKey, RungStanding,
         NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
         RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
@@ -271,6 +271,42 @@ pub fn deposit_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
             .as_ref()
             .map(|build| build.work_cost * DEPOSIT_RUNG_PRICE)
     })
+}
+
+/// **THE TWO LADDERS A DEPOSIT IS WORKED BY, IN THE ORDER A READER MEETS THEM** — wood first, then
+/// stone and, later, every metal.
+///
+/// It is named rather than written as a `matches!` at each call site because the *order* is part of
+/// what [`deposit_rungs_in_climb_order`] publishes: a catalog whose branches came out of a `HashSet`
+/// walk would reorder itself between runs, and a reader grouping the rows would find them
+/// interleaved differently every world. The day the minerals arc adds a third deposit ladder, this
+/// is the one list that has to grow — and every sweep over it follows without moving.
+pub const DEPOSIT_BRANCHES: [RungBranch; 2] = [RungBranch::Forestry, RungBranch::Extraction];
+
+/// **EVERY RUNG THE TWO DEPOSIT BRANCHES DECLARE, GROUPED BY BRANCH AND CLIMBING WITHIN IT** — the
+/// branches' catalog, read straight off the config records. `routes::route_rungs_in_climb_order` is
+/// the precedent, one branch wider.
+///
+/// ⛔ **IT WALKS `ladder.rungs` AND NOT [`RungKey::ALL`], DELIBERATELY.** The key enum names the
+/// rungs a *system* reasons about; this answers *what does the config hold*, so a rung added to
+/// `intensification_ladder.json` is in the catalog — and therefore on the wire and in the client's
+/// ladder — with no code edit. That is not hypothetical here: the minerals arc's `mine` is already
+/// reserved above `extraction:quarry` on this same branch.
+///
+/// Sorted by the record's own `order` within each branch, which the ladder validates as a dense
+/// climb from `1`; the branches themselves come in [`DEPOSIT_BRANCHES`] order.
+pub fn deposit_rungs_in_climb_order(ladder: &LadderConfig) -> Vec<&RungDef> {
+    let mut rungs: Vec<&RungDef> = Vec::new();
+    for branch in DEPOSIT_BRANCHES {
+        let mut on_this_branch: Vec<&RungDef> = ladder
+            .rungs
+            .iter()
+            .filter(|rung| rung.branch == branch)
+            .collect();
+        on_this_branch.sort_by_key(|rung| rung.order);
+        rungs.append(&mut on_this_branch);
+    }
+    rungs
 }
 
 /// **WHAT THIS WORKING'S POSITION BUYS** — the rung payoff [`interpolate`]d over the standing, the
