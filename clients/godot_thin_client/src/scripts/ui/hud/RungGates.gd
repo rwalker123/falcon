@@ -837,6 +837,56 @@ static func deposit_gates(deposit: Dictionary, ladder: Array[Dictionary], knowle
 static func deposit_gates_for(gates: Dictionary, rung: String) -> Array[Dictionary]:
     return route_gates_for(gates, rung)
 
+## ⛔ **THE READY TEST FOR A DEPOSIT — `next_rung_ready`'s twin, and the reason it is not
+## `RungLadder.has_track`.** The CATALOG ENTRY of the rung a press could land right now, or `{}`.
+##
+## Ray, on a `Wood · 1 tile E  Deadfall` roster row wearing a declaring `⌃🪓`: *"The improvement icon
+## makes it look like we can improve it. In the case of forage and hunt, we don't show that icon until
+## there is something to improve."* That row's next rung (`felling`) needed a craft the faction had not
+## learned, so the mark offered a press that could not land — while `Hunt Forest Grouse` on the same
+## board showed no mark at all, its own next rung being refused the same way.
+##
+## **The forage/hunt rows' predicate is `next_rung_ready`, and this is the same three conditions asked
+## of a working's own ladder**: a rung above the standing one, that rung DECLARES a verb, and nothing
+## refuses it. **`RungLadder.has_track` is the wrong test and answering *is any row above the standing
+## rung* is exactly why** — that is TRUE of a rung refused on its craft, its site or the ground beneath
+## it, so it is the test for whether a CARD is worth opening and never for whether a mark is worth
+## drawing.
+##
+## ⛔ **THE CREW REFUSAL IS FORGIVEN HERE, DELIBERATELY, AND IT IS THE ONE GATE WITH NO COUNTERPART ON
+## THE OTHER TWO WEBS.** A working held at zero cutters is still held and still owes — the press IS
+## available, and the card it opens is the one surface that names the missing crew
+## (`extraction-workings.md` → the gates). Withholding the mark for it would hide the remedy, which is
+## why `band_panel_workings_track_no_crew` asserts the mark still draws there. Every OTHER refusal is a
+## rung no press can reach at all.
+##
+## It walks in CLIMB order and answers the FIRST ungated rung, which on a linear branch is the only one
+## that can be ungated — a higher rung is refused on `requires_rung`. The caller reads the mark's glyph
+## off the entry, so the glyph names the rung the press would land rather than the next one up.
+static func deposit_rung_ready(deposit: Dictionary, ladder: Array[Dictionary],
+        knowledge: Dictionary, labels: Dictionary, cutters: int) -> Dictionary:
+    var gates := deposit_gates(deposit, ladder, knowledge, labels, cutters)
+    var rows := HudDepositVocab.branch_ladder(ladder, HudDepositVocab.branch_of(deposit))
+    var standing_order := HudDepositVocab.ladder_order_of(rows, HudDepositVocab.rung_of(deposit))
+    for entry in rows:
+        if HudDepositVocab.catalog_order(entry) <= standing_order:
+            continue
+        if _deposit_refused_apart_from_crew(deposit_gates_for(gates,
+                HudDepositVocab.catalog_rung_key(entry))):
+            continue
+        return entry
+    return {}
+
+## Is this rung refused by anything OTHER than the crew? — `deposit_rung_ready`'s own filter, kept
+## apart so the ONE kind it forgives is NAMED rather than implied by a fabricated `cutters` argument.
+## Asking the gates with a made-up crew count would answer the crew question with a lie; this answers
+## it truthfully and then declines to spend the mark on it.
+static func _deposit_refused_apart_from_crew(refusals: Array[Dictionary]) -> bool:
+    for refusal in refusals:
+        if String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")) != HudDepositVocab.GATE_KIND_CREW:
+            return true
+    return false
+
 ## ⛔ **THE ONE REFUSAL A ROW STATES when several are unmet** — `HudDepositVocab.GATE_ROW_PRIORITY`'s
 ## order. `""` for a ready rung, and for the free floor, whose only refusal carries no short form
 ## because the row's own state word says it.

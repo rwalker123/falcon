@@ -17190,6 +17190,96 @@ func _assert_a_crewless_working_says_so() -> void:
 	_hud._bandpanel._dismiss_rung_track()
 	await _settle()
 
+## ⛔ **THE MARK DRAWS ONLY WHERE A PRESS COULD LAND — the FORAGE AND HUNT ROWS' OWN PREDICATE.**
+##
+## Ray, reading a Work tab: *"The improvement icon makes it look like we can improve it. In the case of
+## forage and hunt, we don't show that icon until there is something to improve."* His board had
+## `Wood · 1 tile E  Deadfall` wearing a declaring `⌃🪓` for a `felling` the faction had not learned,
+## beside a `Hunt Forest Grouse` row correctly wearing nothing at all.
+##
+## The board's own rows gate on `RungGates.next_rung_ready`; `RungGates.deposit_rung_ready` is that
+## predicate asked of a working's ladder, and the whole of what it forgives is the CREW.
+##
+## ⛔ **THE PAIR IS THE CLAIM, AND NEITHER HALF IS WORTH ANYTHING ALONE.** A gate that drew no mark
+## anywhere satisfies the absence; the shipped `RungLadder.has_track` satisfies every presence. So ONE
+## board is staged with the crafts SPLIT — `quarrying` known, the two forestry crafts not — and asserted
+## both ways at once: the wood row's `coppice` is craft-refused and wears no mark, while the two rock
+## rows' `quarry` is clear and both do.
+##
+## ⛔ **AND THE FAR ROCK IS THE CREW-GATE CASE, ON THIS SAME BOARD.** It is held at
+## `WORKINGS_NO_CUTTERS`, so its every rung is refused for want of a crew — and it MUST still wear the
+## mark, because the card it opens is the one surface that names the missing diggers. A predicate that
+## forgave nothing would drop it, which is a different lie from the one Ray reported and reads the same
+## on a thumbnail.
+func _assert_the_mark_needs_a_pressable_rung() -> void:
+	# **THE CRAFTS ARE SPLIT rather than cleared.** With none of them known every row loses its mark and
+	# the presence half of the claim has nowhere to be made; with all of them known (which is what the
+	# block around this one pushes) the absence half has nowhere to be made.
+	var tracks := _standing_knowledge_tracks()
+	tracks[WORKINGS_CRAFT_WOODCRAFT] = 0.0
+	tracks[WORKINGS_CRAFT_CONSERVATIONISM] = 0.0
+	tracks[WORKINGS_CRAFT_QUARRYING] = KNOWLEDGE_COMPLETE
+	_hud.update_intensification([KnowledgeFx.progress_row(0, tracks)])
+	_hud.update_deposits(_workings_rows())
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_craft_gated")
+	_assert_zone_content_fits()
+	var rows := _workings_rows_drawn()
+	# **PRECONDITION: the board still draws all three rows.** Every claim below is about a MARK, and a
+	# roster that had lost a row would satisfy the absence for a reason that is not this one.
+	_assert_band_panel("precondition: the craft-gated board still draws its three workings (got %d)"
+			% rows.size(),
+		rows.size() == 3)
+	if rows.size() != 3:
+		_hud.update_intensification([_workings_knowledge_row()])
+		return
+	var marked: Array = []
+	for control in _collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_TRACK_META, []):
+		marked.append(String(control.get_meta(HudWorkVocab.WORKINGS_ROSTER_TRACK_META)))
+	var wood_key := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
+	var near_rock := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
+	var far_rock := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]
+	# ⛔ **THE PRECONDITION THAT MAKES THE ABSENCE MEAN THE CRAFT.** The wood row's next rung must
+	# really be refused, and refused on its CRAFT rather than on the crew or the ground — otherwise the
+	# missing mark is evidence of a predicate that answers nothing.
+	var ladder := HudDepositVocab.deposit_ladder(_deposit_rung_catalog())
+	var wood := _workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE)
+	var gates := RungGates.deposit_gates(wood, ladder, _hud._bandpanel._player_knowledge(),
+		{}, WORKINGS_CUTTERS)
+	var coppice := RungGates.deposit_gates_for(gates, HudDepositVocab.RUNG_KEY_COPPICE)
+	# ⛔ **THE CLAIM IS THE REFUSAL'S OWN KIND, not the words it renders.** The short form is composed
+	# from the craft's DISPLAY NAME out of the catalog's knowledge roster, so an expectation spelled
+	# here would be asserting against a label table rather than against the gate that fired.
+	var coppice_kinds: Array = []
+	for refusal in coppice:
+		coppice_kinds.append(String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")))
+	_assert_band_panel("precondition: the felling working's coppice is refused on its CRAFT (%s)"
+			% [coppice_kinds],
+		coppice_kinds.has(HudDepositVocab.GATE_KIND_CRAFT))
+	_assert_band_panel(("a working whose next rung is craft-refused carries NO declaring mark — the "
+			+ "forage and hunt rows' own rule (%s not marked, got %s)") % [wood_key, marked],
+		not marked.has(wood_key))
+	# **AND THE PRESENCE HALF, on the same board and the same press.** `quarrying` is known and the
+	# rock clears the quarry's site rule, so the near rock's rung really is available.
+	_assert_band_panel("…while a working whose next rung IS available still carries it (%s of %s)"
+			% [near_rock, marked],
+		marked.has(near_rock))
+	# ⛔ **AND THE CREW REFUSAL IS FORGIVEN, which is the one gate with no counterpart on the other two
+	# webs.** The far rock is held at nobody and the card is where that is stated, so withholding the
+	# mark for it would hide the remedy rather than an unavailable act.
+	_assert_band_panel(("…and a working held at NOBODY keeps its mark, the crew being the one refusal "
+			+ "the card itself names (%s of %s)") % [far_rock, marked],
+		marked.has(far_rock))
+	_assert_band_panel("…so the craft-gated board carries exactly TWO marks (got %d: %s)"
+			% [marked.size(), marked],
+		marked.size() == 2)
+	# **THE CRAFTS GO BACK**, so the states after this one run against the block's own full row — the
+	# `_restore_workings_roster_fixture` idiom, applied at the state that narrowed them.
+	_hud.update_intensification([_workings_knowledge_row()])
+	await _settle()
+
 ## Every rung row's HOVER, as `improvement -> tooltip_text` — the twin of `_rung_track_faces`, off the
 ## meta-carrying row itself. A refusal's SENTENCE lives here and its short form on the face, so a scan
 ## of the card's labels testifies about neither.
@@ -17592,6 +17682,7 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	# **AND THE HEAD IS THE POOL**, asserted on this state because it is the one with a live shortfall.
 	_assert_workings_roster_head("band_panel_workings_roster", block, true)
 	await _assert_the_row_opens_the_rung_track(rows)
+	await _assert_the_mark_needs_a_pressable_rung()
 
 	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
 	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** The `deposits` rows are fog-filtered

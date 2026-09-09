@@ -919,6 +919,36 @@ const STANDING_SUMMARY_FORMAT := "%s %d %s"
 
 const STANDING_SUMMARY_SEPARATOR := " ·"
 
+# ⛔ **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT THIS SIZE, AND IT IS ONE CONST BECAUSE
+# RAY IS TUNING IT.** *"we are getting more buttons now … make the font for the `Assign …` label
+# smaller, let's try 25% to see how it looks. Make that change for all the buttons in the TILE
+# panel."* — so this is exploratory by his own words, and a scattered literal would make the retune a
+# sweep.
+#
+# **25% OFF GODOT'S OWN DEFAULT.** `HudStyle.apply_button` writes styleboxes and colours and NO font
+# size, so a tile button has always drawn at the stock theme size (16); 12 is that less a quarter.
+# The five `Assign … ▸` faces, `Road ▸` and `Move` all read it — the road and move builders directly,
+# the assign ones through `HudWidgets.build_stacked_action_button`'s first line.
+const TILE_ACTION_LABEL_FONT_SIZE := 12
+
+# …and the standing summary UNDER that label, which must stay the quieter of the two. It is its own
+# const rather than `HudWorkVocab.ALLOC_SECTION_FONT_SIZE` (which it happens to equal) for two
+# reasons: the label above it is being retuned, so a second line pinned to a third module's constant
+# would stop being proportionate the moment it moves; and inside a button the summary is ONE readout,
+# where the sibling row rendered its main part at 10 and its `⚠` / note labels at the stock 16 — a
+# mixture that read as two registers on one line.
+#
+# ⛔ **10, NOT THE 9 THE LABEL'S OWN RATIO GIVES.** Applying the 25% a second time lands here, and
+# the Options pane's interface scale is what refuses it: `ui_scale` clamps to [0.75, 1.50], so a 9
+# draws at under 7px effective at the floor. That is a legibility trade nobody chose — and it is a
+# whole readout, `⚠` and material-shortfall note included, not an ornament. The LABEL is the size
+# Ray asked for; this one is sized to be readable under it.
+const TILE_ACTION_SUMMARY_FONT_SIZE := 10
+
+# The gap between the two lines of a stacked action button. Tighter than a section gap on purpose:
+# the pair is one control's face, so anything that reads as a stack of two rows would undo the move.
+const TILE_ACTION_FACE_SEPARATION := 1
+
 ## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign). The
 ## second one's face is the VERB PAIR below, since which verb the sim will honour is not fixed.
 const PARTY_INSPECT_JUMP := "Jump to party"

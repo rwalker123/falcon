@@ -522,20 +522,30 @@ const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has
 ## **THE FOURTH KEEPING ROLE** (arc #583) — the workings, on both deposit branches at once. Same
 ## family again: a band-wide count of hands set by `assign_labor`, measured against a SUM.
 ##
-## ⛔ **THE CARD SAYS `Workings`, AND THE COMMAND TOKEN `quarrywork` NEVER REACHES A PLAYER.** `Quarry`
-## already means the HUNTED ANIMAL in this client — it is one of the compose sheet's own field rows —
-## so a pool named for it would put one word on two unrelated things on two surfaces a player uses in
-## the same minute. *Working* is the sim's own word for a live deposit a band has opened.
+## ⛔ **THE CARD SAYS `Groundwork`, AND THE COMMAND TOKEN `quarrywork` NEVER REACHES A PLAYER.**
+## `Quarry` already means the HUNTED ANIMAL in this client — it is one of the compose sheet's own field
+## rows — so a pool named for it would put one word on two unrelated things on two surfaces a player
+## uses in the same minute.
+##
+## ⛔ **IT SAID `Workings` FOR AN ARC AND RAY OVERRULED THAT.** *Working* is the sim's own word for a
+## live deposit a band has opened, and that is exactly what recommended it and what was wrong with it:
+## it is the ENGINE's noun, not a word the player brought. `Groundwork` is the whole set's rename —
+## this const, the roster head it aliases (below), the role hint, the pool-coverage sentence and every
+## hint and tooltip that said *working* — and the reasoning is on `ZONE_HEADER_WORKINGS_ROSTER`, where
+## the STEPPER makes it a role name rather than a caption. The identifiers still spell `QUARRYWORK` /
+## `WORKINGS_ROSTER_*`: those are grammar and code, on `quarrywork`'s own footing, and appear on no
+## label.
 ##
 ## ⛔ **ONE CARD FOR BOTH BRANCHES, and that is the sim's own split.** Forestry and extraction differ
 ## on KNOWLEDGE and on nothing a keeper does — *hold the face open, clear what has fallen* is one job —
 ## so a second card would be a distinction nothing in the game can express.
-const ROLE_NAME_QUARRYWORK := "Workings"
+const ROLE_NAME_QUARRYWORK := "Groundwork"
 
-## ⛔ **IT NAMES THE WORKINGS THIS BAND OPENED, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`'s
+## ⛔ **IT NAMES THE GROUND THIS BAND OPENED, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`'s
 ## correction, written into this branch from the first line rather than after a slice of the wrong
 ## reading. The catchment is the band's own `extract` ROW: a working is held by the band that works
-## it, worked or idle, wherever that band has since camped.
+## it, worked or idle, wherever that band has since camped. **`opened` is what carries that** — ground
+## a band merely stands on has not been opened by anybody.
 ##
 ## **AND IT NAMES THE CONSEQUENCE.** An unheld working slides back down its ladder — the position is
 ## the thing at risk, there being no crop to rot — which is what *going back* says.
@@ -543,7 +553,7 @@ const ROLE_NAME_QUARRYWORK := "Workings"
 ## **THIS STRING AND `UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT` ARE WRITTEN FROM ONE MODEL.** The road
 ## pair's correction landed in the hint and not in the tooltip eighty lines below it for a whole
 ## slice; these two were composed together, and there is no third copy.
-const QUARRYWORK_ROLE_HINT := "Holds every working this band has opened, worked or idle. Short of the bill, they go back."
+const QUARRYWORK_ROLE_HINT := "Holds all the ground this band has opened, worked or idle. Short of the bill, it goes back."
 
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
@@ -643,7 +653,7 @@ const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; t
 ## deposit branch through `_pool_coverage`), because the `deposits` rows are fog-filtered and summing
 ## them client-side would understate a bill the band still owes. A sentence promising a queued term
 ## the number does not carry would be the worse of the two errors.
-const UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT := "This pool supplies %s work a turn; the workings this band opened need %s."
+const UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT := "This pool supplies %s work a turn; the ground this band opened needs %s."
 
 ## Which of the set a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
 ## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
@@ -2061,11 +2071,28 @@ static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
 # unstaffing is the take crew's own `0`. A `✕` here would emit a command the sim answers by dropping
 # something else on the same hex.
 
-## The block's head, which is also the `quarrywork` pool's only control. **It says WORKINGS and never
-## the command token** — `Quarry` in this client is the HUNTED ANIMAL — and it is the noun
-## `HudWorkVocab.ROLE_NAME_QUARRYWORK` states one row up, so the pool and the block it staffs cannot
-## be called two things.
-const ZONE_HEADER_WORKINGS_ROSTER := "Workings held"
+## The block's head, which is also the `quarrywork` pool's only control.
+##
+## ⛔ **IT IS `ROLE_NAME_QUARRYWORK` ITSELF, NOT A SECOND SPELLING OF IT.** The head IS the pool — that
+## is the whole reason the stepper lives here rather than on a fifth pool card — so an independent
+## literal would be two names for one control, which is exactly how it drifted before: the head read
+## `Workings held` while the role read `Workings`.
+##
+## ⛔ **AND THE WORD IS NOT `WORKINGS` ANY MORE.** Ray: *"we decided a while ago, WORKINGS wasn't a
+## good word to us, fix it."* It is **`GROUNDWORK`**, and the shape of the head is why: it hosts a
+## STEPPER, so the name has to work as a ROLE rather than as a list caption. `Groundwork` sits in
+## `Roadwork`'s own `-work` family beside `Agriculture` / `Husbandry` / `Builders`, it is ordinary
+## English for keeping the ground's diggings and cuttings, and it survives a minerals arc that
+## anything naming wood or stone would not.
+##
+## ⛔ **DO NOT RENAME IT AFTER THE LIST** (`Wood & Stone`, `Cutting & Digging`). The stepper beside it
+## staffs the KEEPING crew, never the per-source take crews — those are on the two compose sheets — so
+## a head naming the list would make the stepper read as *how many cutters and diggers*, which is the
+## wrong control entirely.
+##
+## It still never says the command token: `Quarry` in this client is the HUNTED ANIMAL, and
+## `quarrywork` survives as grammar (`HudConst.LABOR_KIND_QUARRYWORK`) and on no label.
+const ZONE_HEADER_WORKINGS_ROSTER := ROLE_NAME_QUARRYWORK
 
 ## ⛔ **WHAT THE HEAD RESERVES WITH THE POOL STEPPER ON IT — MEASURED, not `ZONE_HEAD_HEIGHT` plus a
 ## guess.** `HudWidgets.zone_head` declares `ZONE_HEAD_HEIGHT` (20) as a MINIMUM and an `HBoxContainer`
@@ -2114,7 +2141,7 @@ const WORKINGS_ROSTER_TRACK_META := "workings_roster_track"
 
 ## …and what the mark says on its hover. It states what the press DOES rather than what it costs: the
 ## price of each rung is on the rung's own row inside the track, which is where a price is comparable.
-const WORKINGS_ROSTER_TRACK_TOOLTIP := "Take this working further up its ladder."
+const WORKINGS_ROSTER_TRACK_TOOLTIP := "Take this ground further up its ladder."
 
 ## The mark's own width, so the value cell beside it clips against a stable edge rather than against
 ## whichever glyph the row happens to carry.
@@ -2129,7 +2156,7 @@ const WORKINGS_ROSTER_UNSEEN_META := "workings_roster_unseen"
 ## bill — so a band can legitimately show `Workings 2` beside a one-row roster or beside none at all.
 ## An empty roster drawn next to a non-zero count would say *this band holds nothing*, which is a
 ## readout that lies.
-const WORKINGS_ROSTER_UNSEEN_LINE := "The workings this band holds are not in sight."
+const WORKINGS_ROSTER_UNSEEN_LINE := "The ground this band works is not in sight."
 
 ## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, the rule every block
 ## in this zone keeps. `0` where the block does not render at all: nothing held in sight AND no

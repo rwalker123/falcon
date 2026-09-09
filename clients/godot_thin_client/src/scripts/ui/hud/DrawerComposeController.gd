@@ -4410,23 +4410,21 @@ func build_forage_drawer_actions(tile_info: Dictionary) -> void:
     #     without changing the drawer's STRUCTURE) — nor should it try, since that would rebuild the
     #     drawer on every tick and reintroduce the reflow flash the patch path exists to remove.
     var shape := [subject_key] + _standing_actions_shape(summary_model)
-    var expected_children := (1 if not summary_model.is_empty() else 0) + 1
-    # Same shape (summary present + its warn/note structure) → patch the summary + compose button in
-    # place, so the per-snapshot restate never tears down the drawer (the "worst around Forage" flash).
-    # The compose button's primary/ghost flip lands in place too.
+    # **ONE CHILD, because the summary is the button's own second line now** — it was a sibling row
+    # above it until Ray moved it inside the control.
+    var expected_children := 1
+    # Same shape (summary present + its warn/note structure) → patch the cell's two lines in place, so
+    # the per-snapshot restate never tears down the drawer (the "worst around Forage" flash). The
+    # compose button's primary/ghost flip lands in place too.
     if shape == _forage_drawer_shape and _forage_assign_controls.get_child_count() == expected_children:
-        var idx := 0
-        if not summary_model.is_empty():
-            _update_standing_summary(_forage_assign_controls.get_child(idx) as HFlowContainer, summary_model)
-            idx += 1
-        _update_compose_open_button(_forage_assign_controls.get_child(idx) as Button, crew_label, subject_key)
+        _update_compose_open_button(_forage_assign_controls.get_child(0) as Control,
+            crew_label, subject_key, summary_model)
         return
     _clear_forage_drawer()
-    if not summary_model.is_empty():
-        _forage_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     _forage_assign_controls.add_child(_build_compose_open_button(
         crew_label, subject_key,
-        func() -> void: open_forage_compose(_live_tile_info(subject_key, tile_info))))
+        func() -> void: open_forage_compose(_live_tile_info(subject_key, tile_info)),
+        summary_model))
     _forage_drawer_shape = shape
 
 ## Free the forage drawer-actions and forget its shape, so the next build always rebuilds.
@@ -4459,23 +4457,22 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
         if not standing.is_empty():
             summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_HUNT, noun.to_lower())
     var shape := _herd_actions_shape(herd_id, corralled, available, summary_model)
-    var expected_children := (1 if corralled else 0) + (1 if not summary_model.is_empty() else 0) + (1 if available else 0)
+    # **THE SUMMARY COSTS NO CHILD OF ITS OWN — it is the button's second line now.** It also cannot
+    # exist without that button on this web: `summary_model` is only ever filled inside the
+    # `available` branch above, so a worked-but-uncomposable herd has no orphan readout to place.
+    var expected_children := (1 if corralled else 0) + (1 if available else 0)
     # Same shape (extend kind + summary structure + compose button presence) → patch each part in
     # place, so a per-snapshot restate never tears the herd drawer down.
     if shape == _herd_drawer_shape and _herd_assign_controls.get_child_count() == expected_children:
-        var idx := 0
-        if not summary_model.is_empty():
-            _update_standing_summary(_herd_assign_controls.get_child(idx) as HFlowContainer, summary_model)
-            idx += 1
         if available:
-            _update_compose_open_button(_herd_assign_controls.get_child(idx) as Button, noun, herd_id)
+            _update_compose_open_button(_herd_assign_controls.get_child(0) as Control,
+                noun, herd_id, summary_model)
         return
     _clear_herd_drawer()
-    if not summary_model.is_empty():
-        _herd_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     if available:
         _herd_assign_controls.add_child(_build_compose_open_button(
-            noun, herd_id, func() -> void: open_herd_compose(_live_herd(herd_id, herd))))
+            noun, herd_id, func() -> void: open_herd_compose(_live_herd(herd_id, herd)),
+            summary_model))
     _herd_drawer_shape = shape
 
 ## Free the herd drawer-actions and forget its shape, so the next build always rebuilds.
@@ -4566,6 +4563,11 @@ func _build_road_ladder_button(on_press: Callable) -> Button:
     button.text = HudRouteVocab.ROAD_LADDER_ACTION_LABEL
     button.set_meta(HudRouteVocab.ROAD_LADDER_ACTION_META, true)
     HudStyle.apply_button(button, "ghost")
+    # **THE TILE CARD'S ONE LABEL SIZE**, the same const the `Assign … ▸` faces read. `Road ▸` carries
+    # no second line, so it is set on the button's own `text` rather than through
+    # `HudWidgets.build_stacked_action_button`.
+    button.add_theme_font_size_override("font_size",
+        HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
     button.pressed.connect(func() -> void: on_press.call(button))
     return button
 
@@ -4980,32 +4982,25 @@ func _fill_deposit_branch(host: VBoxContainer, branch: String, tile_info: Dictio
                 crew_label.to_lower())
         models.append({"key": subject_key, "summary": summary_model, "working": working})
         shape.append([subject_key] + _standing_actions_shape(summary_model))
-    var expected := 0
-    for model in models:
-        expected += (1 if not (model["summary"] as Dictionary).is_empty() else 0) + 1
+    # **ONE CHILD PER WORKING, summary or not** — it is the button's own second line since Ray moved
+    # it inside the control, so a working this band has opened costs exactly what an untouched one does.
+    var expected := models.size()
     if shape == _deposit_drawer_shapes.get(branch, []) and host.get_child_count() == expected:
-        var idx := 0
-        for model in models:
-            var summary: Dictionary = model["summary"]
-            if not summary.is_empty():
-                _update_standing_summary(host.get_child(idx) as HFlowContainer, summary)
-                idx += 1
-            _update_compose_open_button(host.get_child(idx) as Button, crew_label,
-                String(model["key"]))
-            idx += 1
+        for idx in range(models.size()):
+            var model: Dictionary = models[idx]
+            _update_compose_open_button(host.get_child(idx) as Control, crew_label,
+                String(model["key"]), model["summary"] as Dictionary)
         return
     _clear_deposit_branch(host, branch)
     for model in models:
-        var summary: Dictionary = model["summary"]
-        if not summary.is_empty():
-            host.add_child(_build_standing_summary_from_model(summary))
         # The closure captures the SUBJECT KEY, never the working dict: the same-shape patch keeps a
         # button's connection across snapshots, so a captured dict would be frozen at whatever turn
         # this drawer was last rebuilt — `_live_tile_info`'s own rule.
         var subject_key := String(model["key"])
         host.add_child(_build_compose_open_button(crew_label, subject_key,
             func() -> void: open_deposit_compose(
-                _live_deposit(subject_key, model["working"] as Dictionary))))
+                _live_deposit(subject_key, model["working"] as Dictionary)),
+            model["summary"] as Dictionary))
     _deposit_drawer_shapes[branch] = shape
 
 func _clear_deposit_branch(host: VBoxContainer, branch: String) -> void:
@@ -5331,27 +5326,86 @@ func _herd_actions_shape(herd_id: String, corralled: bool, available: bool, summ
 ## ring's meter is quoted by the build queue row, through the same `SourceForecast.pen_extend_fraction`
 ## that division has always had exactly one home in.
 
-## Patch the `Assign … ▸` button in place: its noun (herders vs hunters can flip as a herd is tamed)
-## and its primary/ghost lit-while-composing state, without freeing the button (whose `pressed`
-## connection we keep intact).
-func _update_compose_open_button(button: Button, noun: String, subject_key: String) -> void:
-    if button == null:
+## Patch the `Assign … ▸` CELL in place: its first line's noun (herders vs hunters can flip as a herd
+## is tamed), its second line's standing summary, and the button's primary/ghost lit-while-composing
+## state — without freeing anything, so the `pressed` connection stays intact.
+##
+## ⛔ **THE PARTS ARE FOUND BY META, NEVER BY CHILD INDEX.** `HudWidgets.build_stacked_action_button`
+## nests the face three containers deep inside the cell, so a positional read would be asserting
+## against that builder's nesting rather than against the parts.
+func _update_compose_open_button(cell: Control, noun: String, subject_key: String,
+        summary_model: Dictionary) -> void:
+    if cell == null:
         return
-    button.text = HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
-    var composing := is_compose_sheet_open() and _compose.subject() == subject_key
-    HudStyle.apply_button(button, "primary" if composing else "ghost")
+    var label := _stacked_part(cell, HudWidgets.STACKED_ACTION_LABEL_META) as Label
+    if label != null:
+        label.text = HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
+    var button := _stacked_button(cell)
+    if button != null:
+        var composing := is_compose_sheet_open() and _compose.subject() == subject_key
+        HudStyle.apply_button(button, "primary" if composing else "ghost")
+    if summary_model.is_empty():
+        return
+    var body := _stacked_part(cell, HudWidgets.STACKED_ACTION_BODY_META) as HFlowContainer
+    _update_standing_summary(body, summary_model)
+    if button != null:
+        button.tooltip_text = String(summary_model["tooltip"])
+    # ⛔ **RE-MUTE, because `_update_standing_summary` re-runs `set_label_tooltip` on every note it
+    # rewrites and that helper sets `MOUSE_FILTER_STOP`.** A face muted only at build time grows a
+    # dead patch over the button the first time a note's text moves.
+    HudWidgets.mute_button_face(body)
 
-## The `Assign … ▸` button. It lights "primary" (SIGNAL cyan — this HUD's LIVE state, as on the
-## Sight chip and the selection accent) while ITS sheet is the open one, so the drawer shows which
-## source is being composed rather than looking idle behind the sheet; "ghost" at rest. NOT "armed"
-## — that is the destructive/warned treatment (DANGER border), and an open sheet is not a warning.
-func _build_compose_open_button(noun: String, subject_key: String, on_press: Callable) -> Button:
+## The `Assign … ▸` control — an `HudWidgets.build_stacked_action_button` CELL whose first line is
+## that label and whose second is the source's standing summary, where this faction works it.
+##
+## It lights "primary" (SIGNAL cyan — this HUD's LIVE state, as on the Sight chip and the selection
+## accent) while ITS sheet is the open one, so the drawer shows which source is being composed rather
+## than looking idle behind the sheet; "ghost" at rest. NOT "armed" — that is the destructive/warned
+## treatment (DANGER border), and an open sheet is not a warning.
+##
+## ⛔ **THE SUMMARY IS THE BUTTON'S SECOND LINE ON EVERY WEB, NOT JUST THE DEPOSIT ONE.** Ray named
+## foragers and hunters when he asked for the move, and two shapes for one readout is the
+## inconsistency this rework keeps removing — so forage, hunt, herd, forestry and extraction all
+## carry it inside the control.
+##
+## **A SOURCE NOBODY WORKS GETS ONE LINE AND NO BLANK SECOND ONE**: a summary exists only where this
+## faction already has a standing assignment, and `summary_model` is `{}` there.
+func _build_compose_open_button(noun: String, subject_key: String, on_press: Callable,
+        summary_model: Dictionary) -> Control:
     var button := Button.new()
-    button.text = HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower()
     var composing := is_compose_sheet_open() and _compose.subject() == subject_key
     HudStyle.apply_button(button, "primary" if composing else "ghost")
     button.pressed.connect(on_press)
-    return button
+    var body: Control = null
+    if not summary_model.is_empty():
+        body = _build_standing_summary_from_model(summary_model)
+        # **THE HOVER MOVES TO THE BUTTON.** With the face muted the summary's own labels cannot show
+        # a tooltip, and the button is the whole control's hit target; the flow keeps its own
+        # `tooltip_text` because it costs nothing and it is what the harnesses read the hover off.
+        button.tooltip_text = String(summary_model["tooltip"])
+    return HudWidgets.build_stacked_action_button(button,
+        HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % noun.to_lower(), body)
+
+## A stacked action cell's own `Button` — the child that carries the click, the stylebox and the
+## tooltip. It is the cell's first child by construction; found by TYPE rather than by index for the
+## reason its siblings are found by meta.
+func _stacked_button(cell: Control) -> Button:
+    for child in cell.get_children():
+        if child is Button:
+            return child as Button
+    return null
+
+## A stacked action cell's face part carrying `meta`, anywhere under it.
+func _stacked_part(root: Control, meta: String) -> Control:
+    if root.has_meta(meta):
+        return root
+    for child in root.get_children():
+        if not (child is Control):
+            continue
+        var found := _stacked_part(child as Control, meta)
+        if found != null:
+            return found
+    return null
 
 ## The player faction's standing assignment on a source, across every player band — `{}` when
 ## nobody works it. Scans `_band_labor.player_bands()` (the full player-faction list) and falls back to the

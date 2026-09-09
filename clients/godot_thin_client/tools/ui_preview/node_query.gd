@@ -34,16 +34,61 @@ static func label_containing(root: Node, text: String) -> String:
 			return found
 	return ""
 
+## ⛔ **A STACKED ACTION BUTTON MATCHES ON ITS FIRST LINE, and without that every claim about the
+## tile card's `Assign … ▸` faces would fail rather than testify.** Since those became TWO-LINE
+## controls (`HudWidgets.build_stacked_action_button` — the label over the source's standing summary),
+## the face is a `Label` painted over an EMPTY-`text` `Button`, so a `text` match alone finds nothing.
+## What comes back is still the PRESSABLE button, which is what every caller does with it.
 static func find_button_by_text(root: Node, text: String) -> Button:
 	if root == null:
 		return null
 	if root is Button and (root as Button).text == text:
 		return root as Button
+	if root is Control and (root as Control).has_meta(HudWidgets.STACKED_ACTION_CELL_META) \
+			and action_button_face(root as Control) == text:
+		return stacked_action_button(root as Control)
 	for child in root.get_children():
 		var found := find_button_by_text(child, text)
 		if found != null:
 			return found
 	return null
+
+## What a tile-card action button READS, whichever shape it is — a plain `Button.text` (`Road ▸`,
+## `Move`) or a stacked cell's first line. Callers assert against this rather than `Button.text`,
+## which is empty by construction on a stacked one.
+static func action_button_face(node: Node) -> String:
+	var cell := stacked_action_cell(node)
+	if cell != null:
+		var label := find_meta_node(cell, HudWidgets.STACKED_ACTION_LABEL_META)
+		return (label as Label).text if label is Label else ""
+	return (node as Button).text if node is Button else ""
+
+## The stacked CELL a node belongs to — the node itself, or the ancestor that carries the meta when a
+## caller is holding the pressable `Button` out of `find_button_by_text`.
+static func stacked_action_cell(node: Node) -> Control:
+	var walk := node
+	while walk != null:
+		if walk is Control and (walk as Control).has_meta(HudWidgets.STACKED_ACTION_CELL_META):
+			return walk as Control
+		walk = walk.get_parent()
+	return null
+
+## A stacked cell's own `Button` — the child carrying the click, the stylebox and the tooltip.
+static func stacked_action_button(cell: Control) -> Button:
+	if cell == null:
+		return null
+	for child in cell.get_children():
+		if child is Button:
+			return child as Button
+	return null
+
+## A stacked cell's SECOND LINE — the standing summary flow, or `null` on a source nobody works.
+## `node` may be the cell or the button, so a caller holding either can ask.
+static func stacked_action_summary(node: Node) -> Control:
+	var cell := stacked_action_cell(node)
+	if cell == null:
+		return null
+	return find_meta_node(cell, HudWidgets.STACKED_ACTION_BODY_META) as Control
 
 ## A compose sheet's COMMIT button by its own meta, never by face: the face is the thing every crew-noun
 ## assertion is ABOUT (`Forage` / `Tend` / `Hunt Here` / `Unassign`), so finding it by text could only

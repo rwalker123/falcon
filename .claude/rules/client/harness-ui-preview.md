@@ -2779,17 +2779,71 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Five frames and forty-three checkpoints**, `EXPECTED_CHECKPOINTS` **43** — RE-MEASURED by raising
-the const to an impossible number and reading `reached` back, as this file's own rule says. The
-chapter's subject is `extraction-workings.md`'s; what belongs here is the shape of the drive and the
-three things it cost.
+**Eight frames and fifty-nine checkpoints**, `EXPECTED_CHECKPOINTS` **59** — RE-MEASURED by raising
+the const to an impossible number and reading `reached` back, as this file's own rule says, and the
+read is why: the declared 43 was already four under the chapter's real count before the two ORDER
+frames below added six and the stacked-button frame added six more, so a delta applied to it would have
+set a floor the chapter could fall through. The chapter's subject is `extraction-workings.md`'s; what belongs here is the shape of the
+drive and the three things it cost.
 
 **FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
 `workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
 against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
 branch says those things now. `workings_unopened` kept its name and its subject, and the new set is
 `workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
-`workings_extraction_sheet` / `workings_unopened`.
+`workings_extraction_sheet` / `workings_unopened`, plus the two ORDER frames and
+`workings_worked_buttons` below.
+
+### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
+
+Appended after the two ORDER frames. The standing summary is the `Assign … ▸` control's own SECOND
+LINE now (`selection-card.md`), and this is the one state in the corpus that stages a WORKED deposit —
+Ray's own card, two foresters on the wood — so it is where that face can be read at all.
+
+- **THE PAIR IS ON ONE HEX, which is what makes it a claim rather than a sample**: the band works the
+  wood and not the rock, so `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries
+  none. A control that grew a blank second line on every source satisfies the presence half on its
+  own, and the blank gap is exactly what the single-line rule forbids.
+- **THE LABEL IS ASSERTED ON THE FIRST LINE**, which is what says the summary JOINED the control
+  rather than replacing its face.
+- ⛔ **AND THE FACE IS ASSERTED INERT, because no picture can show a swallowed click.** Every control
+  in a stacked face is `MOUSE_FILTER_IGNORE`; the summary's note labels have been through
+  `set_label_tooltip`, which sets **STOP**, so each would be a dead patch over the button.
+
+**THE HARNESS SIDE OF THE MOVE IS FOUR REPOINTINGS, NOT FOUR DELETIONS.** Every claim survived; what
+changed is where it is read from. `Q.find_button_by_text` matches a stacked cell on its first line
+and returns the PRESSABLE button under it (so every existing caller is untouched); `Q.action_button_face`
+is what a caller asserts against instead of `Button.text`, which is empty by construction on a
+stacked one; `Q.stacked_action_cell` / `_button` / `_summary` reach the parts; and `ui_preview.gd`'s
+`_forage_open_button` descends into the cell, the host's direct child now being that cell rather than
+a Button. `tile_panel`'s `_forage_summary_text` reads the summary through the cell for the same
+reason, and `compose_rungs`' survives-the-restate claim compares the CELL's instance id — the button
+under the face survives with it, and comparing the button against `get_child(0)` would compare two
+different nodes and fail on a drawer that patched perfectly.
+
+### ⛔ THE TWO ORDER FRAMES ARE A FOG PAIR, AND THE REMEMBERED ONE IS THE WHOLE POINT
+
+`workings_road_last` / `workings_road_remembered` are appended after `workings_unopened` and before
+the chapter hands the hex back bare, so nothing before them moves. They exist because Ray asked for
+the `Road` ROW to close the tile card (`roads.md`), and the road block is COMPOSED above
+`_tile_terrain_lines`' Discovered early return — so *"move it to the end"* has an implementation that
+looks right on a live hex and drops the road from every REMEMBERED one.
+
+- **They are this chapter's only states that stand all four row families on ONE hex** — the two
+  seams, the human web with its basket, the animal web and a road — which is the only shape the
+  ORDER is a claim about. Composed from the SHARED `BaseFx.food_tile_fixture()` with the deposits and
+  the road re-homed onto this chapter's hex, rather than from the bare `_workings_tile`, which states
+  deposits and nothing else.
+- **The road is deliberately the FLOOR rung with no payoff and no bill** (`ROAD_PATH_METER`, friction
+  at `HudRouteVocab.ROAD_FRICTION_NO_HELP`), so the block is exactly ONE line and *the road is last*
+  can be asserted by INDEX (`== lines.size() - 1`) rather than by a tail-scan whose own correctness
+  would need arguing. The block's other four rows are already walked by `land_readouts.gd`'s eleven
+  road frames.
+- **The pair is the claim.** The live frame alone passes on a client that composes the road below the
+  early return; the remembered frame alone passes on one that never moved it. The remembered half
+  makes two claims for that reason — the road is still THERE, and it is still LAST.
+- **And the deposits' own position is asserted beside them**, because the move reorders the ONE
+  producer both blocks are emitted from: Wood and Stone must still sit above `Foraging`.
 
 ⛔ **THE CHAPTER STAGES ITS OWN BAND, AND WITHOUT ONE EVERY SHEET CLAIM IS ABOUT A CREW OF ZERO.** It
 runs LAST in `CHAPTERS`, so the roster it inherits is whichever one the twenty-fifth chapter left; a
@@ -2830,7 +2884,7 @@ carrying two RAISED deposits emits two rows keyed `" "` and the shared reader an
 - **The readout's NOTE is uppercased by `_readout_unit_label`**, so the needle is the vocabulary's own
   word `.to_upper()` — `yields_text` does carry it, the note being a child of the row's own flow.
 
-**A clean run is 435 frames / 2065 `PASS`, exit 0 — MEASURED windowed on this tree.** ⛔ **The
+**A clean run is 438 frames / 2078 `PASS`, exit 0 — MEASURED windowed on this tree.** ⛔ **The
 `--headless` run exits 1 here and that is the dummy renderer, not this chapter**: `button_faces`
 skips two pixel probes for want of a renderer and falls 8 short of its own floor, which is that
 harness's documented headless behaviour. Judge this harness windowed.

@@ -490,7 +490,7 @@ const CARD_TAKE_TIP_FORMAT := "Taking %s a turn · it renews %s a turn"
 ## every deposit on the map. It names the one thing that changes it — the crew stepper on this same
 ## block — because the stock row above has already said what is here and how much of it the free
 ## floor can reach.
-const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and the working opens " \
+const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and it opens " \
 	+ "at this rung."
 
 ## …and the finite working's hover, which has no sustainable take to quote (rock's rate is zero, so
@@ -501,8 +501,8 @@ const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take i
 ## a road is not worked, a working is, and this stepper is the TAKE crew. It says so because a player
 ## who staffed it expecting the bill to be met would watch the working go back anyway; the hands that
 ## HOLD a working are the band-wide `Workings` pool, whose only control is the roster head's stepper.
-const CARD_CREW_HINT := "Hands taking material out of this working. The hands that HOLD it are the " \
-	+ "band's Workings pool, on the Work tab."
+const CARD_CREW_HINT := "Hands taking material out of this ground. The hands that HOLD it are the " \
+	+ "band's Groundwork pool, on the Work tab."
 
 ## The bill's face: what the working owes a turn and how many keepers that is.
 const CARD_UPKEEP_FORMAT := "%s work a turn · %d keeper%s"
@@ -1225,11 +1225,11 @@ static func max_useful_cutters(deposit: Dictionary, entry: Dictionary) -> int:
 ## The dead commit button's explanation — a crew of zero on a working nobody holds, where the command
 ## would do nothing at all. **A dead button is always explained**, the `+` stepper's cap note being
 ## this client's precedent.
-const DEPOSIT_NOOP_HINT_FORMAT := "Put %s on it to open the working."
+const DEPOSIT_NOOP_HINT_FORMAT := "Put %s on it to open this ground."
 
 ## The note under the stepper where the working itself is the ceiling — the compose sheets' own
 ## `alloc_hint_label` register, so it reads like the forage sheet's cap note one card over.
-const CUTTERS_CAP_NOTE_FORMAT := "%d %s is all this working can use — the rest would take nothing."
+const CUTTERS_CAP_NOTE_FORMAT := "%d %s is all this ground can use — the rest would take nothing."
 
 # ==================================================================================================
 #  THE LADDER — the deposit branches' two tracks on the Work board
@@ -1365,5 +1365,5 @@ const GATE_LONG_TOO_SMALL_FORMAT := "Wants ground holding %s; this one holds %s.
 ## is wrong advice there — but a craft is the branch's long game while this bites TODAY and closes in
 ## one gesture, so it leads where both are unmet.
 const GATE_SHORT_NO_CREW := "no crew"
-const GATE_LONG_NO_CREW_FORMAT := "Nobody is on this working. Put %s on it before you order a rung."
-const GATE_LONG_NO_CREW_UNNAMED := "Nobody is on this working. Put a crew on it before you order a rung."
+const GATE_LONG_NO_CREW_FORMAT := "Nobody is on this ground. Put %s on it before you order a rung."
+const GATE_LONG_NO_CREW_UNNAMED := "Nobody is on this ground. Put a crew on it before you order a rung."

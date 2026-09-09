@@ -372,7 +372,10 @@ func run(harness) -> void:
 	# why the bug reads as "one turn behind" rather than as a permanent lie.
 	h._hud._drawercompose.close_compose_sheet()
 	await h._settle()
-	var reopen_btn_id = reopen_btn.get_instance_id()
+	# **THE CELL is the host's child, so the survival claim is about the CELL's id** — the button
+	# under its face survives with it, and comparing the button against `get_child(0)` would compare
+	# two different nodes and fail on a drawer that patched perfectly.
+	var reopen_btn_id = Q.stacked_action_cell(reopen_btn).get_instance_id()
 	# TURN N+1 — the SAME herd id restated with taming under way, through the real per-snapshot path.
 	h._hud.reapply_selection("herd", reopen_taming)
 	await h._settle()
@@ -383,7 +386,8 @@ func run(harness) -> void:
 	# so `SourceForecast.is_managed_hunt_source` reads managed and the button — patched in place, not
 	# rebuilt — flips to "Assign herders ▸", agreeing with the drawer's own "Herders: A / 4" row.
 	h._assert_hud("…and its noun flips to herders, the sim having asked for keepers",
-		reopen_btn.text == HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HERD_CREW_LABEL.to_lower())
+		Q.action_button_face(reopen_btn)
+			== HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HERD_CREW_LABEL.to_lower())
 	reopen_btn.pressed.emit()
 	await h._settle()
 	await h._save("herd_compose_reopen_fresh")

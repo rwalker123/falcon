@@ -374,12 +374,20 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # owner in is the sense the order-path overlay does, which is coloured per faction. And it has no
     # STAMPED PATH — that model went with the per-tile rebuild.)
     #
-    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND THAT MATCHES THE SIM'S OWN FOG
-    # GATE.** A road is published to a faction that has seen the TILE — `Discovered`, deliberately NOT
-    # the herd list's `Active` — because a road does not wander off, so remembering one is
-    # remembering something true. Appending below that return would have dropped the whole block from
-    # every remembered hex the sim went to the trouble of sending it for. An UNEXPLORED hex is
-    # already covered: this producer returns before here.
+    # **COMPOSED ABOVE THE DISCOVERED EARLY-RETURN, APPENDED LAST ON BOTH BRANCHES, AND THE FIRST
+    # HALF OF THAT MATCHES THE SIM'S OWN FOG GATE.** A road is published to a faction that has seen
+    # the TILE — `Discovered`, deliberately NOT the herd list's `Active` — because a road does not
+    # wander off, so remembering one is remembering something true. So the block is COMPOSED here,
+    # above the return, where a remembered hex still reaches it; MOVING it below that return would
+    # drop the whole block from every remembered hex the sim went to the trouble of sending it for.
+    # An UNEXPLORED hex is already covered: this producer returns before here.
+    #
+    # **WHERE IT RENDERS IS A SEPARATE QUESTION FROM WHERE IT IS COMPOSED, and the answer is LAST.**
+    # Ray, on a live Alluvial Plain card: *"Road should go last in the list"* — the deposits and the
+    # two food webs are what the ground IS, and the road is what has been built across it, so it
+    # closes the card rather than splitting the rivers from the seams. The lines are therefore held
+    # in `road_lines` and appended at the END of BOTH branches, which keeps Road last in both fog
+    # states while leaving the data path — and the fog gate above — exactly as it was.
     #
     # ONE BLOCK PER ROAD — a hex may carry more than one, and each is its own investment with its own
     # bill, so they are never summed into a hex total.
@@ -418,6 +426,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
     var queued_tiles: Dictionary = {}
     if _band_labor != null:
         queued_tiles = _band_labor.road_queue_tiles()
+    # HELD, NOT EMITTED — see the placement note above. Every join this block needs (`ctx` included,
+    # which the rung rows' hovers are registered on as they are composed) happens right here on the
+    # fog-safe side of the return; only the APPEND is deferred to the end of each branch.
+    var road_lines: Array[String] = []
     for road in Array(tile_info.get("roads", [])):
         if road is Dictionary:
             var keeper_label := ""
@@ -426,16 +438,18 @@ func _tile_terrain_lines(tile_info: Dictionary,
                     HudRouteVocab.keeper_band_id_of(road))
             var upkeep_material := HudRouteVocab.catalog_material_id(
                 HudRouteVocab.ladder_entry_of(ladder, HudRouteVocab.rung_of(road)))
-            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
+            road_lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
                 queued_tiles, upkeep_material))
     # THE DEPOSITS THIS HEX HOLDS (issue #650) — **the tile card is the working's readout**, and this
     # is where it goes for the road block's reason one paragraph up: a seam is IN THE GROUND, so it is
     # a property of the LAND and the land drawer is the one surface whose subject is a piece of ground.
     #
-    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS AND THE ROADS.** The sim publishes a
-    # deposit row under the same `Discovered` gate a road takes — a seam does not wander off, so
-    # remembering one is remembering something true — so appending below that return would drop the
-    # block from every remembered hex the sim went to the trouble of sending it for.
+    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND EMITTED WHERE IT IS COMPOSED.** The
+    # sim publishes a deposit row under the same `Discovered` gate a road takes — a seam does not
+    # wander off, so remembering one is remembering something true — so appending below that return
+    # would drop the block from every remembered hex the sim went to the trouble of sending it for.
+    # Unlike the road block above, these rows RENDER here as well: the deposits sit between the
+    # rivers and the two food webs, which is the order Ray asked for.
     #
     # **ONE ROW PER MATERIAL, AND THE PAYOFF ROW BENEATH IT WHERE THE RUNG BUYS SOMETHING.** A hex
     # carries up to two (`(tile, material)` is the registry key), and each is its own seam with its
@@ -487,6 +501,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
     if not stock_known:
         lines.append_array(_forage_stock_lines(tile_info, false))
         lines.append_array(graze_lines)
+        # …AND THE ROAD LAST HERE TOO. A remembered hex keeps its road (the sim publishes one under
+        # this very fog gate), so this append is what makes "Road is last" true in BOTH fog states
+        # rather than only on the live card.
+        lines.append_array(road_lines)
         return lines
     # FORAGING — the HUMAN-edible stock, and the first of the pair. Standing biomass over the patch's
     # ceiling, with the ecology phase inline: the phase is a condition OF this stock and gates whether
@@ -656,6 +674,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # producer — a shortfall, a countdown and an indented remedy — is retired: the state is on the rung
     # row (`⚠ slipping`) and the remedy is that row's hover, so the card carries one row where it
     # carried three, and no figure the player cannot act on from here.
+    #
+    # THE ROAD BLOCK CLOSES THE CARD, composed far above beside the rivers and held until now — see
+    # the placement note there. Last on the live branch as it is on the remembered one.
+    lines.append_array(road_lines)
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of
@@ -879,6 +901,11 @@ func _make_band_move_actions() -> HBoxContainer:
     var move_btn := Button.new()
     move_btn.text = HudSelectionVocab.MOVE_BAND_BUTTON_TEXT
     HudStyle.apply_button(move_btn, "ghost")
+    # **THE TILE CARD'S ONE LABEL SIZE.** `Move` is a tile-card button like the five `Assign … ▸`
+    # faces and `Road ▸`, and Ray asked for the reduction on all of them; the const lives with the
+    # compose vocabulary because that is where the family's first caller is.
+    move_btn.add_theme_font_size_override("font_size",
+        HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
     move_btn.tooltip_text = HudSelectionVocab.MOVE_BAND_BUTTON_TOOLTIP
     move_btn.pressed.connect(_targeting.begin_move_band)
     actions.add_child(move_btn)

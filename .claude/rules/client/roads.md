@@ -178,15 +178,33 @@ ZERO a disc that never drew would move). **Whether a lone tile should read LARGE
 road-width is a design question and deliberately not settled here** — the disc's size is the road's
 own width, which is the honest geometry.
 
-## The tile card is the road's readout, and it sits ABOVE the remembered-tile early return
+## The tile card is the road's readout, COMPOSED above the remembered-tile early return and RENDERED last
 
 A road is IN THE GROUND, so it is a property of the LAND, and the land drawer
 (`SubjectDrawerController._tile_terrain_lines`) is the one surface in the client whose subject is a
-piece of ground. The rows are appended with the RIVERS — terrain-intrinsic permanent geography —
-which puts them **above `_tile_terrain_lines`' Discovered early return**, and that placement is the
-sim's own fog gate read back: a road is published to a faction that merely *remembers* the ground, so
-appending below that return would drop the whole block from every hex the sim went to the trouble of
+piece of ground.
+
+**Composing and rendering are two different questions here, and the answers differ.** The block is
+built **above `_tile_terrain_lines`' Discovered early return**, with the rivers, and that placement is
+the sim's own fog gate read back: a road is published to a faction that merely *remembers* the ground,
+so building the block below that return would drop it from every hex the sim went to the trouble of
 sending it for. An UNEXPLORED hex is already covered — the producer returns before either.
+
+**But the rows RENDER LAST.** Ray, on a live Alluvial Plain card: *"Road should go last in the list"*
+— the deposits and the two food webs are what the ground IS, and the road is what has been built
+across it, so it closes the card rather than splitting the rivers from the seams. The lines are
+therefore held in a local (`road_lines`) where they are composed and appended at the END of **both**
+branches — after the remembered branch's `— / K` stock rows and before its `return`, and after the
+plant web's build meters on the live one. So Road is last in BOTH fog states and the data path,
+including the fog gate above, is exactly what it was.
+
+⛔ **A future edit that "simplifies" this by moving the composition down to the append site
+reintroduces the bug**, silently and only on remembered hexes: `_assert_fog_stock_parity` and
+`ui_preview`'s `workings_road_remembered` exist because this class of loss has bitten before.
+
+**The DEPOSIT rows are the contrasting case and did not move**: they are composed above the same
+return and emitted there, so they sit between the rivers and the two food webs
+(`extraction-workings.md`).
 
 The rows reach the drawer through `tile_info["roads"]`, stamped by `MapView._tile_info_at` from
 `road_tile_lookup`, the forage patch's own cross-ref idiom. It is deliberately **not** in
@@ -1322,7 +1340,14 @@ branch earns) and a dangling *"keep a  carrying traffic"* being worse than a hea
 ### Where the action sits, and what decides that it is there at all
 
 **THE BOTTOM OF THE TILE CARD, with the Forage and Hunt actions** — `%RoadLadderControls`, its own
-`VBoxContainer` after `%HerdAssignControls` in `SubjectBody`. Not a row inside `%ForageAssignControls`:
+`VBoxContainer`, and it is now the **LAST child of `%SubjectBody`**, after `%ExtractionAssignControls`.
+It sat mid-list (after `%HerdAssignControls`) until Ray asked for the road to go last: that groups the
+three `Assign …` actions — harvesters, foresters, diggers — and lets the road's ladder close the card,
+the same argument that moved the `Road` READOUT row to the end of `_tile_terrain_lines` (above).
+**Nothing depends on the ordinal** — `SubjectDrawerController` and `DrawerComposeController` both hold
+`%`-name references, and the `ui_preview` harnesses find the action by
+`HudRouteVocab.ROAD_LADDER_ACTION_META` — so the child order is free to state the reading order and
+nothing else. Not a row inside `%ForageAssignControls`:
 that container is gated on the tile being a GATHERING SITE with a band in hand, and a road crosses
 ground that is neither. Not a button inside the `Road` readout row either — the card's rows are
 readouts and a control in one would make it the only place on the card where a stat line is also a
@@ -1332,7 +1357,7 @@ control.
 they take a worker count; `grade` / `pave` take none and a trailing count is a parse error — they
 DECLARE, and the hands come separately from `assign_labor <faction> <band> builders <n>`.
 
-**LABELLED `Road ▸`, THE BRANCH'S NOUN**, matching the readout row's key one block up. Never a verb:
+**LABELLED `Road ▸`, THE BRANCH'S NOUN**, matching the `Road` readout row's own key. Never a verb:
 `grade` stops being the whole story the day a non-road rung lands, and the control would then be
 named after one of its steps.
 

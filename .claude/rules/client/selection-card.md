@@ -119,10 +119,33 @@ paths:
     it SMALL — the two compose blocks were still ~270px of always-expanded picker sitting permanently
     in a column that also has to show the land, the roster and the detail rows. Composing is **modal
     by nature** (open, decide, commit, done), so `%ForageAssignControls` / `%HerdAssignControls` now
-    end at a one-line **standing-assignment summary** + an **`Assign foragers ▸` / `Assign hunters ▸`
-    / `Assign herders ▸`** button (`_build_forage_drawer_actions` / `_build_herd_drawer_actions`),
-    and the block itself renders into the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays
-    INLINE (for an expedition it is two buttons and a callout).
+    end at a single **`Assign harvesters ▸` / `Assign hunters ▸` / `Assign herders ▸`** control
+    (`build_forage_drawer_actions` / `build_herd_drawer_actions`), and the block itself renders into
+    the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays INLINE (for an expedition it is
+    two buttons and a callout).
+    - ⛔ **THE STANDING SUMMARY IS THAT CONTROL'S SECOND LINE, NOT A ROW ABOVE IT.** It was a sibling
+      row for the whole life of this layout, and Ray retired that shape on sight of the deposit
+      drawer: *"See the 2 foresters +0.60 wood. That looks strange there, I know that is the existing
+      pattern with foragers and hunters … I think that would look more at home inside the button. We
+      should make it the second line on the button."* **The pattern was what he was objecting to**, so
+      every web moved together — forage, hunt, herd, forestry and extraction — rather than the deposit
+      one alone; two shapes for one readout is the inconsistency this whole rework keeps removing.
+      The mechanism and its three traps (the empty-`text` button under a painted face, the
+      `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes)
+      are on `HudWidgets.build_stacked_action_button`.
+    - **A SOURCE NOBODY WORKS KEEPS ITS SINGLE LINE** and grows no blank second one: a summary exists
+      only where this faction already holds a standing assignment on the source, and the face is built
+      with `null` there.
+    - **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT `HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE`**
+      — the five `Assign … ▸` faces, `Road ▸` and `Move`. Ray: *"we are getting more buttons now …
+      make the font for the `Assign …` label smaller, let's try 25% to see how it looks. Make that
+      change for all the buttons in the TILE panel."* It is 25% off Godot's stock theme size, which is
+      what these buttons drew at (`HudStyle.apply_button` writes styleboxes and colours and no font
+      size), and it is ONE const because it is being tuned. The second line has its own
+      (`TILE_ACTION_SUMMARY_FONT_SIZE`), smaller again, so retuning the label cannot leave the readout
+      competing with it. ⛔ **THAT ONE IS NOT THE SAME RATIO APPLIED TWICE** — the label's 25% lands
+      it at 9, and the Options pane's `ui_scale` floor of 0.75 draws a 9 at under 7px, so it is 10.
+      Ray specified the ratio for the LABEL; the readout under it is sized to stay readable.
     - **The builders were NOT reparented — they were PARAMETERISED.** `_build_forage_assign_controls(
       tile_info, target)` / `_build_herd_assign_controls(herd, target)` take an explicit target
       container, because reparenting a `%Name` node silently clears `unique_name_in_owner` and breaks
@@ -147,7 +170,7 @@ paths:
       INDEPENDENT flags a Band-panel Current-actions row wears: the ⚠ overdraw (ecological, the
       sim-answered `overdraws`) and the `· only N of M working` overstaff note (labor). `has_yield` is
       the one key the readout needs that is not on the wire assignment, so it is set locally; every
-      number comes off the assignment the sim sent. Unstaffed → no summary row, just the button.
+      number comes off the assignment the sim sent. Unstaffed → no second line, just the label.
     - **LIFECYCLE.** Opens on the drawer button; one sheet at a time. Closes on commit, the `✕`, a
       catcher click, `Esc`, a **selection change** (`show_*_selection` / `_select_roster_occupant` /
       `_on_land_row_selected` / `clear_selection`) or a **targeting flow starting** (`_on_move_band_

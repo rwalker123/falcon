@@ -27,12 +27,14 @@ extends RefCounted
 ## The shared readers this chapter walks the surfaces with — the same set every other chapter uses, so
 ## a control is found the same way here as there.
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
+const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
+const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 43
+const EXPECTED_CHECKPOINTS := 59
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -54,6 +56,22 @@ const STONE_REGROWTH := 0.0
 ## than the single figure a full seam reads as.
 const WOOD_STOCK := 412.0
 const STONE_STOCK := 2100.0
+
+## ⛔ **THE PATH THE ORDER FRAMES STAND A ROAD ON — the FLOOR rung, part-worn toward the next.**
+## `0.14` is the meter Ray's own card read (`Path · 14% to trail`), so the frame states the readout he
+## was looking at when he asked for the row to move.
+##
+## **IT HELPS NOBODY AND OWES NOBODY, DELIBERATELY.** At `ROAD_FRICTION_NO_HELP` the block emits no
+## payoff row and with a zero bill no `Upkeep` or `Reverting` row either, so the road is exactly ONE
+## line — which is what lets these frames assert *the road is the LAST line* by index rather than by
+## a tail-scan whose own correctness would need arguing. The road block's other four rows are already
+## walked by `land_readouts.gd`'s eleven road frames; what is under test here is only WHERE the block
+## lands.
+const ROAD_PATH_METER := 0.14
+
+## No band has graded this path, which is the whole free floor's normal state — the `has_keeper` bool
+## beside it is what the client actually reads, `0` being a real `BandId`.
+const ROAD_NO_KEEPER := -1
 
 ## ⛔ **`reachable` IS WHAT THE CURRENT RUNG CAN GET AT, and on the stone seam it is a FRACTION of the
 ## body** — `extraction:gathering`'s `recovery_fraction` is 0.15, so a surface picker on a 2200-unit
@@ -519,6 +537,100 @@ func run(harness) -> void:
 				HudDepositVocab.DEPOSIT_UNOPENED_WORD))
 	await h._save("workings_unopened")
 
+	# ⛔ **STATE workings-road-last — THE ROAD CLOSES THE CARD.** Ray, reading a live Alluvial Plain
+	# card: *"Road should go last in the list"*. The deposits and the two food webs are what the ground
+	# IS; the road is what has been built across it, so it closes the card rather than splitting the
+	# rivers from the seams. This is the first frame that stands all four families on ONE hex — the
+	# seams, the human web with its basket, the animal web, and the road — which is the only shape the
+	# ORDER is a claim about.
+	h._show_tile(_full_land_tile(TileFx.VIS_ACTIVE))
+	await h._settle()
+	var order_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
+		h._hud._selection.tile_info())
+	h._assert_hud("the road closes the live card — its row is the LAST line on it (%s)"
+			% str(order_lines.slice(maxi(0, order_lines.size() - 2))),
+		Readout.detail_row_index(order_lines, HudRouteVocab.ROAD_ROW) == order_lines.size() - 1)
+	# ⛔ **AND THE DEPOSITS DID NOT MOVE WITH IT.** Ray asked about the road alone, so the seams stay
+	# between the rivers and the two webs — a claim that has to be made HERE, because the road's move
+	# is a reordering of the one producer both blocks are emitted from.
+	h._assert_hud("…while the seams still sit ABOVE the two food webs, where they already were",
+		Readout.detail_row_index(order_lines, "Wood")
+				< Readout.detail_row_index(order_lines, HudFloraVocab.FORAGING_KEY)
+			and Readout.detail_row_index(order_lines, "Stone")
+				< Readout.detail_row_index(order_lines, HudFloraVocab.FORAGING_KEY)
+			and Readout.detail_row_index(order_lines, HudFloraVocab.GRAZING_KEY)
+				< Readout.detail_row_index(order_lines, HudRouteVocab.ROAD_ROW))
+	await h._save("workings_road_last")
+
+	# ⛔⛔ **STATE workings-road-remembered — THE REGRESSION THIS PAIR EXISTS TO PREVENT.** The road
+	# block is COMPOSED above the discovered early-return, because the sim publishes a road to any
+	# faction that has seen the TILE — a road does not wander off, so remembering one is remembering
+	# something true. Moving the block below that return to put it last would have dropped the road
+	# from every remembered hex the sim went to the trouble of sending it for, which is exactly the
+	# class of loss `_assert_fog_stock_parity` was built for one arc over. It is HELD in a local and
+	# appended at the end of BOTH branches instead, and these two claims are what says so.
+	h._show_tile(_full_land_tile(TileFx.VIS_DISCOVERED))
+	await h._settle()
+	var remembered_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
+		h._hud._selection.tile_info())
+	h._assert_hud("a REMEMBERED hex still carries its road (%s)"
+			% Readout.detail_row_value(remembered_lines, HudRouteVocab.ROAD_ROW),
+		Readout.detail_row_index(remembered_lines, HudRouteVocab.ROAD_ROW) >= 0)
+	# **AND LAST THERE TOO** — the remembered branch returns early, so its append is a SECOND site and
+	# would be the one forgotten. The webs above it state a capacity with no stock, which is the other
+	# half of that branch and is asserted in `land_readouts.gd`; what is claimed here is the position.
+	h._assert_hud("…and it is the LAST line there too, as it is on the live card (%s)"
+			% str(remembered_lines.slice(maxi(0, remembered_lines.size() - 2))),
+		Readout.detail_row_index(remembered_lines, HudRouteVocab.ROAD_ROW)
+				== remembered_lines.size() - 1
+			and Readout.detail_row_index(remembered_lines, HudFloraVocab.GRAZING_KEY)
+				< Readout.detail_row_index(remembered_lines, HudRouteVocab.ROAD_ROW))
+	await h._save("workings_road_remembered")
+
+	# ⛔ **STATE workings-worked-buttons — THE STANDING SUMMARY IS THE BUTTON'S SECOND LINE.** Ray, on
+	# a Rolling Hills card whose `♻ 2 foresters · +0.60 wood` sat in a row of its own above the button:
+	# *"That looks strange there … I think that would look more at home inside the button. We should
+	# make it the second line on the button."*
+	#
+	# ⛔ **IT IS THE PAIR THAT IS THE CLAIM, ON ONE HEX.** This band works the WOOD and not the rock, so
+	# `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries none — a control that
+	# grew a blank second line on every source would satisfy the presence half on its own, and the
+	# blank gap is exactly what Ray's *"a source nobody works keeps its single line"* forbids.
+	h._hud.update_band_alerts([_working_band_fixture()])
+	h._show_tile(_full_land_tile(TileFx.VIS_ACTIVE))
+	await h._settle()
+	await h._save("workings_worked_buttons")
+	var worked := _assign_button(h._hud.forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY)
+	var unworked := _assign_button(h._hud.extraction_assign_controls,
+		HudDepositVocab.BRANCH_EXTRACTION)
+	h._assert_hud("both branches still offer their `Assign … ▸` control",
+		worked != null and unworked != null)
+	if worked != null and unworked != null:
+		var summary := Q.stacked_action_summary(worked)
+		# **THE LABEL IS STILL THE FIRST LINE**, which is what says the summary joined the control
+		# rather than replacing its face.
+		h._assert_hud("…the worked branch's button still reads `%s` on its first line (%s)"
+				% [HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
+					% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower(),
+					Q.action_button_face(worked)],
+			Q.action_button_face(worked) == HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT
+				% HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower())
+		h._assert_hud("…and its SECOND line is the standing summary, inside the control",
+			summary != null and summary.get_child_count() > 0
+				and (summary.get_child(0) as Label).text.contains(
+					HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower()))
+		# ⛔ **AND THE PRESS STILL LANDS.** Every control in that face is `MOUSE_FILTER_IGNORE`, or the
+		# summary's own note labels — which have been through `set_label_tooltip`, i.e. `STOP` — would
+		# be dead patches over the button. A picture cannot show a swallowed click.
+		var pressable := true
+		for control in [summary]:
+			if control != null and control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+				pressable = false
+		h._assert_hud("…with its whole face inert, so the button stays pressable", pressable)
+		# **THE NEGATIVE, on the branch beside it**: no standing row, so no second line at all.
+		h._assert_hud("…while the branch this band does NOT work keeps its single line",
+			Q.stacked_action_summary(unworked) == null)
+
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked
 	# it*, which is a row like any other.
@@ -636,6 +748,74 @@ func _knowledge_labels() -> Dictionary:
 ## The tile card's payload, carrying whatever deposits this state stages. **`[]` means the GROUND
 ## HOLDS NOTHING**: the section stands a row on every discovered deposit-bearing tile, so an absent
 ## row is absent ground rather than untouched ground.
+## **THE FULL LAND CARD — a hex carrying both seams, both food webs AND a road**, in the given sight
+## state. It is the shape Ray was reading when he asked for the road row to move, which is why it is
+## composed from the SHARED `BaseFx.food_tile_fixture()` (the forage patch, the pasture and the food
+## module) rather than from this chapter's bare `_workings_tile`, which states deposits and nothing
+## else and so could not show what the road is being ordered against.
+##
+## The deposits and the road are both re-homed onto this chapter's own hex, so every row on the card
+## is about one piece of ground.
+func _full_land_tile(visibility_state: String) -> Dictionary:
+	var tile := BaseFx.food_tile_fixture()
+	tile["x"] = WORKING_TILE_X
+	tile["y"] = WORKING_TILE_Y
+	tile["visibility_state"] = visibility_state
+	tile["deposits"] = [_unopened_wood(), _unopened_stone()]
+	tile["roads"] = [_worn_path()]
+	return tile
+
+## **A BAND WORKING THE WOOD AND NOT THE ROCK** — the one shape that puts a standing summary on ONE of
+## the hex's two deposit buttons, which is what makes `workings_worked_buttons` a pair rather than a
+## sample. The `extract` row names its MATERIAL because `(tile, material)` is the assignment's whole
+## identity and a row without it stages an assignment `LaborTarget::Extract` cannot produce.
+func _working_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": WORKED_BUTTON_CUTTERS,
+		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+		"material": "wood",
+		"actual_yield": WORKED_BUTTON_TAKE,
+		"sustainable_yield": WORKED_BUTTON_TAKE,
+		"workers_needed": WORKED_BUTTON_CUTTERS,
+	})
+	return band
+
+## Ray's own numbers, so the frame is the card he was reading: two foresters and the take beside them.
+const WORKED_BUTTON_CUTTERS := 2
+const WORKED_BUTTON_TAKE := 0.60
+
+## The road those two frames stand on — see `ROAD_PATH_METER` for why it helps nobody and owes
+## nobody. Shaped as `native/src/dict/routes.rs` writes a road row, with the wire's own
+## `demand − supplied == shortfall` identity held on both currencies so the fixture stays inside what
+## the sim can emit.
+func _worn_path() -> Dictionary:
+	return {
+		"tile_x": WORKING_TILE_X,
+		"tile_y": WORKING_TILE_Y,
+		"has_keeper": false,
+		"keeper_band_id": ROAD_NO_KEEPER,
+		"keeper_remoteness": 0.0,
+		"rung": HudRouteVocab.RUNG_KEY_PATH,
+		"build_fraction": ROAD_PATH_METER,
+		"upkeep_demand": 0.0,
+		"upkeep_supplied": 0.0,
+		"upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": 0,
+		"has_neglect_grace": false,
+		"neglect_grace_remaining": 0,
+		"grants_sight": false,
+		"friction_multiplier": HudRouteVocab.ROAD_FRICTION_NO_HELP,
+		"holds_link_to_tiles": HudRouteVocab.ROAD_LINK_NONE,
+		"build_material_demand": 0.0,
+		"build_material_supplied": 0.0,
+		"upkeep_material_demand": 0.0,
+		"upkeep_material_supplied": 0.0,
+		"build_blocked_reason": "",
+	}
+
 func _workings_tile(workings: Array) -> Dictionary:
 	return {
 		"x": WORKING_TILE_X, "y": WORKING_TILE_Y,

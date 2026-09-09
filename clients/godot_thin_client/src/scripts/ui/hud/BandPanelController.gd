@@ -2714,18 +2714,29 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     # row can answer is *take it further up its ladder*, which is the same question the work board's
     # `⌃` answers one block down and is opened with the same card.
     #
-    # **It renders only where the branch has somewhere left to go** — `RungLadder.has_track` — so a
-    # working at the top of its ladder carries no mark rather than a card with nothing on it.
-    var rows := RungLadder.deposit_track(deposit, ladder, _player_knowledge(),
+    # ⛔ **IT RENDERS ONLY WHERE A PRESS COULD LAND — `RungGates.deposit_rung_ready`, which is the
+    # FORAGE AND HUNT ROWS' OWN PREDICATE (`RungGates.next_rung_ready`) asked of a working's ladder.**
+    # It was `RungLadder.has_track`, which answers *is any row above the standing rung* — true of a
+    # rung refused on its craft — so a `Wood · Deadfall` row on the free floor wore a declaring mark
+    # for a `felling` the faction had not learned, beside a `Hunt Forest Grouse` row on the same board
+    # correctly wearing none. Reported from play; the whole reasoning is on that predicate.
+    #
+    # **The CREW gate is forgiven by it and the mark still draws at zero cutters**, which is the one
+    # case where the press really is available and the card is the surface that names the remedy.
+    var ready := RungGates.deposit_rung_ready(deposit, ladder, _player_knowledge(),
         _topbar.knowledge_labels() if _topbar != null else {},
         _workings_roster_cutters(band, model))
-    if RungLadder.has_track(rows):
+    if not ready.is_empty():
         var track_btn := Button.new()
-        # **THE MARK IS THE CHEVRON PLUS THE NEXT RUNG'''S OWN POLICY GLYPH** (`⌃⛏`), the work board'''s
+        # **THE MARK IS THE CHEVRON PLUS THE READY RUNG'S OWN POLICY GLYPH** (`⌃⛏`), the work board's
         # ready slot verbatim: the chevron is load-bearing, since a bare glyph reads as *done* rather
         # than *available*.
+        #
+        # **THE GLYPH IS THE READY ENTRY'S, NOT `ladder_next_entry`'S.** They coincide on a linear
+        # branch and part the moment they do not, and naming a rung the press cannot reach is the
+        # defect this gate exists to remove, one register in.
         track_btn.text = HudWorkVocab.WORK_ROW_READY_FORMAT % FoodIcons.for_policy(
-            HudDepositVocab.catalog_verb(HudDepositVocab.ladder_next_entry(ladder, deposit)))
+            HudDepositVocab.catalog_verb(ready))
         track_btn.focus_mode = Control.FOCUS_NONE
         track_btn.tooltip_text = HudWorkVocab.WORKINGS_ROSTER_TRACK_TOOLTIP
         track_btn.set_meta(HudWorkVocab.WORKINGS_ROSTER_TRACK_META,
