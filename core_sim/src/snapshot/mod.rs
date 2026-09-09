@@ -906,6 +906,11 @@ mod tests {
     /// what a take pays, so the quantum is deliberately small enough never to bind.
     const SNAPSHOT_BODY_MASS: f32 = 1.0;
 
+    /// The audience these publication fixtures publish to. One seat, because what they assert —
+    /// which rows a delta carries — is a property of one client's stream; the per-seat split itself
+    /// is asserted in `core_sim/tests/seat_frames.rs`.
+    const PUBLISHING_SEAT: crate::orders::FactionId = crate::orders::FactionId(0);
+
     use super::*;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
@@ -1896,7 +1901,7 @@ mod tests {
         let base_snapshot = snapshot_with_overlay(1, base_tile.clone(), base_overlay);
 
         let mut history = SnapshotHistory::default();
-        history.update(base_snapshot);
+        history.update(PUBLISHING_SEAT, base_snapshot);
 
         let updated_tile = TileState {
             terrain: TerrainType::MangroveSwamp,
@@ -1916,7 +1921,7 @@ mod tests {
         let updated_snapshot =
             snapshot_with_overlay(2, updated_tile.clone(), updated_overlay.clone());
 
-        history.update(updated_snapshot);
+        history.update(PUBLISHING_SEAT, updated_snapshot);
 
         let delta = history
             .last_delta()
@@ -1941,7 +1946,7 @@ mod tests {
         let mut history = SnapshotHistory::default();
 
         let baseline = snapshot_with_power_metrics(1, PowerTelemetryState::default());
-        history.update(baseline);
+        history.update(PUBLISHING_SEAT, baseline);
 
         let updated_metrics = PowerTelemetryState {
             total_supply: Scalar::from_f32(20.0).raw(),
@@ -1965,7 +1970,7 @@ mod tests {
             ],
         };
         let updated_snapshot = snapshot_with_power_metrics(2, updated_metrics.clone());
-        history.update(updated_snapshot);
+        history.update(PUBLISHING_SEAT, updated_snapshot);
 
         let delta = history
             .last_delta()
@@ -1999,7 +2004,7 @@ mod tests {
             Vec::new(),
             GreatDiscoveryTelemetryState::default(),
         );
-        history.update(baseline);
+        history.update(PUBLISHING_SEAT, baseline);
 
         let discovery = GreatDiscoveryState {
             id: 7,
@@ -2029,7 +2034,7 @@ mod tests {
             vec![progress.clone()],
             telemetry.clone(),
         );
-        history.update(updated);
+        history.update(PUBLISHING_SEAT, updated);
 
         let delta = history
             .last_delta()
@@ -2320,6 +2325,8 @@ mod tests {
             FactionId(0),
             &crate::visibility::VisibilityLedger::default(),
             false,
+            // One viewer, so no row is shared and the memo is off.
+            None,
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
@@ -2382,6 +2389,8 @@ mod tests {
             FactionId(0),
             &crate::visibility::VisibilityLedger::default(),
             false,
+            // One viewer, so no row is shared and the memo is off.
+            None,
         );
 
         let published: Vec<&str> = patches
@@ -2884,6 +2893,7 @@ mod tests {
                 FactionId(0),
                 &crate::visibility::VisibilityLedger::default(),
                 false,
+                None,
             );
             let row = &rows[0];
             assert_eq!(

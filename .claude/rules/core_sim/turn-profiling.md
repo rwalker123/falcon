@@ -359,7 +359,7 @@ superlinear algorithmically — every riser is hash-probe or random-access heavy
 working set outgrowing cache. **Map-scaled sections are therefore slightly worse than linear in
 practice**, which is the opposite direction from the one a big-O reading predicts.
 
-### Read shares, not absolutes — this has now bitten the arc twice
+### Read shares, not absolutes — this has now bitten the arc three times
 
 Absolute milliseconds on this machine drift **~8% between sessions** (identical code measured
 `snapshot.build` at 2.92 and 3.25 in the same afternoon); within a session, sequential batches
@@ -367,6 +367,11 @@ drift ~0.12 ms, which has already been enough to fake an effect once. **Shares a
 held to ~1% across every session.** So: interleave A/B arms rather than batching them, quote the
 narrowest label that shows the effect, and treat a cross-session absolute as an order of magnitude
 rather than a number.
+
+**The third time was the sharpest, and is worth reading before trusting any small before/after**: a
+batched comparison whose repeat spread was 0.03 ms reported a 7% regression that interleaving showed
+to be **zero** — see "THIS ARC'S THIRD DRIFT TRAP" under "One frame per seat". A tight repeat within
+a batch says nothing about the gap between two batches.
 
 `core_sim/examples/publish_profile.rs` is the harness. Its map-size sweep builds all three worlds
 up front and resolves one frame of each per round, for that reason; it prints a denominator census
@@ -391,6 +396,136 @@ Two traps, both hit while measuring #387:
   ids in a different order. It is a `BTreeSet`, the mask is gone, and the test hashes the whole
   payload. Three separate processes at 30 turns agree bit-for-bit. Diffing the *structures* a
   refactor touched is still the better failure message; it is no longer the only thing that works.
+
+## One frame per seat — what a second player costs the turn thread
+
+A published frame is **one viewer's world** (`factions.md` → "Which frame sections are
+viewer-scoped"), so a world with N occupied seats captures N frames: `capture_snapshot` loops over
+`SnapshotAudiences` and hands the publisher one snapshot per seat. That puts N captures on the
+**turn thread** — the critical path — while the N diffs and encodes land on the publisher, which is
+already off it. The whole design question was therefore *how much of a capture a second seat has to
+pay again*, and it was answered by measurement rather than by the section table.
+
+**Standard recipe, plus one change**: release, `map_seed` pinned, 80×52 `earthlike` /
+`late_forager_tribe`, publisher **shut down**, 5 warm-ups, mean of 30 frames, and the three seat
+counts **interleaved** — one turn of each per round, all three worlds resident, exactly as the
+map-size sweep does. The change is `default_ai_faction_count: 3`, so every seat in the 4-seat arm is
+a real faction with land, people and fog of its own: a seat naming a faction the roster does not have
+captures a fully redacted world, which is the *cheap* path and would flatter the sweep.
+`core_sim/examples/publish_profile.rs` prints it as row 5.
+
+| | 1 seat | 2 seats | 4 seats | **per extra seat** |
+|---|---|---|---|---|
+| `run_turn` | 6.13 | 10.05 | 15.52 | **+3.13** |
+| `snapshot.build` | 4.58 | 7.73 | 12.18 | **+2.53** |
+| `snapshot.build.forage_patches` | 2.20 | 3.83 | 5.29 | **+1.03** |
+
+The **per extra seat** column is the figure to quote: the three arms are interleaved within one run,
+so it is drift-resistant where the absolutes beside it are not (repeat runs of this row put the
+`snapshot.build` slope between 2.53 and 2.66 — ±5%, all of it in the absolutes).
+
+Where the +2.5 goes, per extra seat: `forage_patches` **1.03**, `assemble` 0.41, `rasters` 0.31,
+`culture` 0.24, `herds` 0.11, `power` 0.11, `populations` 0.03, and ~0.29 of per-pass teardown (see
+the note below). What it does **not** include is the shared prefix: `prelude`, `tiles`, `patches` and
+`tile_index` are flat across all three arms — the map sweep, the flora-quote memo and the coord index
+are built once and read by every pass.
+
+### The dominant section is viewer-scoped, which is why the shape is a memo and not a world/viewer split
+
+The obvious shape — *capture the world-level sections once, the viewer's per seat* — buys much less
+than the section table suggests, and the reason is that the **one dominant section is viewer work**.
+`forage_patches` is ~50% of `snapshot.build`, and a patch row carries an improvement, which is a fact
+about a *people* (`factions.md` → "The improvement follows the GROUND"). So the sharable half is the
+copy-shaped remainder, and the measurement says what sharing it is worth:
+
+> **Measured, then reverted.** Hoisting `power` and `culture` above the audience loop made both
+> labels flat across the arms — 0.35 ms a seat of derivation gone — and moved ~0.25 ms a seat into
+> `assemble` instead, because **a frame owns its rows**: the wire type is an owned `Vec`, so every
+> audience needs its own copy whatever the derivation cost. Net ~0.1 ms a seat, and it made the
+> **one-seat** capture pay a copy it previously *moved*. A pessimization of the shipped path for a
+> tenth of a millisecond on a path that does not ship yet is the wrong trade, so it is not in the
+> code — and the general lesson is: **sharing a copy-shaped section converts a derive into a clone,
+> not into nothing.**
+
+What *is* worth sharing is the **derivation** of a row that no viewer can change — which is what
+`snapshot::subsistence::WildRowMemo` does. A patch row is viewer-dependent only through *which patch
+struct it is derived from* and *which kit index names the tile*, so a patch with no owner, no build
+estimate and nobody's queue or keeping on it produces the identical row for every seat. The first
+pass derives it, the rest clone it:
+
+| | per extra seat |
+|---|---|
+| `snapshot.build`, no memo | +3.59 |
+| `snapshot.build`, memo | **+2.53** |
+| `snapshot.build.forage_patches`, no memo | +2.01 |
+| `snapshot.build.forage_patches`, memo | **+1.03** |
+
+**The clone is half the derive, and that is the ceiling on this lever.** Cutting the remaining half
+means not copying the row at all — an `Arc<ForagePatchState>` on the wire type — which is a
+`sim_runtime` change reaching the diff and the codec, and is not part of this arc.
+
+### A seat costs ~25 MB resident, and that is the other half of the price
+
+Per-seat publication state is **one copy of every published section** — ~55 `Whole`/`Indexed`
+baselines, `tiles` and `power` at 4160 rows each and `culture_layers` at 4195 — plus that seat's own
+depth-1 ring entry, which is a whole `WorldSnapshot` (~6.5 MB at 80×52, by `checkpoints.md`'s
+measurement of the retired 256-deep ring).
+
+Measured as process RSS after 8 turns at 80×52, low envelope of three runs per arm: **1 seat 80 MB,
+2 seats 110 MB, 4 seats 146 MB** — call it **20–30 MB a seat**, a quarter of the single-seat process
+each. The spread across runs grows with the seat count (the four-seat arm ranged 146–182 MB), so this
+is an order of magnitude rather than a figure to regress against; it is stated because a per-seat
+cost that is measured in tens of megabytes is a thing to know before a lobby offers eight of them.
+
+### Single player pays nothing — measured against the pre-seat binary, interleaved
+
+**The one-seat path is the shipped path and it was held still deliberately**, in two places:
+
+- **the last audience MOVES the shared sections** rather than copying them (`passes_left`), so a
+  one-seat capture hands its frame the `tile_states` it built, exactly as it did before there were
+  seats;
+- **the memo is `None` with one audience**, and it carries the two unfiltered kit indices its rule
+  needs — so a single-player turn builds neither. Those indices are **0.29 ms** at 80×52, which is
+  what made "build them unconditionally beside the per-viewer ones" the wrong shape.
+
+What one seat pays that it did not is one `Vec` of one element (the audience list), and it does not
+show. **Two `publish_profile` binaries — the commit before per-seat capture and the commit after —
+run alternately, `IDLE_ONLY=1`, shipped config (one faction), five rounds:**
+
+| | pre-seat | per-seat | |
+|---|---|---|---|
+| `run_turn` | 5.617 | **5.508** | per-seat wins every round |
+| `snapshot.build` | 3.976 | 4.186 | +0.21, and it is the label, not the work — below |
+
+> ⛔ **`snapshot.build` GAINED ~0.2–0.3 ms OF LABEL WITHOUT GAINING ANY COST, and a reader comparing
+> that figure across this arc will misread it.** The per-pass locals — the config handles, the quoted
+> parties, the craft-offer plans — used to drop at the end of `capture_snapshot`, *after*
+> `snapshot.build` closed; they now drop at the end of each pass, inside it. The teardown was always
+> paid and always inside `run_turn`, which is why `run_turn` did not move. That is also why the
+> sub-labels no longer sum to their parent at 80×52 (~4.15 of ~4.45) where they used to sum exactly,
+> and it is the one place in this file where the parent is not its children. **`run_turn` is the
+> honest figure for this comparison; `snapshot.build` is not.**
+
+#### ⛔ THIS ARC'S THIRD DRIFT TRAP, AND THE FIRST ONE WITH A TIGHT REPEAT
+
+The same claim was measured a second time as a **+7% regression** on `run_turn` (5.133 → 5.50),
+sequentially: the pre-seat binary in one batch, the per-seat binary in the next, three runs each,
+spread **0.03 ms** within each batch. The tight repeat is what made it convincing, and it is exactly
+what a batched comparison cannot tell you: three back-to-back runs share a thermal and scheduling
+state, so a small spread measures *within-batch* stability and says nothing about the shift between
+one batch and the next.
+
+Interleaved, the pre-seat binary reads **5.617** where the batch read **5.133** — a **9% gap on
+byte-identical code**, and the whole of the claimed regression. It was watched happening: one arm
+moved 5.51 → 6.27 (+14%) inside a single session while alternating with another.
+
+**So the rule "interleave rather than batch" is not about long runs or big changes — it holds at
+three-run resolution and at tenths of a millisecond.** `IDLE_ONLY=1` exists to make interleaving two
+*builds* cheap enough that there is no excuse: build both, keep both binaries, alternate them.
+Corroborated by three narrower arms measured the same way, each of which removes one suspect and
+each of which showed **zero** `run_turn` difference: the pre-seat `snapshot_forage_patches` (so the
+row memo's closure costs nothing), the audience loop replaced by a single pass, and the whole
+pre-seat `capture_snapshot` body spliced onto the current publication machinery.
 
 ## What the turn path actually broadcasts
 

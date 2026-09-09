@@ -56,9 +56,9 @@ use core_sim::{
     FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
     MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
     Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
+    StartingUnit, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
     TradeExpeditionConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
     TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
 };
@@ -410,6 +410,7 @@ fn main() {
                 // A new world: nothing before this point is reachable.
                 command_log = Some(CommandLog::new(&app));
                 retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 info!(
                     target: "shadow_scale::server",
                     width,
@@ -439,6 +440,7 @@ fn main() {
                     &snapshot_flat_server,
                 );
                 retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
             }
             // **A QUERY IS ANSWERED, NOT APPLIED — and that is why it is matched here rather than
             // falling into the arm below.** Two things below it must not happen to a query:
@@ -510,6 +512,7 @@ fn main() {
                 );
                 answer_save_op(&reply, request_id, answer);
                 retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 // `handle_load_game` publishes the restored world itself, and it is NOT replayable:
                 // it replaces the world, so there is nothing before it to replay from. It re-bases
                 // the log rather than being logged, exactly as `new_game` and `reset_map` do.
@@ -525,6 +528,9 @@ fn main() {
                 reply,
             } => {
                 let answer = answer_seat_claim(&app, &mut seats, connection, faction);
+                // Before the reply, so the token the client is about to present is already bound to
+                // its seat by the time the client's stream socket can offer it.
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 if reply
                     .send(QueryReplyEnvelope {
                         request_id,
@@ -548,6 +554,7 @@ fn main() {
                         faction = %seat,
                         "seat.released=connection closed"
                     );
+                    sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 }
                 continue;
             }
@@ -638,12 +645,14 @@ fn dispatch_connection_command(
     if let Some(log) = command_log.as_mut() {
         log_dispatched_command(log, &command);
     }
-    if let Command::Rollback { tick } = command {
+    if let Command::Resync = command {
+        handle_resync(app, seats.seat_of(connection), connection, flat_server);
+    } else if let Command::Rollback { tick } = command {
         if let Some(log) = command_log.as_mut() {
             handle_rollback(app, tick, flat_server, log, seats);
         }
     } else {
-        apply_command(app, command, flat_server);
+        apply_command(app, command);
         if rebases_origin {
             if let Some(log) = command_log.as_mut() {
                 log.rebase(app, "config_reload");
@@ -839,6 +848,41 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
             "seat.dropped=the new roster does not hold this seat"
         );
     }
+}
+
+/// **Publish the seat roster to the two places delivery depends on**, in one call so they cannot
+/// disagree:
+///
+/// - the capture's [`SnapshotAudiences`] — *which* frames are built, one per occupied seat;
+/// - the stream socket's token table — *where* each of them goes.
+///
+/// Called wherever [`SeatRegistry`] changes: a claim, a release, and the roster sweep a world
+/// rebuild does. **A released seat's publication state is dropped with it** — a stale baseline would
+/// leave the next connection to claim that seat holding rows it was never sent, so the next occupant
+/// is baselined on a full frame.
+fn sync_seat_delivery(
+    app: &mut bevy::prelude::App,
+    seats: &SeatRegistry,
+    flat_server: &SnapshotServer,
+) {
+    let claims = seats.claimants();
+    flat_server.set_seats(&claims);
+    let occupied: Vec<FactionId> = claims.iter().map(|(seat, _)| *seat).collect();
+    let vacated: Vec<FactionId> = app
+        .world
+        .resource::<SnapshotHistory>()
+        .audiences()
+        .into_iter()
+        .filter(|seat| !occupied.contains(seat))
+        .collect();
+    for seat in vacated {
+        app.world
+            .resource_mut::<SnapshotHistory>()
+            .drop_audience(seat);
+    }
+    // An emptied list is "back to the single `ViewerFaction` view" — what an unattended server and
+    // every test publish — and never "publish nothing".
+    app.world.resource_mut::<SnapshotAudiences>().set(occupied);
 }
 
 /// **HOW THE FOUR QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
@@ -10376,6 +10420,10 @@ fn is_replayable(command: &Command) -> bool {
             // no world, and a release is the server's own bookkeeping about a socket that closed.
             | Command::ClaimSeat { .. }
             | Command::ReleaseSeat
+            // A resync is about a connection too — it re-publishes one seat's world to the client
+            // that asked. It mutates nothing, and a replay has neither the connection nor anyone to
+            // answer; logging it would make a rollback re-publish a frame for a socket that is gone.
+            | Command::Resync
     )
 }
 
@@ -10460,7 +10508,10 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
     }
 }
 
-fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &SnapshotServer) {
+/// **Apply one command to the world. It touches no socket** — the two commands that publish a
+/// frame of their own (`Resync`, `Rollback`) are answered by the dispatcher, which knows which
+/// connection asked, and this is also the replay path, which has no connections at all.
+fn apply_command(app: &mut bevy::prelude::App, command: Command) {
     // **Membership is checked ONCE, here, where a command enters the world with a faction on it.**
     // Without it a command from an unregistered faction still reaches its handler and is refused
     // downstream by `no_such_band` / `wrong_faction` — which reads as a legitimate faction that
@@ -10545,37 +10596,15 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 "query.misrouted=a query reached apply_command; it is answered by the dispatcher"
             );
         }
-        // Republish the world as a FULL frame. The client asks for this when it cannot apply a
-        // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
-        // rather than another delta — a delta is what it just failed to use.
-        //
-        // Client-INITIATED, which is what makes this safe against the world-handoff rule: the
-        // server never volunteers a frame to a connecting client (it might belong to a world
-        // that client did not ask for), but answering a request cannot surprise anyone, and the
-        // `worldEpoch` on the frame still lets the client reject a world it did not want.
-        //
-        // It republishes through `publish_full_frame` rather than encoding the ring entry as
-        // stored, because the answer must carry a LIVE sequence number: resync is the recovery
-        // path, so a stale number here reopens the sequence gap the client asked us to close.
+        // **A resync is answered by the dispatcher, which knows WHO asked.** A full frame is one
+        // seat's world and is delivered to that seat's stream clients, so the answer needs the
+        // asking connection — which `apply_command` does not have, and which a replay does not have
+        // at all. See `handle_resync`.
         Command::Resync => {
-            let mut history = app.world.resource_mut::<SnapshotHistory>();
-            match history.latest_entry() {
-                Some(entry) => {
-                    let bytes = history.publish_full_frame(&entry);
-                    flat_server.broadcast(&bytes);
-                    info!(
-                        target: "shadow_scale::server",
-                        tick = entry.tick,
-                        bytes = bytes.len(),
-                        "resync.published"
-                    );
-                }
-                None => {
-                    // No world yet (the server boots idle). Nothing to republish; the client's
-                    // `new_game` retry is what recovers this case.
-                    info!(target: "shadow_scale::server", "resync.no_world");
-                }
-            }
+            warn!(
+                target: "shadow_scale::server",
+                "resync.misrouted=a resync reached apply_command; it is answered by the dispatcher"
+            );
         }
         Command::Orders { faction, orders } => {
             handle_order_submission(app, faction, orders);
@@ -11370,6 +11399,60 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 /// restored world** by recapturing it, not fetched from a parallel archive. There is one history of
 /// worlds, so there is nothing for a second one to disagree with;
 /// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` asserts the result end to end.
+/// **Answer `Command::Resync` for the asking connection's seat.**
+///
+/// The client asks for this when it cannot apply a delta (`docs/plan_delta_streaming.md` §3.3), so
+/// the answer must be a complete world rather than another delta — a delta is what it just failed to
+/// use.
+///
+/// Client-INITIATED, which is what makes it safe against the world-handoff rule: the server never
+/// volunteers a frame to a connecting client (it might belong to a world that client did not ask
+/// for), but answering a request cannot surprise anyone, and the `worldEpoch` on the frame still
+/// lets the client reject a world it did not want.
+///
+/// It republishes through `publish_full_frame_for` rather than encoding the ring entry as stored,
+/// because the answer must carry a **live** sequence number: resync is the *recovery* path, so a
+/// stale number here reopens the very sequence gap the client asked us to close.
+///
+/// **An unseated connection is answered with nothing, and that is not a refusal to be softened.** A
+/// full frame is published *for a seat* and delivered to that seat's stream clients, so a resync from
+/// a connection holding no seat has no world to name and no destination to reach; answering it from
+/// some default seat would publish one faction's private world to a tool.
+fn handle_resync(
+    app: &mut bevy::prelude::App,
+    seat: Option<FactionId>,
+    connection: ConnectionId,
+    flat_server: &SnapshotServer,
+) {
+    let Some(seat) = seat else {
+        info!(
+            target: "shadow_scale::server",
+            %connection,
+            "resync.unseated=this connection holds no seat, so there is no view to republish"
+        );
+        return;
+    };
+    let mut history = app.world.resource_mut::<SnapshotHistory>();
+    let tick = history.latest_entry_for(seat).map(|entry| entry.tick);
+    match (history.publish_full_frame_for(seat), tick) {
+        (Some(bytes), Some(tick)) => {
+            flat_server.deliver(seat, &bytes);
+            info!(
+                target: "shadow_scale::server",
+                tick,
+                faction = %seat,
+                bytes = bytes.len(),
+                "resync.published"
+            );
+        }
+        _ => {
+            // No world yet (the server boots idle), or this seat has never been published to.
+            // Nothing to republish; the client's `new_game` retry is what recovers the first case.
+            info!(target: "shadow_scale::server", faction = %seat, "resync.no_world");
+        }
+    }
+}
+
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
@@ -11404,7 +11487,7 @@ fn handle_rollback(
             LogEntry::Turn => resolve_turn_with_auto_orders(app),
             // The log stores the command it was given. Commands address bands by `BandId`, which
             // a world rebuild does not renumber, so there is nothing to translate on the way out.
-            LogEntry::Command(command) => apply_command(app, command, snapshot_server_flat),
+            LogEntry::Command(command) => apply_command(app, command),
         }
     }
     app.world.resource_mut::<Replaying>().0 = false;
@@ -11420,22 +11503,32 @@ fn handle_rollback(
         "rollback.replayed_from_origin"
     );
 
-    // The client's frame is derived from the world just rebuilt, not fetched from an archive.
+    // Every seat's frame is derived from the world just rebuilt, not fetched from an archive — one
+    // recapture builds them all, one per audience.
     recapture_snapshot_in_place(&mut app.world);
-    let entry: Option<StoredSnapshot> = app.world.resource::<SnapshotHistory>().latest_entry();
-    let Some(entry) = entry else {
+    if app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .is_none()
+    {
         warn!(
             target: "shadow_scale::server",
             tick,
             "rollback.failed=recapture_produced_no_frame"
         );
         return;
-    };
+    }
 
-    let flat_frame = {
+    // ⛔ **A ROLLBACK REWINDS EVERY SEAT'S BASELINES, NOT ONE.** The world moved under all of them
+    // at once, and each rewinds to *its own* recaptured frame: an entry is one viewer's world, so
+    // re-baselining a seat on another's would hand it rows it is not entitled to and withhold the
+    // ones it is. The publication **sequence** is deliberately not rewound — see
+    // `SeatPublishState::publish_full_frame`.
+    let flat_frames = {
         let mut history = app.world.resource_mut::<SnapshotHistory>();
-        history.reset_to_entry(&entry);
-        history.publish_full_frame(&entry)
+        history.reset_all_to_latest_entry();
+        history.publish_full_frame_for_all()
     };
 
     warn!(
@@ -11444,20 +11537,19 @@ fn handle_rollback(
         "rollback.completed -- clients should reconnect to receive fresh state"
     );
 
-    snapshot_server_flat.broadcast(&flat_frame);
-
-    // **The rolled-back seats are named, not left to notice.** A rollback rewinds the world under
+    // **The rolled-back seats are answered, not left to notice.** A rollback rewinds the world under
     // every occupied seat at once, and an occupant's own memory and plans are then ahead of the world
     // it sees (`docs/plan_multiplayer_seats.md` §4.4) — which is exactly what `Command::Resync`
-    // answers. The full frame just published IS that answer, delivered by the one broadcast every
-    // stream client reads; what the seat protocol adds is *who* it was for. Per-seat delivery
-    // replaces the broadcast above, not this list.
-    for (seat, connection) in seats.claimants() {
+    // answers. The full frame published here IS that answer, now addressed to each seat's own stream
+    // clients rather than broadcast to everyone.
+    for (seat, frame) in &flat_frames {
+        snapshot_server_flat.deliver(*seat, frame);
         warn!(
             target: "shadow_scale::server",
             tick,
             faction = %seat,
-            %connection,
+            claimant = ?seats.claimant_of(*seat).map(|connection| connection.0),
+            bytes = frame.len(),
             "rollback.resync_delivered"
         );
     }
@@ -11823,7 +11915,7 @@ mod tests {
 
         // The player turns fog off, through the command that owns the preference, and the process
         // lands on a bumped block — the two states the file cannot reproduce.
-        apply_command(&mut app, Command::SetFogEnabled { enabled: false }, &flat);
+        apply_command(&mut app, Command::SetFogEnabled { enabled: false });
         {
             let mut config = app.world.resource_mut::<SimulationConfig>();
             let bumped = config.port_base_bind.port() + port_alloc::PORT_BLOCK_STRIDE;
@@ -11950,7 +12042,12 @@ mod tests {
             .header
             .frame_seq;
 
-        apply_command(&mut app, Command::Resync, &flat);
+        let seat = app
+            .world
+            .resource::<SnapshotHistory>()
+            .primary_audience()
+            .expect("the loaded world published to a seat");
+        handle_resync(&mut app, Some(seat), ConnectionId::INTERNAL, &flat);
 
         let history = app.world.resource::<SnapshotHistory>();
         let after = history
@@ -12003,7 +12100,12 @@ mod tests {
             .expect("published")
             .header
             .frame_seq;
-        apply_command(&mut app, Command::Resync, &flat);
+        let seat = app
+            .world
+            .resource::<SnapshotHistory>()
+            .primary_audience()
+            .expect("the generated world published to a seat");
+        handle_resync(&mut app, Some(seat), ConnectionId::INTERNAL, &flat);
         assert!(
             app.world
                 .resource::<SnapshotHistory>()
@@ -14736,15 +14838,16 @@ mod tests {
         use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
         recapture_snapshot_in_place(&mut app.world);
-        let entry = app
+        let seat = app
             .world
             .resource::<SnapshotHistory>()
-            .latest_entry()
+            .primary_audience()
             .expect("a snapshot was captured");
         let bytes = app
             .world
             .resource_mut::<SnapshotHistory>()
-            .publish_full_frame(&entry);
+            .publish_full_frame_for(seat)
+            .expect("the seat has a frame to republish");
         let envelope =
             fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
         assert_eq!(
@@ -15028,7 +15131,7 @@ mod tests {
                 take_species: Vec::new(),
             };
             log_dispatched_command(&mut log, &command);
-            apply_command(&mut app, command, &loopback_snapshot_server());
+            apply_command(&mut app, command);
             resolve_turn_with_auto_orders(&mut app);
             log.push(LogEntry::Turn);
         }
@@ -15100,7 +15203,7 @@ mod tests {
             take_species: Vec::new(),
         };
         log_dispatched_command(&mut log, &command);
-        apply_command(&mut app, command, &loopback_snapshot_server());
+        apply_command(&mut app, command);
 
         resolve_turn_with_auto_orders(&mut app);
         log.push(LogEntry::Turn);
@@ -20575,7 +20678,6 @@ mod tests {
             "the fixture world is the shipped single-faction one"
         );
 
-        let snapshot_server = loopback_snapshot_server();
         let grade = |faction: FactionId| Command::Grade {
             faction,
             band_id: ROAD_BAND_ID,
@@ -20583,7 +20685,7 @@ mod tests {
             target_y: COORD.y,
         };
 
-        apply_command(&mut app, grade(stranger), &snapshot_server);
+        apply_command(&mut app, grade(stranger));
         assert_eq!(
             keeper_of(&app, COORD),
             None,
@@ -20599,7 +20701,7 @@ mod tests {
 
         // The same command from the registered faction lands, so the refusal above is membership
         // and not a fixture that could never have worked.
-        apply_command(&mut app, grade(faction), &snapshot_server);
+        apply_command(&mut app, grade(faction));
         assert_eq!(
             keeper_of(&app, COORD),
             Some(BandId(ROAD_BAND_ID)),

@@ -359,8 +359,9 @@ and it holds no seat, which is exactly right for what it sends: world verbs that
 **A claim is `CommandPayload::ClaimSeat` (proto field 71) and its answer rides `QueryReplyEnvelope`**
 — the command socket's one way back, the same envelope a save's answer uses. No new port, no second
 socket. The answer carries the connection id back as `seat_token`: the claim is what ties a seat's
-command socket to its stream socket, and the token is what the stream socket presents once frames are
-delivered per seat rather than broadcast.
+command socket to its stream socket, and the token is what the **stream socket presents** —
+`network.rs`'s greeting, which `snapshot-socket.md` describes. So the order is fixed: claim first,
+then connect the stream and greet with the token you were handed.
 
 Three refusals, all in `SeatRegistry::claim` and all reaching the client as a
 `sim_runtime::commands::seat_error` token:
@@ -437,6 +438,41 @@ idle server is still idle.
 `CommandLog::prefix_len_for`, which counts those to find "the world at tick N", could not see it: a
 rollback to that tick reported it out of reach. `resolve_and_log_turn` is now the one place the live
 path resolves and logs, and both the host's `Turn` and a seat-driven resolution go through it.
+
+### One frame per seat, and an unseated connection gets none
+
+**A published frame is one viewer's world, so a world with N occupied seats captures N frames.**
+`capture_snapshot` loops over `SnapshotAudiences` — the seats, rewritten from `SeatRegistry` whenever
+one is claimed or released — and hands the publisher one snapshot per seat. **An empty list means the
+single `ViewerFaction`**, which is the idle boot app, every library test, and a server before its
+first claim; it is not a fallback for a *connected* client that holds no seat.
+
+`SnapshotAudiences` is the one piece of the seat model that **is** a resource, and only because the
+capture is an ECS system and has to read it. It is still session state and carries no world: it sits
+in `sim_state_coverage.rs`'s not-sim-state table with its reason, beside `SnapshotHistory`.
+
+> ⛔ **PUBLICATION STATE IS PER SEAT, AND SHARING ANY OF IT IS A SILENT DEFECT.**
+> `SeatPublishState` — every `Whole`/`Indexed` baseline, the publication `frame_seq`, the
+> `command_events` cursor, the encoded bytes and the seat's own ring — is a statement about *what
+> this client currently holds*, so there is one per audience. Two seats sharing one would give each
+> a delta chain with gaps in it (a client drops a delta whose `base_frame_seq` it is not holding) and
+> an event feed missing whatever the other seat's frame took (`event-feed.md`). What stays
+> world-level in `PublishState` is the **sink** and the last frame's profile.
+
+**A seat's publication state is created by its first publication and dropped when the seat is
+released.** A fresh state has `frame_seq == 0`, which is what makes a joining seat's first frame a
+full baseline rather than a delta against rows it never received; and a stale one left behind by a
+disconnect would baseline the *next* occupant of that seat against a world it has not been sent.
+
+**A rollback rewinds every seat, and each to its own frame.** `handle_rollback` recaptures — which
+builds a frame per audience — then `reset_all_to_latest_entry` + `publish_full_frame_for_all`, one
+fresh full frame per seat, delivered to that seat's own stream clients. The publication **sequence**
+is deliberately not rewound; `turn-profiling.md` has why. `Command::Resync` is the same thing for one
+seat, and it is answered by the **dispatcher** rather than by `apply_command`: a resync is about a
+*connection*, `apply_command` has none, and it is the replay path (so `Resync` is not replayable
+either — replaying it would re-publish a frame for a socket that is gone). A resync from a connection
+holding **no** seat is answered with nothing, because there is no world to name and no client to send
+it to.
 
 ## Every faction gets land, people and an opening
 
@@ -837,7 +873,10 @@ being cleared rather than after it.
   client's to hold.
 - **The indexed diffs** key on `(faction, id)` and several carry no `removed_*` list. That is safe
   here because a viewer never changes mid-session, so a filtered row never transitions from present
-  to absent — the state that would strand a stale row on the client.
+  to absent — the state that would strand a stale row on the client. **Per-seat publication keeps
+  that true rather than breaking it**: a seat *is* a faction, so the viewer behind one set of
+  baselines never changes for as long as that set exists — and when the seat is released, the whole
+  set is dropped and its next occupant is baselined on a full frame.
 
 ## The single-faction assumptions that are still live
 
@@ -848,7 +887,7 @@ third and is not any more** — it is evaluated per faction and the winner is wh
 | Site | What it assumes |
 |---|---|
 | `telling/mod.rs` (signal sampling) | Takes the registry's **lowest id** as "the player" and filters every band view to it; its own comment says there is no `player_faction` accessor. |
-| `visibility.rs` `ViewerFaction` | A single **global** resource read by `snapshot/capture.rs`, so one snapshot is captured and broadcast to every connected client. The band filter above made it *load-bearing* rather than merely limiting: the one captured frame is now redacted for everyone who is not `ViewerFaction`, so a second connected human sees their own people as a foreign band. One frame per viewer is what that needs, not a wider filter. |
+| `visibility.rs` `ViewerFaction` | **No longer an assumption — it is the seatless default.** The capture publishes one frame per occupied seat and falls back to this resource only when *no* seat is claimed (see "One frame per seat" above), which is the idle boot app and every library test. It stays a global resource because those paths, and `export_map`, still want one view of a world nobody is playing. |
 
 ## The two-faction fixture
 

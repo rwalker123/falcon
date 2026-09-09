@@ -757,8 +757,11 @@ pub struct SeatClaimReply {
     /// prose.
     pub error: String,
     /// **The connection's own id, handed back as the token its STREAM socket presents**, so the two
-    /// sockets of one seat can be correlated. [`NO_SEAT_TOKEN`] on a refusal. Nothing reads it while
-    /// frames are broadcast rather than delivered per seat.
+    /// sockets of one seat can be correlated. [`NO_SEAT_TOKEN`] on a refusal.
+    ///
+    /// The stream socket writes it as its first eight bytes, little-endian, and frames for that seat
+    /// go to the connections holding it — see `.claude/rules/core_sim/snapshot-socket.md`. A client
+    /// therefore claims first and connects its stream second.
     pub seat_token: u64,
 }
 
