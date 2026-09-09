@@ -277,7 +277,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "assign_labor",
         aliases: &[],
         summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the third band-wide pool: it serves both webs and its whole output goes on the head of the band's build queue, so zero stops building altogether. NONE OF THE THREE POOLS TAKES A `kit` TOKEN, and naming one is refused: a pool is HOW MANY hands, never what they carry. What a build is raised with is set per queue entry with `build_kit`, and what a site's keepers carry is set per work site with `upkeep_kit`.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | builders <workers>",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | roadwork <workers> | quarrywork <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1427,9 +1427,9 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     )
                 }
                 // **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) —
-                // `extract <x> <y> <material> <workers>`, and the material is NOT optional: one tile
-                // can hold two workings (a wooded highland holds timber and rock), so a line naming
-                // only the tile names neither of them.
+                // `extract <x> <y> <material> [floor] <workers>`, and the material is NOT optional:
+                // one tile can hold two workings (a wooded highland holds timber and rock), so a
+                // line naming only the tile names neither of them.
                 //
                 // **The material rides the `species` slot** because that is the one free-form string
                 // this command already carries and it means the same kind of thing on a forage row —
@@ -1437,9 +1437,16 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 // arm reads it from there, so a token of its own would be a second spelling of one
                 // field.
                 //
-                // **No floor and no disambiguation.** A deposit has no escapement floor to leave
-                // standing, so the tail is exactly two positional tokens after the tile and the
-                // "does it parse as `f32`" test the forage arm needs has nothing to decide here.
+                // **AND IT CARRIES AN OPTIONAL FLOOR** (issue #650) —
+                // `extract <x> <y> <material> [floor] <workers>`, the `hunt` arm's shape with a
+                // material where the herd id goes. The material is read first and positionally, so
+                // what is left is the two-numbers tail `hunt` already disambiguates **by length**
+                // rather than by parsing; the forage arm's "does it parse as `f32`" test has nothing
+                // to decide here because the free-form token is never in the optional slot.
+                //
+                // A retired stance name is refused **by name** exactly as forage refuses one: a
+                // stale client sending `extract 4 5 wood sustain 3` gets the `RetiredStanceToken`
+                // that says what happened, not a float-parse failure naming a token it never typed.
                 "extract" => {
                     let x = parts
                         .next()
@@ -1450,18 +1457,24 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     let material = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("material"))?;
-                    let workers_tok = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("workers"))?;
-                    if let Some(extra) = parts.next() {
-                        return Err(CommandParseError::UnexpectedToken(extra.to_string()));
-                    }
+                    let tail: Vec<&str> = parts.collect();
+                    let (workers_tok, floor_tok) = match tail.as_slice() {
+                        [w] => (*w, None),
+                        [t, w] => {
+                            reject_retired_stance(t)?;
+                            (*w, Some(parse_f32(t, "assign_labor floor")?))
+                        }
+                        [] => return Err(CommandParseError::MissingArgument("workers")),
+                        [_, _, extra, ..] => {
+                            return Err(CommandParseError::UnexpectedToken(extra.to_string()))
+                        }
+                    };
                     (
                         parse_u32(workers_tok, "assign_labor workers")?,
                         Some(parse_u32(x, "assign_labor target_x")?),
                         Some(parse_u32(y, "assign_labor target_y")?),
                         None,
-                        None,
+                        floor_tok,
                         Some(material.to_string()),
                     )
                 }
@@ -2815,6 +2828,48 @@ mod tests {
         );
     }
 
+    /// **THE EXTRACT TAIL CARRIES AN OPTIONAL FLOOR, DISAMBIGUATED BY LENGTH** (issue #650) —
+    /// `extract <x> <y> <material> [floor] <workers>`, the `hunt` arm's shape with a material where
+    /// the herd id goes.
+    ///
+    /// The material is read **positionally and first**, so the free-form token is never in the
+    /// optional slot and the forage arm's *"does it parse as `f32`"* test has nothing to decide
+    /// here. Both readings round-trip, and the material still rides the `species` field.
+    #[test]
+    fn parse_assign_labor_extract_reads_an_optional_floor_after_the_material() {
+        let row = |floor: Option<f32>| CommandPayload::AssignLabor {
+            faction_id: 0,
+            band_id: Some(904),
+            role: "extract".to_string(),
+            workers: 6,
+            target_x: Some(3),
+            target_y: Some(5),
+            fauna_id: None,
+            policy: None,
+            species: Some("wood".to_string()),
+            floor,
+            kit_id: None,
+            take_species: Vec::new(),
+        };
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 extract 3 5 wood 6").unwrap(),
+            row(None),
+            "the short form is unchanged and still names no floor"
+        );
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 extract 3 5 wood 0.8 6").unwrap(),
+            row(Some(0.8)),
+            "and the long form's optional token is the FLOOR, not a second material"
+        );
+        assert!(
+            matches!(
+                parse_command_line("assign_labor 0 904 extract 3 5 wood 0.8 6 7"),
+                Err(CommandParseError::UnexpectedToken(_))
+            ),
+            "anything longer is a typo, not a longer form"
+        );
+    }
+
     /// **THE PROOF the disambiguation above rests on**: no `flora_config.json` species key parses as
     /// a float, so the two token languages are disjoint and a single optional token is never
     /// ambiguous. Asserted against the **shipped roster** rather than against the claim — a future
@@ -2844,6 +2899,10 @@ mod tests {
                 format!("assign_labor 0 904 forage 3 5 {stance} 6"),
                 format!("assign_labor 0 904 forage 3 5 {stance} wild_emmer 6"),
                 format!("assign_labor 0 904 hunt herd-7 {stance} 6"),
+                // **And the extract form** (issue #650) — its optional slot takes a float too, so
+                // without the guard a stale client's `sustain` reports as a bad number rather than
+                // as the grammar that moved.
+                format!("assign_labor 0 904 extract 3 5 wood {stance} 6"),
             ] {
                 assert!(
                     matches!(

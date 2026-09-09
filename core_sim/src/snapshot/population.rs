@@ -137,10 +137,19 @@ pub(crate) fn labor_assignment_to_state(
         // **THE TILE AND THE MATERIAL — BOTH HALVES OF THE WORKING'S KEY.** One tile can hold two
         // workings, so the coords alone cannot tell a felling crew from a quarrying crew standing on
         // the same wooded highland; the pair is what joins this row to its `DepositState`.
-        LaborTarget::Extract { tile, material } => {
+        LaborTarget::Extract {
+            tile,
+            material,
+            floor,
+        } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
             state.material = material.clone();
+            // **The same field a forage and a hunt row publish**, because it is the same quantity:
+            // where this crew stops, as a fraction of the source's capacity. What a deposit row adds
+            // is that the sim composes it with the *rung's* own floor as a maximum, which is why
+            // `DepositState::rung_floor_fraction` rides the working's row beside it.
+            state.floor = *floor;
         }
         // The six band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
@@ -2267,6 +2276,7 @@ mod tests {
                         BuildSource::Deposit { tile, material } => LaborTarget::Extract {
                             tile: *tile,
                             material: material.clone(),
+                            floor: crate::components::DEFAULT_ESCAPEMENT_FLOOR,
                         },
                     },
                     workers: 1,

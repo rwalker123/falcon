@@ -1314,8 +1314,15 @@ fn seed_snapshot() -> WorldSnapshot {
     // --- deposits --------------------------------------------------------
     // The live workings on deposits (arc #583), **one row per `(tile, material)`**. Seeded for the
     // same reason every repeated field here is: an empty vector is a field the decode guard cannot
-    // exercise. The row carries no nested repeated field — every string on it is a scalar.
+    // exercise.
     s.deposits = rows();
+    for deposit in &mut s.deposits {
+        // **The deposit's own sampled growth curve** (issue #650) — a `[float]`, so it needs seeding
+        // like every other repeated field or the decode guard cannot see it. Only the LENGTH
+        // matters (saturation overwrites the values), and it is the shipped one so the fixture
+        // exercises a real-shaped curve, exactly as the patch and herd curves beside it do.
+        deposit.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+    }
 
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();

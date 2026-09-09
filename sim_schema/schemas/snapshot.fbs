@@ -6314,6 +6314,54 @@ table DepositState {
   // See `ForagePatchState.upkeepKitId` for the whole rationale.
   upkeepKitId:string;
   upkeepKitNamed:bool = false;
+
+  // --- THE ESCAPEMENT FLOOR AND THE CHART IT IS DRAGGED ON (appended, issue #650) ---------------
+  // WHERE THIS TURN'S CREWS STOPPED, as a fraction of `capacity` - the working's own reading of the
+  // dial, kept at the DEEPEST floor any band cutting it named (`DepositSource::last_floor`).
+  //
+  // It is NOT a restatement of LaborAssignment.floor, which is per BAND ROW: that says what one band
+  // asked for, this says where the stock actually came to rest. A working nobody cut this turn reads
+  // 0 - the identity of the max below, so its `reachable` is exactly the rung's own reach.
+  floor:float = 0;
+  // THE RUNG'S OWN FLOOR, IN THE SAME UNITS - `1 - recovery_fraction`, what this rung's reach cannot
+  // get at. Gathering recovers 0.15, so it strands 85% of a rock body and this reads 0.85.
+  //
+  // *** COMPOSE IT WITH THE PLAYER'S FLOOR AS A MAXIMUM, NEVER AS A SUM AND NEVER AS TWO CLAMPS. ***
+  // Both are the same kind of quantity - an amount left standing - so a crew stops at whichever is
+  // greater:
+  //
+  //   effectiveFloor = max(rungFloorFraction, floor) x capacity
+  //   reachable      = max(0, stock - effectiveFloor)
+  //
+  // A chart that ADDED them would draw a gathering crew stopping 85% of a seam short of where it
+  // really stops, on every rung. It is published because the escapement chart's whole axis is
+  // fractions of capacity and this is the SECOND line on it: without it a projection would walk the
+  // stock down to the player's floor on ground the rung cannot reach past.
+  rungFloorFraction:float = 0;
+  // What ONE cutter moves per turn at the rung this working holds, in the material's own units - the
+  // deposit twin of ForagePatchState.perWorkerBiomass and NAMED AFTER IT, because the crew
+  // arithmetic it feeds (clear it now / hold it after) is the same division on every web:
+  //
+  //   clearItNow(floor)  = ceil(reachable        / perWorkerBiomass)
+  //   holdItAfter(floor) = ceil(regrowthAt(floor) / perWorkerBiomass)
+  //
+  // There is no seasonal weight and no TAKE kit on either deposit branch (the two quarry tools
+  // declare `build_work`, which lands on the pool that RAISES a working), so unlike a patch's this
+  // is the rung's rate flat and is never 0 on a live rung.
+  perWorkerBiomass:float = 0;
+  // This deposit's OWN per-turn regrowth, sampled across its capacity - the third curve on the wire
+  // beside ForagePatchState.regrowthSamples and HerdTelemetryState.regrowthSamples, on the same
+  // implicit x-axis: sample `i` of `n` is the one-turn delta at `stock = i/(n-1) x capacity`. That
+  // table carries the whole rationale for why a curve is sampled rather than parameterised.
+  //
+  // *** A QUARRY'S ARE ALL ZERO, AND THAT IS AN ANSWER RATHER THAN AN ABSENCE. *** Rock's rate is
+  // zero, so the delta is exactly 0 everywhere - "this does not grow". An EMPTY vector is the
+  // different claim "no curve was sent", which is what a client blanks its chart on.
+  //
+  // NO SAMPLE IS EVER NEGATIVE: a deposit has no Allee term, so this is the plant curve's shape
+  // rather than the herd curve's, and the seeded reading inside the growth term is what lets a wood
+  // cut clean come back while leaving rock at zero.
+  regrowthSamples:[float];
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

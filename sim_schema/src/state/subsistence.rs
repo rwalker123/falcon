@@ -1789,15 +1789,60 @@ pub struct DepositState {
     /// the tile** at capture rather than stored on the source. **No rung may raise it**: it is the
     /// terrain's, which is what keeps the floor below from climbing out from under a build.
     pub capacity: f32,
-    /// **What the CURRENT rung can actually get at** (`extraction::deposit_reachable`) — capacity
-    /// minus the rung's own floor, clamped to the stock, and the numerator of
-    /// [`Self::turns_remaining`].
+    /// **What the CREWS ON THIS WORKING can actually get at** (`extraction::deposit_reachable`) —
+    /// the stock above the **composed** floor, and the numerator of [`Self::turns_remaining`].
     ///
     /// ⛔ **IT IS NEVER SIMPLY [`Self::stock`].** A rung that cannot reach the whole seam leaves
     /// stock it cannot take, and climbing the extraction ladder is precisely how you reach deeper —
     /// so a reader that rendered the stock as *"what you can have"* would promise the player rock
     /// the crew cannot cut.
+    ///
+    /// ⛔ **AND IT CARRIES THE CREW'S FLOOR TOO** (issue #650): the sim stops at
+    /// `max(rung_floor_fraction, floor) × capacity`, a **maximum** and never a sum. See
+    /// [`Self::rung_floor_fraction`].
     pub reachable: f32,
+    /// **WHERE THIS TURN'S CREWS STOPPED**, as a fraction of [`Self::capacity`] — the working's own
+    /// reading of the escapement dial, kept at the **deepest** floor any band cutting it named
+    /// (`extraction::DepositSource::last_floor`).
+    ///
+    /// It is not a restatement of [`crate::state::population::LaborAssignmentState::floor`], which is
+    /// per **band row**: that says what one band asked for, this says where the stock actually came
+    /// to rest. A working nobody cut this turn reads `0` — the identity of the max below, so its
+    /// [`Self::reachable`] is exactly the rung's own reach.
+    pub floor: f32,
+    /// **THE RUNG'S OWN FLOOR, IN THE SAME UNITS** — `1 − recovery_fraction`, what this rung's reach
+    /// cannot get at (`extraction::deposit_floor_fraction`). Gathering recovers `0.15`, so it
+    /// strands 85% of a rock body and this reads `0.85`.
+    ///
+    /// ⛔ **COMPOSE IT WITH THE PLAYER'S FLOOR AS A MAXIMUM, NEVER AS A SUM AND NEVER AS TWO
+    /// CLAMPS.** Both are the same kind of quantity — *an amount left standing* — so a crew stops at
+    /// whichever is greater. A chart that added them would draw a gathering crew stopping 85% of a
+    /// seam short of where it really stops, on every rung.
+    ///
+    /// It is published because the escapement chart's whole axis is fractions of capacity and this
+    /// is the **second** line on it: without it a client's projection would walk the stock down to
+    /// the player's floor on ground the rung cannot reach past.
+    pub rung_floor_fraction: f32,
+    /// **What ONE cutter moves per turn at the rung this working holds**, in the material's own
+    /// units — the deposit twin of [`ForagePatchState::per_worker_biomass`], **named after it**
+    /// because the crew arithmetic it feeds (*clear it now* / *hold it after*) is the same division
+    /// on every web.
+    ///
+    /// There is no seasonal weight and no take kit on either deposit branch, so unlike a patch's it
+    /// is the rung's rate flat and is never `0` on a live rung.
+    pub per_worker_biomass: f32,
+    /// **This deposit's own per-turn regrowth, sampled across its capacity** — the third curve on the
+    /// wire beside [`ForagePatchState::regrowth_samples`] and [`HerdTelemetryState::regrowth_samples`],
+    /// on the same implicit x-axis: sample `i` of `n` is the one-turn delta at
+    /// `stock = i/(n−1) × capacity`.
+    ///
+    /// ⛔ **A QUARRY'S ARE ALL ZERO, AND THAT IS AN ANSWER RATHER THAN AN ABSENCE.** Rock's rate is
+    /// zero, so the delta is exactly `0` everywhere — *this does not grow*. An **empty** vector is
+    /// the different claim *no curve was sent*, which is what a client blanks its chart on.
+    ///
+    /// **No sample is ever negative**: a deposit has no Allee term, so this is the plant curve's
+    /// shape rather than the herd curve's.
+    pub regrowth_samples: Vec<f32>,
     /// **The ground's own renewal rate** (`extraction::tile_deposit_regrowth`), already scaled by
     /// what this working's rung bought.
     ///
@@ -1913,6 +1958,12 @@ impl Default for DepositState {
             stock: 0.0,
             capacity: 0.0,
             reachable: 0.0,
+            // **`0` is the identity of the composed floor's `max`**, not a policy: a defaulted row
+            // says nothing was asked of the crew, so the rung's own reach is the whole of it.
+            floor: 0.0,
+            rung_floor_fraction: 0.0,
+            per_worker_biomass: 0.0,
+            regrowth_samples: Vec::new(),
             regrowth_rate: 0.0,
             rung: String::new(),
             build_fraction: 0.0,

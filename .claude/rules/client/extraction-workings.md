@@ -187,6 +187,29 @@ ingest with the other five, asserting BOTH of one hex's rows by identity so a lo
 them cannot pass. **Its profile span is its own** (`MapView.PROFILE_LAYERS_DEPOSITS`) rather than
 folded into the road network's, which is where it sat while it was invisible.
 
+## ⛔ THE BUTTON'S SECOND LINE IS IN THE WORKING'S OWN ACCOUNT, NEVER IN FOOD
+
+The `Assign foresters ▸` / `Assign diggers ▸` control's second line is the shared standing summary
+(`DrawerComposeController._standing_summary_model` → `SourceForecast.source_yield_readout`), the same
+one a patch and a herd render. **A working pays no food**, so its zero belongs to its MATERIAL:
+`♻ 2 foresters · +0.00 wood`, never `· +0.00 /turn`. The mechanism is one rule shared with the
+plant and animal webs — `labor-ui.md` → "a WORKED ROW's zero account is decided by its KIND" — and it
+is keyed off the row's `material`, the same half-identity every other join in this arc carries.
+
+⛔ **THE NUMBER IS THE SIM'S AND THE UNIT IS THE CLIENT'S.** `LaborAllocation.last_yields` is written
+by turn resolution and, for `Forage` and `Hunt`, by the assign-time forecast seed
+(`core_sim/src/bin/server.rs` → `seed_source_yield`); a working's material take rides the same
+`material_yield` slot. What the client decides is which account an empty take is empty IN — never
+whether to project one, which would be the forecast/actual split that seam exists to close.
+
+**`workings_just_assigned` is the frame for it**, and it is a PAIR on one hex: a forage crew and a
+forester crew both committed this turn, nothing resolved on either. Every other frame in this chapter
+was authored with a resolved take, which is exactly why the harness rendered a figure where the live
+game rendered `+0.00 /turn` — the broken state was the one state nothing staged. Its claims are the
+UNITS, not the figures, so a seeded row renders more information through the same assertions rather
+than failing them. `_working_band_fixture` was corrected with it: it carried the take in
+`actual_yield`, the FOOD account, which no `Extract` row can pay.
+
 ## ⛔ THE READOUT IS DECIDED BY `regrowth_rate > 0`, NEVER BY `branch`
 
 A flint scatter and a quarry are **both `extraction`** and read differently — same skill, same ladder,

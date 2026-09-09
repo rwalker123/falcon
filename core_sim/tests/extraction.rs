@@ -39,6 +39,24 @@ const STONE: &str = "stone";
 /// The faction every fixture band belongs to.
 const FACTION: FactionId = FactionId(0);
 
+/// **THE ESCAPEMENT FLOOR THAT LEAVES THE RUNG'S OWN FLOOR IN CHARGE** — `0`, the identity of the
+/// `max` in `extraction::deposit_effective_floor`.
+///
+/// Every fixture below this line predates the player's dial (#650) and is about the *rung's* reach,
+/// so it passes the identity and reads exactly as it read before. Named rather than written `0.0`,
+/// because a bare zero in that argument reads as *"strip it bare"* rather than as *"this fixture is
+/// not about the dial"* — the fixtures that ARE about it are at the foot of the file and state a
+/// real fraction.
+const TAKE_WHAT_THE_RUNG_REACHES: f32 = core_sim::STRIP_IT_BARE;
+
+/// **WHAT A ROW THE PLAYER NEVER TOUCHED THE DIAL ON CARRIES** — the shipped default, the food peak.
+///
+/// Every *labor row* below is built with it rather than with the identity above, because that is
+/// what `assign_labor` gives a fresh assignment and because the identity is a **strip order**: at a
+/// floor of `0` `intensification::learn_multiplier` is `0`, so a fixture built at the take seam's
+/// identity would quietly stop teaching its rung's lesson.
+const A_FRESH_ASSIGNMENTS_FLOOR: f32 = core_sim::DEFAULT_ESCAPEMENT_FLOOR;
+
 /// **A 3×1 world of one terrain, with a band standing on tile (0, 0).** Deliberately the smallest
 /// world `advance_labor_allocation` will run against: what these tests measure is a deposit, and a
 /// generated map would put a hundred other sources in the same band's reach.
@@ -144,6 +162,7 @@ fn spawn_band_of(
                     target: LaborTarget::Extract {
                         tile: UVec2::new(0, 0),
                         material: material.to_string(),
+                        floor: A_FRESH_ASSIGNMENTS_FLOOR,
                     },
                     workers: take_crew,
                     kit: None,
@@ -214,6 +233,7 @@ fn spawn_keepers(
                 target: LaborTarget::Extract {
                     tile: *tile,
                     material: (*material).to_string(),
+                    floor: A_FRESH_ASSIGNMENTS_FLOOR,
                 },
                 workers: take_crew,
                 kit: None,
@@ -349,6 +369,76 @@ fn the_quarry_rung_refuses_ground_with_no_rock_and_a_scatter_alike() {
         "a real rock body takes a working, or the rung is unbuildable"
     );
 }
+
+/// ⛔ **A DEEPER FLOOR TEACHES THE DEPOSIT BRANCH FASTER — THROUGH THE SHARED SEAM, NOT A SECOND
+/// ONE** (issue #650).
+///
+/// `intensification::learn_multiplier` is `floor / MSY_BIOMASS_FRACTION` and belongs to no web: it
+/// prices *what you left standing* against *what you learned*, and a deposit crew now has the same
+/// dial to trade with as a gatherer. The deposit earn sites used to pass a named fixed point
+/// (`PRACTICE_AT_THE_PLAIN_RATE`) on the reading that a working carried no floor; that reading is
+/// what this arc removed, so the constant went with it.
+///
+/// **Measured as a RATIO against the shipped multiplier**, not as an ordering: an ordering alone
+/// would pass on any monotone term someone happened to wire in, where the ratio says it is *this*
+/// function. Both bands cut the same ground with the same hands, so the floor is the only thing that
+/// differs.
+#[test]
+fn a_deeper_floor_teaches_the_deposit_branch_faster() {
+    /// Long enough for the ratio to be a rate and short enough that neither band has completed the
+    /// lesson and clamped at `1.0`, which would flatten the comparison to nothing.
+    const A_SPELL_OF_GATHERING: u32 = 5;
+    /// Two floors either side of the food peak, so one multiplier is below `1.0` and one above it.
+    const A_SHALLOW_FLOOR: f32 = 0.4;
+    const A_DEEP_FLOOR: f32 = 0.8;
+
+    let practice_at = |floor: f32| {
+        let (mut world, home) = world_of(WOODED);
+        let band = spawn_band_of(&mut world, home, WOOD, 20, 6);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments[0].target = LaborTarget::Extract {
+                tile: UVec2::new(0, 0),
+                material: WOOD.to_string(),
+                floor,
+            };
+        }
+        for _ in 0..A_SPELL_OF_GATHERING {
+            run_turn(&mut world);
+        }
+        world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FACTION, core_sim::extraction::WOODCRAFT_DISCOVERY_ID)
+            .to_f32()
+    };
+
+    let shallow = practice_at(A_SHALLOW_FLOOR);
+    let deep = practice_at(A_DEEP_FLOOR);
+    assert!(
+        shallow > 0.0,
+        "**LIVENESS**: the shallow crew must still be learning something, or the ratio below is \
+         a statement about zero"
+    );
+    assert!(
+        deep < 1.0,
+        "fixture: neither band may finish the lesson inside the window, or the clamp flattens the \
+         comparison"
+    );
+    let expected =
+        core_sim::learn_multiplier(A_DEEP_FLOOR) / core_sim::learn_multiplier(A_SHALLOW_FLOOR);
+    assert!(
+        (deep / shallow - expected).abs() < A_CLOSE_ENOUGH_RATIO,
+        "the lesson rides `learn_multiplier(floor)` exactly: {deep} against {shallow} is \
+         {ratio}, expected {expected}",
+        ratio = deep / shallow
+    );
+}
+
+/// A few turns of a single-precision accrual compared as a quotient, so an exact `==` would be a
+/// statement about float layout rather than about the multiplier.
+const A_CLOSE_ENOUGH_RATIO: f32 = 1e-3;
 
 /// ⛔ **THE LADDER IS REACHABLE FROM A STANDING START, THROUGH THE ORDINARY BUILD QUEUE** — the
 /// liveness check every gate above is worth nothing without.
@@ -498,7 +588,14 @@ fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
             working.stock, previous,
             "renewal must contribute EXACTLY nothing to a rock body — `0 x anything` is still 0"
         );
-        let outcome = take_from_deposit(&mut working, 5, &ground, &config, &ladder);
+        let outcome = take_from_deposit(
+            &mut working,
+            5,
+            TAKE_WHAT_THE_RUNG_REACHES,
+            &ground,
+            &config,
+            &ladder,
+        );
         ever_took |= outcome.taken > 0.0;
         assert!(
             working.stock <= previous,
@@ -528,7 +625,14 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
 
     for _ in 0..40 {
         core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
-        take_from_deposit(&mut working, 12, &ground, &config, &ladder);
+        take_from_deposit(
+            &mut working,
+            12,
+            TAKE_WHAT_THE_RUNG_REACHES,
+            &ground,
+            &config,
+            &ladder,
+        );
     }
     let cut_to = working.stock;
     assert!(
@@ -572,7 +676,14 @@ fn enough_hands_drive_a_wood_down_turn_on_turn() {
     let mut previous = working.stock;
     for turn in 0..30 {
         core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
-        take_from_deposit(&mut working, 10, &ground, &config, &ladder);
+        take_from_deposit(
+            &mut working,
+            10,
+            TAKE_WHAT_THE_RUNG_REACHES,
+            &ground,
+            &config,
+            &ladder,
+        );
         assert!(
             working.stock < previous,
             "turn {turn}: ten fellers must out-cut the wood's own renewal, {} after {previous}",
@@ -597,7 +708,15 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
         let mut total = 0.0;
         for _ in 0..4000 {
             core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
-            total += take_from_deposit(&mut working, 4, &ground, &config, &ladder).taken;
+            total += take_from_deposit(
+                &mut working,
+                4,
+                TAKE_WHAT_THE_RUNG_REACHES,
+                &ground,
+                &config,
+                &ladder,
+            )
+            .taken;
         }
         total
     };
@@ -1046,6 +1165,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             working.stock,
             tile_deposit_capacity(&config, STONE, &ground),
             &deposit_payoff(working.standing(), &ladder),
+            TAKE_WHAT_THE_RUNG_REACHES,
         )
     };
 
@@ -1357,6 +1477,8 @@ mod wire {
     };
     use sim_schema::{TerrainType, DEPOSIT_RUNWAY_NOT_APPLICABLE, DEPOSIT_RUNWAY_NO_TAKE};
 
+    use super::A_FRESH_ASSIGNMENTS_FLOOR;
+
     /// **The renewing half of the §7 fork.** Mixed woodland carries 600 wood at a rate of 0.03 —
     /// and 35 stone at 0.02 beside it, which is what makes *"one tile can hold two"* a fact this
     /// fixture could exercise without a second terrain.
@@ -1388,6 +1510,10 @@ mod wire {
         stock: f32,
         capacity: f32,
         reachable: f32,
+        floor: f32,
+        rung_floor_fraction: f32,
+        per_worker_biomass: f32,
+        regrowth_samples: Vec<f32>,
         regrowth_rate: f32,
         rung: String,
         sustainable_take: f32,
@@ -1456,6 +1582,13 @@ mod wire {
                 stock: row.stock(),
                 capacity: row.capacity(),
                 reachable: row.reachable(),
+                floor: row.floor(),
+                rung_floor_fraction: row.rungFloorFraction(),
+                per_worker_biomass: row.perWorkerBiomass(),
+                regrowth_samples: row
+                    .regrowthSamples()
+                    .map(|samples| samples.iter().collect())
+                    .unwrap_or_default(),
                 regrowth_rate: row.regrowthRate(),
                 rung: row
                     .rung()
@@ -1610,12 +1743,36 @@ mod wire {
         cutters: u32,
         keepers: u32,
     ) {
+        staff_at_floor(
+            app,
+            band,
+            workings,
+            available,
+            cutters,
+            keepers,
+            A_FRESH_ASSIGNMENTS_FLOOR,
+        );
+    }
+
+    /// The same, with the crews told where to stop — the escapement dial (issue #650), which every
+    /// fixture above passes at the identity because it predates the dial.
+    #[allow(clippy::too_many_arguments)] // one fixture, one parameter per thing it states
+    fn staff_at_floor(
+        app: &mut App,
+        band: Entity,
+        workings: &[(UVec2, &str)],
+        available: u32,
+        cutters: u32,
+        keepers: u32,
+        floor: f32,
+    ) {
         let mut allocation = LaborAllocation::default();
         for (tile, material) in workings {
             allocation.set_assignment(
                 LaborTarget::Extract {
                     tile: *tile,
                     material: (*material).to_string(),
+                    floor,
                 },
                 cutters,
                 available,
@@ -1745,6 +1902,130 @@ mod wire {
     /// 4.5 — over the line by a margin no rounding closes, and small enough for a starting band's
     /// working-age pool to actually field.
     const A_CREW_THAT_OUT_CUTS_A_WOOD: u32 = 3;
+
+    /// ⛔ **THE LEVER ACTUALLY WORKS: RAISING THE FLOOR CLEARS THE OVER-CUT WARNING** (issue #650).
+    ///
+    /// This is the whole point of giving the deposit branches an escapement dial. Before it, the sim
+    /// told a player they were cutting faster than the wood grows and offered no answer but pulling
+    /// people off the job; now the warning is a consequence the player chose and can un-choose.
+    ///
+    /// It is the **same ground, the same rung and the same crew** as
+    /// `a_crew_that_out_cuts_the_msy_reads_as_over_cutting` — the only thing that differs is the
+    /// dial, which is what makes this a statement about the dial.
+    #[test]
+    fn raising_the_floor_above_the_stand_clears_the_over_cut_warning() {
+        let mut app = build_test_app();
+        app.update();
+        let (band, home, working) = first_band(&mut app);
+        reground(&mut app, home, RENEWING_GROUND);
+        seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+        staff_at_floor(
+            &mut app,
+            band,
+            &[(home, WOOD)],
+            working,
+            A_CREW_THAT_OUT_CUTS_A_WOOD,
+            TOO_FEW_KEEPERS,
+            LEAVE_THE_WHOLE_STAND,
+        );
+        app.update();
+
+        let wood = published_working(&app, home, WOOD);
+        assert!(
+            wood.sustainable_take > 0.0,
+            "fixture: the wood must still have a means to be inside — a zero would make the \
+             comparison below vacuous: {wood:?}"
+        );
+        assert!(
+            wood.actual_take <= wood.sustainable_take,
+            "the crew that over-cut at the free dial is inside the wood's means once told to leave \
+             it standing: {wood:?}"
+        );
+        assert_eq!(
+            wood.floor, LEAVE_THE_WHOLE_STAND,
+            "…and the working publishes the floor its crews worked to: {wood:?}"
+        );
+        assert_eq!(
+            wood.reachable, 0.0,
+            "which leaves nothing above it for anyone to reach: {wood:?}"
+        );
+    }
+
+    /// **THE TOP OF THE DIAL** — leave the whole stand, take nothing. Used rather than a value just
+    /// under the crossing so the assertion is about the dial and not about a rate a retune of
+    /// `forestry:felling` would move.
+    const LEAVE_THE_WHOLE_STAND: f32 = 1.0;
+
+    /// **THE CHART TERMS REACH THE CLIENT** — the escapement instrument on a deposit is the plant
+    /// web's, and it is composed from the same three things: a stock against a capacity, a sampled
+    /// growth curve, and one worker's throughput.
+    ///
+    /// ⛔ **PLUS ONE A PATCH DOES NOT HAVE — `rungFloorFraction`.** A deposit has a *second* floor,
+    /// and a projection that walked the stock down to the player's alone would draw a crew reaching
+    /// past ground its rung cannot touch. It is published in the **same units** as the floor beside
+    /// it precisely so the client composes them as a maximum.
+    #[test]
+    fn a_deposit_row_carries_the_floor_and_the_terms_the_chart_is_drawn_from() {
+        let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
+
+        let wood = published_working(&app, wood_tile, WOOD);
+        assert!(
+            wood.per_worker_biomass > 0.0,
+            "one cutter's own rate is what every crew target divides by: {wood:?}"
+        );
+        assert!(
+            wood.regrowth_samples.len() >= 2,
+            "a curve needs at least two points to interpolate between: {wood:?}"
+        );
+        assert!(
+            wood.regrowth_samples.iter().any(|delta| *delta > 0.0),
+            "**LIVENESS**: a wood really grows, so its curve is not all zeros: {wood:?}"
+        );
+        assert!(
+            wood.regrowth_samples.iter().all(|delta| *delta >= 0.0),
+            "and a deposit has no Allee term, so no sample may be negative: {wood:?}"
+        );
+        // ⛔ **THE PUBLISHED REACH IS THE STOCK ABOVE THE GREATER OF THE TWO FLOORS** — the whole
+        // reason both are on the wire, and the arithmetic a client's projection has to reproduce.
+        assert!(
+            (wood.reachable
+                - (wood.stock - wood.rung_floor_fraction.max(wood.floor) * wood.capacity))
+                .abs()
+                < A_CLOSE_ENOUGH_TAKE,
+            "the published reach is the stock above `max(rung floor, crew floor)`: {wood:?}"
+        );
+
+        // ⛔ **A QUARRY'S CURVE IS ALL ZEROS AND IS STILL PUBLISHED** — *"this does not grow"* is a
+        // reading, where an empty vector would be *"no curve was sent"* and blank the chart.
+        let rock = published_working(&app, rock_tile, STONE);
+        assert_eq!(
+            rock.regrowth_samples.len(),
+            wood.regrowth_samples.len(),
+            "one x-axis for every curve on the wire: {rock:?}"
+        );
+        assert!(
+            rock.regrowth_samples.iter().all(|delta| *delta == 0.0),
+            "rock's rate is zero, so its curve is flat at zero rather than absent: {rock:?}"
+        );
+        // ⛔ **AND THE ROCK ROW IS WHERE THE `max` IS DISTINGUISHABLE FROM A SUM.** Its rung
+        // (`extraction:quarry`) strands a real fraction of the body, so the two floors are two
+        // different numbers here where the wood row's are equal — a sum would strand `0.15 + 0.5` of
+        // it and quote a reach a third short of the truth.
+        assert!(
+            rock.rung_floor_fraction > 0.0 && rock.rung_floor_fraction != rock.floor,
+            "fixture: the two floors must differ here, or neither assertion below distinguishes a \
+             maximum from a sum: {rock:?}"
+        );
+        let composed = rock.rung_floor_fraction.max(rock.floor);
+        assert!(
+            (rock.reachable - (rock.stock - composed * rock.capacity)).abs() < A_CLOSE_ENOUGH_TAKE,
+            "the deeper of the two binds, and it is the ONLY one that binds: {rock:?}"
+        );
+        assert!(
+            rock.reachable > rock.stock - (rock.rung_floor_fraction + rock.floor) * rock.capacity,
+            "…never their sum, which would strand ground twice over: {rock:?}"
+        );
+    }
 
     /// ⛔ **THE §7 FORK, AND IT IS DECIDED BY THE RATE RATHER THAN BY THE BRANCH.**
     ///

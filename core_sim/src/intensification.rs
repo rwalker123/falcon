@@ -205,16 +205,16 @@ pub fn learn_multiplier(floor: f32) -> f32 {
     (floor / crate::fauna::MSY_BIOMASS_FRACTION).max(0.0)
 }
 
-/// **THE FLOOR AT WHICH PRACTICE IS WORTH EXACTLY ITS `learn_rate`** — [`learn_multiplier`]'s fixed
-/// point, and what a source with **no escapement dial** passes.
-///
-/// The floor-scales-learning trade is a *food web* mechanism: it prices calories given up against
-/// lessons gained, and it is the player's own dial on a Forage or Hunt row. **A deposit pays no
-/// calories and carries no floor** — its floor is the *rung's*, not the row's
-/// (`extraction::deposit_floor`) — so there is nothing for a deposit crew to trade and this is the
-/// honest multiplier for one. Named rather than passed as a bare `0.5`, because a literal there
-/// would read as a tuning value on the deposit branches when it is the identity.
-pub const PRACTICE_AT_THE_PLAIN_RATE: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+// **RETIRED: `PRACTICE_AT_THE_PLAIN_RATE`** — [`learn_multiplier`]'s fixed point, passed by the two
+// deposit earn sites on the reading that *"a deposit pays no calories and carries no floor"*.
+//
+// The second half stopped being true in #650: an `extract` row carries the same escapement floor a
+// Forage or Hunt row does, so a deposit crew trades **the material it leaves standing** against the
+// lesson exactly as a gatherer trades calories, and the earn sites pass the row's own floor. A named
+// fixed point with no caller is a second answer waiting to be reached for, so it went with the
+// reading it stated. The surviving *"this source has no dial"* reading is
+// `systems::labor::credit_managed_rung_lesson`'s own, and it belongs to **rung 3**, where nothing is
+// drawn down at all — which is a claim about the take rather than about the branch.
 
 /// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK** — its bare output
 /// ([`PER_WORKER_OUTPUT`]) **plus what its kit delivers**, and **the sum of terms** the model is

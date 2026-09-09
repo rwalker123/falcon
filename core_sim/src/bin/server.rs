@@ -2432,7 +2432,7 @@ fn seed_source_yield(
     if workers == 0
         || !matches!(
             target,
-            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } | LaborTarget::Extract { .. }
         )
     {
         return;
@@ -2632,12 +2632,95 @@ fn seed_source_yield(
                 range_sigmas,
             )
         }
-        // ⛔ **A DEPOSIT PAYS NO FOOD, SO THERE IS NO FOOD ROW TO SEED** — and that is the whole
-        // of `docs/plan_extraction.md` §6, restated where a forecast would otherwise invent one.
-        // `SourceYield` is the *food* readout; what a working pays is a material, and the turn
-        // reports that through the row's `materials` rather than through a projected `actual`. A
-        // seeded zero here would put a permanent `+0.00` food line on every working the band holds.
-        LaborTarget::Extract { .. } => return,
+        // **A DEPOSIT PAYS NO FOOD, AND IT DOES PAY A MATERIAL — WHICH IS THE ONLY THING THIS ARM
+        // SEEDS** (`docs/plan_extraction.md` §6, issue #650).
+        //
+        // ⛔ **`actual` STAYS `SourceYield::ZERO`, and that half of the original refusal was right.**
+        // `PopulationCohortState::food_income` is `Σ actual` and one side of the pinned larder
+        // identity, so a working must contribute nothing to it — seeded or resolved. The turn's own
+        // `Extract` arm writes `row.materials` and touches no other field of the row, and this
+        // mirrors it exactly, which is what keeps `forecast == actual` true per component here.
+        //
+        // What the refusal got wrong was the **row**: `actual_yield` is unconditionally on the wire
+        // at `0.0` whether or not this seed runs, so declining to seed did not remove a `+0.00` food
+        // line — it removed the *material* figure beside it, and a freshly-assigned deposit crew read
+        // `+0.00` on the tile card where a freshly-assigned forage crew read a real number.
+        LaborTarget::Extract {
+            tile,
+            material,
+            floor,
+        } => {
+            // Out of the band's work range → the turn abandons the row rather than paying it. Keep
+            // the zero row, exactly as the Forage arm does.
+            if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
+                > labor.band_work_range
+            {
+                return;
+            }
+            let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
+            else {
+                return;
+            };
+            let Some(ground) = app.world.get::<Tile>(tile_entity).cloned() else {
+                return;
+            };
+            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let capacity =
+                core_sim::extraction::tile_deposit_capacity(&extraction, material, &ground);
+            // Ground that holds none of it opens no working and pays nothing — absence is the
+            // answer, and `validate_labor_policy` has already refused the command in that case.
+            if capacity <= core_sim::NO_DEPOSIT {
+                return;
+            }
+            let Some(branch) = core_sim::extraction::deposit_branch(&extraction, material) else {
+                return;
+            };
+            // **THE WORKING AS THE NEXT TURN WILL FIND IT — REGROW FIRST, THEN TAKE.** The seed is
+            // read between turns, so the live stock is the one *this* turn's take already drew down;
+            // pricing against it quotes a turn the sim has not run (`yield-forecast.md` → "A
+            // FORECAST REGROWS FIRST"). `renew_deposit` is the very seam `advance_deposits` runs in
+            // Logistics, on a clone, so nothing here moves the registry.
+            //
+            // **A working nobody has opened is DERIVED, not seeded** — full stock at the tile's
+            // capacity, on its branch's free floor — which is `snapshot::deposits`' own rule and the
+            // reason the commonest case of all (a crew put on fresh ground) has a figure at all.
+            let mut projected = app
+                .world
+                .resource::<core_sim::DepositRegistry>()
+                .source(*tile, material)
+                .cloned()
+                .unwrap_or_else(|| {
+                    core_sim::extraction::DepositSource::opening(*tile, material, capacity, branch)
+                });
+            core_sim::renew_deposit(&mut projected, &ground, &extraction, &ladder);
+            let payoff = core_sim::extraction::deposit_payoff(projected.standing(), &ladder);
+            // **The take, through the one seam the turn takes** — `min(hands, what the crew is
+            // allowed to reach)`, the reach being the stock above `max(rung floor, this row's
+            // floor)`. So raising the floor lowers the seeded figure by exactly what it will lower
+            // the take by, and a floor at or above the standing stock seeds nothing.
+            let taken = core_sim::extraction::deposit_take(
+                workers,
+                projected.stock,
+                capacity,
+                &payoff,
+                *floor,
+            );
+            core_sim::SourceYield {
+                // **EMPTY IS "NO ROW", NEVER A ZERO ENTRY** — `SourceYield::materials`' own rule: a
+                // crew that will take nothing next turn publishes no material line rather than one
+                // reading `0.00`.
+                materials: if taken > core_sim::extraction::DEPOSIT_EMPTY {
+                    vec![core_sim::MaterialPayoff {
+                        material: material.clone(),
+                        amount: taken,
+                    }]
+                } else {
+                    Vec::new()
+                },
+                ..core_sim::SourceYield::ZERO
+            }
+        }
         // A band-wide role produces no per-source yield, so there is no row to seed.
         LaborTarget::Scout
         | LaborTarget::Warrior
@@ -2745,7 +2828,7 @@ fn validate_labor_policy(
         // open and no crew to put on it. That is *also* what refuses the free floor on bare ground,
         // which is why neither rung 1 carries a `site_requirement` (a floor of ~0 admits every tile
         // and reads as a placement rule while being none).
-        LaborTarget::Extract { tile, material } => {
+        LaborTarget::Extract { tile, material, .. } => {
             let extraction = app.world.resource::<ExtractionConfigHandle>().get();
             if extraction.deposit(material).is_none() {
                 return Err(format!(
@@ -2824,7 +2907,7 @@ fn validate_improvement(
                 _ => validate_corral(app, faction, fauna_id),
             }
         }
-        LaborTarget::Extract { tile, material } => {
+        LaborTarget::Extract { tile, material, .. } => {
             if !improvement.valid_for_extract() {
                 return Err(format!(
                     "'{}' is not something you build on a deposit — it applies to the food webs.",
@@ -3479,20 +3562,27 @@ fn validate_tame(
 
 /// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
 /// band's free working-age headroom). Text forms:
-///   `assign_labor <faction> <band> forage <x> <y> [policy] <workers>`
-///   `assign_labor <faction> <band> hunt <herd_id> [policy] <workers>`
+///   `assign_labor <faction> <band> forage <x> <y> [floor] [species] <workers>`
+///   `assign_labor <faction> <band> hunt <herd_id> [floor] <workers>`
+///   `assign_labor <faction> <band> extract <x> <y> <material> [floor] <workers>`
 ///   `assign_labor <faction> <band> scout <workers>`
 ///   `assign_labor <faction> <band> warrior <workers>`
 ///
-/// `policy` is one of the **four harvest stances** (`sustain`/`surplus`/`deplete`/`eradicate`). It
-/// no longer accepts a build verb: an improvement is set by its own command
-/// (`cultivate`/`sow`/`tame`/`corral`) and **is never touched by this one**
+/// `floor` is where the crew stops, as a fraction of the source's carrying capacity — **all three
+/// worked rows carry one**, validated once at the top of this function and rejected rather than
+/// clamped. A deposit's is composed with its *rung's* own floor as a maximum
+/// (`extraction::deposit_effective_floor`), which is the one thing about it that differs from a
+/// patch's.
+///
+/// It **never accepts a build verb**: an improvement is set by its own command
+/// (`cultivate`/`sow`/`tame`/`corral`/`fell`/`coppice`/`quarry`) and **is never touched by this one**
 /// (`docs/plan_investment_rung_toggle.md` §5), which is what makes a paused build's crew editable.
 #[allow(clippy::too_many_arguments)]
 /// **The floor a `LaborTarget` built to NAME A SOURCE carries** — the improvement commands
-/// (`cultivate`/`sow`/`tame`/`corral`), the abandon path and the pen-keeper lookup all construct a
-/// target to identify a tile or a herd, never to state an assignment. [`LaborTarget::same_source`]
-/// keys on the tile/herd id alone, so the floor here is matched by nothing and read by nothing.
+/// (`cultivate`/`sow`/`tame`/`corral`/`fell`/`coppice`/`quarry`), the abandon path and the
+/// pen-keeper lookup all construct a target to identify a tile, a herd or a working, never to state
+/// an assignment. [`LaborTarget::same_source`] keys on the tile/herd id (and, on a deposit, the
+/// material) alone, so the floor here is matched by nothing and read by nothing.
 ///
 /// It is [`DEFAULT_ESCAPEMENT_FLOOR`] rather than an arbitrary number so that a future reader who
 /// *does* look at it sees the sustainable value, not a strip order.
@@ -3672,6 +3762,10 @@ fn handle_assign_labor(
             (Some(x), Some(y), Some(material)) if !material.is_empty() => LaborTarget::Extract {
                 tile: UVec2::new(x, y),
                 material: material.to_string(),
+                // **The same validated floor a Forage or Hunt row gets** — struck once at the top of
+                // this function, so all three webs fail closed on the identical bound rather than
+                // three times over.
+                floor,
             },
             _ => {
                 emit_command_failure(
@@ -6696,6 +6790,10 @@ fn handle_deposit_verb(
     let target = LaborTarget::Extract {
         tile,
         material: material.to_string(),
+        // **Named to be VALIDATED, never assigned** — `SOURCE_NAMED_NOT_ASSIGNED`'s convention: the
+        // gate below and `LaborTarget::same_source` key on the tile and the material alone, so this
+        // target says *which working* and nothing about how it is worked.
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
     };
     if let Err(reason) = validate_improvement(app, faction, &target, improvement) {
         warn!(
@@ -12614,6 +12712,7 @@ mod tests {
                 &LaborTarget::Extract {
                     tile,
                     material: "stone".to_string(),
+                    floor: SOURCE_NAMED_NOT_ASSIGNED,
                 },
             )
         };
@@ -17387,6 +17486,44 @@ mod tests {
         );
     }
 
+    /// Put a take crew on a working through the **command**, so what is under test is the whole
+    /// `assign_labor extract <x> <y> <material> [floor] <workers>` path and not a hand-built row.
+    fn assign_extract(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        coord: UVec2,
+        material: &str,
+        floor: Option<f32>,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            None,
+            "extract".to_string(),
+            workers,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            Some(material.to_string()),
+            floor,
+            None,
+            Vec::new(),
+        );
+    }
+
+    /// The first source's **material** row — what a working pays, and the only account it pays into.
+    fn source_materials(app: &bevy::prelude::App, band: Entity) -> Vec<core_sim::MaterialPayoff> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_yields
+            .first()
+            .expect("the staffed source has a telemetry row")
+            .materials
+            .clone()
+    }
+
     fn assign_hunt(
         app: &mut bevy::prelude::App,
         faction: FactionId,
@@ -20372,6 +20509,170 @@ mod tests {
     /// A `DEPOSIT_GRID`-square world of `terrain` with a `TileRegistry` over it, returning the tile
     /// entity at [`WORKING`]. No food module and no gathering site: neither deposit branch asks for
     /// one, and seeding either would put a second reason on the ground these tests judge.
+    /// ⛔ **A FRESHLY-ASSIGNED DEPOSIT CREW MUST NOT READ `+0.00`** — the defect `seed_source_yield`
+    /// exists to kill, on the one web that was excluded from it.
+    ///
+    /// The exclusion's reasoning was right about **food** and wrong about the **row**: `actual_yield`
+    /// is unconditionally on the wire at `0.0` whether or not the seed runs, so declining to seed
+    /// removed the *material* figure rather than a food line, and a working the player had just
+    /// staffed published nothing at all until the turn resolved.
+    ///
+    /// The expectation is written out from the rung's own rate rather than borrowed from
+    /// `deposit_take`, so this is an independent statement about what the crew will cut.
+    #[test]
+    fn assigning_a_deposit_crew_seeds_the_material_it_will_cut() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+
+        let seeded = source_materials(&app, band);
+        let row = seeded
+            .first()
+            .expect("a staffed working publishes the material it will cut");
+        assert_eq!(row.material, "wood", "…and names it: {seeded:?}");
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        // **The FREE FLOOR's rate**, because nobody has raised this working: `forestry:deadfall`.
+        let per_worker = core_sim::extraction::deposit_payoff(
+            &core_sim::RungStanding::unstarted(core_sim::RungBranch::Forestry),
+            &ladder,
+        )
+        .yield_per_worker_turn;
+        assert!(
+            (row.amount - per_worker * BAND_WORKERS as f32).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the seed is the crew's own rate against a full stand: {seeded:?}"
+        );
+        assert_eq!(
+            source_actual(&app, band),
+            0.0,
+            "⛔ and it pays NO FOOD — `food_income` is `Sum(actual)` and one side of the larder \
+             identity, so a working must contribute nothing to it"
+        );
+    }
+
+    /// **THE FLOOR BOUNDS THE SEEDED FIGURE, and at the top of the dial it bounds it to nothing** —
+    /// the seed goes through `deposit_take`, so the number the player is quoted moves with the dial
+    /// they are dragging rather than describing a crew nobody ordered.
+    #[test]
+    fn a_deposit_floor_that_leaves_everything_standing_seeds_no_material() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_extract(
+            &mut app,
+            faction,
+            WORKING,
+            "wood",
+            Some(LEAVE_THE_WHOLE_STAND),
+            BAND_WORKERS,
+        );
+
+        assert!(
+            source_materials(&app, band).is_empty(),
+            "**EMPTY IS NO ROW, NEVER A ZERO ENTRY**: a crew told to leave the whole stand takes \
+             nothing, so there is no material line to draw"
+        );
+    }
+
+    /// **A FLOOR OUTSIDE `0.0..=1.0` IS REFUSED AT THE COMMAND BOUNDARY, NEVER CLAMPED** — the
+    /// `cancel_order` scope precedent, on the deposit row. A clamp would turn a typo into a quiet
+    /// policy change on the one number the take now turns on.
+    #[test]
+    fn an_out_of_range_floor_is_refused_on_an_extract_row() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_extract(
+            &mut app,
+            faction,
+            WORKING,
+            "wood",
+            Some(NOT_A_FRACTION_OF_CAPACITY),
+            BAND_WORKERS,
+        );
+
+        assert!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("band has an allocation")
+                .assignments
+                .is_empty(),
+            "the row must not exist at all — a refusal, not a clamped assignment"
+        );
+    }
+
+    /// **STONE TAKES A FLOOR TOO, AND THE SIM DOES NOT FORK ON THE RATE** — a floor on a rate-0
+    /// deposit is meaningless but harmless (it caps the take), and *whether to offer the dial* is a
+    /// client decision made through the `regrowthRate > 0` fork it already uses everywhere else. A
+    /// sim that refused a floor here would be a second place that fork lives.
+    ///
+    /// `extraction:gathering` strands 85% of a rock body on its own, so the floor asserted on is
+    /// **above** the rung's — otherwise this would pass against a build that ignored the dial
+    /// entirely.
+    #[test]
+    fn a_quarry_takes_a_floor_and_it_caps_the_take() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::AlpineMountain);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
+        let at_the_default_floor = source_materials(&app, band);
+        assert!(
+            !at_the_default_floor.is_empty(),
+            "**LIVENESS**: a crew on a rock body must cut something, or neither bound below \
+             asserts anything"
+        );
+
+        // **BELOW THE RUNG'S OWN FLOOR THE DIAL CHANGES NOTHING** — `extraction:gathering` already
+        // strands 85% of the body, so `max(0.85, 0.0)` is `max(0.85, 0.5)` and the take is the same
+        // number. This is the composition read through the whole command path.
+        assign_extract(
+            &mut app,
+            faction,
+            WORKING,
+            "stone",
+            Some(core_sim::STRIP_IT_BARE),
+            BAND_WORKERS,
+        );
+        assert_eq!(
+            source_materials(&app, band),
+            at_the_default_floor,
+            "a player floor BELOW what the rung already cannot reach binds nothing — the two \
+             compose as a maximum, never as a sum"
+        );
+
+        // …and above it, the player's binds. At the top of the dial nothing at all is reachable.
+        assign_extract(
+            &mut app,
+            faction,
+            WORKING,
+            "stone",
+            Some(LEAVE_THE_WHOLE_STAND),
+            BAND_WORKERS,
+        );
+        assert!(
+            source_materials(&app, band).is_empty(),
+            "a floor above the rung's binds instead of it — and stone took one with no branch on \
+             its rate anywhere in the sim"
+        );
+    }
+
+    /// The seeded amount is a product of two config numbers in single precision, so an exact `==`
+    /// would be a statement about float layout rather than about the rate.
+    const A_CLOSE_ENOUGH_AMOUNT: f32 = 1e-4;
+    /// **"Leave the whole stand"** — the top of the dial, where the escapement room is empty by
+    /// construction and a crew takes nothing however many hands are on it.
+    const LEAVE_THE_WHOLE_STAND: f32 = 1.0;
+    /// A floor that names a stock no source can hold — `floor_is_valid`'s own bound, crossed.
+    const NOT_A_FRACTION_OF_CAPACITY: f32 = 1.4;
+
     fn seed_deposit_grid(
         app: &mut bevy::prelude::App,
         terrain: sim_runtime::TerrainType,
@@ -20413,6 +20714,7 @@ mod tests {
             LaborTarget::Extract {
                 tile: WORKING,
                 material: material.to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
             },
         );
         app.world.entity_mut(band).insert(BandId(DEPOSIT_BAND_ID));
@@ -20432,6 +20734,7 @@ mod tests {
         let target = LaborTarget::Extract {
             tile: WORKING,
             material: material.to_string(),
+            floor: DEFAULT_ESCAPEMENT_FLOOR,
         };
         app.world
             .get_mut::<LaborAllocation>(band)
@@ -20817,6 +21120,7 @@ mod tests {
                 &LaborTarget::Extract {
                     tile: WORKING,
                     material: "wood".to_string(),
+                    floor: SOURCE_NAMED_NOT_ASSIGNED,
                 },
             )
             .is_err(),

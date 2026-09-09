@@ -412,7 +412,7 @@ pub(crate) fn resolve_upkeep_kits<'a>(
                 // (`DepositDef::branch`) as read back through the rung it stands on. A row naming
                 // ground that holds none of the material resolves no source and therefore no rung,
                 // which is the same forgiveness the two food webs give an unplaced source.
-                crate::components::LaborTarget::Extract { tile, material } => {
+                crate::components::LaborTarget::Extract { tile, material, .. } => {
                     let working = deposits.source(*tile, material);
                     (
                         working.map_or(crate::intensification::RungBranch::Extraction, |source| {
@@ -496,7 +496,11 @@ pub(crate) const REGROWTH_CURVE_SAMPLES: usize = 11;
 
 /// The fraction of `K` sample `index` is taken at — see [`REGROWTH_CURVE_SAMPLES`] for why the
 /// spacing is uniform and therefore implicit on the wire.
-fn regrowth_sample_fraction(index: usize) -> f32 {
+///
+/// Shared with [`crate::snapshot::deposits`], which samples a **third** growth model on the same
+/// x-axis: one spacing for every curve the client interpolates, or the chart would need to know
+/// which source it is drawing before it could place a sample.
+pub(crate) fn regrowth_sample_fraction(index: usize) -> f32 {
     index as f32 / (REGROWTH_CURVE_SAMPLES - 1) as f32
 }
 

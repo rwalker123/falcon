@@ -203,7 +203,7 @@ pub fn source_has_a_meter_at_risk(
         //
         // A working still on its **free floor** answers `false`, exactly as a wild stand does: there
         // is nothing there anybody paid for, so unstaffing it really does end the band's business.
-        LaborTarget::Extract { tile, material } => {
+        LaborTarget::Extract { tile, material, .. } => {
             deposits.source(*tile, material).is_some_and(|source| {
                 source.ladder_position() > crate::intensification::RUNG_UNSTARTED
             })
@@ -1629,15 +1629,20 @@ fn resolve_shed_facts(
                         improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
                     })
             }
-            LaborTarget::Extract { tile, material } => {
+            LaborTarget::Extract {
+                tile,
+                material,
+                floor,
+            } => {
                 deposits
                     .source(*tile, material)
                     .map_or(SourceShedFacts::default(), |source| SourceShedFacts {
                         accruing_knowledge: source_is_still_teaching(
                             ladder.rung(source.rung()),
-                            // **A deposit has no escapement dial to trade against** — see
-                            // `intensification::PRACTICE_AT_THE_PLAIN_RATE`.
-                            crate::intensification::PRACTICE_AT_THE_PLAIN_RATE,
+                            // **A deposit crew's floor prices its lesson exactly as a gatherer's
+                            // does** (issue #650) — the shared `intensification::learn_multiplier`,
+                            // read off this row rather than off a named fixed point.
+                            *floor,
                             faction,
                             discovery,
                             knowledge_threshold,
@@ -1902,7 +1907,7 @@ fn extraction_keeping_claims(
     let mut held: Vec<(UVec2, String)> = Vec::new();
     let mut claims: Vec<KeepingClaim> = Vec::new();
     for assignment in &allocation.assignments {
-        let LaborTarget::Extract { tile, material } = &assignment.target else {
+        let LaborTarget::Extract { tile, material, .. } = &assignment.target else {
             continue;
         };
         let Some(working) = deposits.source(*tile, material) else {
@@ -6594,7 +6599,11 @@ pub fn advance_labor_allocation(
                         &mut event_log,
                     );
                 }
-                LaborTarget::Extract { tile, material } => {
+                LaborTarget::Extract {
+                    tile,
+                    material,
+                    floor,
+                } => {
                     // **Out of range → the assignment is ABANDONED**, byte-for-byte the Forage
                     // arm's rule and for its reason: a deposit cannot move, so beyond
                     // `band_work_range` the band walked away from it. **This is where the deposit
@@ -6806,6 +6815,11 @@ pub fn advance_labor_allocation(
                     let outcome = crate::extraction::take_from_deposit(
                         working,
                         workers,
+                        // **THE PLAYER'S OWN FLOOR, composed with the RUNG'S inside the take** —
+                        // `deposit_effective_floor` takes the greater of the two, so this row asks
+                        // the crew to leave more standing than its rung already cannot reach, never
+                        // to leave the sum of both.
+                        *floor,
                         ground,
                         &extraction_cfg,
                         &ladder,
@@ -6846,15 +6860,21 @@ pub fn advance_labor_allocation(
                     // woodcraft, `felling` conservationism, `gathering` quarrying. Credited once per
                     // source per turn and never per worker, the ladder's own rule.
                     //
-                    // **`eligible` is *there is room above this rung's floor to work in*** — the
+                    // **`eligible` is *there is room above the COMPOSED floor to work in*** — the
                     // deposit reading of `crew_is_working_the_source`, taken **before** the take so
                     // a crew that cleared the last reachable unit this turn is still credited for
-                    // the turn it worked.
+                    // the turn it worked. `reachable_before` already carries the max of the rung's
+                    // floor and this row's, so a crew asked to leave everything standing is credited
+                    // nothing without a second test saying so.
                     credit_rung_lesson(
                         ladder.rung(standing.held),
-                        // **A deposit has no escapement dial to trade against** — see
-                        // `intensification::PRACTICE_AT_THE_PLAIN_RATE`.
-                        crate::intensification::PRACTICE_AT_THE_PLAIN_RATE,
+                        // **THE ROW'S OWN FLOOR PRICES THE LESSON**, through the shared
+                        // `intensification::learn_multiplier` both food webs go through: a crew told
+                        // to leave more of a wood standing learns conservationism faster, in
+                        // proportion, and one told to strip it learns nothing. The predicate below
+                        // is the other end of the same dial — at a floor of `1.0` there is no room
+                        // above it, so watching teaches nothing either.
+                        *floor,
                         take_crew_present && source_is_workable(outcome.reachable_before),
                         &ladder.knowledge,
                         faction,
@@ -8168,7 +8188,7 @@ fn announce_shed_crew(
             format!("hunters on {fauna_id}"),
             format!("kind=hunt herd={fauna_id}"),
         ),
-        LaborTarget::Extract { tile, material } => (
+        LaborTarget::Extract { tile, material, .. } => (
             CommandEventKind::Extraction,
             format!("the {material} crew at ({}, {})", tile.x, tile.y),
             format!("kind=extract material={material} x={} y={}", tile.x, tile.y),

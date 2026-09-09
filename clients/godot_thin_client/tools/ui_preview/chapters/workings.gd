@@ -34,7 +34,7 @@ const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 59
+const EXPECTED_CHECKPOINTS := 66
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -630,6 +630,77 @@ func run(harness) -> void:
 		# **THE NEGATIVE, on the branch beside it**: no standing row, so no second line at all.
 		h._assert_hud("…while the branch this band does NOT work keeps its single line",
 			Q.stacked_action_summary(unworked) == null)
+		# ⛔ **AND THE TAKE IS STATED IN THE MATERIAL, NEVER IN THE FOOD UNIT** (issue #650). This is
+		# the RESOLVED half of the pair the next state opens: a working that has paid out reads
+		# `+0.60 wood`, off the row's `material_yield`, and the food zero beside it is suppressed by
+		# `SourceForecast.yield_rows`' own rule — a source paying a material pays SOMETHING.
+		h._assert_hud("…and its take is stated in WOOD, with no food unit beside it (%s)"
+				% _summary_text(worked),
+			_summary_text(worked).contains(WOOD_MATERIAL_ID)
+				and not _summary_text(worked).contains(SourceForecast.YIELD_PER_TURN_SUFFIX))
+		# ⛔ **AND THE HOVER SAYS THE SAME THING THE FACE DOES.** The face and the tooltip are two
+		# spellings of ONE row, so a button reading `+0.60 wood` over a hover reading
+		# `+0.00 a turn on average · Sustainable +0.00 /turn` is worse than either being wrong alone —
+		# the player is handed two accounts for one working and no way to tell which is the source's.
+		# **Asserted by EQUALITY against the composed material clause**, which is the only form that
+		# proves BOTH halves at once: the material clause is present, and no food clause survives beside
+		# it. A `contains` would pass on the very string this exists to forbid.
+		h._assert_hud("…and its HOVER is that same take and nothing else (%s)" % worked.tooltip_text,
+			worked.tooltip_text == SourceForecast.POLICY_CAP_MATERIAL_FORMAT % [
+				SourceForecast.format_signed(WORKED_BUTTON_TAKE), WOOD_MATERIAL_ID])
+
+	# ⛔⛔ **STATE workings-just-assigned — THE CREW IS ON, NOTHING HAS BEEN TAKEN YET, AND THE TWO
+	# WEBS ARE READ SIDE BY SIDE.** Issue #650, reported from play: two foresters on a floodplain wood
+	# whose button read `♻ 2 foresters · +0.00 /turn`, while a forage crew assigned the same way read a
+	# real number. **Every other frame in this chapter was authored with a RESOLVED take**, which is
+	# exactly why the harness rendered a figure where the live game rendered `+0.00 /turn` — the broken
+	# state was the one state nothing staged.
+	#
+	# ⛔ **THE CLAIM IS THE UNIT, NOT THE FIGURE, AND THAT IS DELIBERATE.** The NUMBER on the deposit
+	# line comes from the sim's assign-time forecast seed (`core_sim/src/bin/server.rs` →
+	# `seed_source_yield`), which seeds `Forage` and `Hunt` and returns early on `Extract` — so the
+	# forage line here carries a seeded rate and the deposit line carries the zero the wire actually
+	# sends. **The FIGURE is the sim's to state and the UNIT is the client's**, so this frame claims only
+	# the client's half: a working states its MATERIAL and never the food unit, which is true at
+	# `+0.00 wood` and at `+0.60 wood` alike. A frame pinning the zero would be asserting the sim's half
+	# through the client, and would break on a seeded row that is more correct than the one it froze.
+	h._hud.update_band_alerts([_just_assigned_band_fixture()])
+	h._show_tile(_full_land_tile(TileFx.VIS_ACTIVE))
+	await h._settle()
+	await h._save("workings_just_assigned")
+	var fresh_forage := _forage_summary_text()
+	var fresh_wood := _summary_text(
+		_assign_button(h._hud.forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY))
+	# **THE FORAGE HALF — A REAL RATE IN THE FOOD UNIT**, which is the counterexample that made this a
+	# bug rather than a timing artefact: a crew assigned this same turn, on the same card, states a
+	# number.
+	h._assert_hud("a crew put on the PATCH this turn states a seeded food rate (%s)" % fresh_forage,
+		fresh_forage.contains(SourceForecast.YIELD_PER_TURN_SUFFIX)
+			and not fresh_forage.contains(SourceForecast.format_signed(0.0)))
+	# **THE DEPOSIT HALF — THE SAME LINE IN THE WORKING'S OWN ACCOUNT.**
+	h._assert_hud("…and a crew put on the WORKING states its material, not the food unit (%s)"
+			% fresh_wood,
+		fresh_wood.contains(WOOD_MATERIAL_ID)
+			and not fresh_wood.contains(SourceForecast.YIELD_PER_TURN_SUFFIX))
+	# **AND BOTH ARE SUMMARIES AT ALL**, which is what makes the pair a comparison rather than two
+	# separate readings: a missing second line would satisfy the two negatives above on its own.
+	# ⛔ **AND THE HOVER ON A WORKING THAT HAS TAKEN NOTHING SAYS NOTHING**, which is the whole of what
+	# it honestly can. Every clause it used to carry — the average, this turn's figure, the sustainable
+	# ceiling — is the FOOD account, and `systems/labor.rs`' `Extract` arm leaves that at
+	# `SourceYield::ZERO` by construction, so the sentence a player read there was three zeros in an
+	# account the ground does not pay. The material clause is the one true thing this hover has to say
+	# and there is no take to say it about yet. **The face and the hover therefore still agree**: both
+	# name the working's own account and neither names food.
+	var fresh_wood_hover := _assign_button(h._hud.forestry_assign_controls,
+		HudDepositVocab.BRANCH_FORESTRY).tooltip_text
+	h._assert_hud("…and the hover on a working with nothing taken states no food sentence (%s)"
+			% fresh_wood_hover,
+		fresh_wood_hover == "")
+	h._assert_hud("…with both controls carrying a second line on the same card (%s | %s)"
+			% [fresh_forage, fresh_wood],
+		fresh_forage.contains(HudComposeVocab.HARVEST_CREW_LABEL.to_lower())
+			and fresh_wood.contains(
+				HudDepositVocab.crew_noun(HudDepositVocab.BRANCH_FORESTRY).to_lower()))
 
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked
@@ -776,9 +847,17 @@ func _working_band_fixture() -> Dictionary:
 		"kind": HudConst.LABOR_KIND_EXTRACT,
 		"workers": WORKED_BUTTON_CUTTERS,
 		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
-		"material": "wood",
-		"actual_yield": WORKED_BUTTON_TAKE,
-		"sustainable_yield": WORKED_BUTTON_TAKE,
+		"material": WOOD_MATERIAL_ID,
+		# ⛔ **A WORKING'S TAKE IS A MATERIAL, AND THIS FIXTURE USED TO STATE IT AS FOOD** (issue #650).
+		# `actual_yield` is the FOOD account, which `systems/labor.rs`' `Extract` arm leaves at
+		# `SourceYield::ZERO` on purpose so a deposit cannot pollute the band's `food_income`; what a
+		# working pays rides `material_yield`. Carrying `0.60` in the food slot made this frame render
+		# `+0.60 /turn` — the food unit — while claiming in its own comment to show `+0.60 wood`, which
+		# is exactly how a harness authored against the wrong field passed a client that was wrong the
+		# same way. The row now states what the wire states.
+		"actual_yield": 0.0,
+		"sustainable_yield": 0.0,
+		"material_yield": [{"material_id": WOOD_MATERIAL_ID, "amount": WORKED_BUTTON_TAKE}],
 		"workers_needed": WORKED_BUTTON_CUTTERS,
 	})
 	return band
@@ -786,6 +865,11 @@ func _working_band_fixture() -> Dictionary:
 ## Ray's own numbers, so the frame is the card he was reading: two foresters and the take beside them.
 const WORKED_BUTTON_CUTTERS := 2
 const WORKED_BUTTON_TAKE := 0.60
+
+## The wire's own id for the wood seam's material — the `(tile, material)` pair's second half on the
+## deposit row, on the `extract` labor row and on the material payoff the row pays. Spelled once, so a
+## fixture cannot key three surfaces apart with three spellings of one material.
+const WOOD_MATERIAL_ID := "wood"
 
 ## The road those two frames stand on — see `ROAD_PATH_METER` for why it helps nobody and owes
 ## nobody. Shaped as `native/src/dict/routes.rs` writes a road row, with the wire's own
@@ -976,6 +1060,72 @@ func _payoff_values(lines: Array[String]) -> Array[String]:
 		if line.begins_with(prefix):
 			out.append(line.substr(prefix.length()))
 	return out
+
+## **A BAND THAT HAS JUST COMMITTED BOTH CREWS AND RESOLVED NEITHER** — the state issue #650 was
+## reported in, on ONE hex so the two webs are read side by side.
+##
+## The FORAGE row carries what the sim's assign-time seed writes (`seed_source_yield`): the patch's
+## own published take at this crew, `min(crew × patch_per_worker_yield, patch_ceiling_sustain)` off
+## `BaseFx.food_tile_fixture()`, so the fixture quotes the tile card's own numbers rather than a
+## figure invented here.
+##
+## The EXTRACT row carries what the wire actually sends for a working nobody has resolved: a zero food
+## account (`systems/labor.rs`' `Extract` arm leaves `SourceYield::ZERO` there deliberately) and an
+## EMPTY material vector — the seed returns early on `Extract`, so there is nothing in either account
+## yet. **That emptiness is the fixture's whole point**; a row carrying a take here would stage the
+## resolved state the frame above already covers.
+func _just_assigned_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["labor_assignments"] = [
+		{
+			"kind": SourceForecast.LABOR_KIND_FORAGE,
+			"workers": FRESH_FORAGE_CREW,
+			"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+			"floor": SourceForecast.DEFAULT_HARVEST_FLOOR,
+			"actual_yield": FRESH_FORAGE_SEED,
+			"sustainable_yield": FRESH_FORAGE_SEED,
+			"realized_yield": FRESH_FORAGE_SEED,
+			"workers_needed": FRESH_FORAGE_CREW,
+			"overdraws": false,
+		},
+		{
+			"kind": HudConst.LABOR_KIND_EXTRACT,
+			"workers": WORKED_BUTTON_CUTTERS,
+			"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+			"material": WOOD_MATERIAL_ID,
+			"actual_yield": 0.0,
+			"sustainable_yield": 0.0,
+			"material_yield": [],
+			"workers_needed": 0,
+		},
+	]
+	return band
+
+## The gatherers on that patch and what the seed pays them: `min(3 × 0.32, 0.96)` at the shipped
+## `food_tile_fixture` rates, i.e. the patch's whole Sustain ceiling. Stated rather than computed here
+## so the frame asserts against the sim's arithmetic rather than against a second copy of it.
+const FRESH_FORAGE_CREW := 3
+const FRESH_FORAGE_SEED := 0.96
+
+## The forage drawer's standing summary text — **the `Assign … ▸` button's SECOND LINE**, read
+## through the stacked cell exactly as the deposit reader below does, so the pair is compared through
+## one shape.
+func _forage_summary_text() -> String:
+	var controls = h._hud.forage_assign_controls
+	if controls == null or controls.get_child_count() == 0:
+		return ""
+	return _summary_text(controls.get_child(0))
+
+## …and the same read for any stacked action cell (or the `Button` inside one). `""` where the control
+## carries no second line at all, which is the "nobody works this source" state.
+func _summary_text(node: Node) -> String:
+	if node == null:
+		return ""
+	var flow := Q.stacked_action_summary(node)
+	if flow == null or flow.get_child_count() == 0:
+		return ""
+	var label := flow.get_child(0) as Label
+	return label.text if label != null else ""
 
 ## One branch's `Assign … ▸` button, or `null` where the hex carries no deposit of that branch.
 func _assign_button(host: Node, branch: String) -> Button:

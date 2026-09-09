@@ -2020,17 +2020,29 @@ pub enum LaborTarget {
     /// **abandoned**. The material is part of the key because **one tile can hold two deposits** — a
     /// wooded highland holds timber *and* rock — and working one is not working the other.
     ///
-    /// **There is no `floor` beside them, and its absence is the model.** A food web's floor is
-    /// escapement the player dials per row; a deposit's floor is the **rung's**
-    /// (`(1 − recovery_fraction) × capacity`), which is what makes climbing the ladder the way you
-    /// reach deeper. Adding a per-row floor would put a second, contradictory answer on the same
-    /// question.
+    /// **AND IT CARRIES A FLOOR, WHICH DOES NOT CONTRADICT THE RUNG'S** (issue #650). A deposit has
+    /// two floors and they are the same kind of quantity — *an amount left standing* — so they
+    /// compose as a **maximum**, never as two clamps and never as a sum: you stop at whichever is
+    /// higher of what the rung's reach cannot get at and what the player told the crew to leave.
+    /// `extraction::deposit_effective_floor` is the one place that is said.
     Extract {
         tile: UVec2,
         /// The `extraction.json` deposit this crew works — `wood`, `stone`, and whatever the minerals
         /// arc adds. **Which ladder that is, is the deposit's** (`DepositDef::branch`), never the
         /// row's, which is what lets one row kind serve both branches.
         material: String,
+        /// **WHERE THIS CREW STOPS**, as a fraction of the deposit's capacity — [`Self::Forage`]'s
+        /// own field, on a third and fourth branch.
+        ///
+        /// [`DEFAULT_ESCAPEMENT_FLOOR`] when the player named none; validated `0.0..=1.0` at the
+        /// command boundary ([`floor_is_valid`]) and never clamped silently.
+        ///
+        /// **It is offered on BOTH deposit branches, and the sim does not fork on `regrowth_rate`.**
+        /// A floor on a rate-0 quarry is meaningless but harmless — it caps the take and shortens the
+        /// runway, both honestly — and *whether to offer the dial* is a client decision the client
+        /// already makes through the `regrowth_rate > 0` fork it uses for every other deposit
+        /// readout. A sim that refused a floor on stone would be a second place that fork lives.
+        floor: f32,
     },
 }
 
@@ -2128,10 +2140,12 @@ impl LaborTarget {
                 LaborTarget::Extract {
                     tile: a,
                     material: left,
+                    ..
                 },
                 LaborTarget::Extract {
                     tile: b,
                     material: right,
+                    ..
                 },
             ) => a == b && left == right,
             _ => false,
@@ -4128,7 +4142,7 @@ impl BuildSource {
         match target {
             LaborTarget::Forage { tile, .. } => Some(BuildSource::Patch(*tile)),
             LaborTarget::Hunt { fauna_id, .. } => Some(BuildSource::Herd(fauna_id.clone())),
-            LaborTarget::Extract { tile, material } => Some(BuildSource::Deposit {
+            LaborTarget::Extract { tile, material, .. } => Some(BuildSource::Deposit {
                 tile: *tile,
                 material: material.clone(),
             }),
@@ -4169,6 +4183,7 @@ impl BuildSource {
                 LaborTarget::Extract {
                     tile: other,
                     material: worked,
+                    ..
                 },
             ) => tile == other && material == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road

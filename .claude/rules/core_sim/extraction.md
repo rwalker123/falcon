@@ -91,7 +91,7 @@ Logistics  — once per WORKING (`advance_deposits`, phase 4)
   stock    += regrowth(stock, capacity, regrowth_rate(terrain) × regrowth_multiplier(position))
 
 Population — once per BAND ROW on it (the `Extract` arm)
-  floor     = (1 − recovery_fraction(position)) × capacity
+  floor     = max((1 − recovery_fraction(position)) × capacity, escapement × capacity)
   reachable = max(0, stock − floor)
   take      = min(workers × yield_per_worker_turn(position), reachable)
   stock    -= take
@@ -135,6 +135,52 @@ Population — once per BAND ROW on it (the `Extract` arm)
 > the stock rose would pass against the defect), and
 > `an_abandoned_wood_still_recovers_and_an_abandoned_quarry_still_does_not` drives a world with no
 > band in it at all.
+
+## The escapement floor — the rung's and the crew's are ONE floor, taken as a MAXIMUM
+
+An `extract` row carries a `floor` (`LaborTarget::Extract::floor`), the same fraction-of-capacity
+dial `Forage` and `Hunt` have carried since `docs/plan_harvest_floor.md`. A deposit therefore has
+**two** floors, and the one thing to get right about them is how they compose.
+
+> ### ⛔ `max`, NEVER a sum and never two clamps
+>
+> ```text
+> effective_floor = max(deposit_floor(capacity, payoff), escapement × capacity)
+> reachable       = max(0, stock − effective_floor)
+> ```
+>
+> They are **the same kind of quantity — an amount left standing.** `deposit_floor` is what the
+> rung's reach cannot get at (`extraction:gathering` recovers 0.15, so it strands 85% of a rock
+> body); `escapement × capacity` is what the player told the crew to leave. You stop at whichever is
+> greater, so a player floor *below* the rung's changes nothing and one *above* it binds.
+>
+> **Summing them would double-count on every rung** — a gathering crew told to leave half a seam
+> would be refused 135% of it, and a working nobody could cut would read as a config error. Clamping
+> twice is the same arithmetic written out longer.
+>
+> `deposit_effective_floor` is the only place this is said, and `deposit_reachable` is the only seam
+> that reads it — so the take, the runway, the row's `reachable` and the lesson's work predicate all
+> move together. `extraction::tests::the_rungs_floor_and_the_crews_compose_as_a_maximum` asserts it
+> from both sides *and* against the sum, on two payoffs chosen so one number binds each way.
+
+**The floor is on BOTH branches and the sim does not fork on `regrowth_rate`.** A floor on a rate-0
+quarry is meaningless but harmless — it caps the take and shortens the runway, both honestly — and
+*whether to offer the dial* is a client decision made through the `regrowthRate > 0` fork the client
+already uses for every other deposit readout. A sim that refused a floor on stone would be a second
+place that fork lives.
+
+**Grammar:** `assign_labor <f> <b> extract <x> <y> <material> [floor] <workers>` — the `hunt` arm's
+shape with a material where the herd id goes, disambiguated **by tail length** because the free-form
+token is read positionally first and is never in the optional slot. It fails **closed** on the shared
+`components::floor_is_valid` bound (`0.0..=1.0`, finite), struck once at the top of
+`handle_assign_labor` for all three webs, and a retired stance word is refused **by name**.
+
+**The working stamps the floor its crews worked to** — `DepositSource::last_floor`,
+`last_take`'s twin, cleared once per turn by `advance_deposits` beside it. ⛔ **The aggregate across
+bands is a MINIMUM where the take's is a sum**: a floor is not an amount to add up, two bands each
+stop at their own, and the stock comes to rest at the lowest of them. `None` is *nobody cut this
+working this turn* and reads as `STRIP_IT_BARE` — the **identity** of the `max` above, so an
+unworked deposit publishes exactly the rung's own reach, as it did before the dial existed.
 
 > ### The seed is the point the curve is READ AT, never a lift on the stock
 > The logistic term is zero at a stock of zero, so a wood cut clean would stick there for ever — the
@@ -451,10 +497,21 @@ Three lessons, on the ladder's own *practise rung N to unlock rung N+1* shape. D
 **Conservationism is learned by being in a position to ruin a wood**, which is why `felling` teaches
 it: `felling` is the first rung on either branch at which over-cutting is possible.
 
-**A deposit crew learns at the plain rate.** `learn_multiplier` prices *calories given up against
-lessons gained* and is the player's own escapement dial on a food-web row; a deposit pays no calories
-and its floor is the **rung's**, not the row's, so there is nothing to trade.
-`intensification::PRACTICE_AT_THE_PLAIN_RATE` is the named fixed point the earn site passes.
+**A deposit crew's lesson rides its own floor, through the seam both food webs go through.**
+`intensification::learn_multiplier` is `floor / MSY_BIOMASS_FRACTION` and belongs to no web: it
+prices *what you left standing* against *what you learned*, and an `extract` row carries the same
+dial a Forage row does. So a crew told to leave more of a wood standing learns conservationism
+faster, in proportion; one told to strip it learns nothing (`learn_multiplier(0)` is `0`), and one at
+the top of the dial has no escapement room, so the work predicate is false and watching teaches
+nothing either. Both earn sites — the live credit in the `Extract` arm and
+`source_is_still_teaching` in the shedding order — pass the row's floor.
+
+`intensification::PRACTICE_AT_THE_PLAIN_RATE` was the named fixed point they passed instead, on the
+reading that *a deposit carries no floor*. That reading is what #650 removed, so the constant went
+with it — a named fixed point with no caller is a second answer waiting to be reached for. The
+surviving *"this source has no dial"* reading is `systems::labor::credit_managed_rung_lesson`'s, and
+it belongs to **rung 3**, which is a claim about a take that draws nothing down rather than about a
+branch.
 
 ## Config files
 
@@ -523,6 +580,78 @@ is per frame.
 stock and the position and nothing that could be derived. A tile the capture's sweep never saw
 publishes **nothing rather than a row at zero**, since every number on the row is a function of that
 ground.
+
+### The floor and the chart the client draws it on
+
+Four fields ride the row for the escapement instrument, and three of them are **named after their
+`ForagePatchState` twins** so the client's chart builder is reused rather than forked:
+
+| field | what it is |
+|---|---|
+| `floor` | where **this turn's crews** stopped, as a fraction of `capacity` — `DepositSource::last_floor`, deepest-first across the bands cutting it. Not a restatement of `LaborAssignment.floor`, which is per **band row**: that says what one band asked for, this says where the stock came to rest |
+| `rungFloorFraction` | the **rung's own** floor in the same units, `1 − recovery_fraction`. ⛔ **Compose the two as a MAXIMUM** — a chart that added them would draw a gathering crew stopping 85% of a seam short of where it really stops |
+| `perWorkerBiomass` | what ONE cutter moves per turn at the standing rung, in the material's own units. No seasonal weight and no take kit on either branch, so unlike a patch's it is the rung's rate flat and is never `0` on a live rung |
+| `regrowthSamples` | the deposit's own growth curve, sampled on the **same implicit x-axis** as the patch and herd curves (`snapshot::subsistence::regrowth_sample_fraction`), through `deposit_regrowth` — the seam `renew_deposit` advances the stock with, at the rung's scaled rate |
+
+⛔ **A QUARRY'S CURVE IS ALL ZEROS AND IS STILL PUBLISHED.** Rock's rate is `NEVER_RENEWS`, so the
+delta is exactly `0` at every reading point — *this does not grow*. An **empty** vector is the
+different claim *no curve was sent*, which is what a client blanks its chart on, so the codec's
+`is_empty → None` rule and this all-zero reading are two distinct states and must stay so. No sample
+is ever negative: a deposit has no Allee term, so the curve's shape is the plant one's.
+
+**The client has no `ecologyPhase` / `collapseFraction` / `stressedFraction` to draw zones from,
+because a deposit has no ecology phase in the sim.** Nothing classifies a working as thriving or
+collapsing, and inventing a band ladder to fill a chart would be a mechanism with no owner. The
+chart's phase zones are simply absent there.
+
+**Nor a `buildDestinationCapacity` twin**, and that absence is provable rather than pending: no rung
+on either branch may raise `capacity` (`no_rung_on_either_branch_may_raise_capacity`), so `floor ×
+capacity` cannot climb under a build the way a gentling herd's does. There is nothing for a
+*"the floor is moving"* flag to mark.
+
+**Every repeated field on this row must be seeded in `xtask/src/decode_fixture.rs`** — its
+`assert_no_empty_arrays` gate is what stops an appended vector reaching the client as nothing at all,
+and `regrowthSamples` is seeded at `REGROWTH_CURVE_SAMPLES` beside the patch and herd curves.
+
+### A freshly-assigned deposit crew is seeded, and it is seeded in MATERIALS
+
+`server::seed_source_yield` writes the touched source's pre-commit forecast into
+`LaborAllocation.last_yields` right after `set_assignment`, which is the only reason a fresh forage
+crew reads a real number instead of `+0.00`. The `Extract` arm used to `return` outright, on the
+reading that *a deposit pays no food, so there is no row to seed*.
+
+**That was right about the food and wrong about the row.** `actualYield` is unconditionally on the
+wire at `0.0` whether or not the seed runs, so declining to seed did not remove a `+0.00` food line —
+it removed the **material figure beside it**, and a working the player had just staffed published
+nothing at all until the turn resolved.
+
+The arm now seeds `SourceYield::materials` alone, through the take's own seams: **regrow first, then
+take** (`renew_deposit` on a clone, then `deposit_take` at the row's floor), which is
+`yield-forecast.md`'s *"a forecast regrows first"* rule — the seed is read between turns, so the live
+stock is the one this turn's take already drew down. A working nobody has opened is **derived** from
+`DepositSource::opening`, `snapshot::deposits`' own rule, which is what gives the commonest case of
+all — a crew put on fresh ground — a figure at all.
+
+⛔ **`actual` stays `SourceYield::ZERO`.** `PopulationCohortState::food_income` is `Σ actual` and one
+side of the pinned larder identity, so a working must contribute nothing to it, seeded or resolved.
+The turn's own `Extract` arm writes `row.materials` and touches no other field, and the seed mirrors
+it exactly — which is what keeps `forecast == actual` true per component here.
+
+> #### `DepositState.actualTake` is NOT seeded, and that is a decision
+>
+> It is `DepositSource::last_take`: a **source-level accumulator**, `+=` across every band cutting the
+> working and cleared once per turn by `advance_deposits`. Seeding it at assign time cannot be
+> reconciled with either of the two things commands actually do — a second `assign_labor` on the same
+> row would double it under `+=` and a second band's would clobber it under `=`, and both fail
+> silently. It is also the denominator of `turnsRemaining` and one half of the over-cut pair, so a
+> seeded value would put a projection on both.
+>
+> So `actualTake` keeps meaning **what was cut**, and `DEPOSIT_RUNWAY_NO_TAKE` keeps meaning *nobody
+> is cutting it* — both of which are true of a just-assigned working. What the client needs to say
+> *"this crew will cut X a turn"* is on the wire already: the crew is on the assignment row
+> (`workers`), the rate it will cut at is the seeded `materialYield` beside it, and the runway is
+> `reachable ÷ that rate` — linear and exact, which is the side of the boundary rule where the sim
+> ships terms and the client evaluates them.
 
 ### `regrowthRate` is the fork, and `branch` is not
 

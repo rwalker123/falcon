@@ -1138,6 +1138,14 @@ fn create_deposits<'a>(
             let build_blocked_reason = builder.create_string(&deposit.build_blocked_reason);
             let build_kit_id = builder.create_string(&deposit.build_kit_id);
             let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
+            // **Absent, not empty, where the sim published no curve** — `regrowthSamples`' own rule
+            // one table over: an empty vector is *"no curve was sent"* and a client blanks its chart
+            // on it, where a quarry's all-zero curve is the live reading *"this does not grow"*.
+            let regrowth_samples = if deposit.regrowth_samples.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&deposit.regrowth_samples))
+            };
             fb::DepositState::create(
                 builder,
                 &fb::DepositStateArgs {
@@ -1148,6 +1156,10 @@ fn create_deposits<'a>(
                     stock: deposit.stock,
                     capacity: deposit.capacity,
                     reachable: deposit.reachable,
+                    floor: deposit.floor,
+                    rungFloorFraction: deposit.rung_floor_fraction,
+                    perWorkerBiomass: deposit.per_worker_biomass,
+                    regrowthSamples: regrowth_samples,
                     regrowthRate: deposit.regrowth_rate,
                     rung: Some(rung),
                     buildFraction: deposit.build_fraction,

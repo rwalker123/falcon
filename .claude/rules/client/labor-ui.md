@@ -1910,6 +1910,64 @@ none to nominate), and the material rows are what make the readout non-empty any
 `herd_hunt_both_products`, whose deer prints a live FOOD line: "renders nothing" and "is correctly
 silent" are one picture, and only the paired frame separates them.
 
+### …and a WORKED ROW's zero account is decided by its KIND, because a row carries no vector
+
+`zero_account_of` above reads the per-biomass yield VECTOR, which a **labor assignment** does not
+carry — so `source_yield_readout` hardcoded food and, on the one source kind whose account is neither
+food nor fodder, printed the false zero §7.7 exists to remove. A working pays a MATERIAL: the sim's
+`systems/labor.rs` `Extract` arm leaves `SourceYield::ZERO` in the food slot deliberately so a deposit
+cannot pollute `food_income`, and `actual_yield` is nonetheless always on the wire at `0.0`, so
+`♻ 2 foresters · +0.00 /turn` reached the tile card's button (issue #650, reported from play).
+
+`SourceForecast.row_zero_account(m, kind)` is that decision and it is the same rule entered from the
+row side: **food for every kind, and the row's own `material` on `extract`**, `YIELD_ACCOUNT_NONE`
+where the row names none. It reads `ASSIGNMENT_MATERIAL_KEY`, which is already half of an extract
+row's identity, so nothing new crosses the wire for it.
+
+⛔ **AN ACCOUNT THE TAKE VECTOR DOES NOT CONTAIN IS STILL AN ACCOUNT.** `yield_rows` built its pairs
+from food, fodder and the material rows the source *paid*, so a `zero_account` naming a material that
+paid nothing could never be emitted and the line went silent instead. Food and fodder are pairs
+unconditionally, which is why that branch was unreachable until a material became nominable. The
+missing pair is now appended at zero (`_pairs_name_account` is the duplicate guard), and the
+surviving-zero rule is otherwise untouched: `empty` is computed over the pairs, so the moment any
+component is non-empty the synthesized zero is suppressed exactly as the food zero is beside a
+material row.
+
+⛔ **THE HOVER IS THE SAME ROW AND TOOK THE SAME FORK.** `source_yield_readout` composes a face and a
+tooltip out of one row, so a button reading `+0.60 wood` over a hover reading `+0.00 a turn on average
+· Sustainable +0.00 /turn` is worse than either being wrong alone: the player is handed two accounts
+for one working with nothing saying which is the source's. `zero_account` is therefore resolved ONCE at
+the top of the block and `states_food` is the one question every food-scalar clause turns on — the
+rates clause, the `actual_yield_low/high` band (on the tooltip **and** in the `muted_note` that mirrors
+it), and the renewable/sustainable/overdraw clause. All four spell `actual_yield`, `sustainable_yield`,
+`realized_yield` or the band, and all four are the structural zeros the `Extract` arm leaves behind.
+
+**What a working's hover states instead is its MATERIAL clause, which was already unconditional** — so
+a resolved working reads exactly `+0.60 wood/turn` and one that has taken nothing states nothing at
+all. That silence is deliberate: the material clause is the one true thing the hover has, and there is
+no take to say it about yet. **`_joined_clause` is what makes it safe** — the fodder and material
+clauses used to prepend `COMPONENT_SEPARATOR` unconditionally, which held only because the food clause
+above them always ran first, so a working's hover would have opened with a dangling ` · `. On a food
+row the tooltip is never empty at that point, and every existing string is byte-identical.
+
+⛔ **AND THE WASTED NOTE'S TEST IS THE HUNT WEB, NOT "NOT THE PLANT WEB".** Its own paragraph says
+ANIMAL WEB ONLY and the condition said `kind != LABOR_KIND_FORAGE`, which admitted `extract` the day a
+third source kind existed — `wasted_yield` on a working being the same structural food zero, spelled
+through `format_yield`'s `/turn`. It is inert today (the `Extract` arm publishes `SourceYield::ZERO`),
+so tightening it asserts the intent rather than fixing a visible line: the note is about meat left to
+rot, which only a kill can do.
+
+**Two clauses on that hover are deliberately UNTOUCHED**, and both are honest on a working: the
+overstaff note (`only N of M working` — a head count, unit-free) and the fodder clause, which is
+suppressed by its own non-zero gate today and would correctly state a working that ever paid feed.
+
+**The FIGURE on that line is the sim's, not this layer's.** A brand-new forage row shows a real number
+because `core_sim/src/bin/server.rs` → `seed_source_yield` writes the source's pre-commit forecast
+into `LaborAllocation.last_yields` the moment the allocation is mutated; it matches `Forage` and
+`Hunt` and returns on every other target. So the client's job here is the ACCOUNT and the UNIT, and a
+client-side projection put behind one kind would be the forecast/actual split this seam exists to
+close, rebuilt one layer out.
+
 ### Per-account divergence is GONE on the plant web, and that is the model
 
 A plant take is one BIOMASS quantity through three fixed rates (`forage::forage_take`: *"both operands

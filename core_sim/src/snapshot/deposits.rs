@@ -1,12 +1,13 @@
 use super::*;
 
 use crate::extraction::{
-    deposit_build_fraction, deposit_keeping_basis, deposit_measure,
-    deposit_neglect_grace_remaining, deposit_payoff, deposit_reachable, deposit_runway,
-    deposit_sustainable_take, deposit_upkeep_workers_needed, tile_deposit_capacity,
+    deposit_build_fraction, deposit_floor_fraction, deposit_keeping_basis, deposit_measure,
+    deposit_neglect_grace_remaining, deposit_payoff, deposit_reachable, deposit_regrowth,
+    deposit_runway, deposit_sustainable_take, deposit_upkeep_workers_needed, tile_deposit_capacity,
     tile_deposit_regrowth, DepositRegistry, DepositSource,
 };
 use crate::extraction_config::NO_DEPOSIT;
+use crate::snapshot::subsistence::{regrowth_sample_fraction, REGROWTH_CURVE_SAMPLES};
 
 /// **The countdown a working with nothing at risk publishes.** Paired with
 /// `has_neglect_grace: false`, which is the field a reader must check — this number is only here
@@ -140,6 +141,39 @@ pub(crate) fn deposit_states<'a>(
     rows
 }
 
+/// **THE DEPOSIT'S OWN PER-TURN REGROWTH, SAMPLED ACROSS ITS CAPACITY** — the third curve on the
+/// wire beside `patch_regrowth_samples` / `herd_regrowth_samples`, on the same implicit x-axis
+/// ([`regrowth_sample_fraction`]) so one client interpolation serves all three.
+///
+/// Each entry is a **delta in the material's own units**: what one Logistics pass adds at that
+/// standing stock, through [`deposit_regrowth`] — the same seam `renew_deposit` advances the stock
+/// with, at the rung's own scaled rate, so a coppiced wood's curve is the one its rung bought.
+///
+/// ⛔ **A QUARRY'S SAMPLES ARE ALL ZERO, AND THAT IS THE HONEST ANSWER RATHER THAN AN ABSENCE.**
+/// Rock's rate is `NEVER_RENEWS`, so the delta is exactly `0` at every reading point and the client
+/// draws a flat curve — *this does not grow*. An empty vector would say *no curve was sent*, which
+/// is a different claim and the one a client blanks its chart on.
+///
+/// **No sample is ever negative**: a deposit has no Allee term, so it is the plant curve's shape
+/// rather than the herd curve's, and the seeded reading inside `deposit_regrowth` is what lets a
+/// wood cut clean come back while leaving rock at zero.
+fn deposit_regrowth_samples(
+    source: &DepositSource,
+    ground: &Tile,
+    capacity: f32,
+    config: &crate::extraction_config::ExtractionConfig,
+    ladder: &LadderConfig,
+) -> Vec<f32> {
+    let payoff = deposit_payoff(source.standing(), ladder);
+    let rate = tile_deposit_regrowth(config, &source.material, ground) * payoff.regrowth_multiplier;
+    (0..REGROWTH_CURVE_SAMPLES)
+        .map(|index| {
+            let standing = regrowth_sample_fraction(index) * capacity;
+            deposit_regrowth(standing, capacity, rate, config.seed_fraction) - standing
+        })
+        .collect()
+}
+
 /// **ONE `(tile, material)` ROW**, off whichever [`DepositSource`] the caller resolved — the live
 /// working where a band opened one, and the derived opening state where none has been.
 ///
@@ -173,9 +207,29 @@ fn deposit_row(
         branch: source.rung().branch().as_str().to_string(),
         stock: source.stock,
         capacity,
-        // **What THIS rung can get at**, which is never simply the stock: a rung that cannot reach
-        // the whole seam leaves stock it cannot take, and climbing is how you reach deeper.
-        reachable: deposit_reachable(source.stock, capacity, &payoff),
+        // **What the CREWS ON IT can get at**, which is never simply the stock: a rung that cannot
+        // reach the whole seam leaves stock it cannot take, climbing is how you reach deeper — and
+        // since #650 a crew told to leave more standing than the rung already cannot reach binds
+        // instead. `deposit_reachable` composes the pair as a maximum, and it is the only place
+        // that is done.
+        reachable: deposit_reachable(source.stock, capacity, &payoff, source.escapement_floor()),
+        // **THE FLOOR THIS TURN'S CREWS WORKED TO**, deepest-first across the bands cutting it —
+        // the working's own reading of `LaborAssignmentState::floor`, which is per BAND ROW. Both
+        // ship: a row says what one band asked for, this says where the stock actually came to rest.
+        floor: source.escapement_floor(),
+        // …and **THE RUNG'S OWN FLOOR, IN THE SAME UNITS**, so a client can compose the two exactly
+        // as the sim does. ⛔ **THEY ARE A MAXIMUM, NEVER A SUM**: a chart that added them would
+        // draw a crew stopping 85% of a seam short of where it really stops on the gathering rung.
+        rung_floor_fraction: deposit_floor_fraction(&payoff),
+        // **WHAT ONE CUTTER MOVES PER TURN AT THIS RUNG**, in the material's own units — the deposit
+        // twin of `ForagePatchState::per_worker_biomass` and named after it, because the client's
+        // crew arithmetic (*clear it now* / *hold it after*) is the same division on either web.
+        // There is no seasonal weight and no kit term on this branch, so it is the rung's rate flat.
+        per_worker_biomass: payoff.yield_per_worker_turn,
+        // **THIS DEPOSIT'S OWN GROWTH CURVE, SAMPLED** — the third model on the wire's one
+        // x-axis, and a **quarry's is all zeros** rather than absent: *this does not grow* is a
+        // different claim from *no curve was sent*, and the rate is what a client forks on.
+        regrowth_samples: deposit_regrowth_samples(source, ground, capacity, config, ladder),
         // ⛔ **THE FIELD THAT DECIDES WHICH READOUT THE CLIENT DRAWS**, and it is the ground's rate
         // scaled by the rung — not the branch. A flint scatter and a quarry are both `extraction`
         // and land on opposite sides of it.
