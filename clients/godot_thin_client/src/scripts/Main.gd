@@ -57,6 +57,15 @@ var _reservations: Dictionary = {}
 # The save channel (list / save / load / delete). Owned here for the same reason `ForecastQuery`
 # is: the seam holds no socket, and the pause menu that drives it must not reach the network.
 var save_slots: SaveSlots = null
+# **THE SEAT.** Claimed once, at boot, on the long-lived command connection — the server takes the
+# faction every command acts on from the seat that CONNECTION holds, so without a grant nothing the
+# player clicks reaches the world (`.claude/rules/client/command-transport.md`). Owned here because
+# `Main` is where the command client is built and where a refusal has to be reported.
+var seat_claim: SeatClaim = null
+# Whether a seat refusal has been put in front of the player. Held so the RECOVERY can be reported
+# too: the link re-claims on reconnect, and a standing "orders will not be obeyed" alert that has
+# since become false is worse than the alert never appearing.
+var _seat_refusal_reported: bool = false
 # The slot this run is being LOADED from ("" = this run generates a world instead). Set from the
 # GameLaunch handoff in _build_world_request; it is what makes _try_send_world_request send
 # `load_game` rather than `new_game`, through the same retry and the same reveal gate.
@@ -151,6 +160,9 @@ const WORKBENCH_COMMAND_MESSAGE := "Workbench: %s sent."
 ## Label the Workbench's status lines wear on the event dock's System channel.
 const WORKBENCH_LOG_LABEL := "Workbench"
 const LOADING_OVERLAY_TEXT = "Generating world…"
+## What the System channel says when a refused or lost seat comes back — the retraction of
+## `SeatClaim.REFUSED_HEADLINE`, and the reason that headline is safe to raise on a transient fault.
+const SEAT_RECOVERED_MESSAGE = "Your people's seat is held again — orders are being obeyed."
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
@@ -288,6 +300,17 @@ func _ready() -> void:
         inspector.call("set_command_client", command_client, command_err == OK)
     if inspector != null and inspector.has_method("set_hud_layer"):
         inspector.call("set_hud_layer", hud)
+    # **THE SEAT IS CLAIMED BEFORE THE WORLD IS ASKED FOR**, and that order matters in one direction
+    # only: `new_game` names no faction, so it is legal from an unseated connection, but every command
+    # the player can issue afterwards is not. Claiming first means the grant is in flight before the
+    # first band exists rather than after the player has already clicked something. Faction 0 is always
+    # in the roster (`FactionRegistry::with_ai_factions`), so a world rebuild — `new_game`, a load —
+    # keeps this claim rather than dropping it.
+    seat_claim = SeatClaim.new()
+    seat_claim.set_sender(Callable(self, "_claim_seat"))
+    seat_claim.seated.connect(_on_seat_seated)
+    seat_claim.refused.connect(_on_seat_refused)
+    seat_claim.request(HudConst.PLAYER_FACTION_ID)
     # The save channel rides the same command client. Built BEFORE the world request, because the
     # world request may itself be a `load_game` that goes out through this seam.
     save_slots = SaveSlots.new()
@@ -2185,11 +2208,24 @@ func _on_hud_recall_expedition(payload: Dictionary) -> void:
 func _on_hud_split_band(payload: Dictionary) -> void:
     _send_formatted_command(format_split_band(payload))
 
-func _on_hud_next_turn(steps: int) -> void:
-    var clamped_steps: int = max(1, steps)
-    var line := "turn %d" % clamped_steps
-    var suffix := "s" if clamped_steps != 1 else ""
-    _send_runtime_command(line, "Advance %d turn%s." % [clamped_steps, suffix])
+## **END TURN SUBMITS THIS SEAT'S ORDERS; IT DOES NOT RESOLVE THE WORLD.**
+##
+## It used to send `turn 1` — *"resolve the world now"* — which under seats is the **host's** verb and
+## is refused from a seated connection (`SeatRegistry::may_issue_host_verb`): with two players either
+## one could end a turn the other was still taking. `order <faction> ready` says only *"I am done"*,
+## and the server resolves once every occupied seat has said it, or when
+## `seat_turn_timeout_seconds` runs out (`.claude/rules/core_sim/factions.md` → "Waiting is the
+## default"). With one player and vacant rivals that is the same instant, so single-player pacing is
+## unchanged: vacant seats never hold the turn.
+##
+## `steps` is unused because a seat cannot submit a BATCH — "I am done" is not a number. The turn orb
+## is the only emitter and it always asks for one; advancing several at once stays the Inspector's
+## host verb (`Inspector._send_turn`, which keeps `turn N`).
+func _on_hud_next_turn(_steps: int) -> void:
+    _send_runtime_command(
+        "order %d ready" % HudConst.PLAYER_FACTION_ID,
+        "Turn submitted."
+    )
 
 ## The Inspector's dev toolbar / autoplay advanced a turn. That path is deliberately NOT gated on
 ## a pending narrative fork (docs/plan_the_telling.md §1a) — but it must not be SILENT: note the
@@ -3004,6 +3040,51 @@ func _send_query(request_id: int, ask: Dictionary) -> bool:
         return false
     return command_client.send_query(request_id, ask)
 
+## Put the seat claim on the command connection. Injected into `SeatClaim` as its sender; `true` means
+## the ask reached the bridge, never that the seat was granted.
+func _claim_seat(faction_id: int, request_id: int) -> bool:
+    if command_client == null:
+        return false
+    return command_client.claim_seat(faction_id, request_id)
+
+
+## The seat is ours: every faction-bearing command this client sends will now be obeyed. Nothing is
+## shown — a working game is the expected state and does not deserve a notification — but it IS logged,
+## because a grant that never arrives is otherwise indistinguishable from one that did.
+func _on_seat_seated(faction_id: int) -> void:
+    print("[Seat] faction %d seated on the command connection." % faction_id)
+    if not _seat_refusal_reported:
+        return
+    # The link reconnected and got the seat back. The alert that said otherwise is now false, so the
+    # same channel that raised it retracts it — and the overlay, if the player is still on it, goes
+    # back to saying what is actually happening.
+    _seat_refusal_reported = false
+    _note_system_event(SEAT_RECOVERED_MESSAGE, "", false, HudEventVocab.KIND_SYSTEM)
+    if loading_overlay != null and loading_overlay.visible:
+        _set_loading_overlay_text(LOADING_OVERLAY_TEXT)
+
+
+## **THE SEAT IS NOT OURS, AND THIS IS THE ONE PLACE THE PLAYER LEARNS IT.**
+##
+## Two surfaces, because the answer can land on either side of the world reveal:
+##   * the **event dock's System channel**, as an ALERT — the client's standing surface for a fault the
+##     player did not cause (the same channel a dropped command socket and a `resync` report on), and
+##     the only one still there once the game is running;
+##   * the **loading overlay**, while it is still up, re-worded exactly as a refused load re-words it.
+##     "Generating world…" is a lie when the world that appears will not take your orders, and the
+##     overlay is what the player is looking at.
+##
+## Deliberately NOT a modal: the client cannot fix this and neither can the player, and a dialog would
+## only take away the one thing left — reading the map of a game they cannot command.
+func _on_seat_refused(faction_id: int, error: String) -> void:
+    var reason := SeatClaim.error_prose(error)
+    push_warning("seat claim for faction %d refused: %s" % [faction_id, error])
+    _seat_refusal_reported = true
+    _note_system_event(SeatClaim.REFUSED_HEADLINE, reason, true, HudEventVocab.KIND_SYSTEM)
+    if loading_overlay != null and loading_overlay.visible:
+        _set_loading_overlay_text(reason)
+
+
 ## Drain the forecast answers that landed this frame into the HUD's seam, and let it retire any
 ## superseded answer whose stale window has closed. **This is the only path an answer takes** — a
 ## query deliberately triggers no re-capture server-side, so no snapshot will ever carry one.
@@ -3017,6 +3098,8 @@ func _pump_forecast_queries() -> void:
     var replies: Array = command_client.poll_query_replies()
     if save_slots != null:
         save_slots.deliver(replies)
+    if seat_claim != null:
+        seat_claim.deliver(replies)
     if hud == null or not hud.has_method("forecast_query"):
         return
     var query: ForecastQuery = hud.call("forecast_query")

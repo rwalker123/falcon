@@ -2,6 +2,7 @@
 //! the decode work itself lives in [`crate::snapshot`] and [`mod@crate::dict`].
 
 pub(crate) mod command;
+pub(crate) mod command_link;
 pub(crate) mod decoder;
 pub(crate) mod query;
 pub(crate) mod script_host;

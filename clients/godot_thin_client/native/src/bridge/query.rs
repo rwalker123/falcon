@@ -7,10 +7,15 @@
 //!
 //! ## Why a query gets its own worker, and its own connection
 //!
-//! `transmit_proto_command` is fire-and-forget: connect, write one frame, drop the socket. A query
-//! must **hold the connection open** until the answer arrives, because that is where the answer is
-//! written. So it cannot ride the ordinary command path, and it must not ride the ordinary command
-//! *thread* either — a query that waits on the sim would put every queued order behind it.
+//! A query must **hold the connection open** until the answer arrives, because that is where the
+//! answer is written, and it must not ride the ordinary command *thread* — a query that waits on the
+//! sim would put every queued order behind it. It also must not ride the **seated** command link
+//! (`bridge/command_link.rs`): that connection carries this client's seat, and a forecast the sim
+//! answers between turns has no business bounding how long a seat's orders queue behind it.
+//!
+//! **A query names no commanding faction**, so an unseated round trip is answered exactly as a seated
+//! one is — which is what makes a connection per question still correct here while it is no longer
+//! correct for a command.
 //!
 //! ## **A QUERY TRIGGERS NO SNAPSHOT, so nothing else will arrive to render off**
 //!
@@ -94,8 +99,9 @@ pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
 /// `default_ai_faction_count` and `max_ai_faction_count`.
 pub(crate) const QUERY_KIND_FACTION_CAPACITY: &str = "faction_capacity";
 /// **The seat claim's answer kind** — *"do I drive this faction?"*. A `ClaimSeatCommand` is a command
-/// that answers on this envelope, exactly as the save verbs do; only the ANSWER direction is decoded
-/// here, because nothing in the client sends a claim yet.
+/// that answers on this envelope, exactly as the save verbs do — but it is the one answer this module
+/// does not READ: the claim goes out on the seated command link, which owns that socket for the
+/// session and hands the decoded answer here through [`deliver_reply`] (`bridge/command_link.rs`).
 pub(crate) const QUERY_KIND_SEAT_CLAIM: &str = "seat_claim";
 
 /// **The transport's OWN failure token**, and it is deliberately in the same vocabulary as the
@@ -125,6 +131,14 @@ struct QueryAnswer {
 
 static QUERY_SENDER: OnceLock<Sender<QueryRequest>> = OnceLock::new();
 static QUERY_ANSWERS: OnceLock<Mutex<Receiver<QueryAnswer>>> = OnceLock::new();
+/// **The write end of the drain, kept so a SECOND worker can put an answer on it.**
+///
+/// The forecast worker owns one clone of this sender outright; the seated command link
+/// ([`crate::bridge::command_link`]) reads replies off a socket this module never opened, and its
+/// answers have to reach the same once-a-frame drain — a seat claim is answered on the command
+/// connection, not on a query round trip. `Mutex` rather than a bare `Sender` because an `mpsc`
+/// sender is `Send` but not `Sync`, and this is a `static`.
+static ANSWER_SENDER: OnceLock<Mutex<Sender<QueryAnswer>>> = OnceLock::new();
 
 /// Encode a query from the Dictionary the GDScript seam composes, and hand it to the worker.
 ///
@@ -290,6 +304,27 @@ pub(crate) fn poll_replies() -> VarArray {
         out.push(&answer_to_dict(&answer).to_variant());
     }
     out
+}
+
+/// **Put an answer this module did not ask for onto the same drain.**
+///
+/// The seated command link reads its socket's reply direction itself — that socket carries a seat
+/// claim's answer, and it stays open for the session rather than for one round trip — so it needs a
+/// way onto the one hop the main thread already drains once a frame
+/// (`CommandBridge.poll_query_replies`). Correlation is unchanged: every seam matches an answer by
+/// `request_id` against its own reserved block (`QueryRequestIds`), so where the answer was READ
+/// makes no difference to who it belongs to.
+pub(crate) fn deliver_reply(request_id: u64, reply: Result<QueryReply, String>) {
+    // Standing the query sender up is what creates the channel, exactly as `query_answers` does it:
+    // a claim answered before the first forecast would otherwise find nothing to send on.
+    let _ = query_sender();
+    let Some(sender) = ANSWER_SENDER.get() else {
+        return;
+    };
+    let Ok(sender) = sender.lock() else {
+        return;
+    };
+    let _ = sender.send(QueryAnswer { request_id, reply });
 }
 
 fn query_worker(requests: Receiver<QueryRequest>, answers: Sender<QueryAnswer>) {
@@ -625,6 +660,7 @@ fn query_sender() -> Sender<QueryRequest> {
             let (requests_tx, requests_rx) = mpsc::channel::<QueryRequest>();
             let (answers_tx, answers_rx) = mpsc::channel::<QueryAnswer>();
             let _ = QUERY_ANSWERS.set(Mutex::new(answers_rx));
+            let _ = ANSWER_SENDER.set(Mutex::new(answers_tx.clone()));
             thread::Builder::new()
                 .name("forecast-query-worker".into())
                 .spawn(move || query_worker(requests_rx, answers_tx))
