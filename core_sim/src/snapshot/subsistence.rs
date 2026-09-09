@@ -1616,6 +1616,13 @@ pub(crate) fn snapshot_forage_patches(
             // the fields below.
             let basket =
                 patch_composition_info(patch, tile_composition, forage, flora, tile_quotes);
+            // **ONE decomposition, two rates struck off it.** `material_per_biomass` and
+            // `per_worker_material` differ only in the biomass scalar they are quoted per, so the
+            // per-species decomposition beneath them is the same value twice. It was computed twice
+            // — and it is not cheap: `patch_material_yields` allocates the patch's live basket
+            // (`patch_composition`) and then a row per species. See `turn-profiling.md`.
+            let material_yields =
+                crate::forage::patch_material_yields(patch, tile_composition, flora, forage);
             ForagePatchState {
                 x: patch.tile.x,
                 y: patch.tile.y,
@@ -1723,7 +1730,7 @@ pub(crate) fn snapshot_forage_patches(
                 // is what a rate means; their readings are never averaged, because that would invent
                 // a plant that is not growing there. The readings ride the batches the take creates.
                 material_per_biomass: material_rates(
-                    &crate::forage::patch_material_yields(patch, tile_composition, flora, forage),
+                    &material_yields,
                     ONE_UNIT_OF_BIOMASS,
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
@@ -1731,7 +1738,7 @@ pub(crate) fn snapshot_forage_patches(
                 // exactly as `per_worker_yield` folds it — so this is honestly EMPTY in a dead
                 // season, and a client must not divide by it.
                 per_worker_material: material_rates(
-                    &crate::forage::patch_material_yields(patch, tile_composition, flora, forage),
+                    &material_yields,
                     forage_per_worker_biomass(equipped_gather_rate, seasonal),
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
