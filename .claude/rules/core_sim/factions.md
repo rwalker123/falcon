@@ -363,10 +363,45 @@ and it holds no seat, which is exactly right for what it sends: world verbs that
 
 **A claim is `CommandPayload::ClaimSeat` (proto field 71) and its answer rides `QueryReplyEnvelope`**
 — the command socket's one way back, the same envelope a save's answer uses. No new port, no second
-socket. The answer carries the connection id back as `seat_token`: the claim is what ties a seat's
-command socket to its stream socket, and the token is what the **stream socket presents** —
-`network.rs`'s greeting, which `snapshot-socket.md` describes. So the order is fixed: claim first,
-then connect the stream and greet with the token you were handed.
+socket. The answer carries a freshly minted `seat_token`: the claim is what ties a seat's command
+socket to its stream socket, and the token is what the **stream socket presents** — `network.rs`'s
+greeting, which `snapshot-socket.md` describes. So the order is fixed: claim first, then connect the
+stream and greet with the token you were handed.
+
+#### A token is a secret; the connection id is an identity
+
+`SeatToken` is a **random `u64`, minted per granted claim** from `rand::thread_rng()` (the OS-seeded
+CSPRNG `core_sim` already depends on) and held in the registry beside the `ConnectionId` that claimed
+the seat. The two are separate values because they answer opposite requirements:
+
+| | `ConnectionId` | `SeatToken` |
+|---|---|---|
+| Minted by | `ConnectionIdAllocator`, a sequential counter | `SeatToken::mint()`, at random per **claim** |
+| Read by | a **human**, in log lines (`connection=5`, `command.rejected=… connection=7`) | the **server**, resolving a stream greeting to a seat |
+| Wanted property | short and followable across a session's log | unguessable — a bearer is sent that seat's private world |
+
+Making the *identity* random would have cost the log its readable connection numbers; leaving the
+*token* sequential meant `1, 2, 3` bought another seat's frames. Splitting them is also what lets the
+identity stay in the log while the secret stays out of it: **a token is never logged, whole or in
+part.** `SeatToken`'s `Debug` is redacted and it has no `Display`, so a `{:?}` or a `%token` cannot
+leak it; `seat.claimed` names the connection and the faction, which is the half a human wants.
+
+Two consequences worth stating:
+
+- **The sentinel is excluded by construction.** `0` means *"no token"* everywhere downstream — a
+  refusal's reply (`NO_SEAT_TOKEN`), `SeatToken::NONE`, the fallback for a peer that greets with
+  nothing — so `mint()` draws from the range strictly above it rather than filtering after the fact.
+  A collision *between* live tokens is deliberately not checked: over a `u64` the birthday bound is
+  orders of magnitude beyond any seat count.
+- **Re-claiming a seat mints a new secret.** The token belongs to the claim, not to the connection,
+  so a released seat's old token names nothing from that moment — which is the same property
+  `set_seats` gives the delivery side (`snapshot-socket.md`).
+
+⛔ **A token never enters the simulation.** It is session state like the rest of `seats.rs`: not in
+`SimState`, not in the command log, not in a published frame, and drawn from a source no `map_seed`
+can reach. That is what keeps `determinism.rs` and `replay_determinism.rs` blind to it — a token
+drawn from a sim RNG would have made a replay reproduce a secret, and a seeded one would have made it
+predictable.
 
 Three refusals, all in `SeatRegistry::claim` and all reaching the client as a
 `sim_runtime::commands::seat_error` token:

@@ -412,8 +412,8 @@ pub use resources::{
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use seats::{
-    ConnectionId, ConnectionIdAllocator, SeatClaimRefusal, SeatRegistry, SeatTurnGate,
-    SeatTurnLimits, TurnWait,
+    ConnectionId, ConnectionIdAllocator, SeatClaimRefusal, SeatClaimant, SeatRegistry, SeatToken,
+    SeatTurnGate, SeatTurnLimits, TurnWait,
 };
 pub use snapshot::{
     command_events_to_state, publish_baseline_snapshot, recapture_snapshot_in_place, FrameSink,

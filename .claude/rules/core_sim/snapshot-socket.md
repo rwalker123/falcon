@@ -23,13 +23,20 @@ writes it to **the clients holding that seat** and to nobody else.
 
 ### The greeting: a stream connection presents its seat token
 
-A seat's two sockets are correlated by the token the claim reply hands back — the claiming
-connection's `ConnectionId` (`factions.md` → "A connection has an identity"). The stream socket
+A seat's two sockets are correlated by the token the claim reply hands back — a `SeatToken`, minted
+per claim (`factions.md` → "A token is a secret; the connection id is an identity"). The stream socket
 presents it as the first `SEAT_TOKEN_BYTES` (8) it writes, little-endian and unframed: the socket is
 one-way from there on, so a length prefix would only describe a payload whose size is a constant.
-`ConnectionId::INTERNAL` (`0`) is the explicit *"I hold no seat"*, which is how a tool skips the wait
-below. **The order is fixed** — claim on the command socket, then connect the stream and greet with
-the token.
+`SeatToken::NONE` (`0`) is the explicit *"I hold no seat"*, which is how a tool skips the wait below.
+**The order is fixed** — claim on the command socket, then connect the stream and greet with the
+token.
+
+⛔ **The token is a secret, so this socket's log lines do not carry it.** The handshake logs *that* a
+token arrived and from which address — never its value, not even in part — because a bearer of that
+value is sent the seat's private world. The useful half is already in the log where the claim was
+granted (`seat.claimed`, with the connection id and the faction), and the handshake thread could not
+name that connection anyway: a stream socket knows only the secret. `SeatToken` has a redacted
+`Debug` and no `Display`, so putting it in a log line does not compile.
 
 **The token is resolved to a seat at DELIVERY, not at the handshake**, off a table
 (`SnapshotServer::set_seats`) the server rewrites whenever a claim or a release moves. Both
@@ -40,7 +47,8 @@ its socket is still open* — otherwise the next occupant's private world would 
 ### An unseated connection is registered, and receives nothing
 
 Three ways to hold no seat: the peer sends no token within `handshake_timeout`, it sends
-`ConnectionId::INTERNAL`, or its token names no live claim. All three are the same state, and it is
+`SeatToken::NONE`, or its token names no live claim — **which is what a guessed or stale token is**.
+All three are the same state, and it is
 **silence, not a refusal**: the connection stays registered (a socket the server closes under a tool
 is not a defined state) and no frame is ever written to it.
 
@@ -50,7 +58,11 @@ is the disclosure #648 closed on the frame's *contents* reappearing one addressi
 spectator view would have to be its own capture with no viewer at all, and there is no spectator.
 `an_unseated_client_receives_nothing_while_a_seated_one_receives_every_frame` pins **both** halves in
 one run, because "the unseated client got nothing" passes just as well on a server that delivers
-nothing to anyone.
+nothing to anyone. It carries a third connection that greets with `1` — the value a *sequential*
+token scheme handed the session's first claim, and therefore the first thing a guess tries — and that
+one is written nothing either. Note what `seated_clients()` counts: **tokens presented**, not seats
+held, so the guesser is counted there and still receives no frame, because entitlement is decided by
+the table at delivery.
 
 > ⛔ **THE HANDSHAKE READ IS ON ITS OWN THREAD, AND IT IS SPAWNED ONLY AFTER THE HANDOFF SUCCEEDS.**
 > Reading the greeting on the accept thread would let one client that connects and says nothing hold

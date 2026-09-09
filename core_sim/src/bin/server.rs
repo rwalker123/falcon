@@ -843,8 +843,10 @@ fn settle_open_turn(
 /// is this plus putting the answer on the asking connection's reply channel.
 ///
 /// The seat is validated against the **world's own roster**, so a claim can only ever name a faction
-/// this world has. The reply carries the connection id back as the seat token: the claim is what ties
-/// a seat's command socket to its stream socket, and the token is what the stream socket presents.
+/// this world has. A grant mints a fresh [`core_sim::SeatToken`] and the reply carries it: the claim is what
+/// ties a seat's command socket to its stream socket, and the token is what the stream socket
+/// presents. ⛔ **The log line names the connection and the faction and never the token** — the
+/// identity is what a human debugging a session wants, and the token is a secret (`seats.rs`).
 fn answer_seat_claim(
     app: &bevy::prelude::App,
     seats: &mut SeatRegistry,
@@ -853,14 +855,14 @@ fn answer_seat_claim(
 ) -> SeatClaimReply {
     let roster = app.world.resource::<FactionRegistry>().factions().to_vec();
     match seats.claim(faction, connection, &roster) {
-        Ok(()) => {
+        Ok(token) => {
             info!(
                 target: "shadow_scale::server",
                 %connection,
                 %faction,
                 "seat.claimed"
             );
-            SeatClaimReply::granted(faction.0, connection.0)
+            SeatClaimReply::granted(faction.0, token.wire())
         }
         Err(refusal) => {
             warn!(
@@ -905,9 +907,10 @@ fn sync_seat_delivery(
     seats: &SeatRegistry,
     flat_server: &SnapshotServer,
 ) {
-    let claims = seats.claimants();
-    flat_server.set_seats(&claims);
-    let occupied: Vec<FactionId> = claims.iter().map(|(seat, _)| *seat).collect();
+    // The stream socket is addressed by **token**, not by connection id: that is the only value a
+    // stream socket ever presents, and it is what a claim minted for exactly this purpose.
+    flat_server.set_seats(&seats.delivery_tokens());
+    let occupied: Vec<FactionId> = seats.occupied_seats();
     let vacated: Vec<FactionId> = app
         .world
         .resource::<SnapshotHistory>()
@@ -21788,9 +21791,18 @@ mod tests {
         let granted = answer_the_claim(&mut first_client, first_id, FIRST_REQUEST);
         assert!(granted.ok, "the first claim on a free seat is granted");
         assert_eq!(granted.faction_id, HOME.0);
-        assert_eq!(
+        // ⛔ **The token is a minted secret, NOT the connection id.** It must never be the sentinel,
+        // which every downstream reader takes for "you were given nothing", and the tail below
+        // asserts it is the value the delivery table resolves to this seat.
+        assert_ne!(
+            granted.seat_token,
+            sim_runtime::commands::NO_SEAT_TOKEN,
+            "a granted claim hands back a real token"
+        );
+        assert_ne!(
             granted.seat_token, first_id.0,
-            "and it hands back the token the stream socket presents"
+            "and it is not the claiming connection's id, which is a sequential counter anyone can \
+             guess"
         );
 
         let refused = answer_the_claim(&mut second_client, second_id, SECOND_REQUEST);
@@ -21809,6 +21821,12 @@ mod tests {
             seats.claimant_of(HOME),
             Some(first_id),
             "the sitting connection keeps the seat"
+        );
+        assert_eq!(
+            seats.token_of(HOME).map(|token| token.wire()),
+            Some(granted.seat_token),
+            "and the token the grant handed back is the one the delivery table resolves to this \
+             seat — the refused claim minted nothing"
         );
 
         // The first client goes away: its read loop delivers the release, and the seat frees.

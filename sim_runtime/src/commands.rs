@@ -756,12 +756,17 @@ pub struct SeatClaimReply {
     /// A machine-readable snake_case token when `ok` is false ([`seat_error`]); the client owns the
     /// prose.
     pub error: String,
-    /// **The connection's own id, handed back as the token its STREAM socket presents**, so the two
-    /// sockets of one seat can be correlated. [`NO_SEAT_TOKEN`] on a refusal.
+    /// **The secret this grant minted, and the token its STREAM socket must present** to be sent
+    /// this seat's frames. [`NO_SEAT_TOKEN`] on a refusal.
     ///
     /// The stream socket writes it as its first eight bytes, little-endian, and frames for that seat
     /// go to the connections holding it — see `.claude/rules/core_sim/snapshot-socket.md`. A client
     /// therefore claims first and connects its stream second.
+    ///
+    /// ⛔ **It is a random `u64` and not the connection's id** (`core_sim::SeatToken`): a stream that
+    /// presents it receives that seat's private world, so it must resist guessing, while a connection
+    /// id is a sequential counter that appears in log lines. A client should treat it as a secret —
+    /// hold it, present it, and keep it out of anything it prints.
     pub seat_token: u64,
 }
 

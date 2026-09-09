@@ -43,7 +43,10 @@ fn roster(app: &bevy::prelude::App) -> Vec<core_sim::FactionId> {
 fn a_seat_is_a_faction_of_the_worlds_own_roster() {
     let two = two_faction_world();
     let mut seats = SeatRegistry::default();
-    assert_eq!(seats.claim(RIVAL, RIVAL_CLIENT, &roster(&two)), Ok(()));
+    assert!(
+        seats.claim(RIVAL, RIVAL_CLIENT, &roster(&two)).is_ok(),
+        "faction 1 is a seat of the two-faction world"
+    );
 
     let one = one_faction_world();
     let mut seats = SeatRegistry::default();
@@ -52,7 +55,10 @@ fn a_seat_is_a_faction_of_the_worlds_own_roster() {
         Err(SeatClaimRefusal::UnknownSeat),
         "the single-faction world seats nobody at faction 1, so there is no seat to claim"
     );
-    assert_eq!(seats.claim(HOME, RIVAL_CLIENT, &roster(&one)), Ok(()));
+    assert!(
+        seats.claim(HOME, RIVAL_CLIENT, &roster(&one)).is_ok(),
+        "faction 0 is, so the same client is seated there"
+    );
 }
 
 /// ⛔ **THE WAIT SET IS THE TURN QUEUE'S OWN, AND A VACANT SEAT IS NOT IN IT.**

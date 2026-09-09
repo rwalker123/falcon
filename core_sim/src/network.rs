@@ -9,7 +9,7 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, select, Receiver, Sender, TrySendError};
 
 use crate::orders::FactionId;
-use crate::seats::ConnectionId;
+use crate::seats::SeatToken;
 use crate::snapshot::FrameSink;
 
 /// How long the accept thread waits before retrying after a genuine `accept()` error, so a
@@ -64,12 +64,12 @@ const DEFAULT_FRAME_QUEUE_CAPACITY: usize = 64;
 /// registration before the accept thread starts closing new ones.
 const DEFAULT_PENDING_CLIENT_CAPACITY: usize = 32;
 
-/// **The seat token a stream connection presents**: the `u64` inside the [`ConnectionId`] its
-/// command connection was handed by the claim reply, little-endian.
+/// **The seat token a stream connection presents**: the `u64` inside the [`SeatToken`] its command
+/// connection was handed by the claim reply, little-endian.
 ///
 /// A **fixed-width** greeting rather than a framed message because it is the whole protocol: the
 /// socket is one-way from here on, and a length prefix would only describe a payload whose size is
-/// a constant. [`ConnectionId::INTERNAL`] (`0`) is the explicit *"I hold no seat"* greeting, which
+/// a constant. [`SeatToken::NONE`] (`0`) is the explicit *"I hold no seat"* greeting, which
 /// is how a tool skips the wait below instead of sitting out [`DEFAULT_HANDSHAKE_TIMEOUT`].
 pub const SEAT_TOKEN_BYTES: usize = 8;
 
@@ -95,7 +95,7 @@ pub struct SnapshotServer {
     /// and released, read once per accepted stream socket by its handshake. A `Mutex` rather than a
     /// channel because both sides are human-paced: a claim is a player action and a lookup happens
     /// once per connection.
-    seats: Arc<Mutex<HashMap<ConnectionId, FactionId>>>,
+    seats: Arc<Mutex<HashMap<SeatToken, FactionId>>>,
 }
 
 impl SnapshotServer {
@@ -152,7 +152,7 @@ impl SnapshotServer {
     /// per connection**, because both halves can move under a live stream: a connection that
     /// released its seat must stop receiving that seat's frames *even though its stream socket is
     /// still open*, or the next occupant's world would go to its predecessor.
-    pub fn set_seats(&self, claims: &[(FactionId, ConnectionId)]) {
+    pub fn set_seats(&self, claims: &[(FactionId, SeatToken)]) {
         let mut seats = self.lock_seats();
         seats.clear();
         for (seat, token) in claims {
@@ -160,7 +160,7 @@ impl SnapshotServer {
         }
     }
 
-    fn lock_seats(&self) -> std::sync::MutexGuard<'_, HashMap<ConnectionId, FactionId>> {
+    fn lock_seats(&self) -> std::sync::MutexGuard<'_, HashMap<SeatToken, FactionId>> {
         self.seats
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -217,7 +217,7 @@ pub fn start_snapshot_server_with_limits(
     let connected = Arc::new(AtomicUsize::new(0));
     let seated = Arc::new(AtomicUsize::new(0));
     let dropped_frames = Arc::new(AtomicU64::new(0));
-    let seats: Arc<Mutex<HashMap<ConnectionId, FactionId>>> = Arc::new(Mutex::new(HashMap::new()));
+    let seats: Arc<Mutex<HashMap<SeatToken, FactionId>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // The listener blocks. The old loop polled it non-blocking every 50 ms so the same thread could
     // also drain the frame channel; with the threads split there is nothing else for this one to do
@@ -262,21 +262,22 @@ static NEXT_STREAM_CLIENT: AtomicU64 = AtomicU64::new(0);
 /// stream socket stays open — so which seat a connection is entitled to is asked at delivery, off
 /// the live table, and a released token resolves to nothing from that moment.
 ///
-/// [`ConnectionId::INTERNAL`] is an *unseated* connection: it presented no token, presented the
-/// explicit "no seat" one, or has not greeted yet. It stays registered (the socket is not churned)
+/// [`SeatToken::NONE`] is an *unseated* connection: it presented no token, presented the explicit
+/// "no seat" one, or has not greeted yet — as is a **wrong or guessed** token, which resolves to no
+/// seat in the table below. It stays registered (the socket is not churned)
 /// and is delivered nothing, which is the only reading of "no seat" that cannot leak — the
 /// alternative, falling back to some default faction, hands a tool the private world of whichever
 /// faction that turned out to be.
 struct StreamClient {
     id: u64,
     stream: TcpStream,
-    token: ConnectionId,
+    token: SeatToken,
 }
 
 /// A connection's seat token, arriving after the connection itself. See [`spawn_handshake`].
 struct Greeting {
     client: u64,
-    token: ConnectionId,
+    token: SeatToken,
 }
 
 fn spawn_accept_thread(
@@ -329,7 +330,7 @@ fn spawn_accept_thread(
                 match client_sender.try_send(StreamClient {
                     id,
                     stream,
-                    token: ConnectionId::INTERNAL,
+                    token: SeatToken::NONE,
                 }) {
                     Ok(()) => {
                         if let Some(reader) = reader {
@@ -371,7 +372,7 @@ fn spawn_accept_thread(
 /// Read one connection's seat token and forward it to the broadcaster.
 ///
 /// **Two ways to stay unseated**: the peer sends nothing within `handshake_timeout`, or it sends
-/// [`ConnectionId::INTERNAL`] — the explicit "I hold no seat", which is how a tool skips the wait. A
+/// [`SeatToken::NONE`] — the explicit "I hold no seat", which is how a tool skips the wait. A
 /// third, a token naming no live claim, is not decided here at all: the token is resolved to a seat
 /// at **delivery**, so a stream that greets a moment before its claim registers is seated as soon as
 /// the claim lands, and one whose claim ends stops being seated the moment it does.
@@ -386,14 +387,20 @@ fn spawn_handshake(
     handshake_timeout: Duration,
 ) {
     thread::spawn(move || {
-        let token =
-            read_seat_token(&reader, &addr, handshake_timeout).unwrap_or(ConnectionId::INTERNAL);
-        if token == ConnectionId::INTERNAL {
+        let token = read_seat_token(&reader, &addr, handshake_timeout).unwrap_or(SeatToken::NONE);
+        if token == SeatToken::NONE {
             log::info!("Snapshot client {addr} holds no seat; it will receive no frames");
             // Nothing to say: the broadcaster already holds this client as unseated.
             return;
         }
-        log::info!("Snapshot client {addr} presented seat token {token}");
+        // ⛔ **THE TOKEN IS A SECRET AND DOES NOT GO IN THE LOG** — see [`SeatToken`]. The line says
+        // *that* a token arrived, on which socket; who holds the seat is already logged where the
+        // claim was granted (`seat.claimed`, with the connection id and the faction), and this
+        // thread could not name that connection anyway — a stream socket knows only the secret.
+        log::info!(
+            "Snapshot client {addr} presented a seat token; it will receive the frames of whatever \
+             seat holds that token"
+        );
         match greeting_sender.try_send(Greeting { client, token }) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => log::warn!(
@@ -408,7 +415,7 @@ fn spawn_handshake(
 }
 
 /// The greeting: exactly [`SEAT_TOKEN_BYTES`] little-endian bytes, or nothing.
-fn read_seat_token(stream: &TcpStream, addr: &str, timeout: Duration) -> Option<ConnectionId> {
+fn read_seat_token(stream: &TcpStream, addr: &str, timeout: Duration) -> Option<SeatToken> {
     if let Err(err) = stream.set_read_timeout(Some(timeout)) {
         log::warn!("Failed to set the handshake read timeout for snapshot client {addr}: {err}");
         return None;
@@ -416,7 +423,7 @@ fn read_seat_token(stream: &TcpStream, addr: &str, timeout: Duration) -> Option<
     let mut token = [0u8; SEAT_TOKEN_BYTES];
     let mut reader = stream;
     match reader.read_exact(&mut token) {
-        Ok(()) => Some(ConnectionId(u64::from_le_bytes(token))),
+        Ok(()) => Some(SeatToken::from_wire(u64::from_le_bytes(token))),
         Err(err) => {
             log::info!(
                 "Snapshot client {addr} presented no seat token ({err}); it will receive no frames"
@@ -432,7 +439,7 @@ fn spawn_broadcast_thread(
     frames: Receiver<(FactionId, Arc<Vec<u8>>)>,
     connected: Arc<AtomicUsize>,
     seated: Arc<AtomicUsize>,
-    seats: Arc<Mutex<HashMap<ConnectionId, FactionId>>>,
+    seats: Arc<Mutex<HashMap<SeatToken, FactionId>>>,
 ) {
     thread::spawn(move || {
         // Owned outright by this thread — no `Arc<Mutex<…>>`, because the only other thread that
@@ -474,7 +481,7 @@ fn spawn_broadcast_thread(
                     Ok((seat, frame)) => {
                         // One lock per frame, not per client: the table is rewritten only when a
                         // seat is claimed or released, both human-paced.
-                        let holders: Vec<ConnectionId> = seats
+                        let holders: Vec<SeatToken> = seats
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
                             .iter()
@@ -501,7 +508,7 @@ fn spawn_broadcast_thread(
 fn seated_count(clients: &[StreamClient]) -> usize {
     clients
         .iter()
-        .filter(|client| client.token != ConnectionId::INTERNAL)
+        .filter(|client| client.token != SeatToken::NONE)
         .count()
 }
 
@@ -518,7 +525,7 @@ fn write_frame(stream: &mut TcpStream, frame: &[u8]) -> io::Result<()> {
 /// **A client holding another seat, or none, is skipped rather than written to** — that is the whole
 /// of per-seat delivery, and the wedged-client contract above it is unchanged: a write that fails
 /// still closes the connection, because a partially written frame desynchronises the stream.
-fn deliver_frame(clients: &mut Vec<StreamClient>, holders: &[ConnectionId], frame: &[u8]) {
+fn deliver_frame(clients: &mut Vec<StreamClient>, holders: &[SeatToken], frame: &[u8]) {
     clients.retain_mut(|client| {
         if !holders.contains(&client.token) {
             return true;

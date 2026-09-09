@@ -19,15 +19,22 @@ use std::time::{Duration, Instant};
 use core_sim::network::{
     start_snapshot_server_with_limits, SnapshotServer, SnapshotServerLimits, SEAT_TOKEN_BYTES,
 };
-use core_sim::{ConnectionId, FactionId};
+use core_sim::{FactionId, SeatToken};
 
 /// The seat every client in this file holds. **One seat, and every client on it**, because what
 /// these tests pin is what happens to a client that stops reading — which is the same whether the
 /// frame was addressed to one seat or four. Per-seat *addressing* is pinned in
 /// `core_sim/tests/seat_frames.rs`.
 const TEST_SEAT: FactionId = FactionId(0);
-/// The token that seat's claim handed out. Any non-`INTERNAL` value serves.
-const TEST_TOKEN: ConnectionId = ConnectionId(7);
+/// The token that seat's claim handed out. A shipped one is minted at random (`core_sim::SeatToken`);
+/// these tests need a *fixed* one so several clients can greet with the same value, and any
+/// non-[`SeatToken::NONE`] value serves for what they pin.
+const TEST_TOKEN: SeatToken = SeatToken::from_wire(7);
+
+/// **What a guess looks like.** Before seat tokens were minted at random the greeting was the
+/// claiming connection's id, which the allocator hands out as `1, 2, 3, …` — so this is the *first*
+/// value an outsider would try, and it must resolve to no seat.
+const GUESSED_TOKEN: SeatToken = SeatToken::from_wire(1);
 
 /// How long a poll-until-true will wait before declaring the property broken. Generous because a
 /// loaded CI box scheduling three threads is not the failure under test.
@@ -108,7 +115,7 @@ fn connect_and_register(port: u16, server: &SnapshotServer, expected: usize) -> 
     // The greeting: a frame is addressed to a seat, so a client that presents no token is
     // deliberately delivered nothing at all and every assertion below would time out.
     stream
-        .write_all(&TEST_TOKEN.0.to_le_bytes())
+        .write_all(&TEST_TOKEN.wire().to_le_bytes())
         .expect("present the seat token");
     assert_eq!(
         SEAT_TOKEN_BYTES,
@@ -239,7 +246,7 @@ fn a_stalled_client_does_not_block_a_new_connection() {
         .expect("a second client must be able to connect while the first is stalled");
     let connect_elapsed = started.elapsed();
     fresh
-        .write_all(&TEST_TOKEN.0.to_le_bytes())
+        .write_all(&TEST_TOKEN.wire().to_le_bytes())
         .expect("present the seat token");
     assert!(
         connect_elapsed < PROMPT_CONNECT,
@@ -455,8 +462,12 @@ fn a_stalled_client_cannot_grow_the_broadcast_queue_without_bound() {
     );
 }
 
-/// ⛔ **A CONNECTION THAT PRESENTS NO SEAT TOKEN RECEIVES NOTHING — and the seat beside it still
-/// receives everything.**
+/// ⛔ **A CONNECTION THAT PRESENTS NO SEAT TOKEN — OR THE WRONG ONE — RECEIVES NOTHING, and the seat
+/// beside it still receives everything.**
+///
+/// Both are the same state by design: a token that names no live claim is as unseated as no token at
+/// all. The wrong token here is [`GUESSED_TOKEN`], the value a *sequential* token scheme would have
+/// handed the session's first claim, which is the guess a random token exists to defeat.
 ///
 /// A frame is one viewer's world (PR #648), so there is no frame to give a connection that holds no
 /// seat: the Inspector, a `nc`, a tool, a client that has not claimed. Withholding is the only
@@ -493,19 +504,33 @@ fn an_unseated_client_receives_nothing_while_a_seated_one_receives_every_frame()
     let mut unseated =
         TcpStream::connect(("127.0.0.1", port)).expect("connect to snapshot server unseated");
     unseated
-        .write_all(&ConnectionId::INTERNAL.0.to_le_bytes())
+        .write_all(&SeatToken::NONE.wire().to_le_bytes())
         .expect("present the explicit no-seat token");
     unseated
         .set_read_timeout(Some(SILENCE_WINDOW))
         .expect("set read timeout");
+    // And a third that presents a **wrong** token: `1`, which is the id the connection allocator
+    // hands the first claim of a session, and therefore the first value a guess would try. A seat
+    // token is minted at random precisely so this cannot work.
+    let mut guessing =
+        TcpStream::connect(("127.0.0.1", port)).expect("connect to snapshot server guessing");
+    guessing
+        .write_all(&GUESSED_TOKEN.wire().to_le_bytes())
+        .expect("present a guessed seat token");
+    guessing
+        .set_read_timeout(Some(SILENCE_WINDOW))
+        .expect("set read timeout");
     assert!(
-        wait_until(|| server.connected_clients() == 2),
-        "the server never registered the unseated client: an unseated connection is registered and \
+        wait_until(|| server.connected_clients() == 3),
+        "the server never registered all three clients: an unseated connection is registered and \
          silent, not refused"
     );
+    // Two tokens were *presented*; only one of them names a seat. `seated_clients` counts the
+    // greeting, not the entitlement — the token is resolved against the live claims at delivery, so
+    // the guesser is a registered client whose token matches no seat and who is written nothing.
     assert!(
-        wait_until(|| server.seated_clients() == 1),
-        "seated_clients()={} with one token presented",
+        wait_until(|| server.seated_clients() == 2),
+        "seated_clients()={} with two tokens presented",
         server.seated_clients()
     );
 
@@ -519,14 +544,17 @@ fn an_unseated_client_receives_nothing_while_a_seated_one_receives_every_frame()
         "the seat's client must receive the frame addressed to its seat"
     );
 
-    // And the unseated one gets nothing at all — not a truncated frame, not a length prefix.
-    let mut probe = [0u8; 1];
-    match unseated.read(&mut probe) {
-        Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-        Ok(n) => panic!(
-            "the unseated client received {n} byte(s) of a frame addressed to seat {TEST_SEAT:?}: \
-             a connection holding no seat has no view and must be sent nothing"
-        ),
-        Err(err) => panic!("the unseated client's read failed unexpectedly: {err}"),
+    // And neither the unseated one nor the guesser gets anything at all — not a truncated frame, not
+    // a length prefix.
+    for (who, socket) in [("unseated", &mut unseated), ("guessing", &mut guessing)] {
+        let mut probe = [0u8; 1];
+        match socket.read(&mut probe) {
+            Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Ok(n) => panic!(
+                "the {who} client received {n} byte(s) of a frame addressed to seat {TEST_SEAT:?}: \
+                 a connection holding no seat has no view and must be sent nothing"
+            ),
+            Err(err) => panic!("the {who} client's read failed unexpectedly: {err}"),
+        }
     }
 }

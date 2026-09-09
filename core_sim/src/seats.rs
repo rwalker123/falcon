@@ -19,14 +19,16 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use sim_runtime::commands::seat_error;
+use rand::Rng;
+use sim_runtime::commands::{seat_error, NO_SEAT_TOKEN};
 
 use crate::orders::FactionId;
 
 /// **One accepted command socket's opaque identity**, minted by [`ConnectionIdAllocator`].
 ///
 /// Opaque on purpose: it says *which connection*, and nothing about who is on the other end. It is
-/// also the seat token a claim hands back, so the same value correlates a seat's two sockets.
+/// the value the **log** names a connection by (`connection=5`), which is why it stays a short
+/// sequential counter — the secret its stream socket presents is a separate [`SeatToken`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectionId(pub u64);
 
@@ -65,6 +67,81 @@ impl Default for ConnectionIdAllocator {
     }
 }
 
+/// **The secret a seat's STREAM socket presents to be sent that seat's frames**, minted fresh by
+/// every granted claim and deliberately *not* the claimant's [`ConnectionId`].
+///
+/// The pair is **identity versus secret**, and one value cannot be both:
+///
+/// - a [`ConnectionId`] is what a human reads while debugging a session (`connection=5`,
+///   `command.rejected=… connection=7`), so it wants to be short and sequential;
+/// - a seat token is what entitles its bearer to a seat's private world, so it wants to resist
+///   guessing — and a sequential one is enumerable by anyone who can open the snapshot socket.
+///
+/// Separating them is what lets the identity stay in the log while the secret stays out of it:
+/// ⛔ **a seat token is never logged, whole or in part.** The connection that holds the seat is
+/// already in the log (`seat.claimed`), and that is the half a human wants.
+///
+/// ⛔ **It is session state, and no part of the simulation may see it.** It is drawn from the OS
+/// entropy pool via [`rand::thread_rng`] — never from a sim RNG, never seeded from `map_seed` — so a
+/// determinism suite cannot observe it and a replay cannot reproduce it. It reaches `SimState`, the
+/// command log and a published frame nowhere at all; the only two places it appears are the claim
+/// reply that mints it and the greeting that presents it back.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SeatToken(u64);
+
+impl SeatToken {
+    /// **No token.** What a refused claim hands back, what a stream connection holds until it greets,
+    /// and what a peer presenting nothing falls back to.
+    ///
+    /// Spelled as the wire constant the client also reads, so the sentinel the server means and the
+    /// sentinel the client tests for cannot drift apart.
+    pub const NONE: Self = Self(NO_SEAT_TOKEN);
+
+    /// **Mint one from a cryptographically strong source.**
+    ///
+    /// `thread_rng` is `rand`'s CSPRNG, seeded from the OS: the value is not merely unlikely to
+    /// repeat but unpredictable from any other token. It is drawn from the range **strictly above
+    /// [`Self::NONE`]**, which is how the sentinel is excluded — by construction, rather than by a
+    /// retry loop guarding a 1-in-2^64 draw.
+    ///
+    /// A collision with a live token is not checked either: over a `u64` the birthday bound is many
+    /// orders of magnitude beyond the number of seats a session claims, so the check would guard an
+    /// event that cannot be reached.
+    pub fn mint() -> Self {
+        Self(rand::thread_rng().gen_range(Self::NONE.0 + 1..=u64::MAX))
+    }
+
+    /// The value the claim reply carries, and the value the greeting presents back little-endian.
+    pub fn wire(self) -> u64 {
+        self.0
+    }
+
+    /// **Read a presented greeting.** `NO_SEAT_TOKEN` is [`Self::NONE`] — the explicit "I hold no
+    /// seat" — and any other value is resolved against the live claims at *delivery*, so a wrong or
+    /// guessed one simply names no seat and is sent nothing.
+    pub const fn from_wire(bits: u64) -> Self {
+        Self(bits)
+    }
+}
+
+/// ⛔ **Redacted on purpose.** The one formatter a token has says nothing about its value, so a
+/// `{:?}` reached for in a hurry — or a `#[derive(Debug)]` on a struct that holds one — cannot put
+/// the secret in a log line. There is deliberately no `Display`, so `%token` in a `tracing` field or
+/// a `{token}` in a `log::` string does not compile.
+impl fmt::Debug for SeatToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SeatToken(redacted)")
+    }
+}
+
+/// **What a granted claim recorded**: which connection holds the seat, and the token its stream
+/// socket must present. Two values because they answer two different questions — see [`SeatToken`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeatClaimant {
+    pub connection: ConnectionId,
+    pub token: SeatToken,
+}
+
 /// Why a [`SeatRegistry::claim`] was refused. Each maps to a wire token
 /// (`sim_runtime::commands::seat_error`) the client turns into prose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,19 +176,24 @@ impl SeatClaimRefusal {
 /// scan over at most the roster.
 #[derive(Debug, Default)]
 pub struct SeatRegistry {
-    claims: BTreeMap<FactionId, ConnectionId>,
+    claims: BTreeMap<FactionId, SeatClaimant>,
 }
 
 impl SeatRegistry {
     /// **Seat `connection` at `seat`, or say why not.** `roster` is the world's registered factions
     /// ([`crate::FactionRegistry::factions`]); a seat outside it is refused rather than created,
     /// because a seat is a property of the world and not of the request.
+    ///
+    /// A grant returns **a freshly minted [`SeatToken`]** — the secret the claimant's stream socket
+    /// presents. It is minted per claim rather than per connection so that a seat released and
+    /// re-claimed, even by the same connection, is a new secret: the previous holder's token names
+    /// nothing from the release onward.
     pub fn claim(
         &mut self,
         seat: FactionId,
         connection: ConnectionId,
         roster: &[FactionId],
-    ) -> Result<(), SeatClaimRefusal> {
+    ) -> Result<SeatToken, SeatClaimRefusal> {
         if !roster.contains(&seat) {
             return Err(SeatClaimRefusal::UnknownSeat);
         }
@@ -121,20 +203,27 @@ impl SeatRegistry {
         if self.claims.contains_key(&seat) {
             return Err(SeatClaimRefusal::SeatOccupied);
         }
-        self.claims.insert(seat, connection);
-        Ok(())
+        let token = SeatToken::mint();
+        self.claims.insert(seat, SeatClaimant { connection, token });
+        Ok(token)
     }
 
     /// The seat this connection claimed, if any.
     pub fn seat_of(&self, connection: ConnectionId) -> Option<FactionId> {
         self.claims
             .iter()
-            .find(|(_, claimant)| **claimant == connection)
+            .find(|(_, claimant)| claimant.connection == connection)
             .map(|(seat, _)| *seat)
     }
 
     pub fn claimant_of(&self, seat: FactionId) -> Option<ConnectionId> {
-        self.claims.get(&seat).copied()
+        self.claims.get(&seat).map(|claimant| claimant.connection)
+    }
+
+    /// The token the connection holding `seat` was handed. For the delivery table and for a test that
+    /// has to present what a claim minted; nothing logs it.
+    pub fn token_of(&self, seat: FactionId) -> Option<SeatToken> {
+        self.claims.get(&seat).map(|claimant| claimant.token)
     }
 
     pub fn is_occupied(&self, seat: FactionId) -> bool {
@@ -146,9 +235,24 @@ impl SeatRegistry {
         self.claims.keys().copied().collect()
     }
 
-    /// Every claimant, in seat-id order — who a world-wide event has to reach.
+    /// Every claimant, in seat-id order — who a world-wide event has to reach, and the id its log
+    /// lines name.
     pub fn claimants(&self) -> Vec<(FactionId, ConnectionId)> {
-        self.claims.iter().map(|(f, c)| (*f, *c)).collect()
+        self.claims
+            .iter()
+            .map(|(seat, claimant)| (*seat, claimant.connection))
+            .collect()
+    }
+
+    /// **Every occupied seat with the token that reaches it**, in seat-id order — the table
+    /// `network::SnapshotServer::set_seats` resolves a greeting against. Deliberately the *tokens*
+    /// and not the connection ids: the stream socket knows only the secret it was handed, and it is
+    /// the only thing that socket ever presents.
+    pub fn delivery_tokens(&self) -> Vec<(FactionId, SeatToken)> {
+        self.claims
+            .iter()
+            .map(|(seat, claimant)| (*seat, claimant.token))
+            .collect()
     }
 
     /// **Free the seat a closing connection held**, returning it. What makes "occupied" honest: a
@@ -168,7 +272,7 @@ impl SeatRegistry {
             .claims
             .iter()
             .filter(|(seat, _)| !roster.contains(seat))
-            .map(|(seat, connection)| (*seat, *connection))
+            .map(|(seat, claimant)| (*seat, claimant.connection))
             .collect();
         for (seat, _) in &dropped {
             self.claims.remove(seat);
@@ -340,9 +444,19 @@ mod tests {
     #[test]
     fn a_claim_seats_the_connection_both_ways_round() {
         let mut seats = SeatRegistry::default();
-        assert_eq!(seats.claim(HOME, FIRST, &ROSTER), Ok(()));
+        let token = seats.claim(HOME, FIRST, &ROSTER).expect("the claim");
         assert_eq!(seats.seat_of(FIRST), Some(HOME));
         assert_eq!(seats.claimant_of(HOME), Some(FIRST));
+        assert_eq!(
+            seats.token_of(HOME),
+            Some(token),
+            "the token the claimant was handed is the token the delivery table holds"
+        );
+        assert_eq!(
+            seats.delivery_tokens(),
+            vec![(HOME, token)],
+            "and the occupied seat is reachable by it and by nothing else"
+        );
         assert!(seats.is_occupied(HOME));
         assert!(!seats.is_occupied(RIVAL), "the rival seat stays vacant");
     }
@@ -381,10 +495,77 @@ mod tests {
     #[test]
     fn a_closed_connection_frees_its_seat_for_the_next_claimant() {
         let mut seats = SeatRegistry::default();
-        seats.claim(HOME, FIRST, &ROSTER).expect("the first claim");
+        let first_token = seats.claim(HOME, FIRST, &ROSTER).expect("the first claim");
         assert_eq!(seats.release(FIRST), Some(HOME));
         assert_eq!(seats.release(FIRST), None, "releasing twice is a no-op");
-        assert_eq!(seats.claim(HOME, SECOND, &ROSTER), Ok(()));
+        let second_token = seats
+            .claim(HOME, SECOND, &ROSTER)
+            .expect("the next claimant");
+        assert_ne!(
+            first_token, second_token,
+            "a re-claimed seat is a NEW secret: the previous holder's token must name nothing, or a \
+             stream socket it left open would keep receiving the next occupant's world"
+        );
+    }
+
+    /// ⛔ **A TOKEN IS A SECRET, SO IT IS RANDOM AND IT IS NEVER THE SENTINEL.**
+    ///
+    /// The whole point of minting it apart from [`ConnectionId`]: the ids the log names are 1, 2, 3
+    /// and are therefore guessable, so the value that entitles a stream socket to a seat's private
+    /// world cannot be one of them. And `0` means *"no token"* everywhere downstream
+    /// (`SeatToken::NONE`, the greeting's fallback, a refusal's reply), so a minted one that landed
+    /// on it would read as unseated.
+    #[test]
+    fn every_claim_mints_its_own_token_and_never_the_no_token_sentinel() {
+        /// Draws taken per seat. Small — the sentinel is excluded by the mint's range rather than by
+        /// chance, so this asserts the property holds repeatedly, not that a rare draw is unlikely.
+        const DRAWS: usize = 32;
+
+        let mut minted = Vec::with_capacity(DRAWS * ROSTER.len());
+        for draw in 0..DRAWS {
+            let mut seats = SeatRegistry::default();
+            minted.push(seats.claim(HOME, FIRST, &ROSTER).expect("home"));
+            minted.push(seats.claim(RIVAL, SECOND, &ROSTER).expect("rival"));
+            assert_ne!(
+                minted[draw * ROSTER.len()],
+                minted[draw * ROSTER.len() + 1],
+                "two live seats must not share a token"
+            );
+        }
+        assert!(
+            !minted.contains(&SeatToken::NONE),
+            "a minted token must never be the no-token sentinel"
+        );
+        assert!(
+            !minted
+                .iter()
+                .any(|token| token.wire() == FIRST.0 || token.wire() == SECOND.0),
+            "a minted token is not the claiming connection's id — the ids a counter hands out are \
+             exactly what a guess would try"
+        );
+        minted.sort_unstable();
+        let distinct = {
+            let mut distinct = minted.clone();
+            distinct.dedup();
+            distinct.len()
+        };
+        assert_eq!(distinct, minted.len(), "every mint is its own value");
+    }
+
+    /// ⛔ **THE TOKEN HAS NO FORMATTER THAT SHOWS IT.** `Debug` is the only one, and it is redacted,
+    /// so a `{:?}` on a token — or on a `SeatRegistry` that holds one — cannot leak the secret into a
+    /// log line. There is no `Display`, which is what stops `%token` compiling in a `tracing` field.
+    #[test]
+    fn a_token_never_formats_its_value() {
+        let mut seats = SeatRegistry::default();
+        let token = seats.claim(HOME, FIRST, &ROSTER).expect("the claim");
+        let value = token.wire().to_string();
+        for rendered in [format!("{token:?}"), format!("{seats:?}")] {
+            assert!(
+                !rendered.contains(&value),
+                "a formatter rendered the token's value: {rendered}"
+            );
+        }
     }
 
     #[test]

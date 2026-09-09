@@ -285,6 +285,16 @@ impl Harness {
             "the harness could not claim seat {HARNESS_SEAT}: {}",
             claim.error
         );
+        // ⛔ **The token is a SECRET the grant minted, not the connection's id** (`core_sim::SeatToken`),
+        // so the harness cannot construct it — it must present back exactly what the reply carried,
+        // which is what makes the greeting below an end-to-end check of the claim → stream path. A
+        // zero would be the "you were given nothing" sentinel and would leave this client unseated,
+        // silently, for the whole run.
+        assert_ne!(
+            claim.seat_token,
+            sim_runtime::commands::NO_SEAT_TOKEN,
+            "a granted claim must hand back a real seat token"
+        );
 
         let mut snapshots =
             TcpStream::connect(ports.snapshot_flat).expect("connect to the snapshot socket");
