@@ -21,10 +21,10 @@ extends RefCounted
 ## THE INJECTION SURFACE IS ONE CALLABLE. `_herd_label_for_id` stays on `HudLayer` because resolving a
 ## herd id to a species reads THREE collaborators — the selection card's roster, the current selection,
 ## and the snapshot herd list — so it cannot fold onto `HudBandLaborState` the way `find_world_herd`
-## did. `_is_player_unit` is a trivial private COPY (the `SelectionCardController` /
-## `BandPanelController` precedent — a one-line predicate is not worth a Callable). It holds NO
-## faction-scope cluster: the one reading it ever wanted off `FactionReadouts` was the live Foddering
-## percent for the dormant Fodder row's hover, and that row carries no hover now
+## did. The is-this-mine test is NOT part of that surface — `HudConst.is_player_unit` is a
+## `class_name` static, so it is called directly and needs no Callable. It holds NO faction-scope
+## cluster: the one reading it ever wanted off `FactionReadouts` was the live Foddering percent for
+## the dormant Fodder row's hover, and that row carries no hover now
 ## (`DetailFormat.fodder_dormant_row`).
 ##
 ## IT NEVER SEES THE SELECTION MODEL. The old producers read `_selection` at exactly two sites, both
@@ -284,11 +284,6 @@ func _init(band_labor: HudBandLaborState, disclosures: DisclosureController,
 func _herd_label_for_id(herd_id: String) -> String:
     return String(_herd_label_for_id_fn.call(herd_id))
 
-## Player-faction check for a roster/drawer band (a trivial private copy of HudLayer's, the
-## `SelectionCardController` / `BandPanelController` precedent).
-func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
-
 # ---- The two public producers ---------------------------------------------------------------------
 
 ## The band summary rows. **No row here restates what its host's own header already shows.** Both
@@ -347,7 +342,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
     # band shows only what we can honestly observe from outside: where it is (Position) and roughly
     # how many (its roster row's size).
-    if _is_player_unit(unit_data):
+    if HudConst.is_player_unit(unit_data):
         lines.append(_band_food_line(unit_data, context, compact))
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
         # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads
@@ -412,7 +407,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
-    if _is_player_unit(unit_data):
+    if HudConst.is_player_unit(unit_data):
         # **BUILT, THEN REGISTERED, THEN APPENDED — in that order, because the merge needs all three.**
         # The SHORT tier joins Growth onto this line, and the clause carries Growth's own clickable
         # run, which does not exist until `register` has recorded its caret state. So the morale line
@@ -805,7 +800,7 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
     # `unit_summary_lines`, which decides whether to register that disclosure — the formatter never
     # sees it. An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
-    if _is_player_unit(unit_data) and DetailFormat.band_has_food_flow(unit_data):
+    if HudConst.is_player_unit(unit_data) and DetailFormat.band_has_food_flow(unit_data):
         # The headline "/turn" is the STEADY net: income (Gathered + Hunted — the realized average,
         # so it no longer swings turn-to-turn) minus what the people eat and what raids take off the
         # larder. The breakdown below itemizes the income rows and the debits.

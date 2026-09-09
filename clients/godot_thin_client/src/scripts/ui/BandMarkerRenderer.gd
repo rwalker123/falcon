@@ -173,7 +173,7 @@ func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 	# Active band reads by brightness alone now (full-color top card over darkened back cards);
 	# the hex selection outline still marks the selected tile. No per-token ring.
 	# Decorations on the active band only (expeditions show provisions in their drawer, not a dot).
-	if _view._is_player_unit(active) and not active_is_expedition:
+	if HudConst.is_player_unit(active) and not active_is_expedition:
 		_draw_band_status(active, center, token_radius)
 		# …and the ⚠ for ground that is killing them, in the one free corner of the token.
 		_draw_band_lethal_mark(active, center, token_radius, radius)

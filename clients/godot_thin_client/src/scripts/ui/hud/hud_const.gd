@@ -1,9 +1,27 @@
 class_name HudConst
 
-## Universal HUD constants — the core leaf every cluster reads. Reads nothing (no cross-module
-## const initializer), so it can never take part in a load-time const cycle.
+## Universal HUD vocabulary — the core leaf every cluster reads: the constants, plus the one
+## `static func` that answers "is this row mine". Reads nothing (no cross-module const initializer,
+## and a static body is evaluated on CALL rather than at class load), so it can never take part in a
+## load-time const cycle.
 
+# **WHO THE PLAYER IS, IN ONE PLACE.** Every "is this mine" question in the client resolves through
+# `is_player_unit` below rather than comparing a row's faction against this id by hand.
 const PLAYER_FACTION_ID := 0
+
+# **A ROW THAT CARRIES NO FACTION.** The default every faction read takes when the key is absent, and
+# it CANNOT be `PLAYER_FACTION_ID`: faction 0 is a real faction — the player's — so a missing faction
+# defaulting to it makes an unattributed row the player's OWN and exempts it from every
+# foreign-disclosure gate. No snapshot writes `-1`, so a read defaulted to it fails closed.
+const NO_FACTION_ID := -1
+
+## Is this band / party / unit dict the player's own? **THE ONE COPY.** It was six identical private
+## `_is_player_unit` methods — `HudLayer`, `MapView` and four controllers — each defaulting a missing
+## `faction` to the player, so a row that arrived without the key read as ours. `HudConst` is a
+## `class_name`, so a static is reachable from every script with no preload, no injection and no
+## `Callable` threaded through a constructor — which was the objection the copies were justified by.
+static func is_player_unit(unit: Dictionary) -> bool:
+	return int(unit.get("faction", NO_FACTION_ID)) == PLAYER_FACTION_ID
 
 # THE ONE HANDLE A COMMAND MAY NAME A BAND BY: `PopulationCohortState.bandId`, decoded onto every
 # cohort dict as `band_id`. It is durable — a rollback rebuilds the ECS world and renumbers every

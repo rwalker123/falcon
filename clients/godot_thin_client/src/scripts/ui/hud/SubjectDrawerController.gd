@@ -18,8 +18,8 @@ extends RefCounted
 ##
 ## THE MOVE VERB IS A TYPED COLLABORATOR, not a Callable — the drawer's Move button `.connect()`s
 ## straight to `TargetingController.begin_move_band`, which owns the `_pending_move_band` state and the
-## banner (the targeting machinery, with three other modes). `_is_player_unit` is a trivial private COPY
-## (the SelectionCardController / BandPanelController precedent).
+## banner (the targeting machinery, with three other modes). The is-this-mine test needs no
+## collaborator at all: `HudConst.is_player_unit` is a `class_name` static, called directly.
 ##
 ## THE FIT PATH IS THE HIGH-RISK PIECE. `fit_subject_drawer` does `await _host.get_tree().process_frame`
 ## — a `RefCounted` has no `get_tree()`, so the frame wait is threaded through the injected HOST node
@@ -116,11 +116,6 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
     _targeting = targeting
-
-## Player-faction check for a roster/drawer band (a trivial private copy of HudLayer's, the
-## SelectionCardController / BandPanelController precedent — a one-line predicate is not worth a Callable).
-func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 # ---- The drawer render dispatch --------------------------------------------------------------
 
@@ -706,7 +701,7 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
     var is_band := not _selection.unit().is_empty()
     var is_herd := not _selection.herd().is_empty()
     var is_expedition := is_band and bool(_selection.unit().get("is_expedition", false))
-    var is_player_band := is_band and not is_expedition and _is_player_unit(_selection.unit())
+    var is_player_band := is_band and not is_expedition and HudConst.is_player_unit(_selection.unit())
     # A selected player band is the panel's subject: its detail + labor allocation render into the
     # dockable Band/City panel (docs/plan_band_city_dock.md §3), and the Occupants card shows NO
     # band detail (the roster still lists it). Falls back to the legacy in-card drawer only when no
@@ -799,7 +794,7 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     if container == null:
         return
     HudWidgets.clear_children(container)
-    var is_player := not band.is_empty() and _is_player_unit(band)
+    var is_player := not band.is_empty() and HudConst.is_player_unit(band)
     container.visible = is_player
     if not is_player:
         return
@@ -851,7 +846,7 @@ func _build_expedition_panel(expedition: Dictionary) -> void:
         return
     for child in _allocation_panel.get_children():
         child.queue_free()
-    var is_player := not expedition.is_empty() and _is_player_unit(expedition)
+    var is_player := not expedition.is_empty() and HudConst.is_player_unit(expedition)
     _allocation_panel.visible = is_player
     if not is_player:
         return

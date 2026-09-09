@@ -1114,10 +1114,10 @@ func _on_zoom_fit_pressed() -> void:
 ##
 ## `{}` when the player has no band at all.
 func _resolve_assign_band() -> Dictionary:
-    if not _selection.unit().is_empty() and _is_player_unit(_selection.unit()):
+    if not _selection.unit().is_empty() and HudConst.is_player_unit(_selection.unit()):
         return _selection.unit()
     var panel := _band_labor.panel_band()
-    if not panel.is_empty() and _is_player_unit(panel):
+    if not panel.is_empty() and HudConst.is_player_unit(panel):
         var live := _band_labor.player_band_by_entity(int(panel.get("entity", -1)))
         if not live.is_empty():
             return live
@@ -2106,10 +2106,6 @@ const NO_BAND_ENTITY := -1
 func show_band_work_tab(band_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     _bandpanel.show_work_tab(int(band.get("entity", NO_BAND_ENTITY)))
-
-## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
-func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).

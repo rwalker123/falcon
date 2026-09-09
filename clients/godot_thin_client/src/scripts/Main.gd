@@ -154,7 +154,6 @@ const LOADING_OVERLAY_TEXT = "Generating world…"
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
-const PLAYER_FACTION_ID = 0
 # --- THE SHIPMENT MANIFEST'S SPELLING (arc #527, see `format_send_trade_expedition`) --------------
 # **THE COMMAND LINE AND THE FEED NOTE SPELL AN AMOUNT DIFFERENTLY, because they are read by
 # different readers.** The note is prose for a person and rounds to one decimal; the LINE is an order
@@ -1092,7 +1091,7 @@ static func format_cancel_order(band: Dictionary, scope: String) -> Dictionary:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(band.get("faction", PLAYER_FACTION_ID))
+    var faction := int(band.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "cancel_order %d %d %s" % [faction, band_id, scope],
         "message": "Clear labor assignments (%s) for band." % scope,
@@ -1169,7 +1168,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var kind := String(payload.get("kind", "")).strip_edges().to_lower()
     var workers: int = max(0, int(payload.get("workers", 0)))
     match kind:
@@ -1248,7 +1247,7 @@ static func format_move_band(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
@@ -1269,7 +1268,7 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
@@ -1295,7 +1294,7 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
@@ -1332,7 +1331,7 @@ static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
@@ -1377,7 +1376,7 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     var destination_band_id := int(payload.get("destination_band_id", HudConst.NO_BAND_ID))
     if destination_band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     if party_workers <= 0:
         return {}
@@ -1490,7 +1489,7 @@ static func format_recall_expedition(payload: Dictionary) -> Dictionary:
     var expedition_band_id := int(payload.get("expedition_band_id", HudConst.NO_BAND_ID))
     if expedition_band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "recall_expedition %d %d" % [faction, expedition_band_id],
         "message": "Recall expedition.",
@@ -1507,7 +1506,7 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
     var workers := int(payload.get("workers", 0))
     if workers <= 0:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "split_band %d %d %d" % [faction, band_id, workers],
         "message": "Form a new band.",
@@ -1523,7 +1522,7 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
 ## the build queue of every band keeping the pen, and that band's `builders` pool raises it when it
 ## reaches the head.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
@@ -1564,7 +1563,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     if improvement in IMPROVEMENT_HERD_TARGETED:
         var herd_id := String(payload.get("herd_id", "")).strip_edges()
         if herd_id == "":
@@ -1610,7 +1609,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
 ## source with a live meter down, and it has its own builder one block up (`format_abandon`) reached
 ## from the road ladder's own control.
 static func format_unqueue(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
         return {
@@ -1649,7 +1648,7 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
 ## **`abandon_improvement` IS A DIFFERENT, RETIRED VERB** — see its epitaph further down: it cleared an
 ## assignment's STORED improvement, which no longer exists, and the server refuses that form outright.
 static func format_abandon(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
         return {
@@ -1684,7 +1683,7 @@ static func format_abandon(payload: Dictionary) -> Dictionary:
 ## The two source shapes are told apart the way `format_unqueue` tells them apart, which is the way
 ## the sim's own parser does: a non-empty herd id is the herd form, else two integer tokens are a tile.
 static func format_build_kit(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var kit_face := String(payload.get("kit_id", "")).strip_edges()
     var token := _kit_token(payload)
     var message_kit := kit_face if token != "" else BUILD_KIT_DERIVED_NOTE
@@ -1729,7 +1728,7 @@ const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 ## The two source shapes are told apart exactly as `format_build_kit` tells them apart, which is how
 ## the sim's own parser does it: a non-empty herd id is the herd form, else two integers are a tile.
 static func format_upkeep_kit(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var kit_face := String(payload.get("kit_id", "")).strip_edges()
     var token := _kit_token(payload)
     var message_kit := kit_face if token != "" else UPKEEP_KIT_DERIVED_NOTE
@@ -1778,7 +1777,7 @@ static func format_build_order(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var position: int = max(0, int(payload.get("position", 0)))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
@@ -1818,7 +1817,7 @@ static func format_work_priority(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var level := String(payload.get("level", "")).strip_edges().to_lower()
     if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
         return {}
@@ -1858,7 +1857,7 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
     var recipe_id := String(payload.get("recipe_id", "")).strip_edges()
     if recipe_id == "":
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "set_bench %d %d recipe %s" % [faction, band_id, recipe_id],
         "message": "Put %s on the bench." % recipe_id,
@@ -1884,7 +1883,7 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
 ## this returns a line for an empty allocation rather than the `{}` that means "nothing to send",
 ## which is the one place this formatter deliberately departs from its neighbours above.
 static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     var parts: Array[String] = ["set_starting_loadout %d %d" % [faction, band_id]]
     var kits := 0
@@ -1926,7 +1925,7 @@ static func format_clear_bench(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "clear_bench %d %d" % [faction, band_id],
         "message": "Cleared the bench.",
@@ -1939,7 +1938,7 @@ static func format_bench_crew(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var workers: int = max(0, int(payload.get("workers", 0)))
     return {
         "line": "bench_crew %d %d workers %d" % [faction, band_id, workers],
@@ -1964,7 +1963,7 @@ static func format_bench_priority(payload: Dictionary) -> Dictionary:
     var level := String(payload.get("level", "")).strip_edges().to_lower()
     if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     # The FEED reads the level the way the picker's own face spells it, so the echo and the button the
     # player pressed carry one word between them — `format_work_priority`'s rule, one verb over.
     var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
@@ -2002,7 +2001,7 @@ static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
     var mode := String(payload.get("mode", "")).strip_edges().to_lower()
     if mode == "":
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "upkeep_mode %d %d %s" % [faction, band_id, mode],
         "message": HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGES.get(mode,
@@ -2208,7 +2207,7 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
     var choice_id := String(payload.get("choice_id", "")).strip_edges()
     if beat_id == "" or choice_id == "":
         return
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     _send_runtime_command(
         "answer_fork %d %s %s" % [faction, beat_id, choice_id],
         "Answered the question."

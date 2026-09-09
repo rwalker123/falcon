@@ -2666,7 +2666,7 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 	worked.append(READY_BARREN_LADDER)
 	# LIT — tended and sowable, with a Field meter nobody declared. See the constant.
 	patches.append(_ready_patch(READY_MID_FIELD, true, true, true, 0.0,
-		MapView.PLAYER_FACTION_ID, READY_MID_FIELD_PROGRESS))
+		HudConst.PLAYER_FACTION_ID, READY_MID_FIELD_PROGRESS))
 	worked.append(READY_MID_FIELD)
 	# DARK — wild, half-cultivated, and nobody is on it: neither half of the candidate union admits it.
 	patches.append(_ready_patch(READY_HALF_BUILT, false, true, false, READY_HALF_BUILT_PROGRESS))
@@ -2728,7 +2728,7 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 ## the player because that is what every owned source in this state is; the one foreign patch says so
 ## explicitly.
 func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool,
-		progress: float = 0.0, owner: int = MapView.PLAYER_FACTION_ID,
+		progress: float = 0.0, owner: int = HudConst.PLAYER_FACTION_ID,
 		field_progress: float = 0.0) -> Dictionary:
 	return _stamp_patch_owner({
 		"x": tile.x, "y": tile.y,
@@ -4169,7 +4169,7 @@ func _snapshot_work_ready() -> Dictionary:
 	# badges want; the point of routing them through the derivation anyway is that a row whose meters
 	# are edited can never keep an owner they no longer justify.
 	for patch_variant in snap["forage_patches"]:
-		_stamp_patch_owner(patch_variant, MapView.PLAYER_FACTION_ID)
+		_stamp_patch_owner(patch_variant, HudConst.PLAYER_FACTION_ID)
 	for entry_variant in snap["populations"][0]["labor_assignments"]:
 		var entry: Dictionary = entry_variant
 		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:

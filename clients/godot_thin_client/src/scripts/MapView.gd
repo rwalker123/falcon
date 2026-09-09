@@ -613,7 +613,6 @@ const KEYBOARD_PAN_SPEED := 600.0
 # setting to a far higher UI_SCALE_MIN, so this is the guard for a hand-edited config file only —
 # without it a 0 would make the counter-scale infinite. See `_apply_ui_scale`.
 const MIN_UI_SCALE := 0.01
-const PLAYER_FACTION_ID := 0
 
 # --- Band status decorations (food-runway dot, activity glyph, supply links) ---
 # Sit relative to the band marker radius so they scale with zoom.
@@ -1805,7 +1804,7 @@ func _ingest_discovered_sites(snapshot: Dictionary) -> void:
 		if not (entry is Dictionary):
 			continue
 		var faction_entry: Dictionary = entry
-		if int(faction_entry.get("faction", -1)) != PLAYER_FACTION_ID:
+		if int(faction_entry.get("faction", HudConst.NO_FACTION_ID)) != HudConst.PLAYER_FACTION_ID:
 			continue
 		var faction_sites: Variant = faction_entry.get("sites", [])
 		if not (faction_sites is Array):
@@ -2405,7 +2404,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _draw_supply_links(radius: float, origin: Vector2) -> void:
 	var networks: Dictionary = {}  # supply_network_id -> Array[Vector2] of centers
 	for unit in units:
-		if not _is_player_unit(unit):
+		if not HudConst.is_player_unit(unit):
 			continue
 		var network_id: int = int(unit.get("supply_network_id", SUPPLY_NETWORK_SOLO))
 		if network_id == SUPPLY_NETWORK_SOLO:
@@ -5387,9 +5386,6 @@ func secondary_food_key(x: int, y: int) -> String:
 func secondary_herd_key(herd_id: String) -> String:
 	return _secondary_markers.herd_key(herd_id)
 
-func _is_player_unit(unit: Dictionary) -> bool:
-	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
-
 ## THE unit fog rule — one definition, used by every unit draw/lookup/hit-test:
 ##     hidden == tile not currently visible AND the unit is not ours.
 ##
@@ -5399,7 +5395,7 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## an Unexplored tile. A plain visibility gate would erase your own expedition from the map at exactly
 ## the moment you are using it. A unit with no position can't be fog-tested, so it stays visible.
 func _unit_hidden_by_fog(unit: Dictionary) -> bool:
-	if _is_player_unit(unit):
+	if HudConst.is_player_unit(unit):
 		return false
 	var pos: Array = Array(unit.get("pos", []))
 	if pos.size() != 2:
