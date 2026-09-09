@@ -324,6 +324,46 @@
       "working": 24
     }
   ],
+  "deposit_rungs": [
+    {
+      "branch": "deposit_rungs[0].branch",
+      "build_material_cost": 53.380001,
+      "build_material_id": "deposit_rungs[0].build_material_id",
+      "build_work_per_worker_turn": 9.94,
+      "display_name": "deposit_rungs[0].display_name",
+      "earns_knowledge": "deposit_rungs[0].earns_knowledge",
+      "min_deposit_capacity": 90.110001,
+      "order": 68,
+      "recovery_fraction": 24.58,
+      "regrowth_multiplier": 25.51,
+      "requires_rung": "deposit_rungs[0].requires_rung",
+      "rung_key": "deposit_rungs[0].rung_key",
+      "unlock_knowledge": "deposit_rungs[0].unlock_knowledge",
+      "upkeep_work_per_turn": 7.32,
+      "verb": "deposit_rungs[0].verb",
+      "work_cost": 111.959999,
+      "yield_per_worker_turn": 90.739998
+    },
+    {
+      "branch": "deposit_rungs[1].branch",
+      "build_material_cost": 112.269997,
+      "build_material_id": "deposit_rungs[1].build_material_id",
+      "build_work_per_worker_turn": 63.73,
+      "display_name": "deposit_rungs[1].display_name",
+      "earns_knowledge": "deposit_rungs[1].earns_knowledge",
+      "min_deposit_capacity": 15.24,
+      "order": 107,
+      "recovery_fraction": 22.190001,
+      "regrowth_multiplier": 101.449997,
+      "requires_rung": "deposit_rungs[1].requires_rung",
+      "rung_key": "deposit_rungs[1].rung_key",
+      "unlock_knowledge": "deposit_rungs[1].unlock_knowledge",
+      "upkeep_work_per_turn": 101.18,
+      "verb": "deposit_rungs[1].verb",
+      "work_cost": 15.55,
+      "yield_per_worker_turn": 6.69
+    }
+  ],
   "deposits": [
     {
       "actual_take": 75.360001,

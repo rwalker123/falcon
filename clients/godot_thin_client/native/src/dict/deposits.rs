@@ -196,3 +196,97 @@ pub(crate) fn deposits_to_array(
     }
     array
 }
+
+/// **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** -- one row per rung of `intensification_ladder.json`'s
+/// `forestry` and `extraction` branches, published ONCE PER WORLD beside `routeRungs` and carrying no
+/// faction and no tile.
+///
+/// ⛔ **IT IS `route_rungs_to_array`'s TWIN, FIELD FOR FIELD WHERE THE TWO BRANCHES AGREE** -- read
+/// `dict::routes` beside this function. Every rule there holds here: the row order is the CLIMB
+/// order, the `""` fields are STATES rather than absences, and the base figures are quoted as
+/// published with no client-side scaling.
+///
+/// ⛔ **ONE VECTOR CARRIES BOTH LADDERS, WHICH IS WHY `branch` IS A FIELD.** A working climbs the
+/// branch its MATERIAL belongs to; a reader that ignored `branch` would offer a coppice above a
+/// quarry. `order` is per branch, so it is only a climb order WITHIN one.
+pub(crate) fn deposit_rungs_to_array(
+    rungs: Vector<'_, ForwardsUOffset<fb::DepositRungState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for rung in rungs {
+        let mut dict = VarDictionary::new();
+        // The join key with a working's own `rung`, spelled `"<branch>:<id>"` exactly as
+        // `DepositState.rung` spells it.
+        let _ = dict.insert("rung_key", rung.rungKey().unwrap_or_default());
+        // ⛔ **WHICH LADDER THIS ROW IS ON** -- `"forestry"` | `"extraction"`, the same vocabulary
+        // `DepositState.branch` publishes. One vector, two ladders: without this the rows would be
+        // one undifferentiated climb and a wood would be offered a quarry.
+        let _ = dict.insert("branch", rung.branch().unwrap_or_default());
+        let _ = dict.insert("order", rung.order() as i64);
+        // "Coppice" -- resolved SIM-SIDE, so no client authors a second spelling of it.
+        let _ = dict.insert("display_name", rung.displayName().unwrap_or_default());
+        // The TILE COMMAND that raises this rung, and `""` on both FREE FLOORS, which nobody
+        // declares: deadfall and a stone scatter are what the ground already offers.
+        let _ = dict.insert("verb", rung.verb().unwrap_or_default());
+        // The ladder knowledge that gates it, joining to `LadderKnowledgeState.knowledgeId`.
+        let _ = dict.insert(
+            "unlock_knowledge",
+            rung.unlockKnowledge().unwrap_or_default(),
+        );
+        // The rung directly beneath, `""` at a branch's floor -- the chain a client renders the climb
+        // from without holding a second copy of the order.
+        let _ = dict.insert("requires_rung", rung.requiresRung().unwrap_or_default());
+        // ⛔ **WHAT STANDING HERE TEACHES, AND IT IS THE CRAFT GATE'S REMEDY.** `unlock_knowledge`
+        // above says what a rung WAITS ON; this says what a rung EARNS, and the two are different
+        // rungs. Inferring the pairing from `requires_rung` produces byte-identical sentences on the
+        // shipped five and sends the player to stand on the wrong ground the day a config breaks it.
+        let _ = dict.insert("earns_knowledge", rung.earnsKnowledge().unwrap_or_default());
+        let _ = dict.insert("work_cost", f64::from(rung.workCost()));
+        // ...and the standing bill, BEFORE the working's own keeper-loads scale it
+        // (`DepositState.upkeep_demand` is the resolved per-working reading).
+        let _ = dict.insert("upkeep_work_per_turn", f64::from(rung.upkeepWorkPerTurn()));
+        // ⛔ **THE PILE AND ITS NOUN ARE ONE READING** -- 8 wood on `extraction:quarry`, nothing
+        // anywhere else. An amount with no word cannot be rendered into a sentence and a word with
+        // no amount says nothing, so a reader takes both or neither; and the client must not supply
+        // the noun itself, *a quarry eats wood* being a fact about the CONFIG.
+        let _ = dict.insert("build_material_cost", f64::from(rung.buildMaterialCost()));
+        let _ = dict.insert(
+            "build_material_id",
+            rung.buildMaterialId().unwrap_or_default(),
+        );
+        // ⛔ **WHAT ONE BARE-HANDED WORKER BANKS IN A TURN -- the SIM'S rate, not the rung's**, and
+        // it is DECODED rather than transcribed for `RouteRungState.buildWorkPerWorkerTurn`'s
+        // reason: the sim writes worker output as a sum of terms, so a copy in the client goes stale
+        // in silence the day a second term lands. A reader finding this missing or `0` states NO
+        // ESTIMATE rather than substituting a rate of its own.
+        let _ = dict.insert(
+            "build_work_per_worker_turn",
+            f64::from(rung.buildWorkPerWorkerTurn()),
+        );
+        // --- WHAT THIS RUNG BUYS (`extraction_payoff`) ------------------------------------------
+        // What ONE worker takes in a turn at this rung, in the deposit's material's own units,
+        // before the reachable stock caps it. **Both free floors carry a real bare-handed rate**:
+        // the whole material economy bootstraps through them.
+        let _ = dict.insert(
+            "yield_per_worker_turn",
+            f64::from(rung.yieldPerWorkerTurn()),
+        );
+        // ⛔ **HOW MUCH OF THE SEAM THIS RUNG CAN EVER REACH, 0..1 -- PUBLISHED, NEVER DERIVED FROM
+        // `reachable / capacity`.** That ratio clamps to the STOCK, so it falls as the rock is
+        // worked while the rung's reach never moves; a payoff row computing it would quietly begin
+        // quoting a different number.
+        let _ = dict.insert("recovery_fraction", f64::from(rung.recoveryFraction()));
+        // What this rung multiplies the deposit's OWN `regrowth_rate` by -- 2.0 at
+        // `forestry:coppice`, 1.0 everywhere else. **No rung raises capacity and there is no field
+        // for one**, so "stone's rate is zero" survives as arithmetic rather than as a rule.
+        let _ = dict.insert("regrowth_multiplier", f64::from(rung.regrowthMultiplier()));
+        // ⛔ **WHAT THE GROUND MUST HOLD FOR THIS RUNG TO STAND THERE** -- 100 at
+        // `extraction:quarry`, the one placement rule on either branch. It is published so a client
+        // can say WHY a rung is refused rather than only that it is; the working's own `capacity` is
+        // the other half of that sentence, and a threshold transcribed client-side would be a second
+        // authority over a rule the config owns.
+        let _ = dict.insert("min_deposit_capacity", f64::from(rung.minDepositCapacity()));
+        array.push(&dict.to_variant());
+    }
+    array
+}

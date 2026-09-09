@@ -731,3 +731,133 @@ static func knowledge_gate_unmet(rung: String, knowledge: Dictionary) -> bool:
 
 static func track(knowledge: Dictionary, key: String) -> float:
     return float(knowledge.get(key, 0.0))
+
+# ==================================================================================================
+#  THE TWO DEPOSIT BRANCHES (issue #650) — may this WORKING be raised, and if not, why not?
+# ==================================================================================================
+#
+# ⛔ **KEYED ON THE RUNG AND NOT ON THE VERB**, the route branch's own rule and for its exact reason:
+# **both** free floors declare no verb, so a verb-keyed table would hold two entries spelling `""` and
+# could not tell a deadfall from a stone scatter. The plant and animal webs have no such rung, which
+# is why their gates are keyed the way they are.
+#
+# ⛔ **A REFUSAL IS A `{kind, short, long}` RECORD, NOT A STRING**, and the record's field names are
+# `HudRouteVocab.GATE_*_KEY` — one refusal SHAPE for every branch, so `deposit_row_refusal` and
+# `deposit_tooltip_refusals` below are the route pair's twins reading one spelling. What is per branch
+# is the PRIORITY (`HudDepositVocab.GATE_ROW_PRIORITY`).
+#
+# ⛔ **IT ANSWERS FOR EVERY RUNG ABOVE THE STANDING ONE, GATED OR NOT — the absence of a key is the
+# READY answer.** The track shows the whole branch, so a refused rung is rendered and explained.
+
+## **THE DEPOSIT ARM.** `deposit` is the raw `deposits` row for the working, `ladder` the WHOLE catalog
+## (this filters it to the working's own branch, because `order` is per branch and a shared walk would
+## offer a coppice above a quarry), `knowledge` the faction's `{track: progress}` row and `labels` the
+## `{knowledge_id: display_name}` lookup off the ladder's knowledge roster.
+##
+## Four gates, appended in `HudDepositVocab.GATE_ROW_PRIORITY` order so the row's pick is the first
+## entry carrying a short form and the hover reads in the order the row chose from:
+##
+##   1. **NOBODY DECLARES IT** — `verb == ""`. The ground already offers it; there is no order to give.
+##      **Stated ALONE**, and the loop `continue`s past every other gate for that rung, exactly as the
+##      route branch's gate 1 does: a craft or a site rule beside it would read as a prerequisite for
+##      something that is not on offer.
+##   2. ⛔ **THE SITE — `min_deposit_capacity` against this working's own `capacity`.** New to this
+##      branch; the route branch has no placement rule at all. It is what refuses a quarry on a
+##      35-unit scatter, and it OUTRANKS the craft because it is the one refusal here that no amount
+##      of learning will ever close.
+##   3. **THE CRAFT** — `unlock_knowledge`, at the same `KNOWLEDGE_COMPLETE` bar every other track is
+##      read at, with the remedy looked up through `earns_knowledge`.
+##   4. **THE GROUND** — `requires_rung`, LAST for the route branch's reason: it names a rung the track
+##      is already displaying one line up.
+static func deposit_gates(deposit: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary) -> Dictionary:
+    var gates := {}
+    var branch := HudDepositVocab.branch_of(deposit)
+    var rows := HudDepositVocab.branch_ladder(ladder, branch)
+    var standing_order := HudDepositVocab.ladder_order_of(rows, HudDepositVocab.rung_of(deposit))
+    var capacity := HudDepositVocab.capacity_of(deposit)
+    for entry in rows:
+        if HudDepositVocab.catalog_order(entry) <= standing_order:
+            continue
+        var refusals: Array[Dictionary] = []
+        var verb := HudDepositVocab.catalog_verb(entry)
+        if verb == HudDepositVocab.RUNG_CATALOG_NONE:
+            refusals.append(_route_refusal(HudDepositVocab.GATE_KIND_WORN_IN, "",
+                HudDepositVocab.GATE_LONG_WORN_IN))
+            gates[HudDepositVocab.catalog_rung_key(entry)] = refusals
+            continue
+        # ⛔ **THE SITE RULE — BOTH FIGURES ARE PUBLISHED AND NEITHER IS TRANSCRIBED.** The threshold is
+        # the rung's (`min_deposit_capacity`), the ground's is the working's own `capacity`, and a
+        # client holding either as a literal would be a second authority over a placement rule the
+        # config owns.
+        var wanted := HudDepositVocab.catalog_min_capacity(entry)
+        if wanted > HudDepositVocab.RUNG_CATALOG_NO_SITE_REQUIREMENT and capacity < wanted:
+            refusals.append(_route_refusal(HudDepositVocab.GATE_KIND_SITE,
+                HudDepositVocab.GATE_SHORT_TOO_SMALL,
+                HudDepositVocab.GATE_LONG_TOO_SMALL_FORMAT % [
+                    DetailFormat.format_trimmed(wanted, HudDepositVocab.CARD_STOCK_DECIMALS),
+                    DetailFormat.format_trimmed(capacity,
+                        HudDepositVocab.CARD_STOCK_DECIMALS)]))
+        var unlock := HudDepositVocab.catalog_unlock_knowledge(entry)
+        if unlock != HudDepositVocab.RUNG_CATALOG_NONE \
+                and track(knowledge, unlock) < HudConst.KNOWLEDGE_COMPLETE:
+            refusals.append(_deposit_craft_refusal(unlock, track(knowledge, unlock), labels,
+                HudDepositVocab.ladder_rung_teaching(ladder, branch, unlock)))
+        var requires := HudDepositVocab.catalog_requires_rung(entry)
+        if requires != HudDepositVocab.RUNG_CATALOG_NONE \
+                and HudDepositVocab.ladder_order_of(rows, requires) > standing_order:
+            var beneath := HudDepositVocab.ladder_rung_name(rows, requires).to_lower()
+            refusals.append(_route_refusal(HudDepositVocab.GATE_KIND_GROUND,
+                HudDepositVocab.GATE_SHORT_NEEDS_RUNG_FORMAT % beneath,
+                HudDepositVocab.GATE_LONG_NEEDS_RUNG_FORMAT % beneath))
+        if not refusals.is_empty():
+            gates[HudDepositVocab.catalog_rung_key(entry)] = refusals
+    return gates
+
+## The refusals a deposit gates dict holds for ONE rung — `route_gates_for`'s twin, and separate from
+## it only because the two branches' dicts are built separately; the record shape is identical.
+static func deposit_gates_for(gates: Dictionary, rung: String) -> Array[Dictionary]:
+    return route_gates_for(gates, rung)
+
+## ⛔ **THE ONE REFUSAL A ROW STATES when several are unmet** — `HudDepositVocab.GATE_ROW_PRIORITY`'s
+## order. `""` for a ready rung, and for the free floor, whose only refusal carries no short form
+## because the row's own state word says it.
+static func deposit_row_refusal(refusals: Array[Dictionary]) -> String:
+    for kind in HudDepositVocab.GATE_ROW_PRIORITY:
+        for refusal in refusals:
+            if String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")) != kind:
+                continue
+            var short := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
+            if short != "":
+                return short
+    # **A refusal of an unlisted kind still answers**, the route pick's own rule: a gate added without
+    # a priority entry must degrade to stating SOMETHING rather than to a blank half-face.
+    for refusal in refusals:
+        var fallback := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
+        if fallback != "":
+            return fallback
+    return ""
+
+## …and ALL of them, as sentences for the hover, in the order the gate layer appended them. The record
+## shape is shared, so this is the route joiner verbatim.
+static func deposit_tooltip_refusals(refusals: Array) -> Array[String]:
+    return route_tooltip_refusals(refusals)
+
+## The CRAFT refusal in both lengths, for a deposit rung.
+##
+## ⛔ **`teaches` IS THE RUNG WHOSE `earns_knowledge` NAMES THIS CRAFT, AND IT IS LOOKED UP** — never
+## `requires_rung`. The two coincide on the five shipped rungs, which is exactly why reading the wrong
+## one looks correct; a gate reason is a REMEDY, so naming the wrong rung sends the player to stand on
+## the wrong ground. `""` where nothing on this branch teaches it drops the remedy clause entirely,
+## that being a real state (a deposit rung may be gated on a craft another branch earns).
+static func _deposit_craft_refusal(unlock: String, progress: float, labels: Dictionary,
+        teaches: String) -> Dictionary:
+    var name := String(labels.get(unlock, "")).strip_edges()
+    var percent := HudFormat.progress_percent(progress)
+    var short := HudDepositVocab.GATE_SHORT_NEEDS_CRAFT_UNNAMED if name == "" \
+        else HudDepositVocab.GATE_SHORT_NEEDS_CRAFT_FORMAT % name
+    var long := HudDepositVocab.GATE_LONG_KNOWLEDGE_HEAD_UNNAMED_FORMAT % percent if name == "" \
+        else HudDepositVocab.GATE_LONG_KNOWLEDGE_HEAD_FORMAT % [name, percent]
+    if teaches.strip_edges() != "":
+        long += HudDepositVocab.GATE_LONG_KNOWLEDGE_REMEDY_FORMAT % teaches.to_lower()
+    return _route_refusal(HudDepositVocab.GATE_KIND_CRAFT, short, long)

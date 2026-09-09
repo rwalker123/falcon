@@ -153,6 +153,13 @@ func default_kit_id(job: String) -> String:
 			return _default_warrior_kit_id
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
+		KitRoster.JOB_EXTRACT:
+			# **THE WIRE NAMES NO EXTRACT DEFAULT IN THIS INGEST**, so this answers `""` — stated
+			# rather than reached by fall-through, for the reason the builders arm below is: falling
+			# through would hand the deposit sheets the HUNT kit as their marked `(default)`, and
+			# `Main._kit_token` would then omit the token for a selection that happened to equal it.
+			# The shipped roster offers `extract` no kit at all, so nothing renders either way.
+			return KitRoster.NO_KIT_ID
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
 			# not named a default for" case above, stated rather than reached by fall-through. Falling
@@ -1614,6 +1621,11 @@ func source_crew_pool_hunt(band: Dictionary, herd_id: String) -> int:
 
 func source_crew_pool_forage(band: Dictionary, x: int, y: int) -> int:
 	return maxi(int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y), 0)
+
+## …and the deposit twin, keyed through the `(tile, material)` PAIR for `extract_assignment_of`'s
+## reason: a tile-keyed pool would offer the Wood crew's hands back to the Stone sheet beside it.
+func source_crew_pool_extract(band: Dictionary, x: int, y: int, material: String) -> int:
+	return maxi(int(band.get("idle_workers", 0)) + workers_for_extract(band, x, y, material), 0)
 
 ## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** — the declared verb when every band working
 ## the source has zero builders on it, `IMPROVEMENT_NONE` otherwise. The client half of the

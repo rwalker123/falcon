@@ -125,6 +125,13 @@ const POLICY_ICONS := {
 	POLICY_SOW: "▦",
 	POLICY_TAME: "◎",
 	POLICY_CORRAL: "🐄",
+	# **THE TWO DEPOSIT BRANCHES' THREE VERBS** (issue #650) — the mark the compose sheet's pointer
+	# line leads with, in the same register as the four above: a tool or the thing worked, never an
+	# abstract badge. `fell` and `coppice` are one branch and take DIFFERENT marks deliberately, the
+	# axe being what opens a wood and the tree what a managed one is for.
+	"fell": "🪓",
+	"coppice": "🌲",
+	"quarry": "⛏",
 }
 
 ## Icon for an improvement verb ("" for an unknown/absent one, so callers render bare text).

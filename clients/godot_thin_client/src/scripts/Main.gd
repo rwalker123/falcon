@@ -762,6 +762,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # `intensification_ladder.json` reaches the player with no client edit.
     if snapshot.has("route_rungs") and SnapshotSections.changed(snapshot, "route_rungs"):
         _hud_invoke("update_route_rungs", [snapshot["route_rungs"]])
+    # …and the two DEPOSIT branches' catalog beside it, the third per-world ladder declaration. It is
+    # what lets a working's ladder, its tile-card payoff row and its compose sheet all name a rung,
+    # price it and state what it buys off the sim's own record rather than a client table.
+    if snapshot.has("deposit_rungs") and SnapshotSections.changed(snapshot, "deposit_rungs"):
+        _hud_invoke("update_deposit_rungs", [snapshot["deposit_rungs"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):

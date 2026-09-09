@@ -2449,3 +2449,49 @@ consults the sight axis — **no frame rendered before it existed changes.**
 `KIT_DEFAULT_EXPEDITION`), and the verb joined `KIT_BEARING_KINDS`; `xtask/src/command_guard.rs`'s
 `kit_token` gained the `SendExpedition` arm, that verb having left the `NotKitBearing` list. Without
 both halves the drive would prove only that a line PARSES.
+
+## The workings roster's rung TRACK (issue #650)
+
+One frame and eight assertions appended to `_assert_the_workings_roster_names_its_workings`, plus a
+rung CATALOG the whole state now needs. The behaviour is `extraction-workings.md`'s; what belongs
+here is the shape of the drive.
+
+**`band_panel_workings_track` is the deposit ladder's ONE rendered frame, and this is the only
+harness that can take it**: the track is opened from the roster ROW's declaring mark, and
+`ui_preview` stands up no Band panel. Its four ROW STATES are asserted over the producer in
+`ui_preview`'s `workings` chapter — a frame shows one, and the branch has four.
+
+⛔ **THE STATE PUSHES A DEPOSIT RUNG CATALOG, AND WITHOUT ONE IT IS EVIDENCE OF NOTHING.** Every
+value cell names its rung out of `SubsistenceSection.depositRungs`, so a roster with no catalog
+behind it draws `forestry:felling` in each one; and the row's mark is built from
+`RungLadder.has_track` over its rows, so with no catalog the mark does not draw at all and **every
+claim about it passes vacuously**. It is cleared with the deposits in
+`_restore_workings_roster_fixture`, a per-world constant being exactly the thing a later state
+inherits.
+
+⛔ **THE VALUE-CELL CLAIM IS ASKED WITH THE SAME CATALOG THE ROW WAS BUILT FROM.** `deposit_row_value`
+names the rung out of it, so an expectation composed against `[]` compares a display name with a raw
+wire key and fails for a reason that has nothing to do with the REUSE being claimed. A second claim
+beside it pins the name as the catalog's word and the raw key as its negative.
+
+⛔ **THE CARD IS A `PopupPanel`, i.e. a `Window`, SO `_find_meta_control` WALKS STRAIGHT PAST IT** —
+the road ladder's own trap, and it cost a run here (`pressing it opens the SHARED rung track` failed
+on a track that was up and correct). The rows are read through the same `_rung_track_states` /
+`_rung_track_faces` pair the plant track's own states use, which recurse through the Window because
+they walk `get_children()` rather than gating the recursion on `Control`.
+
+**What only this frame can say:** one mark per row with somewhere left to go, each keyed to its own
+`(tile, material)`; the branch's own TWO rungs and no more — the two ladders are ONE vector, so a walk
+that forgot to filter on `branch` would offer a coppice here; the floor stated as a FACT rather than a
+price of zero, asserted BOTH as `STATE_STANDING` and as the rendered face, since a `0 work` price is
+the shape the branch's own ⛔ refuses; the quarry LEADING with its pile and its standing bill (a
+`begins_with`, because *every ordered rung leads with its price, refused or not* and this walk's
+faction may or may not have learned Quarrying by the time it gets here); **no `≈` estimate on it**;
+and its material aside through the shared price composer.
+
+**The per-row prohibition is unchanged and still asserted.** The existing scan walks the ROWS for the
+stepper's `−`/`+` faces and the road roster's `✕`; the mark is asserted BESIDE it, which is what says
+a declaring `⌃` is not one of the three controls roads.md forbids on a row.
+
+**A clean run is 170 frames / 1161 `PASS` / 511 `assert OK`, exit 0 — MEASURED on this tree.**
+

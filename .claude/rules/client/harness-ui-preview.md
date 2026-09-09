@@ -2776,3 +2776,62 @@ sheet of the chapter that runs after `hunt` — renders its card ~300px SHORTER,
 documented fit sensitivity to the sheet rendered before it, and the new frame is the correctly fitted
 one. Measured by disabling the block's one call and diffing the whole set: **421 of 422 frames
 byte-identical**, that frame the only mover.
+
+## The `workings` chapter, reworked to the three surfaces (issue #650)
+
+**Five frames and forty-three checkpoints**, `EXPECTED_CHECKPOINTS` **43** — RE-MEASURED by raising
+the const to an impossible number and reading `reached` back, as this file's own rule says. The
+chapter's subject is `extraction-workings.md`'s; what belongs here is the shape of the drive and the
+three things it cost.
+
+**FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
+`workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
+against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
+branch says those things now. `workings_unopened` kept its name and its subject, and the new set is
+`workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
+`workings_extraction_sheet` / `workings_unopened`.
+
+⛔ **THE CHAPTER STAGES ITS OWN BAND, AND WITHOUT ONE EVERY SHEET CLAIM IS ABOUT A CREW OF ZERO.** It
+runs LAST in `CHAPTERS`, so the roster it inherits is whichever one the twenty-fifth chapter left; a
+band with no idle worker clamps the compose sheet's stepper to 0, and that renders a perfectly
+ordinary sheet — no take row, no deal row, and the pointer line's *send diggers here first* arm
+instead of its live one. **Measured**: that is exactly how the chapter first failed, on four claims
+that said nothing about the code under test. `BandFx.band_fixture()` is pushed through
+`update_band_alerts` at the top, and the crew the sheet SETTLED on is read back off
+`ComposeState.deposit_count()` rather than assumed — a deal asserted at a count the sheet refused is
+a claim about a number nothing on screen shows.
+
+⛔ **IT PUSHES ITS OWN RUNG CATALOG, THROUGH THE REAL INGEST** (`Hud.update_deposit_rungs`). Every
+rung NAME, PRICE, PAYOFF and GATE on all three surfaces is read out of
+`SubsistenceSection.depositRungs`, so a chapter that staged no catalog would assert against raw wire
+keys and against a ladder with no rows on it.
+
+⛔ **AND THE LADDER IS ASSERTED OVER ITS PRODUCER, WITH NO FRAME OF ITS OWN.** The track is opened
+from the WORK BOARD's workings roster and this harness stands up no Band panel, so the rendered frame
+is `band_panel_preview`'s (`band_panel_workings_track`). What is asserted here is the four ROW STATES
+the branch can reach — the new SITE gate, the CRAFT gate and its looked-up remedy, the free floor as
+a FACT, a priced row leading with its pile and quoting no turns, and a row mid-build quoting the sim's
+own countdown — because a frame can show one of them and the branch has four.
+
+**Two claims are structural rather than textual, and each is the only thing that can see its
+failure.** The payoff row's key is a BLANK rather than absent, so the claim is that the rendered
+markup keeps exactly ONE `[table=`: a keyless line closes the card's table and every key below it
+stops sharing a column with `Foraging`, which no `contains` can see. And the payoff rows are read
+through the chapter's own `_payoff_values` scan rather than `Readout.detail_row_value`, because a hex
+carrying two RAISED deposits emits two rows keyed `" "` and the shared reader answers with the first.
+
+**Three gotchas cost a run each, all of them harness rather than feature:**
+
+- **`h` is untyped, so every local taken off it needs an annotation.** Six `var x := h._hud…` lines
+  failed to compile with `Cannot infer the type of "x"`, which takes the whole chapter down at LOAD
+  and reports as `did not load`.
+- **`Readout.verdict_text` includes the severity DOT**, the dot being a Label of the verdict row, so
+  a sentence is asserted with `contains` and never `==`.
+- **The readout's NOTE is uppercased by `_readout_unit_label`**, so the needle is the vocabulary's own
+  word `.to_upper()` — `yields_text` does carry it, the note being a child of the row's own flow.
+
+**A clean run is 435 frames / 2065 `PASS`, exit 0 — MEASURED windowed on this tree.** ⛔ **The
+`--headless` run exits 1 here and that is the dummy renderer, not this chapter**: `button_faces`
+skips two pixel probes for want of a renderer and falls 8 short of its own floor, which is that
+harness's documented headless behaviour. Judge this harness windowed.
+

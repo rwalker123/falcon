@@ -1439,3 +1439,188 @@ static func _outright_bar(kind: String, source: Dictionary, prefix: String,
         return ""
     return HudFloraVocab.GATE_REASON_CROP_CANNOT_CLIMB_FORMAT \
         % DetailFormat.rung_badge_word(improvement)
+
+# ---- THE TWO DEPOSIT BRANCHES — a THIRD sibling of `track`, never a widening of it ----------------
+#
+# ⛔ **`track` TAKES A LABOR `kind` AND A PREFIXED FORECAST SOURCE DICT, AND A WORKING HAS NEITHER.**
+# There is no `forage`/`hunt` forecast row for a deposit, no per-rung `<rung>WorkCost` on the source,
+# no queued entry publishing legs and no `prefix` to spell its keys under. So the PRODUCER is a
+# sibling, exactly as `route_track` is, and the RENDERER is not: this emits `track`'s own `ROW_*`
+# shape and hands it to the SAME `build_track`, which is what keeps one rung reading one way on every
+# card in the client.
+#
+# ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE COMES OFF THE CATALOG** (`HudDepositVocab`'s `catalog_*`
+# readers over `SubsistenceSection.depositRungs`). Nothing here hard-codes the five shipped rungs: a
+# rung added to `intensification_ladder.json` appears as a row with no client edit at all.
+#
+# ⛔ **THREE OF THE SIX ORIGINAL STATES ARE UNREACHABLE HERE, STRUCTURALLY** — `path` and `target`
+# name legs of a QUEUED entry, and a deposit publishes membership (`is_queued`) rather than a
+# destination, so no row can be a leg of one.
+
+## **THE DEPOSIT BRANCH FOR ONE WORKING, BOTTOM RUNG FIRST — ONE LINE PER RUNG.**
+##
+## `deposit` is the raw `deposits` row, `ladder` the WHOLE catalog (both branches — this filters to
+## the working's own, because `order` is per branch), `knowledge` the faction's `{track: progress}`
+## row and `labels` the `{knowledge_id: display_name}` lookup off the ladder's knowledge roster.
+##
+## `builders` is the acting band's own pool and `band` is read for ONE thing — its `material_store`,
+## which is what the shared price-aside composer weighs a rung's pile against. `{}` simply drops that
+## aside: a caller with no band in hand states the price and not the shortfall, which is the honest
+## half, and it is `track()`'s own contract. `queue` is that band's build queue as `{ahead, head}`, so
+## a row states what a press would land behind.
+##
+## ⛔ **A PRICED ROW QUOTES NO TURNS, AND THAT IS A DECISION.** The estimate would be divided by a
+## builders pool that may be on another job entirely and would ignore the queue the press joins —
+## the route branch's own finding, arriving here before it could ship. What a row states instead is
+## the rung's pile and its standing bill, neither of which a crew moves. **The row being BUILT is the
+## one exception**, and it quotes the SIM's chained countdown (`build_value`) rather than an estimate
+## of this client's.
+static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowledge: Dictionary,
+        labels: Dictionary, builders: int = SourceForecast.BUILD_CREW_NONE,
+        band: Dictionary = {}, queue: Dictionary = {}) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var branch := HudDepositVocab.branch_of(deposit)
+    var catalog := HudDepositVocab.branch_ladder(ladder, branch)
+    var gates := RungGates.deposit_gates(deposit, ladder, knowledge, labels)
+    var standing_order := HudDepositVocab.ladder_order_of(catalog,
+        HudDepositVocab.rung_of(deposit))
+    var floor_entry := HudDepositVocab.branch_floor_entry(ladder, branch)
+    var store := _material_store(band)
+    var meter := HudDepositVocab.build_fraction_of(deposit)
+    # ⛔ **IS THE RUNG ABOVE THE STANDING ONE ACTUALLY BEING RAISED?** — a declaration on the wire, or
+    # work already banked against it. Resolved ONCE, because only one row can own the meter, and the
+    # queue is tested FIRST for the route branch's reason: `build_fraction` measures against the rung
+    # AT RISK, which on a working with nothing banked above it falls back to the rung HELD — so a
+    # `quarry` ordered this turn publishes an honest `1.0` for a completed gathering rung.
+    var climbing := HudDepositVocab.is_queued(deposit) \
+        or (meter > HudDepositVocab.METER_UNSTARTED and meter < HudDepositVocab.METER_COMPLETE)
+    # **THE METER BELONGS TO THE FIRST ROW ABOVE THE STANDING RUNG AND TO NO OTHER.** Tracked as a
+    # latch rather than an `order + 1` test, because a catalog's orders need not be contiguous.
+    var approach_placed := false
+    for entry in catalog:
+        var rung_key := HudDepositVocab.catalog_rung_key(entry)
+        var row := {
+            ROW_RUNG_KEY: rung_key,
+            ROW_IMPROVEMENT_KEY: HudDepositVocab.catalog_verb(entry),
+            ROW_NAME_KEY: HudDepositVocab.catalog_display_name(entry),
+            ROW_NAME_WIDTH_KEY: HudDepositVocab.DEPOSIT_LADDER_NAME_WIDTH,
+            ROW_WORK_KEY: WORK_UNKNOWN,
+            ROW_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+            ROW_REASONS_KEY: [] as Array[String],
+            ROW_BUILD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_HOLD_ASIDES_KEY: [] as Array[Dictionary],
+            ROW_SELECTABLE_KEY: false,
+        }
+        var order := HudDepositVocab.catalog_order(entry)
+        if order < standing_order:
+            row[ROW_STATE_KEY] = STATE_BANKED
+            rows.append(row)
+            continue
+        if order == standing_order:
+            # ⛔ **THE FREE FLOOR RENDERS AS A FACT, AND THIS IS THE ARM IT ARRIVES ON.** A working
+            # standing on `forestry:deadfall` reads `where you are` in the live ink — a `Label`, no
+            # price, no `0 work`, no disabled control — because that is what the shape says: a rung
+            # you hold is not a choice on offer.
+            row[ROW_STATE_KEY] = STATE_STANDING
+            rows.append(row)
+            continue
+        var is_approach_row := not approach_placed
+        approach_placed = true
+        var is_building := is_approach_row and climbing
+        var refusals := RungGates.deposit_gates_for(gates, rung_key)
+        row[ROW_TOOLTIP_KEY] = _deposit_tooltip(entry, refusals, floor_entry)
+        if HudDepositVocab.catalog_verb(entry) == HudDepositVocab.RUNG_CATALOG_NONE:
+            # ⛔ **A RUNG NOBODY DECLARES IS NOT REFUSED — the ground already offers it.** `locked`
+            # would be a lie in the one direction that matters, so the row takes the seventh state
+            # and SUPPLIES its own word: `RUNG_TRACK_STATE_WORN_IN` is the route branch's traffic
+            # metaphor and describes nothing that happens to a deposit.
+            row[ROW_STATE_KEY] = STATE_UNORDERED
+            row[ROW_FACE_KEY] = HudWorkVocab.RUNG_TRACK_STATE_GROUND_GIVES
+            rows.append(row)
+            continue
+        row[ROW_WORK_KEY] = HudDepositVocab.catalog_work_cost(entry)
+        var figure := HudDepositVocab.deposit_ladder_price_face(entry)
+        if is_building:
+            # ⛔ **A ROW ALREADY ORDERED IS NOT A PURCHASE BEING WEIGHED**, so `250 work` on it
+            # answers a question nobody is asking; what the player opened the track to find out is
+            # whether the press LANDED. `build_value` is the shared five-sentinel countdown a patch,
+            # a herd and a road all render through, so `0%` on a job queued behind another reads as
+            # the receipt it is rather than as a failed command.
+            var progress := HudDepositVocab.build_value(deposit, builders)
+            if progress != "":
+                figure = progress
+            row[ROW_ROUTE_BUILDING_KEY] = true
+        if refusals.is_empty():
+            row[ROW_STATE_KEY] = STATE_OPEN
+            row[ROW_SELECTABLE_KEY] = true
+            row[ROW_FACE_KEY] = figure
+            # **THE PILE COMES THROUGH THE SHARED COMPOSER**, with the band's own shelf behind it —
+            # the plant and animal branches' path, not the route branch's: a deposit publishes no
+            # per-turn material draw of its own, so the stall verdict is DERIVED here from the shelf
+            # against the pile exactly as a pen's hurdles are.
+            var asides := _build_price_asides(_deposit_pile(entry), store)
+            if not is_building:
+                var placement := _route_queue_aside(queue)
+                if placement != "":
+                    asides.append({
+                        RUNG_ASIDE_TEXT_KEY: placement,
+                        RUNG_ASIDE_WARN_KEY: false,
+                    })
+                if builders <= SourceForecast.BUILD_CREW_NONE:
+                    asides.append({
+                        RUNG_ASIDE_TEXT_KEY: HudRouteVocab.ROAD_LADDER_NO_BUILDERS_ASIDE,
+                        RUNG_ASIDE_WARN_KEY: true,
+                    })
+            row[ROW_BUILD_ASIDES_KEY] = asides
+            rows.append(row)
+            continue
+        # ⛔ **ONE REFUSAL ON THE ROW AND ALL OF THEM IN THE HOVER**, and never the word `locked`
+        # beside a reason that already is the state.
+        row[ROW_STATE_KEY] = STATE_LOCKED
+        row[ROW_FACE_KEY] = HudDepositVocab.DEPOSIT_LADDER_FACE_FORMAT % [
+            figure, RungGates.deposit_row_refusal(refusals)]
+        # **A REFUSED RUNG STATES ITS PILE TOO** — a rung the track refuses today is still one the
+        # player is planning toward, and a price hidden behind a refusal is a price nobody can plan
+        # against. **No stall clause**: the shelf is weighed against a build that is not happening.
+        row[ROW_BUILD_ASIDES_KEY] = _build_price_asides(_deposit_pile(entry),
+            NO_MATERIAL_STORE, "", false)
+        rows.append(row)
+    return rows
+
+## **THE DEPOSIT PILE AS THE SHARED COMPOSER TAKES IT** — one `MaterialPayoff`-shaped row, or `[]` for
+## a rung that eats nothing, which is every rung of either branch but `extraction:quarry`. The
+## amount and its noun are paired inside `catalog_material_pile` so no caller can read half of one.
+static func _deposit_pile(entry: Dictionary) -> Array[Dictionary]:
+    var pile: Array[Dictionary] = []
+    var row := HudDepositVocab.catalog_material_pile(entry)
+    if not row.is_empty():
+        pile.append(row)
+    return pile
+
+## **EVERYTHING THE ROW STOPPED SAYING, AS ONE HOVER.** In reading order: what it costs to raise AND
+## to keep, what it buys, then every refusal in the gate layer's own order.
+##
+## ⛔ **THE PRICE LINE RENDERS ONLY WHERE THE RUNG OWES UPKEEP** — on a free rung it would restate the
+## face and add nothing. **NO TURNS LINE AT ALL**, on any row: see `deposit_track`.
+static func _deposit_tooltip(entry: Dictionary, refusals: Array,
+        floor_entry: Dictionary) -> String:
+    var lines: Array[String] = []
+    var upkeep := HudDepositVocab.catalog_upkeep(entry)
+    if upkeep >= SourceForecast.UPKEEP_WORK_MIN:
+        # **THE RATE IS SPELLED HERE EXACTLY AS THE ROW SPELLS IT** — two decimals, because the face
+        # states this same bill one line away and a hover reading `1.5` beside a row reading `1.50`
+        # is one number told two ways on one card.
+        lines.append(HudDepositVocab.DEPOSIT_LADDER_TIP_PRICE_FORMAT % [
+            DetailFormat.format_work_units(HudDepositVocab.catalog_work_cost(entry)),
+            DetailFormat.format_trimmed(upkeep, HudDepositVocab.DEPOSIT_LADDER_RATE_DECIMALS)])
+    var payoff := HudDepositVocab.deposit_payoff_clause(entry, floor_entry)
+    if payoff != "":
+        lines.append(payoff)
+    lines.append_array(RungGates.deposit_tooltip_refusals(refusals))
+    return HudDepositVocab.DEPOSIT_LADDER_TIP_SEPARATOR.join(lines)
+
+## The deposit twin of `route_building_verb`, and it is that function verbatim: `ROW_ROUTE_BUILDING_KEY`
+## is a property of the ROW rather than of the branch that wrote it, so a caller that needs to tell a
+## press on the row being raised from a press on one merely offered reads one answer either way.
+static func deposit_building_verb(rows: Array[Dictionary]) -> String:
+    return route_building_verb(rows)

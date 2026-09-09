@@ -26,6 +26,10 @@ extends RefCounted
 const KIND_NONE := ""
 const KIND_FORAGE := "forage"
 const KIND_HERD := "herd"
+## …and the two deposit branches' (issue #650). ONE kind for both, because what a sheet composes is
+## a CREW on a working and the branch decides only the noun on the button: a `KIND_FORESTRY` beside a
+## `KIND_EXTRACTION` would be two identical groups keyed apart by a word.
+const KIND_DEPOSIT := "deposit"
 
 ## "No band" for every band-ENTITY slot here — the picked actor and the band a composition was last
 ## seeded for. Distinct from `HudConst.NO_BAND_ID`, which is the WIRE's band id; these hold the
@@ -95,6 +99,25 @@ var _forage_seeded_band: int = NO_BAND_ENTITY
 # composes ONE crew: the take.
 
 # ---- Hunt compose (the herd drawer's "assign hunters/herders" block) -----------------------------
+# ---- Deposit compose (the tile card's "assign foresters / diggers" sheets) ----------------------
+# ⛔ **THE SOURCE KEY IS `x,y:material`, NOT `x,y`** — a hex carries up to two workings on two
+# different branches, so a tile-keyed composition would let the Wood sheet and the Stone sheet
+# overwrite each other's crew. It is the same pair every other join in this arc carries.
+#
+# **THE GROUP IS THREE FIELDS AND NO MORE.** A deposit has no escapement floor, no take species, no
+# commit crop and no second axis — the rung is declared from the Work board — so the forage group's
+# other seven slots have nothing to hold here and are deliberately absent rather than defaulted.
+var _deposit_key: String = ""
+var _deposit_count: int = 0
+var _deposit_band: int = NO_BAND_ENTITY
+## The band the composed count was last seeded from — `NO_BAND_ENTITY` until a first seed. The builder
+## re-seeds when this disagrees with the band it has resolved, which is how switching the ACTOR
+## re-reads the standing assignment the same way switching the SOURCE does. Without it the sheet shows
+## the previous band's crew — most damagingly a `0`, which turns the commit into an Unassign against a
+## crew the newly-picked band really has on the working.
+var _deposit_seeded_band: int = NO_BAND_ENTITY
+var _deposit_kit_id: String = KitRoster.NO_KIT_ID
+
 var _hunt_key: String = ""
 var _hunt_count: int = 0
 var _hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
@@ -126,6 +149,57 @@ var _party_autofill := false
 var _forage_kit_id: String = KitRoster.NO_KIT_ID
 var _hunt_kit_id: String = KitRoster.NO_KIT_ID
 var _party_kit_id: String = KitRoster.NO_KIT_ID
+
+# ---- Deposit accessors + mutators ---------------------------------------------------------------
+
+func deposit_key() -> String:
+	return _deposit_key
+
+func deposit_count() -> int:
+	return _deposit_count
+
+func deposit_band() -> int:
+	return _deposit_band
+
+func deposit_seeded_band() -> int:
+	return _deposit_seeded_band
+
+func deposit_kit_id() -> String:
+	return _deposit_kit_id
+
+## A DIFFERENT working is being composed: adopt its key and default the actor band. Re-seeding the
+## count is a SECOND step (`seed_deposit`) for `begin_forage_source`'s reason — the caller has to
+## resolve the actual band dict before it can read that band's standing crew.
+func begin_deposit_source(key: String, band_entity: int) -> void:
+	_deposit_key = key
+	_deposit_band = band_entity
+
+## Re-seed the composed count from the newly-resolved band's crew on this working, and RECORD which
+## band it came from.
+func seed_deposit(count: int) -> void:
+	_deposit_count = count
+	_deposit_seeded_band = _deposit_band
+
+## Forget which working the deposit compose belongs to, so the NEXT render takes the source-changed
+## path and re-seeds from the band's standing crew. (`""` matches no real `x,y:material` key.)
+func reset_deposit_source() -> void:
+	_deposit_key = ""
+
+func set_deposit_band(entity: int) -> void:
+	_deposit_band = entity
+
+func set_deposit_count(count: int) -> void:
+	_deposit_count = count
+
+func set_deposit_kit_id(kit_id: String) -> void:
+	_deposit_kit_id = kit_id
+
+## Clamp the composed crew to a freshly-resolved cap — the working's own max-useful, or the band's
+## hands, whichever binds. `clamp_forage_count`'s twin and for its reason: the cap moves when the seam
+## is drawn down or the picker names a smaller band, and a count above it would arm a `+` the sheet
+## has already refused.
+func clamp_deposit_count(cap: int) -> void:
+	_deposit_count = clampi(_deposit_count, 0, maxi(cap, 0))
 
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE

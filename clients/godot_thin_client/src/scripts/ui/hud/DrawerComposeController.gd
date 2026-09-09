@@ -135,10 +135,14 @@ var _forage_assign_controls: VBoxContainer = null
 # rather than a row inside `%ForageAssignControls`: that container is gated on the tile being a
 # GATHERING SITE with a band in hand, and a road crosses ground that is neither.
 var _road_ladder_controls: VBoxContainer = null
-# …and the LAND drawer's WORKINGS action (arc #583), beside the road's and for the same reason: a
-# deposit is a tile-keyed source reached by a tile-first pick, and the ground it is on is not
+# …and the LAND drawer's two DEPOSIT actions (issue #650), beside the road's and for the same reason:
+# a working is a tile-keyed source reached by a tile-first pick, and the ground it is on is not
 # necessarily a gathering site with a band in hand.
-var _workings_controls: VBoxContainer = null
+#
+# ⛔ **ONE CONTAINER PER BRANCH, not one per hex.** `Assign foresters ▸` and `Assign diggers ▸` are
+# two different crews on two different ladders, and a wooded highland offers both at once.
+var _forestry_assign_controls: VBoxContainer = null
+var _extraction_assign_controls: VBoxContainer = null
 # The selection card, READ-ONLY: the rect the sheet floats beside (`_compose_anchor_rect`).
 var _tile_panel: PanelCard = null
 
@@ -159,7 +163,10 @@ var _compose_sheet: ComposeSheet = null
 var _forage_drawer_shape: Array = []
 var _herd_drawer_shape: Array = []
 var _road_drawer_shape: Array = []
-var _workings_drawer_shape: Array = []
+## …and the deposit drawers', keyed by BRANCH, because the two containers appear and disappear
+## independently: a hex with only rock rebuilds the extraction container and must not force the
+## forestry one, which is not drawn at all.
+var _deposit_drawer_shapes: Dictionary = {}
 ## The road ladder's Window and its inner `MarginContainer`, built on the first press of a `Road ▸`
 ## and reused thereafter. **A Window renders over the dock and changes no layout**, which is why the
 ## height-capped selection card can host a ladder at all; the margin is held so a re-open clears the
@@ -179,18 +186,11 @@ var _road_ladder_band_entity: int = ComposeState.NO_BAND_ENTITY
 var _road_ladder_tile: Dictionary = {}
 var _road_ladder_index: int = -1
 
-## **THE WORKINGS CARD'S OWN WINDOW AND ITS STATE** (arc #583) — the road ladder's arrangement, member
-## for member and for the same reasons: a `PopupPanel` because a block drawn into the height-capped
-## selection card would push that card's own rows out of view, the margin held so a re-open clears the
-## CONTENT rather than the chrome, and the acting band held only as long as the card because the next
-## hex is a different question.
-##
-## **THE CARD KEEPS NO ROW INDEX**, unlike the road's: it renders EVERY working on the tile at once,
-## the pair being read together, so there is nothing to index into.
-var _workings_card: PopupPanel = null
-var _workings_body: MarginContainer = null
-var _workings_band_entity: int = ComposeState.NO_BAND_ENTITY
-var _workings_tile: Dictionary = {}
+## ⛔ **RETIRED — `_workings_card` / `_workings_body` / `_workings_band_entity` / `_workings_tile`**,
+## the `Workings ▸` popup's Window and the state that outlived one open of it (issue #650). The
+## working is composed on the shared COMPOSE SHEET now, whose node is `_compose_sheet` and whose
+## composition is `ComposeState`'s `deposit_*` group — so there is no second window and no second
+## acting-band member to keep in step with the first.
 ## **RETIRED — `_pen_extend_crew`, the ring's own dialled crew** (`docs/plan_standing_upkeep.md`
 ## §2.5). It held the number a stepper beside the Extend-pen button had dialled, because
 ## `extend_pen` took a trailing worker count; the verb DECLARES now — it appends a queue entry and the
@@ -243,7 +243,8 @@ func set_forecast_query(query: ForecastQuery) -> void:
 func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudSelectionState,
         topbar: FactionReadouts, selectioncard: SelectionCardController, host: Node,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        road_ladder_controls: VBoxContainer, workings_controls: VBoxContainer,
+        road_ladder_controls: VBoxContainer,
+        forestry_assign_controls: VBoxContainer, extraction_assign_controls: VBoxContainer,
         tile_panel: PanelCard,
         resolve_assign_band: Callable, herd_label_for_id: Callable, emit_assign_labor: Callable) -> void:
     _compose = compose
@@ -255,7 +256,8 @@ func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudS
     _herd_assign_controls = herd_assign_controls
     _forage_assign_controls = forage_assign_controls
     _road_ladder_controls = road_ladder_controls
-    _workings_controls = workings_controls
+    _forestry_assign_controls = forestry_assign_controls
+    _extraction_assign_controls = extraction_assign_controls
     _tile_panel = tile_panel
     _resolve_assign_band_fn = resolve_assign_band
     _herd_label_for_id_fn = herd_label_for_id
@@ -2340,13 +2342,21 @@ func _refresh_floor_live(hosts: Array, model: Dictionary, workers: int) -> void:
 ## target. That is a different answer from `NO_CREW_ANSWER`, which is a source that HAS one and whose
 ## crew cannot be priced; `build_crew_targets` renders those as a DISABLED `✕` pill, so "there is no
 ## floor here" and "this target cannot be reached" stay two different things on screen.
+##
+## `label_tooltip` is a hover on the SECTION LABEL, `""` for every caller that wants none. It exists
+## for the deposit sheets, whose crew is the TAKE crew while the hands that HOLD a working are a
+## band-wide pool on another panel — a distinction a player who staffed the wrong one pays for, and
+## which has nowhere else on that sheet to be said. `set_label_tooltip`, because a bare `tooltip_text`
+## on a `Label` is a silent no-op.
 func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, count: int,
-        plus_enabled: bool, on_change: Callable, model: Dictionary, on_pick: Callable) -> void:
+        plus_enabled: bool, on_change: Callable, model: Dictionary, on_pick: Callable,
+        label_tooltip: String = "") -> void:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
     var row_label := HudWidgets.alloc_section_label(crew_label)
     row_label.set_meta(HudWidgets.CREW_ROW_LABEL_META, true)
+    HudWidgets.set_label_tooltip(row_label, label_tooltip)
     # **THE ROW LABEL CARRIES NO BUILD NOTE ANY MORE.** It used to say *"— building this rung, each
     # carries 25% as much"*, which was the dip: one crew doing two jobs. The build has its own crew
     # below, so these hands carry a full load whether or not a rung is going up, and there is nothing
@@ -2363,7 +2373,7 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, count, plus_enabled, on_change)
     line.add_child(stepper)
-    if bool(model.get("known", false)):
+    if bool(model.get("known", false)) and on_pick.is_valid():
         var targets := HBoxContainer.new()
         # The pills are shorter than the stepper's boxed buttons, so they centre against it rather
         # than hanging off the flow row's top edge.
@@ -3976,6 +3986,9 @@ func _on_compose_sheet_closed() -> void:
     _compose.clear_composing()
     _compose.reset_forage_source()
     _compose.reset_hunt_source()
+    # …and the deposit composition with them, for the identical reason: an uncommitted crew that
+    # outlives its sheet is a promise nothing in the game is keeping.
+    _compose.reset_deposit_source()
     _end_floor_drag()
     refresh_drawer_actions()
 
@@ -4335,6 +4348,17 @@ func refresh_compose_sheet(may_close: bool = true) -> void:
                     close_compose_sheet()
                 return
             _build_herd_assign_controls(_selection.herd(), _compose_sheet.content())
+        ComposeState.KIND_DEPOSIT:
+            # **THE WORKING IS RE-RESOLVED OFF THE SELECTED TILE**, never held: a snapshot restates
+            # every figure on this sheet, and a captured row would quote the turn the sheet opened.
+            # A hex that no longer carries this material — the selection moved — is the sheet's
+            # subject being GONE, which is exactly what `may_close` is for.
+            var working := _live_deposit(_compose.subject(), {})
+            if working.is_empty() or not _deposit_compose_available(working):
+                if may_close:
+                    close_compose_sheet()
+                return
+            _build_deposit_assign_controls(working, _compose_sheet.content())
         _:
             if may_close:
                 close_compose_sheet()
@@ -4349,6 +4373,10 @@ func refresh_drawer_actions() -> void:
         # The road action rides the LAND drawer with them: a road is a property of the ground, so its
         # control appears on exactly the renders the terrain rows do.
         build_road_drawer_actions(_selection.tile_info())
+        # …and the two DEPOSIT actions beside it, for the identical reason (issue #650). They were
+        # missing from this path while the branch had a popup, so a turn's staffing change reached the
+        # tile card's `Workings ▸` button only through a full drawer render.
+        build_deposit_drawer_actions(_selection.tile_info())
 
 ## The LAND drawer's read state: the standing forage summary (when the player already works this
 ## patch) and the `Assign harvesters ▸` button that opens the sheet. Fills `%ForageAssignControls`,
@@ -4877,68 +4905,119 @@ func _ensure_road_ladder() -> PopupPanel:
     return card
 
 
-# ---- THE TILE CARD'S WORKINGS ACTION (arc #583, `docs/plan_extraction.md` §7) ---------------------
+# ---- THE TILE CARD'S DEPOSIT ACTIONS (issue #650) -------------------------------------------------
 #
-# ⛔ **THIS IS THE ROAD LADDER CARD'S SHAPE AND NOT THE COMPOSE SHEET'S**, and the reason is how the
-# thing is REACHED. A working is a tile-keyed source picked tile-first, exactly as a road is; the two
-# food webs' compose sheet is reached from a source row and carries a stance, an escapement floor, a
-# policy ceiling, a take-species chooser and a projection chart, **none of which a deposit has**.
-# Giving a working that sheet would invent parity the simulation does not have.
+# ⛔ **RETIRED — THE `Workings ▸` POPUP, ITS CARD AND EVERY BUILDER UNDER IT** (`_open_workings_card`
+# / `_fill_workings_card` / `_build_workings_block` / `_workings_row` / `_build_workings_crew_row` /
+# `_build_workings_band_picker` / `_ensure_workings_card` / `_dismiss_workings_card`, and the
+# `WORKINGS_*` metas and label). It was a FOURTH UX pattern on a branch whose three surfaces already
+# ship: one action opening a Window that was a readout, a stepper and a bill at once, on a card the
+# player reaches tile-first.
 #
-# ⛔ **ONE TILE CAN HOLD TWO WORKINGS, AND THE CARD IS ONE BLOCK PER *WORKING*.** The registry key is
-# `(tile, material)`: a wooded highland shows a `Wood` block and a `Stone` block, each with its own
-# crew and its own readout. A card that rendered one block per TILE is exactly the defect the whole
-# `material` field exists to prevent.
+# **WHAT REPLACED IT IS THE THREE SURFACES THIS CLIENT ALREADY HAS**, one per question:
+#   • *what is on this ground* — a `Key: value` ROW per material on the tile card itself
+#     (`HudDepositVocab.deposit_lines`, rendered by `SubjectDrawerController._tile_terrain_lines`);
+#   • *put a crew on it* — the two COMPOSE SHEETS below, the forage sheet's own spine;
+#   • *take it up a rung* — the shared `RungLadder` TRACK, on the Work board where `cultivate` and
+#     `sow` are pressed.
+#
+# ⛔ **ONE SHEET PER *WORKING*, AND THE CONTAINER IS PER BRANCH.** The registry key is
+# `(tile, material)`: a wooded highland carries timber AND rock, and putting foresters on the timber
+# is not putting diggers on the rock. So the hex grows one `Assign foresters ▸` and one
+# `Assign diggers ▸`, each in its own container, and each opens a sheet about ONE working. A single
+# action for the pair is exactly the tile-keyed collapse the `material` field exists to prevent.
 #
 # ⛔ **THE WORD "QUARRY" APPEARS ON NOTHING HERE.** In this client `Quarry` is the HUNTED ANIMAL — it
-# is one of the compose sheet's own field rows — so the noun is **Workings** and the material names
-# the thing being worked. `quarrywork` survives only as the server's command token.
+# is one of this very sheet's field rows — so the crew nouns are `Foresters` and `Diggers` and the
+# material names the thing being worked. `quarrywork` survives only as the server's command token.
 
 ## The tile-card key the working rows travel under, stamped by `MapView._tile_info_at` off
 ## `deposit_tile_lookup`. Spelled once here because a typo is a silently absent action.
 const TILE_DEPOSITS_KEY := "deposits"
 
-## **THE LAND drawer's WORKINGS ACTION — ONE button, however many workings the hex holds.**
-##
-## The road drawer builds one button per road because a tile carries at most one; a tile carries up to
-## two workings that are read TOGETHER (the same crew pool feeds both, and the same keeping pool holds
-## both), so one action opens one card that states them both.
-func build_workings_drawer_actions(tile_info: Dictionary) -> void:
-    if _workings_controls == null:
-        return
-    var workings := _tile_workings(tile_info)
-    _workings_controls.visible = not workings.is_empty()
-    if workings.is_empty():
-        _clear_workings_drawer()
-        return
-    # THE SIGNATURE CARRIES IDENTITY ONLY, the drawer builders' own rule: the subject key LEADS so a
-    # different hex forces a rebuild rather than a positional patch onto another tile's node, and the
-    # workings' LIVE state (their rung, their stock, their crew) is deliberately absent — those move
-    # every turn without changing this drawer's structure, and the card is read at PRESS time anyway.
-    var subject_key := _forage_source_key(tile_info)
-    var shape := [subject_key, workings.size()]
-    if shape == _workings_drawer_shape and _workings_controls.get_child_count() == 1:
-        return
-    _clear_workings_drawer()
-    # The closure captures the SUBJECT KEY, never the working dicts: the same-shape patch keeps a
-    # button's connection across snapshots, so captured dicts would be frozen at whatever turn this
-    # drawer was last rebuilt — `_live_tile_info`'s own rule.
-    _workings_controls.add_child(_build_workings_button(
-        func(anchor: Control) -> void:
-            _open_workings_card(_live_tile_info(subject_key, tile_info), anchor)))
-    _workings_drawer_shape = shape
+## `12,7:stone` — ONE working's compose subject key. **The material is half of it**, for the reason
+## every join in this arc carries both halves: a tile-only key would let a hex's Wood sheet and its
+## Stone sheet overwrite each other's composition.
+const DEPOSIT_SUBJECT_KEY_FORMAT := "%d,%d:%s"
 
-## Free the workings drawer-action and forget its shape, so the next build always rebuilds.
-func _clear_workings_drawer() -> void:
-    if _workings_controls == null:
+static func _deposit_source_key(deposit: Dictionary) -> String:
+    var tile := HudDepositVocab.tile_of(deposit)
+    return DEPOSIT_SUBJECT_KEY_FORMAT % [tile.x, tile.y, HudDepositVocab.material_of(deposit)]
+
+## **THE LAND drawer's TWO DEPOSIT ACTIONS** — one container per BRANCH, each holding the standing
+## summary (where this faction already works the source) and the `Assign … ▸` button that opens the
+## sheet. `build_road_drawer_actions`' own shape, and `build_forage_drawer_actions`' read state.
+func build_deposit_drawer_actions(tile_info: Dictionary) -> void:
+    _fill_deposit_branch(_forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY, tile_info)
+    _fill_deposit_branch(_extraction_assign_controls, HudDepositVocab.BRANCH_EXTRACTION, tile_info)
+
+## One branch's container. **One button per deposit of that branch the hex carries**, which is one
+## today and is not assumed to be: a second wood-bearing material on one tile is a config away, and
+## the loop costs nothing where the branch holds one row.
+func _fill_deposit_branch(host: VBoxContainer, branch: String, tile_info: Dictionary) -> void:
+    if host == null:
         return
-    for child in _workings_controls.get_children():
+    var workings := _tile_workings_of_branch(tile_info, branch)
+    host.visible = not workings.is_empty()
+    if workings.is_empty():
+        _clear_deposit_branch(host, branch)
+        return
+    var crew_label := HudDepositVocab.crew_noun(branch)
+    # THE SIGNATURE CARRIES IDENTITY ONLY, the drawer builders' own rule: the subject keys LEAD so a
+    # different hex forces a rebuild rather than a positional patch onto another tile's node, and the
+    # workings' LIVE state (their rung, their stock, their crew) is deliberately absent — that moves
+    # every turn without changing this drawer's structure.
+    var shape: Array = []
+    var models: Array[Dictionary] = []
+    for working in workings:
+        var subject_key := _deposit_source_key(working)
+        var tile := HudDepositVocab.tile_of(working)
+        var standing := _standing_assignment_extract(tile.x, tile.y,
+            HudDepositVocab.material_of(working))
+        var summary_model: Dictionary = {}
+        if not standing.is_empty():
+            summary_model = _standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
+                crew_label.to_lower())
+        models.append({"key": subject_key, "summary": summary_model, "working": working})
+        shape.append([subject_key] + _standing_actions_shape(summary_model))
+    var expected := 0
+    for model in models:
+        expected += (1 if not (model["summary"] as Dictionary).is_empty() else 0) + 1
+    if shape == _deposit_drawer_shapes.get(branch, []) and host.get_child_count() == expected:
+        var idx := 0
+        for model in models:
+            var summary: Dictionary = model["summary"]
+            if not summary.is_empty():
+                _update_standing_summary(host.get_child(idx) as HFlowContainer, summary)
+                idx += 1
+            _update_compose_open_button(host.get_child(idx) as Button, crew_label,
+                String(model["key"]))
+            idx += 1
+        return
+    _clear_deposit_branch(host, branch)
+    for model in models:
+        var summary: Dictionary = model["summary"]
+        if not summary.is_empty():
+            host.add_child(_build_standing_summary_from_model(summary))
+        # The closure captures the SUBJECT KEY, never the working dict: the same-shape patch keeps a
+        # button's connection across snapshots, so a captured dict would be frozen at whatever turn
+        # this drawer was last rebuilt — `_live_tile_info`'s own rule.
+        var subject_key := String(model["key"])
+        host.add_child(_build_compose_open_button(crew_label, subject_key,
+            func() -> void: open_deposit_compose(
+                _live_deposit(subject_key, model["working"] as Dictionary))))
+    _deposit_drawer_shapes[branch] = shape
+
+func _clear_deposit_branch(host: VBoxContainer, branch: String) -> void:
+    if host == null:
+        return
+    for child in host.get_children():
         child.queue_free()
-    _workings_drawer_shape = []
+    _deposit_drawer_shapes[branch] = []
 
 ## The deposit rows on this hex, as typed dicts. **`[]` MEANS THIS GROUND HOLDS NOTHING** (or the
 ## faction has never seen it): the section publishes a row for every discovered tile that holds a
-## deposit and merges the live working in where a band has opened one, so an untouched seam is a row
+## deposit and merges the live working in where a band has opened one, so untouched ground is a row
 ## like any other — `HudDepositVocab.is_unopened` is what tells the two apart, never the absence.
 func _tile_workings(tile_info: Dictionary) -> Array[Dictionary]:
     var workings: Array[Dictionary] = []
@@ -4947,252 +5026,274 @@ func _tile_workings(tile_info: Dictionary) -> Array[Dictionary]:
             workings.append(entry as Dictionary)
     return workings
 
-## The action itself — a ghost button in the `Assign … ▸` register, labelled for the BRANCH's noun
-## rather than for a verb, exactly as `Road ▸` is.
-func _build_workings_button(on_press: Callable) -> Button:
-    var button := Button.new()
-    button.text = WORKINGS_ACTION_LABEL
-    button.set_meta(WORKINGS_ACTION_META, true)
-    HudStyle.apply_button(button, "ghost")
-    button.pressed.connect(func() -> void: on_press.call(button))
-    return button
+## …filtered to ONE branch, which is what makes the two containers two containers.
+func _tile_workings_of_branch(tile_info: Dictionary, branch: String) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    for working in _tile_workings(tile_info):
+        if HudDepositVocab.branch_of(working) == branch:
+            rows.append(working)
+    return rows
 
-## `Workings ▸` — the action's face and its handle. The noun, never the token.
-const WORKINGS_ACTION_LABEL := "Workings ▸"
-const WORKINGS_ACTION_META := &"workings_action"
-const WORKINGS_CARD_META := &"workings_card"
-
-## The crew stepper's own handle, so a harness can assert the control that sends `extract`.
-const WORKINGS_CREW_STEPPER_META := &"workings_crew_stepper"
-
-## One working's block, valued that working's `(tile, material)` — the pair a tile-only meta could not
-## tell apart, which is the whole point of asserting on it.
-const WORKINGS_BLOCK_META := &"workings_block"
-
-## **THE CARD — floated over the dock, never drawn into it**, the road ladder's own arrangement and for
-## its reason: the selection card is height-capped and scrolls internally, so a block drawn into it
-## would push the card's own rows out of view on the frame it opened. A Window changes no layout at all.
-##
-## **REBUILT PER OPEN, NEVER PATCHED.** Every figure on it is a function of the working's stock, its
-## rung, its bill and which band is acting — all of which move per snapshot.
-func _open_workings_card(tile_info: Dictionary, anchor: Control) -> void:
-    if _tile_workings(tile_info).is_empty():
-        return
-    _workings_tile = tile_info
-    _workings_band_entity = int(_default_workings_band(tile_info).get(
-        "entity", ComposeState.NO_BAND_ENTITY))
-    var card := _ensure_workings_card()
-    _fill_workings_card()
-    card.popup(_road_ladder_anchor_rect(anchor))
-
-## **THE CARD'S CONTENTS, REBUILT IN PLACE** — the band row, then one block per working.
-##
-## ⛔ **A PICK RE-RENDERS THE ROWS IN PLACE AND MUST NOT CLOSE THE CARD**, the road ladder's rule: the
-## crew stepper's number is the ACTING band's own crew on this working, so a block left standing after
-## a pick would show another band's count above a `+` that sends this one's.
-func _fill_workings_card() -> void:
-    var margin := _workings_body
-    if margin == null or not is_instance_valid(margin):
-        return
-    var workings := _tile_workings(_workings_tile)
-    if workings.is_empty():
-        return
-    var band := _band_labor.player_band_by_entity(_workings_band_entity)
-    HudWidgets.clear_children(margin)
-    var column := VBoxContainer.new()
-    column.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
-    var title := Label.new()
-    title.text = HudDepositVocab.CARD_TITLE
-    title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
-    title.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-    column.add_child(title)
-    # **THE BAND ROW LEADS THE CARD**, above the blocks: whose hands are being spent is decided before
-    # how many, and every stepper below reads differently once it moves.
-    var picker := _build_workings_band_picker(band)
-    if picker != null:
-        column.add_child(picker)
-    # ⛔ **ONE BLOCK PER WORKING, IN THE ORDER THE WIRE SENT THEM.** Two blocks on a wooded highland is
-    # the ordinary case, and the material heads each one because it is the only thing that tells them
-    # apart.
-    for working in workings:
-        column.add_child(_build_workings_block(band, working))
-    margin.add_child(column)
-
-## One working's block: the material, its state, its stock, its crew, and — where it has one — the
-## build in flight and the bill for holding it.
-func _build_workings_block(band: Dictionary, deposit: Dictionary) -> VBoxContainer:
-    var block := VBoxContainer.new()
-    block.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH, 0.0)
-    block.add_theme_constant_override("separation", HudWorkVocab.RUNG_TRACK_ROW_SEPARATION)
-    block.set_meta(WORKINGS_BLOCK_META, "%d,%d:%s" % [
-        HudDepositVocab.tile_of(deposit).x, HudDepositVocab.tile_of(deposit).y,
-        HudDepositVocab.material_of(deposit)])
-    var head := Label.new()
-    head.text = HudDepositVocab.CARD_BLOCK_HEAD_FORMAT % HudDepositVocab.material_label(deposit)
-    head.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
-    head.add_theme_color_override("font_color", HudStyle.INK)
-    block.add_child(head)
-    # ⛔ **THE STATE LINE IS `HudDepositVocab.deposit_row_value`, VERBATIM** — the same composer the
-    # WORKINGS ROSTER's value cell uses, so the card and the roster cannot disagree about a working's
-    # state and §7's fork is taken exactly once. Its FIGURES ride the hover, which is where this card
-    # keeps every number the one-line clause cannot hold.
-    var state := Label.new()
-    state.text = HudDepositVocab.deposit_row_value(deposit)
-    state.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
-    state.add_theme_color_override("font_color", HudDepositVocab.deposit_value_color(deposit))
-    HudWidgets.set_label_tooltip(state, HudDepositVocab.supply_tooltip(deposit))
-    block.add_child(state)
-    block.add_child(_workings_row(HudDepositVocab.CARD_STOCK_ROW,
-        HudDepositVocab.stock_value(deposit), HudStyle.INK_DIM))
-    block.add_child(_build_workings_crew_row(band, deposit))
-    var build := HudDepositVocab.build_value(deposit,
-        int(_band_labor.effective_role_workers(
-            band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE)))
-    if build != "":
-        var build_row := _workings_row(HudDepositVocab.CARD_BUILD_ROW, build, HudStyle.INK_DIM)
-        var blocked := HudDepositVocab.build_blocked_reason_of(deposit)
-        if blocked != "":
-            # The SHARED `BuildGate` vocabulary, rendered as the shared aside — a working publishes no
-            # dialect of it, so nothing here re-words the sim's own reason.
-            block.add_child(build_row)
-            block.add_child(RungLadder.build_aside(blocked, true))
-        else:
-            block.add_child(build_row)
-    var upkeep := HudDepositVocab.upkeep_value(deposit)
-    if upkeep != "":
-        block.add_child(_workings_row(HudDepositVocab.CARD_UPKEEP_ROW, upkeep,
-            HudStyle.WARN if HudDepositVocab.is_short(deposit) else HudStyle.INK_DIM))
-    # ⛔ **THE COUNTDOWN READS THE BOOL BEFORE THE NUMBER** (`HudDepositVocab.is_at_risk`), the road
-    # card's treatment verbatim: `0` on the wire means *it is sliding NOW*, and a working with no
-    # meter to lose publishes that same `0` beside `has_neglect_grace == false`.
-    var reverting := HudDepositVocab.reverting_value(deposit)
-    if reverting != "":
-        block.add_child(_workings_row(HudDepositVocab.CARD_REVERTING_ROW, reverting, HudStyle.WARN))
-    return block
-
-## One `Key  value` line of a working's block, at the card's own row metrics.
-func _workings_row(key: String, value: String, tint: Color) -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    row.add_child(HudWidgets.build_field_key(key))
-    var label := Label.new()
-    label.text = value
-    label.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
-    label.add_theme_color_override("font_color", tint)
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_child(label)
-    return row
-
-## **THE CREW STEPPER — the one place a working differs from a road.** A road is not worked and has no
-## stepper; a working IS, and this is the take crew that cuts it.
-##
-## ⛔ **THE COMMAND IS `assign_labor <faction> <band> extract <x> <y> <material> <n>`, and the material
-## rides the `species` token** — the slot the sim's own `extract` arm reads it from. `0` unassigns.
-##
-## ⛔ **IT IS NOT THE KEEPERS.** Those are the band-wide `Workings` pool on the Work tab, which holds
-## every working the band has opened whether or not anybody is cutting it; the hint says so, because a
-## player who staffed this stepper expecting the bill to be met would watch the working go back anyway.
-func _build_workings_crew_row(band: Dictionary, deposit: Dictionary) -> HBoxContainer:
-    var tile := HudDepositVocab.tile_of(deposit)
-    var material := HudDepositVocab.material_of(deposit)
-    var crew := 0
-    var idle := 0
-    if not band.is_empty():
-        crew = _band_labor.effective_extract_workers(band, tile.x, tile.y, material)
-        idle = _band_labor.effective_idle(band)
-    var row := HBoxContainer.new()
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var key := HudWidgets.build_field_key(HudDepositVocab.CARD_CREW_ROW)
-    HudWidgets.set_label_tooltip(key, HudDepositVocab.CARD_CREW_HINT)
-    row.add_child(key)
-    var stepper := HBoxContainer.new()
-    stepper.set_meta(WORKINGS_CREW_STEPPER_META, material)
-    stepper.add_theme_constant_override("separation", HudWorkVocab.POOL_STEPPER_SEPARATION)
-    # **A CARD WITH NO ACTING BAND OFFERS NO `+`.** The picker is not drawn where the player holds no
-    # bands at all, and a stepper that emitted a command naming nobody would be refused in the client.
-    HudWidgets.add_stepper_controls(stepper, crew, not band.is_empty() and idle > 0,
-        func(n: int) -> void:
-            _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n, tile.x, tile.y, "",
-                SourceForecast.DEFAULT_HARVEST_FLOOR, material)
-            _fill_workings_card(), true, {
-        HudWidgets.STEPPER_METRIC_BUTTON_WIDTH: HudWorkVocab.POOL_STEPPER_BUTTON_WIDTH,
-        HudWidgets.STEPPER_METRIC_VALUE_WIDTH: HudWorkVocab.POOL_STEPPER_VALUE_WIDTH,
-        HudWidgets.STEPPER_METRIC_PADDING_H: HudWorkVocab.POOL_STEPPER_PADDING_H,
-    })
-    row.add_child(stepper)
-    return row
-
-## The `Band:` row — `_build_band_picker`'s own family, so `Band:` here and `Band:` on the compose
-## sheet line their value controls up at one declared key width and cannot drift.
-##
-## `null` where the player holds no bands: an empty selector states nothing.
-func _build_workings_band_picker(selected: Dictionary) -> HBoxContainer:
-    if _band_labor.current_player_bands().is_empty():
-        return null
-    return _build_band_picker(selected, func(picked: Dictionary) -> void:
-        _workings_band_entity = int(picked.get("entity", ComposeState.NO_BAND_ENTITY))
-        _fill_workings_card())
-
-## ⛔ **WHICH BAND THE CARD OPENS ON — a band ALREADY working this hex wins**, whichever material it is
-## on. Re-crewing a working you already hold is the ordinary case, and defaulting away from the band
-## that holds it would show a `0` beside a working that has three cutters on it.
-##
-## Failing that it is the NEAREST band, wrap-aware, which is `_default_road_band`'s rule and its
-## reason: hands come from a camp, so the nearest band is the one a player would have picked. A band
-## the grid cannot place is skipped rather than counted as distance zero, and the roster's own first
-## band answers where nobody is placeable.
-func _default_workings_band(tile_info: Dictionary) -> Dictionary:
-    var target_x := int(tile_info.get("x", -1))
-    var target_y := int(tile_info.get("y", -1))
-    var nearest := {}
-    var nearest_distance := SourceForecast.HEX_DISTANCE_UNKNOWN
-    for band_variant in _band_labor.current_player_bands():
+## The player faction's standing `extract` assignment on ONE working — `{}` when nobody works it.
+## `_standing_assignment`'s twin, and it is a twin rather than a fourth arm of that function because
+## the join is on the `(tile, material)` PAIR: a tile-keyed lookup would answer the Wood row for a
+## Stone sheet on the same hex.
+func _standing_assignment_extract(x: int, y: int, material: String) -> Dictionary:
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() \
+        else [_band_labor.player_band()]
+    for band_variant in bands:
         if not (band_variant is Dictionary):
             continue
-        var band: Dictionary = band_variant
-        for working in _tile_workings(tile_info):
-            if not _band_labor.extract_assignment_of(band, target_x, target_y,
-                    HudDepositVocab.material_of(working)).is_empty():
-                return band
-        var tile := SourceForecast.band_tile(band)
-        var distance := SourceForecast.hex_distance_wrapped(tile.x, tile.y, target_x, target_y,
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())
-        if distance == SourceForecast.HEX_DISTANCE_UNKNOWN:
-            continue
-        if nearest.is_empty() or distance < nearest_distance:
-            nearest = band
-            nearest_distance = distance
-    if nearest.is_empty():
-        var bands := _band_labor.current_player_bands()
-        return bands[0] if not bands.is_empty() and bands[0] is Dictionary else {}
-    return nearest
+        var found := _band_labor.extract_assignment_of(band_variant as Dictionary, x, y, material)
+        if not found.is_empty():
+            return found
+    return {}
 
-## Take the card down, if one is up. Idempotent, and safe before the card has ever been built.
-func _dismiss_workings_card() -> void:
-    if _workings_card != null and is_instance_valid(_workings_card) and _workings_card.visible:
-        _workings_card.hide()
+## The LIVE row for a working the drawer is showing, re-resolved through the selection's own tile so
+## a press acts on this turn's figures — `_live_tile_info`'s rule, one subject in.
+func _live_deposit(subject_key: String, fallback: Dictionary) -> Dictionary:
+    for working in _tile_workings(_selection.tile_info()):
+        if _deposit_source_key(working) == subject_key:
+            return working
+    return fallback
 
-## The card's Window, built once and reused — `_ensure_road_ladder`'s shape, including its rule that
-## **the MARGIN is the chrome and is never freed, its CHILDREN are**: clearing the Window's own
-## children frees the margin the open reaches for, and `queue_free` is deferred, so the first open
-## renders correctly and every later one opens onto an empty card.
-func _ensure_workings_card() -> PopupPanel:
-    if _workings_card != null and is_instance_valid(_workings_card):
-        return _workings_card
-    var card := PopupPanel.new()
-    card.name = String(WORKINGS_CARD_META)
-    card.set_meta(WORKINGS_CARD_META, true)
-    card.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
-    var margin := MarginContainer.new()
-    for side in DisclosureController.POPOVER_MARGIN_SIDES:
-        margin.add_theme_constant_override("margin_%s" % side, HudWorkVocab.RUNG_TRACK_PADDING)
-    card.add_child(margin)
-    _host.add_child(card)
-    _workings_card = card
-    _workings_body = margin
-    return card
+## Can a sheet be composed on this working at all? — a real row, a branch this client has a crew noun
+## for, and a band to spend. **A branch with no noun renders NO action** rather than an unnamed one.
+func _deposit_compose_available(deposit: Dictionary) -> bool:
+    if deposit.is_empty():
+        return false
+    if HudDepositVocab.tile_of(deposit).x < 0 or HudDepositVocab.material_of(deposit) == "":
+        return false
+    return HudDepositVocab.crew_noun(HudDepositVocab.branch_of(deposit)) != ""
+
+## **OPEN THE SHEET ON ONE WORKING.** The eyebrow names the crew this branch staffs
+## (`ASSIGN FORESTERS` / `ASSIGN DIGGERS`) and the TITLE beside it is the ground's own terrain label —
+## the slot the food-module label fills for a forage patch. **The material is not repeated there**:
+## the crew noun already says which of the hex's two workings this sheet is about.
+func open_deposit_compose(deposit: Dictionary) -> void:
+    if not _deposit_compose_available(deposit):
+        return
+    _ensure_compose_sheet()
+    var subject_key := _deposit_source_key(deposit)
+    _compose.set_composing(ComposeState.KIND_DEPOSIT, subject_key)
+    var branch := HudDepositVocab.branch_of(deposit)
+    var content := _compose_sheet.open(
+        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT
+            % HudDepositVocab.crew_noun(branch).to_lower(),
+        String(_selection.tile_info().get("terrain_label", "")).strip_edges(),
+        subject_key, _compose_anchor_rect())
+    _build_deposit_assign_controls(deposit, content)
+    refresh_drawer_actions()
+
+## **THE SHEET, TOP TO BOTTOM** — the forage sheet's spine with the elements a deposit has no concept
+## for simply ABSENT:
+##
+##   1. the `Band:` picker, unchanged;
+##   2. ⛔ **NO FLOOR PRESETS AND NO CHART, ON EITHER BRANCH.** A deposit has no escapement floor
+##      today, and the chart IS the floor dial — so with no dial there is nothing to draw and a
+##      disabled or empty one would be furniture explaining an absence. Giving the forestry branch a
+##      floor is a live design question and deliberately not answered here;
+##   3. the crew row, capped at what the working can actually use;
+##   4. the `Kit` row, with the crew handed on;
+##   5. ⛔ **NO SPECIES CHIPS** — a deposit takes one material by construction;
+##   6. the improvement POINTER line, whose `Work tab` is a live link;
+##   7. the readout box;
+##   8. the commit button.
+func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) -> void:
+    if target == null:
+        return
+    # A rebuild frees whatever the sheet held, so any drag on it is over — the forage builder's rule.
+    _end_floor_drag()
+    for child in target.get_children():
+        child.queue_free()
+    if not _deposit_compose_available(deposit):
+        return
+    var tile := HudDepositVocab.tile_of(deposit)
+    var material := HudDepositVocab.material_of(deposit)
+    var branch := HudDepositVocab.branch_of(deposit)
+    var crew_label := HudDepositVocab.crew_noun(branch)
+    var subject_key := _deposit_source_key(deposit)
+    # The band the sheet DEFAULTS to: whoever already cuts this working, else the shared ladder's
+    # answer. `_band_working_source`'s own contract, asked through the `(tile, material)` pair.
+    var resolved := _band_working_source(func(candidate: Dictionary) -> bool:
+        return _band_labor.effective_extract_workers(candidate, tile.x, tile.y, material) > 0)
+    var source_changed := _compose.deposit_key() != subject_key
+    if source_changed:
+        _compose.begin_deposit_source(subject_key,
+            int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
+    var band := _band_labor.player_band_by_entity(_compose.deposit_band())
+    if band.is_empty():
+        band = resolved
+        _compose.set_deposit_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
+    # **THE ACTOR BAND CHANGING RE-SEEDS THE CREW, exactly as the SOURCE changing does** — the forage
+    # sheet's rule and for its reason: a composition is a statement about ONE band's standing row, so
+    # the previous band's count surviving a pick turns the commit into an Unassign.
+    var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
+    if source_changed or _compose.deposit_seeded_band() != band_entity:
+        var staffed := _band_labor.workers_for_extract(band, tile.x, tile.y, material)
+        _compose.seed_deposit(staffed if staffed > 0 else HudConst.WORKER_STEP)
+    var current := _band_labor.effective_extract_workers(band, tile.x, tile.y, material)
+    var crew_pool := _band_labor.source_crew_pool_extract(band, tile.x, tile.y, material)
+    target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+        _compose.set_deposit_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
+        _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target)))
+    var ladder := HudDepositVocab.deposit_ladder(
+        _topbar.deposit_rungs() if _topbar != null else [])
+    var standing_entry := HudDepositVocab.ladder_entry_of(ladder, HudDepositVocab.rung_of(deposit))
+    var next_entry := HudDepositVocab.ladder_next_entry(ladder, deposit)
+    # ⛔ **THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE.** A crew takes
+    # `min(crew × rate, reachable)` in a turn, so a hand beyond that quotient carries nothing home and
+    # the `+` must not offer it — the forage sheet's max-useful rule, arrived at from the seam rather
+    # than from a forecast this branch does not publish.
+    var cap := crew_pool
+    var useful := HudDepositVocab.max_useful_cutters(deposit, standing_entry)
+    var capped_by_seam := useful != HudDepositVocab.CUTTERS_UNCAPPED and useful < cap
+    if capped_by_seam:
+        cap = maxi(useful, 0)
+    _compose.clamp_deposit_count(cap)
+    # **THE CREW ROW** — the section label is the branch's crew noun, and the stepper is the TAKE
+    # crew. Its hover says so, because a player who staffed it expecting the standing bill to be met
+    # would watch the working go back anyway.
+    #
+    # ⛔ **NO CREW-TARGET PILLS, and the empty model is what says so.** Both pills are answers about a
+    # FLOOR — *clear it now* and *hold it after* — and a deposit has no floor, so `_mount_crew_row`'s
+    # own `known` gate drops them rather than a branch here.
+    var live_hosts: Array[Dictionary] = []
+    _mount_crew_row(target, live_hosts, crew_label, _compose.deposit_count(),
+        _compose.deposit_count() < cap,
+        func(n: int) -> void:
+            _compose.set_deposit_count(clampi(n, 0, cap))
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+        {}, Callable(), HudDepositVocab.CARD_CREW_HINT)
+    if capped_by_seam:
+        target.add_child(HudWidgets.alloc_hint_label(
+            HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
+    # **THE KIT ROW.** The shipped roster declares no TAKE gear on either deposit branch, so
+    # `KitRoster.build_kit_row` mounts nothing today — which is the honest answer rather than an empty
+    # picker, and the row appears by itself the day a felling axe declares a take stat.
+    #
+    # ⛔ **THE CREW IS HANDED ON**, because omitting it is what made the forage sheet's shortfall line
+    # mute for the whole life of that line: `crew` then defaults to `KIT_CREW_UNCOMPOSED` and the
+    # shortfall falls back to the published `workersOnQuotedJob`, which is `0` on a sheet where
+    # nobody is assigned yet.
+    var kits := _band_labor.kits()
+    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_EXTRACT)
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_EXTRACT, default_kit,
+        _compose.deposit_kit_id())
+    _compose.set_deposit_kit_id(kit_id)
+    _mount_kit_row(target, kits, KitRoster.JOB_EXTRACT, kit_id, default_kit, band,
+        func(picked: String) -> void:
+            _compose.set_deposit_kit_id(picked)
+            _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
+        {}, "", _compose.deposit_count())
+    # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's two zero-crew cases, verbatim: `0` on a
+    # working this band does not hold is a no-op (dead button), `0` on one it does is the sim's own
+    # unassign (live button, renamed).
+    var is_unassign := _compose.deposit_count() <= 0 and current > 0
+    var is_noop := _compose.deposit_count() <= 0 and current <= 0
+    # ⛔ **THE POINTER LINE, AND THE SHEET EMITS NO IMPROVEMENT VERB.** `assign_labor` is the only
+    # command this sheet sends — the shipped contract, and it is not being reopened — so the rung is
+    # named, its board is linked, and the press happens there. Nothing is offered on an UNASSIGN:
+    # pointing a player at a rung on ground they are walking off is advice about a job they are ending.
+    if not is_unassign:
+        var offer := HudDepositVocab.offer_label(next_entry, branch)
+        if offer != "":
+            target.add_child(_build_deposit_offer_line(offer,
+                HudDepositVocab.catalog_verb(next_entry), crew_label, not is_noop, band))
+    # **THE READOUT** — what this crew brings home next turn, what the next rung would pay once it
+    # stands, the verdict the branch turns on, and the runway under the dashed rule.
+    _mount_deposit_readout(target, deposit, ladder, next_entry, band, _compose.deposit_count())
+    # A dead button is always explained, the `+` stepper's cap note being the precedent.
+    if is_noop:
+        target.add_child(HudWidgets.alloc_hint_label(
+            HudDepositVocab.DEPOSIT_NOOP_HINT_FORMAT % crew_label.to_lower()))
+    var assign_btn := Button.new()
+    assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
+    assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
+        else HudDepositVocab.commit_verb(branch)
+    HudStyle.apply_button(assign_btn, "primary")
+    assign_btn.disabled = is_noop
+    # ⛔ **ONE COMMAND, AND IT IS `assign_labor <f> <b> extract <x> <y> <material> <n>`.** The material
+    # rides the `species` token — the slot the sim's own `extract` arm reads it from and half the
+    # optimistic overlay's key. **No floor and no kit token**: a deposit has no escapement floor, and
+    # `extract`'s grammar is closed after the worker count.
+    assign_btn.pressed.connect(func() -> void:
+        _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
+            tile.x, tile.y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, material)
+        close_compose_sheet())
+    target.add_child(assign_btn)
+
+## **THE POINTER LINE — `⛏ Quarry this rock from the Work tab.`** — the retired `_emit_improvement`
+## pattern, and the same widget the forage sheet's offered rung uses, so a deposit rung and a plant
+## rung point at the same board in the same words.
+##
+## `works_the_ground` is the caller's already-resolved `not is_noop`: the sim's rule is that an
+## improvement verb reaches only bands ALREADY working the source, so a band with nobody on it and
+## nobody composed is told to send people first rather than handed a link to a board with no row on it.
+func _build_deposit_offer_line(offer: String, verb: String, crew_label: String,
+        works_the_ground: bool, band: Dictionary) -> VBoxContainer:
+    var link := HudFormat.bbcode_link(HudComposeVocab.WORK_TAB_LINK_TEXT,
+        HudComposeVocab.WORK_TAB_LINK_META, HudStyle.SIGNAL_HEX)
+    var sentence := HudComposeVocab.BUILD_OFFER_WORKED_FORMAT % [offer, link]
+    if not works_the_ground:
+        sentence = HudDepositVocab.DEPOSIT_OFFER_UNWORKED_FORMAT % [
+            crew_label.to_lower(), offer, link]
+    return HudWidgets.build_improvement_control(verb, HudWidgets.IMPROVEMENT_STATE_OFFERED,
+        HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [FoodIcons.for_policy(verb), sentence],
+        "", [], false, SourceForecast.BUILD_PACE_UNKNOWN,
+        func(_meta: String) -> void: _navigate_to_work_tab(
+            int(band.get("entity", ComposeState.NO_BAND_ENTITY))))
+
+## **THE READOUT BOX, BUILT DIRECTLY RATHER THAN THROUGH `_mount_readout`.**
+##
+## ⛔ **THAT MOUNT IS THE FLOOR MODEL'S, AND A DEPOSIT HAS NO FLOOR.** Every register it wires is a
+## function of a `floor_chart_model` — the live registry a drag refills, the crew targets, the floor's
+## teaching line, the `now → after` walk — and there is no dial here for any of them to follow. Passing
+## it an empty model would render the box and then silently drop the VERDICT, which on a finite seam is
+## the one sentence the whole branch turns on. So the four SHARED widgets are assembled here, in the
+## same order and the same registers `_mount_readout` puts them in.
+##
+## The caption is `next turn` — `SourceForecast.yield_row_header`'s own default, since no account here
+## carries a holding rate to arrow toward.
+func _mount_deposit_readout(target: VBoxContainer, deposit: Dictionary,
+        ladder: Array[Dictionary], next_entry: Dictionary, band: Dictionary, crew: int) -> void:
+    var column := HudWidgets.build_readout_box(target)
+    # **THE TAKE, WITH THE MATERIAL AS THE ACCOUNT NAME.** `yield_rows` puts a material's own id in
+    # the account slot precisely because a material names itself, so `6.60 STONE` needs no new
+    # vocabulary — and the render-only-where-the-vector-pays rule stays in one place.
+    var rate := HudDepositVocab.catalog_yield_per_worker_turn(
+        HudDepositVocab.ladder_entry_of(ladder, HudDepositVocab.rung_of(deposit)))
+    var take := minf(rate * float(crew), HudDepositVocab.reachable_of(deposit))
+    var rows := SourceForecast.yield_rows(0.0, 0.0, SourceForecast.YIELD_ACCOUNT_NONE, {}, [{
+        SourceForecast.MATERIAL_PAYOFF_ID_KEY: HudDepositVocab.material_of(deposit),
+        SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: take,
+    }])
+    # ⛔ **THE NOTE IS DECIDED BY `regrowth_rate > 0`, NEVER BY THE BRANCH** — `HudDepositVocab.renews`,
+    # the one fork. A renewing working reads the food webs' own `renewable` in HEALTHY, or their own
+    # overdraw flag and word in WARN; a finite one renews nothing and states neither.
+    var overdraws := HudDepositVocab.renews(deposit) \
+        and HudDepositVocab.actual_take_of(deposit) > HudDepositVocab.sustainable_take_of(deposit)
+    var note := ""
+    if HudDepositVocab.renews(deposit):
+        note = HudComposeVocab.OVERHUNT_FLAG + " " + HudDepositVocab.over_cut_word() if overdraws \
+            else SourceForecast.YIELD_RENEWABLE_NOTE
+    if not rows.is_empty():
+        column.add_child(HudWidgets.build_yields_row(rows,
+            HudStyle.WARN if overdraws else HudStyle.INK, note,
+            HudStyle.WARN if overdraws else HudStyle.HEALTHY, ""))
+    # **THE DEAL — ITS OWN BLOCK, NEVER A ROW INSIDE THE YIELDS FLOW.** Two harness contracts read
+    # that flow structurally, so a deal term folded in would corrupt both silently; it is
+    # `HudWidgets.IMPROVEMENT_DEAL_META`'s own block for that reason.
+    var deal_label := HudDepositVocab.deal_label(next_entry)
+    var deal_value := HudDepositVocab.deal_value(next_entry, deposit, crew)
+    if deal_label != "" and deal_value != "":
+        column.add_child(HudWidgets.build_improvement_deal(deal_label, deal_value))
+    column.add_child(HudWidgets.build_verdict_line(
+        HudDepositVocab.deposit_verdict(deposit, ladder)))
+    var aside := HudDepositVocab.runway_aside(deposit)
+    if aside != "":
+        column.add_child(HudWidgets.build_readout_aside(
+            [HudWidgets.readout_aside_line(aside)]))
 
 ## The STANDING-SUMMARY child-slot structure shared by both drawers: `[has_summary, warn, has_note,
 ## has_muted]` — the full set of optional summary child slots, so any structural change (summary

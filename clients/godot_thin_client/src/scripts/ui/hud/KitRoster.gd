@@ -405,6 +405,14 @@ const JOB_EXPEDITION := "expedition"
 ## fact about what the pool is holding this turn rather than a stored id.
 const JOB_BUILDERS := "builders"
 
+## …and the two deposit branches' TAKE job (issue #650) — `equipment.json`'s own `extract`, the job a
+## felling axe or a stone hammer would declare a take stat on.
+##
+## **THE SHIPPED ROSTER DECLARES NONE**, so `build_kit_row` mounts nothing on either compose sheet
+## today and `default_kits.extract` is the bare `none` kit. That is the honest answer rather than an
+## empty picker, and the row appears by itself the day a tool declares one.
+const JOB_EXTRACT := "extract"
+
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
 ## work appear: a hunt or forage crew is priced on a CARRY axis instead (`JOB_CARRY_AXES`), and a

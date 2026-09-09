@@ -288,7 +288,8 @@ var _server_build: String = "?"
 ## …and the LAND drawer's WORKINGS action (arc #583), beside it and for the same reason: a deposit is
 ## a tile-keyed source reached by a tile-first pick, and the ground it stands on need be neither a
 ## gathering site nor a hex with a band in hand.
-@onready var workings_controls: VBoxContainer = %WorkingsControls
+@onready var forestry_assign_controls: VBoxContainer = %ForestryAssignControls
+@onready var extraction_assign_controls: VBoxContainer = %ExtractionAssignControls
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -645,7 +646,8 @@ func _ready() -> void:
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
-        herd_assign_controls, forage_assign_controls, road_ladder_controls, workings_controls,
+        herd_assign_controls, forage_assign_controls, road_ladder_controls,
+        forestry_assign_controls, extraction_assign_controls,
         tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.send_hunt_expedition_requested.connect(
@@ -853,7 +855,7 @@ func _ready() -> void:
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        road_ladder_controls, workings_controls,
+        road_ladder_controls, forestry_assign_controls, extraction_assign_controls,
         subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
     _load_ui_balance_config()
     _connect_zoom_rail()
@@ -994,6 +996,16 @@ func update_ladder_knowledge(roster_variant: Variant) -> void:
 ## lands long before any road exists to open a ladder on.
 func update_route_rungs(catalog_variant: Variant) -> void:
     _topbar.update_route_rungs(catalog_variant)
+
+## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — what the forestry and extraction ladders
+## HOLD, per world. `update_route_rungs`' twin, and a thin delegator for its reason: `Main` reaches it
+## BY NAME through `_hud_invoke`, whose `has_method` probe fails silently.
+##
+## **IT PUSHES NO RE-RENDER.** The catalog is read when a working's ladder is opened and when the tile
+## card composes a deposit's rows, not at ingest, and a world's catalog lands long before any working
+## exists to read it.
+func update_deposit_rungs(catalog_variant: Variant) -> void:
+    _topbar.update_deposit_rungs(catalog_variant)
 
 ## THE ROADS IN THE GROUND, into the shared labor model — the road twin of `update_forage_patches`,
 ## and it exists for one reader: a route knowledge is *in use* when one of the faction's own road
@@ -2055,8 +2067,10 @@ func _hide_drawer_blocks() -> void:
         forage_assign_controls.visible = false
     if road_ladder_controls != null:
         road_ladder_controls.visible = false
-    if workings_controls != null:
-        workings_controls.visible = false
+    if forestry_assign_controls != null:
+        forestry_assign_controls.visible = false
+    if extraction_assign_controls != null:
+        extraction_assign_controls.visible = false
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:

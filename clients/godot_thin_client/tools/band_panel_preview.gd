@@ -17007,6 +17007,85 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 	_restore_roadwork_roster_fixture()
 	await _settle()
 
+## ⛔ **THE ROW'S DECLARING MARK, AND THE TRACK IT OPENS** (issue #650) — the deposit branches'
+## ladder, hosted where the plant and animal branches are declared rather than on a fourth popup.
+##
+## **THIS IS THE ONE SURFACE THAT CAN RENDER IT**, which is why the frame lives here rather than in
+## `ui_preview`: the track is opened from this roster's row, and `ui_preview` stands up no Band panel.
+## Its four ROW STATES are asserted in `ui_preview`'s `workings` chapter, over the producer — a frame
+## can show one of them, and the branch has four.
+##
+## ⛔ **THE MARK IS NOT A STEPPER, A CREW COUNT OR A KIT PICKER**, which is the whole of roads.md's
+## per-row prohibition; the scan above asserts those three are still absent from every row, and this
+## one asserts the mark is present beside them.
+func _assert_the_row_opens_the_rung_track(rows: Array[Control]) -> void:
+	var marks := _collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_TRACK_META, [])
+	# **ONE MARK PER ROW WITH SOMEWHERE LEFT TO GO**, and on this fixture that is all three: the two
+	# free floors have a rung above them and the felling working has the coppice.
+	_assert_band_panel(("…and every row with a rung above it carries the declaring mark that opens "
+			+ "its track (got %d of %d)") % [marks.size(), rows.size()],
+		marks.size() == rows.size())
+	if marks.is_empty():
+		return
+	# **THE FINITE SEAM'S OWN MARK**, found by its `(tile, material)` handle rather than by position —
+	# the row meta's own identity, and the pair a tile-only handle could not tell apart.
+	var wanted := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
+	var mark: Button = null
+	for control in marks:
+		if String(control.get_meta(HudWorkVocab.WORKINGS_ROSTER_TRACK_META)) == wanted \
+				and control is Button:
+			mark = control as Button
+	_assert_band_panel("…each keyed to its own working, the rock's included (%s)" % wanted,
+		mark != null)
+	if mark == null:
+		return
+	mark.pressed.emit()
+	await _settle()
+	await _save("band_panel_workings_track")
+	# ⛔ **THE CARD IS A `PopupPanel`, i.e. a `Window`, SO A `Control`-ROOTED FINDER WALKS PAST IT** —
+	# the road ladder's own trap. The ROWS are read through the same `_rung_track_states` /
+	# `_rung_track_faces` pair the plant track's own states use, which recurse through the Window.
+	var states := _rung_track_states()
+	_assert_band_panel("…and pressing it opens the SHARED rung track, not a popup of its own (%s)"
+			% str(states.keys()),
+		states.size() == WORKINGS_EXTRACTION_RUNGS)
+	if states.size() == WORKINGS_EXTRACTION_RUNGS:
+		# ⛔ **THE FREE FLOOR IS A FACT, NOT A PRICE OF ZERO.** The rung a working already holds reads
+		# `where you are` — it is the row keyed on the EMPTY verb, both floors declaring none — and it
+		# carries no control at all: a button is a CHOICE and a rung you stand on is not one.
+		_assert_band_panel("…with the floor it stands on stated as a FACT (%s)"
+				% String(states.get(SourceForecast.IMPROVEMENT_NONE, "")),
+			String(states.get(SourceForecast.IMPROVEMENT_NONE, ""))
+				== RungLadder.STATE_STANDING)
+		var faces := _rung_track_faces()
+		var floor_face := String(faces.get(SourceForecast.IMPROVEMENT_NONE, ""))
+		_assert_band_panel("…reading `%s` rather than a `%s` price of zero (\"%s\")"
+				% [HudWorkVocab.RUNG_TRACK_STATE_STANDING,
+					HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT
+						% DetailFormat.format_work_units(0.0), floor_face],
+			floor_face == HudWorkVocab.RUNG_TRACK_STATE_STANDING)
+		# ⛔ **EVERY ORDERED RUNG LEADS WITH ITS PRICE, REFUSED OR NOT** — the refusal is the face's
+		# SECOND clause rather than a replacement for it — so what is claimed is that the price LEADS,
+		# which holds whichever craft this walk's faction happens to have learned by the time it gets
+		# here. **AND A PRICED ROW QUOTES NO TURNS**, so the estimate's own `≈` must be nowhere on it.
+		var priced := HudDepositVocab.deposit_ladder_price_face(HudDepositVocab.ladder_entry_of(
+			HudDepositVocab.deposit_ladder(_deposit_rung_catalog()),
+			HudDepositVocab.RUNG_KEY_QUARRY))
+		var quarry_face := String(faces.get(WORKINGS_QUARRY_VERB, ""))
+		_assert_band_panel("…and the quarry above it LEADS with its pile and its standing bill — `%s` (\"%s\")"
+				% [priced, quarry_face],
+			quarry_face.begins_with(priced))
+		_assert_band_panel("…quoting no turns estimate on a rung nobody has ordered (\"%s\")"
+				% quarry_face,
+			not quarry_face.contains(WORKINGS_TURNS_ESTIMATE_MARK))
+		# **AND THE PILE IT EATS RIDES BENEATH IT, THROUGH THE SHARED PRICE ASIDE** — the same format a
+		# pen's hurdles and a paved road's stone take, so one rung's material reads one way everywhere.
+		_assert_band_panel("…with the wood it eats stated beneath it as the shared price aside",
+			_rung_track_aside_text().contains(HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT.split(
+				"%s")[0]) and _rung_track_aside_text().contains(WORKINGS_WOOD))
+	_hud._bandpanel._dismiss_rung_track()
+	await _settle()
+
 ## Put the world back the way the states after this one expect it — the road catalogue and the road
 ## network both cleared, exactly as `_restore_road_queue_fixture` does.
 func _restore_roadwork_roster_fixture() -> void:
@@ -17140,6 +17219,67 @@ const UNOPENED_NO_TAKE := 0.0
 ## gap the quarry rung above it buys, and never a restatement of the stock.
 const UNOPENED_STONE_REACHABLE := 450.0
 
+## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — `SubsistenceSection.depositRungs`, per
+## world. ⛔ **THE ROSTER READS IT FOR EVERY RUNG NAME IT PRINTS**, so a state that pushed no catalog
+## would draw `forestry:felling` in each value cell: a raw wire key is the honest answer for a rung the
+## catalog does not carry, and a whole roster of them is a fixture that never sent one.
+##
+## It is also what the row's `⌃` is built from — `RungLadder.has_track` over these rows — so with no
+## catalog the mark does not draw at all and every claim about it would pass vacuously.
+##
+## At the shipped `intensification_ladder.json` figures, so a face asserted here is a face the wire
+## produces. **`extraction:quarry`'s site threshold is 100** against this fixture's 3000-unit body, so
+## the rock's ladder offers a live quarry row rather than one refused for its ground.
+func _deposit_rung_catalog() -> Array:
+	return [
+		_deposit_rung(HudDepositVocab.RUNG_KEY_DEADFALL, "forestry", 1, "Deadfall", "", "", "",
+			WORKINGS_CRAFT_WOODCRAFT, 0.0, 0.0, 0.5, 1.0, 1.0, 0.0),
+		_deposit_rung(HudDepositVocab.RUNG_KEY_FELLING, "forestry", 2, "Felling", "fell",
+			WORKINGS_CRAFT_WOODCRAFT, HudDepositVocab.RUNG_KEY_DEADFALL,
+			WORKINGS_CRAFT_CONSERVATIONISM, 60.0, 1.0, 1.0, 1.0, 1.0, 0.0),
+		_deposit_rung(HudDepositVocab.RUNG_KEY_COPPICE, "forestry", 3, "Coppice", "coppice",
+			WORKINGS_CRAFT_CONSERVATIONISM, HudDepositVocab.RUNG_KEY_FELLING, "",
+			150.0, 2.0, 2.0, 1.0, 2.0, 0.0),
+		_deposit_rung(HudDepositVocab.RUNG_KEY_GATHERING, "extraction", 1, "Gathering", "", "", "",
+			WORKINGS_CRAFT_QUARRYING, 0.0, 0.0, 0.6, 0.15, 1.0, 0.0),
+		_deposit_rung(HudDepositVocab.RUNG_KEY_QUARRY, "extraction", 2, "Quarry", "quarry",
+			WORKINGS_CRAFT_QUARRYING, HudDepositVocab.RUNG_KEY_GATHERING, "",
+			250.0, 1.5, 1.5, 0.85, 1.0, WORKINGS_QUARRY_MIN_CAPACITY, 8.0, WORKINGS_WOOD),
+	]
+
+func _deposit_rung(key: String, branch: String, order: int, display_name: String, verb: String,
+		unlock: String, requires: String, earns: String, work_cost: float, upkeep: float,
+		yield_rate: float, recovery: float, regrowth: float, min_capacity: float,
+		material_cost: float = 0.0, material_id: String = "") -> Dictionary:
+	return {
+		"rung_key": key, "branch": branch, "order": order, "display_name": display_name,
+		"verb": verb, "unlock_knowledge": unlock, "requires_rung": requires,
+		"earns_knowledge": earns, "work_cost": work_cost, "upkeep_work_per_turn": upkeep,
+		"build_material_cost": material_cost, "build_material_id": material_id,
+		"build_work_per_worker_turn": 1.0, "yield_per_worker_turn": yield_rate,
+		"recovery_fraction": recovery, "regrowth_multiplier": regrowth,
+		"min_deposit_capacity": min_capacity,
+	}
+
+## How many rungs the EXTRACTION branch holds, so the track's row count is a claim about the branch
+## rather than about the whole catalog: the two ladders are one vector and a walk that forgot to filter
+## on `branch` would offer a coppice above a quarry.
+const WORKINGS_EXTRACTION_RUNGS := 2
+
+## `extraction:quarry`'s own verb, which is the key its ladder row is stamped with.
+const WORKINGS_QUARRY_VERB := "quarry"
+
+## The `≈` every turns estimate in the client opens with. ⛔ **A PRICED DEPOSIT ROW MUST CARRY NONE**:
+## the estimate would be divided by a builders pool that may be on another job and would ignore the
+## queue the press joins, so the row states the two figures no crew moves.
+const WORKINGS_TURNS_ESTIMATE_MARK := "≈"
+
+## The three ladder knowledges the deposit branches gate on, and the ground `extraction:quarry` wants.
+const WORKINGS_CRAFT_WOODCRAFT := "woodcraft"
+const WORKINGS_CRAFT_CONSERVATIONISM := "conservationism"
+const WORKINGS_CRAFT_QUARRYING := "quarrying"
+const WORKINGS_QUARRY_MIN_CAPACITY := 100.0
+
 ## The six deposit rows on the wire — three of this band's workings (two of them on ONE tile) and
 ## THREE NEGATIVES, each of which a differently-broken membership test would list.
 func _workings_rows() -> Array:
@@ -17204,6 +17344,8 @@ func _workings_row_value(row: Control) -> String:
 	return ""
 
 func _assert_the_workings_roster_names_its_workings() -> void:
+	# **THE CATALOG FIRST**, because every row's value cell and every row's `⌃` is read out of it.
+	_hud.update_deposit_rungs(_deposit_rung_catalog())
 	_hud.update_deposits(_workings_rows())
 	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
 	_hud._bandpanel.rerender()
@@ -17274,10 +17416,19 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	# REUSE: the tile card's working block and this roster compose a working's state through ONE
 	# function, so §7's fork is taken once and the two cannot disagree.
 	var wood := _workings_row(ROSTER_NEAR_TILE, WORKINGS_WOOD, true, WORKINGS_WOOD_TAKE)
-	var wanted := HudDepositVocab.deposit_row_value(wood)
+	# ⛔ **ASKED WITH THE SAME CATALOG THE ROW WAS BUILT FROM.** `deposit_row_value` names the rung out
+	# of it, so an expectation composed against `[]` would compare a display name with a raw wire key
+	# and fail for a reason that has nothing to do with the reuse being claimed.
+	var ladder := HudDepositVocab.deposit_ladder(_deposit_rung_catalog())
+	var wanted := HudDepositVocab.deposit_row_value(wood, ladder)
 	var got := _workings_row_value(rows[1])
 	_assert_band_panel("…and its value is `deposit_row_value` verbatim — `%s` (got \"%s\")"
 			% [wanted, got], got == wanted)
+	# **AND THE RUNG IS NAMED BY THE WIRE**, never by a retired client table: the negative is the raw
+	# key, which is exactly what a roster with no catalog behind it prints.
+	_assert_band_panel("…naming the rung by the CATALOG's own word rather than its wire key (\"%s\")"
+			% got,
+		got.contains("Felling") and not got.contains(HudDepositVocab.RUNG_KEY_FELLING))
 	# ⛔ **THE §7 FORK, READ OFF TWO ROWS OF ONE ROSTER.** The renewing seam states the over-cut word
 	# and the finite one a runway — the pair, since either alone passes on a composer that says the
 	# same thing about both.
@@ -17307,6 +17458,7 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 		row_controls.is_empty())
 	# **AND THE HEAD IS THE POOL**, asserted on this state because it is the one with a live shortfall.
 	_assert_workings_roster_head("band_panel_workings_roster", block, true)
+	await _assert_the_row_opens_the_rung_track(rows)
 
 	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
 	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** The `deposits` rows are fog-filtered
@@ -17432,6 +17584,9 @@ func _label_titled_under_head(block: Control, title: String) -> Label:
 ## `_restore_roadwork_roster_fixture` idiom one branch over.
 func _restore_workings_roster_fixture() -> void:
 	_hud.update_deposits([])
+	# …and the catalog with them, `_restore_road_queue_fixture`'s own rule one branch over: it is a
+	# per-WORLD constant, so a delta never restates it and a state after this one would inherit it.
+	_hud.update_deposit_rungs([])
 	_restore_queue_reorder_fixture()
 
 func _restore_road_queue_fixture() -> void:

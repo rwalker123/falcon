@@ -71,7 +71,8 @@ var _forage_assign_controls: VBoxContainer = null
 # is not the land: a road is a property of the GROUND, so it belongs to exactly one subject.
 var _road_ladder_controls: VBoxContainer = null
 # …and the LAND drawer's WORKINGS action (arc #583), hidden and shown beside the road's.
-var _workings_controls: VBoxContainer = null
+var _forestry_assign_controls: VBoxContainer = null
+var _extraction_assign_controls: VBoxContainer = null
 var _subject_body: VBoxContainer = null
 var _subject_scroll: ScrollContainer = null
 # The fit ceiling — read only, the room the drawer may claim in the dock beneath the card.
@@ -98,7 +99,8 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         bandpanel: BandPanelController, banddetail: BandDetailLines, host: Node,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        road_ladder_controls: VBoxContainer, workings_controls: VBoxContainer,
+        road_ladder_controls: VBoxContainer,
+        forestry_assign_controls: VBoxContainer, extraction_assign_controls: VBoxContainer,
         subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
         targeting: TargetingController, topbar: FactionReadouts) -> void:
     _selection = selection
@@ -115,7 +117,8 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _herd_assign_controls = herd_assign_controls
     _forage_assign_controls = forage_assign_controls
     _road_ladder_controls = road_ladder_controls
-    _workings_controls = workings_controls
+    _forestry_assign_controls = forestry_assign_controls
+    _extraction_assign_controls = extraction_assign_controls
     _subject_body = subject_body
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
@@ -203,10 +206,11 @@ func _render_land_drawer() -> void:
     # exactly where the `Road` readout row above does — a tile carrying a road — so nothing shows on
     # ground with no road; the builder decides that from the same `roads` key the rows are drawn from.
     _drawercompose.build_road_drawer_actions(_selection.tile_info())
-    # …and the WORKINGS action beside it (arc #583). It appears exactly where a live working stands
-    # on this hex, off the same `deposits` key the card's rows would be drawn from — so nothing shows
-    # on ground nobody has worked, which is most of the world.
-    _drawercompose.build_workings_drawer_actions(_selection.tile_info())
+    # …and the two DEPOSIT actions beside it (issue #650) — `Assign foresters ▸` and
+    # `Assign diggers ▸`, each appearing exactly where its branch's readout ROW above does, off the
+    # same `deposits` key. **One container per BRANCH**, because a wooded highland offers both at once
+    # and putting foresters on the timber is not putting diggers on the rock.
+    _drawercompose.build_deposit_drawer_actions(_selection.tile_info())
     if _allocation_panel != null:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
@@ -424,6 +428,31 @@ func _tile_terrain_lines(tile_info: Dictionary,
                 HudRouteVocab.ladder_entry_of(ladder, HudRouteVocab.rung_of(road)))
             lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
                 queued_tiles, upkeep_material))
+    # THE DEPOSITS THIS HEX HOLDS (issue #650) — **the tile card is the working's readout**, and this
+    # is where it goes for the road block's reason one paragraph up: a seam is IN THE GROUND, so it is
+    # a property of the LAND and the land drawer is the one surface whose subject is a piece of ground.
+    #
+    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS AND THE ROADS.** The sim publishes a
+    # deposit row under the same `Discovered` gate a road takes — a seam does not wander off, so
+    # remembering one is remembering something true — so appending below that return would drop the
+    # block from every remembered hex the sim went to the trouble of sending it for.
+    #
+    # **ONE ROW PER MATERIAL, AND THE PAYOFF ROW BENEATH IT WHERE THE RUNG BUYS SOMETHING.** A hex
+    # carries up to two (`(tile, material)` is the registry key), and each is its own seam with its
+    # own rung — so they are never summed into a hex total.
+    #
+    # ⛔ **THE CATALOG JOIN IS RESOLVED HERE AND HANDED OVER**, exactly as the road block's keeper
+    # name, build rate and material noun are: the rung's display name, its reach and its renewal all
+    # ride `SubsistenceSection.depositRungs`, and `HudDepositVocab` stays a leaf with no catalog
+    # dependency. `[]` before a catalog has arrived, which the composer reads as *the rung cannot be
+    # named* and answers with the raw wire key rather than a blank.
+    var deposit_ladder: Array[Dictionary] = []
+    if _topbar != null:
+        deposit_ladder = HudDepositVocab.deposit_ladder(_topbar.deposit_rungs())
+    for deposit_variant in Array(tile_info.get("deposits", [])):
+        if deposit_variant is Dictionary:
+            lines.append_array(HudDepositVocab.deposit_lines(
+                deposit_variant as Dictionary, deposit_ladder, ctx))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
@@ -708,8 +737,10 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         _forage_assign_controls.visible = false
     if _road_ladder_controls != null:
         _road_ladder_controls.visible = false
-    if _workings_controls != null:
-        _workings_controls.visible = false
+    if _forestry_assign_controls != null:
+        _forestry_assign_controls.visible = false
+    if _extraction_assign_controls != null:
+        _extraction_assign_controls.visible = false
     # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
     # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
     var ctx := DetailFormat.Context.new()

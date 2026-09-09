@@ -2601,7 +2601,7 @@ func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContai
         block.add_child(line)
     var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
     for index in range(drawn):
-        block.add_child(_build_workings_roster_row(models[index] as Dictionary))
+        block.add_child(_build_workings_roster_row(band, models[index] as Dictionary))
     if models.size() > drawn:
         var more := HudWidgets.alloc_hint_label(
             HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % (models.size() - drawn))
@@ -2681,9 +2681,10 @@ func _build_workings_roster_head(band: Dictionary) -> HBoxContainer:
 ##
 ## **THE NAME JUMPS AND THE REST DROPS**, the road roster's split: a working IS its tile, so the jump
 ## is `alert_focus_requested` on its own coordinates with no entity resolution.
-func _build_workings_roster_row(model: Dictionary) -> PanelContainer:
+func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
+    var ladder := _deposit_ladder()
     var row := PanelContainer.new()
     row.set_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META,
         "%d,%d:%s" % [tile.x, tile.y, String(model["material"])])
@@ -2697,13 +2698,141 @@ func _build_workings_roster_row(model: Dictionary) -> PanelContainer:
         func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
     line.add_child(jump)
     var value := Label.new()
-    value.text = HudDepositVocab.deposit_row_value(deposit)
+    value.text = HudDepositVocab.deposit_row_value(deposit, ladder)
     value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    value.add_theme_color_override("font_color", HudDepositVocab.deposit_value_color(deposit))
+    value.add_theme_color_override("font_color",
+        HudDepositVocab.deposit_value_color(deposit, ladder))
     value.clip_text = true
     value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # **THE FIGURES THE ONE-LINE CELL CANNOT CARRY RIDE ITS HOVER** — the take pair or the runway, the
+    # standing bill, and the neglect COUNTDOWN, which lives on this surface and no other: this is the
+    # block whose own head staffs the pool that would stop the slide.
+    HudWidgets.set_label_tooltip(value, HudDepositVocab.deposit_roster_tooltip(deposit))
     line.add_child(value)
+    # ⛔ **THE DECLARING MARK, AND IT IS THE ONLY CONTROL A ROW CARRIES.** The hands that CUT a working
+    # are the tile card's compose sheet and the hands that HOLD it are this block's own head; what a
+    # row can answer is *take it further up its ladder*, which is the same question the work board's
+    # `⌃` answers one block down and is opened with the same card.
+    #
+    # **It renders only where the branch has somewhere left to go** — `RungLadder.has_track` — so a
+    # working at the top of its ladder carries no mark rather than a card with nothing on it.
+    var rows := RungLadder.deposit_track(deposit, ladder, _player_knowledge(),
+        _topbar.knowledge_labels() if _topbar != null else {})
+    if RungLadder.has_track(rows):
+        var track_btn := Button.new()
+        # **THE MARK IS THE CHEVRON PLUS THE NEXT RUNG'''S OWN POLICY GLYPH** (`⌃⛏`), the work board'''s
+        # ready slot verbatim: the chevron is load-bearing, since a bare glyph reads as *done* rather
+        # than *available*.
+        track_btn.text = HudWorkVocab.WORK_ROW_READY_FORMAT % FoodIcons.for_policy(
+            HudDepositVocab.catalog_verb(HudDepositVocab.ladder_next_entry(ladder, deposit)))
+        track_btn.focus_mode = Control.FOCUS_NONE
+        track_btn.tooltip_text = HudWorkVocab.WORKINGS_ROSTER_TRACK_TOOLTIP
+        track_btn.set_meta(HudWorkVocab.WORKINGS_ROSTER_TRACK_META,
+            String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META)))
+        track_btn.custom_minimum_size = Vector2(HudWorkVocab.WORKINGS_ROSTER_TRACK_WIDTH, 0.0)
+        HudStyle.apply_button(track_btn, "ghost")
+        HudWidgets.compact(track_btn, HudWorkVocab.WORK_ROW_FONT_SIZE,
+            HudWorkVocab.WORK_PAGER_PADDING_V)
+        track_btn.add_theme_color_override("font_color", HudStyle.SIGNAL)
+        track_btn.pressed.connect(func() -> void:
+            _open_deposit_track(band, deposit, track_btn))
+        line.add_child(track_btn)
     return row
+
+## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
+## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
+## than as branches with nothing on them.
+func _deposit_ladder() -> Array[Dictionary]:
+    return HudDepositVocab.deposit_ladder(_topbar.deposit_rungs() if _topbar != null else [])
+
+## **THE WORKING'S DESTINATION TRACK — the same Window, the same renderer and the same press the work
+## board's `⌃` opens** (issue #650), so the deposit branches are declared exactly where the plant and
+## animal branches are rather than from a fourth popup on the tile card.
+##
+## **THE CARD IS REBUILT PER OPEN, NEVER PATCHED** — the track is a function of the working's rung, its
+## meter, the faction's knowledge and the band's own pool, all of which move per snapshot.
+##
+## ⛔ **THE PRESS EMITS THE RUNG'S VERB THROUGH THE EXISTING IMPROVEMENT PATH** —
+## `improvement_requested` → `Main.format_improvement`, the tile-targeted arm, exactly as
+## `cultivate` / `sow` do. **No `assign_labor` rides with it**: this band demonstrably works this
+## working (that is why the roster lists it), which is the whole of the sim's *an improvement command
+## reaches only bands already working the source* rule.
+func _open_deposit_track(band: Dictionary, deposit: Dictionary, anchor: Control) -> void:
+    var ladder := _deposit_ladder()
+    if ladder.is_empty():
+        # **THE CATALOG IS PER WORLD AND ARRIVES WITH THE FIRST SNAPSHOT**, so an empty one is a wire
+        # this client has not been sent rather than a branch with nothing on it. A card of no rows
+        # would read as *this working can never be raised*, which is a claim about the world.
+        push_warning("BandPanelController: a working's ⌃ was pressed with no deposit rung catalog " +
+            "on the wire — the track cannot state a single rung")
+        return
+    var rows := RungLadder.deposit_track(deposit, ladder, _player_knowledge(),
+        _topbar.knowledge_labels() if _topbar != null else {},
+        int(_band_labor.effective_role_workers(
+            band, HudConst.LABOR_KIND_BUILDERS).get("workers", SourceForecast.BUILD_CREW_NONE)),
+        band, _deposit_track_queue(band))
+    if not RungLadder.has_track(rows):
+        return
+    var track := _ensure_rung_track()
+    var margin := _rung_track_body
+    HudWidgets.clear_children(margin)
+    var building := RungLadder.deposit_building_verb(rows)
+    margin.add_child(RungLadder.build_track(rows, func(verb: String) -> void:
+        # The press closes the card BEFORE it emits, the rung presses' own rule: the declaration
+        # re-renders the zone this card is anchored to.
+        _dismiss_rung_track()
+        # **A RUNG NOT YET ORDERED IS DECLARED; the one being raised is only followed.** The sim
+        # refuses a rung the working already stands at or above, so pressing the row already in
+        # flight would spend a command to be told no.
+        if verb != building:
+            _emit_deposit_declaration(band, deposit, verb)))
+    track.popup(_rung_track_anchor_rect(anchor))
+
+## ⛔ **WHAT A PRESS WOULD LAND BEHIND — the acting band's own build queue, as `{ahead, head}`.** The
+## press DECLARES: it appends an entry, and the whole `builders` pool funds the HEAD of that queue
+## until its meter fills, so *what is it waiting behind* is half the answer.
+##
+## `{}` for a band this controller cannot resolve, which the track renders as NO line rather than as
+## an empty queue — an unknown queue and an empty one are different facts and only one is reassuring.
+func _deposit_track_queue(band: Dictionary) -> Dictionary:
+    if band.is_empty():
+        return {}
+    var keys := _band_labor.build_queue_keys(band)
+    var head := ""
+    var entries: Variant = band.get("build_queue", [])
+    if entries is Array and not (entries as Array).is_empty() \
+            and (entries as Array)[0] is Dictionary:
+        var first: Dictionary = (entries as Array)[0]
+        head = HudWorkVocab.build_queue_subject(
+            String(first.get("kind", "")).strip_edges().to_lower(),
+            int(first.get("target_x", -1)), int(first.get("target_y", -1)),
+            _herd_label_for_id(String(first.get("fauna_id", ""))))
+    return {
+        HudRouteVocab.ROAD_LADDER_QUEUE_AHEAD_KEY: keys.size(),
+        HudRouteVocab.ROAD_LADDER_QUEUE_HEAD_KEY: head,
+    }
+
+## **DECLARE A DEPOSIT RUNG — `fell|coppice|quarry <faction> <x> <y>`, through the tile-targeted arm of
+## `Main.format_improvement`.** The verb names a PLACE, exactly as `cultivate` does, and the working it
+## lands on is the one this band already holds there.
+##
+## ⛔ **IT CARRIES NO `pending_entity`, so no optimistic overlay is written.** That overlay's entries
+## are keyed to a band's LABOR ROWS, and this declaration touches the working's own build meter rather
+## than the row's crew — the same shape the road ladder's relay takes.
+func _emit_deposit_declaration(band: Dictionary, deposit: Dictionary, verb: String) -> void:
+    if verb == SourceForecast.IMPROVEMENT_NONE or band.is_empty():
+        return
+    var tile := HudDepositVocab.tile_of(deposit)
+    if tile.x < 0 or tile.y < 0:
+        return
+    emit_signal("improvement_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "improvement": verb,
+        "kind": HudConst.LABOR_KIND_EXTRACT,
+        "x": tile.x,
+        "y": tile.y,
+        "herd_id": "",
+    })
 
 ## **WHAT ONE KEEPING POOL SUPPLIES AGAINST WHAT IT IS ASKED FOR** — `{supply, asked}` in work units,
 ## the ONE input the pool card's mark and its hover both fork on.

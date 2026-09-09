@@ -20,7 +20,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
-use crate::dict::deposits::deposits_to_array;
+use crate::dict::deposits::{deposit_rungs_to_array, deposits_to_array};
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::fixed64_to_f32;
 use crate::dict::governance::{
@@ -1486,6 +1486,14 @@ pub(crate) fn snapshot_to_dict(
     // DECLARATION of what the ladder holds, carrying no faction and no tile.
     if let Some(catalog) = snapshot.subsistence().and_then(|s| s.routeRungs()) {
         let _ = dict.insert("route_rungs", &route_rungs_to_array(catalog));
+    }
+
+    // ...and the two DEPOSIT branches' catalog, which is the same kind of thing again: one vector
+    // carrying `forestry` and `extraction`, per world, with no faction and no tile on it. Its live
+    // half is `deposits` above -- this is what a working could BECOME, including on ground nobody
+    // has opened.
+    if let Some(catalog) = snapshot.subsistence().and_then(|s| s.depositRungs()) {
+        let _ = dict.insert("deposit_rungs", &deposit_rungs_to_array(catalog));
     }
 
     if let Some(demographics) = snapshot.population().and_then(|s| s.demographics()) {

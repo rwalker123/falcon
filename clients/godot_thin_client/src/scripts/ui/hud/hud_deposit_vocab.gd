@@ -55,26 +55,16 @@ const RUNG_KEY_GATHERING := "extraction:gathering"
 ## An open face cut into the rock body beneath the scatter.
 const RUNG_KEY_QUARRY := "extraction:quarry"
 
-## The forestry branch's rungs in climb order — the order `next_rung_key` steps through.
-const RUNG_ORDER_FORESTRY := [RUNG_KEY_DEADFALL, RUNG_KEY_FELLING, RUNG_KEY_COPPICE]
-
-## …and the extraction branch's. **Two ladders, never one**: a working climbs the branch its material
-## belongs to, and a shared order would offer a coppice above a quarry.
-const RUNG_ORDER_EXTRACTION := [RUNG_KEY_GATHERING, RUNG_KEY_QUARRY]
-
-## One rung's player-facing name.
-##
-## ⛔ **THERE IS NO RUNG CATALOG ON THE WIRE FOR EITHER DEPOSIT BRANCH**, unlike the route branch's
-## `SubsistenceSection.routeRungs` — so this table is the client's own reading vocabulary, exactly as
-## `HudRouteVocab.RUNG_LABELS` is for the tile card. A rung this table does not know renders as its
-## raw wire key, which is the honest answer rather than a blank.
-const RUNG_LABELS := {
-	RUNG_KEY_DEADFALL: "Deadfall",
-	RUNG_KEY_FELLING: "Felling",
-	RUNG_KEY_COPPICE: "Coppice",
-	RUNG_KEY_GATHERING: "Gathering",
-	RUNG_KEY_QUARRY: "Quarry face",
-}
+# ⛔ **RETIRED — `RUNG_ORDER_FORESTRY`, `RUNG_ORDER_EXTRACTION` AND `RUNG_LABELS`** (issue #650). They
+# were the client's own reading vocabulary for branches the wire published no catalog for, and the
+# wire publishes one now: `SubsistenceSection.depositRungs`, one row per rung of BOTH branches,
+# carrying the climb order, the sim's own `display_name`, the price, the payoff and every gate. Every
+# surface reads it through the `catalog_*` / `ladder_*` accessors below, so **a rung added to
+# `intensification_ladder.json` appears with no client edit** — the property the route branch's own
+# catalog bought, arriving here for the same reason.
+#
+# The five `RUNG_KEY_*` consts above SURVIVE: they are the wire's own join keys, spelled once for the
+# harnesses that stage a catalog and a working standing on one of its rungs.
 
 # ---- THE WIRE'S OWN VALUES -------------------------------------------------------------------
 
@@ -313,25 +303,9 @@ static func is_unopened(deposit: Dictionary) -> bool:
 
 # ---- COMPOSERS -------------------------------------------------------------------------------
 
-## One rung's player-facing name; the raw wire key for a rung this client has never heard of.
-static func rung_label(rung: String) -> String:
-	return String(RUNG_LABELS.get(rung, rung))
-
-## The rung DIRECTLY above the one held, as a key — `""` at the top of a branch and for a rung
-## neither order knows. The two branches are walked separately, so a working never offers a rung from
-## the other ladder.
-static func next_rung_key(rung: String) -> String:
-	for order in [RUNG_ORDER_FORESTRY, RUNG_ORDER_EXTRACTION]:
-		var at: int = (order as Array).find(rung)
-		if at >= 0 and at + 1 < (order as Array).size():
-			return String((order as Array)[at + 1])
-	return ""
-
-## …and as a word. Callers state a meter without a destination rather than naming a rung they cannot
-## vouch for.
-static func next_rung_label(rung: String) -> String:
-	var next_key := next_rung_key(rung)
-	return "" if next_key == "" else rung_label(next_key)
+# ⛔ **RETIRED — `rung_label`, `next_rung_key` and `next_rung_label`.** All three read the client-side
+# tables above; the catalog answers all three now (`ladder_rung_name`, `ladder_next_entry`), and it
+# answers them for a rung this client has never heard of as well.
 
 ## The material as a person reads it — `Wood`, `Stone`. **The wire carries no display name for a
 ## material**, and `HudLoadoutVocab.material_label` is this client's one idiom for that, so the
@@ -347,7 +321,7 @@ static func percent_of(meter: float) -> int:
 ## ⛔ **THE APPROACH TO THE NEXT RUNG, NEVER THE STATE OF THIS ONE** — `42% to coppice`, not
 ## `Coppice 42%`. `""` where nothing is rising: `METER_COMPLETE` is the complete reading and covers
 ## both a rung just finished and the top of a branch.
-static func progress_clause(deposit: Dictionary) -> String:
+static func progress_clause(deposit: Dictionary, ladder: Array[Dictionary] = []) -> String:
 	var meter := build_fraction_of(deposit)
 	if meter >= METER_COMPLETE:
 		return ""
@@ -357,7 +331,7 @@ static func progress_clause(deposit: Dictionary) -> String:
 	if meter <= METER_UNSTARTED and not is_queued(deposit):
 		return ""
 	var percent := percent_of(meter)
-	var destination := next_rung_label(rung_of(deposit))
+	var destination := catalog_display_name(ladder_next_entry(ladder, deposit))
 	if destination == "":
 		return DEPOSIT_PROGRESS_UNNAMED_FORMAT % percent
 	return DEPOSIT_PROGRESS_FORMAT % [percent, destination.to_lower()]
@@ -416,8 +390,8 @@ const DEPOSIT_UNDER_KEPT_WORD := "going back"
 ##
 ## ⛔ **THE RUNG IS THE VALUE AND EVERYTHING ELSE IS A QUALIFIER.** A felling working 42% of the way
 ## to a coppice is a COMPLETE felling working, not a coppice 42% built.
-static func deposit_row_value(deposit: Dictionary) -> String:
-	var clauses: Array[String] = [rung_label(rung_of(deposit))]
+static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = []) -> String:
+	var clauses: Array[String] = [ladder_rung_name(ladder, rung_of(deposit))]
 	# ⛔ **UNTOUCHED GROUND STATES WHAT IT IS AND STOPS.** Every clause below this line describes
 	# something being DONE to a working — a rung rising, a seam being cut faster than it grows, a
 	# runway burning down, a bill going unpaid — and on ground nobody has opened each of them would
@@ -426,16 +400,26 @@ static func deposit_row_value(deposit: Dictionary) -> String:
 	if is_unopened(deposit):
 		clauses.append(DEPOSIT_UNOPENED_WORD)
 		return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
-	var progress := progress_clause(deposit)
+	var progress := progress_clause(deposit, ladder)
 	if progress != "":
 		clauses.append(progress)
 	var supply := supply_clause(deposit)
 	if supply != "":
 		clauses.append(supply)
-	if is_at_risk(deposit):
-		clauses.append(DEPOSIT_HAZARD_CLAUSE_FORMAT % [
-			HudSelectionVocab.RUNG_HAZARD_GLYPH, DEPOSIT_UNDER_KEPT_WORD])
+	var hazard := hazard_clause(deposit)
+	if hazard != "":
+		clauses.append(hazard)
 	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+
+## **THE UNDER-KEPT CLAUSE, AND IT IS ONE SPELLING FOR BOTH SURFACES.** The roster's value cell states
+## it after the runway; the tile card's material row states it after the rung. Composing it here is
+## what stops the two rows wearing two different words for one working sliding back down its ladder.
+## `""` where nothing is at risk, which is both free floors and every working whose bill is met.
+static func hazard_clause(deposit: Dictionary) -> String:
+	if not is_at_risk(deposit):
+		return ""
+	return DEPOSIT_HAZARD_CLAUSE_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, DEPOSIT_UNDER_KEPT_WORD]
 
 ## ⛔ **§7's FORK, AND IT IS THE ONLY PLACE IT IS TAKEN.** A renewing working warns that you are
 ## over-cutting it; a finite one warns that it runs out. `""` on a renewing working cut inside its own
@@ -464,33 +448,29 @@ static func runway_clause(deposit: Dictionary) -> String:
 ## The row's INK, forked on the hazard mark the composer above puts there rather than on a second
 ## reading of the working — `HudRouteVocab.road_value_hex`'s shape, so a working at risk reads in the
 ## same amber a slipping patch does.
-static func deposit_value_color(deposit: Dictionary) -> Color:
-	return HudStyle.WARN if deposit_row_value(deposit).contains(
+static func deposit_value_color(deposit: Dictionary, ladder: Array[Dictionary] = []) -> Color:
+	return HudStyle.WARN if deposit_row_value(deposit, ladder).contains(
 		HudSelectionVocab.RUNG_HAZARD_GLYPH) else HudStyle.INK_DIM
 
-# ---- THE CARD'S OWN ROWS ----------------------------------------------------------------------
+# ---- THE FIGURES, AND WHERE THEY GO NOW --------------------------------------------------------
 #
-# The working card is a READOUT with a crew stepper, and deliberately NOT a rung ladder: a deposit has
-# no stance, no escapement floor, no policy ceiling, no take-species and no projection chart, so the
-# two food webs' compose sheet is the wrong shape for it and giving it one would be inventing parity
-# the simulation does not have.
-
-## The card's own title — the noun, not the command token.
-const CARD_TITLE := "WORKINGS"
-
-## `Wood` — one BLOCK per working, headed by its material, because the registry key is
-## `(tile, material)` and a wooded highland really does carry two.
-const CARD_BLOCK_HEAD_FORMAT := "%s"
-
-## ⛔ **THREE NUMBERS, AND `reachable` IS NOT A RESTATEMENT OF EITHER.** `stock` is what is standing,
-## `capacity` is what this ground holds when full, and `reachable` is what the CURRENT rung can get
-## at — so a low rung on a full seam shows a large capacity and a small reachable, and that gap is the
-## whole argument for climbing the ladder. Collapsing any two of them hides the argument.
-const CARD_STOCK_FORMAT := "%s of %s · %s within reach"
-
-## The stock row's key, kept inside `DetailFormat.DETAIL_KEY_MAX_LENGTH` so it aligns with the card's
-## other rows.
-const CARD_STOCK_ROW := "Stock"
+# ⛔ **RETIRED — THE `Workings ▸` POPUP AND EVERY CONST THAT ONLY IT READ** (issue #650): `CARD_TITLE`,
+# `CARD_BLOCK_HEAD_FORMAT`, `CARD_STOCK_ROW` / `CARD_STOCK_FORMAT` / `stock_value`, `CARD_CREW_ROW`,
+# `CARD_BUILD_ROW`, `CARD_UPKEEP_ROW` and `CARD_REVERTING_ROW`. That card was a FOURTH UX pattern for
+# a branch whose three surfaces already ship, and it has been replaced by them: the tile card's
+# per-material ROW, the `Assign foresters ▸` / `Assign diggers ▸` COMPOSE SHEETS, and the shared
+# `RungLadder` TRACK on the Work board.
+#
+# ⛔ **THE THREE-NUMBER STOCK ROW WENT WITH IT, AND ITS ARGUMENT DID NOT.** `stock`, `capacity` and
+# `reachable` on one line were the case for climbing the ladder, and on a `label · value · qualifier`
+# card there is no room for three figures. The argument moved to the two surfaces that can carry it:
+# the tile card's PAYOFF row (*reaches 85% of the seam*, off the catalog rather than off the working)
+# and the compose sheet's VERDICT (*Gathering reaches 330 of 2,200. A quarry would reach 1,870.*).
+# **`reachable` is still never drawn as *what you can have***; what changed is which surface says so.
+#
+# The composers that survive are the ones with a reader on the new surfaces: `upkeep_value` and
+# `reverting_value` state the FIGURES on a hover (`deposit_card_tooltip` / `deposit_roster_tooltip`),
+# `build_value` is the ladder's face for the row being built, and `supply_tooltip` is unchanged.
 
 ## How many decimals a stock reads at. Wood and stone are counted in whole units at the scale the
 ## deposits table authors them (a mixed woodland is 600, a karst highland 3000), so a trailing `.0`
@@ -512,20 +492,12 @@ const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and
 ## the sustainable figure is `0` by arithmetic) and quotes the seam instead.
 const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take it is running at now."
 
-## The crew row's key and its hint. **The one place a working differs from a road**: a road is not
-## worked, a working is, and this stepper is the take crew — never the keepers, which are the
-## band-wide pool one panel over.
-const CARD_CREW_ROW := "Cutters"
-
+## **THE CREW SECTION'S HOVER, ON THE COMPOSE SHEET** — the one place a working differs from a road:
+## a road is not worked, a working is, and this stepper is the TAKE crew. It says so because a player
+## who staffed it expecting the bill to be met would watch the working go back anyway; the hands that
+## HOLD a working are the band-wide `Workings` pool, whose only control is the roster head's stepper.
 const CARD_CREW_HINT := "Hands taking material out of this working. The hands that HOLD it are the " \
 	+ "band's Workings pool, on the Work tab."
-
-## The build line's key — the rung being raised, its countdown and its percentage.
-const CARD_BUILD_ROW := "Building"
-
-## The keeping line's key. **It shares its word with the road's bill and the band's material bill** —
-## one word for one concept.
-const CARD_UPKEEP_ROW := "Upkeep"
 
 ## The bill's face: what the working owes a turn and how many keepers that is.
 const CARD_UPKEEP_FORMAT := "%s work a turn · %d keeper%s"
@@ -535,10 +507,9 @@ const CARD_UPKEEP_PLURAL_SUFFIX := "s"
 ## …and the shortfall, appended where the pool is not covering it.
 const CARD_UPKEEP_SHORT_FORMAT := "%s (short %s)"
 
-## The countdown row — *when this working goes back*, and it renders only while the working is
-## actually short. **The countdown, not the counter**: `0` is *it is sliding now*.
-const CARD_REVERTING_ROW := "Going back"
-
+## The countdown's three faces — *when this working goes back*, composed only while the working is
+## actually short. **The countdown, not the counter**: `0` is *it is sliding now*. It has no ROW of its
+## own on any surface: it rides the WORK BOARD roster's hover and nowhere else.
 const CARD_REVERTING_NOW := "%s now"
 const CARD_REVERTING_ONE := "%s next turn"
 const CARD_REVERTING_FORMAT := "%s in %d turns"
@@ -573,13 +544,6 @@ static func reverting_value(deposit: Dictionary) -> String:
 		return CARD_REVERTING_ONE % HudSelectionVocab.RUNG_HAZARD_GLYPH
 	return CARD_REVERTING_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH, left]
 
-## The stock row's three figures, in the material's own units.
-static func stock_value(deposit: Dictionary) -> String:
-	return CARD_STOCK_FORMAT % [
-		DetailFormat.format_trimmed(stock_of(deposit), CARD_STOCK_DECIMALS),
-		DetailFormat.format_trimmed(capacity_of(deposit), CARD_STOCK_DECIMALS),
-		DetailFormat.format_trimmed(reachable_of(deposit), CARD_STOCK_DECIMALS)]
-
 ## The state line's hover — the §7 figures the one-line clause above it cannot carry. Forked on
 ## `renews()`, the same single fork, so the words and the numbers cannot describe two workings.
 ##
@@ -610,3 +574,764 @@ static func build_value(deposit: Dictionary, crew: int) -> String:
 		return ""
 	return DetailFormat.build_countdown_value(turns, crew, percent_of(meter),
 		queue_position_of(deposit))
+
+# ==================================================================================================
+#  THE RUNG CATALOG — `SubsistenceSection.depositRungs`, one row per rung of BOTH branches
+# ==================================================================================================
+#
+# ⛔ **EVERY LABEL, PRICE, PAYOFF AND GATE ON THIS BRANCH COMES OFF THE WIRE** (issue #650), exactly as
+# the route branch's do. A rung added to `intensification_ladder.json` appears on the tile card, in the
+# compose sheet's pointer line and as a ladder row **with no client edit at all** — which is the whole
+# reason the client-side `RUNG_LABELS` table above was retired rather than extended.
+#
+# ⛔ **ONE ARRAY CARRIES TWO LADDERS.** `order` is a climb order WITHIN a branch, so every walk over
+# the catalog either filters on `branch` first or is a bug: a shared order would offer a coppice above
+# a quarry. `branch_ladder` is the filter, and nothing here walks the raw array.
+
+## The row's join key with a working's own `rung`, spelled `"<branch>:<id>"`.
+const RUNG_CATALOG_KEY := "rung_key"
+
+## Which ladder the row is on — `"forestry"` | `"extraction"`, the same vocabulary `branch_of` reads
+## off a working.
+const RUNG_CATALOG_BRANCH := "branch"
+
+const RUNG_CATALOG_ORDER := "order"
+const RUNG_CATALOG_DISPLAY_NAME := "display_name"
+
+## The TILE COMMAND that raises this rung. `""` on both free floors, which nobody declares.
+const RUNG_CATALOG_VERB := "verb"
+
+const RUNG_CATALOG_UNLOCK_KNOWLEDGE := "unlock_knowledge"
+const RUNG_CATALOG_REQUIRES_RUNG := "requires_rung"
+
+## ⛔ **WHAT STANDING ON THIS RUNG TEACHES — the craft gate's REMEDY.** `unlock_knowledge` says what a
+## rung WAITS ON; this says what a rung EARNS, and they are different rungs. See `ladder_rung_teaching`
+## for why the pairing may not be inferred from `requires_rung`.
+const RUNG_CATALOG_EARNS_KNOWLEDGE := "earns_knowledge"
+
+const RUNG_CATALOG_WORK_COST := "work_cost"
+const RUNG_CATALOG_UPKEEP := "upkeep_work_per_turn"
+
+## The rung's declared build PILE and the noun for it — 8 wood on `extraction:quarry`, nothing
+## anywhere else. **Read as a pair or not at all** (`catalog_material_pile`): an amount with no word
+## cannot be rendered into a sentence and a word with no amount says nothing.
+const RUNG_CATALOG_MATERIAL_COST := "build_material_cost"
+const RUNG_CATALOG_MATERIAL_ID := "build_material_id"
+
+## ⛔ **THE SIM'S OWN BARE WORKER OUTPUT, IDENTICAL ON EVERY ROW.** It rides the catalog because the
+## catalog is exactly the set of numbers that are the same for every working in the world, and it is
+## READ rather than transcribed: the sim writes worker output as a sum of terms, so a client copy goes
+## stale in silence the day a second term lands.
+const RUNG_CATALOG_BUILD_PER_WORKER_TURN := "build_work_per_worker_turn"
+
+## What ONE cutter takes in a turn at this rung, before the reachable stock caps it. **Both free
+## floors carry a real bare-handed rate** — the whole material economy bootstraps through them.
+const RUNG_CATALOG_YIELD_PER_WORKER_TURN := "yield_per_worker_turn"
+
+## ⛔ **HOW MUCH OF THE SEAM THIS RUNG REACHES, 0..1 — AND IT IS NOT `reachable / capacity`.** That
+## ratio clamps to the STOCK, so it falls as the rock is worked while the rung's reach never moves.
+const RUNG_CATALOG_RECOVERY := "recovery_fraction"
+
+## What this rung multiplies the GROUND's own `regrowth_rate` by. No rung raises capacity and there is
+## no field for one, so *stone's rate is zero* survives as arithmetic rather than as a rule.
+const RUNG_CATALOG_REGROWTH_MULTIPLIER := "regrowth_multiplier"
+
+## ⛔ **WHAT THE GROUND MUST HOLD FOR THIS RUNG TO STAND ON IT** — the one placement rule on either
+## branch, and the whole of *you cannot quarry just anywhere*. The SITE gate reads it against the
+## working's own `capacity`.
+const RUNG_CATALOG_MIN_CAPACITY := "min_deposit_capacity"
+
+## ⛔ **THE WIRE'S OWN SPELLING OF *there is none*, A NAMED EMPTY STRING RATHER THAN A SENTINEL.**
+## `verb` is `""` on a rung nobody declares, `unlock_knowledge` on one nothing gates, `requires_rung`
+## at a branch's floor and `earns_knowledge` on a rung that teaches nothing. Four real, distinct facts.
+const RUNG_CATALOG_NONE := ""
+
+## The order a rung with no published position falls to — **below either floor**, so a row this client
+## cannot place sorts beneath the ladder rather than silently ahead of the rung it needs.
+const RUNG_CATALOG_NO_ORDER := -1
+
+## A rung nobody pays for — the two free floors. Named because it is the TEST a verbless row's face is
+## gated on, not a rounding tolerance: `0 work` would read as a defect on a row with no price to state.
+const RUNG_CATALOG_NO_WORK_COST := 0.0
+
+## The rate a catalog this client has not been sent reads. **A measured nothing, not a sentinel**: it
+## flows into the readers as *there is no rate*, which each answers by stating nothing.
+const RUNG_CATALOG_NO_BUILD_RATE := 0.0
+
+## …and the take rate's own version of that, for the identical reason.
+const RUNG_CATALOG_NO_YIELD := 0.0
+
+## A rung that asks nothing of the ground — every shipped rung but `extraction:quarry`. The SITE gate
+## is skipped outright at this value rather than compared against a capacity.
+const RUNG_CATALOG_NO_SITE_REQUIREMENT := 0.0
+
+## A rung that eats no material, which is every rung of either branch but `extraction:quarry`.
+const RUNG_CATALOG_MATERIAL_NONE := 0.0
+
+## …and the noun for one. `""` is *this rung eats nothing*, never *nothing is known*.
+const RUNG_CATALOG_MATERIAL_NO_ID := ""
+
+## The multiplier at which a rung leaves the ground's renewal exactly as it found it — every
+## extraction rung, and both floors. Above it is the coppice's payoff.
+const RUNG_CATALOG_REGROWTH_UNCHANGED := 1.0
+
+# ---- CATALOG READERS ---------------------------------------------------------------------------
+
+static func catalog_rung_key(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_KEY, "")).strip_edges()
+
+static func catalog_branch(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_BRANCH, "")).strip_edges()
+
+static func catalog_order(entry: Dictionary) -> int:
+	return int(entry.get(RUNG_CATALOG_ORDER, RUNG_CATALOG_NO_ORDER))
+
+## The sim's own word for this rung. **The raw wire key where the catalog carries none**, which is the
+## honest answer rather than a blank row.
+static func catalog_display_name(entry: Dictionary) -> String:
+	var name := String(entry.get(RUNG_CATALOG_DISPLAY_NAME, "")).strip_edges()
+	return name if name != "" else catalog_rung_key(entry)
+
+## ⛔ **`""` MEANS NOBODY DECLARES THIS RUNG** — the ground already offers it. A state, not a missing
+## field, and it is the two commonest rungs on either branch.
+static func catalog_verb(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_VERB, RUNG_CATALOG_NONE)).strip_edges()
+
+static func catalog_unlock_knowledge(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_UNLOCK_KNOWLEDGE, RUNG_CATALOG_NONE)).strip_edges()
+
+static func catalog_requires_rung(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_REQUIRES_RUNG, RUNG_CATALOG_NONE)).strip_edges()
+
+static func catalog_earns_knowledge(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_EARNS_KNOWLEDGE, RUNG_CATALOG_NONE)).strip_edges()
+
+static func catalog_work_cost(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_WORK_COST, RUNG_CATALOG_NO_WORK_COST))
+
+static func catalog_upkeep(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_UPKEEP, SourceForecast.NO_UPKEEP_DEMAND))
+
+static func catalog_material_cost(entry: Dictionary) -> float:
+	return maxf(float(entry.get(RUNG_CATALOG_MATERIAL_COST, RUNG_CATALOG_MATERIAL_NONE)),
+		RUNG_CATALOG_MATERIAL_NONE)
+
+static func catalog_material_id(entry: Dictionary) -> String:
+	return String(entry.get(RUNG_CATALOG_MATERIAL_ID, RUNG_CATALOG_MATERIAL_NO_ID)).strip_edges()
+
+## ⛔ **THE PAIR, OR NOTHING — the one reader every caller goes through**, `HudRouteVocab`'s own rule
+## one branch over. `{}` unless the rung declares BOTH a noun and an amount above zero, so *this rung
+## eats nothing* and *this rung eats 8 wood* are the only two answers a caller can get. Shaped as a
+## `MaterialPayoff` row, so `RungLadder`'s SHARED price-aside composer takes it unchanged.
+static func catalog_material_pile(entry: Dictionary) -> Dictionary:
+	var wanted := catalog_material_cost(entry)
+	var id := catalog_material_id(entry)
+	if wanted <= RUNG_CATALOG_MATERIAL_NONE or id == RUNG_CATALOG_MATERIAL_NO_ID:
+		return {}
+	return {
+		SourceForecast.MATERIAL_PAYOFF_ID_KEY: id,
+		SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: wanted,
+	}
+
+static func catalog_build_work_per_worker_turn(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_BUILD_PER_WORKER_TURN, RUNG_CATALOG_NO_BUILD_RATE))
+
+static func catalog_yield_per_worker_turn(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_YIELD_PER_WORKER_TURN, RUNG_CATALOG_NO_YIELD))
+
+static func catalog_recovery_fraction(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_RECOVERY, RUNG_CATALOG_NO_YIELD))
+
+static func catalog_regrowth_multiplier(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_REGROWTH_MULTIPLIER, RUNG_CATALOG_REGROWTH_UNCHANGED))
+
+static func catalog_min_capacity(entry: Dictionary) -> float:
+	return float(entry.get(RUNG_CATALOG_MIN_CAPACITY, RUNG_CATALOG_NO_SITE_REQUIREMENT))
+
+# ---- THE LADDER: ONE BRANCH'S ROWS, IN CLIMB ORDER ---------------------------------------------
+
+## **THE WHOLE CATALOG AS TYPED ROWS**, unfiltered. Non-Dictionary entries are dropped rather than
+## defaulted: a row this client cannot read has no rung key to join a working on. `[]` before any
+## snapshot has arrived, which every caller renders as *no ladder to show*.
+static func deposit_ladder(catalog: Array) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for entry_variant in catalog:
+		if entry_variant is Dictionary:
+			rows.append(entry_variant as Dictionary)
+	return rows
+
+## ⛔ **ONE BRANCH'S ROWS, BOTTOM RUNG FIRST — the only walk any surface may make.** The wire's `order`
+## is per branch, so sorting the whole catalog by it interleaves two ladders; every consumer asks for
+## the branch it is about and gets a real climb order.
+static func branch_ladder(ladder: Array[Dictionary], branch: String) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for entry in ladder:
+		if catalog_branch(entry) == branch:
+			rows.append(entry)
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return catalog_order(a) < catalog_order(b))
+	return rows
+
+## …and the branch a WORKING climbs, which is the branch its material belongs to.
+static func working_ladder(ladder: Array[Dictionary], deposit: Dictionary) -> Array[Dictionary]:
+	return branch_ladder(ladder, branch_of(deposit))
+
+## One rung's whole catalog row, `{}` for a rung the catalog does not carry (a client that has not been
+## sent one, or a rung above the top of its branch).
+static func ladder_entry_of(ladder: Array[Dictionary], rung_key: String) -> Dictionary:
+	if rung_key == RUNG_CATALOG_NONE:
+		return {}
+	for entry in ladder:
+		if catalog_rung_key(entry) == rung_key:
+			return entry
+	return {}
+
+## Where a rung sits on its branch — `RUNG_CATALOG_NO_ORDER` for one the catalog does not carry, which
+## sorts it below the floor and so above nothing.
+static func ladder_order_of(ladder: Array[Dictionary], rung_key: String) -> int:
+	return catalog_order(ladder_entry_of(ladder, rung_key))
+
+## One rung's name as every surface says it — the catalog's own word, and the raw wire key for a rung
+## the catalog does not carry. **This is what replaced `RUNG_LABELS`**, so the tile card, the roster,
+## the sheet and the ladder cannot spell one rung four ways.
+static func ladder_rung_name(ladder: Array[Dictionary], rung_key: String) -> String:
+	var entry := ladder_entry_of(ladder, rung_key)
+	return catalog_display_name(entry) if not entry.is_empty() else rung_key
+
+## The branch's FREE FLOOR — its lowest row. `{}` for a branch the catalog does not carry. It is what
+## a rung's payoff is measured AGAINST: *reaches 85% of the seam* is a claim about the gap between this
+## rung's reach and the floor's.
+static func branch_floor_entry(ladder: Array[Dictionary], branch: String) -> Dictionary:
+	var rows := branch_ladder(ladder, branch)
+	return rows[0] if not rows.is_empty() else {}
+
+## ⛔ **THE RUNG DIRECTLY ABOVE THE ONE THIS WORKING HOLDS**, as a catalog row — `{}` at the top of a
+## branch and for a working standing on a rung the catalog does not carry. The walk is within ONE
+## branch, so a wood is never offered a quarry.
+static func ladder_next_entry(ladder: Array[Dictionary], deposit: Dictionary) -> Dictionary:
+	var rows := working_ladder(ladder, deposit)
+	var standing := ladder_order_of(rows, rung_of(deposit))
+	for entry in rows:
+		if catalog_order(entry) > standing:
+			return entry
+	return {}
+
+## ⛔ **WHICH RUNG TEACHES THIS CRAFT — the gate's remedy, LOOKED UP AND NEVER INFERRED.** The obvious
+## shortcut is *the rung beneath the gated one* (`requires_rung`), and it holds for the five rungs that
+## ship: deadfall teaches Woodcraft, which opens the felling above it. **It is a coincidence of this
+## config and not a property of the ladder** — and it matters because it is a REMEDY, so a wrong answer
+## sends the player to stand on the wrong ground.
+##
+## `""` where no rung on this branch teaches it, which is a real state: a deposit rung may be gated on
+## a craft another branch earns. The caller then states the craft and its progress with no remedy.
+static func ladder_rung_teaching(ladder: Array[Dictionary], branch: String,
+		knowledge_id: String) -> String:
+	if knowledge_id == RUNG_CATALOG_NONE:
+		return ""
+	for entry in branch_ladder(ladder, branch):
+		if catalog_earns_knowledge(entry) == knowledge_id:
+			return catalog_display_name(entry)
+	return ""
+
+# ==================================================================================================
+#  THE TILE CARD'S ROWS — one `Key: value` per material, and every one conditional
+# ==================================================================================================
+#
+# ⛔ **THE ROWS READ LIKE THE ROWS ABOVE THEM ON THE CARD** — `label · value · qualifier`, the shape
+# `Foraging 90 / 100 · Thriving` and `Road Path · 25% to trail` already use, joined by
+# `DEPOSIT_CLAUSE_SEPARATOR`. A deposit-specific style on a card of ecology rows reads as a different
+# card's row.
+#
+# ⛔ **A ROW THAT WOULD SAY "none" IS NOT RENDERED**, the road block's rule (issue #566): at the free
+# floor a material is exactly ONE row, and the payoff row appears only where the rung buys something.
+#
+# ⛔ **NO UPKEEP ROW, NO COUNTDOWN, NO SHORTFALL FIGURE.** `land-readouts.md` records those as retired
+# from the plant web on Ray's own instruction. The hazard is a WORD in the row's clause list; the
+# figures ride the BLOCK's `tooltip_text` (`deposit_card_tooltip`), and the neglect countdown survives
+# on the Work board's own hover and nowhere else.
+#
+# ⛔ **KEYS STAY INSIDE `DetailFormat.DETAIL_KEY_MAX_LENGTH`** so they align with every other row on
+# the card. The material row's key IS the material (`Wood`, `Stone`), which is short by construction.
+
+## ⛔ **THE PAYOFF ROW'S KEY IS A BLANK, NOT ABSENT, AND THAT IS STRUCTURAL.**
+## `DetailFormat.detail_bbcode` renders a colon-free line FULL WIDTH and **closes the open `[table=2]`
+## to do it** (`_split_kv` refuses `idx <= 0`, so a genuinely keyless line is unreachable as a table
+## row) — and this row sits in the MIDDLE of the card, so a keyless payoff would split the card's one
+## table in two and every key below it would stop sharing a column with `Foraging` / `Grazing`.
+##
+## **`HudRouteVocab.ROAD_BONUS_ROW` IS THE SAME BLANK, AND THE SHARING IS THE POINT** rather than a
+## collision: one unlabelled payoff row, one ink, whichever branch emitted it — `DetailFormat._value_hex`
+## dispatches both to `bonus_value_hex()`, which takes no value because the row is emitted only where
+## the rung buys something.
+##
+## **THE `Foraging` BASKET ROWS ARE NOT THE PRECEDENT.** They indent with `MORALE_BREAKDOWN_INDENT` and
+## are routed to the full-width sub-row branch, which closes the table — which is exactly what a row in
+## the middle of this block may not do.
+const DEPOSIT_PAYOFF_ROW := " "
+
+## `35` — the seam at full, and the free floor's whole reading. **A stock at capacity states ONE
+## number**: `35 of 35` is a ratio spent on the absence of a drawdown.
+const DEPOSIT_STOCK_FULL_FORMAT := "%s"
+
+## …and `1,870 of 2,200` once anything has been taken. The pair is the argument: what is standing
+## against what this GROUND holds when full, which no rung may raise.
+const DEPOSIT_STOCK_DRAWN_FORMAT := "%s of %s"
+
+## ⛔ **WHAT THE RUNG BUYS OVER ITS BRANCH'S FREE FLOOR, IN ONE CLAUSE.** It is the one thing on this
+## card that states a PAYOFF, which is why it is tinted rather than left in plain ink — without it a
+## working reads as pure cost and the decision the ladder exists to create is invisible.
+const DEPOSIT_PAYOFF_REACH_FORMAT := "reaches %d%% of the seam"
+
+## The coppice's payoff, and the one point on the scale English has a word for. Any other multiplier
+## states the factor itself rather than inventing a word for it.
+const DEPOSIT_REGROWTH_TWICE := 2.0
+const DEPOSIT_PAYOFF_REGROWTH_TWICE := "grows back twice as fast"
+const DEPOSIT_PAYOFF_REGROWTH_FORMAT := "grows back %s× as fast"
+
+## The scale a recovery fraction is stated at.
+const DEPOSIT_RECOVERY_PERCENT_SCALE := 100.0
+
+## How many decimals the regrowth multiplier reads at, so `2.5` states itself and `2.0` does not read
+## as `2.00`.
+const DEPOSIT_REGROWTH_DECIMALS := 1
+
+## **THE WHOLE DEPOSIT BLOCK FOR ONE MATERIAL**, as `Key: value` detail lines — `HudRouteVocab.road_lines`'
+## twin, and it keeps that composer's two rules: only the material row is unconditional, and every join
+## (the catalog) is resolved at the CALL SITE and threaded in, so this leaf holds no catalog.
+##
+## `ctx` is the render's tint/hover context. The FIGURES the row's one line cannot carry are registered
+## on it against the MATERIAL row's key — never the payoff row's, which two materials on one hex would
+## both claim.
+static func deposit_lines(deposit: Dictionary, ladder: Array[Dictionary],
+		ctx: DetailFormat.Context = null) -> Array[String]:
+	var lines: Array[String] = []
+	var key := material_label(deposit)
+	if key == "":
+		return lines
+	lines.append("%s: %s" % [key, deposit_land_value(deposit, ladder)])
+	if ctx != null:
+		ctx.deposit_rows[key] = true
+		var figures := deposit_card_tooltip(deposit)
+		if figures != "":
+			ctx.row_tooltips[key] = figures
+	var payoff := deposit_payoff_clause(
+		ladder_entry_of(ladder, rung_of(deposit)),
+		branch_floor_entry(ladder, branch_of(deposit)))
+	if payoff != "":
+		lines.append("%s: %s" % [DEPOSIT_PAYOFF_ROW, payoff])
+	return lines
+
+## `1,870 of 2,200 · Quarry · ⚠ going back` — **THE MATERIAL ROW'S VALUE**, and it leads with the STOCK
+## because the card's subject is the GROUND: what is standing here, then what stands on it.
+##
+## ⛔ **IT IS NOT `deposit_row_value`, AND THE TWO PART ON PURPOSE.** That composer is the WORKINGS
+## ROSTER's, whose subject is a working the band already holds — so it leads with the rung and carries
+## the runway and the climb. This one describes a hex the player is looking at, most of which is ground
+## nobody has opened. **The clauses they share are shared functions** (`ladder_rung_name`,
+## `hazard_clause`), so the rung's word and the hazard's cannot drift between them.
+static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary]) -> String:
+	var clauses: Array[String] = [deposit_stock_clause(deposit),
+		ladder_rung_name(ladder, rung_of(deposit))]
+	var hazard := hazard_clause(deposit)
+	if hazard == "" and renews(deposit) and actual_take_of(deposit) > sustainable_take_of(deposit):
+		# **THE OVER-CUT WORD IS THE SECOND HAZARD THIS ROW CAN CARRY**, and it is the food webs' own
+		# word (`SourceForecast.YIELD_OVERDRAW_WORD`) rather than a second spelling of one idea. The
+		# under-kept clause outranks it: a working sliding back down its ladder is the louder fact and
+		# the row holds one qualifier.
+		hazard = DEPOSIT_HAZARD_CLAUSE_FORMAT % [
+			HudSelectionVocab.RUNG_HAZARD_GLYPH, over_cut_word()]
+	if hazard != "":
+		clauses.append(hazard)
+	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+
+## The stock as the tile card states it. ⛔ **NEVER `0 / 0`, and never a ratio on a full seam**: a
+## deposit at capacity has had nothing taken out of it, and the second figure would be a comparison
+## with itself.
+static func deposit_stock_clause(deposit: Dictionary) -> String:
+	var stock := stock_of(deposit)
+	var capacity := capacity_of(deposit)
+	var standing := DetailFormat.format_trimmed(stock, CARD_STOCK_DECIMALS)
+	if stock >= capacity:
+		return DEPOSIT_STOCK_FULL_FORMAT % standing
+	return DEPOSIT_STOCK_DRAWN_FORMAT % [standing,
+		DetailFormat.format_trimmed(capacity, CARD_STOCK_DECIMALS)]
+
+## ⛔ **WHAT THE HELD RUNG BUYS OVER ITS BRANCH'S FREE FLOOR — `""` where it buys nothing**, which is
+## both floors and every extraction rung that neither reaches deeper nor renews faster.
+##
+## The two axes are the branches' own: `recovery_fraction` is what a finite seam's ladder is FOR (a
+## surface picker reaches 15% of a rock body and a quarry 85%), and `regrowth_multiplier` is what a
+## renewing one's is (a coppice is *more per turn for ever*, not more per turn). **Both are read off
+## the catalog and neither is derived from the working**, so a drawn-down seam cannot make its own
+## rung's reach appear to shrink.
+static func deposit_payoff_clause(entry: Dictionary, floor_entry: Dictionary) -> String:
+	if entry.is_empty():
+		return ""
+	var clauses: Array[String] = []
+	var reach := catalog_recovery_fraction(entry)
+	if reach > catalog_recovery_fraction(floor_entry):
+		clauses.append(DEPOSIT_PAYOFF_REACH_FORMAT % int(round(
+			reach * DEPOSIT_RECOVERY_PERCENT_SCALE)))
+	var renewal := catalog_regrowth_multiplier(entry)
+	if renewal > catalog_regrowth_multiplier(floor_entry):
+		clauses.append(DEPOSIT_PAYOFF_REGROWTH_TWICE if is_equal_approx(
+				renewal, DEPOSIT_REGROWTH_TWICE) \
+			else DEPOSIT_PAYOFF_REGROWTH_FORMAT % DetailFormat.format_trimmed(
+				renewal, DEPOSIT_REGROWTH_DECIMALS))
+	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+
+## **THE FIGURES THAT LEFT THE ROW, ON THE BLOCK'S HOVER** — the §7 take pair or the runway, and the
+## standing bill where the working owes one. ⛔ **Nothing was deleted; it MOVED here**, which is the
+## whole of what "no upkeep row on this card" means.
+##
+## ⛔ **NO NEGLECT COUNTDOWN.** That reading survives on the Work board's own roster hover
+## (`deposit_roster_tooltip`) and nowhere else — a countdown on the land card is a figure the player
+## cannot act on from there.
+static func deposit_card_tooltip(deposit: Dictionary) -> String:
+	var lines: Array[String] = [supply_tooltip(deposit)]
+	var bill := upkeep_value(deposit)
+	if bill != "":
+		lines.append(DEPOSIT_UPKEEP_TIP_FORMAT % bill)
+	return HudFormat.join_tooltip_lines(lines)
+
+## `Holding it: 1.5 work a turn · 2 keepers` — the bill as a HOVER sentence, so the figures read as a
+## fact about the working rather than as a row the card is spending a line on.
+const DEPOSIT_UPKEEP_TIP_FORMAT := "Holding it: %s"
+
+## …and the WORK BOARD's version, which is the card's plus the neglect COUNTDOWN. The roster is the one
+## surface that states when a working goes back, because it is the surface whose own head staffs the
+## pool that would stop it.
+static func deposit_roster_tooltip(deposit: Dictionary) -> String:
+	var lines: Array[String] = [deposit_card_tooltip(deposit)]
+	var countdown := reverting_value(deposit)
+	if countdown != "":
+		lines.append(DEPOSIT_REVERTING_TIP_FORMAT % countdown)
+	return HudFormat.join_tooltip_lines(lines)
+
+const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
+
+## The material row's INK, forked on the hazard mark the composer put there rather than on a second
+## reading of the working — `deposit_value_color`'s rule, and the same one.
+static func deposit_land_value_hex(value: String) -> String:
+	if value.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH):
+		return HudStyle.WARN_HEX
+	return HudStyle.INK_HEX
+
+# ==================================================================================================
+#  THE TWO COMPOSE SHEETS — `Assign foresters ▸` and `Assign diggers ▸`
+# ==================================================================================================
+#
+# ⛔ **THE CREW NOUN IS PER BRANCH, NEVER PER RUNG** — the `Harvesters` rule
+# (`labor-ui.md` → "The plant web's crew is `Harvesters`"): *a build in flight does not move the noun*.
+# A crew cutting a coppice is still foresters, and a second word would be the plant web's retired
+# `Foragers`/`Tenders` fork arriving on a third branch.
+
+## The wire's own branch spellings — `RungBranch`'s, and the same strings `branch_of` reads off a
+## working and `catalog_branch` off a rung.
+const BRANCH_FORESTRY := "forestry"
+const BRANCH_EXTRACTION := "extraction"
+
+## The crew each branch staffs, and the verb its commit button carries. Two tables rather than one
+## keyed record, the `IMPROVEMENT_*_LABELS` idiom: each answers one question and a caller reads one.
+const BRANCH_CREW_NOUNS := {
+	BRANCH_FORESTRY: "Foresters",
+	BRANCH_EXTRACTION: "Diggers",
+}
+
+const BRANCH_COMMIT_VERBS := {
+	BRANCH_FORESTRY: "Cut",
+	BRANCH_EXTRACTION: "Dig",
+}
+
+## …and the NOUN the pointer line names the ground with — *this stand* for a wood, *this rock* for a
+## seam. It is per BRANCH for the crew noun's reason: the rung's own verb already says which rung.
+const BRANCH_GROUND_NOUNS := {
+	BRANCH_FORESTRY: "this stand",
+	BRANCH_EXTRACTION: "this rock",
+}
+
+## The crew this branch staffs — `""` for a branch this client has never heard of, which every caller
+## renders as no sheet rather than as an unnamed one.
+static func crew_noun(branch: String) -> String:
+	return String(BRANCH_CREW_NOUNS.get(branch, ""))
+
+static func commit_verb(branch: String) -> String:
+	return String(BRANCH_COMMIT_VERBS.get(branch, ""))
+
+static func ground_noun(branch: String) -> String:
+	return String(BRANCH_GROUND_NOUNS.get(branch, ""))
+
+## ⛔ **THE SHEET EMITS NO IMPROVEMENT VERB — `assign_labor` is the only command it sends.** The rung
+## is declared from the Work board, exactly as `cultivate` and `sow` are, and this line is the pointer
+## that says so. `Work tab` is a live `[url]`; the verb and the ground's noun come off the NEXT rung's
+## catalog entry and this branch's own table.
+const DEPOSIT_OFFER_LABEL_FORMAT := "%s %s"
+
+## …and the form for a band that does not work this ground yet. The sim's rule is that an improvement
+## verb reaches only bands ALREADY working the source, so the sheet says so where the player meets it
+## rather than offering a link that would land on a board with no row to press.
+const DEPOSIT_OFFER_UNWORKED_FORMAT := "Send %s here first, then %s from the %s."
+
+## The rung a pointer line names — `Quarry this rock`. `""` where the working is at the top of its
+## branch or the next rung declares no verb, and the sheet then states no pointer at all.
+static func offer_label(entry: Dictionary, branch: String) -> String:
+	var verb := catalog_verb(entry)
+	if verb == RUNG_CATALOG_NONE:
+		return ""
+	var noun := ground_noun(branch)
+	if noun == "":
+		return ""
+	return DEPOSIT_OFFER_LABEL_FORMAT % [verb.capitalize(), noun]
+
+# ---- THE READOUT BOX ---------------------------------------------------------------------------
+
+## `ONCE QUARRIED` — the deal row's label, in the readout's own small-print register: the rung's own
+## verb in the past tense, so the row names the rung rather than restating the material.
+##
+## ⛔ **THREE SUFFIX RULES, AND EACH IS A RULE RATHER THAN A SPECIAL CASE.** The shipped verbs are
+## `fell` → `felled`, `coppice` → `coppiced` (a silent `e` takes `d` alone) and `quarry` →
+## `quarried` (a consonant + `y` becomes `ied`). A verb whose participle is genuinely irregular
+## falls through to the plain suffix, which reads as a mangled word — the honest failure, and visible
+## the first time a config adds one.
+const DEPOSIT_DEAL_LABEL_FORMAT := "once %sed"
+const DEPOSIT_DEAL_LABEL_SILENT_E_FORMAT := "once %sd"
+const DEPOSIT_DEAL_LABEL_Y_FORMAT := "once %sied"
+
+## The two endings those rules fork on, named because each IS the rule.
+const DEPOSIT_DEAL_SILENT_E := "e"
+const DEPOSIT_DEAL_CONSONANT_Y := "y"
+
+## `6.60 stone a turn` — what the next rung would pay at the crew being composed, off its own
+## `yieldPerWorkerTurn`. **Not a client-side projection of the take**: it is the catalog's rate times
+## the stepper's count, which is the sim's own arithmetic before the reachable stock caps it.
+const DEPOSIT_DEAL_VALUE_FORMAT := "%s %s a turn"
+
+## The deal row's label for one rung — `once quarried`. `""` for a rung with no verb, which has no
+## deal to state.
+static func deal_label(entry: Dictionary) -> String:
+	var verb := catalog_verb(entry)
+	if verb == RUNG_CATALOG_NONE:
+		return ""
+	if verb.ends_with(DEPOSIT_DEAL_SILENT_E):
+		return DEPOSIT_DEAL_LABEL_SILENT_E_FORMAT % verb
+	if verb.ends_with(DEPOSIT_DEAL_CONSONANT_Y):
+		return DEPOSIT_DEAL_LABEL_Y_FORMAT % verb.left(verb.length() - 1)
+	return DEPOSIT_DEAL_LABEL_FORMAT % verb
+
+## …and its value, at the crew the stepper is on. `""` at a crew of zero or for a rung the catalog
+## prices no take on — a deal quoted at nobody is a promise of nothing.
+static func deal_value(entry: Dictionary, deposit: Dictionary, crew: int) -> String:
+	var rate := catalog_yield_per_worker_turn(entry)
+	if rate <= RUNG_CATALOG_NO_YIELD or crew <= 0:
+		return ""
+	return DEPOSIT_DEAL_VALUE_FORMAT % [
+		DetailFormat.format_trimmed(rate * float(crew), CARD_STOCK_DECIMALS),
+		material_of(deposit)]
+
+## ⛔ **THE SENTENCE THE WHOLE BRANCH TURNS ON, ON A FINITE SEAM** — `Gathering reaches 330 of 2,200. A
+## quarry would reach 1,870.` Composed from the CATALOG's `recovery_fraction` and the working's own
+## `capacity`, never from `reachable / capacity`: that ratio clamps to the stock, so it would fall as
+## the rock is worked and quietly restate the rung's reach as something it is not.
+const DEPOSIT_VERDICT_REACH_FORMAT := "%s reaches %s of %s."
+const DEPOSIT_VERDICT_REACH_NEXT_FORMAT := " A %s would reach %s."
+
+## …and the RENEWING seam's verdict, which is the over-cut sentence rather than a reach.
+const DEPOSIT_VERDICT_OVER_CUT_FORMAT := "Cutting %s a turn against %s that grows back."
+const DEPOSIT_VERDICT_WITHIN_FORMAT := "Cutting %s a turn, inside the %s that grows back."
+
+## The readout's verdict — `{severity, text}` as `HudWidgets.build_verdict_line` takes it.
+##
+## ⛔ **THE FORK IS `regrowth_rate > 0`, NEVER THE BRANCH** — `renews()`, the one fork, so a renewing
+## flint scatter and a quarry of the same branch read differently and neither borrows the other's
+## sentence.
+static func deposit_verdict(deposit: Dictionary, ladder: Array[Dictionary]) -> Dictionary:
+	if renews(deposit):
+		var actual := DetailFormat.format_trimmed(actual_take_of(deposit), CARD_STOCK_DECIMALS)
+		var sustainable := DetailFormat.format_trimmed(
+			sustainable_take_of(deposit), CARD_STOCK_DECIMALS)
+		if actual_take_of(deposit) > sustainable_take_of(deposit):
+			return {
+				"severity": SourceForecast.VERDICT_BLOCKED,
+				"text": DEPOSIT_VERDICT_OVER_CUT_FORMAT % [actual, sustainable],
+			}
+		return {
+			"severity": SourceForecast.VERDICT_OK,
+			"text": DEPOSIT_VERDICT_WITHIN_FORMAT % [actual, sustainable],
+		}
+	var branch := branch_of(deposit)
+	var standing := ladder_entry_of(ladder, rung_of(deposit))
+	var capacity := capacity_of(deposit)
+	var text := DEPOSIT_VERDICT_REACH_FORMAT % [
+		ladder_rung_name(ladder, rung_of(deposit)),
+		DetailFormat.format_trimmed(
+			catalog_recovery_fraction(standing) * capacity, CARD_STOCK_DECIMALS),
+		DetailFormat.format_trimmed(capacity, CARD_STOCK_DECIMALS)]
+	var next_entry := ladder_next_entry(ladder, deposit)
+	if not next_entry.is_empty() \
+			and catalog_recovery_fraction(next_entry) > catalog_recovery_fraction(standing):
+		text += DEPOSIT_VERDICT_REACH_NEXT_FORMAT % [
+			catalog_display_name(next_entry).to_lower(),
+			DetailFormat.format_trimmed(
+				catalog_recovery_fraction(next_entry) * capacity, CARD_STOCK_DECIMALS)]
+	return {
+		"severity": SourceForecast.VERDICT_OK if next_entry.is_empty() \
+			else SourceForecast.VERDICT_SLOW,
+		"text": text,
+	}
+
+## `Runs out in 275 turns at this rate.` — the aside under the dashed rule, and it honours BOTH
+## sentinels: `RUNWAY_NO_TAKE` is *nobody is cutting it* and never `0 turns`, and
+## `RUNWAY_NOT_APPLICABLE` cannot occur on a finite deposit by construction. `""` on a renewing one,
+## which has no runway to state.
+const DEPOSIT_RUNWAY_ASIDE_FORMAT := "Runs out in %d turns at this rate."
+const DEPOSIT_RUNWAY_ASIDE_ONE := "Runs out next turn at this rate."
+const DEPOSIT_RUNWAY_ASIDE_IDLE := "Nobody is cutting it, so it is running out at no rate at all."
+
+static func runway_aside(deposit: Dictionary) -> String:
+	if renews(deposit):
+		return ""
+	var turns := turns_remaining_of(deposit)
+	if turns == RUNWAY_NO_TAKE:
+		return DEPOSIT_RUNWAY_ASIDE_IDLE
+	if turns < 0:
+		return ""
+	if turns == 1:
+		return DEPOSIT_RUNWAY_ASIDE_ONE
+	return DEPOSIT_RUNWAY_ASIDE_FORMAT % turns
+
+## ⛔ **THE MOST CUTTERS THIS WORKING CAN USE — `reachable / yieldPerWorkerTurn`, rounded UP.** A crew
+## takes `min(crew × rate, reachable)` in a turn, so hands beyond that quotient take nothing and the
+## `+` states so rather than offering them. `CUTTERS_UNCAPPED` where the catalog prices no rate, which
+## is a client that has not been sent one — the cap is then the band's own pool and nothing else.
+const CUTTERS_UNCAPPED := -1
+
+static func max_useful_cutters(deposit: Dictionary, entry: Dictionary) -> int:
+	var rate := catalog_yield_per_worker_turn(entry)
+	if rate <= RUNG_CATALOG_NO_YIELD:
+		return CUTTERS_UNCAPPED
+	return int(ceil(reachable_of(deposit) / rate))
+
+## The dead commit button's explanation — a crew of zero on a working nobody holds, where the command
+## would do nothing at all. **A dead button is always explained**, the `+` stepper's cap note being
+## this client's precedent.
+const DEPOSIT_NOOP_HINT_FORMAT := "Put %s on it to open the working."
+
+## The note under the stepper where the working itself is the ceiling — the compose sheets' own
+## `alloc_hint_label` register, so it reads like the forage sheet's cap note one card over.
+const CUTTERS_CAP_NOTE_FORMAT := "%d %s is all this working can use — the rest would take nothing."
+
+# ==================================================================================================
+#  THE LADDER — the deposit branches' two tracks on the Work board
+# ==================================================================================================
+
+## ⛔ **THE NAME COLUMN IS NARROWER ON THIS BRANCH, and the wrapping is why** — the route branch's own
+## measurement, arrived at for the same reason. The shared `HudWorkVocab.RUNG_TRACK_NAME_WIDTH` (150px)
+## leaves 142px of a 292px card for the face, and `250 work · 1.50/turn upkeep` does not fit in it.
+## Deposit rung names are short (`Gathering` is the longest the shipped ladders hold), so the column
+## gives the width back to the face. It rides the ROW (`RungLadder.ROW_NAME_WIDTH_KEY`) rather than
+## widening `build_track`'s signature, the plant and animal tracks wanting the wider column they have.
+const DEPOSIT_LADDER_NAME_WIDTH := 96.0
+
+## The row's two-clause face. **The figure leads**, because it is what two rows of one ladder differ by
+## most and because the eye that came here for a price should not have to read past a sentence.
+const DEPOSIT_LADDER_FACE_FORMAT := "%s · %s"
+
+## ⛔ **THE RUNG'S OWN STANDING BILL, BESIDE THE PILE IT WOULD COST TO RAISE** — the second half of what
+## the press commits to, and the half a one-off figure cannot state. It is the CATALOG's
+## `upkeepWorkPerTurn`, never a progress-scaled figure: a rung nobody has started has no live bill to
+## scale, and the number being weighed is what holding it will cost for ever.
+const DEPOSIT_LADDER_UPKEEP_FORMAT := "%s/turn upkeep"
+
+## ⛔ **A RATE IS PRINTED TO TWO DECIMALS AND THE BUILD PILE IS NOT** — the route branch's finding
+## verbatim: `DetailFormat.format_work_units` rounds to one, which prints a 1.50 rate as `1.5` and
+## would print a 0.45 one as `0.5`, an 11% lie about the number the player is deciding against. `250`
+## does not care.
+const DEPOSIT_LADDER_RATE_DECIMALS := 2
+
+# ⛔ **THE MATERIAL ASIDE IS THE SHARED ONE** (`HudWorkVocab.RUNG_TRACK_BUILD_MATERIAL_FORMAT`,
+# `+ 8 wood to raise it`), composed by `RungLadder._build_price_asides` from
+# `catalog_material_pile` — so a deposit rung's pile, a pen's hurdles and a paved road's stone all
+# read in one format and in one order. A branch-local spelling of it was written here first and
+# deleted: it would have been the same sentence typed a fourth time.
+
+## **WHAT A RUNG NOBODY HAS STARTED COSTS — the pile AND the bill, and NO DURATION.** A priced row
+## quotes no turns: the estimate would be divided by a builders pool that may be on another job and
+## would ignore the queue the press joins. The two figures that do not move with a crew are what the
+## row states.
+##
+## **THE UPKEEP CLAUSE IS DROPPED WHERE THE RUNG DECLARES NONE** — both free floors hold for nothing,
+## so `0/turn upkeep` would be a bill where there is no bill.
+static func deposit_ladder_price_face(entry: Dictionary) -> String:
+	var pile := HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(
+		catalog_work_cost(entry))
+	var upkeep := catalog_upkeep(entry)
+	if upkeep < SourceForecast.UPKEEP_WORK_MIN:
+		return pile
+	return DEPOSIT_LADDER_FACE_FORMAT % [pile,
+		DEPOSIT_LADDER_UPKEEP_FORMAT % DetailFormat.format_trimmed(
+			upkeep, DEPOSIT_LADDER_RATE_DECIMALS)]
+
+## The ladder row's HOVER — what it costs to build AND to keep, what it buys, and then every refusal.
+## **The hover's order is the sentence.**
+const DEPOSIT_LADDER_TIP_PRICE_FORMAT := "%s work to raise, %s work a turn to keep."
+const DEPOSIT_LADDER_TIP_SEPARATOR := "\n"
+
+# ---- THE GATES: A SHORT FORM FOR THE ROW, A SENTENCE FOR THE HOVER ------------------------------
+#
+# ⛔ **A GATED ROW IS SHOWN AND EXPLAINED, NEVER HIDDEN.** The track exists to say what the branch
+# HOLDS; a rung silently missing reads as a shorter ladder rather than as one this working cannot climb.
+#
+# ⛔ **AND THE WORD `locked` IS NOT USED.** A row reading `locked` above a reason says it twice — the
+# reason alone IS the state, and the row stays disabled by its ink and by being a `Label`.
+#
+# **The RECORD's own field names are `HudRouteVocab.GATE_KIND_KEY` / `GATE_SHORT_KEY` / `GATE_LONG_KEY`,
+# shared deliberately**: one refusal shape for every branch, so `RungGates`' row-pick and hover-join
+# read one spelling. What is per branch is the PRIORITY below.
+
+## The gate KINDS this branch can state, in the order a ROW prefers them — first match wins, and the
+## tooltip keeps the rest.
+##
+## ⛔ **THE GROUND GATE SINKS TO LAST**, the route branch's own finding: *needs a felling* names a rung
+## the ladder is already displaying one line up under the rung it stands on, so it earns least on a
+## line that holds one clause. **The SITE gate outranks the craft** because it is the only refusal here
+## that no amount of learning or standing will ever close — this ground will never take a quarry — and
+## telling a player to go and learn Quarrying for a 35-unit scatter is wrong advice.
+const GATE_KIND_WORN_IN := "worn_in"
+const GATE_KIND_SITE := "site"
+const GATE_KIND_CRAFT := "craft"
+const GATE_KIND_GROUND := "ground"
+const GATE_ROW_PRIORITY := [
+	GATE_KIND_WORN_IN,
+	GATE_KIND_SITE,
+	GATE_KIND_CRAFT,
+	GATE_KIND_GROUND,
+]
+
+## The rung nobody declares — the free floor. It is not refused for want of anything; the ground
+## already offers it and there is no order to give. **Stated ALONE**, so a craft or a site rule beside
+## it cannot read as a prerequisite for something that is not on offer.
+##
+## **The row's own word is `HudWorkVocab.RUNG_TRACK_STATE_WORN_IN`** — one spelling, in the state table
+## with the other six — so this carries the hover's sentence alone and no short form.
+const GATE_LONG_WORN_IN := "The ground already offers this. There is nothing to order."
+
+## The GROUND gate — `requires_rung`.
+const GATE_SHORT_NEEDS_RUNG_FORMAT := "needs a %s"
+const GATE_LONG_NEEDS_RUNG_FORMAT := "Needs a %s first."
+
+## The CRAFT gate. **The discovery is named from the ladder's own knowledge roster**, so a rung added to
+## `intensification_ladder.json` names its unlock with no client edit; a roster carrying no name for it
+## yet says so plainly rather than printing a blank.
+const GATE_SHORT_NEEDS_CRAFT_FORMAT := "needs %s"
+const GATE_SHORT_NEEDS_CRAFT_UNNAMED := "needs a craft"
+const GATE_LONG_KNOWLEDGE_HEAD_FORMAT := "%s known %d%%."
+const GATE_LONG_KNOWLEDGE_HEAD_UNNAMED_FORMAT := "This craft is known %d%%."
+const GATE_LONG_KNOWLEDGE_REMEDY_FORMAT := " Learn it by holding a %s."
+
+## ⛔ **THE SITE GATE, AND IT IS NEW TO THIS BRANCH** — the route branch has no placement rule at all.
+## `min_deposit_capacity` against the working's own `capacity` is the whole of *you cannot quarry just
+## anywhere*, and it is what refuses a quarry on a 35-unit periglacial scatter. **Both figures are
+## published**: the threshold rides the catalog and the capacity rides the working, so nothing here
+## transcribes a rule the config owns.
+const GATE_SHORT_TOO_SMALL := "too small"
+const GATE_LONG_TOO_SMALL_FORMAT := "Wants ground holding %s; this one holds %s."

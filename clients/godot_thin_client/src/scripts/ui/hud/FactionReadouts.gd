@@ -70,6 +70,16 @@ var _ladder_knowledge: Array = []
 ## It is what lets the tile card's road action open a LADDER rather than one button per verb — a rung
 ## added to `intensification_ladder.json` appears as a row with no client edit at all.
 var _route_rungs: Array = []
+## ⛔ **THE TWO DEPOSIT BRANCHES' RUNG CATALOG as the wire sent it** — an ordered array of
+## `{rung_key, branch, order, display_name, verb, unlock_knowledge, requires_rung, earns_knowledge,
+## work_cost, upkeep_work_per_turn, build_material_cost, build_material_id,
+## build_work_per_worker_turn, yield_per_worker_turn, recovery_fraction, regrowth_multiplier,
+## min_deposit_capacity}`. **Per WORLD, not per faction**, `_route_rungs`' own shape and reason.
+##
+## ⛔ **ONE ARRAY CARRIES BOTH LADDERS**, which is why every row states its `branch`: a working climbs
+## the branch its MATERIAL belongs to, and `order` is a climb order only WITHIN one branch. A reader
+## groups before it walks.
+var _deposit_rungs: Array = []
 ## **WHAT EACH DISCOVERY LETS THE FACTION'S HANDS DO — one sentence per ladder track, and this table
 ## OUTLIVED THE ANNOUNCEMENT IT WAS WRITTEN FOR.**
 ##
@@ -143,6 +153,10 @@ func reset_world_state() -> void:
 	# never restates it, and a road ladder opened before the new world's own catalog lands would draw
 	# the previous game's rungs.
 	_route_rungs.clear()
+	# …and the deposit branches' catalog with it, for the identical reason: it is per WORLD, a delta
+	# never restates it, and a ladder opened before the new world's own catalog lands would draw the
+	# previous game's rungs.
+	_deposit_rungs.clear()
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
@@ -295,6 +309,20 @@ func update_route_rungs(catalog_variant: Variant) -> void:
 ## show* rather than as a branch with nothing on it.
 func route_rungs() -> Array:
 	return _route_rungs
+
+## ⛔ **INGEST THE DEPOSIT RUNG CATALOG** — the `deposit_rungs` section, retained whole, exactly as
+## `update_route_rungs` retains its own. Per WORLD, and a non-Array leaves the last value standing:
+## absence means unchanged, never *"this world has no deposit branches"*.
+func update_deposit_rungs(catalog_variant: Variant) -> void:
+	if not (catalog_variant is Array):
+		return
+	_deposit_rungs = catalog_variant
+
+## The deposit catalog as the wire sent it, BY REFERENCE (this HUD's accessor convention; every
+## reader is read-only). `[]` before any snapshot has arrived, which every caller renders as *no
+## ladder to show* rather than as branches with nothing on them.
+func deposit_rungs() -> Array:
+	return _deposit_rungs
 
 ## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
 ## (the snapshot row is sparse) or no snapshot has arrived yet. PUBLIC because the rung-gate reasons

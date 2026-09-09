@@ -2100,6 +2100,26 @@ const WORKINGS_ROSTER_BLOCK_META := "workings_roster_block"
 ## meta could not tell apart.
 const WORKINGS_ROSTER_ROW_META := "workings_roster_row"
 
+## ⛔ **THE ROW'S DECLARING MARK — the `⌃` that opens this working's rung TRACK** (issue #650), and
+## the same control the work board's own rows carry: `WORK_ROW_READY_FORMAT` over
+## `RUNG_TRACK_MARK_GLYPH`, so a deposit rung and a plant rung are pressed with one gesture in one
+## place. Its handle is its own so a harness can find the mark without knowing which row drew it.
+##
+## ⛔ **THIS IS NOT roads.md's ROSTER RULE BEING BROKEN.** That rule forbids a STEPPER, a CREW COUNT
+## and a KIT PICKER on a row, because a per-row worker count would re-introduce the per-tile work row
+## `docs/plan_standing_upkeep.md` §4.13b retired. A declaring mark is none of the three: it names no
+## crew, staffs nobody, and opens the identical card `cultivate` and `sow` are ordered from. **The
+## per-row prohibition is unchanged and still asserted.**
+const WORKINGS_ROSTER_TRACK_META := "workings_roster_track"
+
+## …and what the mark says on its hover. It states what the press DOES rather than what it costs: the
+## price of each rung is on the rung's own row inside the track, which is where a price is comparable.
+const WORKINGS_ROSTER_TRACK_TOOLTIP := "Take this working further up its ladder."
+
+## The mark's own width, so the value cell beside it clips against a stable edge rather than against
+## whichever glyph the row happens to carry.
+const WORKINGS_ROSTER_TRACK_WIDTH := 22.0
+
 ## The muted case-2 line's own handle, so its presence is assertable rather than inferred from a row
 ## count.
 const WORKINGS_ROSTER_UNSEEN_META := "workings_roster_unseen"
@@ -3062,6 +3082,17 @@ const RUNG_TRACK_STATE_OPEN := "open"
 ## state with no word in this block renders an empty face, which is the trap the block's own header
 ## records.
 const RUNG_TRACK_STATE_WORN_IN := "wearing in"
+
+## ⛔ **AND THE SEVENTH STATE'S SECOND WORD, because two branches reach it and mean different things
+## by it** (issue #650). A DEPOSIT rung with no verb is not worn in by anything — nobody's traffic
+## raises a deadfall — it is simply what the ground already offers, so `wearing in` on it would be a
+## metaphor describing a mechanism the branch does not have.
+##
+## **The state enumeration is still ONE table, which is why this word is HERE and not in
+## `HudDepositVocab`.** What differs per branch is which word a producer SUPPLIES on the row
+## (`RungLadder.ROW_FACE_KEY`); `_row_face`'s own fallback for `STATE_UNORDERED` stays the route
+## branch's, that being the branch whose rows reach it without a supplied face.
+const RUNG_TRACK_STATE_GROUND_GIVES := "the ground gives it"
 
 ## `75 work · ≈12 turns` — what a selectable destination's own leg still owes and when the sim says it
 ## lands. **The turns half renders only where the wire dates the leg**, which is when an entry is

@@ -7962,3 +7962,37 @@ it cannot say WHY it is capped and its wording is unchanged; `expedition_useful_
 forage caller of `_forecast_worker_cap` passes neither value: a patch asks no attack-vs-defense
 question, so the defaults are the unarmed pair (`SourceForecast.CREW_TAKE_NO_ARMED_CREW`, `""`) and the
 plant web renders exactly what it did.
+
+## A THIRD AND FOURTH SHEET: the two deposit branches (issue #650)
+
+`ComposeState` grew a `deposit_*` group and `DrawerComposeController` two more `Assign … ▸` actions —
+`Assign foresters ▸` and `Assign diggers ▸`, one per deposit branch. **The whole rationale is
+`.claude/rules/client/extraction-workings.md`**; this section exists because `ComposeState.gd` is
+gated by THIS file and a reader editing the compose spine would otherwise never load it.
+
+The four things about the pair that constrain edits to this spine:
+
+- **THE GROUP IS THREE FIELDS AND NO MORE** — a source key, a crew, and the acting band beside the
+  band it was seeded from, plus a kit. A deposit has no escapement floor, no take species, no commit
+  crop and no second axis (the rung is declared from the Work board), so the forage group's other
+  seven slots have nothing to hold and are deliberately absent rather than defaulted.
+- ⛔ **THE SOURCE KEY IS `x,y:material`, NOT `x,y`.** A hex carries up to two deposits on two
+  branches, so a tile-keyed composition lets one hex's Wood sheet and its Stone sheet overwrite each
+  other's crew. Every join in that arc carries the same pair.
+- ⛔ **NO FLOOR PICKER AND NO CHART ON EITHER SHEET, and that is a decision rather than a gap.** The
+  chart IS the floor dial, so with no dial there is nothing to draw; a disabled or empty one would be
+  furniture explaining an absence. `_mount_crew_row`'s own `known` gate is what drops the two crew
+  pills — both are answers about a floor — so the sheet passes an EMPTY model rather than growing a
+  branch here.
+- **`_mount_crew_row` gained a trailing `label_tooltip`, and the deposit sheets are its one caller.**
+  Their crew is the TAKE crew while the hands that HOLD a working are a band-wide pool on another
+  panel, and that sheet has nowhere else to say so. `""` for every other caller, which is what they
+  all had before the parameter existed.
+
+**Its READOUT is assembled directly rather than through `_mount_readout`, and the reason is worth
+knowing before reaching for that mount on any floorless source**: every register it wires is a
+function of a `floor_chart_model` — the live registry a drag refills, the crew targets, the floor's
+teaching line, the `now → after` walk — so an empty model renders the box and then silently drops the
+**VERDICT**, which on a finite seam is the one sentence the whole branch turns on. The four SHARED
+widgets are assembled in the same order and the same registers instead.
+

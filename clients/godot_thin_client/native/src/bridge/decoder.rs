@@ -14,7 +14,7 @@ use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
     sentiment_to_dict,
 };
-use crate::dict::deposits::deposits_to_array;
+use crate::dict::deposits::{deposit_rungs_to_array, deposits_to_array};
 use crate::dict::economy::faction_inventory_to_array;
 use crate::dict::governance::{
     corruption_to_dict, crisis_overlay_to_dict, crisis_telemetry_to_dict, power_metrics_to_dict,
@@ -756,6 +756,13 @@ fn decode_delta_against(
     // the `food_modules` / `faction_inventory` pair recorded, one section over.
     if let Some(catalog) = delta.subsistence().and_then(|s| s.routeRungs()) {
         frame.insert_changed("route_rungs", &route_rungs_to_array(catalog));
+    }
+
+    // ...and the DEPOSIT branches' catalog on the delta path with it, for the identical reason: a
+    // per-world constant read only on the full path republishes the BASELINE's value for the life of
+    // the world.
+    if let Some(catalog) = delta.subsistence().and_then(|s| s.depositRungs()) {
+        frame.insert_changed("deposit_rungs", &deposit_rungs_to_array(catalog));
     }
 
     if let Some(demographics) = delta.population().and_then(|s| s.demographics()) {
