@@ -3903,14 +3903,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
     # work_range, and the target band all key off `band` explicitly (never the faction's default band).
-    var band_tile := SourceForecast.band_tile(band)
-    var work_range := int(band.get("work_range", 0))
-    var distance := SourceForecast.hex_distance_wrapped(
-        band_tile.x, band_tile.y, x, y, _band_labor.grid_width(), _band_labor.wrap_horizontal())
-    var out_of_range := distance >= 0 and distance > work_range
-    if out_of_range:
-        target.add_child(HudWidgets.alloc_hint_label(
-            "(%d,%d) is %d tiles away — beyond this band's forage range (%d)." % [x, y, distance, work_range]))
+    var out_of_range := _mount_work_range_refusal(target, band, x, y)
     # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only when
     # the cap note has not already said it, so the panel never states one fact twice.
     if is_noop and cap_note == "":
@@ -3942,6 +3935,34 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             composed_improvement, forage_kit_id, _compose.forage_take_species())
         close_compose_sheet())
     target.add_child(assign_btn)
+
+## ⛔ **THE STATIONARY WEBS' RANGE GATE — ONE MEASUREMENT, ONE SENTENCE, ONE MOUNT** (issue #650).
+## Returns whether `(x, y)` is beyond `band`'s reach, having already mounted the refusal on `target`
+## where it is. Every caller then does the one remaining thing with the answer: disable its commit.
+##
+## **THE DEPOSIT SHEETS HAD NO GATE AT ALL, AND THAT WAS THE BUG.** `systems::labor`'s `Extract` arm
+## lapses an out-of-range crew against the same `band_work_range` its `Forage` arm does — so the
+## limit was always the sim's rule — but this client measured it on the plant sheet only. A digger
+## sheet therefore accepted any distance, sent the command, and the sim abandoned the crew on the
+## next turn with nothing but an event-log line: from the player's seat *no range limit*, right up
+## until the crew vanished. Reported from play by Ray. A REFUSAL is strictly kinder than a silent
+## lapse, which is why the fix is a gate here and no change at all over there.
+##
+## ⛔ **A DISTANCE THE GRID CANNOT ANSWER IS NOT AN OUT-OF-RANGE ONE.** `hex_distance_wrapped`
+## reports `-1` where it has no grid dimensions to wrap against, and `-1 > work_range` is false only
+## by luck of the comparison; the test is explicit so a gate cannot be written that reads *unknown*
+## as *too far* and refuses every sheet on a frame that arrived before the grid did.
+func _mount_work_range_refusal(target: VBoxContainer, band: Dictionary, x: int, y: int) -> bool:
+    var band_tile := SourceForecast.band_tile(band)
+    var work_range := int(band.get("work_range", 0))
+    var distance := SourceForecast.hex_distance_wrapped(
+        band_tile.x, band_tile.y, x, y, _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    if distance < 0 or distance <= work_range:
+        return false
+    if target != null:
+        target.add_child(HudWidgets.alloc_hint_label(
+            HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [x, y, distance, work_range]))
+    return true
 
 # ---- THE COMPOSE SHEET: the drawer's read state + the floating write state --------------------
 #
@@ -5271,6 +5292,13 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # on, and the runway under the dashed rule.
     _mount_deposit_readout(target, live_hosts, deposit, ladder, next_entry, chart_model,
         _compose.deposit_count())
+    # ⛔ **THE RANGE GATE, AND IT IS THE FORAGE SHEET'S OWN** (issue #650) — the same measurement, the
+    # same refusal sentence and the same dead commit, because it is the same `band_work_range` the
+    # sim's `Extract` arm lapses a distant crew against. **A seam is offered no expedition**: the
+    # missions a party can carry are `scout` / `hunt` / `deny` / `trade`, so unlike a migrating herd
+    # a deposit cannot be followed and a plain refusal is the whole of the honest answer. Measured
+    # from the PICKED band's own tile, so switching the `Band:` picker above re-runs it for that band.
+    var out_of_range := _mount_work_range_refusal(target, band, tile.x, tile.y)
     # A dead button is always explained, the `+` stepper's cap note being the precedent.
     if is_noop:
         target.add_child(HudWidgets.alloc_hint_label(
@@ -5280,7 +5308,11 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
         else HudDepositVocab.commit_verb(branch)
     HudStyle.apply_button(assign_btn, "primary")
-    assign_btn.disabled = is_noop
+    # **THE FORAGE SHEET'S DISABLE, VERBATIM — the unassign included.** A crew the band has walked
+    # out of range of is lapsed by the sim on that same turn, so `current` is already 0 by the time
+    # the sheet reopens and `is_unassign` cannot be true here; forking the two sheets over a state
+    # neither can reach would be a difference between them with nothing behind it.
+    assign_btn.disabled = out_of_range or is_noop
     # ⛔ **ONE COMMAND, AND IT IS `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`.** The
     # material rides the `species` token — the slot the sim's own `extract` arm reads it from and half
     # the optimistic overlay's key — and the FLOOR is a validated number in forage's own position and

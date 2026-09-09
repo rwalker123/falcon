@@ -34,7 +34,7 @@ const Readout := preload("res://tools/ui_preview/readouts.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 104
+const EXPECTED_CHECKPOINTS := 118
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -43,6 +43,27 @@ var h
 ## never be confused with the road frames' tile.
 const WORKING_TILE_X := 21
 const WORKING_TILE_Y := 14
+
+## ⛔ **EVERY BAND IN THIS CHAPTER STANDS ON THE WORKING'S OWN HEX, AND SINCE issue #650 IT HAS TO.**
+## `BandFx.band_fixture()` camps at (71,18) with a `work_range` of 2, some fifty tiles from this
+## chapter's ground — which cost nothing while the deposit sheets measured no distance, and refuses
+## every one of them now that they do. A sheet whose commit is dead for a reason no state here is
+## about would make each of the claims below a claim about the refusal instead.
+##
+## **A DISTANCE OF ZERO rather than one inside the range**, because the sheet states no distance when
+## it is happy and there is nothing to be gained from a number the frames cannot see. The one state
+## that IS about the range stands its band far away on purpose (`_band_beyond_reach`).
+func _band_at_the_working() -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["current_x"] = WORKING_TILE_X
+	band["current_y"] = WORKING_TILE_Y
+	return band
+
+## …and the same band left where the shared fixture camps it: out of reach of this chapter's hex, so
+## the refusal is the sheet's own arithmetic on the shipped `work_range` rather than a distance this
+## file asserts. Only `workings_out_of_range` uses it.
+func _band_beyond_reach() -> Dictionary:
+	return BandFx.band_fixture()
 
 ## **A WOODED HIGHLAND'S TWO SEAMS**, at the shipped `extraction.json` proportions: mixed woodland
 ## carries 600 units of wood and renews 3% of it a turn, a karst body 2200 units of rock and renews
@@ -249,7 +270,7 @@ func run(harness) -> void:
 	# LAST — after twenty-five others, whichever roster the previous one left standing. A band with no
 	# idle worker clamps the count to 0, which renders a perfectly ordinary sheet: no take, no deal
 	# row, and the pointer line's *send crews here first* arm instead of its live one.
-	h._hud.update_band_alerts([BandFx.band_fixture()])
+	h._hud.update_band_alerts([_band_at_the_working()])
 	# **THE CATALOG IS PER WORLD AND EVERY SURFACE HERE READS IT** — the rung's name, its price, what
 	# it buys and every gate. Pushed through the real ingest so a claim made below is a claim about
 	# the wire rather than about a table this chapter holds.
@@ -275,13 +296,19 @@ func run(harness) -> void:
 			and Readout.detail_row_index(lines, "Stone") >= 0)
 	# ⛔ **THE ROW LEADS WITH THE STOCK AND THE RUNG IS A QUALIFIER** — the card's subject is the
 	# GROUND, so what is standing here comes first and what stands on it follows.
-	h._assert_hud("…the wood row reads `stock of capacity · rung · hazard` (%s)"
+	# ⛔ **AND THE CREW SITS BETWEEN THEM, AT THE STATED ZERO** (issue #650). This band holds the
+	# working and has taken its hands off it, which is a different fact from untouched ground and the
+	# one the sim charges for: the bill goes on coming out of `quarrywork` either way. The zero form
+	# is parallel to the staffed one for the forage land row's own reason — *nobody is on this* reads
+	# at a glance instead of needing a comparison with a row that has a number.
+	h._assert_hud("…the wood row reads `stock of capacity · rung · crew · hazard` (%s)"
 			% Readout.detail_row_value(lines, "Wood"),
 		Readout.detail_row_value(lines, "Wood") == HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join([
 			HudDepositVocab.DEPOSIT_STOCK_DRAWN_FORMAT % [
 				DetailFormat.format_trimmed(WOOD_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
 				DetailFormat.format_trimmed(WOOD_CAPACITY, HudDepositVocab.CARD_STOCK_DECIMALS)],
 			CATALOG_FELLING_NAME,
+			HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), HudDepositVocab.CUTTERS_NONE),
 			HudDepositVocab.DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 				HudSelectionVocab.RUNG_HAZARD_GLYPH, HudDepositVocab.DEPOSIT_UNDER_KEPT_WORD]]))
 	# ⛔ **THE RUNG'S NAME IS THE CATALOG'S OWN WORD**, never a client table: `RUNG_LABELS` is retired,
@@ -325,11 +352,15 @@ func run(harness) -> void:
 		h._hud._selection.tile_info())
 	h._assert_hud("a built quarry states its stock against the BODY, under the catalog's own name (%s)"
 			% Readout.detail_row_value(payoff_lines, "Stone"),
-		Readout.detail_row_value(payoff_lines, "Stone") == "%s%s%s" % [
-			HudDepositVocab.DEPOSIT_STOCK_DRAWN_FORMAT % [
-				DetailFormat.format_trimmed(QUARRY_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
-				DetailFormat.format_trimmed(STONE_CAPACITY, HudDepositVocab.CARD_STOCK_DECIMALS)],
-			HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR, CATALOG_QUARRY_NAME])
+		Readout.detail_row_value(payoff_lines, "Stone")
+			== HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join([
+				HudDepositVocab.DEPOSIT_STOCK_DRAWN_FORMAT % [
+					DetailFormat.format_trimmed(QUARRY_STOCK, HudDepositVocab.CARD_STOCK_DECIMALS),
+					DetailFormat.format_trimmed(STONE_CAPACITY,
+						HudDepositVocab.CARD_STOCK_DECIMALS)],
+				CATALOG_QUARRY_NAME,
+				HudDepositVocab.crew_clause(_quarried_stone(),
+					HudDepositVocab.CUTTERS_NONE)]))
 	# ⛔ **THE BLANK KEY IS SEARCHED FOR ACROSS THE BLOCK, NOT TAKEN AS THE FIRST MATCH.** A hex
 	# carrying two RAISED deposits emits two payoff rows, both keyed `" "` — which is exactly what this
 	# state stages — so a reader that took `detail_row_value`'s first hit would answer the wood's
@@ -1077,6 +1108,149 @@ func run(harness) -> void:
 		is_equal_approx(HudDepositVocab.composed_floor(_scatter_working(), SCATTER_DEEP_FLOOR),
 			SCATTER_DEEP_FLOOR))
 
+	# ⛔⛔ **STATE workings-out-of-range — A DEPOSIT CREW COULD BE SENT ANY DISTANCE** (issue #650).
+	# Ray, from play: *"Diggers have no range, we apparently can go as far away as we want. Given this
+	# involves bringing back the material, the initial dig sites should be limited to the same as
+	# foraging. I'm assuming wood harvesting has the same bug."* He was right about the second half
+	# too — both branches go through ONE builder, and it measured no distance at all.
+	#
+	# ⛔ **THE SIM WAS NEVER THE PROBLEM, AND NOTHING SIM-SIDE MOVED.** `systems::labor`'s `Extract`
+	# arm lapses an out-of-range crew against `band_work_range`, the same value its `Forage` arm
+	# uses, so the limit Ray asked for was already the rule. What was missing was the REFUSAL: the
+	# client took the order, sent it, and the sim abandoned the crew on the next turn with nothing but
+	# an event-log line — which from the player's seat reads as *no range limit* right up until the
+	# crew vanishes. A refusal is strictly kinder than a silent lapse.
+	#
+	# ⛔ **AND IT IS A PLAIN REFUSAL, NOT THE HUNT SHEET'S OFFER.** A herd beyond reach is offered a
+	# detached party (`"…Detach a party to follow it."`); the expedition missions are
+	# `scout` / `hunt` / `deny` / `trade`, none of which works ground, so a seam has no such
+	# alternative and the forage sheet's plain *no* is the honest answer.
+	h._hud.update_band_alerts([_band_beyond_reach()])
+	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+	await h._settle()
+	await h._save("workings_out_of_range")
+	var far_sheet: Node = h._hud._drawercompose._compose_sheet
+	# ⛔ **ASSERTED ON THE WHOLE SENTENCE, WITH THE DISTANCE IN IT.** A presence test would pass on a
+	# gate that refused every sheet, and the number is the half a player acts on.
+	h._assert_hud("a forester sheet on ground beyond the band's reach states the refusal (%s)"
+			% BEYOND_REACH_SENTENCE,
+		Q.has_label_containing(far_sheet, BEYOND_REACH_SENTENCE))
+	# ⛔ **THE SENTENCE IS THE FORAGE SHEET'S OWN, ONE STRING FOR ONE NUMBER.** Both webs are judged
+	# against `band_work_range`, so a second spelling would describe one limit as two.
+	h._assert_hud("…in the very words the forage sheet refuses in",
+		BEYOND_REACH_SENTENCE == HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [
+			WORKING_TILE_X, WORKING_TILE_Y, BEYOND_REACH_DISTANCE, BandFx.band_fixture()["work_range"]])
+	# **AND THE COMMIT IS DEAD, which is the half that stops the order.** The sentence alone would be
+	# a warning beside a live button.
+	var far_commit := Q.compose_commit_button(far_sheet)
+	h._assert_hud("…and the commit it would have sent is refused",
+		far_commit != null and far_commit.disabled)
+	# ⛔ **AND THE ROCK BESIDE IT IS REFUSED THE SAME WAY** — Ray's *"I'm assuming wood harvesting has
+	# the same bug"*, tested rather than assumed. One builder serves both branches, so a gate written
+	# on one arm would be the same defect one branch over.
+	h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
+	await h._settle()
+	var far_digger: Node = h._hud._drawercompose._compose_sheet
+	var far_digger_commit := Q.compose_commit_button(far_digger)
+	h._assert_hud("…and the DIGGER sheet on the same hex refuses in the same sentence",
+		Q.has_label_containing(far_digger, BEYOND_REACH_SENTENCE)
+			and far_digger_commit != null and far_digger_commit.disabled)
+	h._hud.close_compose_sheet()
+	await h._settle()
+
+	# ⛔⛔ **STATE workings-tile-crews — THE TILE NOW SAYS THE DIGGING IS HAPPENING** (issue #650).
+	# Ray: *"The tile also has no indication the activity is taking place. We probably can do the same
+	# that we do for forage sites where we have a minimal display when the owning band is not selected
+	# and more details when it is."*
+	#
+	# **THE FORAGE MECHANISM HE MEANS IS THE `<count> <mark>` PAIR**, and its band-independence is
+	# what makes it the minimal level: `SelectionCardController._forage_workers_on_tile` sums the
+	# foragers on the hex across EVERY player band, so the land row states what the faction has on
+	# this ground whichever subject is picked. `SubjectDrawerController._cutters_on_working` is that
+	# function for a working, and `HudDepositVocab.crew_clause` is the pair.
+	#
+	# ⛔ **TWO WORKINGS ON ONE HEX STAY TWO, AND THE COUNTS DIFFER SO THAT IT CAN BE PROVEN.** Equal
+	# crews would pass a card that composed one number and printed it on both rows — the tile-keyed
+	# collapse the whole `material` field exists to prevent.
+	h._hud.update_band_alerts([_both_seams_band_fixture()])
+	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	var crew_ctx := DetailFormat.Context.new()
+	var crew_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
+		h._hud._selection.tile_info(), crew_ctx)
+	await h._save("workings_tile_crews")
+	h._assert_hud("the wood row states its own crew (%s)"
+			% Readout.detail_row_value(crew_lines, "Wood"),
+		Readout.detail_row_value(crew_lines, "Wood").contains(
+			HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS)))
+	h._assert_hud("…and the rock states a DIFFERENT one on the same hex (%s)"
+			% Readout.detail_row_value(crew_lines, "Stone"),
+		Readout.detail_row_value(crew_lines, "Stone").contains(
+			HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS)))
+	# **THE DISTINCTNESS, STATED AS A NEGATIVE TOO**: neither row may carry the other's count.
+	h._assert_hud("…and neither row wears the other's crew",
+		not Readout.detail_row_value(crew_lines, "Wood").contains(
+				HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS))
+			and not Readout.detail_row_value(crew_lines, "Stone").contains(
+				HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS)))
+	# ⛔ **A MARK AND A COUNT — NEVER A BILL.** The keeping figure and the neglect countdown are
+	# retired from this card, and staffing it must not smuggle either back on.
+	h._assert_hud("…and the crew arrives with no bill and no countdown beside it",
+		not "\n".join(crew_lines).contains(UPKEEP_FACE_NEEDLE)
+			and not "\n".join(crew_lines).contains(HudDepositVocab.reverting_value(
+				_wood_working(WOOD_OVER_CUT))))
+
+	# ⛔⛔ **STATE workings-tile-crews-other-band — THE COUNT IS THE HEX'S, NOT THE PICKED BAND'S.**
+	# The same two workings, held by a band that is NOT the faction's default actor: the rows read
+	# exactly as they did above, which is the whole of what "minimal display when the owning band is
+	# not selected" buys. A count taken off the selected band would go to zero here.
+	h._hud.update_band_alerts(_both_seams_two_bands())
+	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	var other_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
+		h._hud._selection.tile_info())
+	await h._save("workings_tile_crews_other_band")
+	# **PRECONDITION: the default actor really does hold nothing here**, or the claim below is met by
+	# the wrong band and proves the opposite of what it says.
+	h._assert_hud("the faction's default band holds neither working",
+		h._hud._band_labor.workers_for_extract(
+				h._hud._band_labor.player_band(), WORKING_TILE_X, WORKING_TILE_Y,
+				WOOD_MATERIAL_ID) == 0
+			and h._hud._band_labor.workers_for_extract(
+				h._hud._band_labor.player_band(), WORKING_TILE_X, WORKING_TILE_Y,
+				STONE_MATERIAL_ID) == 0)
+	h._assert_hud("…and both rows still state the crews the OTHER band has on them (%s | %s)"
+			% [Readout.detail_row_value(other_lines, "Wood"),
+				Readout.detail_row_value(other_lines, "Stone")],
+		Readout.detail_row_value(other_lines, "Wood").contains(
+				HudDepositVocab.crew_clause(_wood_working(WOOD_OVER_CUT), CARD_WOOD_CUTTERS))
+			and Readout.detail_row_value(other_lines, "Stone").contains(
+				HudDepositVocab.crew_clause(_stone_working(STONE_TAKE), CARD_STONE_CUTTERS)))
+	# ⛔ **AND UNTOUCHED GROUND SAYS NOTHING ABOUT A CREW AT ALL** — `deposit_row_value`'s rule: every
+	# clause about a working being worked is, on ground nobody has opened, a reading of an event that
+	# has not happened. The stated ZERO is for a working someone HAS opened, which is the forage land
+	# row's own parallel-to-the-staffed-form rule.
+	#
+	# **THE CREWS HAVE TO GO FOR THIS ONE, and that is the rule in the other direction.** A crew put
+	# on a full seam this turn has taken nothing yet, which is field-for-field `is_unopened` — so the
+	# mark is drawn for ANY crew and suppressed only where there is no crew and nothing has happened.
+	# Staging untouched ground under the band that still holds both workings would therefore assert
+	# the opposite of the rule and fail for being right.
+	h._hud.update_band_alerts([_band_at_the_working()])
+	h._show_tile(_workings_tile([_unopened_wood(), _unopened_stone()]))
+	await h._settle()
+	var untouched_lines: Array[String] = h._hud._drawer._tile_terrain_lines(
+		h._hud._selection.tile_info())
+	h._assert_hud("untouched ground carries no crew mark of any count (%s | %s)"
+			% [Readout.detail_row_value(untouched_lines, "Wood"),
+				Readout.detail_row_value(untouched_lines, "Stone")],
+		not Readout.detail_row_value(untouched_lines, "Wood").contains(
+				HudSelectionVocab.SOURCE_CREW_MARK)
+			and not Readout.detail_row_value(untouched_lines, "Stone").contains(
+				HudSelectionVocab.SOURCE_CREW_MARK))
+
 	# **THE HEX IS HANDED BACK BARE**, so a chapter appended after this one starts where every other
 	# one does. **An empty `deposits` array means the GROUND HOLDS NOTHING** — not *nobody has worked
 	# it*, which is a row like any other.
@@ -1244,7 +1418,7 @@ func _full_land_tile(visibility_state: String) -> Dictionary:
 ## sample. The `extract` row names its MATERIAL because `(tile, material)` is the assignment's whole
 ## identity and a row without it stages an assignment `LaborTarget::Extract` cannot produce.
 func _working_band_fixture() -> Dictionary:
-	var band := BandFx.band_fixture()
+	var band := _band_at_the_working()
 	var rows: Array = band["labor_assignments"]
 	rows.append({
 		"kind": HudConst.LABOR_KIND_EXTRACT,
@@ -1273,6 +1447,62 @@ const WORKED_BUTTON_TAKE := 0.60
 ## deposit row, on the `extract` labor row and on the material payoff the row pays. Spelled once, so a
 ## fixture cannot key three surfaces apart with three spellings of one material.
 const WOOD_MATERIAL_ID := "wood"
+
+## …and the rock's, for the same reason. It was spelled inline while nothing joined on it; the crew
+## clauses' band-independence claim looks a working up by the PAIR, and a typo there would answer
+## `0` and pass a negative assertion.
+const STONE_MATERIAL_ID := "stone"
+
+## **THE TWO CREWS THE TILE CARD STATES, AND THEY DIFFER ON PURPOSE** (issue #650). Equal counts
+## would be satisfied by a card that composed one number and printed it on both of the hex's rows,
+## which is the tile-keyed collapse the `(tile, material)` key exists to prevent.
+const CARD_WOOD_CUTTERS := 2
+const CARD_STONE_CUTTERS := 4
+
+## A band cutting BOTH seams on this hex, each at its own crew — the fixture the tile card's two crew
+## clauses are read against.
+func _both_seams_band_fixture() -> Dictionary:
+	var band := _band_at_the_working()
+	var rows: Array = band["labor_assignments"]
+	for held in [[WOOD_MATERIAL_ID, CARD_WOOD_CUTTERS], [STONE_MATERIAL_ID, CARD_STONE_CUTTERS]]:
+		rows.append({
+			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": int(held[1]),
+			"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
+			"material": String(held[0]),
+		})
+	return band
+
+## …and the pair that makes the card's count BAND-INDEPENDENT rather than merely correct: a second
+## band listed FIRST, so it is the faction's default actor (`HudBandLaborState.player_band`) and the
+## panel's subject, holding nothing on this hex at all. If the rows read off the picked band they go
+## to zero here; they do not, because the count is the GROUND's.
+func _both_seams_two_bands() -> Array:
+	var idle := _band_at_the_working()
+	idle["entity"] = IDLE_BAND_ENTITY
+	idle["name"] = IDLE_BAND_NAME
+	idle["id"] = IDLE_BAND_NAME
+	idle["labor_assignments"] = []
+	return [idle, _both_seams_band_fixture()]
+
+## The second band's identity. Its own entity — a duplicate would collapse the two rosters into one
+## band and the claim would be about nothing.
+const IDLE_BAND_ENTITY := 907
+const IDLE_BAND_NAME := "Coldhollow"
+
+## **HOW FAR `BandFx.band_fixture()`'s CAMP IS FROM THIS CHAPTER'S HEX** — (71,18) to (21,14) by the
+## client's own odd-r cube distance, transcribed rather than computed here so the frame pins the
+## arithmetic instead of restating it. Against the fixture's shipped `work_range` of 2 it is the
+## refusal's whole reason.
+const BEYOND_REACH_DISTANCE := 52
+
+## `BandFx.band_fixture()`'s own `work_range`, transcribed: a const expression cannot read a fixture
+## dictionary, and the state that uses it compares the two so a drift in the fixture fails loudly.
+const BEYOND_REACH_WORK_RANGE := 2
+
+## …and the sentence that refusal reads, composed from the SHARED format so this file cannot freeze a
+## wording the client has moved on from.
+const BEYOND_REACH_SENTENCE := HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [
+	WORKING_TILE_X, WORKING_TILE_Y, BEYOND_REACH_DISTANCE, BEYOND_REACH_WORK_RANGE]
 
 ## The road those two frames stand on — see `ROAD_PATH_METER` for why it helps nobody and owes
 ## nobody. Shaped as `native/src/dict/routes.rs` writes a road row, with the wire's own
@@ -1443,7 +1673,7 @@ func _worked_down_quarry() -> Dictionary:
 ## `WORKER_STEP` floor, and the take it quotes is a figure this fixture states rather than one the
 ## stepper happened to land on.
 func _worked_quarry_band_fixture() -> Dictionary:
-	var band := BandFx.band_fixture()
+	var band := _band_at_the_working()
 	var rows: Array = band["labor_assignments"]
 	rows.append({
 		"kind": HudConst.LABOR_KIND_EXTRACT,
@@ -1547,7 +1777,7 @@ func _wood_at_its_floor() -> Dictionary:
 ## **A BAND THAT HAS JUST PUT DIGGERS ON THE ROCK AND CUT NOTHING YET** — the `extract` row carries
 ## the crew and the SEEDED rate, which is all three of the terms the runway is told apart by.
 func _fresh_stone_band_fixture() -> Dictionary:
-	var band := BandFx.band_fixture()
+	var band := _band_at_the_working()
 	var rows: Array = band["labor_assignments"]
 	rows.append({
 		"kind": HudConst.LABOR_KIND_EXTRACT,
@@ -1638,7 +1868,7 @@ func _payoff_values(lines: Array[String]) -> Array[String]:
 ## regrown clone of the working — so the honest fixture states a FIGURE, and what the frame proves is
 ## that both webs answer a crew committed this turn with a real rate in their own account.
 func _just_assigned_band_fixture() -> Dictionary:
-	var band := BandFx.band_fixture()
+	var band := _band_at_the_working()
 	band["labor_assignments"] = [
 		{
 			"kind": SourceForecast.LABOR_KIND_FORAGE,

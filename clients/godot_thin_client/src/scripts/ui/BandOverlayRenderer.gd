@@ -100,7 +100,10 @@ const WORKED_TILE_OUTLINE_WIDTH := 1.4
 #
 # BELOW the icon, never upper-right: `MapView.HERD_DISTRESS_BADGE_OFFSET_FACTOR` already owns that
 # corner, and a herd can be both penned-and-starving and ready-to-something.
-const BADGE_CREW_GLYPH := "⚒"
+# **ONE SPELLING, AND IT IS THE CARD'S** (issue #650): the tile card's deposit rows wear the same
+# mark, so the glyph lives in `HudSelectionVocab` and both surfaces read it from there. A hex whose
+# badge said `⚒4` beside a card row that said nothing about a crew is half of what Ray reported.
+const BADGE_CREW_GLYPH := HudSelectionVocab.SOURCE_CREW_MARK
 # The chevron is what makes the mark read "available" rather than "done". It has to be the carrier
 # because the verb and standing-rung glyphs COLLIDE — ▦ is both "Sow" and "this is a Field", 🐄 both
 # "Corral" and "this is a Pen" — so a bare verb glyph on a marker would say the opposite of the truth.

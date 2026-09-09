@@ -780,7 +780,9 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   `MapView.FOOD_HARVEST_RING_FACTOR` (0.42) — the harvest ring is a different statement about the same
   marker and the two must read apart.
 - **The badge** (`_queue_source_badge` / `_draw_source_badge`): ONE plate per source under its marker,
-  carrying `⚒N` crew and, when the source can climb, a `⌃` chevron + the verb glyph. One plate rather
+  carrying `⚒N` crew — **`BADGE_CREW_GLYPH` reads `HudSelectionVocab.SOURCE_CREW_MARK`, one spelling
+  for one idea** (issue #650), since the tile card's deposit rows wear the same mark and a hex whose
+  badge said `⚒4` beside a card row silent about a crew was half of what Ray reported — and, when the source can climb, a `⌃` chevron + the verb glyph. One plate rather
   than two because three sources × two elements is six things in forty pixels. **Below the icon,
   never upper-right** — `HERD_DISTRESS_BADGE_OFFSET_FACTOR` owns that corner, and a herd can be both
   penned-and-starving and ready-to-something. Ready rides the plate's BORDER as well as its glyph

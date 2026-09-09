@@ -844,6 +844,27 @@ const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 # collides with nothing.
 const HARVEST_ASSIGN_BUTTON := "Harvest"
 
+# ⛔ **THE STATIONARY WEBS' ONE OUT-OF-RANGE REFUSAL, AND IT IS ONE STRING BECAUSE IT IS ONE NUMBER**
+# (issue #650). The forage sheet and the two DEPOSIT sheets are all judged against the same
+# `band_work_range` — `systems::labor`'s `Extract` arm lapses an out-of-range crew byte-for-byte as
+# its `Forage` arm does — so both sheets refuse in the same sentence, composed here once. Two
+# spellings of one limit is two limits as far as a player can tell.
+#
+# ⛔ **THE RANGE'S NAME IS THE ONE THE CLIENT ALREADY USES FOR THIS NUMBER, and it is deliberately
+# not a per-crew word.** `hunt reach` is a DIFFERENT quantity (`band_work_range` plus the leash), so
+# the two names in this client name two numbers; a third name for `band_work_range` on the digger
+# sheet would read as a third limit.
+#
+# **AND IT IS A PLAIN REFUSAL RATHER THAN THE HUNT SHEET'S OFFER.** A herd beyond reach can be
+# followed by a detached party, so that sheet says so (`"…Detach a party to follow it."`). Nothing in
+# the expedition roster works ground — the missions are `scout` / `hunt` / `deny` / `trade` — so a
+# seam beyond reach has no alternative to offer and the honest answer is *no*. What a player does
+# instead is move the band, which is a different control on a different surface.
+#
+# Args: `[x, y, distance, work_range]`.
+const WORK_RANGE_REFUSAL_FORMAT := \
+    "(%d,%d) is %d tiles away — beyond this band's forage range (%d)."
+
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
 # submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a source this

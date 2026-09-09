@@ -1065,12 +1065,12 @@ const DEPOSIT_REGROWTH_DECIMALS := 1
 ## on it against the MATERIAL row's key — never the payoff row's, which two materials on one hex would
 ## both claim.
 static func deposit_lines(deposit: Dictionary, ladder: Array[Dictionary],
-		ctx: DetailFormat.Context = null) -> Array[String]:
+		ctx: DetailFormat.Context = null, cutters: int = CUTTERS_UNSTATED) -> Array[String]:
 	var lines: Array[String] = []
 	var key := material_label(deposit)
 	if key == "":
 		return lines
-	lines.append("%s: %s" % [key, deposit_land_value(deposit, ladder)])
+	lines.append("%s: %s" % [key, deposit_land_value(deposit, ladder, cutters)])
 	if ctx != null:
 		ctx.deposit_rows[key] = true
 		var figures := deposit_card_tooltip(deposit)
@@ -1091,9 +1091,15 @@ static func deposit_lines(deposit: Dictionary, ladder: Array[Dictionary],
 ## the runway and the climb. This one describes a hex the player is looking at, most of which is ground
 ## nobody has opened. **The clauses they share are shared functions** (`ladder_rung_name`,
 ## `hazard_clause`), so the rung's word and the hazard's cannot drift between them.
-static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary]) -> String:
+static func deposit_land_value(deposit: Dictionary, ladder: Array[Dictionary],
+		cutters: int = CUTTERS_UNSTATED) -> String:
 	var clauses: Array[String] = [deposit_stock_clause(deposit),
 		ladder_rung_name(ladder, rung_of(deposit))]
+	# **THE CREW, BETWEEN THE RUNG AND THE HAZARD** — what is standing here, what stands on it, who
+	# is on it, and last what is wrong with it. The hazard keeps the tail it has on both surfaces.
+	var crew := crew_clause(deposit, cutters)
+	if crew != "":
+		clauses.append(crew)
 	var hazard := hazard_clause(deposit)
 	if hazard == "" and renews(deposit) and actual_take_of(deposit) > sustainable_take_of(deposit):
 		# **THE OVER-CUT WORD IS THE SECOND HAZARD THIS ROW CAN CARRY**, and it is the food webs' own
@@ -1117,6 +1123,47 @@ static func deposit_stock_clause(deposit: Dictionary) -> String:
 		return DEPOSIT_STOCK_FULL_FORMAT % standing
 	return DEPOSIT_STOCK_DRAWN_FORMAT % [standing,
 		DetailFormat.format_trimmed(capacity, CARD_STOCK_DECIMALS)]
+
+## `⚒3` — **THE ACTIVITY INDICATION THE TILE HAD NONE OF** (issue #650). Ray put a crew on a seam,
+## looked at the hex, and nothing anywhere said the digging was happening; the forage web has said so
+## all along on the land roster row's `<count> <mark>` pair, and this is that pair for a working.
+##
+## ⛔ **IT IS THE HEX'S CREW, NOT THE SELECTED BAND'S, and that is what makes it the MINIMAL level.**
+## The caller sums it over every player band (`SubjectDrawerController._cutters_on_working`, the
+## deposit twin of `SelectionCardController._forage_workers_on_tile`), so the row answers *is anyone
+## working this ground* whichever band — or none — the player has picked. The band-specific reading
+## is the Work board's own roster row, which states THIS band's cutters and its bill beside them
+## (`deposit_row_value`); the two levels are the pair Ray asked for, in that order.
+##
+## ⛔ **ONE CLAUSE PER MATERIAL ROW, WHICH IS WHY TWO WORKINGS CANNOT COLLAPSE.** A wood crew and a
+## stone crew on one hex are two rows keyed `(tile, material)`, each carrying its own count — the
+## whole reason the `material` field exists. A hex-level mark could not make that distinction and so
+## is not what this is.
+##
+## ⛔ **A COUNT AND A MARK — NEVER A BILL.** No keeping figure, no neglect countdown: both are
+## retired from this card (`land-readouts.md`), and the figures ride the block's hover.
+##
+## Three answers, and the third is the subtle one:
+##   • `CUTTERS_UNSTATED` → `""`. A caller with no band roster in hand must not announce a crew of
+##     nobody, exactly as `deposit_row_value`'s idle clause must not.
+##   • a crew → `⚒N`, always, **including on ground the wire still reads as unopened**: a crew put
+##     here this turn has taken nothing yet from a full seam, which is field-for-field `is_unopened`,
+##     and suppressing the mark there would mute it at the one moment the player is looking for it.
+##   • nobody, on a working someone has opened → `⚒0`, the STATED ZERO. It is the forage land row's
+##     own rule (`HudSelectionVocab.LAND_META_WORKERS_FORMAT`): the zero form is parallel to the
+##     staffed one, so "nobody is on this" reads at a glance instead of needing a comparison.
+## Untouched ground gets nothing at all — `deposit_row_value`'s rule, that every clause about a
+## working being worked is a reading of an event that has not happened there.
+static func crew_clause(deposit: Dictionary, cutters: int) -> String:
+	if cutters <= CUTTERS_UNSTATED:
+		return ""
+	if cutters <= CUTTERS_NONE and is_unopened(deposit):
+		return ""
+	return DEPOSIT_CREW_CLAUSE_FORMAT % [HudSelectionVocab.SOURCE_CREW_MARK, cutters]
+
+## The crew clause's face — the shared mark, then the count, with nothing between them, so it reads
+## as one token in a `·`-joined row rather than as two clauses.
+const DEPOSIT_CREW_CLAUSE_FORMAT := "%s%d"
 
 ## ⛔ **WHAT THE HELD RUNG BUYS OVER ITS BRANCH'S FREE FLOOR — `""` where it buys nothing**, which is
 ## both floors and every extraction rung that neither reaches deeper nor renews faster.

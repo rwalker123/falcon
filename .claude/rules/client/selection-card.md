@@ -388,6 +388,30 @@ activity are one column of drawn marks down the subject list. Splitting only the
 left a drawn sprig beside an emoji bow two rows under it, which is the *half a set* failure
 `sprites-widgets.md` → "`HudSprites` keys the ACTIVITY" exists to name.
 
+### THE `<count> <mark>` PAIR IS THE CARD'S BAND-INDEPENDENT LEVEL, AND A WORKING BORROWED IT
+
+⛔ **`_forage_workers_on_tile` AND `_hunt_workers_on_herd` SUM ACROSS EVERY PLAYER BAND**, so the
+land row's meta and the herd row's state what the FACTION has on that source rather than what the
+band the player happens to have picked has. That is not incidental: it is what makes the pair the
+*minimal* reading of a source — true whichever subject is selected, and on the one surface whose
+subject is the ground. The band-specific reading is the Work board's own rosters, which take the
+panel band's crew and add its bill.
+
+**A WORKING'S ROWS NOW READ THE SAME WAY** (issue #650). Ray asked for the tile to say a deposit was
+being worked *"the same [as] we do for forage sites"*, and the mechanism he meant is this pair;
+`SubjectDrawerController._cutters_on_working` is `_forage_workers_on_tile` for a `(tile, material)`
+working, and `HudDepositVocab.crew_clause` is the count and the mark. It rides the per-MATERIAL
+detail row rather than this roster row, because a hex carries up to two workings and a roster row has
+exactly one meta and one mark — collapsing a wood crew and a stone crew into one is the very
+distinction the `material` field exists to make. Full spec in `extraction-workings.md` → "THE CREW
+CLAUSE IS THE TILE'S ONLY ACTIVITY INDICATION".
+
+⛔ **THE WORKING'S MARK IS `HudSelectionVocab.SOURCE_CREW_MARK` (`⚒`), A TEXT GLYPH RATHER THAN ART.**
+It lives beside the activity marks because the map's source badge reads the same const
+(`overlay-channels.md`), so one hex cannot say `⚒4` under its marker and nothing on its card. It is
+not an `ACTIVITY_MARKS` entry: those are drawn textures for a roster row's own trailing node, and a
+`Key: value` detail line is BBCode text with no node to swap.
+
 **THE PATCH PATH OWES THE SAME NODE SWAP, and a row crosses the line by doing its job.**
 `_set_row_activity_mark` is `_set_row_icon`'s twin: the mark is a `TextureRect` while a band forages
 and a glyph `Label` the turn its crew goes IDLE. Writing `.text` to a `TextureRect` is a silent

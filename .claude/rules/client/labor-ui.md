@@ -5659,9 +5659,13 @@ spelled and never a raw count.
     **wrap-aware hex distance** from the **SELECTED band's** own tile to the forage tile vs that band's
     **`work_range`** (the plain `workRange` field, NOT `hunt_reach`; already decoded/on the marker):
     **within range** → enabled **Forage**; **beyond range** → the button is **disabled** + an
-    out-of-range hint (`"(x,y) is N tiles away — beyond this band's forage range (R)"`), no alternative.
+    out-of-range hint (`HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT` — `"(x,y) is N tiles away — beyond
+    this band's forage range (R)"`), no alternative.
     Reuses the same `_hex_distance_wrapped` / `SourceForecast.band_tile` / grid-dim plumbing and explicit
-    selected-band threading as the herd hunt. Covered by ui_preview states `food_tile` (in range) /
+    selected-band threading as the herd hunt. ⛔ **THE MEASUREMENT AND THE SENTENCE ARE SHARED WITH THE
+    TWO DEPOSIT SHEETS** since issue #650 — `_mount_work_range_refusal`, one gate for every surface
+    judged against `band_work_range`, because two spellings of one limit read as two limits
+    (`extraction-workings.md` → "THE RANGE GATE IS THE FORAGE SHEET'S"). Covered by ui_preview states `food_tile` (in range) /
     `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
     (two bands, one tile — picker flips enabled↔disabled).
 

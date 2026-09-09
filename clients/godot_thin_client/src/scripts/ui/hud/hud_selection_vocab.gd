@@ -195,6 +195,21 @@ const ACTIVITY_MARKS := {
     "warrior": "warrior",
 }
 
+# **THE CREW MARK — `⚒`, ONE SPELLING FOR "THIS MANY PEOPLE WORK THIS SOURCE"** (issue #650).
+# It is the map badge's own mark (`BandOverlayRenderer.BADGE_CREW_GLYPH` reads it from here) and now
+# also the tile card's deposit rows'. **It lives with the roster glyphs rather than in either
+# caller** because the two surfaces state one fact: a hex whose badge says `⚒4` and whose card row
+# said nothing about a crew was the second half of what Ray reported.
+#
+# ⛔ **NOT A VERB GLYPH, AND THAT IS DELIBERATE.** `FoodIcons.POLICY_ICONS` marks the RUNG a source
+# is climbing (🪓 fell, ⛏ quarry), and the standing-rung and verb glyphs already collide with each
+# other (`overlay-channels.md` → the badge's chevron). A crew is a different axis from a rung, so it
+# gets a mark of its own and no rung's mark ever doubles as one.
+#
+# ⛔ **A TEXT-PRESENTATION SYMBOL, NEVER AN EMOJI**, for `FoodIcons`' own reason: it inherits the
+# label's font colour, so it dims with a dimmed row instead of staying stubbornly coloured.
+const SOURCE_CREW_MARK := "⚒"
+
 # The activity mark's box and glyph size, the pair `HudWidgets.build_marker_icon` needs. Sized to the
 # roster's own row mark (`ROSTER_ROW_ICON_BOX`) so the leading subject mark and the trailing activity
 # mark read as one family at one weight rather than as two unrelated pictures on one row.

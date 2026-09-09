@@ -231,6 +231,38 @@ func _render_land_drawer() -> void:
 ## only happens for your own party on an unseen hex, and `_rebuild_subject_list` appends
 ## `OCCUPANTS_UNSEEN_OTHERS_HINT` to the list in exactly that case.
 ##
+## **THE HEX'S OWN CUTTERS ON ONE WORKING, summed across every player band** (issue #650) — the
+## deposit twin of `SelectionCardController._forage_workers_on_tile`, and band-independent for that
+## function's own reason: this card's subject is the GROUND, so its rows state what the faction has
+## on this seam rather than what the band the player happens to have picked has. That is what makes
+## the row the MINIMAL level of the pair Ray asked for; the band-specific level is the Work board's
+## workings roster, whose value cell takes the panel band's own `cutters`.
+##
+## ⛔ **THE PENDING-AWARE READ, unlike the land row's.** `effective_extract_workers` overlays a
+## commit this client has sent and the sim has not answered yet, and a working is the one source
+## whose card is the surface the player lands back on the instant the compose sheet closes: reading
+## the wire alone would leave the row saying `⚒0` about the crew they just committed until the turn
+## resolved — the very silence this clause exists to end.
+##
+## `CUTTERS_UNSTATED` where there is no band model at all (the map-hover path builds its own text and
+## the harnesses read the lines directly), which the composer answers with no clause rather than with
+## a crew of nobody.
+func _cutters_on_working(deposit: Dictionary) -> int:
+    if _band_labor == null:
+        return HudDepositVocab.CUTTERS_UNSTATED
+    var tile := HudDepositVocab.tile_of(deposit)
+    var material := HudDepositVocab.material_of(deposit)
+    if tile.x < 0 or material == "":
+        return HudDepositVocab.CUTTERS_UNSTATED
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() \
+        else [_band_labor.player_band()]
+    var total := 0
+    for band_variant in bands:
+        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
+            total += _band_labor.effective_extract_workers(
+                band_variant as Dictionary, tile.x, tile.y, material)
+    return total
+
 ## **UNLESS `force`, which `_render_land_drawer` passes when the drawer produced NO terrain rows.**
 ## An UNEXPLORED hex produces none at all, and it routinely carries roster rows — the sim excludes
 ## expeditions from fog reveal, so your own party stands on unexplored ground as a matter of course.
@@ -463,10 +495,17 @@ func _tile_terrain_lines(tile_info: Dictionary,
     var deposit_ladder: Array[Dictionary] = []
     if _topbar != null:
         deposit_ladder = HudDepositVocab.deposit_ladder(_topbar.deposit_rungs())
+    #
+    # ⛔ **AND THE CREW IS RESOLVED HERE TOO, PER MATERIAL** (issue #650) — the second join this
+    # block threads in, for the catalog's reason: `HudDepositVocab` holds no band roster, so a count
+    # summed over the faction's bands cannot be composed inside it. The row said nothing at all about
+    # a crew until now, which is why a player who had just put diggers on a seam saw no sign of it
+    # anywhere on the hex.
     for deposit_variant in Array(tile_info.get("deposits", [])):
         if deposit_variant is Dictionary:
+            var working: Dictionary = deposit_variant
             lines.append_array(HudDepositVocab.deposit_lines(
-                deposit_variant as Dictionary, deposit_ladder, ctx))
+                working, deposit_ladder, ctx, _cutters_on_working(working)))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
