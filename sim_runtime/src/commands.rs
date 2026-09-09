@@ -158,6 +158,58 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    /// ⛔ **THE TWO DEPOSIT BRANCHES' THREE TILE VERBS** — `fell`, `coppice` and `quarry`
+    /// (`docs/plan_extraction.md` §4). Each **declares** a rung on the working at
+    /// `(target_x, target_y)` in [`Self::Fell::material`]: an entry on the build queue of every band
+    /// of the faction that already has an `extract` row there, raised by that band's `builders` pool
+    /// at the head of the queue — so none of them names workers.
+    ///
+    /// **It is `cultivate`/`sow`'s grammar and NOT `grade`/`pave`'s, and the difference is the
+    /// keeper.** A road has no work row at all, so the band that will keep it has to be a token; a
+    /// **working belongs to a camp exactly as a patch does**, and its keeper is whoever already cuts
+    /// or digs it. Hence no band token, and hence the verb reaching every band working the source.
+    ///
+    /// ⛔ **BUT IT NAMES A MATERIAL, WHICH NO OTHER TILE VERB DOES.** The working's key is
+    /// `(tile, material)` because one hex can hold two — a wooded highland holds timber *and* rock —
+    /// so a command carrying only the tile names neither of them. It is the same token
+    /// [`Self::AssignLabor::species`] carries for the `extract` role, and it means the same kind of
+    /// thing there: *which of the things on this ground are you here for*.
+    ///
+    /// **One variant per verb** rather than one carrying an improvement key — [`Self::Grade`] and
+    /// [`Self::Pave`]'s own arrangement, so the dispatch names the rung it raises and a caller
+    /// cannot get it wrong.
+    ///
+    /// Forestry rung 2: open a felling working on a wood. Needs **Woodcraft**, earned by gathering
+    /// deadfall.
+    Fell {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        /// The deposit's material key (`extraction.json` → `deposits`), e.g. `"wood"`. **Required**
+        /// — see the note above for why a tile alone cannot name a working.
+        material: String,
+    },
+    /// Forestry rung 3: bring a wood under management. Needs **Conservationism**, earned by
+    /// *felling* — the first rung on either branch at which a wood can be ruined. See [`Self::Fell`]
+    /// for the shared grammar.
+    Coppice {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        /// See [`Self::Fell::material`].
+        material: String,
+    },
+    /// Extraction rung 2: open a cut working face. Needs **Quarrying**, earned by picking loose
+    /// stone, and a tile whose own capacity for this material clears the rung's
+    /// `min_deposit_capacity` — the one placement rule on either branch. See [`Self::Fell`] for the
+    /// shared grammar.
+    Quarry {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        /// See [`Self::Fell::material`].
+        material: String,
+    },
     // **RETIRED: `AbandonImprovement`** — "clear the build verb off every band working this source".
     //
     // The build verb is **derived from the meter** now (`forage::patch_build_verb` /
@@ -1573,6 +1625,39 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::Fell {
+                faction_id,
+                target_x,
+                target_y,
+                material,
+            } => pb::command_envelope::Command::Fell(pb::FellCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                material: material.clone(),
+            }),
+            CommandPayload::Coppice {
+                faction_id,
+                target_x,
+                target_y,
+                material,
+            } => pb::command_envelope::Command::Coppice(pb::CoppiceCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                material: material.clone(),
+            }),
+            CommandPayload::Quarry {
+                faction_id,
+                target_x,
+                target_y,
+                material,
+            } => pb::command_envelope::Command::Quarry(pb::QuarryCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                material: material.clone(),
+            }),
             CommandPayload::ExtendPen {
                 faction_id,
                 target_x,
@@ -2070,6 +2155,24 @@ impl CommandEnvelope {
                 band_id: cmd.band_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::Fell(cmd) => CommandPayload::Fell {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                material: cmd.material,
+            },
+            pb::command_envelope::Command::Coppice(cmd) => CommandPayload::Coppice {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                material: cmd.material,
+            },
+            pb::command_envelope::Command::Quarry(cmd) => CommandPayload::Quarry {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                material: cmd.material,
             },
             pb::command_envelope::Command::Abandon(cmd) => CommandPayload::Abandon {
                 faction_id: cmd.faction_id,

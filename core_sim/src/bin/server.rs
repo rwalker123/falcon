@@ -714,6 +714,36 @@ enum Command {
         target_x: u32,
         target_y: u32,
     },
+    /// **The two deposit branches' three TILE verbs**, one variant apiece for
+    /// [`Command::Grade`]'s reason — the dispatch names the rung it raises rather than carrying an
+    /// [`Improvement`] a caller could get wrong.
+    ///
+    /// ⛔ **EACH NAMES A TILE *AND* A MATERIAL, and no band.** A working's key is
+    /// `(tile, material)` because one hex can hold two, and its **keeper is whoever already works
+    /// it** — a working belongs to a camp exactly as a patch does, which is the one place the arc
+    /// deliberately does not copy the route branch. So this is `cultivate`'s shape with a material
+    /// token, not `grade`'s with a band one.
+    Fell {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+        material: String,
+    },
+    /// [`Command::Fell`]'s twin one rung up the forestry branch, on the same terms.
+    Coppice {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+        material: String,
+    },
+    /// The extraction branch's rung-2 verb, declared on [`Command::Fell`]'s terms. The one verb on
+    /// either branch whose ground can refuse it (`min_deposit_capacity`).
+    Quarry {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+        material: String,
+    },
     // **RETIRED: `AbandonImprovement`.** The build verb is derived from the meter
     // (`forage::patch_build_verb`, `docs/plan_standing_upkeep.md` §2.4), so there was no stored
     // authority for it to clear. What came back in its place is **disposal**, not arbitration:
@@ -6623,6 +6653,106 @@ fn road_verb_refusal(
     Ok(())
 }
 
+/// ⛔ **`fell` / `coppice` / `quarry` — THE TWO DEPOSIT BRANCHES' THREE TILE VERBS**
+/// (`docs/plan_extraction.md` §4).
+///
+/// **It is `handle_cultivate`'s body, not `handle_road_verb`'s, and the difference is who the keeper
+/// is.** A road belongs to nobody until a band is named, which is why the route verbs carry a band
+/// token and stamp a `RoadKeeper`. A **working belongs to a camp exactly as a patch does** — the one
+/// place this arc deliberately departs from the route branch — so its keeper is already known: it is
+/// whichever bands hold an `extract` row on the source. The declaration therefore goes on **every**
+/// band of the faction working it, through the same [`queue_build_on_working_bands`] the plant and
+/// animal verbs use, and there is nothing for the command to name.
+///
+/// ⛔ **THE MATERIAL IS HALF THE ADDRESS.** A working's key is `(tile, material)` because one hex can
+/// hold two — a wooded highland holds timber *and* rock — so the target is built with the material
+/// the command carried and `LaborTarget::same_source` keys on both. Raising the timber on a tile is
+/// not raising its rock, and the queue entry that lands says which.
+///
+/// **The gates are [`validate_improvement`]'s, not a second copy.** Its `Extract` arm refuses a verb
+/// aimed at the wrong kind of source and then defers to [`validate_deposit_verb`], which resolves the
+/// ground through the same `rung_site_refusal` seam a `sow` goes through and the knowledge off the
+/// rung record's own `unlock_discovery_id`. So the command's refusal and the turn's
+/// `deposit_head_gate` cannot drift into disagreeing about which ground takes a working.
+///
+/// # THE REFUSALS, EACH NAMED
+///
+/// | | |
+/// |---|---|
+/// | that material does not come out of the ground | an unknown key, refused by name |
+/// | the verb belongs to the other ladder | `quarry` on wood, `fell` on stone |
+/// | there is no tile there | an off-map coordinate |
+/// | the ground carries too little | `extraction:quarry`'s `min_deposit_capacity` — a scatter is not a body of rock |
+/// | the knowledge is not learned | `woodcraft` → `fell`, `conservationism` → `coppice`, `quarrying` → `quarry` |
+/// | no band is working the deposit | the keeper is the crew, so there has to be one |
+fn handle_deposit_verb(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    material: &str,
+    improvement: Improvement,
+) {
+    let verb = improvement.as_str();
+    let target = LaborTarget::Extract {
+        tile,
+        material: material.to_string(),
+    };
+    if let Err(reason) = validate_improvement(app, faction, &target, improvement) {
+        warn!(
+            target: "shadow_scale::command",
+            command = verb,
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            material,
+            reason = %reason,
+            "command.deposit.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Extraction, faction, reason);
+        return;
+    }
+    let declared = queue_build_on_working_bands(app, faction, &target, BuildJob::Rung(improvement));
+    if declared == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Extraction,
+            faction,
+            format!(
+                "No band is working the {material} at ({}, {}). Put a crew on the deposit first, \
+                 then {verb} it.",
+                tile.x, tile.y
+            ),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = verb,
+        faction = %faction.0,
+        x = tile.x,
+        y = tile.y,
+        material,
+        bands = declared,
+        "command.deposit.declared"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Extraction,
+        faction,
+        format!(
+            "Raising the {material} working at ({}, {}) — {verb}",
+            tile.x, tile.y
+        ),
+        Some(format!(
+            "status=declared action={verb} x={} y={} material={material} bands={declared}",
+            tile.x, tile.y
+        )),
+    );
+}
+
 /// **Set the Cultivate improvement** on the forage patch at `tile` for the band(s) already working it
 /// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
 /// the client's policy picker does; it does **not** claim or complete anything.
@@ -9157,6 +9287,39 @@ fn command_from_payload(
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::Fell {
+            faction_id,
+            target_x,
+            target_y,
+            material,
+        } => Some(Command::Fell {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            material,
+        }),
+        ProtoCommandPayload::Coppice {
+            faction_id,
+            target_x,
+            target_y,
+            material,
+        } => Some(Command::Coppice {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            material,
+        }),
+        ProtoCommandPayload::Quarry {
+            faction_id,
+            target_x,
+            target_y,
+            material,
+        } => Some(Command::Quarry {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            material,
+        }),
         ProtoCommandPayload::Abandon {
             faction_id,
             target_x,
@@ -9951,6 +10114,9 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Corral { faction, .. } => Some((*faction, "corral")),
         Command::Grade { faction, .. } => Some((*faction, "grade")),
         Command::Pave { faction, .. } => Some((*faction, "pave")),
+        Command::Fell { faction, .. } => Some((*faction, "fell")),
+        Command::Coppice { faction, .. } => Some((*faction, "coppice")),
+        Command::Quarry { faction, .. } => Some((*faction, "quarry")),
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::BuildOrder { faction, .. } => Some((*faction, "build_order")),
@@ -10342,6 +10508,48 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 band_id,
                 UVec2::new(target_x, target_y),
                 Improvement::Pave,
+            );
+        }
+        Command::Fell {
+            faction,
+            target_x,
+            target_y,
+            material,
+        } => {
+            handle_deposit_verb(
+                app,
+                faction,
+                UVec2::new(target_x, target_y),
+                &material,
+                Improvement::Fell,
+            );
+        }
+        Command::Coppice {
+            faction,
+            target_x,
+            target_y,
+            material,
+        } => {
+            handle_deposit_verb(
+                app,
+                faction,
+                UVec2::new(target_x, target_y),
+                &material,
+                Improvement::Coppice,
+            );
+        }
+        Command::Quarry {
+            faction,
+            target_x,
+            target_y,
+            material,
+        } => {
+            handle_deposit_verb(
+                app,
+                faction,
+                UVec2::new(target_x, target_y),
+                &material,
+                Improvement::Quarry,
             );
         }
         Command::Abandon { faction, source } => {
@@ -20127,6 +20335,507 @@ mod tests {
             name_of(home_id),
             "a detached party is the home band's people walking somewhere, so it publishes the \
              home band's name rather than a second identity"
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // ⛔ THE TWO DEPOSIT BRANCHES' THREE TILE VERBS — `fell`, `coppice` and `quarry`
+    // ---------------------------------------------------------------------------------------
+
+    /// The band id every deposit fixture below addresses, `ROAD_BAND_ID`'s neighbour and, like it,
+    /// far above anything worldgen allocates.
+    const DEPOSIT_BAND_ID: u64 = 9_812;
+
+    /// The hex every deposit fixture works. Inside `DEPOSIT_GRID`, and away from its edge so the
+    /// mistyped-tile cases have somewhere to point.
+    const WORKING: UVec2 = UVec2::new(1, 1);
+
+    /// The deposit fixtures' own grid, held apart from `seed_tile_grid`'s because these worlds are
+    /// about the **terrain**: what a tile holds is `extraction.json`'s `by_terrain` reading of it,
+    /// so a fixture that could not choose one could not put timber and rock on the same hex.
+    const DEPOSIT_GRID: u32 = 3;
+
+    /// **Rolling hills carry BOTH** — wood 180 at a renewing rate and stone 900 at rate zero — which
+    /// is the ground the material-token regression needs, and its stone clears
+    /// `extraction:quarry`'s `min_deposit_capacity` so the same hex answers the accepted half of the
+    /// site gate too.
+    const TWO_DEPOSIT_TERRAIN: sim_runtime::TerrainType = sim_runtime::TerrainType::RollingHills;
+
+    /// **Closed woodland carries a great wood and a SCATTER of loose stone** — 600 against 35 — so it
+    /// is the ground `extraction:quarry`'s placement rule refuses: a scatter is not a body of rock.
+    const SCATTER_TERRAIN: sim_runtime::TerrainType = sim_runtime::TerrainType::MixedWoodland;
+
+    /// **A lava field carries rock and NO TIMBER AT ALL** — absent from `wood`'s `by_terrain`, which
+    /// is how that table says *there is none here*. The ground a `fell` has nothing to work.
+    const NO_TIMBER_TERRAIN: sim_runtime::TerrainType = sim_runtime::TerrainType::BasalticLavaField;
+
+    /// A `DEPOSIT_GRID`-square world of `terrain` with a `TileRegistry` over it, returning the tile
+    /// entity at [`WORKING`]. No food module and no gathering site: neither deposit branch asks for
+    /// one, and seeding either would put a second reason on the ground these tests judge.
+    fn seed_deposit_grid(
+        app: &mut bevy::prelude::App,
+        terrain: sim_runtime::TerrainType,
+    ) -> Entity {
+        let tiles: Vec<Entity> = (0..DEPOSIT_GRID)
+            .flat_map(|y| (0..DEPOSIT_GRID).map(move |x| UVec2::new(x, y)))
+            .map(|position| {
+                app.world
+                    .spawn(Tile {
+                        position,
+                        terrain,
+                        ..Default::default()
+                    })
+                    .id()
+            })
+            .collect();
+        let working = tiles[(WORKING.y * DEPOSIT_GRID + WORKING.x) as usize];
+        app.world.insert_resource(TileRegistry {
+            tiles,
+            width: DEPOSIT_GRID,
+            height: DEPOSIT_GRID,
+        });
+        working
+    }
+
+    /// A world of `terrain` with one resident band standing on [`WORKING`] and an `extract` row on
+    /// `(WORKING, material)` — **the state a deposit verb acts on**, because a working's keeper is
+    /// whoever already cuts or digs it.
+    fn deposit_world(
+        terrain: sim_runtime::TerrainType,
+        material: &str,
+    ) -> (bevy::prelude::App, FactionId, Entity) {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, terrain);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Extract {
+                tile: WORKING,
+                material: material.to_string(),
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(DEPOSIT_BAND_ID));
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.home = tile;
+        cohort.current_tile = tile;
+        (app, faction, band)
+    }
+
+    /// Put a second `extract` row on the same band, so one hex is worked for two materials at once.
+    ///
+    /// The headroom it offers is the band's **whole** working-age count, not `BAND_WORKERS`:
+    /// `set_assignment` nets out every *other* row from what it is given, so a fixture that offered
+    /// only this row's own crew would leave zero headroom the moment a first row existed — and a row
+    /// applied at zero is not pushed at all, which is the state this helper exists to avoid.
+    fn also_work(app: &mut bevy::prelude::App, band: Entity, material: &str) {
+        let target = LaborTarget::Extract {
+            tile: WORKING,
+            material: material.to_string(),
+        };
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("allocation")
+            .set_assignment(target, BAND_WORKERS, BAND_WORKING_AGE, None);
+    }
+
+    fn grant_deposit_knowledge(app: &mut bevy::prelude::App, faction: FactionId, discovery: u32) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, discovery, scalar_from_f32(1.0));
+    }
+
+    /// Every working this band has declared a rung on, as `(tile, material, verb)` — the observable
+    /// effect of a deposit verb, since a declaration is a **build-queue entry** and nothing else.
+    fn declared_workings(
+        app: &bevy::prelude::App,
+        band: Entity,
+    ) -> Vec<(UVec2, String, Option<Improvement>)> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the band has an allocation")
+            .build_queue
+            .iter()
+            .filter_map(|entry| match &entry.source {
+                BuildSource::Deposit { tile, material } => Some((
+                    *tile,
+                    material.clone(),
+                    match entry.declared {
+                        BuildJob::Rung(improvement) => Some(improvement),
+                        _ => None,
+                    },
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn extraction_failure_reasons(app: &bevy::prelude::App) -> Vec<String> {
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Extraction))
+            .filter_map(|entry| entry.detail.clone())
+            .collect()
+    }
+
+    fn extraction_failure_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        extraction_failure_reasons(app)
+            .iter()
+            .any(|detail| detail.contains(needle))
+    }
+
+    /// ⛔ **DRIVE ONE LINE THE WHOLE WAY A PLAYER'S GOES** — the shared grammar parses it, a proto
+    /// envelope carries it over the wire, [`command_from_payload`] recovers it and [`apply_command`]
+    /// runs it.
+    ///
+    /// **Through the ENCODED envelope, not straight from the parsed payload.** The hole this arc
+    /// closed was three links long — no grammar, no proto message, no dispatch arm — and each link
+    /// is a separate crate that compiles perfectly without the next one. A test that handed the
+    /// parsed payload to the handler would prove only the first and the last.
+    fn send_command_line(app: &mut bevy::prelude::App, line: &str) {
+        let payload = sim_runtime::command_text::parse_command_line(line)
+            .unwrap_or_else(|err| panic!("`{line}` must parse: {err:?}"));
+        let bytes = ProtoCommandEnvelope {
+            payload,
+            correlation_id: None,
+        }
+        .encode_to_vec()
+        .expect("the envelope encodes");
+        let decoded = ProtoCommandEnvelope::decode(&bytes).expect("the envelope decodes");
+        let (reply_tx, _reply_rx) = unbounded();
+        let command = command_from_payload(decoded.payload, &reply_tx)
+            .unwrap_or_else(|| panic!("`{line}` parsed and encoded but reached no Command"));
+        apply_command(app, command, &loopback_snapshot_server());
+    }
+
+    /// **The canonical line a player types to declare `improvement`.** Exhaustive on purpose: a new
+    /// [`Improvement`] fails to compile here until somebody states the command that raises it, which
+    /// is exactly what `fell`, `coppice` and `quarry` went without for a whole arc.
+    fn command_line_declaring(improvement: Improvement) -> String {
+        match improvement {
+            Improvement::Cultivate => "cultivate 0 1 1".to_string(),
+            Improvement::Sow => "sow 0 1 1".to_string(),
+            Improvement::Tame => "tame 0 herd_a".to_string(),
+            Improvement::Corral => "corral 0 1 1".to_string(),
+            Improvement::Grade => format!("grade 0 {ROAD_BAND_ID} 1 1"),
+            Improvement::Pave => format!("pave 0 {ROAD_BAND_ID} 1 1"),
+            Improvement::Fell => "fell 0 1 1 wood".to_string(),
+            Improvement::Coppice => "coppice 0 1 1 wood".to_string(),
+            Improvement::Quarry => "quarry 0 1 1 stone".to_string(),
+        }
+    }
+
+    /// ⛔ **EVERY BUILD VERB IS SENDABLE — the guard that would have caught this arc's hole.**
+    ///
+    /// `fell`, `coppice` and `quarry` shipped as [`Improvement`] variants with a `RungKey` apiece and
+    /// a validation arm written for them, and **no command of any kind**: no grammar in
+    /// `sim_runtime::command_text`, no proto message, no [`Command`] variant, no dispatch arm.
+    /// Nothing failed to compile, because a verb nobody sends is a verb nothing calls — the client's
+    /// ladder was built and pressing it could send nothing.
+    ///
+    /// So the claim is made once, over [`Improvement::ALL`], and it is made **end to end**: the line
+    /// parses, survives the proto round trip, and comes out the far side as the `Command` whose own
+    /// [`commanding_faction`] label is the verb's name. Comparing against `as_str` rather than a
+    /// hand-written expectation is what stops a `fell` line that decoded into `Command::Coppice`
+    /// passing.
+    #[test]
+    fn every_build_verb_has_a_command_line() {
+        let (reply_tx, _reply_rx) = unbounded();
+        for improvement in Improvement::ALL {
+            let line = command_line_declaring(improvement);
+            let payload =
+                sim_runtime::command_text::parse_command_line(&line).unwrap_or_else(|err| {
+                    panic!(
+                        "`{}` has no grammar — `{line}` is refused by the shared parser ({err:?}), \
+                         so no client can send it",
+                        improvement.as_str()
+                    )
+                });
+            let bytes = ProtoCommandEnvelope {
+                payload,
+                correlation_id: None,
+            }
+            .encode_to_vec()
+            .unwrap_or_else(|err| {
+                panic!(
+                    "`{}` parses but has no proto message to ride ({err:?})",
+                    improvement.as_str()
+                )
+            });
+            let decoded = ProtoCommandEnvelope::decode(&bytes).expect("the envelope decodes");
+            let command = command_from_payload(decoded.payload, &reply_tx).unwrap_or_else(|| {
+                panic!(
+                    "`{}` crosses the wire but the server has no dispatch for it",
+                    improvement.as_str()
+                )
+            });
+            assert_eq!(
+                commanding_faction(&command).map(|(_, label)| label),
+                Some(improvement.as_str()),
+                "`{line}` must arrive as the verb it names",
+            );
+        }
+    }
+
+    /// ⛔ **EACH OF THE THREE VERBS, AS A TEXT LINE, DECLARES THE RUNG IT NAMES.**
+    ///
+    /// The observable effect is the **build-queue entry**: a deposit verb declares, and the band's
+    /// `builders` pool raises what is at the head — so what the command must produce is an entry
+    /// keyed on this working and carrying this verb.
+    #[test]
+    fn each_deposit_verb_declares_the_rung_it_names() {
+        for (verb, material, terrain, discovery, expected) in [
+            (
+                "fell",
+                "wood",
+                TWO_DEPOSIT_TERRAIN,
+                core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+                Improvement::Fell,
+            ),
+            (
+                "coppice",
+                "wood",
+                TWO_DEPOSIT_TERRAIN,
+                core_sim::extraction::CONSERVATIONISM_DISCOVERY_ID,
+                Improvement::Coppice,
+            ),
+            (
+                "quarry",
+                "stone",
+                TWO_DEPOSIT_TERRAIN,
+                core_sim::extraction::QUARRYING_DISCOVERY_ID,
+                Improvement::Quarry,
+            ),
+        ] {
+            let (mut app, faction, band) = deposit_world(terrain, material);
+            grant_deposit_knowledge(&mut app, faction, discovery);
+            send_command_line(
+                &mut app,
+                &format!("{verb} 0 {} {} {material}", WORKING.x, WORKING.y),
+            );
+            assert_eq!(
+                declared_workings(&app, band),
+                vec![(WORKING, material.to_string(), Some(expected))],
+                "`{verb}` must put its own rung on the queue for the working it named; the feed \
+                 said {:?}",
+                extraction_failure_reasons(&app)
+            );
+        }
+    }
+
+    /// ⛔ **A TILE HOLDING TWO DEPOSITS RAISES THE ONE THE VERB NAMES, AND NOT THE OTHER.**
+    ///
+    /// This is what the material token is *for*. A working's key is `(tile, material)` because one
+    /// hex really can hold two — rolling hills carry timber and rock at once — so a command carrying
+    /// only the tile would name neither, and the plausible implementation of that hole is one that
+    /// raises whichever the registry happened to answer with first.
+    ///
+    /// Both rows are staffed and both verbs are learned, so the *only* thing separating the two
+    /// workings is the token on the line.
+    #[test]
+    fn a_deposit_verb_raises_the_material_it_names_and_not_its_neighbour() {
+        let (mut app, faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        also_work(&mut app, band, "stone");
+        grant_deposit_knowledge(
+            &mut app,
+            faction,
+            core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+        );
+        grant_deposit_knowledge(
+            &mut app,
+            faction,
+            core_sim::extraction::QUARRYING_DISCOVERY_ID,
+        );
+
+        send_command_line(
+            &mut app,
+            &format!("fell 0 {} {} wood", WORKING.x, WORKING.y),
+        );
+        assert_eq!(
+            declared_workings(&app, band),
+            vec![(WORKING, "wood".to_string(), Some(Improvement::Fell))],
+            "the timber is raised and the rock on the same hex is untouched"
+        );
+
+        // …and the rock takes its own verb on the same tile, so the two workings are genuinely two.
+        send_command_line(
+            &mut app,
+            &format!("quarry 0 {} {} stone", WORKING.x, WORKING.y),
+        );
+        assert_eq!(
+            declared_workings(&app, band),
+            vec![
+                (WORKING, "wood".to_string(), Some(Improvement::Fell)),
+                (WORKING, "stone".to_string(), Some(Improvement::Quarry)),
+            ],
+            "one hex carries two declarations at once, each on its own working"
+        );
+    }
+
+    /// ⛔ **THE KNOWLEDGE GATE IS REACHED, AND IT IS A COMMAND FAILURE.**
+    ///
+    /// `validate_deposit_verb` resolves the gate off the rung record's own `unlock_discovery_id`,
+    /// and this is what proves the deposit verbs actually run it. The liveness half matters as much
+    /// as the refusal: without it the test would pass against a verb that never worked at all.
+    #[test]
+    fn a_deposit_verb_is_refused_until_its_lesson_is_learned() {
+        let line = format!("fell 0 {} {} wood", WORKING.x, WORKING.y);
+
+        let (mut ignorant, _faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        send_command_line(&mut ignorant, &line);
+        assert!(
+            extraction_failure_contains(&ignorant, "not learned"),
+            "a people who have not learned woodcraft are told so, rather than the command \
+             silently doing nothing; the feed said {:?}",
+            extraction_failure_reasons(&ignorant)
+        );
+        assert!(
+            declared_workings(&ignorant, band).is_empty(),
+            "and nothing is declared"
+        );
+
+        let (mut taught, faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        grant_deposit_knowledge(
+            &mut taught,
+            faction,
+            core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+        );
+        send_command_line(&mut taught, &line);
+        assert_eq!(
+            declared_workings(&taught, band),
+            vec![(WORKING, "wood".to_string(), Some(Improvement::Fell))],
+            "with the lesson learned the same line declares the working"
+        );
+    }
+
+    /// ⛔ **`quarry` IS REFUSED ON A SCATTER, WHICH IS THE WHOLE OF "YOU CANNOT QUARRY JUST
+    /// ANYWHERE".**
+    ///
+    /// `extraction:quarry`'s `min_deposit_capacity` is the one placement rule on either branch, and
+    /// it is resolved through the same `rung_site_refusal` seam a `sow` goes through. Closed
+    /// woodland carries 35 units of loose stone against the rung's 100; rolling hills carry 900. The
+    /// two halves run against the identical line, so the refusal is the ground and nothing else.
+    #[test]
+    fn a_quarry_is_refused_on_a_scatter_and_accepted_on_a_body_of_rock() {
+        let line = format!("quarry 0 {} {} stone", WORKING.x, WORKING.y);
+
+        let (mut scatter, faction, band) = deposit_world(SCATTER_TERRAIN, "stone");
+        grant_deposit_knowledge(
+            &mut scatter,
+            faction,
+            core_sim::extraction::QUARRYING_DISCOVERY_ID,
+        );
+        send_command_line(&mut scatter, &line);
+        assert!(
+            extraction_failure_contains(&scatter, "a scatter is not a body of rock"),
+            "the site rule refuses by name; the feed said {:?}",
+            extraction_failure_reasons(&scatter)
+        );
+        assert!(
+            declared_workings(&scatter, band).is_empty(),
+            "and no working is declared on ground the rung will not take"
+        );
+
+        let (mut rock, faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "stone");
+        grant_deposit_knowledge(
+            &mut rock,
+            faction,
+            core_sim::extraction::QUARRYING_DISCOVERY_ID,
+        );
+        send_command_line(&mut rock, &line);
+        assert_eq!(
+            declared_workings(&rock, band),
+            vec![(WORKING, "stone".to_string(), Some(Improvement::Quarry))],
+            "the same line on a real body of rock is accepted, so the refusal above is the site \
+             rule and not a fixture that could never have worked"
+        );
+    }
+
+    /// ⛔ **A VERB AIMED AT SOMETHING THE GROUND DOES NOT HOLD IS REFUSED, IN ALL THREE OF ITS
+    /// SHAPES** — and each names a different thing to fix.
+    ///
+    /// **The third is the one worth stating plainly, because the gate that answers it is one command
+    /// upstream.** `validate_deposit_verb` asks the ground and the knowledge and *nothing else* —
+    /// exactly the two terms `deposit_head_gate` resolves for the turn, which is what stops the
+    /// command's refusal and the turn's drifting apart — and a free floor's `site_requirement` is
+    /// `null`, so no capacity term there can refuse a `fell`. What refuses it is that **a working's
+    /// keeper is its crew**: `extraction.json` says *there is no timber here* by leaving the terrain
+    /// out of `wood`'s `by_terrain`, `validate_labor_policy`'s `Extract` arm turns that absence into
+    /// a refusal at the moment a crew is assigned, and so a tile holding no wood has nobody on its
+    /// wood for the verb to declare for. The fixture asserts that premise rather than assuming it.
+    #[test]
+    fn a_deposit_verb_is_refused_when_the_ground_holds_no_such_working() {
+        // ① A material that does not come out of the ground at all.
+        let (mut app, faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        grant_deposit_knowledge(
+            &mut app,
+            faction,
+            core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+        );
+        send_command_line(
+            &mut app,
+            &format!("fell 0 {} {} amber", WORKING.x, WORKING.y),
+        );
+        assert!(
+            extraction_failure_contains(&app, "not something that comes out of the ground"),
+            "an unknown material is refused by name; the feed said {:?}",
+            extraction_failure_reasons(&app)
+        );
+        assert!(declared_workings(&app, band).is_empty());
+
+        // ② The right material on the WRONG ladder — `quarry` is not how you work a wood.
+        let (mut app, faction, band) = deposit_world(TWO_DEPOSIT_TERRAIN, "wood");
+        grant_deposit_knowledge(
+            &mut app,
+            faction,
+            core_sim::extraction::QUARRYING_DISCOVERY_ID,
+        );
+        send_command_line(
+            &mut app,
+            &format!("quarry 0 {} {} wood", WORKING.x, WORKING.y),
+        );
+        assert!(
+            extraction_failure_contains(&app, "that is the other ladder"),
+            "the branch mismatch is refused by name; the feed said {:?}",
+            extraction_failure_reasons(&app)
+        );
+        assert!(declared_workings(&app, band).is_empty());
+
+        // ③ A real material on ground that holds none of it. The band is on this lava field's ROCK,
+        // which it genuinely has — so the only thing missing is the timber the line names.
+        let (mut bare, faction, band) = deposit_world(NO_TIMBER_TERRAIN, "stone");
+        grant_deposit_knowledge(
+            &mut bare,
+            faction,
+            core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+        );
+        assert!(
+            validate_labor_policy(
+                &bare,
+                faction,
+                &LaborTarget::Extract {
+                    tile: WORKING,
+                    material: "wood".to_string(),
+                },
+            )
+            .is_err(),
+            "the fixture's premise: no crew can legally be put on timber this ground does not have, \
+             which is why the verb finds nobody to declare for"
+        );
+        send_command_line(
+            &mut bare,
+            &format!("fell 0 {} {} wood", WORKING.x, WORKING.y),
+        );
+        assert!(
+            extraction_failure_contains(&bare, "No band is working the wood"),
+            "the refusal reaches the player's feed and names what to do about it, rather than the \
+             command silently doing nothing; the feed said {:?}",
+            extraction_failure_reasons(&bare)
+        );
+        assert!(
+            declared_workings(&bare, band).is_empty(),
+            "and no working is declared on ground that holds no timber"
         );
     }
 }

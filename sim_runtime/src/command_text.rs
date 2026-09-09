@@ -232,6 +232,24 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "pave <faction_id> <band_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "fell",
+        aliases: &[],
+        summary: "DECLARE a felling working on the wood at a tile: appended to the build queue of every band already working that deposit, and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. IT NAMES A MATERIAL as well as a tile, unlike every other tile verb: one hex can hold two workings (a wooded highland holds timber AND rock), so a line naming only the tile names neither of them - the same token `assign_labor <f> <b> extract <x> <y> <material> <n>` carries. IT NAMES NO BAND, unlike `grade`: a working belongs to a camp exactly as a patch does, so its keeper is whoever already cuts it, and you must have a crew on the deposit before you can raise it. Forestry rung 2, and the rung at which OVER-CUTTING BECOMES POSSIBLE - the take is finally fast enough to outpace what the wood puts back. Needs Woodcraft knowledge, earned by gathering deadfall. Use `unqueue` to withdraw the declaration and `abandon` to put the working down.",
+        usage: "fell <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
+        verb: "coppice",
+        aliases: &[],
+        summary: "DECLARE a managed wood on the deposit at a tile - `fell`'s twin one rung up, declared and funded on exactly the same terms and naming the material the same way. What it buys is REGROWTH: it raises the deposit's own rate and NEVER its capacity, so you do not get more per turn by cutting harder, you get more per turn for ever by managing the wood. Needs Conservationism knowledge, earned by FELLING - the first rung on either branch at which a wood can be ruined.",
+        usage: "coppice <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
+        verb: "quarry",
+        aliases: &[],
+        summary: "DECLARE a cut working face on the stone at a tile - the extraction branch's rung-2 verb, declared and funded exactly as `fell` is and naming the material the same way. What it buys is REACH, not rate: a finite deposit has no regrowth to raise, so the rung lowers the floor it can reach beneath instead. IT IS THE ONE RUNG ON EITHER BRANCH THAT ASKS SOMETHING OF THE GROUND - the tile's own capacity for the material must clear the rung's min_deposit_capacity, which is the whole of 'you cannot quarry just anywhere': a scatter of loose stone is not a body of rock, and the refusal says so and names the ground that carries one. Needs Quarrying knowledge, earned by picking loose stone.",
+        usage: "quarry <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
         summary: "Grow the fenced footprint of your built pen at a tile by one ring. A ring rides the same animal:pen rung as the pen it widens, so it queues and is funded exactly like every other build: appended to the build queue of every band keeping the pen, raised by that band's `builders` pool when it reaches the head - this names no workers. Needs Penning, an owned penned herd, a band already keeping it, and room below the pen-radius max.",
@@ -1179,6 +1197,64 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     target_y,
                 })
             }
+        }
+        // ⛔ **THE TWO DEPOSIT BRANCHES' THREE TILE VERBS**, in `cultivate`/`sow`'s grammar **plus a
+        // material** — and deliberately **not** `grade`/`pave`'s, which take a band.
+        //
+        // **No band token, because a working has a keeper already.** A road has no work row at all,
+        // so the band that will keep it must be said out loud; a working belongs to a camp exactly
+        // as a patch does, and its keeper is whoever already cuts or digs it. The verb reaches every
+        // band of the faction with an `extract` row on the source, as `cultivate` reaches every band
+        // foraging the patch.
+        //
+        // ⛔ **A MATERIAL TOKEN, WHICH NO OTHER TILE VERB CARRIES.** The working's key is
+        // `(tile, material)` because one hex can hold two — a wooded highland holds timber *and*
+        // rock — so a line naming only the tile names neither of them. It is the same trailing token
+        // the `assign_labor … extract` grammar above carries, in the same position after the tile, so
+        // the two ways of addressing one working read alike.
+        //
+        // **The tail is CLOSED.** The material is the last token, so an unnoticed extra would be
+        // silently dropped on exactly the verb where a second material name is the plausible typo.
+        verb @ ("fell" | "coppice" | "quarry") => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let material = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("material"))?;
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            let faction_id = parse_u32(faction_str, "faction")?;
+            let target_x = parse_u32(x_str, "target_x")?;
+            let target_y = parse_u32(y_str, "target_y")?;
+            let material = material.to_string();
+            Ok(match verb {
+                "fell" => CommandPayload::Fell {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+                "coppice" => CommandPayload::Coppice {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+                _ => CommandPayload::Quarry {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+            })
         }
         "extend_pen" => {
             let faction_str = parts
@@ -2598,6 +2674,61 @@ mod tests {
         assert!(matches!(
             parse_command_line("corral 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
+        ));
+    }
+
+    /// ⛔ **THE TWO DEPOSIT BRANCHES' THREE TILE VERBS** — `cultivate`'s grammar **plus a
+    /// material**, and deliberately not `grade`'s plus a band.
+    #[test]
+    fn parse_deposit_verbs() {
+        assert_eq!(
+            parse_command_line("fell 0 7 3 wood").unwrap(),
+            CommandPayload::Fell {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+                material: "wood".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command_line("coppice 1 7 3 wood").unwrap(),
+            CommandPayload::Coppice {
+                faction_id: 1,
+                target_x: 7,
+                target_y: 3,
+                material: "wood".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command_line("quarry 0 7 3 stone").unwrap(),
+            CommandPayload::Quarry {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+                material: "stone".to_string(),
+            }
+        );
+    }
+
+    /// ⛔ **THE MATERIAL IS NOT OPTIONAL, AND THE TAIL IS CLOSED.**
+    ///
+    /// One hex can hold two workings, so a line naming only the tile names **neither** of them —
+    /// which makes a defaulted material the one plausible way to raise the wrong one silently. And
+    /// the material is the last token, so an unnoticed extra would be dropped on exactly the verb
+    /// where a second material name is the plausible typo.
+    #[test]
+    fn a_deposit_verb_needs_its_material_and_takes_nothing_after_it() {
+        assert!(matches!(
+            parse_command_line("fell 0 7 3"),
+            Err(CommandParseError::MissingArgument("material"))
+        ));
+        assert!(matches!(
+            parse_command_line("quarry 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("quarry 0 7 3 stone wood"),
+            Err(CommandParseError::UnexpectedToken(_))
         ));
     }
 

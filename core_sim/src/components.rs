@@ -5614,6 +5614,28 @@ pub const NO_RAID_FLOOR: f32 = 1.0;
 pub const NO_IMPROVEMENT_UNDERWAY: Option<Improvement> = None;
 
 impl Improvement {
+    /// **EVERY BUILD VERB THE GAME HAS**, in `RungKey::ALL`'s idiom and for its reason: a sweep
+    /// that must cover all of them needs something to iterate, and a hand-listed set of names in
+    /// the sweep's own file is a second authority that goes stale the day a verb lands.
+    ///
+    /// ⛔ **IT IS WHAT `every_build_verb_has_a_command_line` WALKS** (issue #650). `fell`, `coppice`
+    /// and `quarry` shipped as variants here, with a [`crate::intensification::RungKey`] apiece and
+    /// a validation arm written for them, and **no command of any kind** — no grammar, no proto
+    /// message, no dispatch. Nothing failed to compile, because a verb nobody sends is a verb
+    /// nothing calls; the feature was simply unreachable. Adding a variant now breaks that test's
+    /// exhaustive match until someone states the line a player types to declare it.
+    pub const ALL: [Improvement; 9] = [
+        Improvement::Cultivate,
+        Improvement::Sow,
+        Improvement::Tame,
+        Improvement::Corral,
+        Improvement::Grade,
+        Improvement::Pave,
+        Improvement::Fell,
+        Improvement::Coppice,
+        Improvement::Quarry,
+    ];
+
     /// Stable wire/config key — the `as_str` convention every wire enum here uses, and the value
     /// `LaborAssignmentState.improvement` carries (`""` for [`None`]).
     pub fn as_str(self) -> &'static str {

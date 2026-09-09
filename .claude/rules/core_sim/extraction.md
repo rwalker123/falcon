@@ -248,6 +248,57 @@ and where this branch's move-or-stay pressure actually lives.
 risk *from*, so what the row protects is the position itself. A working still on its free floor is a
 wild stand and its row goes.
 
+## The three verbs — `fell`, `coppice`, `quarry`
+
+`fell <faction> <x> <y> <material>`, and the same shape for the other two. Each **declares**: an
+entry on the build queue of every band of the faction that already has an `extract` row on
+`(tile, material)`, raised by that band's `builders` pool at the head of the queue — so none of them
+names workers, exactly as no rung verb has since `plan_standing_upkeep.md` §2.5.
+
+**It is `cultivate`/`sow`'s grammar and not `grade`/`pave`'s, and the section above is the reason.** A
+road belongs to nobody until a band is named, so the route verbs carry a band token and stamp a
+`RoadKeeper`; a working belongs to a camp, so its keeper is already known and there is nothing for the
+command to name. `handle_deposit_verb` therefore goes through the same
+`queue_build_on_working_bands` the plant and animal verbs do, and inherits its *"no band is working
+this"* rejection — which is also why several bands can quote one working's countdown, the reason
+`publish_entry`'s deposit arm needs a `BuildEstimateClaims` where the road's needs nothing.
+
+⛔ **A MATERIAL TOKEN, WHICH NO OTHER TILE VERB CARRIES.** The working's key is `(tile, material)`
+because one hex can hold two — rolling hills carry timber *and* rock — so a line naming only the tile
+names **neither**, and the plausible shape of that hole is one that raises whichever the registry
+answered with first. It rides a trailing positional token in `assign_labor extract`'s own position,
+after the tile, so the two ways of addressing one working read alike, and the tail is **closed**: the
+material is the last token, so an extra one would be silently dropped on exactly the verb where a
+second material name is the plausible typo.
+
+**The gates are `validate_improvement`'s `Extract` arm and `validate_deposit_verb`, run once.** Those
+were written a slice before the verbs existed and were reachable from nothing; the command runs them
+rather than a second copy, which is what keeps the command's refusal and `deposit_head_gate`'s the
+same two terms.
+
+**"There is no timber on this ground" is answered one command upstream**, and deliberately not here: a
+free floor's `site_requirement` is `null`, so no capacity term in `validate_deposit_verb` can refuse
+a `fell`. What refuses it is `validate_labor_policy`'s `Extract` arm at the moment a crew is
+assigned — absence in `by_terrain` *is* the answer — so a tile holding no wood has nobody on its wood
+for the verb to declare for, and the verb's own rejection names the crew.
+
+> ### ⛔ THE VERBS SHIPPED AS `Improvement` VARIANTS WITH NO COMMAND AT ALL, FOR A WHOLE ARC
+>
+> `Improvement::Fell` / `Coppice` / `Quarry`, a `RungKey` apiece, `RungKey::built_by` mapping them,
+> `valid_for_extract` guarding them and `validate_deposit_verb` gating them — and **no grammar, no
+> proto message, no `Command` variant and no dispatch arm** (issue #650). Nothing failed to compile,
+> because a verb nobody sends is a verb nothing calls; the client's rung ladder was built and pressing
+> it could send nothing. A player could cultivate a patch, sow a field, grade a road and pave one, and
+> could not build a quarry by any means.
+>
+> The guard is `server::tests::every_build_verb_has_a_command_line`, which walks **`Improvement::ALL`**
+> — a new variant fails its exhaustive match until somebody states the line that declares it — and
+> drives each line through the *encoded* envelope: the grammar, the proto round trip and
+> `command_from_payload` are three separate crates that each compile perfectly without the next, so a
+> test that handed the parsed payload straight to the handler would prove only the first and the last.
+> The `Command` it comes out as is compared against `commanding_faction`'s own label rather than a
+> hand-written expectation, so a `fell` line that decoded into `Command::Coppice` cannot pass.
+
 ## What a working costs to HOLD — the `quarrywork` pool
 
 Every **built** rung on both branches owes work per turn, drawn from `LaborTarget::Quarrywork` — the
