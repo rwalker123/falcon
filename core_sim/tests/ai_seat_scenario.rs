@@ -7,11 +7,8 @@
 //! launcher would, and observes the world afterwards through a connection of its own.
 //!
 //! **Why it lives in `core_sim/tests/`.** `CARGO_BIN_EXE_server` is only defined for the package
-//! owning that bin, and the `sim_ai` binary is resolved as its **sibling** in the target directory.
-//! `cargo test --workspace` builds it there before any test runs (`sim_ai/tests/crate_boundary.rs`
-//! is an integration-test target, and a package with one has its binaries built). Under a narrower
-//! invocation the sibling can be absent, in which case it is built into a private target directory
-//! — private, because the outer `cargo test` holds the shared one's lock for the whole run.
+//! owning that bin, and the `sim_ai` binary is resolved as its **sibling** in the target directory
+//! (`common::ai_process`, shared with `ai_bench.rs`, which also owns the fallback build).
 //!
 //! **What it asserts, and through whom.** Frames are viewer-scoped and fogged — a rival band the
 //! human has never seen is in no frame of seat 0's — so the rival's world is read through seat 1
@@ -19,13 +16,16 @@
 //! has exited and released it. The rival's band count moved by the scripted `split_band`, and the
 //! tick advanced by the turns the AI submitted `ready` for.
 
+mod common;
+
 use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use common::ai_process::{log_tail, sim_ai_binary, strip_ansi, Process, Scratch, LOG_TAIL_LINES};
 use core_sim::network::SEAT_TOKEN_BYTES;
 use core_sim::{apply_port_base, SimulationConfig};
 use sim_runtime::commands::{QueryPayload, SeatClaimReply};
@@ -84,41 +84,15 @@ const MAX_SNAPSHOT_FRAME_BYTES: usize = 64 * 1024 * 1024;
 /// Frames read past while waiting for a full one, before giving up.
 const MAX_FRAMES_AWAITED: usize = 32;
 const SERVER_LOG_FILTER: &str = "info";
-const LOG_TAIL_LINES: usize = 40;
 
 const SYNC_QUERY_ID: u64 = 1;
 /// Claim ids are spaced by the retry count, since a retried claim spends one id per attempt.
 const BEFORE_CLAIM_ID: u64 = 100;
 const AFTER_CLAIM_ID: u64 = 200;
 
-/// The private target directory the fallback build uses (see the module docs).
-const FALLBACK_TARGET_DIR: &str = "ai_seat_scenario";
-
 // =================================================================================================
 // The harness
 // =================================================================================================
-
-struct Scratch {
-    dir: PathBuf,
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.dir);
-    }
-}
-
-/// A child killed on drop, including on a panic.
-struct Process {
-    child: Child,
-}
-
-impl Drop for Process {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 
 struct Ports {
     command: SocketAddr,
@@ -275,14 +249,7 @@ impl Link {
 }
 
 fn start_server() -> (Process, Scratch, PathBuf, PathBuf, Ports) {
-    let scratch = Scratch {
-        dir: std::env::temp_dir().join(format!(
-            "shadow_scale_ai_seat_scenario_{}",
-            std::process::id()
-        )),
-    };
-    let _ = fs::remove_dir_all(&scratch.dir);
-    fs::create_dir_all(&scratch.dir).expect("scratch directory");
+    let scratch = Scratch::new("ai_seat_scenario");
     let saves = scratch.dir.join("saves");
     fs::create_dir_all(&saves).expect("scratch save directory");
     let config_path = write_test_config(&scratch.dir);
@@ -372,67 +339,6 @@ fn read_ports_file(path: &Path, pid: u32) -> Option<Ports> {
         command: SocketAddr::new(host, port("command")?),
         stream: SocketAddr::new(host, port("snapshot_flat")?),
     })
-}
-
-/// The introducer of an ANSI escape sequence and the byte that ends an SGR one.
-const ANSI_ESCAPE: char = '\x1b';
-const ANSI_SGR_END: char = 'm';
-
-/// `text` without its ANSI colour sequences.
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut in_escape = false;
-    for ch in text.chars() {
-        if in_escape {
-            if ch == ANSI_SGR_END {
-                in_escape = false;
-            }
-        } else if ch == ANSI_ESCAPE {
-            in_escape = true;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-fn log_tail(path: &Path) -> String {
-    match fs::read_to_string(path) {
-        Ok(text) => {
-            let lines: Vec<&str> = text.lines().collect();
-            lines[lines.len().saturating_sub(LOG_TAIL_LINES)..].join("\n")
-        }
-        Err(err) => format!("(the log at {} could not be read: {err})", path.display()),
-    }
-}
-
-/// The built `sim_ai`: the server binary's sibling, or a private build of it (module docs).
-fn sim_ai_binary() -> PathBuf {
-    let server = Path::new(env!("CARGO_BIN_EXE_server"));
-    let sibling = server.with_file_name(format!("sim_ai{}", std::env::consts::EXE_SUFFIX));
-    if sibling.is_file() {
-        return sibling;
-    }
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("core_sim sits in the workspace root");
-    let target_dir = workspace.join("target").join(FALLBACK_TARGET_DIR);
-    let status = Command::new(env!("CARGO"))
-        .current_dir(workspace)
-        .args(["build", "-p", "sim_ai", "--bin", "sim_ai", "--target-dir"])
-        .arg(&target_dir)
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "building sim_ai for the scenario failed");
-    let built = target_dir
-        .join("debug")
-        .join(format!("sim_ai{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        built.is_file(),
-        "the fallback build produced no sim_ai at {}",
-        built.display()
-    );
-    built
 }
 
 fn new_game() -> CommandPayload {

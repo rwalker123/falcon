@@ -35,7 +35,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use sim_runtime::commands::{seat_error, SeatClaimReply};
+use sim_runtime::commands::{seat_error, QueryPayload, SeatClaimReply};
 use sim_runtime::{
     CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelope, MAX_PROTO_FRAME,
 };
@@ -308,6 +308,69 @@ impl Drop for Link {
         // server's read loop); the stream goes with it.
         let _ = self.command.shutdown(Shutdown::Both);
         let _ = self.stream.shutdown(Shutdown::Both);
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// The unseated connection
+// -------------------------------------------------------------------------------------------------
+
+/// **A command connection that claims no seat** — the bench's world builder (`crate::bench`).
+///
+/// It sends the verbs that name no faction (`new_game`) and holds no seat, exactly as the scenario
+/// tests' builder does: `factions.md` → Seats says an unseated connection is right for world verbs
+/// and nothing else. It is not a host — it never sends `Turn` — and it is dropped once the world
+/// exists.
+pub struct UnseatedConnection {
+    socket: TcpStream,
+    next_request_id: u64,
+}
+
+impl UnseatedConnection {
+    pub fn connect(addr: SocketAddr) -> io::Result<Self> {
+        let socket = TcpStream::connect(addr)?;
+        let _ = socket.set_nodelay(true);
+        Ok(Self {
+            socket,
+            next_request_id: 1,
+        })
+    }
+
+    /// Write one world verb.
+    pub fn send(&mut self, payload: CommandPayload) -> io::Result<()> {
+        debug_assert!(
+            !is_host_verb(&payload),
+            "the bench's builder is not a host: {payload:?}"
+        );
+        let envelope = CommandEnvelope {
+            payload,
+            correlation_id: None,
+        };
+        let bytes = envelope
+            .encode_to_vec()
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        write_frame(&mut self.socket, &bytes)
+    }
+
+    /// Block until everything sent before this has been applied: a `ListSaves` question names
+    /// no faction, so an unseated connection is answered, and it is answered **in order** behind
+    /// whatever was written before it.
+    pub fn sync(&mut self, timeout: Duration) -> io::Result<()> {
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send(CommandPayload::Query {
+            request_id,
+            query: QueryPayload::ListSaves,
+        })?;
+        self.socket.set_read_timeout(Some(timeout))?;
+        loop {
+            let bytes = read_frame(&mut self.socket, MAX_PROTO_FRAME)?;
+            let envelope = QueryReplyEnvelope::decode(&bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+            if envelope.request_id == request_id {
+                return Ok(());
+            }
+        }
     }
 }
 

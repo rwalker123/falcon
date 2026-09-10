@@ -33,12 +33,23 @@ use rand::rngs::StdRng;
 use sim_runtime::{parse_command_line, CommandPayload};
 use tracing::{error, info};
 
+use crate::instruments::decisions::{Decision, DecisionRecord, DecisionSink, Outcome};
 use crate::view::SeatView;
 
 /// The plug. An external program in another language implements the same contract over the
 /// socket; inside this crate it is this trait.
+///
+/// `sink` is where the brain's decision records go (`docs/plan_ai_driver.md` §8.1): a brain that
+/// weighs proposals writes one [`Decision`] per proposal, accepted or not, so every command it
+/// returns has a row behind it (§10). A brain with nothing to say leaves the sink untouched — the
+/// `ready` row is the loop's, not the brain's.
 pub trait Brain {
-    fn decide(&mut self, view: &SeatView, rng: &mut StdRng) -> Vec<CommandPayload>;
+    fn decide(
+        &mut self,
+        view: &SeatView,
+        rng: &mut StdRng,
+        sink: &mut dyn DecisionSink,
+    ) -> Vec<CommandPayload>;
 }
 
 /// Submits end-turn and nothing else.
@@ -46,10 +57,26 @@ pub trait Brain {
 pub struct PassBrain;
 
 impl Brain for PassBrain {
-    fn decide(&mut self, _view: &SeatView, _rng: &mut StdRng) -> Vec<CommandPayload> {
+    fn decide(
+        &mut self,
+        _view: &SeatView,
+        _rng: &mut StdRng,
+        _sink: &mut dyn DecisionSink,
+    ) -> Vec<CommandPayload> {
         Vec::new()
     }
 }
+
+/// How the scripted brain names itself on the decision log: one `Scripted` specialist replaying
+/// its list at infinite score (`plan_ai_driver.md` §1), which the log states as a score of
+/// [`SCRIPT_SCORE`] accepted by a pass-through arbiter.
+pub const SCRIPTED_SPECIALIST: &str = "scripted";
+/// The one intent a script line carries.
+pub const SCRIPT_INTENT: &str = "script";
+/// The score a script line is logged at, raw and final alike: nothing outscores a script.
+pub const SCRIPT_SCORE: f32 = 1.0;
+/// A script line is one command.
+const COMMANDS_PER_SCRIPT_LINE: usize = 1;
 
 /// The placeholder for this seat's faction id.
 const FACTION_PLACEHOLDER: &str = "{faction}";
@@ -126,7 +153,12 @@ impl ScriptedBrain {
 }
 
 impl Brain for ScriptedBrain {
-    fn decide(&mut self, view: &SeatView, _rng: &mut StdRng) -> Vec<CommandPayload> {
+    fn decide(
+        &mut self,
+        view: &SeatView,
+        _rng: &mut StdRng,
+        sink: &mut dyn DecisionSink,
+    ) -> Vec<CommandPayload> {
         let tick = view.snapshot.header.tick;
         if self.first_tick.is_none() {
             self.first_tick = Some(tick);
@@ -144,6 +176,16 @@ impl Brain for ScriptedBrain {
             match parse_command_line(&resolved) {
                 Ok(payload) => {
                     info!(tick, command = %resolved, "script line fires");
+                    sink.record(DecisionRecord::Decision(Decision {
+                        tick,
+                        specialist: SCRIPTED_SPECIALIST.to_owned(),
+                        intent: SCRIPT_INTENT.to_owned(),
+                        score_raw: SCRIPT_SCORE,
+                        score_final: SCRIPT_SCORE,
+                        outcome: Outcome::Accepted,
+                        reason: resolved.clone(),
+                        commands: COMMANDS_PER_SCRIPT_LINE,
+                    }));
                     commands.push(payload);
                 }
                 Err(err) => error!(tick, line = %resolved, %err, "script line does not parse"),
@@ -243,6 +285,7 @@ fn substitute(command: &str, faction: u32, view: &SeatView) -> Result<String, Su
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instruments::decisions::{NullSink, VecSink};
     use rand::SeedableRng;
     use sim_runtime::{PopulationCohortState, WorldSnapshot};
 
@@ -278,8 +321,12 @@ mod tests {
     }
 
     #[test]
-    fn the_pass_brain_submits_nothing() {
-        assert!(PassBrain.decide(&a_view_at(A_TICK), &mut rng()).is_empty());
+    fn the_pass_brain_submits_nothing_and_records_nothing() {
+        let mut sink = VecSink::default();
+        assert!(PassBrain
+            .decide(&a_view_at(A_TICK), &mut rng(), &mut sink)
+            .is_empty());
+        assert!(sink.0.is_empty());
     }
 
     #[test]
@@ -322,16 +369,36 @@ mod tests {
             OUR_FACTION,
         )
         .expect("parses");
-        assert!(brain.decide(&a_view_at(A_TICK - 1), &mut rng()).is_empty());
+        let mut sink = VecSink::default();
+        assert!(brain
+            .decide(&a_view_at(A_TICK - 1), &mut rng(), &mut sink)
+            .is_empty());
+        assert!(sink.0.is_empty(), "a line that did not fire is no decision");
         assert_eq!(
-            brain.decide(&a_view_at(A_TICK), &mut rng()),
+            brain.decide(&a_view_at(A_TICK), &mut rng(), &mut sink),
             vec![CommandPayload::SplitBand {
                 faction_id: OUR_FACTION,
                 band_id: Some(OUR_SECOND_BAND),
                 workers: 4,
             }]
         );
-        assert!(brain.decide(&a_view_at(A_TICK + 1), &mut rng()).is_empty());
+        assert_eq!(
+            sink.0,
+            vec![DecisionRecord::Decision(Decision {
+                tick: A_TICK,
+                specialist: SCRIPTED_SPECIALIST.to_owned(),
+                intent: SCRIPT_INTENT.to_owned(),
+                score_raw: SCRIPT_SCORE,
+                score_final: SCRIPT_SCORE,
+                outcome: Outcome::Accepted,
+                reason: format!("split_band {OUR_FACTION} {OUR_SECOND_BAND} 4"),
+                commands: COMMANDS_PER_SCRIPT_LINE,
+            })],
+            "one accepted decision per fired line"
+        );
+        assert!(brain
+            .decide(&a_view_at(A_TICK + 1), &mut rng(), &mut sink)
+            .is_empty());
     }
 
     #[test]
@@ -339,8 +406,15 @@ mod tests {
         let mut brain =
             ScriptedBrain::from_script("+1: split_band {faction} {own_band:0} 4", OUR_FACTION)
                 .expect("parses");
-        assert!(brain.decide(&a_view_at(A_TICK), &mut rng()).is_empty());
-        assert_eq!(brain.decide(&a_view_at(A_TICK + 1), &mut rng()).len(), 1);
+        assert!(brain
+            .decide(&a_view_at(A_TICK), &mut rng(), &mut NullSink)
+            .is_empty());
+        assert_eq!(
+            brain
+                .decide(&a_view_at(A_TICK + 1), &mut rng(), &mut NullSink)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -352,6 +426,10 @@ mod tests {
             OUR_FACTION,
         )
         .expect("parses");
-        assert!(brain.decide(&a_view_at(A_TICK), &mut rng()).is_empty());
+        let mut sink = VecSink::default();
+        assert!(brain
+            .decide(&a_view_at(A_TICK), &mut rng(), &mut sink)
+            .is_empty());
+        assert!(sink.0.is_empty(), "a skipped line is no decision either");
     }
 }

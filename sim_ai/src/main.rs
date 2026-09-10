@@ -7,8 +7,14 @@
 //! not acted on, `decide` runs, its commands go out on the seated link, and `Orders { Ready }`
 //! follows — **always**, even when the brain returned nothing. A mid-turn recapture arrives with
 //! the same tick and is never acted on twice.
+//!
+//! The same binary is the bench harness: `sim_ai bench …` (`bench.rs`) starts a server and one
+//! player process per seat, and measures them from their logs. Without that first word the
+//! process plays — the launcher's invocation (`sim_ai --ports-file … --faction N`) is unchanged.
 
+mod bench;
 mod brain;
+mod instruments;
 mod link;
 mod view;
 
@@ -23,6 +29,11 @@ use sim_runtime::{CommandPayload, OrdersDirective};
 use tracing::{error, info, warn};
 
 use brain::{Brain, PassBrain, ScriptedBrain};
+use instruments::decisions::{
+    DecisionRecord, DecisionSink, LinkEventKind, LinkRecord, NullSink, ReadyRecord,
+};
+use instruments::scoreboard::ScoreRow;
+use instruments::Instruments;
 use link::{Endpoints, Link, LinkEvent};
 use view::{FrameOutcome, Perception};
 
@@ -43,8 +54,13 @@ const EVENT_POLL: Duration = Duration::from_millis(250);
 /// The one seed value meaning "derive from the faction", so two rivals with no seed differ.
 const DERIVE_SEED_FROM_FACTION: u64 = 0;
 
+/// The first argument that selects the bench harness; anything else is the player.
+const BENCH_SUBCOMMAND: &str = "bench";
+/// The player's own subcommand name, accepted so `sim_ai play …` reads as the pair of `bench`.
+const PLAY_SUBCOMMAND: &str = "play";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum BrainKind {
+pub enum BrainKind {
     Pass,
     Scripted,
 }
@@ -52,7 +68,7 @@ enum BrainKind {
 #[derive(Parser, Debug)]
 #[command(
     name = "sim_ai",
-    about = "A Shadow-Scale player process: claims a seat and plays it."
+    about = "A Shadow-Scale player process: claims a seat and plays it. `sim_ai bench` measures it."
 )]
 struct Args {
     /// The server's handshake file (default: `$SIM_PORTS_FILE`, as the launcher sets it).
@@ -79,7 +95,7 @@ struct Args {
     /// Exit 0 after this many resolved turns (advances of the frame's tick).
     #[arg(long)]
     turns: Option<u64>,
-    /// Where the instruments will write. Accepted now, used by a later slice.
+    /// Where the instruments write `scoreboard.jsonl` and `decisions.jsonl`. Absent: no instruments.
     #[arg(long)]
     log_dir: Option<PathBuf>,
 }
@@ -90,6 +106,12 @@ enum RunError {
     NoEndpoints,
     #[error("could not read the ports file {path}: {detail}")]
     PortsFile { path: String, detail: String },
+    #[error("could not open the instruments under {path}: {source}")]
+    Instruments {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error(transparent)]
     Link(#[from] link::LinkError),
     #[error(transparent)]
@@ -104,8 +126,20 @@ fn main() {
         )
         .with_writer(std::io::stderr)
         .init();
-    let args = Args::parse();
-    if let Err(err) = run(args) {
+    let mut argv: Vec<String> = std::env::args().collect();
+    let outcome = match argv.get(1).map(String::as_str) {
+        Some(BENCH_SUBCOMMAND) => {
+            argv.remove(1);
+            bench::run(bench::BenchArgs::parse_from(argv)).map_err(|err| err.to_string())
+        }
+        first => {
+            if first == Some(PLAY_SUBCOMMAND) {
+                argv.remove(1);
+            }
+            run(Args::parse_from(argv)).map_err(|err| err.to_string())
+        }
+    };
+    if let Err(err) = outcome {
         error!(%err, "sim_ai exiting");
         std::process::exit(1);
     }
@@ -129,9 +163,19 @@ fn run(args: Args) -> Result<(), RunError> {
             Box::new(ScriptedBrain::load(script, faction)?)
         }
     };
-    if let Some(log_dir) = &args.log_dir {
-        info!(log_dir = %log_dir.display(), "log dir accepted; the instruments arrive in a later slice");
-    }
+    let mut instruments = match &args.log_dir {
+        Some(log_dir) => {
+            info!(log_dir = %log_dir.display(), "instruments open");
+            Some(
+                Instruments::open(log_dir).map_err(|source| RunError::Instruments {
+                    path: log_dir.display().to_string(),
+                    source,
+                })?,
+            )
+        }
+        None => None,
+    };
+    let mut null_sink = NullSink;
 
     let mut link = Link::connect(endpoints, faction)?;
     let mut perception = Perception::default();
@@ -162,6 +206,11 @@ fn run(args: Args) -> Result<(), RunError> {
             LinkEvent::CommandDropped(detail) => {
                 warn!(%detail, "command link dropped");
                 link.reconnect()?;
+                record_link_event(
+                    instruments.as_mut(),
+                    last_tick_seen,
+                    LinkEventKind::CommandReconnect,
+                );
                 perception.expect_full_frame();
                 link.resync()?;
                 continue;
@@ -169,6 +218,11 @@ fn run(args: Args) -> Result<(), RunError> {
             LinkEvent::StreamDropped(detail) => {
                 warn!(%detail, "stream dropped");
                 link.reopen_stream()?;
+                record_link_event(
+                    instruments.as_mut(),
+                    last_tick_seen,
+                    LinkEventKind::StreamReopen,
+                );
                 perception.expect_full_frame();
                 link.resync()?;
                 continue;
@@ -192,6 +246,11 @@ fn run(args: Args) -> Result<(), RunError> {
         if let Some(limit) = args.turns {
             if turns_observed >= limit {
                 info!(turns_observed, "turn budget reached; releasing the seat");
+                if let Some(instruments) = instruments.as_mut() {
+                    if let Err(err) = instruments.flush() {
+                        error!(%err, "the instruments could not be flushed");
+                    }
+                }
                 return Ok(());
             }
         }
@@ -199,9 +258,20 @@ fn run(args: Args) -> Result<(), RunError> {
             continue;
         }
 
+        // The row first, so a process that dies mid-turn still leaves the tick it saw behind.
+        if let Some(instruments) = instruments.as_mut() {
+            let row = ScoreRow::from_snapshot(&view.snapshot, faction);
+            if let Err(err) = instruments.record_score(&row) {
+                error!(%err, tick, "the scoreboard could not be written");
+            }
+        }
+        let sink: &mut dyn DecisionSink = match instruments.as_mut() {
+            Some(instruments) => instruments,
+            None => &mut null_sink,
+        };
         let started = Instant::now();
         let mut rng = decision_rng(seed, faction, tick);
-        let commands = brain.decide(view, &mut rng);
+        let commands = brain.decide(view, &mut rng, sink);
         let elapsed = started.elapsed();
         if elapsed > DECIDE_BUDGET {
             warn!(
@@ -218,7 +288,19 @@ fn run(args: Args) -> Result<(), RunError> {
             faction_id: faction,
             directive: OrdersDirective::Ready,
         })?;
+        sink.record(DecisionRecord::Ready(ReadyRecord { tick }));
         view.last_acted_tick = Some(tick);
+    }
+}
+
+/// Note a link event on the decision log, when there is one.
+fn record_link_event(
+    instruments: Option<&mut Instruments>,
+    tick: Option<u64>,
+    event: LinkEventKind,
+) {
+    if let Some(instruments) = instruments {
+        instruments.record(DecisionRecord::Link(LinkRecord { tick, event }));
     }
 }
 
@@ -302,5 +384,27 @@ mod tests {
         assert_eq!(endpoints.command, "127.0.0.1:41001".parse().unwrap());
         assert_eq!(endpoints.stream, "127.0.0.1:41002".parse().unwrap());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_players_arguments_parse_with_and_without_the_play_word() {
+        let bare = Args::try_parse_from(["sim_ai", "--faction", "1", "--host", "127.0.0.1"]);
+        assert!(
+            bare.is_err(),
+            "--host alone is refused: it needs both ports"
+        );
+        let play = Args::try_parse_from([
+            "sim_ai",
+            "--ports-file",
+            "ports.json",
+            "--faction",
+            "2",
+            "--turns",
+            "5",
+        ])
+        .expect("the launcher's invocation parses");
+        assert_eq!(play.faction, 2);
+        assert_eq!(play.turns, Some(5));
+        assert_eq!(play.brain, BrainKind::Pass);
     }
 }
