@@ -1016,8 +1016,10 @@ const SPLIT_BAND_BUTTON := "Form the band"
 
 const SPLIT_BAND_HINT := "Split this band in two where it stands. The new band moves like any other."
 
-## What the player is told AFTER a viable split, under the button — the things that are easy to miss
-## about a verb whose result appears on the tile you are already looking at.
+## What the player is told under the button, VIABLE OR NOT — the things that are easy to miss about a
+## verb whose result appears on the tile you are already looking at. It describes the VERB, not this
+## composition, so the sheet draws it unconditionally and the footer is a fixed block; gating it on a
+## legal split grew the sheet the moment the stepper crossed a floor and jumped it under the cursor.
 ##
 ## **THE THIRD SENTENCE IS THE OUTFIT, and it is a fact this sheet no longer settles.** The worker
 ## count still divides the people and the stores, but the splinter's GEAR is decided in the
@@ -1028,9 +1030,10 @@ const SPLIT_BAND_AFTER_NOTE := "It appears on this tile. Move it like any band. 
 
 ## ---- WHY a split would be refused
 ##
-## **THE BUTTON IS DISABLED AND SAYS WHY; IT IS NEVER HIDDEN.** A control that vanishes teaches
-## nothing — the player who sees the verb only when it is legal never learns that a new band needs
-## four workers.
+## **THE BUTTON IS DISABLED AND CARRIES THE WHY ON ITS TOOLTIP; IT IS NEVER HIDDEN.** A control that
+## vanishes teaches nothing — the player who sees the verb only when it is legal never learns that a
+## new band needs four workers. The reason hangs off the button rather than printing under it because
+## a footer line that comes and goes with the stepper moves the whole bottom-anchored sheet.
 ##
 ## **SECOND PERSON, ONE SENTENCE PER REASON.** Both floors are independent and both can hold at once,
 ## which is why each is a whole sentence joined by `SPLIT_BLOCKED_SEPARATOR` rather than a clause

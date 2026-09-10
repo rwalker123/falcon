@@ -5493,8 +5493,10 @@ idle workers to spare" directly under a live `⌂ Split`.
 
 **THE SHEET SHOWS THE CONSEQUENCE, BECAUSE THE INPUT IS ONE NUMBER.** Workers stepper → the share it
 implies → what the new band would be (people, brackets, dependants/worker, provisions) → the home
-band beside its now → the verdict. The people, the larder and the material all divide on that one
-share.
+band beside its now → the button, live or disabled-carrying-its-reason → a footer that never moves.
+The people, the larder and the material all divide on that one share. **The verdict is not a line of
+its own**: it hangs off the disabled button as a tooltip, for the height reason in "THE REFUSAL RIDES
+THE DISABLED BUTTON'S TOOLTIP" below.
 
 > #### ⛔ THE GEAR NO LONGER DOES, AND THE SHEET SAYS SO IN ONE SENTENCE
 >
@@ -5536,6 +5538,17 @@ share.
 joined by `SPLIT_BLOCKED_SEPARATOR`, because fixing one otherwise just reveals the other. The client
 holds no copy of the rule: a verdict cannot cross the wire when the sheet moves a stepper, since that
 would be one field per possible composition. See `.claude/rules/core_sim/fission.md`.
+
+**THE REFUSAL RIDES THE DISABLED BUTTON'S TOOLTIP; THE FOOTER LINE IS THE AFTER-NOTE, ALWAYS.** The
+first cut spent ONE hint label under `Form the band` and swapped its text — the refusal while a floor
+held, `SPLIT_BAND_AFTER_NOTE` once the composition was legal. The two run to different line counts,
+so the sheet changed height the moment the stepper crossed a floor, and this sheet is bottom-anchored:
+it answers a height change by **jumping upward, under the cursor that is still on the stepper**, which
+is exactly where the player is looking. The after-note describes what the VERB does — where the band
+appears, that it moves like any band, that the outfit closes with the turn — and every word of that is
+true whether or not the current composition is legal, so it is drawn unconditionally and the footer is
+a fixed block. `confirm.tooltip_text` carries `split_blocked_reason` instead, which is the control the
+reason is about; the button is still visible-and-disabled, never hidden.
 
 **THE STEPPER'S KEY IS A PARAMETER** on `HudWidgets.build_party_stepper_row`, defaulting to the word
 the three expedition sheets want. This sheet passes `SPLIT_STEPPER_LABEL` (`Workers`): a sheet whose
