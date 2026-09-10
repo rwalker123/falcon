@@ -6803,6 +6803,41 @@ static func signed_material_components(rows: Array,
             figure, String(row[MATERIAL_PAYOFF_ID_KEY])] if name_material else figure)
     return COMPONENT_SEPARATOR.join(parts)
 
+## **SEVERAL SOURCES' MATERIAL VECTORS ADDED INTO ONE, BY MATERIAL ID** — what a whole band's
+## extraction pays per turn, for a readout that states the band rather than one working.
+##
+## **THE MERGE IS BY ID AND NEVER ACROSS IDS.** Summing a `wood` row into a `hide` row would be the
+## retired trade axis under a new name (`signed_material_components`' own ⛔): two materials are two
+## accounts, and one figure standing for both is a number nothing in the sim ever computes. What IS
+## legitimate is two SOURCES paying the same material — two workings cutting wood, a hunt paying hide
+## beside a quarry that pays none — because that is one account credited twice.
+##
+## **FIRST-SEEN ORDER IS KEPT, so a repeated render states the accounts in the same sequence**: the
+## rows come off the caller's own ordered walk, and a dictionary-key order that shuffled would make
+## the joined face flicker between frames.
+##
+## `row_sets` is an array of per-source row arrays; each is normalized through `material_payoff_rows`,
+## so a malformed or absent vector contributes nothing rather than a zero row.
+static func merged_material_rows(row_sets: Array) -> Array[Dictionary]:
+    var order: Array[String] = []
+    var totals: Dictionary = {}
+    for rows_variant in row_sets:
+        if not (rows_variant is Array):
+            continue
+        for row in material_payoff_rows(rows_variant as Array):
+            var material_id := String(row[MATERIAL_PAYOFF_ID_KEY])
+            if not totals.has(material_id):
+                order.append(material_id)
+            totals[material_id] = float(totals.get(material_id, 0.0)) \
+                + float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
+    var out: Array[Dictionary] = []
+    for material_id in order:
+        out.append({
+            MATERIAL_PAYOFF_ID_KEY: material_id,
+            MATERIAL_PAYOFF_AMOUNT_KEY: float(totals[material_id]),
+        })
+    return out
+
 ## One per-material vector times a scalar — a per-biomass vector through the escapement room, a
 ## per-worker vector through the build dip, or any of them through the band's `output_multiplier`.
 ## **Every material scales by the SAME factor**, because they are one biomass flow through a fixed

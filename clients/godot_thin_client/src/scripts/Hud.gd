@@ -2160,6 +2160,13 @@ func show_band_work_tab(band_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     _bandpanel.show_work_tab(int(band.get("entity", NO_BAND_ENTITY)))
 
+## **THE MAP'S SOURCE LIST ASKS FOR THE SAME TAB, HOLDING THE OTHER HANDLE** — the `Work tab ▸` link
+## on `BandSourceList` (issue #650). The map keys every overlay on the client-local `entity`, so this
+## caller needs no roster lookup at all; the pair above and this one differ only in which of the two
+## band handles arrives, which is exactly the join `show_band_work_tab` exists to make.
+func show_band_work_tab_for_entity(band_entity: int) -> void:
+    _bandpanel.show_work_tab(band_entity)
+
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID

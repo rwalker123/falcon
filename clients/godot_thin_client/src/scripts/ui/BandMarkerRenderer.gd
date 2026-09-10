@@ -20,6 +20,9 @@ var _band_banner_box: StyleBoxFlat = null
 # nothing to collide with.
 var _label_rects: Array[Rect2] = []
 var _label_grants: Dictionary = {}   # Vector2i -> Rect2
+# …and the same pass's FOOTPRINTS, expressed RELATIVE to the token centre they were measured from —
+# see `name_pill_offset`, the one consumer.
+var _label_offsets: Dictionary = {}   # Vector2i -> Rect2
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -59,6 +62,19 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 func placed_label_tiles() -> Array:
 	return _label_grants.keys()
 
+## **WHAT THIS TILE'S NAMEPLATE INKS, AS AN OFFSET FROM THE TOKEN'S CENTRE** — `Rect2()` where the
+## band drew none (below `BAND_NAME_PILL_MIN_RADIUS`, an expedition, a nameless band, or one the
+## overlap cull ate). The FOOTPRINT rect, so it includes the plate's end caps and the over-cap `×N`
+## chip: it is the same measurement the cull tests, read rather than re-derived.
+##
+## **IT IS AN OFFSET AND NOT A POSITION, ON PURPOSE.** The consumer is `BandSourceList.place()`, which
+## docks beside the band's centre as `BandOverlayRenderer` resolved it (`_band_effective_col`), while
+## this pass resolves its own centre through `_hex_center_wrapped`. Handing back a relative rect means
+## the two cannot disagree about WHICH wrapped copy of the band is being talked about — the panel
+## avoids the plate drawn beside the token it is docking to, whichever copy that is.
+func name_pill_offset(tile: Vector2i) -> Rect2:
+	return _label_offsets.get(tile, Rect2())
+
 ## THE NAME-PILL RESERVATION PASS. Fixed-size text does not shrink with the map, so at the gate
 ## radius a 15-character pill spans roughly two hexes and neighbouring bands collide. A pill whose
 ## rect intersects one already placed is SKIPPED ENTIRELY — no pill, and no fall back to the scaled
@@ -72,6 +88,7 @@ func placed_label_tiles() -> Array:
 func _reserve_name_pills(by_tile: Dictionary, order: Array, radius: float, origin: Vector2) -> void:
 	_label_rects.clear()
 	_label_grants.clear()
+	_label_offsets.clear()
 	if radius < _view.BAND_NAME_PILL_MIN_RADIUS:
 		return
 	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
@@ -98,6 +115,8 @@ func _reserve_name_pills(by_tile: Dictionary, order: Array, radius: float, origi
 		# plate ending where the `×N` chip has to be centred. See `_name_pill_rects`.
 		_label_rects.append(footprint)
 		_label_grants[tile] = rects[NAME_PILL_ANCHOR]
+		# The same footprint, minus the centre it was measured from — see `name_pill_offset`.
+		_label_offsets[tile] = Rect2(footprint.position - center, footprint.size)
 
 ## `order`, with the selected band's tile moved to the front — the ONE reordering the cull does, and
 ## it touches label placement only (the caller still draws tokens in `order`).

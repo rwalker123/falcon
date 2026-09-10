@@ -411,6 +411,12 @@ func _ready() -> void:
         if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
             if not hud.is_connected("labor_pending_changed", Callable(map_view, "set_labor_pending")):
                 hud.connect("labor_pending_changed", Callable(map_view, "set_labor_pending"))
+        # The map's SOURCE LIST asks for a band's Work tab (issue #650). The link is drawn ONLY when
+        # this connection exists (`MapView._update_source_list` tests it), so a harness with no HUD
+        # shows no dead control rather than a button that does nothing.
+        if hud != null and map_view.has_signal("work_tab_requested") and hud.has_method("show_band_work_tab_for_entity"):
+            if not map_view.is_connected("work_tab_requested", Callable(hud, "show_band_work_tab_for_entity")):
+                map_view.connect("work_tab_requested", Callable(hud, "show_band_work_tab_for_entity"))
         if hud != null and hud.has_signal("faction_knowledge_changed") and map_view.has_method("set_faction_knowledge"):
             if not hud.is_connected("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge")):
                 hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))

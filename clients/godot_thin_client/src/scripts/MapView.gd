@@ -40,6 +40,10 @@ signal targeting_cancel_requested()
 ## real change (it early-returns on a no-op); `_fit_map_to_view` also emits after
 ## resetting zoom + pan, so a fit re-syncs the readout even when already at 1.0×.
 signal zoom_changed(zoom_factor: float)
+## **THE SOURCE LIST'S `Work tab ▸` LINK** (issue #650) — re-emitted from `BandSourceList`, carrying
+## the SELECTED BAND'S ENTITY so the panel jumps to that band rather than to whichever one it happens
+## to be showing. `Main` relays it to the HUD; the map never reaches the Band/City panel itself.
+signal work_tab_requested(band_entity: int)
 
 ## The two channels this renderer paints WITHOUT consulting `OVERLAY_COLORS` and that own no single
 ## hue of their own: the empty key (terrain art, or the fog tones over it) and the terrain-tag blend
@@ -1085,6 +1089,10 @@ var _fow_noise_amount: float = FOW_DEFAULT_NOISE_AMOUNT
 
 # 2D Minimap (owned by MinimapController — see ui/MinimapController.gd)
 var _minimap: MinimapController = null
+## The selected band's SOURCE LIST, docked beside its token (issue #650) — a Control on its own
+## CanvasLayer, created here in `_ready`. Not lazy like the minimap: that one waits because it needs
+## `Main` to have supplied the HUD reference first, and this panel needs nothing from the HUD.
+var _source_list: BandSourceList = null
 # Primary player-band markers (owned by BandMarkerRenderer — see ui/BandMarkerRenderer.gd)
 var _band_markers: BandMarkerRenderer = null
 # Secondary markers — herds/food/sites (owned by SecondaryMarkerRenderer — see ui/SecondaryMarkerRenderer.gd)
@@ -1231,6 +1239,15 @@ func _ready() -> void:
 	_secondary_markers = SecondaryMarkerRenderer.new(self)
 	_band_overlays = BandOverlayRenderer.new(self)
 	_annotations = AnnotationRenderer.new(self)
+	_source_list = BandSourceList.new()
+	_source_list.setup(self)
+	# A row click PANS; it deliberately does not re-select the hex — see `_on_row_pressed` there.
+	_source_list.tile_focus_requested.connect(focus_on_tile)
+	_source_list.work_tab_requested.connect(
+		func() -> void: work_tab_requested.emit(selected_unit_id))
+	# Turning a page moves the rows the LEADER LINES run to, and those are drawn here — see the
+	# signal's own note.
+	_source_list.page_changed.connect(queue_redraw)
 	_apply_ui_scale()
 	ClientSettings.changed.connect(_apply_ui_scale)
 	# Note: the MinimapPanel node is created lazily from _minimap.update()
@@ -2056,6 +2073,11 @@ func _draw() -> void:
 	# always-on marks above. Its per-source yield LABELS are the exception — they are queued here and
 	# flushed at the very end of _draw (see _band_overlays.flush_yield_labels).
 	_band_overlays.draw_band_work_highlights(radius, origin)
+	# …and the SOURCE LIST that carries what those sources PAY (issue #650). Placed and linked here,
+	# in the same `_draw` that built the rows: the leader lines run from a ROW to its hex, so the
+	# panel's geometry has to be settled before they can be drawn, and a frame's delay would show as
+	# lines trailing the panel under a pan.
+	_update_source_list(radius)
 
 	# Selected herd: its grazing range (the ground that sets its carrying capacity), drawn over the
 	# tile tints / Pasture overlay but under the herd markers so the animal still reads on top.
@@ -2481,6 +2503,10 @@ func reset_world_state() -> void:
 	highlighted_culture_context = ""
 	_annotations.reset_world_state()
 	_band_overlays.reset_world_state()
+	# The list describes a band of the world we are leaving; its rows are rebuilt from the next
+	# frame's selection, and until then it must not stand over the new map.
+	if _source_list != null:
+		_source_list.hide_list()
 	queue_redraw()
 
 func _herd_by_id(herd_id: String) -> Dictionary:
@@ -2703,16 +2729,17 @@ func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int, modulate: C
 ## The shared rounded-pill PLATE: a dark rounded-rect (draw_rect body + two end-cap circles) centered
 ## on `center`, sized to an already-measured `text_size` plus `pad_x` of symmetric horizontal padding.
 ## Single source of truth for the pill look — used by the `×N`/`+N` count badges (`_draw_count_pill`,
-## no extra padding: the end caps are its padding), by the on-tile yield labels
-## (`BandOverlayRenderer._draw_yield_label`, padded so the plate hugs the text+glyph run), and by the
-## BAND NAME PILL (`BandMarkerRenderer._draw_band_name_pill`), which is the one caller that asks for a
-## border.
+## no extra padding: the end caps are its padding) and by the BAND NAME PILL
+## (`BandMarkerRenderer._draw_band_name_pill`), which is the one caller that asks for a border. The
+## per-source `⚒N` badge draws its own plate as two `draw_rect`s rather than through here, a squared
+## plate being what distinguishes it from the rounded family. (The on-tile YIELD LABEL was the third
+## caller until issue #650 moved the rates into `BandSourceList`; there is no pill on the map now.)
 ##
 ## The optional BORDER is drawn as a second, larger plate UNDERNEATH the body rather than as a stroke:
 ## a stroked rounded pill would have to seam a rect outline into two arcs, and the two-plate form has
 ## no joins to get wrong. It costs nothing for the borderless callers — `PILL_NO_BORDER` is fully
-## transparent and `border_width` defaults to 0, so the `×N`/`+N`/yield callers render exactly the
-## pixels they always did.
+## transparent and `border_width` defaults to 0, so the `×N`/`+N` callers render exactly the pixels
+## they always did.
 const PILL_NO_BORDER := Color(0.0, 0.0, 0.0, 0.0)   # the default: draw no border plate at all
 func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color,
 		border: Color = PILL_NO_BORDER, border_width: float = 0.0) -> void:
@@ -5119,6 +5146,30 @@ func screen_size_local() -> Vector2:
 		return viewport_size
 	return viewport_size / to_screen
 
+## **MAP-LOCAL → CANVAS, THE ONE CONVERSION PAIR** (issue #650). A point this node DRAWS at, expressed
+## in the units a `Control` on a `CanvasLayer` positions in — and back.
+##
+## `get_global_transform_with_canvas()` composes this node's own transform (position = the leading
+## reserved insets, scale = the interface counter-scale) with the canvas transform, which is the same
+## single division `screen_size_local` and `_reserved_inset_span_local` already make. So this is ONE
+## seam rather than a fourth place that arithmetic is written out, and it cannot drift from them.
+##
+## Used by the source list — both to dock the panel beside the band's token and to bring the row
+## anchors back into map-local for the leader lines, which must be drawn in the SAME frame the panel
+## was placed in or they lag visibly under a pan.
+func local_to_canvas(point: Vector2) -> Vector2:
+	return get_global_transform_with_canvas() * point
+
+func canvas_to_local(point: Vector2) -> Vector2:
+	return get_global_transform_with_canvas().affine_inverse() * point
+
+## A RECT through the same pair. The transform is a scale plus a translation with no rotation, so
+## converting the two corners and re-forming is exact — and it is written once here rather than at the
+## call site, where a `size * scale` shortcut would silently assume the scale.
+func local_rect_to_canvas(rect: Rect2) -> Rect2:
+	var start := local_to_canvas(rect.position)
+	return Rect2(start, local_to_canvas(rect.end) - start)
+
 ## The summed reserved strips per axis (left+right, top+bottom), converted into LOCAL units.
 ## `set_reserved_inset` receives widths measured in CANVAS units (a docked panel's width), which is
 ## also the space this node's `position` lives in — but `_get_adjusted_viewport_size` subtracts them
@@ -5768,6 +5819,59 @@ func unreserved_screen_rect() -> Rect2:
 		Vector2(
 			maxf(0.0, full.x - _inset_left - _inset_right),
 			maxf(0.0, full.y - _inset_top - _inset_bottom)))
+
+## **PUSH THIS FRAME'S ROWS INTO THE SOURCE LIST, PLACE IT, AND DRAW ITS LEADER LINES.** Called from
+## `_draw`, immediately after `BandOverlayRenderer.draw_band_work_highlights` has built the model.
+##
+## Visible iff a player band is selected AND it works at least one source; the renderer's rows answer
+## both halves, an unselected band yielding none.
+##
+## **THE LINK RUNS ROW → SOURCE, AND BOTH ENDS ARE CONVERTED THROUGH THE ONE PAIR.** The row anchor is
+## a CANVAS point (the panel lives in that space); the source's anchor is MAP-LOCAL (it is the point
+## the source's own marker was drawn at). `local_to_canvas` decides which panel EDGE the line leaves
+## from — the one facing the hex — and `canvas_to_local` brings that end back into the space this node
+## draws in.
+func _update_source_list(radius: float) -> void:
+	if _source_list == null:
+		return
+	var rows: Array = _band_overlays.source_rows()
+	if rows.is_empty():
+		_source_list.hide_list()
+		return
+	_source_list.visible = true
+	_source_list.set_work_tab_available(work_tab_requested.get_connections().size() > 0)
+	_source_list.update_rows(rows, selected_unit_id, _band_overlays.source_total_text())
+	_source_list.place(local_rect_to_canvas(_selected_band_avoid_rect(radius)),
+		unreserved_screen_rect())
+	var page: Array = _source_list.page_rows()
+	for i in range(page.size()):
+		var row: Dictionary = page[i]
+		var target: Vector2 = row.get("anchor", Vector2.ZERO)
+		_band_overlays.draw_row_link(
+			canvas_to_local(_source_list.row_anchor(i, local_to_canvas(target))),
+			target, row.get("color", HudStyle.LINE))
+
+## **EVERYTHING THE SELECTED BAND INKS, IN MAP-LOCAL UNITS** — the rect `BandSourceList.place()` keeps
+## clear of. Built from the parts that already know their own extents and NEVER re-measured here.
+##
+## ⛔ **THE NAMEPLATE IS WHY THIS IS NOT JUST THE TOKEN.** `BAND_GAP` used to be taken from the token's
+## CENTRE, so a panel opening below-right landed on the band's name pill — which hangs BELOW the token
+## and is wider than it. The plate's own footprint is `BandMarkerRenderer`'s one measurement
+## (`name_pill_offset`, the FOOTPRINT the overlap cull tests, end caps and `×N` chip included); a
+## second formula for one shape is the defect `map-markers.md` records under "A plate's half-extent is
+## ONE expression".
+##
+## Where the band draws NO nameplate — below `BAND_NAME_PILL_MIN_RADIUS`, an expedition, or one the
+## cull ate — the rect is the token's box alone, which is the honest footprint of what is drawn.
+func _selected_band_avoid_rect(radius: float) -> Rect2:
+	var center: Vector2 = _band_overlays.selected_band_center()
+	var token_radius := radius * BAND_TOKEN_RADIUS_FACTOR
+	var avoid := Rect2(center - Vector2(token_radius, token_radius),
+		Vector2(token_radius, token_radius) * 2.0)
+	var pill: Rect2 = _band_markers.name_pill_offset(_band_overlays.selected_band_tile())
+	if pill.size == Vector2.ZERO:
+		return avoid
+	return avoid.merge(Rect2(center + pill.position, pill.size))
 
 ## Sum the registered reservations into the four per-edge totals.
 func _recompute_insets() -> void:
