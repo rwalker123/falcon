@@ -129,9 +129,20 @@ pub struct Plan {
     pub stance: Stance,                        // discrete: Expand | Consolidate | Seek (v1 set)
     pub budgets: BTreeMap<SpecialistId, Budget>, // the scarce shared units each specialist may spend
     pub priorities: BTreeMap<SpecialistId, f32>, // a multiplier on that specialist's scores
+    pub goals: BTreeMap<SpecialistId, Goals>,    // the targets each specialist scores progress toward
     pub since_turn: u64,                       // when this plan was adopted — hysteresis is measurable
 }
 ```
+
+**Goals, not only weights.** A weight says how much a specialist matters; a goal says what it is
+for. The orchestrator hands `Food` targets in the units the frame reports — food per turn, total
+stock, minimum runway in turns — and `Food` scores a proposal by the progress it makes toward them.
+Personality shapes the targets (a raider tolerates a shorter runway than a forager), so a profile
+still enters here and only here, but a specialist can now explain a choice as *"this closes the
+runway gap by four turns"* rather than as a number times a weight. Goals are also what let a
+specialist accept an **investment**: a reassignment that dips income negative is fine when the stock
+lasts until the payoff (§4, the projection ledger), and that judgement needs the target to judge
+against.
 
 **A stance is what the archetype resolves to** (`raider → Expand`), and the budgets are what a stance
 means in units the specialists spend: under `Expand` the `Land` specialist holds more of the worker
@@ -211,6 +222,66 @@ version is concrete rather than a trait with no body:
   patch with higher carrying capacity than the band's own, and a falling runway, proposes `MoveBand`
   with an intent that persists until arrival. *Room* — a band above the split size on a claimed patch
   proposes `SplitBand` under `Expand`.
+
+Those three are the placeholders the first version shipped with. They prove the seam; they are not
+the specialist. The specialist is the rule set below.
+
+### Rules read the surroundings; recipes do not
+
+⛔ **A specialist is a set of rules over what the frame shows, never an opening.** "Always split the
+start band into two bands of five" works on the maps where it was learned and fails elsewhere; a rule
+that says *when* to split reads the tiles and decides. The orchestrator helps by supplying the goals
+(§3); the specialist supplies the reading of the ground.
+
+The `Food` rule set — each a named rule with its own unit test on a recorded frame, each producing a
+proposal whose `reason` names the rule and its subject:
+
+| Rule | Reads | Proposes |
+|---|---|---|
+| **Negative income** | income below consumption | reassign to the tiles with the highest food per worker-turn, preferring the balanced take policy |
+| **Feed while moving** | a band with a movement intent in force | forage or hunt what will fall *outside* the new range on the way — not for a freshly split band, which must not strip the parent's ground |
+| **Split to feed** | after assignment the start band is still short; reachable food within three tiles that a smaller band could work | split a band toward it, since small bands are easier to feed; the split rule lives here because feeding is its reason |
+| **Spare hands into hunts** | income positive or near it | put the surplus into hunts, which is what opens penning |
+| **Upgrade the ground** | a worked forage site, the cultivation rung known | cultivate, then sow, drawing workers from hunts and poor tiles; a field and a tended patch feed a population in the tens, after which food stops being the constraint and herding becomes the work |
+
+**The projection ledger** is what makes the last rule safe to fire. Learning cultivation costs
+income now for income later; a per-turn score cannot see that trade. So `Food` keeps a small what-if
+ledger: given the current stock, income and consumption from the frame, project the stock turn by
+turn under a proposed reassignment, using the per-source yields per worker the labor rows carry. A
+proposal that takes income negative is acceptable **iff the projected stock stays above zero until
+the projected payoff**, and the proposal's `reason` carries the turn it goes positive again. That is
+the forward-projection discipline the food-arrivals arc already uses on the server side, applied to
+the seat's own view. The ledger is also how the specialist answers the goals it was handed: the gap
+between projected runway and the target is the score.
+
+### The demand board — specialists never talk to each other
+
+A crafter needs bone; a builder needs stone; a herder needs fodder. Those needs are met by other
+specialists, and the moment specialists call one another the design is a web whose edges nobody can
+test in isolation. **So a need is a `Demand` posted on a board, and the board is read by the
+orchestrator alone.**
+
+```rust
+pub struct Demand {
+    pub requester: SpecialistId,
+    pub resource: ResourceKey,   // bone, stone, fodder, food, workers … one vocabulary with Cost
+    pub amount: u32,
+    pub by_tick: u64,
+    pub priority: f32,           // the requester's view; the orchestrator's is what counts
+}
+```
+
+The lifecycle is `posted → planned → fulfilled | expired`, and every transition is a log record. The
+orchestrator weighs the open demands against its goals and personality, and writes the ones it
+accepts into the **supplier's** plan slice as goals — so `Hunt`'s goals this cadence may include
+"three bone by tick 40 for the crafter". The supplier never knows who asked; it has a target. The
+requester never knows who supplies; it has a board. Conflicts between demands are decided in one
+place, with the same commitment margin a stance has, instead of in pairwise negotiations.
+
+Three consequences: specialists stay pure functions of `(view, plan slice, own memory)` and remain
+unit-testable alone; the web of relationships is a star with the orchestrator at its centre; and the
+board is measurable — fulfilment rate and latency per requester/supplier pair, and the demands a
+personality lets expire. ⛔ **No specialist that needs another lands before the board does.**
 
 ### Budgets and costs share one vocabulary
 
@@ -402,6 +473,24 @@ Fixture frames for the unit tier are recorded from a real run through the server
 (`snapshot/publish.rs:66`, whose doc names a file writer as an intended implementor) — a specialist is
 tested on the shipped representation, not on a hand-built struct.
 
+### 8.4 The run viewer — look before tuning
+
+A number says *that* a run went badly; it cannot say whether the ground fed five people or the
+specialist assigned them to fodder. **So a bench run also records what each specialist was looking
+at**, per turn and per seat: each band's tile and size; the tiles within its reach with their food
+yield, owner and improvement; the food ledger (stock, income, consumption, runway, and the projection
+the ledger made); every proposal with its score, outcome and reason; the plan and goals in force; the
+alarms and demands open. Written as data beside the two logs, and shown as a page with a turn
+scrubber and a small local hex map, so a run can be read turn by turn on a phone.
+
+⛔ **Nobody touches a weight, a rule or a profile until the viewer has been looked at.** The failure
+this exists to prevent is the one the first bench produced: a starving band read as "the AI is weak"
+before anyone had seen the map. The viewer is the difference between measuring an AI and guessing at
+one.
+
+The bench runs on the **shipped map presets and sizes a player can select**, never a fixture world
+chosen for speed. A world nobody plays measures nothing a player will meet.
+
 ---
 
 ## 9. Making it better without making it different
@@ -411,9 +500,12 @@ Each of these is a procedure with a done-bar, and none of them touches the serve
 - **Add a specialist.** Implement `Specialist`; declare the metric it owns and its alarm; add its
   costs to the shared vocabulary if it spends something new; record a fixture and write the unit
   tests; add it to the ablation set; run the bench; land it with its ablation delta in the PR body.
-- **Add a consideration.** A new `reason` inside an existing specialist, usually reading a new
-  profile weight. Done when the unit test shows the proposal, and the bench shows profile divergence
-  did not shrink — a consideration every profile weighs identically is character-neutral.
+- **Add a rule.** A named rule inside an existing specialist, reading the frame and its goals, with
+  a unit test on a recorded frame that shows the proposal and its `reason`. Done when the viewer
+  shows it firing where it should and the bench shows profile divergence did not shrink — a rule
+  every profile weighs identically is character-neutral.
+- **Add a demand.** A new `ResourceKey`, a requester that posts it, a supplier whose goals can carry
+  it. Done when the board's log shows the lifecycle end to end and the fulfilment measure reads.
 - **Change the orchestrator.** A new `Orchestrator` impl producing the same `Plan`. Done when stance
   churn stays under its bound, alarm latency does not grow, and the ablation against uniform budgets
   is still positive. The LLM orchestrator lands through this door and nothing else changes.
@@ -429,6 +521,8 @@ Each of these is a procedure with a done-bar, and none of them touches the serve
   no second visibility model; no decoding shortcut that reads sections the seat was not sent.
 - ⛔ **Specialists propose; only the arbiter emits.** A `CommandPayload` reaches the Link from
   nowhere else, and every one of them has a `Decision` row behind it.
+- ⛔ **Specialists never name each other.** A need is a `Demand` on the board; the orchestrator turns
+  it into a supplier's goal. A specialist is a rule set over the frame, never an opening.
 - ⛔ **Commitment is in the first version** — both the switch margin and the intent bonus.
 - ⛔ **No `core_sim` in `sim_ai`'s dependency graph.** The crate boundary is the honesty guarantee.
 - ⛔ **The seat token is never logged**, and the decision log carries the faction id, never the token.
@@ -447,10 +541,16 @@ Each of these is a procedure with a done-bar, and none of them touches the serve
 | 3 | Instruments and bench: scoreboard, decision log, `bench`, baselines | `sim_ai`, `integration_tests` | `PassBrain` vs `PassBrain` reads as zero on every measure; `ScriptedBrain` vs `PassBrain` reads as non-zero |
 | 4 | `UtilityBrain`: `ConstantStance`, `Food`, `Land`, the arbiter with commitment; `ai_profiles.json` with two profiles; delete `StartProfileOverrides::ai_profile_overrides` | `sim_ai`, `core_sim` | lands with its Pass delta, its two ablations, and its profile-divergence number in the PR body |
 
+| 5 | The run viewer (§8.4) and the bench on shipped presets | `sim_ai` | a 30-turn run can be read turn by turn — bands, reachable tiles with yields, ledger, proposals with reasons, plan, alarms; the baselines are regenerated on a shipped preset |
+| 6 | Goals in the `Plan`, the projection ledger, the `Food` rule set replacing the v1 considerations | `sim_ai` | every rule has a fixture test and a viewer-visible firing; the forager reaches the cultivation rung on the bench with zero hunger deaths, or the viewer shows why the ground could not carry it |
+| 7 | The demand board and its measures | `sim_ai` | one demand round-trips posted → planned → fulfilled in a scenario test; fulfilment rate and latency read on the bench |
+
 Slice 1 is the one the issue did not anticipate — "there is nothing to build in `core_sim`" is still
 true, but there was something to build in `sim_schema`, and it is the largest of the four. Slice 3
 comes before 4 deliberately: the real brain lands measured, on a harness already proven to read zero
-where zero is correct.
+where zero is correct. Slices 5–7 are the order the first bench taught: see first, then give the
+specialist goals and rules worth seeing, then let specialists need each other — and no second
+specialist that needs a first lands before 7.
 
 ---
 
