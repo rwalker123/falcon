@@ -171,7 +171,7 @@ pub struct Proposal {
     pub intent: IntentKey,             // "what this is for", stable across turns — the commitment key
     pub score: f32,                    // this specialist's utility, before priority and commitment
     pub cost: Cost,                    // scarce units it spends: workers, the bands it moves
-    pub reason: &'static str,          // the consideration that produced it — the decision log's why
+    pub reason: String,                // the consideration that produced it, naming its target — the decision log's why
 }
 
 pub struct Proposals { pub proposals: Vec<Proposal>, pub alarm: Option<Alarm> }
@@ -192,7 +192,7 @@ judged on the number it exists to move.
 | Specialist | Domain | Commands it proposes | v1 |
 |---|---|---|---|
 | `Food` | the food loop | `AssignLabor`, `ForageTile`, `HuntFauna`, `HuntGame`, `Cultivate`, `Sow`, `WorkPriority` | **yes** |
-| `Land` | where the people are | `MoveBand`, `ScoutArea`, `SplitBand`, `FoundSettlement`, `FollowHerd` | **yes** |
+| `Land` | where the people are | `MoveBand`, `AssignLabor … scout`, `SplitBand`, `FoundSettlement`, `FollowHerd` | **yes** |
 | `Herd` | animals | `Tame`, `Corral`, `ExtendPen`, `SetHerdOutput` | later |
 | `Build` | improvements and their upkeep | `BuildOrder`, `BuildKit`, `UpkeepMode`, `UpkeepKit`, `Abandon`, `Unqueue` | later |
 | `Craft` | the bench | `SetBench`, `BenchCrew`, `BenchPriority` | later |
@@ -207,7 +207,7 @@ version is concrete rather than a trait with no body:
   the lowest-yield job to the highest. *Overuse* — a source whose `actualYield` exceeds its
   `sustainableYield` proposes shifting workers off it (the intensification arc's row-level signal,
   read straight off the frame).
-- **`Land`.** *Blind* — few known tiles around a band proposes `ScoutArea`. *Better ground* — a seen
+- **`Land`.** *Blind* — few known tiles around a band proposes a scout assignment (`assign_labor … scout`; the `scout <x> <y>` verb is retired server-side). *Better ground* — a seen
   patch with higher carrying capacity than the band's own, and a falling runway, proposes `MoveBand`
   with an intent that persists until arrival. *Room* — a band above the split size on a claimed patch
   proposes `SplitBand` under `Expand`.
