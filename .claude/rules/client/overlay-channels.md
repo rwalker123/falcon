@@ -703,10 +703,30 @@ where this row sits beside flat ones; an illegible swatch is the worse readout. 
 `OVERLAY_COLORS` row, having no single hue — so `_selection_has_map_color` answers false and the
 legend button wears `◐` rather than a swatch that could only name one stop of five.
 
-## The on-tile yield label carries ONE component (issues #337 / #449 / #527)
+## A worked source's RATE carries ONE component (issues #337 / #449 / #527 / #650)
 
-A source can pay more than one account, but the label sits on a hex a few pixels wide beside a floor
-mark and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
+> #### ⛔ THE RATE LEFT THE MAP — IT IS A ROW IN `BandSourceList` NOW, AND THAT IS ARITHMETIC
+>
+> Issue #650. Selecting a band put ~20 floating elements over four hexes. A rate pill is ~90px wide,
+> two markers in one hex's edge slots sit ~55px apart, and a hex holds three slots — **a rate cannot
+> live above its own marker at those numbers.** So the rates became a list docked beside the selected
+> band, each row joined to its hex by a LEADER LINE, which is the association a pill's position used
+> to carry. `_queue_yield_label` / `_draw_yield_label` / `_deferred_yield_labels` and the plate's
+> whole const family are deleted; `flush_yield_labels` keeps its name (MapView reaches it by name)
+> and its BADGE half.
+>
+> **Everything below about WHICH account is stated survives unchanged and is the ROW's rule now** —
+> `_yield_label_rate_text`, `_entry_*`, `yield_label_overdraw` and `YIELD_LABEL_COMPONENT_MIN` are
+> the row's producers, called from `BandOverlayRenderer.compute_source_rows`. What changed is the
+> surface, not the vocabulary.
+>
+> **The far-zoom LOD gate went with the pill.** `show_yields` existed because a map-scale label is
+> unreadable; a fixed-size panel is exactly as readable at hex radius 12 as at 80 (the
+> `BAND_NAME_PILL` property), so rows are built at EVERY zoom. `map_working_farzoom` asserts both
+> halves in one frame: every marker suppressed, every row still there.
+
+A source can pay more than one account, but the row's rate cell sits beside a floor mark and a `⚠` —
+there is no room for a second rate. `BandOverlayRenderer._yield_label_rate_text` therefore
 shows the account the source PAYS, falling through **food → fodder → materials → the account's own
 ZERO** in the wire's own order: food when `realized_yield` is non-zero (every forage patch and edible quarry, so those frames
 are unchanged), else the assignment's `fodder_yield` spelled with the WORD — a sown hay Field reads
@@ -720,25 +740,33 @@ had no fall-through at all and read `+0.00`. The material arm is what closed it:
 the RESOLVED take, what the source actually credited to the band's `MaterialStore` this turn.
 
 **THE MATERIAL ARM STATES EVERY MATERIAL.** Naming one of a vector picks a winner the sim does not
-name, and summing them is the retired trade axis under a new name. `_draw_pill_plate` sizes to the
-MEASURED run, so a two-material label is wide rather than clipped — a legibility question for
-`map_band_label_overlap`, not a reason to state less than the truth.
+name, and summing them is the retired trade axis under a new name. The row's rate cell has the panel's
+own width and its detail cell elides with the full string on the hover, so a two-material rate is
+stated rather than clipped — never a reason to state less than the truth.
 
-### ⛔ THE MATERIAL'S NOUN COMES OFF WHERE THE MARKER UNDER IT IS THE MATERIAL
+### ⛔ THE MATERIAL'S NOUN COMES OFF WHERE SOMETHING BESIDE IT IS ALREADY THE MATERIAL
 
 Issue #650. Ray, on a live frame holding a worked rock and a worked log on adjacent hexes: *"remove
-the wood and stone text, it is obvious from the icon what it is."* A worked WORKING's pill hangs over
-a marker that IS its material (🪵 / 🪨), so `+0.40 stone ♻` said the same thing twice in the one
-place on the map with no room to say anything twice. It reads **`+0.40 ♻`** — the shape the forage
-pill three hexes over already had.
+the wood and stone text, it is obvious from the icon what it is."* A worked WORKING's rate sits beside
+a mark that IS its material (🪵 / 🪨), so `+0.40 stone ♻` said the same thing twice in the one place
+with no room to say anything twice. It reads **`+0.40 ♻`** — the shape the forage rate above it
+already had.
 
-- **The gate is `secondary_slot_of(working_key) >= 0`, i.e. *did this working's marker draw*.** A slot
-  of `-1` — LOD-suppressed, overflowed into the `+N` chip, or a material this client has no glyph for
-  (`SecondaryMarkerRenderer._working_renders` denies it a slot) — is exactly the case where nothing
-  else on the hex names the account, and there the noun stays. The source-badge pass skips on the
-  same test for the same reason.
+- **The gate moved from the HEX's marker to the ROW's icon.** It was
+  `secondary_slot_of(working_key) >= 0` — *did this working's marker draw* — when the rate hung over
+  that marker. A row draws the material's mark ITSELF, through the same
+  `SecondaryMarkerRenderer.face_for_material` the marker goes through, so the test is now *does this
+  row render a face at all*. The consequence is a real behaviour change and the right one: the noun
+  no longer comes back at far zoom or behind the `+N` chip, because the row's icon is there in both
+  cases. It stays only for a material this client has no mark for, which is exactly the case where
+  nothing else names the account.
 - **The two FOOD WEBS are untouched.** A hunted wolf pack still reads `+0.22 hide ⇊`: a deer's marker
-  says nothing about `hide`, so the noun is the only thing naming that account. The flag
+  says nothing about `hide`, so the noun is the only thing naming that account. **They answer
+  `BandOverlayRenderer.MARKER_NAMES_NO_MATERIAL`, and that constant exists because they answered with
+  the wrong boolean's** — `SourceForecast.MATERIAL_NAMED`, which is `true` and belongs to the OPPOSITE
+  question (*does this rate write the noun*, `signed_material_components`' own argument). Handed to
+  `marker_names_material` it means *the mark already says it*, so both food arms silently dropped the
+  noun they were commented as keeping and a hide-only hunt read a bare `+0.22`. The flag
   (`marker_names_material`) is the CALLER's statement about its own surface, never a fact about the
   rows, and the hunt arm passes none.
 - **It drops the noun off the ACCOUNT'S ZERO on the same condition**, or a working would name its
@@ -749,33 +777,62 @@ pill three hexes over already had.
   `COMPONENT_SEPARATOR` would be two numbers with nothing between them, which is worse than the
   repetition. The named form is the default and every other readout in the HUD takes it.
 
-### ⛔ ONE PILL PER MARKER, EACH AT ITS OWN ANCHOR — AND TWO THAT OVERLAP ARE LEFT TO
+### ⛔ ONE ROW PER SOURCE, ONE LEADER LINE PER ROW — AND NO PLACEMENT PASS ANYWHERE
 
-Ray read that same frame as **one dark plate carrying two figures**, and the labels were never
-merged: each is anchored to its own source's slot (`_label_anchor`) and drawn on its own plate, and
-there has never been a grouping pass. What merged was the INK. The plate has no border and every
-plate is the same colour, so two that OVERLAP ink one continuous dark shape — and two workings sit
-either in two EDGE SLOTS of one hex or on two adjacent hexes, about 1.2 hex radii apart in x and at
-the SAME y, under plates that ran wider than that. Dropping the noun raised the zoom at which they
-touch; it did not abolish it, the font being clamped at `YIELD_LABEL_MIN_FONT` while the gap between
-two edge slots goes on closing. `map_working_pills_crowded` is that zoom.
+The pills that used to hang over their markers overlapped, and the two cures that were tried are the
+reason this arc ended where it did. Both are recorded because both would be re-proposed:
 
-**THE REMAINING OVERLAP IS ACCEPTED DELIBERATELY.** `flush_yield_labels` draws the batch and does not
-place it: every pill lands at its own anchor, raised by the one `YIELD_LABEL_OFFSET_FACTOR` every
-other pill is raised by, and two whose plates meet simply meet.
-
-- ⛔ **A COLLISION PASS SHIPPED HERE AND WAS REMOVED — DO NOT RE-ADD IT AS AN IMPROVEMENT.**
+- ⛔ **A COLLISION PASS SHIPPED AND WAS REMOVED — DO NOT RE-ADD IT AS AN IMPROVEMENT.**
   `_lift_clear_of_placed` lifted a colliding pill straight up off any plate already inked that frame.
   Ray, on the live frame it shipped on: *"having 1 way up there is worse then letting them overlapp a
   bit. I would move the pill back down"*. It guarded an ambiguity nobody had reported and made the
   ordinary two-workings frame worse to do it.
-- **A pill's POSITION is the whole of what ties a rate to its source.** There is no leader line, no
-  colour key and no name on the plate — only "it is over that marker" — so a pill moved away from its
-  anchor costs more than two plates touching, in every direction and at every distance. That is the
-  trade, and it is why the cure is not a stagger, a nudge, a cull or a merge either.
-- **What the accepted overlap bought is what `map_working_pills_crowded` now asserts**: both pills at
-  their own `_label_anchor`, at the SAME height, each centred in x on its own marker, with the plates
-  measured as genuinely intersecting so the claim cannot pass vacuously.
+- **Then the overlap was ACCEPTED, and that is what finally failed.** A pill's POSITION was the whole
+  of what tied a rate to its source — no leader line, no colour key, no name on the plate — so a pill
+  moved off its anchor cost more than two plates touching. Accepting the touch was correct given the
+  surface, and the surface was the problem: ~90px plates over markers ~55px apart, three slots to a
+  hex, is not solvable by placement.
+
+**SO THE RATE MOVED OFF THE MAP AND GREW THE THING A PILL NEVER HAD: A LINE TO ITS HEX.**
+`BandSourceList` states one row per staffed source and `MapView._draw` runs a leader line from each
+row on the current page to that source's `_label_anchor` — its own marker's slot, falling back to the
+hex centre. The link is `_draw_worked_link`, unchanged in weight, alpha and seam test; what changed is
+that it starts at a ROW rather than at the band's token, and that **every kind draws one**, forage
+included (it had none).
+
+**THERE IS STILL NO PLACEMENT PASS ANYWHERE IN THIS FILE.** Every mark lands on its own source's
+marker and two that overlap are left to overlap. The panel is placed by a quadrant rule against
+`MapView.unreserved_screen_rect()`, which is placement of ONE surface against the room — not of marks
+against each other, and not something a marker ever consults.
+
+**AND THE LEADER LINES ARE DRAWN IN THE SAME FRAME THE PANEL IS PLACED.** Control layout is deferred
+a frame, so a row anchor read back off layout would lag visibly under a pan; `BandSourceList.place()`
+computes the geometry ARITHMETICALLY and `row_anchor()` reads that measurement — one function
+measures, two consumers read it, the `_name_pill_rects` rule from `map-markers.md`.
+
+### ⛔ A ROW'S `⚒N` AND ITS MARKER'S `⚒N` ARE ONE NUMBER, AND THE EXTRACTION ARM DID NOT FILL IT
+
+`_source_crew` is the per-source crew map the mark pass fills and `compute_source_rows` READS — the
+whole point being that the plate under a marker and the row joined to it by a leader line cannot
+disagree about how many hands are on the source. The two food webs fill it as they walk their bands.
+**The workings arm did not**: it walked `_worked_workings` (where the crew is already summed across
+bands) and passed that number straight to `_queue_source_badge`, so the marker printed `⚒3` while the
+row two hundred pixels away printed `⚒0`, with a line drawn between them. The arm now ASSIGNS
+`_source_crew[key]` — assigns, not accumulates, the sum having already been made — and hands the badge
+that same entry, so there is one number and one producer.
+
+### THE BADGE'S RUNG FACE IS A FUNCTION, `badge_rung`, AND THE BATCH SURVIVES THE FRAME
+
+Two changes that exist for the same reason: **a draw call renders into a canvas, and no harness can
+read a glyph back off one.** The plate's whole claim is which characters are on it — the verb, the
+`⚠`, and the percent that issue #650 removed — so that composition was lifted out of
+`_draw_source_badge` into a public `badge_rung(entry) -> {text, color}`. One fork, two readers; a
+harness that re-composed the string would be a second producer of the very thing under test.
+
+And `flush_yield_labels` **renders without draining**. The batch is cleared at the top of
+`draw_worked_source_marks` — the pass that refills it, and the first thing `MapView` calls every
+frame — so the clear at the end was redundant, and dropping it gives the badge entries the same
+lifecycle `_source_rows` already has: this frame's answers, readable after this frame.
 
 **AND WHEN A SOURCE TOOK NOTHING, THE ZERO NAMES THE ACCOUNT IT PAYS INTO** (issue #650). Every arm
 above states a rate the take produced; this is the one place the label speaks for a take that produced
@@ -784,7 +841,7 @@ food. `_yield_label_rate_text` takes a `zero_account` and the call sites resolve
 **`SourceForecast.row_zero_account`**, the SHARED seam the tile card's deposit rows and the work row's
 second line are held to, so a working reads `+0.00 wood` and no surface can print a food figure on a
 source with no food account. A row answering `YIELD_ACCOUNT_NONE` states **no rate at all** —
-`_draw_yield_label` returns before it draws a plate, which is that seam's own caller contract rather
+the row's rate cell is left EMPTY, which is that seam's own caller contract rather
 than a rule invented here. A food row answers `YIELD_ACCOUNT_FOOD` and nothing about the two webs
 changes.
 
@@ -810,12 +867,11 @@ render-only-when-non-zero rule lives in `labor-ui.md`.
 The label's trailing glyph is the assignment's floor ZONE mark — `_entry_floor_glyph(entry)` =
 `FoodIcons.for_floor_zone(SourceForecast.floor_zone(entry.floor))`, the same mark the work board's
 mark column and the floor picker wear. **On a WORKING it is `HudDepositVocab.floor_mark` instead, and
-a finite one wears none** — see below. It travels through `_queue_yield_label` → the deferred batch →
-`_draw_yield_label` as `floor_glyph`, a **resolved glyph**, and every one of those hops spends it
-as-is.
+a finite one wears none** — see below. It reaches the row as `floor_glyph`, a **resolved glyph**,
+appended verbatim after the rate, and every hop spends it as-is.
 
 **A GLYPH RESOLVED ONCE AND RE-RESOLVED IS A MARK THAT VANISHES SILENTLY, and this one did.** The
-parameter was called `policy` and `_draw_yield_label` ran it back through `FoodIcons.for_policy` — a
+parameter was called `policy` and the retired pill ran it back through `FoodIcons.for_policy` — a
 table keyed on the four IMPROVEMENT verbs since #442, which a floor-zone glyph is never a key of — so
 the lookup answered `""` and **the map drew no harvest mark at all** for the life of the harvest-floor
 arc. Nothing failed: a plain `+0.48` on a pill is a perfectly plausible label, and the frames that

@@ -1784,7 +1784,7 @@ standing`.
 - The compose sheets: `ComposeState.forage_floor()` / `hunt_floor()` / **`deposit_floor()`** (floats,
   clamped on the way in), seeded from `HudBandLaborState.floor_for_forage` / `floor_for_hunt` /
   **`floor_for_extract`**.
-- A worked row / map yield label: the assignment's own `floor`, marked with its ZONE glyph
+- A worked row / source-list row: the assignment's own `floor`, marked with its ZONE glyph
   (`FoodIcons.for_floor_zone`). **A continuous number cannot wear one glyph per value**, and the zone
   is the whole of what one mark can honestly say; the exact percent is in the tooltip and in the work
   inspector's sentence (`50% left standing`, `HudComposeVocab.FLOOR_VALUE_FORMAT`).
@@ -1985,7 +1985,7 @@ that the verdict tracks the FLOOR.
 crew's throughput out-takes the biggest one-turn regrowth between that floor and the stock standing
 today. The contract says so in as many words: read this field, do not re-derive it, do not gate it.
 So every surface that says *overdrawing* — the tile card's tooltip, the drawer's standing summary, the
-work row, the map's on-tile yield label and **the compose sheet** — is a lookup on the source's own
+work row, the map's source-list row and **the compose sheet** — is a lookup on the source's own
 standing row, and that one question has one answer.
 
 **The compose sheet was the fourth predicate, and both halves of it were wrong.** It computed
@@ -5318,37 +5318,15 @@ spelled and never a raw count.
     at `hunt_reach` when it extends past `work_range` (ties to the hunted-herd rings), scout **azure**
     at `scout_reveal_radius` when scouts are staffed — nested and color-distinct, all at every zoom),
     and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is
-    since hunt reach = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
-    tile / hunted herd is labeled with its per-turn rate (food/turn, from the assignment inside
-    `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
-    food-income **green**. **A HUNT label headlines `sustainable_yield`** (the steady per-turn rate),
-    **a FORAGE label `actual_yield`** — the exact split `SourceForecast.source_yield_readout` uses for the Band
-    panel (a hunt's `actual_yield` is the kill-credit PULSE — 0 on a wait turn, a spike on a kill turn —
-    so its honest rate is `sustainable_yield`; forage has no pulse, `actual == sustainable`), so the map
-    label and the Band panel's hunt headline can never disagree. A source that overdraws (the
-    **sim-answered `overdraws` bool** on the assignment — the SAME wire flag the Band panel's
-    `SourceForecast.source_yield_readout` reads, NOT the client-derived `actual > sustainable`, which false-positives on a
-    hunt's kill turn) reads
-    **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage patch now that the forage
-    policy axis can decline one (a Sustain forage gathers at regrowth, so it stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
-    pill chrome extracted out of `_draw_count_pill` — the `×N`/`+N` badges draw the same primitive):
-    bare drop-shadowed text washed out on the light tan biomes (prairie/desert), so the plate is sized to
-    the MEASURED text+glyph run plus symmetric padding (`YIELD_LABEL_PLATE_PAD_FACTOR`, a fraction of the
-    font size) and centered on the label's existing anchor, near-black + slightly translucent
-    (`YIELD_LABEL_PLATE_BG`) so the terrain still reads through. The
-    label font scales with the hex radius (clamped) and the whole annotation (plate included) is
-    **LOD-suppressed below
-    `ICON_MIN_DETAIL_RADIUS`** (like the secondary markers) so far zoom stays clean. Scout/Warrior
-    produce no food → no label. **The labels are DEFERRED to the very end of `_draw`** — they are an
-    annotation OVER the map, and drawn inline in the highlight pass they were painted over by every
-    later layer (the dashed-amber pending overlays, the band→herd links, the hunted-herd rings, and the
-    secondary herd/food glyphs — a deer glyph landing squarely on the number). The highlight pass now
-    `_queue_yield_label`s each request into `_deferred_yield_labels` (cleared at the top of
-    `draw_band_work_highlights`, before its early-outs) and `BandOverlayRenderer.flush_yield_labels()` renders the batch
-    as the LAST draw call, after the markers/rings/links/pending/targeting. The LOD gate stays at the
-    QUEUE site (`show_yields`), so a far-zoom label is never queued and deferral can't bypass the
-    suppression. Guarded by `map_preview` state `map_band_label_overlap` (a herd parked ON a worked
-    forage tile + a pending hunt dashing across the hunted herd's label) and `map_band_yield_farzoom`. **Scouting draws its azure range border** (the scout vantage reach `scout_reveal_radius`, when
+    since hunt reach = `work_range` + leash). **The per-source RATE is no longer drawn on the map at
+    all** (issue #650): a rate pill is ~90px and two markers in one hex's edge slots are ~55px apart,
+    so the rates left the markers and became the **source list** docked beside the band —
+    `BandSourceList`, one row per worked source, with the connector lines now running from each ROW to
+    its hex. `overlay-channels.md` owns that grammar and the autopsy on the on-tile pill that preceded
+    it; what belongs here is only that a staffed assignment's rate reaches the player through the ROW's
+    `rate_text` rather than through a label over its tile, and that the row's producers are still this
+    layer's (`SourceForecast.row_zero_account` for the account a zero may name, the sim-answered
+    `overdraws` bool for the `⚠`, never the client-derived `actual > sustainable`). **Scouting draws its azure range border** (the scout vantage reach `scout_reveal_radius`, when
     scouts are staffed) — a perimeter outline like the forage/hunt borders, NOT a filled reveal disc:
     the old faint-blue scouted DISC was removed because `scout_reveal_radius` is a scout-vantage /
     sight-range value, not a revealed-area radius, and the client can't reconstruct the true LOS-revealed
@@ -6623,27 +6601,32 @@ all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedi
   inedible species delivers 0 food at every party size, so the scan finds no
   plateau, which is the honest reading of a raid with nothing to bring home.
 
-### The MAP's on-tile label is the one-slot surface — the board row stopped being one
+### The SOURCE LIST's rate cell is the one-slot surface — the board row stopped being one
 
 **RETIRED — the work-board row's fall-through.** A board row had a fixed 46px rate column
 (`WORK_ROW_RATE_WIDTH`) beside its marks and its stepper, so it fell through **food → fodder →
 materials** picking exactly ONE account, and the material arm further named one material and counted
 the rest (`+0.24 fibre +3`). The row is TWO LINES now and the accounts have the second one to
-themselves, in full — `band-city-panel.md` → "THE ROW IS TWO LINES". What survives here is the MAP's
-label and the mechanism both surfaces were taught by.
+themselves, in full — `band-city-panel.md` → "THE ROW IS TWO LINES". What survives here is the
+SOURCE LIST's rate cell and the mechanism both surfaces were taught by.
 
-The **map's** on-tile yield label (`BandOverlayRenderer._draw_yield_label`, whose choice is split out
-as `_yield_label_rate_text` so a harness can ask it — a draw call renders to a canvas and no assertion
-can read a glyph back off one) still falls through **food → fodder → materials**, in the wire's own
+The source list's rate (`BandOverlayRenderer._yield_label_rate_text`, which outlived the on-tile pill
+it was split out of — a draw call renders to a canvas and no assertion can read a glyph back off one,
+so the choice was already a function a harness could ask) still falls through **food → fodder →
+materials**, in the wire's own
 order: food when there is food (so every forage patch and edible quarry is unchanged), else the fodder
 rate spelled with the WORD (`+0.40 fodder`) — fodder has no glyph, and borrowing another account's
 would say the wrong thing — else the MATERIALS, each naming itself (`+0.22 hide`). A trade branch
 stood between food and fodder until arc #527; the material arm is what replaced it, one release later.
 
-**THE MAP STATES EVERY MATERIAL AND NEVER CAPS.** Naming one of a vector picks a winner the sim does
-not name and summing them is the retired trade axis under a new name — so the plate, which SIZES TO
-ITS MEASURED RUN, states the whole vector and a two-material label is wide rather than truncated (a
-legibility question for `map_band_label_overlap`, not a reason to state less than the truth).
+**THE ROW STATES EVERY MATERIAL AND NEVER CAPS.** Naming one of a vector picks a winner the sim does
+not name and summing them is the retired trade axis under a new name — so the cell states the whole
+vector, and a rate too wide for its column ELIDES with the full string on the row's tooltip rather
+than being composed shorter. **That is a change of mechanism, not just of surface**: the retired
+on-tile plate SIZED TO ITS MEASURED RUN and so could not overflow anything, while a list row's cell
+is a fixed column — which is what makes the rates comparable down the page, and is also the board
+row's own 46px lesson one surface further on. Truncating a rendered string is not losing it; stating
+less than the truth is.
 
 **WHAT THE BOARD ROW'S 46px SLOT TAUGHT, and the reason the elide survives on a line that no longer
 needs it.** A `Label` with no overrun behaviour reports its WHOLE text as its minimum width, so an
@@ -6656,8 +6639,8 @@ row's stepper too**. Reported from play as a rate with no source name beside it.
 
 `SourceForecast.capped_material_components(rows, limit)` was the bounded joiner that answered it, and
 it is **RETIRED** with `ONE_SLOT_MATERIAL_LIMIT`, `MATERIAL_COMPONENTS_UNCAPPED` and
-`MATERIAL_OVERFLOW_FORMAT`: the board row's line two has the width and the map plate sizes to its
-measured run, so no caller had one fixed slot left, and an unreachable cap is a thing the next reader
+`MATERIAL_OVERFLOW_FORMAT`: the board row's line two has the width and the source-list row elides to
+its tooltip, so no caller composes a shorter join, and an unreachable cap is a thing the next reader
 assumes is load-bearing. `signed_material_components` is the plain joiner again — every material,
 signed, `" · "`-joined, `""` when there is nothing to say.
 

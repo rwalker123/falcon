@@ -103,13 +103,26 @@ the one `_working_renders` predicate both the slot pass and the draw guard ask (
 contract — a source given a slot it then declines to draw leaves a hole in the ring and pushes a real
 marker into the chip).
 
-**AND BECAUSE THE MARKER NAMES THE MATERIAL, THE PILL OVER IT DOES NOT.** Ray, on a live frame
+**AND BECAUSE SOMETHING NAMES THE MATERIAL, THE RATE BESIDE IT DOES NOT.** Ray, on a live frame
 holding a worked rock and a worked log: *"remove the wood and stone text, it is obvious from the icon
-what it is."* A working's rate pill reads `+0.40 ♻`, the shape the forage pill beside it already
-had, and the noun survives only where this working's marker did NOT draw — LOD-suppressed, overflowed
-into the `+N` chip, or a material `FoodIcons.for_material` has no glyph for, all of which
-`secondary_slot_of(key) < 0` answers in one test. The draw is `overlay-channels.md` → "the on-tile
-yield label carries ONE component"; the condition is here because it is a fact about the MARKER.
+what it is."* A working's rate reads `+0.40 ♻`, the shape the forage rate beside it already had.
+
+**THE CONDITION MOVED FROM THE HEX'S MARKER TO THE ROW'S ICON** (issue #650): the rate is a row in
+`BandSourceList` now, and that row draws the material's mark itself, through the same
+`SecondaryMarkerRenderer.face_for_material` the marker goes through. So the test is *does this row
+render a face at all* rather than `secondary_slot_of(key) >= 0` — which is why the noun stays only
+for a material this client has no mark for, and no longer comes back at far zoom or behind the `+N`
+chip. It is still a statement the CALLER makes about its OWN surface, never a fact about the rows: the two
+food webs answer `BandOverlayRenderer.MARKER_NAMES_NO_MATERIAL` unconditionally, a deer's icon saying
+nothing about `hide`.
+
+> ⛔ **THE FOOD ARMS ANSWERED WITH THE WRONG BOOLEAN'S CONSTANT, AND IT INVERTED THEM.**
+> `SourceForecast.MATERIAL_NAMED` answers *does this rate WRITE the noun*; the argument here answers
+> *does the MARK already say it, so the rate need not*. They are opposites, and the food arms were
+> handed `MATERIAL_NAMED` — `true` — under a comment stating that the food webs never drop the noun,
+> which is exactly what it made them do: a hunt paying only `hide` printed a bare `+0.22`, naming that
+> account nowhere at all. `MARKER_NAMES_NO_MATERIAL` exists so the two food arms state the answer in
+> the argument's own vocabulary rather than borrowing a `true` from a different question.
 
 **THE KEY IS THE `(tile, material)` PAIR** (`working_key`, `MapView.secondary_working_key`), the same
 identity `HudBandLaborState.extract_assignment_of` and the tile card's rows use: a hex cutting timber
@@ -229,6 +242,15 @@ and its food dot all still draw, so the band is never hidden; only its name is.
   anchor was harmless wherever it landed — on a pill it is what keeps the chip off the name's last
   letters. The bar needs no allowance at all, which is why all of this lives on the pill rather than
   in the anchoring code.
+- **THE FOOTPRINT HAS A SECOND READER NOW, AND IT TAKES AN OFFSET** (issue #650).
+  `BandSourceList` docks beside the selected band and used to measure its gap from the token's
+  CENTRE, so a panel opening below-right landed on the nameplate — which hangs BELOW the token and is
+  wider than it. `name_pill_offset(tile)` hands back that same FOOTPRINT rect **relative to the token
+  centre it was measured from**, `MapView._selected_band_avoid_rect` unions it with the token's box,
+  and `place()` takes its gap from the resulting rect's EDGES. Relative rather than absolute because
+  the two renderers resolve the band's wrapped copy by different routes (`_hex_center_wrapped` here,
+  `_band_effective_col` there) and an offset cannot disagree about WHICH copy is meant. It is the
+  measured rect and never a second formula — the ⛔ two bullets up.
 
 Foreign bands take the pill exactly as your own do — the fog rule already means a foreign band you
 cannot see is not drawn at all, so it needs no rule of its own. **Expeditions get no pill**, the same
