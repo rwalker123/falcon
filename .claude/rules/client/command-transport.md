@@ -127,6 +127,41 @@ it was granted on goes away, since a second claim on a live connection is refuse
 by design. A command is likewise written at most once: a write that fails drops the link and tells the
 caller, rather than replaying onto a fresh socket where the server may already have had it.
 
+## …and a connection lasts exactly one RUN
+
+**The seat's lifetime is the RUN, not the process.** The link worker is process-global
+(`LINK_SENDER`, a `OnceLock`), so it outlives every `Main`, and the server frees a seat on one event
+only: the connection holding it closing. Ending a run therefore has to SAY so —
+`Main._exit_tree` calls `CommandClient.release_seat`, which drops the seat intent and shuts the socket
+down, and the next run claims on a connection the server has never seated.
+
+**`_exit_tree` rather than the Abandon handler, because a run ends five ways and they all free
+`Main`**: Abandon, the pause menu's "Load — discards this run", Options → "Apply now",
+`_return_to_landing`, and quitting. Hooking the one button leaves the other four stranding the seat.
+The re-claim on the next run can race the server's reap of the old socket and come back
+`seat_occupied`, which is the one refusal the link already retries, so the teardown needs nothing
+further.
+
+**The symptom when nothing released it was a game that could not be restarted without quitting.** The
+second run's `ClaimSeat` went out on the still-seated socket of the first, `SeatRegistry::claim`
+refused it `already_seated`, and the pre-reveal path above bounced the player to the landing screen
+with that refusal's prose. `retain_seats` is no help and cannot be: faction 0 is in every roster, so a
+`new_game` deliberately KEEPS the claim. And the message understated it — a refused claim leaves
+`seat_token` at `NO_SEAT_TOKEN`, so the new run's snapshot stream is registered unseated and is sent
+no frames at all.
+
+**The release is stated in two places on purpose.** `LinkWorker::on_claim` releases a seat it still
+holds before claiming, because a `Claim` means a new run is starting and a run starts on an unseated
+connection; the GDScript call is the fix, and the link's own release is what keeps a teardown path
+that forgets from stranding the run after it. **The shutdown is the mechanism, not the drop**: the
+reader thread holds a `try_clone`d handle to the same socket, so releasing `self.write` alone leaves
+the file description open and the server never sees the EOF.
+
+**An idle client between runs holds no socket and no seat**, which is the other half of why the
+release clears the intent rather than merely dropping the connection. A reconnect would re-claim; a
+player sitting on the landing screen would then occupy a seat the server's turn gate waits
+`seat_turn_timeout_seconds` on, every turn.
+
 ## A refused seat is reported where the player can act, and that is TWO different places
 
 The failure to design against is *"nothing I click does anything"*. What the report looks like turns
@@ -354,10 +389,10 @@ client is still trying, because after a server restart it is.
 | `SnapshotLoader.gd` | `enable_stream(host, port, seat_token)` and `stream_presented_seat_token` — the loader is where the token reaches the socket |
 | `native/src/bridge/command_link.rs` | The seated link: the worker that owns the socket and the seat, the reader thread, the reconnect/re-claim clock, `dispatch`'s two-arm routing, and the one-shot transmit the host verbs use. It also carries the faction-bearing QUESTIONS (`send_query`) and the deadline per outstanding one. The levers are `RECONNECT_BACKOFF`, `SEAT_CLAIM_REPLY_TIMEOUT`, `SEAT_CLAIM_RETRY_BACKOFF`, `SEAT_CLAIM_ATTEMPTS`, `LINK_ACK_TIMEOUT` |
 | `native/src/bridge/query.rs` | The query channel and the split above: `names_a_faction` (exhaustive over `QueryPayload`), `routes_over_seated_link`, and the per-round-trip worker the faction-free questions still use with their own `QUERY_REPLY_TIMEOUT` / `SAVE_REPLY_TIMEOUT` |
-| `native/src/bridge/command.rs` | `CommandBridge` (`#[godot_api]`) — `send_line`, `send_query`, `claim_seat`, `poll_query_replies` — and the worker that keeps a send off Godot's main thread. It decides *when* a command is written; `command_link` decides *where* |
+| `native/src/bridge/command.rs` | `CommandBridge` (`#[godot_api]`) — `send_line`, `send_query`, `claim_seat`, `release_seat`, `poll_query_replies` — and the worker that keeps a send off Godot's main thread. It decides *when* a command is written; `command_link` decides *where* |
 | `native/src/runtime.rs` | The embedded script host. Its `commands.issue` path takes the SAME `command_link::dispatch`, so a script's faction-bearing command is seated like a panel's |
-| `CommandClient.gd` | The GDScript face of the bridge: endpoint precedence, `send_line`'s two-error contract, `send_query`, `claim_seat` |
+| `CommandClient.gd` | The GDScript face of the bridge: endpoint precedence, `send_line`'s two-error contract, `send_query`, `claim_seat`, `release_seat` |
 | `GameLaunch.gd` | `pending_landing_notice` — the one message a failed pre-reveal session leaves for the landing screen, in the same handoff direction the launch parameters travel the other way. Written by `Main`, read AND CLEARED by `LandingScreen`, so it is reported exactly once |
 | `ui/MenuShell.gd` | `NOTICE_NO_SERVER` and `set_notice(text)` — the rail notice above the nav: ONE sentence in a `DANGER`-bordered box, no eyebrow and no heading, hidden when there is nothing to say (every healthy path). `_notice_line` resolves the owner's text over the shell's own unreachable latch, so the two paths can never stack. Built with the RAIL, not with a pane, because what it reports is a fact about the SESSION and has to survive every pane change |
 | `SeatClaim.gd` | The seat seam: one reserved request id, the refusal tokens and their prose, `seated(faction_id, seat_token)` / `refused`. Asked once — the link re-claims by itself, and each re-grant carries a new token |
-| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal — pre-reveal by returning to the landing screen with the reason (`_return_to_landing`, `MenuShell.NOTICE_NO_SERVER`, `_seat_bounce_taken`), post-reveal on the two standing surfaces above — opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync` |
+| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal — pre-reveal by returning to the landing screen with the reason (`_return_to_landing`, `MenuShell.NOTICE_NO_SERVER`, `_seat_bounce_taken`), post-reveal on the two standing surfaces above — opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync`. `_exit_tree` releases the seat, since every way a run ends frees this node |

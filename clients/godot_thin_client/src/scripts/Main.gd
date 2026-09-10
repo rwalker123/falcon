@@ -512,6 +512,23 @@ func _ready() -> void:
     _connect_event_dock()
     _connect_pause_menu()
 
+## **THE SEAT BELONGS TO THE RUN, SO ENDING THE RUN GIVES IT BACK.** The native command link is
+## process-global and outlives this scene, so nothing about being freed closes the socket the server
+## reads the seat from: without this call the next run claims on a still-seated connection, is refused
+## `already_seated`, and — the half that is not in the message — is left unseated, which means the
+## snapshot stream it opens is addressed to nobody and it receives no frames at all.
+##
+## **`_exit_tree`, NOT the Abandon handler**, because every way a run ends frees `Main`: Abandon, the
+## pause menu's "Load — discards this run", Options → "Apply now", `_return_to_landing`, and quitting.
+## Hooking the one button would leave the other four stranding the seat.
+##
+## The next run's claim can race the server's reap of this socket and come back `seat_occupied`. That
+## is the one refusal the link already retries (`SEAT_CLAIM_ATTEMPTS` × `SEAT_CLAIM_RETRY_BACKOFF`),
+## so it needs nothing here.
+func _exit_tree() -> void:
+    if command_client != null:
+        command_client.release_seat()
+
 ## The ESC pause overlay ($PauseLayer): hidden until ESC opens it. Resume hides it, Abandon
 ## returns to the landing screen, Exit quits. New Game is deliberately absent in pause mode —
 ## Abandon routes back to the landing screen, which owns the New Game flow.

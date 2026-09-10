@@ -137,9 +137,10 @@ impl CommandBridge {
     /// later through [`Self::poll_query_replies`] under `request_id`, `kind: "seat_claim"`, because a
     /// claim is a command that is answered on the socket that made it.
     ///
-    /// **Called once per session.** The claim is re-asserted by the link itself on every reconnect —
-    /// GDScript must not re-ask, since a second claim on a live connection is refused
-    /// (`already_seated`) by design.
+    /// **Called once per RUN.** The claim is re-asserted by the link itself on every reconnect, so
+    /// GDScript must not re-ask within a run — a second claim on a live connection is refused
+    /// (`already_seated`) by design. A new run asks again, after [`Self::release_seat`] ended the
+    /// previous one's connection.
     #[func]
     pub fn claim_seat(
         &self,
@@ -165,6 +166,30 @@ impl CommandBridge {
             faction_id as u32,
             request_id as u64,
         ) {
+            Ok(()) => {
+                let _ = dict.insert("ok", true);
+            }
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", err);
+            }
+        }
+        dict
+    }
+
+    /// **RELEASE THE SEAT THIS CONNECTION HOLDS, because the run that claimed it has ended.**
+    ///
+    /// It closes the command socket, and that is the whole mechanism: the server frees a seat when
+    /// the connection holding it closes, so nothing else tells it the run is over. The next run
+    /// claims on a new connection. Returns `{ok, error}` for the DISPATCH only — a release has no
+    /// answer to wait for, since the socket it would have arrived on is the one being closed.
+    ///
+    /// The link is process-global and outlives the `Main` scene, so without this call the next run's
+    /// claim is refused `already_seated` and its snapshot stream, addressed per seat, sends nothing.
+    #[func]
+    pub fn release_seat(&self) -> VarDictionary {
+        let mut dict = VarDictionary::new();
+        match command_link::release_seat() {
             Ok(()) => {
                 let _ = dict.insert("ok", true);
             }
