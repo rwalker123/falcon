@@ -6350,6 +6350,11 @@ const BUILD_ARC_ROT_RATE := 0.22
 ## Its meter, deliberately UNLIKE the 42% one beside it, so the two arcs differ in sweep as well as in
 ## colour — the frame's whole job is that two builds can be told apart at a glance.
 const BUILD_ARC_ROT_PROGRESS := 0.75
+## The FINITE estimate stamped on the healthy build of this frame. **Without it the wire's own
+## default (`buildTurnsRemaining = -1`, no estimate) reaches the row and the cell renders a SENTINEL
+## face** — a reachable state, but it left the ordinary countdown, the very reading that replaced the
+## `%` on the marker, absent from every frame and every assertion in the run.
+const BUILD_ARC_TURNS := 7
 ## How many times closer the ROTTING source's hex must come to `HudStyle.DANGER` than the hex of the
 ## build beside it, which draws the same arc in its own web's green. `_closest_mark_distance`'s ratio
 ## idiom (see `WORKING_MARK_CONTRAST_MIN`): an absolute tolerance cannot be tuned for a mark drawn at
@@ -6437,6 +6442,15 @@ func _snapshot_build_arc() -> Dictionary:
 	}
 	_stamp_patch_owner(rotting, MapView.PLAYER_FACTION_ID)
 	(snap["forage_patches"] as Array).append(rotting)
+	# **AND THE HEALTHY BUILD GETS A FINITE ESTIMATE, so this frame carries all three faces** — a real
+	# countdown, the rot sentinel above, and a worked source building nothing. It is stamped HERE
+	# rather than in `_snapshot_work_ready`, which the `map_worked_ready` / `map_worked_unstaffed` A/B
+	# is measured against and which must not move.
+	for patch_variant in snap["forage_patches"]:
+		var patch: Dictionary = patch_variant
+		if int(patch.get("x", -1)) == WORK_CULTIVATE_X \
+				and int(patch.get("y", -1)) == WORK_CULTIVATE_Y:
+			patch[SourceForecast.FORECAST_BUILD_TURNS_KEY] = BUILD_ARC_TURNS
 	return snap
 
 ## The rung half of a source's badge FACE this frame, off the renderer's ONE producer
@@ -6791,6 +6805,26 @@ func _source_list_states() -> void:
 	_assert_map("map_build_arc — …and that badge carries no verb glyph at all (`%s`)"
 			% _badge_face(control_key),
 		_badge_face(control_key) == "")
+	# **AND THE ROW STATES THE ORDINARY COUNTDOWN** — the reading that REPLACED the `%` on the plate,
+	# and the one the whole meter change was made for. ⛔ Asserted as an equality against
+	# `DetailFormat.build_countdown_value` driven with the fixture's own numbers, not as "contains a
+	# digit": the row and the tile card are held to ONE producer, and a probe that merely looked for a
+	# number would pass on a second fork spelling it differently. The `%` absence claim above is about
+	# the MARKER; the row is where the figure went, so the two are asserted together or neither is
+	# falsifiable.
+	var building_row: Dictionary = _rows_by_key(overlays.source_rows()).get(building_key, {})
+	# The percent comes off the badge entry's OWN `building_progress` — the same value the renderer
+	# spent — so this compares the string rather than re-deriving the meter the string is about.
+	var expected_countdown := DetailFormat.build_countdown_value(BUILD_ARC_TURNS,
+		WORKED_READY_BUILDERS,
+		HudFormat.progress_percent(float(overlays._badge_entry_for(building_key).get(
+			"building_progress", 0.0))),
+		SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
+	_assert_map("map_build_arc — the building ROW carries the finite countdown the plate no longer does (`%s`)"
+			% String(building_row.get("build_text", "")),
+		not building_row.is_empty()
+		and String(building_row.get("build_text", "")) == expected_countdown
+		and String(building_row.get("build_text", "")).contains(str(BUILD_ARC_TURNS)))
 	# **THE BLOCKED CASE**: a build the WIRE says is rotting wears the ⚠ face, not a confident meter.
 	_assert_map("map_build_arc — the rotting build wears the stalled face (`%s`)" % rotting_face,
 		rotting_glyph != ""
