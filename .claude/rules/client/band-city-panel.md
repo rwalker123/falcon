@@ -5493,8 +5493,10 @@ idle workers to spare" directly under a live `⌂ Split`.
 
 **THE SHEET SHOWS THE CONSEQUENCE, BECAUSE THE INPUT IS ONE NUMBER.** Workers stepper → the share it
 implies → what the new band would be (people, brackets, dependants/worker, provisions) → the home
-band beside its now → the verdict. The people, the larder and the material all divide on that one
-share.
+band beside its now → the button, live or disabled-carrying-its-reason → a footer that never moves.
+The people, the larder and the material all divide on that one share. **The verdict is not a line of
+its own**: it hangs off the disabled button as a tooltip, for the height reason in "THE REFUSAL RIDES
+THE DISABLED BUTTON'S TOOLTIP" below.
 
 > #### ⛔ THE GEAR NO LONGER DOES, AND THE SHEET SAYS SO IN ONE SENTENCE
 >
