@@ -79,9 +79,16 @@ const CHIP_CLIMATE_DEGREES_ONLY_FORMAT := "%.1f °C"
 # **It merged with CLIMATE and NOT with HABITABILITY, and the difference is arithmetic.** Habitability
 # is `terrain attrition + terrain hardness + (|T - 18| - 9) x 0.004` and turns Hostile at 0.09; on
 # terrain with no attrition penalty, temperature alone does not reach Hostile until -13.5 °C, while
-# people start dying at 6.0 °C. That is a 19.5-degree band of lethal-but-Fair ground — exactly where
-# the original defect lived — so a warning folded into habitability would be silent across the whole
-# window it exists to cover.
+# people start dying at 0.0 °C (`demographics_config.json` -> `cold.onset_temp`). That is a
+# 13.5-degree band of lethal-but-Fair ground — exactly where the original defect lived — so a warning
+# folded into habitability would be silent across the whole window it exists to cover.
+#
+# The onset in this argument was **6.0 °C** when it was written, giving a 19.5-degree band. It moved
+# to 0.0 in `84777e06` ("6 °C was never cold enough to kill anyone"), which narrowed the band without
+# weakening the argument. The RENDERING never used the stale figure — `TileSurvivability` reads both
+# onsets off the wire — so this was prose drift only. See `docs/plan_population_collapse.md`
+# Finding 4 for what else that retune moved: the morale break-even at 6.5 °C did NOT follow it, and
+# nothing on this card knows about that second threshold.
 const CHIP_CLIMATE_LETHAL_PREFIX := "⚠ "
 
 # The hover: ONE clause, and it names what happens to the people.
