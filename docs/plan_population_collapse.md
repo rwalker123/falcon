@@ -148,23 +148,55 @@ every one of those three surfaces says it is fine. This is the same class as iss
 `Temperate` tile that killed); that fix moved the *death* onset and the *morale* onset was never
 re-examined beside it.
 
-**(b) The death feed spends every death on "old age".** `push_demographic_events` accrues deaths on
-**one** carry across all three brackets and labels the resulting event with the single
-largest-contributing bracket and *its* cause. `flows.elder_deaths` folds in the flat
-`elder_mortality_rate` of **0.20**, which outweighs almost everything else, so the elder bracket wins
-that comparison nearly always. A well-fed band of 30:
+**(b) The death feed's cold warning exists and is starved of its input.**
 
-| tile temp | child deaths | worker deaths | elder deaths | what the feed says | deaths unspoken for |
+⚠ **The reporting is NOT missing** — this is the correction to an earlier reading of this finding.
+Issue #614 already built exactly the right mechanism, and `hud_event_vocab.gd` carries its reasoning
+in full: **a death's rung is its bracket.** `bracket=working` and `bracket=child` claim `RUNG_ALERT`
+(⚠, danger red); `bracket=elder` is deliberately absent and falls through to `died`'s own
+`RUNG_NOTABLE` (✦), because bands lose elders as a matter of course and alerting on each one trains
+the player to skim the bar. `cause=cold` / `cause=heat` / `cause=age` all render as prose. End to
+end, the vocabulary is right.
+
+**What denies it its input is `push_demographic_events`.** Deaths accrue on **one** carry across all
+three brackets, and the emitted event carries the single largest-*contributing* bracket and *its*
+cause. `flows.elder_deaths` folds in the flat `elder_mortality_rate` of **0.20**, which keeps the
+elder bracket dominant almost everywhere — so the event that *should* be `bracket=working cause=cold`
+is emitted as `bracket=elder cause=age`, and lands on Notable with no warning colour.
+
+A well-fed band of 30, one turn, by tile temperature:
+
+| tile temp | child | worker | elder | event carries | client rung |
 |---|---|---|---|---|---|
-| −1.9 | 0.042 (cold) | 0.059 (cold) | 0.449 (age) | "An elder died of old age" | 18 % |
-| −5.0 | 0.110 (cold) | 0.156 (cold) | 0.467 (age) | "An elder died of old age" | 36 % |
-| −10.0 | 0.219 (cold) | 0.311 (cold) | 0.495 (age) | "An elder died of old age" | **52 %** |
-| −15.0 | 0.329 (cold) | 0.467 (cold) | 0.524 (age) | "An elder died of old age" | 60 % |
+| −5.0 | 0.110 (cold) | 0.156 (cold) | 0.467 (age) | `bracket=elder cause=age` | Notable ✦ |
+| −10.0 | 0.219 (cold) | 0.311 (cold) | 0.495 (age) | `bracket=elder cause=age` | Notable ✦ |
+| −15.0 | 0.329 (cold) | 0.467 (cold) | 0.524 (age) | `bracket=elder cause=age` | Notable ✦ |
+| −17.0 | 0.373 (cold) | 0.529 (cold) | 0.536 (age) | `bracket=elder cause=age` | Notable ✦ |
+| **−18.0** | 0.395 (cold) | 0.560 (cold) | 0.541 (age) | `bracket=working cause=cold` | **ALERT ⚠** |
 
-The sim knows the per-bracket cause and puts all three on the wire. The feed drops two of them.
+Workers out-die elders only below **−17.3 °C** on a fresh band (algebraically, `W·c > E·(1.5c + 0.2)`
+at the opening `W/E` of 8.12), improving to about **−15 °C** once sustained cold has thinned the
+elder share. **The map's coldest tile is −18.5 °C.** So the ⚠ fires in roughly the last one to three
+degrees of the entire range the generator produces; across the whole 0 → −17 °C band where cold is
+demonstrably killing workers and children, every death is announced as an elder dying of old age.
 
-**Together they are the whole of Ray's "I could have missed it".** The tile said fine; the feed said
-old age; the population fell. Nothing anywhere named the temperature.
+This is #614's own failure mode recurring one layer down. That issue's fix replaced the argument
+*"a death that matters announces itself through other channels"* with the bracket split — correctly.
+The split is simply never reached.
+
+**The pooling itself is deliberate and documented** — `.claude/rules/core_sim/event-feed.md`
+§"Deaths pool onto ONE carry" explains why three per-bracket carries strand remainders, and states
+the cost as *"a single crossing may span brackets, so `bracket=` / `cause=` name the dominant
+contributor since the last crossing"*. What is new here is the **consequence**: that stated
+attribution cost is what makes the ⚠ unreachable across the whole map. Whatever is done about it has
+to keep the pooled carry's head-count exactness — that part is right, and the ledger guard
+(`the_reported_flows_account_for_every_person_a_band_gains_or_loses`) enforces it.
+
+**Together they are the whole of Ray's "I could have missed it".** The tile chip said the ground was
+survivable, the feed said an elder died of old age, and the population fell. Both surfaces that
+*could* have named the temperature had a correct mechanism for doing so and neither was reached —
+(a) because its threshold is the wrong one of the two, (b) because the bracket that would have
+tripped it never wins the comparison.
 
 ## What this does NOT find
 
@@ -189,10 +221,15 @@ Grouped by which finding they answer. They are not alternatives to each other.
    temperature at which cold starts killing are one decision rather than two independently-tuned
    numbers that happen to be 6.5 ° apart.
 
-**For the feed (Finding 5b):**
-3. Name every bracket that lost someone, or name the cause with the largest **share of deaths**
-   rather than the largest bracket. Either makes cold visible without touching the model. Overlaps
-   #625, which found the same masking from the other end.
+**For the feed (Finding 5b) — the rung ladder is right; feed it:**
+3. Stop letting the flat old-age term win the bracket comparison. The narrowest form is to compare
+   brackets on their **non-age** deaths — `elder_mortality` is the one term that is never news — so a
+   turn that killed a worker with cold emits `bracket=working cause=cold` and reaches the ⚠ the
+   ladder already defines. Alternatives: emit one event **per bracket that lost someone** (three
+   carries, which `DemographicFlowAccumulator` documents as stranding remainders), or leave the
+   selection alone and promote on `cause=cold`/`heat` regardless of bracket. **Nothing in
+   `hud_event_vocab.gd` needs to change for any of them.** Overlaps #625, which found the same flat
+   0.20 term masking temperature from the other end.
 
 **For the missing floor (Findings 2 + 3):**
 4. Leave it. The land *is* the intended floor and it works; the defect is that morale silently pushes

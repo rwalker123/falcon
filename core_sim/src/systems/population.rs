@@ -2994,15 +2994,27 @@ mod collapse_research {
         }
     }
 
-    /// **§5 — what the player is told.** One death event per whole person, labelled by the bracket
-    /// that contributed most since the last crossing — and the flat `elder_mortality_rate` wins
-    /// that comparison almost everywhere, so cold is spoken for by "old age".
+    /// **§5 — the cold ⚠ exists and cannot be reached.**
+    ///
+    /// The client's rung ladder is **correct**: `hud_event_vocab.gd` claims `bracket=working` and
+    /// `bracket=child` for `RUNG_ALERT` (⚠, danger ink) and leaves `bracket=elder` on Notable,
+    /// which is issue #614's fix and is the right rule. What denies it its input is upstream —
+    /// `push_demographic_events` pools deaths onto one carry (`event-feed.md` documents the pooling
+    /// and its attribution cost) and labels the event with the largest-*contributing* bracket, and
+    /// `flows.elder_deaths` carries the flat `elder_mortality_rate`.
+    ///
+    /// This sweep prints which bracket wins that comparison at every temperature the map produces,
+    /// and therefore which rung the event lands on.
     #[test]
     #[ignore = "research harness — prints, asserts nothing; see docs/plan_population_collapse.md"]
-    fn research_what_the_death_feed_names_versus_what_did_the_killing() {
+    fn research_which_rung_a_cold_death_actually_reaches() {
         let cfg = DemographicsConfig::default();
-        println!("\n=== 5: one turn of a WELL-FED band of 30 — deaths by bracket vs the one reported ===");
-        for t in [18.0f32, -1.9, -5.0, -10.0, -15.0, TODAYS_COLDEST_TILE_C] {
+        println!(
+            "\n=== 5: one turn of a WELL-FED band of 30 — which bracket the event carries ==="
+        );
+        println!("   temp    child   working   elder   | event carries          client rung");
+        let mut t = 0.0f32;
+        while t >= TODAYS_COLDEST_TILE_C {
             let out = advance_demographics(
                 opening_band(30.0, 10_000.0),
                 Some(FoodFlow {
@@ -3019,26 +3031,29 @@ mod collapse_research {
                 f.elder_deaths.to_f32(),
             );
             // Mirrors `push_demographic_events`' first-max over child >= working >= elder.
-            let mut named = ("A child", c, f.child_death_cause);
+            let mut named = ("child", c, f.child_death_cause);
             if w > named.1 {
-                named = ("A worker", w, f.working_death_cause);
+                named = ("working", w, f.working_death_cause);
             }
             if e > named.1 {
-                named = ("An elder", e, f.elder_death_cause);
+                named = ("elder", e, f.elder_death_cause);
             }
-            let total = (c + w + e).max(1e-9);
             println!(
-                "  {t:6.1}  C {c:.3} ({})   W {w:.3} ({})   E {e:.3} ({})   total {total:.3}/turn",
-                f.child_death_cause.as_str(),
-                f.working_death_cause.as_str(),
-                f.elder_death_cause.as_str()
-            );
-            println!(
-                "          feed says \"{} died of {}\" — {:.0}% of the turn's deaths go unspoken for",
+                "  {t:6.1}   {c:.3}    {w:.3}    {e:.3}   | bracket={:8} cause={:5}  {}",
                 named.0,
                 named.2.as_str(),
-                100.0 * (total - named.1) / total
+                if named.0 == "elder" {
+                    "notable ✦ (no warning)"
+                } else {
+                    "ALERT ⚠"
+                }
             );
+            t -= 1.0;
         }
+        println!("  workers out-die elders only where W·c > E·(1.5c + 0.2) — about -17.3 C at the");
+        println!(
+            "  opening W/E of 8.12, easing to about -15 C once sustained cold thins the elders."
+        );
+        println!("  The coldest tile the generator makes is {TODAYS_COLDEST_TILE_C} C.");
     }
 }
