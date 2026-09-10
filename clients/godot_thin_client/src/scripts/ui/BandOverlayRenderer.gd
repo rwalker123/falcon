@@ -224,6 +224,9 @@ var _deferred_source_badges: Array[Dictionary] = []
 ## warn}`. A cap that hides state silently reads as "nothing here", which is the very failure this
 ## feature exists to fix at a different scale — so the `+N` chip reports what it is covering.
 var _hidden_source_state: Dictionary = {}
+## THE WORKED WORKINGS this frame — `working_key → {tile, material, crew}` — see
+## `compute_worked_workings`, which is the one place it is built.
+var _worked_workings: Dictionary = {}
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -243,6 +246,78 @@ func reset_world_state() -> void:
 	_deferred_yield_labels.clear()
 	_deferred_source_badges.clear()
 	_hidden_source_state.clear()
+	_worked_workings.clear()
+
+## **WHICH WORKINGS ARE BEING CUT, AND BY HOW MANY** — `working_key → {tile, material, crew}`, summed
+## across EVERY player band (issue #650). `MapView._draw` calls this FIRST and hands the answer to
+## `SecondaryMarkerRenderer.set_worked_workings`, because a working's marker exists only where a crew
+## is on it: the slot pass needs this pass's answer, which is the reverse of the food/herd order.
+##
+## **IT IS THE MAP-SIDE TWIN OF `SubjectDrawerController._cutters_on_working`, DELIBERATELY LOCAL.**
+## That helper sums the same `(tile, material)` crew across every player band, and the tile card's
+## `⚒N` clause is its face — but it reaches it through `HudBandLaborState`, and a renderer must not
+## depend on the HUD's band-labor model (the rule `_labor_assignments_of_marker` beside it already
+## follows). So this reads the same rows off the MARKERS' own `labor_assignments`, exactly as the
+## forage and hunt arms below do, and the two surfaces agree because they sum the same wire field
+## over the same set of bands rather than because one calls the other.
+##
+## **NOT PENDING-AWARE, matching the forage and hunt arms**: the map's marks report the crew the
+## SNAPSHOT confirms, and the dashed-amber pending overlay is the separate statement about an order
+## that has not landed yet. (The tile card's clause IS pending-aware; the disagreement lasts one
+## frame and is the same one the existing worked-source badges already have.)
+##
+## **A WORKING THE `deposits` SECTION DOES NOT KNOW ABOUT DRAWS NOTHING.** The map states a working
+## the snapshot carries, never one a labor row asserts — the same `(tile, material)` join the tile
+## card and the Workings roster make — so a lapsing row pointing at a hex with no such deposit cannot
+## put a phantom marker on it.
+func compute_worked_workings() -> Dictionary:
+	_worked_workings.clear()
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary):
+			continue
+		var band: Dictionary = unit_variant
+		if not _view._is_player_unit(band):
+			continue
+		# A DETACHED PARTY CUTS NOTHING — it carries no `labor_assignments` of its own, its one
+		# source being the quarry the mark pass reads off the cohort.
+		if bool(band.get("is_expedition", false)):
+			continue
+		for entry_variant in _labor_assignments_of_marker(band):
+			if not (entry_variant is Dictionary):
+				continue
+			var entry: Dictionary = entry_variant
+			var workers := int(entry.get("workers", 0))
+			if workers <= 0:
+				continue
+			if String(entry.get("kind", "")).strip_edges().to_lower() != HudConst.LABOR_KIND_EXTRACT:
+				continue
+			var material := String(entry.get("material", "")).strip_edges()
+			if material == "":
+				continue
+			var tile := Vector2i(int(entry.get("target_x", -1)), int(entry.get("target_y", -1)))
+			if tile.x < 0 or tile.y < 0 or tile.y >= _view.grid_height:
+				continue
+			if not _working_on_tile(tile, material):
+				continue
+			var key := _view.secondary_working_key(tile.x, tile.y, material)
+			var known: Dictionary = _worked_workings.get(key, {})
+			_worked_workings[key] = {
+				"tile": tile,
+				"material": material,
+				"crew": int(known.get("crew", 0)) + workers,
+			}
+	return _worked_workings
+
+## Does the `deposits` section carry a working of `material` on this hex — the `(tile, material)` join
+## every other surface makes, restated here because this renderer holds no deposit model.
+func _working_on_tile(tile: Vector2i, material: String) -> bool:
+	var rows: Variant = _view.deposit_tile_lookup.get(tile, null)
+	if not (rows is Array):
+		return false
+	for row in (rows as Array):
+		if row is Dictionary and HudDepositVocab.material_of(row as Dictionary) == material:
+			return true
+	return false
 
 ## EVERY player band's worked sources, drawn whatever is selected (docs/plan_worked_source_marks.md).
 ##
@@ -314,7 +389,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# only ever show a rung on OFFER, never one under way (issue #442). It carries
 						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
 						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
-						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
+						_queue_source_badge(_view._hex_center(qcol, qrow, radius, origin), qkey, LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin,
 							int(builders.get(qkey, 0)))
 						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd,
@@ -341,7 +416,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
 				builders[fkey] = int(builders.get(fkey, 0)) + band_builders
 				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
-				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
+				_queue_source_badge(_view._hex_center(tcol, trow, radius, origin), fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin,
 					int(builders[fkey]))
@@ -365,11 +440,36 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
 				builders[hkey] = int(builders.get(hkey, 0)) + band_builders
 				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
-				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
+				_queue_source_badge(_view._hex_center(hcol, hrow, radius, origin), hkey, LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin,
 					int(builders[hkey]))
 				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
+	# **THE WORKED WORKINGS** (issue #650), off the set `compute_worked_workings` resolved before the
+	# slot pass — this walk is over SOURCES rather than bands because the crew is already summed.
+	#
+	# **NO RING AND NO TILE OUTLINE, and that is the whole difference from the two food webs.** A
+	# patch or a herd is on the map whether or not anybody works it, so the ring is what says *we
+	# work this*; a working's MARKER only exists where a crew is on it, so its presence already
+	# carries that statement and a ring would say it twice. It follows that a working has no
+	# tile-level fallback either: at far zoom, and past the visible cap, the aggregate outline would
+	# be a mark in the food webs' own colour language for a source that is in neither. What the cap
+	# hides is reported by the `+N` chip's `⚒` below; what far zoom hides is hidden on purpose.
+	for key in _worked_workings:
+		var working: Dictionary = _worked_workings[key]
+		var wtile: Vector2i = working.get("tile", Vector2i(-1, -1))
+		# **THE PLATE IS THE SHARED `⚒N` SOURCE BADGE, not a shape of its own** — the tile card's
+		# deposit row, the band badge and this plate are one spelling of one idea (`BADGE_CREW_GLYPH`
+		# → `HudSelectionVocab.SOURCE_CREW_MARK`), so a hex whose marker said one number beside a card
+		# row saying another is unwritable. It is queued with an EMPTY source deliberately: the rung
+		# answers `_queue_source_badge` reaches for (`RungGates.rung_in_progress` /
+		# `next_rung_ready`) are the FOOD webs' — they answer nothing for an `extract` kind — and a
+		# working's ladder is declared from the Work board, so the plate states the crew and stops.
+		_queue_source_badge(_view._hex_center_wrapped(wtile.x, wtile.y, radius, origin), key,
+			HudConst.LABOR_KIND_EXTRACT, {}, SourceForecast.IMPROVEMENT_NONE,
+			int(working.get("crew", 0)), radius, origin)
+		_note_if_hidden(key, wtile, HudConst.LABOR_KIND_EXTRACT, {},
+			SourceForecast.IMPROVEMENT_NONE, false)
 
 ## Fold a worked source the marker cap HID into its tile's roll-up, so the `+N` chip can report it.
 ## A source with a visible slot returns immediately — its own badge already says everything.
@@ -418,7 +518,12 @@ func _label_anchor(col: int, row: int, key: String, radius: float, origin: Vecto
 ## to draw somewhere arbitrary.
 ## `builders` is this source's BUILD crew, summed across bands — see `_draw_source_badge` for why a
 ## rung under way has to know it.
-func _queue_source_badge(col: int, row: int, key: String, kind: String, source: Dictionary,
+## `hex_center` is the plate's ANCHOR HEX in screen space, passed in rather than derived from a
+## column here: the food and hunt arms anchor to the BAND's wrap image (`eff_col + delta`, so a
+## source across the seam draws beside the band that works it) while a working anchors to its own
+## marker's (`_hex_center_wrapped`), and a badge that resolved the wrap for itself would eventually
+## disagree with the marker it hangs under.
+func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source: Dictionary,
 		improvement: String, crew: int, radius: float, origin: Vector2,
 		builders: int = 0) -> void:
 	var slot := _view.secondary_slot_of(key)
@@ -455,7 +560,7 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 		else:
 			stalled = SourceForecast.build_is_stalled(
 				source, float(building.get("progress", 0.0)), builders)
-	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
+	var center := _view.secondary_slot_center(hex_center, slot, radius)
 	# One entry per source key: a later band working the same source replaces the earlier queue rather
 	# than stacking a second plate on the same marker.
 	for i in range(_deferred_source_badges.size()):

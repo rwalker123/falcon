@@ -1948,6 +1948,7 @@ func _ready() -> void:
 
 	await _overlay_picker_state()
 	await _ready_for_improvement_state()
+	await _worked_working_states()
 
 	_finish()
 
@@ -5474,3 +5475,218 @@ func _snapshot_routes() -> Dictionary:
 		_route_order(ROUTE_PLAYER_FACTION, ROUTE_DEGENERATE_PATH),
 	]
 	return snap
+
+## ---- THE WORKED-WORKING MARKERS (issue #650) ---------------------------------------------------
+## A working gets a map marker **only where a crew is on it**. That is Ray's decision and it is the
+## whole feature: with the scrub-wood rows gone nearly every land tile still holds stone, so marking
+## unworked deposits would bury the map under a mark that says nothing is happening.
+##
+## The two hexes below sit either side of the band and carry the SAME two deposits; the only thing
+## that differs is whether anybody is cutting them. That contrast is the frame — a marker family
+## that drew on ground alone would render a perfectly plausible picture, so the claim is asserted
+## structurally against the slot system as well as photographed.
+const WORKING_WORKED_OFFSET := Vector2i(-1, 0)     # the hex a crew is on
+const WORKING_BARE_OFFSET := Vector2i(1, 0)        # the CONTROL: same deposits, nobody on them
+const WORKING_MATERIAL_WOOD := "wood"
+const WORKING_MATERIAL_STONE := "stone"
+## Crews per material, distinct so the two `⚒N` plates in the pair frame are told apart by their
+## numbers as well as by the glyph above them.
+const WORKING_CREW := {
+	WORKING_MATERIAL_WOOD: 3,
+	WORKING_MATERIAL_STONE: 2,
+}
+## The grid the far-zoom state renders on — fitted hexes must come out under `LOD_MIN_RADIUS`, which
+## is where `compute_slots` returns early and every secondary marker (workings included) vanishes.
+const WORKING_FAR_GRID_W := 110
+const WORKING_FAR_GRID_H := 80
+
+## A deposit row as the wire ships one, trimmed to the fields the MAP reads plus the ones that make
+## it an honest row. The marker path needs only `tile_x` / `tile_y` / `material` — it states no stock
+## and no rung — but a fixture staging a row the server could not publish is this harness's own
+## documented hazard, so the seam's shape is stated rather than reduced to the join key.
+func _working_deposit(tile: Vector2i, material: String) -> Dictionary:
+	var renews := material == WORKING_MATERIAL_WOOD
+	return {
+		"tile_x": tile.x, "tile_y": tile.y, "material": material,
+		"branch": "forestry" if renews else "extraction",
+		"stock": 600.0 if renews else 3000.0,
+		"capacity": 600.0 if renews else 3000.0,
+		"reachable": 600.0 if renews else 450.0,
+		"regrowth_rate": 0.03 if renews else HudDepositVocab.REGROWTH_NEVER_RENEWS,
+		"rung": HudDepositVocab.RUNG_KEY_DEADFALL if renews else HudDepositVocab.RUNG_KEY_GATHERING,
+		"ladder_position": HudDepositVocab.LADDER_UNSTARTED,
+		"actual_take": HudDepositVocab.TAKE_NONE,
+		"sustainable_take": HudDepositVocab.TAKE_NONE,
+	}
+
+## One band, two deposit-bearing hexes, and a crew on `worked_materials` of the LEFT one.
+## `worked_materials` empty is a legitimate call — it is what "both hexes are bare" looks like — and
+## the grid is a parameter so the far-zoom state drives the identical fixture at a tiny hex radius.
+func _snapshot_workings(w: int, h: int, worked_materials: Array) -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(w * h)
+	terrain.fill(TERRAIN_ID)
+	var center := _work_grid_center(w, h)
+	var worked_tile: Vector2i = center + WORKING_WORKED_OFFSET
+	var bare_tile: Vector2i = center + WORKING_BARE_OFFSET
+	var assignments: Array = []
+	for material in worked_materials:
+		assignments.append({
+			"kind": HudConst.LABOR_KIND_EXTRACT,
+			"workers": int(WORKING_CREW[material]),
+			"target_x": worked_tile.x, "target_y": worked_tile.y,
+			"material": String(material),
+		})
+	var band := _with_stage({
+		"entity": BAND_ENTITY, "faction": 0, "current_x": center.x, "current_y": center.y,
+		"size": 30, "id": "Band 1", "work_range": 2, "scout_reveal_radius": 0,
+		"labor_assignments": assignments,
+	}, STAGE_NOMADIC)
+	return {
+		"grid": {"width": w, "height": h, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [band],
+		"herds": [],
+		"deposits": [
+			_working_deposit(worked_tile, WORKING_MATERIAL_WOOD),
+			_working_deposit(worked_tile, WORKING_MATERIAL_STONE),
+			_working_deposit(bare_tile, WORKING_MATERIAL_WOOD),
+			_working_deposit(bare_tile, WORKING_MATERIAL_STONE),
+		],
+	}
+
+## The crowded hex from `_snapshot_mixed` — three wonders, a herd and a food site — with a WOOD
+## working being cut on it too. Every visible slot is spoken for before the working is reached, so it
+## falls past the cap and the only thing that reports it is the `+N` chip's `⚒`.
+func _snapshot_workings_overflow() -> Dictionary:
+	var snap := _snapshot_mixed()
+	var tile := Vector2i(BAND_X, BAND_Y)
+	snap["populations"] = [_with_stage({
+		"entity": BAND_ENTITY, "faction": 0, "current_x": BAND_X, "current_y": BAND_Y,
+		"size": 30, "id": "Band 1", "work_range": 2, "scout_reveal_radius": 0,
+		"labor_assignments": [{
+			"kind": HudConst.LABOR_KIND_EXTRACT,
+			"workers": int(WORKING_CREW[WORKING_MATERIAL_WOOD]),
+			"target_x": tile.x, "target_y": tile.y, "material": WORKING_MATERIAL_WOOD,
+		}],
+	}, STAGE_VILLAGE)]
+	snap["deposits"] = [_working_deposit(tile, WORKING_MATERIAL_WOOD)]
+	return snap
+
+## **THE UNWORKED HEX SHOWS NOTHING, AND THAT IS THE CLAIM RAY'S DECISION TURNS ON** — so it is
+## asserted against the slot system rather than left to a picture. `secondary_slot_of` answers
+## `0..cap-1` for a marker that drew and `-1` for one that did not exist, so the A and the B of the
+## same frame are one comparison: a renderer that marked ground would light the bare hex's keys, and
+## a renderer that marked nothing at all would darken the worked hex's.
+func _assert_working_slots(label: String, w: int, h: int, worked: Array, bare: Array) -> void:
+	var center := _work_grid_center(w, h)
+	var worked_tile: Vector2i = center + WORKING_WORKED_OFFSET
+	var bare_tile: Vector2i = center + WORKING_BARE_OFFSET
+	for material in worked:
+		var key: String = _map.secondary_working_key(worked_tile.x, worked_tile.y, String(material))
+		_assert_map("%s — the %s working a crew is on took a marker slot (%d)"
+			% [label, material, _map.secondary_slot_of(key)],
+			_map.secondary_slot_of(key) >= 0)
+	for material in bare:
+		var bkey: String = _map.secondary_working_key(bare_tile.x, bare_tile.y, String(material))
+		_assert_map("%s — the UNWORKED %s deposit on (%d, %d) has no marker at all"
+			% [label, material, bare_tile.x, bare_tile.y],
+			_map.secondary_slot_of(bkey) < 0)
+
+func _worked_working_states() -> void:
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.set_faction_knowledge({})
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+
+	# State "worked working" — ONE working being cut (wood, ⚒3) beside a hex carrying the SAME two
+	# deposits with nobody on them. Read for: a single 🪵 in an edge slot on the left hex with its
+	# `⚒3` plate under it, and the right hex completely bare.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_worked")
+	_assert_working_slots("map_working_worked", GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD], [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	# The STONE on the SAME hex is untouched, so it must be as absent as the bare hex's pair — the
+	# marker is per `(tile, material)`, not per tile, and a tile-keyed renderer passes every other
+	# assertion in this state.
+	_assert_map("map_working_worked — the stone on the WORKED hex, which nobody is cutting, has no marker",
+		_map.secondary_slot_of(_map.secondary_working_key(
+			(_work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET).x,
+			(_work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET).y,
+			WORKING_MATERIAL_STONE)) < 0)
+
+	# State "worked pair" — the same hex with BOTH workings crewed. Read for: two DIFFERENT glyphs
+	# (🪵 wood and 🪨 stone) in two edge slots of one hex, each with its own plate (`⚒3` / `⚒2`), so a
+	# hex cutting timber and quarrying rock cannot read as one working.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pair")
+	_assert_working_slots("map_working_pair", GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE],
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	# The two markers must not land in ONE slot — that is what a renderer keying the tile rather than
+	# the pair would do, and both slot assertions above would still pass.
+	var pair_center := _work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET
+	var wood_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_center.x, pair_center.y, WORKING_MATERIAL_WOOD))
+	var stone_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_center.x, pair_center.y, WORKING_MATERIAL_STONE))
+	_assert_map("map_working_pair — the wood and the stone hold DIFFERENT slots (%d vs %d)"
+		% [wood_slot, stone_slot], wood_slot != stone_slot)
+	# And the glyphs themselves must differ, which is the half a slot index cannot carry: two markers
+	# in two corners drawing one emoji is exactly as unreadable as one marker.
+	_assert_map("map_working_pair — wood and stone wear DIFFERENT marks (%s vs %s)"
+		% [FoodIcons.for_material(WORKING_MATERIAL_WOOD), FoodIcons.for_material(WORKING_MATERIAL_STONE)],
+		FoodIcons.for_material(WORKING_MATERIAL_WOOD) != FoodIcons.for_material(WORKING_MATERIAL_STONE)
+			and FoodIcons.for_material(WORKING_MATERIAL_WOOD) != "")
+
+	# State "working overflow" — the crowded hex, where three wonders take every visible slot before
+	# the working is reached. Read for: the `+N` chip carrying `⚒`, which is what stops a capped
+	# marker reading as "nothing is happening here".
+	_map.display_snapshot(_snapshot_workings_overflow())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_overflow")
+	var crowded := Vector2i(BAND_X, BAND_Y)
+	var over_key: String = _map.secondary_working_key(crowded.x, crowded.y, WORKING_MATERIAL_WOOD)
+	_assert_map("map_working_overflow — the working is pushed past the visible cap (slot %d) and the chip hides %d"
+		% [_map.secondary_slot_of(over_key), _map._secondary_markers.overflow_at(crowded)],
+		_map.secondary_slot_of(over_key) < 0 and _map._secondary_markers.overflow_at(crowded) > 0)
+	_assert_map("map_working_overflow — the chip reports the hidden working as worked (⚒), not as a bare count",
+		bool((_map._band_overlays.hidden_source_state().get(crowded, {}) as Dictionary).get("worked", false)))
+
+	# State "working far zoom" — the SAME crewed pair on a grid large enough that fitted hexes fall
+	# under `ICON_MIN_DETAIL_RADIUS`. `compute_slots` returns early there, so every secondary marker
+	# goes, workings included; a working has no tile-level fallback outline, so this hex must be
+	# clean. **The premise is asserted with the measured radius**, because an absence is only worth
+	# asserting where a presence would have been visible — and the pair frame above IS that presence.
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_workings(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	if _map.last_hex_radius >= LOD_MIN_RADIUS:
+		push_warning("map_preview: working-farzoom fitted radius %.1f >= LOD gate %.1f — this state no longer guards the LOD suppression; grow WORKING_FAR_GRID_*" % [_map.last_hex_radius, LOD_MIN_RADIUS])
+	await _save("map_working_farzoom")
+	_assert_working_slots("map_working_farzoom (radius %.1f < gate %.1f)"
+		% [_map.last_hex_radius, LOD_MIN_RADIUS],
+		WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
+		[], [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	var far_center := _work_grid_center(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H) + WORKING_WORKED_OFFSET
+	for material in [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]:
+		_assert_map("map_working_farzoom — the CREWED %s working is LOD-suppressed at radius %.1f (gate %.1f)"
+			% [material, _map.last_hex_radius, LOD_MIN_RADIUS],
+			_map.secondary_slot_of(_map.secondary_working_key(
+				far_center.x, far_center.y, String(material))) < 0)

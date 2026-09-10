@@ -825,6 +825,38 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   nobody works is a standing rung, which the rung glyph already reports.
 - **CREW IS AGGREGATED PER SOURCE, NOT PER BAND** — two bands can work one patch, and two plates on
   one marker would be a lie about a single number.
+- **A WORKED WORKING TAKES THE BADGE AND NO RING** (issue #650). The wood and stone workings are a
+  THIRD kind of worked source and they arrive at this pass differently from the two food webs, in
+  three ways worth keeping straight:
+  - **The set is resolved in a pass of its own, `compute_worked_workings`, which `MapView._draw` runs
+    BEFORE `SecondaryMarkerRenderer.compute_slots`.** A working's marker exists only where a crew is
+    on it, so the slot pass depends on this pass's answer rather than the other way round — the
+    inverse of the food/herd order, and the whole reason it is a separate function whose result is
+    threaded across (`map-markers.md` → "A WORKING gets a marker only where a CREW IS ON IT").
+  - **NO `_draw_worked_mark`, so no ring and no tile outline.** The ring's job is to say *we work
+    this* about a source that would be on the map either way; a working's marker only exists because
+    it is worked, so the ring would state it twice, and the tile-level outline takes the SOURCE's
+    colour — which a working, in neither food web, has none of.
+  - **The plate is `_queue_source_badge` with an EMPTY source**, deliberately: `RungGates`'
+    `rung_in_progress` / `next_rung_ready` answer for the FOOD webs and return nothing for an
+    `extract` kind, and a working's ladder is declared from the Work board, so the plate states the
+    crew (`⚒N`) and stops. It is the same plate a worked patch or a hunted herd wears, which is what
+    makes the map mark and the tile card's `crew_clause` one spelling of one idea.
+  - **It is the map-side twin of `SubjectDrawerController._cutters_on_working`, and it is local on
+    purpose.** That helper sums the same `(tile, material)` crew across every player band but reaches
+    it through `HudBandLaborState`; a renderer must not depend on the HUD's band-labor model (the
+    rule `_labor_assignments_of_marker` already follows), so this walks the markers' own
+    `labor_assignments`. The two agree because they sum the same wire field over the same set of
+    bands, not because one calls the other. **Not pending-aware**, matching the forage and hunt arms;
+    the card's clause is, so the two disagree for exactly one frame — which is the disagreement the
+    existing badges already have and not a new one.
+  - **A working the `deposits` section does not carry draws nothing** — the map states a working the
+    snapshot knows about, never one a labor row asserts, so a lapsing row cannot put a phantom marker
+    on a hex with no such deposit.
+  - **`_queue_source_badge` takes a `hex_center` rather than a column** because of this: the food and
+    hunt arms anchor to the BAND's wrap image (`eff_col + delta`) while a working anchors to its own
+    marker's (`_hex_center_wrapped`), and a badge resolving the wrap for itself would eventually
+    disagree with the marker it hangs under.
 - **A HUNTING EXPEDITION'S QUARRY IS A WORKED SOURCE.** It rides the COHORT
   (`expedition_target_herd`), not a `labor_assignments` row, so a pass that only walks assignments
   misses it — which is how the first cut shipped, with parties crossing the map and nothing saying

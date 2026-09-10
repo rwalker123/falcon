@@ -2037,6 +2037,13 @@ func _draw() -> void:
 	# they can draw. This is a PURE computation over `discovered_sites` / `food_sites` / `herds` /
 	# `last_hex_radius`, none of which mutate during `_draw`, so hoisting it above the overlay pass is
 	# behaviour-neutral for the marker draws that still read the result further down.
+	#
+	# **A WORKING'S MARKER IS THE ONE CATEGORY WHOSE EXISTENCE THE SLOT PASS CANNOT SEE FOR ITSELF**
+	# (issue #650): it is drawn only where a crew is on the working, which is a fact about the bands'
+	# labor rows rather than about a source array. So the worked set is resolved FIRST and threaded
+	# in — the inverse of the `hidden_source_state` hand-off below, and the same rule: threaded
+	# across, never held, so neither renderer depends on the other.
+	_secondary_markers.set_worked_workings(_band_overlays.compute_worked_workings())
 	_secondary_markers.compute_slots()
 
 	# Every player band's worked sources — a ring on each source's OWN marker, bold for the selected
@@ -2072,6 +2079,8 @@ func _draw() -> void:
 		_secondary_markers.draw_food_site(site, radius, origin)
 	for wsite in discovered_sites:
 		_secondary_markers.draw_discovered_site(wsite, radius, origin)
+	# The WORKINGS being cut — the fourth secondary family, drawn from the set threaded in above.
+	_secondary_markers.draw_workings(radius, origin)
 	# The chip reports what the cap hid, so it needs the mark pass's roll-up (threaded across here so
 	# neither renderer holds the other).
 	_secondary_markers.set_hidden_source_state(_band_overlays.hidden_source_state())
@@ -5407,6 +5416,12 @@ func secondary_food_key(x: int, y: int) -> String:
 
 func secondary_herd_key(herd_id: String) -> String:
 	return _secondary_markers.herd_key(herd_id)
+
+## …and the WORKING's, keyed on the `(tile, material)` PAIR (issue #650). Same pass-through
+## convention as the two above: `BandOverlayRenderer` reaches the slot system through `MapView`, so
+## no renderer holds another.
+func secondary_working_key(x: int, y: int, material: String) -> String:
+	return _secondary_markers.working_key(x, y, material)
 
 func _is_player_unit(unit: Dictionary) -> bool:
 	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID

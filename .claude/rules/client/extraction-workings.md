@@ -386,6 +386,11 @@ source badge reads the same const, so one hex cannot say `⚒4` under its marker
 card. It is deliberately **not** a rung glyph (`FoodIcons.POLICY_ICONS`): a crew is a different axis
 from a rung, and those glyphs already collide with the standing-rung marks.
 
+**A CREWED WORKING NOW WEARS THAT BADGE ON THE MAP TOO** (issue #650) — a fourth secondary marker
+category, drawn ONLY where a crew is on it, glyphed by the MATERIAL (🪵 / 🪨) and carrying the same
+`⚒N` plate. It is the map half of this clause and the reason the two must not drift;
+`map-markers.md` owns the decision and `overlay-channels.md` the draw.
+
 ⛔ **THE COUNT IS THE PENDING-AWARE READ (`effective_extract_workers`), unlike the land row's.** The
 card is the surface the player lands back on the instant the compose sheet closes; the wire alone
 would leave the row saying `⚒0` about the crew they just committed until the turn resolved, which is

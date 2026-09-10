@@ -138,6 +138,31 @@ const POLICY_ICONS := {
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
 
+# ---- WHAT A WORKING TAKES OUT OF THE GROUND — the MATERIAL marks --------------------------------
+# The map's THIRD secondary-marker family (issue #650). A working that is BEING CUT wears a marker on
+# its hex the way a herd or a food site does, and this is the glyph it wears: the MATERIAL, never the
+# rung's verb.
+#
+# **THE VERB GLYPHS ABOVE CANNOT DO THIS JOB**, and it is exactly the collision `BADGE_READY_CHEVRON`
+# is built around one layer out: `🌲` is both *"Coppice"* and *"this is a wood"*, `⛏` both *"Quarry"*
+# and *"this is a rock face"*. A marker answers WHAT IS HERE, so a bare verb glyph on one would say
+# the opposite of the truth on every hex whose working is standing rather than climbing. What comes
+# OUT of the ground has no second reading — a log is a log at every rung of the forestry ladder.
+const MATERIAL_ICONS := {
+	"wood": "🪵",
+	"stone": "🪨",
+}
+
+## The map mark for a material — `""` for one this client has no mark for.
+##
+## ⛔ **AN UNMARKED MATERIAL WEARS NO SYMBOL, AND THEREFORE NO MARKER** — the module-less land row's
+## rule (`HudSelectionVocab`), enforced on the marker path by denying such a working a slot at all
+## (`SecondaryMarkerRenderer._working_renders`, the `_wonder_renders` contract: slot eligibility and
+## the draw guard ask ONE predicate). A neutral placeholder would put a glyph meaning only
+## *"something"* onto a hex whose whole marker budget is three, which is worse than an absent mark.
+static func for_material(material: String) -> String:
+	return String(MATERIAL_ICONS.get(material.strip_edges().to_lower(), ""))
+
 # **THE TRADE-GOODS GLYPH (`⇄`) IS RETIRED** (arc #527) with the account it marked. It was the mark
 # on every non-food component of a hunt/gather yield — worked-row headlines, work-zone filter chips,
 # map yield labels, tooltips — and it earned that job by being ONE glyph for a whole product, because

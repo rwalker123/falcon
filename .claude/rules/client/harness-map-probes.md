@@ -738,6 +738,56 @@ ready" — the correct degradation, but an unreadable frame. `map_band_work`'s f
 on each worked tile, and that is load-bearing: the first cut of the ring rendered nothing at all
 because the fixture had none, and the mark correctly degraded to the bare tile outline.
 
+### `map_working_*` — the WORKED-WORKING markers (issue #650)
+
+The last states in the run (`_worked_working_states`, appended after `_ready_for_improvement_state`
+so no existing frame moves), on their own fixture: one band, TWO deposit-bearing hexes carrying the
+SAME wood+stone pair, and the only thing that differs between them is whether anybody is cutting.
+That contrast is the frame — `map-markers.md` has the decision it renders.
+
+| frame | stages | read for |
+|---|---|---|
+| `map_working_worked` | ONE crewed working (wood, `⚒3`) beside the bare pair | a single 🪵 in an edge slot with its plate, and the neighbour hex **empty** |
+| `map_working_pair` | BOTH workings on one hex crewed | 🪵 `⚒3` and 🪨 `⚒2` in two DIFFERENT slots — a hex cutting timber and quarrying rock cannot read as one working |
+| `map_working_overflow` | the `_snapshot_mixed` crowded hex, plus a crewed wood working | the `+3 ⚒` chip, which is what stops a capped marker reading as *nothing is happening here* |
+| `map_working_farzoom` | the same crewed pair on a 110×80 grid (fit r **12.7** < the 16.0 gate) | nothing but the band token and its range border |
+
+**THE UNWORKED HEX'S CLAIM IS STRUCTURAL, NOT PHOTOGRAPHIC, and it is the one Ray's decision turns
+on.** `_assert_working_slots` reads `MapView.secondary_slot_of` for each `(tile, material)` key —
+`0..cap-1` for a marker that drew, `-1` for one that never existed — and asserts the two hexes of the
+SAME frame against each other. That pairing is what makes it falsifiable: a renderer marking ground
+lights the bare hex's keys, a renderer marking nothing darkens the worked hex's, and neither passes.
+It also asks for the **stone on the WORKED hex**, which nobody is cutting, because every other
+assertion in that state is satisfied by a renderer keyed on the TILE rather than the pair.
+
+**The pair frame adds the two claims a slot index cannot carry**: that the two markers hold DIFFERENT
+slots (a tile-keyed renderer collapses them and still passes the presence claims), and that the two
+materials wear DIFFERENT non-empty marks — two markers in two corners drawing one emoji is exactly as
+unreadable as one marker, and `FoodIcons.for_material` is asked directly since a canvas draw cannot
+be read back for a glyph.
+
+**The far-zoom claim is structural too, which is why r 12.7 is far enough under the gate.** The
+`map_band_lethal_mark*` rule — *an absence is only worth asserting where a presence would have been
+visible* — governs PIXEL probes, and an antialiased glyph at r 12.7 is invisible either way; a slot
+index is not, so removing the LOD gate flips it to `>= 0` and the assertion fails. It states the
+measured radius in its own label and `push_warning`s if the grid ever stops fitting under the gate.
+
+Sabotage-verified in two runs, each restored, and they fail independently:
+
+- **marking bare ground** (emitting a working for every `deposit_tile_lookup` row at crew 0) → exit
+  1 with **five** failures, all of them the unworked claims, on both the single and the pair frames.
+  The far-zoom claims stay green, correctly: LOD hides everything there whatever the ground says.
+- **deleting `compute_slots`' LOD early-return** → exit 1 with the **two CREWED far-zoom** claims
+  failing and the unworked ones still passing, which is the split that proves the two guards are
+  measuring different things.
+
+**The fixture states an honest `deposits` row even though the marker path reads only `tile_x` /
+`tile_y` / `material`** — every field it fills comes from `HudDepositVocab`'s own constants rather
+than a literal, the same rule `fixtures_rung.gd` enforces for a standing rung: a fixture staging a
+row the server could not publish proves something about a world that does not exist. The join is why
+the row has to be there at all — the map draws a working the SNAPSHOT carries, never one a labor row
+asserts.
+
 ### `map_ready_for_improvement` — the AGGREGATE ⌃, and why the frame is a contrast rather than a glow
 
 `docs/plan_knowledge_screen.md` §7. The `ready_for_improvement` channel painted over the ⌃-mark fixture, plus

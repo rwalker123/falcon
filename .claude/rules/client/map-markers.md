@@ -14,7 +14,7 @@ paths:
 Co-located hex markers no longer overlap at the hex center. Markers split into two
 classes by their source array (not a predicate): **PRIMARY** = player bands, drawn by
 `MapView._draw_primary_bands` over the `units`/`populations` array; **SECONDARY** = herds /
-food sites / wondrous sites, placed by `MapView._compute_secondary_slots`. (Tuning consts
+food sites / wondrous sites / **worked workings**, placed by `MapView._compute_secondary_slots`. (Tuning consts
 are grouped near the top of `MapView.gd`, after the FoW/height consts.)
 
 - **PRIMARY — player bands** own the **center spotlight** as an offset card-stack
@@ -41,13 +41,16 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
   Beyond 3, a `×N` count pill folded onto the **right end of whichever nameplate is drawn**
   (nameplate-with-count) — one anchoring rule, fed the `Rect2` the bar or the pill returns.
   Food-days dot + the travel arrow draw on the active card only.
-- **SECONDARY — herds / food sites / wondrous sites** ring the hex in **fixed edge slots**
+- **SECONDARY — herds / food sites / wondrous sites / worked WORKINGS** ring the hex in **fixed edge
+  slots**
   (`SECONDARY_SLOT_OFFSETS`, near the hex corners), computed once per frame in
-  `_compute_secondary_slots` by category priority **wonder → food → herd** (sequential fill,
+  `_compute_secondary_slots` by category priority **wonder → food → herd → working** (sequential fill,
   so icons never jump frame-to-frame). Cap `SECONDARY_VISIBLE_CAP` (3) visible icons; extras
   collapse into a `+N` overflow chip (`_draw_secondary_overflow`). Glyphs drop the old dark
   backing disc for a 1px drop shadow (`_draw_marker_glyph`). Herd migration arrow is thinner
   and only drawn on the hovered/selected herd tile. The `×N`/`+N` pills share `_draw_count_pill`.
+  The **working** category is the fourth and last — see "A WORKING gets a marker only where a crew is
+  on it" below.
 - **Selected + hovered hex outline** (`_draw_tile_selection_highlight`, reusing `_outline_hex`):
   a solid white hex outline on `selected_tile`, a faint one on `_hovered_tile` (skipped when
   hover == selection) — this replaces the old selection-as-marker-ring feel.
@@ -63,6 +66,58 @@ Verify visual changes via `tools/map_preview.gd` (`scripts/preview.sh res://tool
 `map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) /
 `map_band_names.png` / `map_band_names_overlap.png` / `map_band_names_gate.png` /
 `map_band_names_below_gate.png` + the existing labor-highlight states).
+
+
+## A WORKING gets a marker only where a CREW IS ON IT — bare ground gets nothing (issue #650)
+
+Ray's decision, and it is the whole feature: *"If it is being worked, we can show the marker and it
+being worked. If it is not being worked, many/most tiles have rock, so it would dirty up the map."*
+With the scrub-wood rows deleted nearly every land tile still holds stone, so a mark on unworked
+ground would be a mark on the whole map saying nothing is happening. **There is no large-deposit
+variant** — that was named as a fallback if worked-only turned out to be too little, not as a
+request.
+
+**IT IS A FOURTH SECONDARY CATEGORY, APPENDED LAST, AND THE EXISTING THREE DO NOT MOVE.** Sequential
+fill is what stops icons jumping frame-to-frame, so a new category earns the END of `wonder → food →
+herd` rather than a place inside it; on the rare hex already carrying three secondaries the working
+falls into the `+N` chip, which reports it as `⚒` through the roll-up the chip already carries. A
+worked working is **not promoted** past a herd for the same reason a ready source is not — see
+"A ready source is deliberately NOT promoted into a visible slot" in the slot-lookup section.
+
+**THE MARKER'S PRESENCE IS THE "AND IT BEING WORKED".** A patch or a herd is on the map whether or
+not anybody works it, so its worked RING is what says *we work this*; a working's marker exists only
+where a crew is on it, so a ring would state that twice. It follows that a working takes **no
+tile-level outline fallback either** — the aggregate outline takes the SOURCE's colour, and a working
+is in neither food web's colour language. What the visible cap hides the `+N` chip reports; what far
+zoom hides is hidden on purpose.
+
+**THE GLYPH IS THE MATERIAL, NEVER THE RUNG'S VERB** (`FoodIcons.MATERIAL_ICONS` / `for_material`:
+`wood` → 🪵, `stone` → 🪨). This is `BADGE_READY_CHEVRON`'s collision one layer out — 🌲 is both
+*"Coppice"* and *"this is a wood"*, ⛏ both *"Quarry"* and *"this is a rock face"* — and a marker
+answers WHAT IS HERE, so a verb glyph on one would say the opposite of the truth on any working that
+is standing rather than climbing. What comes out of the ground has no second reading. **An unmarked
+material wears no symbol and therefore takes no slot**, the module-less land row's rule, enforced by
+the one `_working_renders` predicate both the slot pass and the draw guard ask (`_wonder_renders`'
+contract — a source given a slot it then declines to draw leaves a hole in the ring and pushes a real
+marker into the chip).
+
+**THE KEY IS THE `(tile, material)` PAIR** (`working_key`, `MapView.secondary_working_key`), the same
+identity `HudBandLaborState.extract_assignment_of` and the tile card's rows use: a hex cutting timber
+AND quarrying rock is TWO markers, and a tile-only key would collapse them. Within one hex the
+working keys are **sorted** before they are appended — the crew walk yields them in the snapshot's
+BAND order, so two bands cutting the same hex's two materials would swap corners the moment those
+bands reordered.
+
+**THE COMPUTATION ORDER IS INVERTED FROM THE OTHER THREE CATEGORIES, which is why the worked set is a
+PUSHED INPUT here** (`set_worked_workings`, fed from `MapView._draw`). A herd's marker exists because
+the herd exists, so the slot pass reads `_view.herds` for itself; a working's exists because somebody
+is WORKING it, which is a fact about the bands' labor rows — `BandOverlayRenderer`'s territory. So
+`compute_worked_workings()` runs BEFORE `compute_slots()` and its answer is threaded across, the
+mirror image of the `hidden_source_state` hand-off in the other direction, and by the same rule:
+threaded, never held, so neither renderer depends on the other.
+
+Frames: `map_working_worked` / `map_working_pair` / `map_working_overflow` / `map_working_farzoom` —
+`harness-map-probes.md`, which also records the sabotage runs behind the bare-ground and LOD claims.
 
 
 ## The slot lookup is public, and the overflow chip reports what it hides
