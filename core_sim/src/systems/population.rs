@@ -2720,3 +2720,325 @@ mod wellbeing_tests {
         assert!(output_multiplier(&miserable, &wb) < scalar_one());
     }
 }
+
+/// **THE POPULATION-COLLAPSE RESEARCH HARNESS** (issue #431, `docs/plan_population_collapse.md`).
+///
+/// Not assertions — a **printing** harness, `#[ignore]`d so it never runs in CI, that re-derives
+/// the four numbers the investigation turned on straight from the shipped config and the shipped
+/// [`advance_demographics`]. Run it with:
+///
+/// ```text
+/// cargo test -p core_sim --lib collapse_research -- --ignored --nocapture --test-threads=1
+/// ```
+///
+/// ⛔ **It deliberately asserts NOTHING.** Every threshold it prints is a threshold the report
+/// calls *wrong*; pinning them as tests would freeze the defect as the specification. When the fix
+/// lands, the tests that pin the new behaviour belong beside the model, and this harness stays what
+/// it is — the way to re-measure the curve after a re-tune.
+#[cfg(test)]
+mod collapse_research {
+    use super::{
+        advance_demographics, discontent_fraction, discontent_output_modifier, food_demand,
+        DemographicState, FoodFlow,
+    };
+    use crate::demographics_config::DemographicsConfig;
+    use crate::scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero};
+    use crate::wellbeing_config::WellbeingConfig;
+
+    const NO_CAP: u32 = 1_000_000_000;
+
+    /// `simulation_config.json`'s morale levers, restated here so the harness prints the tuning it
+    /// is measuring instead of hiding it behind a loader. Re-read them if that file moves.
+    const SETTLING_GAIN: f32 = 0.01; // population_growth_rate
+    const AMBIENT_TEMP_C: f32 = 18.0;
+    const MORALE_TOLERANCE_C: f32 = 9.0;
+    const MORALE_PENALTY_PER_DEGREE: f32 = 0.004;
+
+    /// A flint-basket gatherer: `equipment.json`'s `forage_carry` 8.0 biomass/worker x
+    /// `labor_config.json`'s `provisions_per_biomass` 0.05.
+    const EQUIPPED_FOOD_PER_WORKER: f32 = 0.40;
+    /// Bare hands: `labor_config.json`'s `per_worker_biomass_capacity` 1.6 x 0.05.
+    const BARE_HANDED_FOOD_PER_WORKER: f32 = 0.08;
+
+    /// The coldest tile today's generator makes, from `demographics_tests`' own constant.
+    const TODAYS_COLDEST_TILE_C: f32 = -18.5;
+
+    fn opening_band(size: f32, food: f32) -> DemographicState {
+        let d = DemographicsConfig::default().initial_distribution;
+        DemographicState {
+            children: scalar_from_f32(size * d.children),
+            working: scalar_from_f32(size * d.working),
+            elders: scalar_from_f32(size * d.elders),
+            food_store: scalar_from_f32(food),
+        }
+    }
+
+    fn head(s: &DemographicState) -> f32 {
+        (s.children + s.working + s.elders).to_f32()
+    }
+
+    /// Food the band must land per working-age person to break even at its **current** bracket
+    /// shape. The number every case here is measured against, and the reason the collapse is a
+    /// cliff rather than a slope: it is a function of the SHAPE only, so it does not move as the
+    /// band shrinks.
+    fn breakeven_food_per_worker(s: &DemographicState, cfg: &DemographicsConfig) -> f32 {
+        food_demand(s.children, s.working, s.elders, &cfg.consumption).to_f32()
+            / s.working.to_f32().max(1e-9)
+    }
+
+    /// The climate half of [`super::tile_morale_pressure`], on flat terrain — no attrition or
+    /// hardness term, so every threshold printed here is the **most forgiving** one. Real terrain
+    /// only moves them warmer.
+    fn climate_morale_drain(temp: f32) -> f32 {
+        ((temp - AMBIENT_TEMP_C).abs() - MORALE_TOLERANCE_C).max(0.0) * MORALE_PENALTY_PER_DEGREE
+    }
+
+    /// One band, `turns` turns of the whole loop: morale accrues from the settling gain against the
+    /// climate drain, discontent follows morale, the output multiplier follows discontent, and the
+    /// food a worker brings home is scaled by it before the shipped demographics resolve the turn.
+    ///
+    /// `patch_cap` is the **land** as a binding constraint — `f32::MAX` for "the ground is not what
+    /// is short", a finite value for a patch whose escapement room caps the take however many hands
+    /// are sent (`forage::forage_take`'s `worker_cap.min(take_ceiling)`).
+    fn run(
+        temp: f32,
+        base_per_worker: f32,
+        patch_cap: f32,
+        turns: u32,
+    ) -> (DemographicState, f32, f32) {
+        let cfg = DemographicsConfig::default();
+        let well = WellbeingConfig::default();
+        let mut s = opening_band(30.0, 5.0);
+        let mut morale = scalar_from_f32(0.5);
+        let mut multiplier = 1.0f32;
+        for _ in 0..turns {
+            let delta =
+                scalar_from_f32(SETTLING_GAIN) - scalar_from_f32(climate_morale_drain(temp));
+            morale = (morale + delta).clamp(scalar_zero(), scalar_one());
+            multiplier = discontent_output_modifier(
+                discontent_fraction(morale, &well.discontent),
+                &well.productivity,
+            )
+            .to_f32();
+            let income = (s.working.to_f32() * base_per_worker * multiplier).min(patch_cap);
+            s.food_store += scalar_from_f32(income);
+            s = advance_demographics(
+                s,
+                Some(FoodFlow {
+                    steady_income: scalar_from_f32(income),
+                }),
+                scalar_from_f32(temp),
+                scalar_from_u32(NO_CAP),
+                &cfg,
+            )
+            .state;
+        }
+        (s, morale.to_f32(), multiplier)
+    }
+
+    /// **§1 — the two cold thresholds are not the same temperature.** Morale breaks even at 6.5 °C;
+    /// cold starts killing at 0 °C. Everything between is ground that ends a band while every
+    /// lethality surface in the client calls it survivable.
+    #[test]
+    #[ignore = "research harness — prints, asserts nothing; see docs/plan_population_collapse.md"]
+    fn research_where_each_cold_mechanism_switches_on() {
+        let well = WellbeingConfig::default();
+        println!("\n=== 1: what each mechanism does, by tile temperature ===");
+        println!(
+            "   temp   morale drain   net morale/turn   morale settles   output x   cold deaths"
+        );
+        for t in [
+            18.0f32,
+            10.0,
+            7.0,
+            6.5,
+            6.0,
+            5.0,
+            3.0,
+            0.0,
+            -2.0,
+            -5.0,
+            -10.0,
+            TODAYS_COLDEST_TILE_C,
+        ] {
+            let drain = climate_morale_drain(t);
+            let net = SETTLING_GAIN - drain;
+            let settles = if net >= 0.0 { 1.0 } else { 0.0 };
+            let mult = discontent_output_modifier(
+                discontent_fraction(scalar_from_f32(settles), &well.discontent),
+                &well.productivity,
+            )
+            .to_f32();
+            println!(
+                "  {t:6.1}   {drain:12.4}   {net:+15.4}   {settles:14.2}   {mult:8.2}   {}",
+                if t < 0.0 { "yes" } else { "no" }
+            );
+        }
+        println!("  morale break-even: settling {SETTLING_GAIN} = (|T-{AMBIENT_TEMP_C}| - {MORALE_TOLERANCE_C}) x {MORALE_PENALTY_PER_DEGREE}  =>  T = 6.5 C");
+        println!("  cold deaths begin at demographics_config cold.onset_temp = 0.0 C");
+    }
+
+    /// **§2 — the whole loop.** An equipped band on land that is not what is short, so the tile is
+    /// the only thing that can kill it.
+    #[test]
+    #[ignore = "research harness — prints, asserts nothing; see docs/plan_population_collapse.md"]
+    fn research_an_equipped_band_by_tile_temperature() {
+        let cfg = DemographicsConfig::default();
+        let opening = opening_band(30.0, 0.0);
+        println!("\n=== 2: equipped band (0.40 food/worker), land not binding, 300 turns ===");
+        println!(
+            "  break-even {:.4} food/worker at the opening bracket shape",
+            breakeven_food_per_worker(&opening, &cfg)
+        );
+        println!("   temp    end head   morale   output x   effective food/worker   verdict");
+        for t in [18.0f32, 10.0, 7.0, 6.0, 5.0, 3.0, 0.0, -5.0, -10.0, -15.0] {
+            let (s, morale, mult) = run(t, EQUIPPED_FOOD_PER_WORKER, f32::MAX, 300);
+            let end = head(&s);
+            let verdict = if end < 1.0 {
+                "EXTINCT"
+            } else if end < 30.0 {
+                "shrinking"
+            } else {
+                "growing"
+            };
+            println!(
+                "  {t:6.1}  {end:10.1}   {morale:6.3}   {mult:8.2}   {:21.4}   {verdict}",
+                EQUIPPED_FOOD_PER_WORKER * mult
+            );
+        }
+    }
+
+    /// **§3 — the cliff, and why it is a cliff.** Income per worker either clears break-even or it
+    /// does not, and nothing about being small moves the line.
+    #[test]
+    #[ignore = "research harness — prints, asserts nothing; see docs/plan_population_collapse.md"]
+    fn research_the_crew_limited_cliff_and_the_land_limited_floor() {
+        let cfg = DemographicsConfig::default();
+        println!("\n=== 3a: CREW-LIMITED (income scales with the workforce), 18 C, 400 turns ===");
+        println!("  food/worker   end head-count");
+        for rate in [0.20f32, 0.22, 0.225, 0.23, 0.24, 0.25, 0.30, 0.40] {
+            let (s, _, _) = run(18.0, rate, f32::MAX, 400);
+            println!("  {rate:>11.4}   {:14.1}", head(&s));
+        }
+        println!("\n=== 3b: LAND-LIMITED (the patch caps the take), 18 C, 600 turns ===");
+        println!("  patch cap food/turn   end head-count   final C/W/E");
+        for cap in [1.0f32, 2.0, 4.0, 8.0, 12.0, 20.0] {
+            let (s, _, _) = run(18.0, EQUIPPED_FOOD_PER_WORKER, cap, 600);
+            println!(
+                "  {cap:>19.1}   {:14.1}   {:.1}/{:.1}/{:.1}",
+                head(&s),
+                s.children.to_f32(),
+                s.working.to_f32(),
+                s.elders.to_f32()
+            );
+        }
+        println!(
+            "  a finite cap gives the model the equilibrium the crew-limited regime has none of"
+        );
+        println!("\n=== 3c: what a gatherer actually carries ===");
+        let opening = opening_band(30.0, 0.0);
+        let breakeven = breakeven_food_per_worker(&opening, &cfg);
+        for (label, rate) in [
+            ("bare hands (1.6 biomass)", BARE_HANDED_FOOD_PER_WORKER),
+            ("flint baskets (8.0 biomass)", EQUIPPED_FOOD_PER_WORKER),
+            (
+                "flint baskets at the morale floor",
+                EQUIPPED_FOOD_PER_WORKER * 0.5,
+            ),
+        ] {
+            println!(
+                "  {label:36}  {rate:.3} food/worker = {:.2}x break-even  -> {}",
+                rate / breakeven,
+                if rate > breakeven { "viable" } else { "DIES" }
+            );
+        }
+    }
+
+    /// **§4 — the dependency ratio does the OPPOSITE of what the issue supposed.** Starvation is
+    /// already biased toward dependents, so the ratio improves and the deficit narrows — to a fixed
+    /// asymptote that is still short, at which the band shrinks at a constant rate for ever.
+    #[test]
+    #[ignore = "research harness — prints, asserts nothing; see docs/plan_population_collapse.md"]
+    fn research_the_dependency_ratio_under_sustained_shortfall() {
+        let cfg = DemographicsConfig::default();
+        println!("\n=== 4: crew-limited at 0.20 food/worker (just under break-even), 18 C ===");
+        println!("  turn   head      C      W      E   dependents/worker   deficit %");
+        let mut s = opening_band(30.0, 5.0);
+        for turn in 0..=60 {
+            if turn % 10 == 0 {
+                let demand =
+                    food_demand(s.children, s.working, s.elders, &cfg.consumption).to_f32();
+                let income = s.working.to_f32() * 0.20;
+                println!(
+                    "  {turn:4}  {:5.1}  {:5.1}  {:5.1}  {:5.1}   {:15.3}   {:9.1}",
+                    head(&s),
+                    s.children.to_f32(),
+                    s.working.to_f32(),
+                    s.elders.to_f32(),
+                    (s.children.to_f32() + s.elders.to_f32()) / s.working.to_f32().max(1e-9),
+                    ((demand - income.min(demand)) / demand.max(1e-9)) * 100.0
+                );
+            }
+            let income = s.working.to_f32() * 0.20;
+            s.food_store += scalar_from_f32(income);
+            s = advance_demographics(
+                s,
+                Some(FoodFlow {
+                    steady_income: scalar_from_f32(income),
+                }),
+                scalar_from_f32(18.0),
+                scalar_from_u32(NO_CAP),
+                &cfg,
+            )
+            .state;
+        }
+    }
+
+    /// **§5 — what the player is told.** One death event per whole person, labelled by the bracket
+    /// that contributed most since the last crossing — and the flat `elder_mortality_rate` wins
+    /// that comparison almost everywhere, so cold is spoken for by "old age".
+    #[test]
+    #[ignore = "research harness — prints, asserts nothing; see docs/plan_population_collapse.md"]
+    fn research_what_the_death_feed_names_versus_what_did_the_killing() {
+        let cfg = DemographicsConfig::default();
+        println!("\n=== 5: one turn of a WELL-FED band of 30 — deaths by bracket vs the one reported ===");
+        for t in [18.0f32, -1.9, -5.0, -10.0, -15.0, TODAYS_COLDEST_TILE_C] {
+            let out = advance_demographics(
+                opening_band(30.0, 10_000.0),
+                Some(FoodFlow {
+                    steady_income: scalar_from_f32(100.0),
+                }),
+                scalar_from_f32(t),
+                scalar_from_u32(NO_CAP),
+                &cfg,
+            );
+            let f = out.flows;
+            let (c, w, e) = (
+                f.child_deaths.to_f32(),
+                f.working_deaths.to_f32(),
+                f.elder_deaths.to_f32(),
+            );
+            // Mirrors `push_demographic_events`' first-max over child >= working >= elder.
+            let mut named = ("A child", c, f.child_death_cause);
+            if w > named.1 {
+                named = ("A worker", w, f.working_death_cause);
+            }
+            if e > named.1 {
+                named = ("An elder", e, f.elder_death_cause);
+            }
+            let total = (c + w + e).max(1e-9);
+            println!(
+                "  {t:6.1}  C {c:.3} ({})   W {w:.3} ({})   E {e:.3} ({})   total {total:.3}/turn",
+                f.child_death_cause.as_str(),
+                f.working_death_cause.as_str(),
+                f.elder_death_cause.as_str()
+            );
+            println!(
+                "          feed says \"{} died of {}\" — {:.0}% of the turn's deaths go unspoken for",
+                named.0,
+                named.2.as_str(),
+                100.0 * (total - named.1) / total
+            );
+        }
+    }
+}

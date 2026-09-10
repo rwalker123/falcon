@@ -87,6 +87,15 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 `size` is a derived
 `u32` cache of the bracket sum. Design: `docs/plan_settlement_population.md`.
 
+> **The collapse research harness lives in this file.** `mod collapse_research` in
+> `systems/population.rs` re-derives the model's break-even curve — food/worker against bracket
+> shape, the morale productivity floor, and each bracket's death cause against the one the feed
+> names — from the shipped config and the shipped `advance_demographics`. It is `#[ignore]`d and
+> **prints rather than asserts**, deliberately: every threshold it reports is one
+> `docs/plan_population_collapse.md` calls wrong, and pinning them would freeze the defect as the
+> spec. Run it with
+> `cargo test -p core_sim --lib collapse_research -- --ignored --nocapture --test-threads=1`.
+
 `simulate_population` (`systems.rs`, `TurnStage::Population`) delegates each cohort to the pure
 `advance_demographics` (config: `demographics_config.json`):
 1. **Consume** — draw `per_capita_draw × weighted_mouths` (dependents eat less) from the band's
