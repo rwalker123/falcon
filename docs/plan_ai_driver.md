@@ -59,39 +59,48 @@ and the real opponent on one code path.
 
 ---
 
-## 2. Perception — the frame is the view, and there is nothing to decode it yet
+## 2. Perception — the frame is the view, and the contract crate reads it back
 
 **`SeatView` is the decoded `WorldSnapshot` for this seat, kept current by applying each `WorldDelta`
 as it arrives.** It is the same struct the server captured and redacted for this seat
 (`sim_schema/src/world.rs:137`); the AI holds no second copy of "what can I see". Fog is a property of
 the bytes: a tile the seat has not seen is not in them (`plan_multiplayer_seats.md` §4.3).
 
-### ⛔ The gap this issue has to close first
+### The decoder lives beside the encoder, and is tested against it
 
-Nothing in the workspace turns a FlatBuffers frame back into a `WorldSnapshot`. `sim_schema` encodes
-(`codec/mod.rs:53` `encode_snapshot_flatbuffer`, `:60` `encode_delta_flatbuffer`, ~4,700 lines across
-the `codec/` modules, 130 tables) and has no decoder. The only decoder in the repo is the Godot native
-extension, and it decodes into Godot dictionaries (`native/src/bridge/decoder.rs:201`,
-`snapshot/delta.rs` `DeltaAggregator`). Tests that read a frame today reach into the generated
-accessors by hand (`core_sim/tests/seat_frames.rs:137` `decode_frame`).
+Until #645, nothing in the workspace turned a FlatBuffers frame back into a `WorldSnapshot`:
+`sim_schema` encoded (`codec/mod.rs` `encode_snapshot_flatbuffer` / `encode_delta_flatbuffer`, ~4,700
+lines across the `codec/` modules, 130 tables) and the only decoder was the Godot native extension,
+into Godot dictionaries. Tests that read a frame reached into the generated accessors by hand.
 
-**Decision: the decoder and the delta merge go in `sim_schema`, beside the encoder, as
-`decode_snapshot_flatbuffer` / `decode_delta_flatbuffer` and `WorldSnapshot::apply_delta`.** Not in
-`sim_ai`, for three reasons:
+**The decoder and the delta merge are in `sim_schema`, beside the encoder** —
+`decode_frame_flatbuffer` / `decode_snapshot_flatbuffer` / `decode_delta_flatbuffer`, one
+`decode_<section>` per `serialize_<section>` in the same file, and `WorldSnapshot::apply_delta`
+(`sim_schema/src/apply_delta.rs`). Not in `sim_ai`, for three reasons:
 
 - **It is round-trip testable there and nowhere else.** `encode(decode(bytes)) == bytes` and
-  `hash_snapshot(decode(encode(s))) == hash_snapshot(s)` are the definition of done, section by
-  section, against the *shipped* encoder. A partial decoder in the AI crate would fail silently — a
-  section left undecoded reads as "empty", which is exactly what an unseen section also reads as.
+  `hash_snapshot(decode(encode(s))) == hash_snapshot(s)` hold on a saturated fixture
+  (`sim_schema::fixture::saturated_snapshot`, every section and vector non-empty) against the
+  *shipped* encoder. A partial decoder in the AI crate would fail silently — a section left undecoded
+  reads as "empty", which is exactly what an unseen section also reads as. Every state struct is
+  rebuilt as an exhaustive literal, so a field appended to the schema fails to compile until it is
+  decoded.
 - **`sim_schema` is the contract crate.** A schema change that breaks decoding fails the contract's
   own tests, not an AI test three crates away.
 - **Any Rust seat occupant needs it** — the bench harness (§8), a replay viewer, a map inspector — and
   the AI is only the first.
 
-The dependency line becomes `sim_ai → sim_runtime → sim_schema → shadow_scale_flatbuffers`; still no
-`core_sim`, still no Bevy. Two constants the Link needs live only in `core_sim` today — the 8-byte
-token width and the 2 s greeting timeout (`core_sim/src/network.rs:74,84`) — and are restated in
-`sim_ai` with a pointer comment, exactly as `SnapshotStream.gd` restates them.
+`apply_delta` inverts the producer one diff shape at a time — keyed upsert then `removed_*`, whole
+`Option` replace with `Some(empty)` clearing, the append-only event feed deduplicated on `seq` and
+trimmed by tick window — and refuses a delta whose `base_frame_seq` or `world_epoch` does not match
+the view it holds, because a silently skipped delta loses event history. It is proven against the
+shipped publication path (`core_sim/tests/apply_delta_producer.rs`: two seats, 14 turns, a mid-tick
+recapture applied twice), not against a hand-written model of it.
+
+The dependency line is `sim_ai → sim_runtime → sim_schema → shadow_scale_flatbuffers`; no `core_sim`,
+no Bevy. Two constants the Link needs live only in `core_sim` — the 8-byte token width and the 2 s
+greeting timeout (`core_sim/src/network.rs`) — and are restated in `sim_ai` with a pointer comment,
+exactly as `SnapshotStream.gd` restates them.
 
 ### `SeatMemory` — what the frame no longer says
 
@@ -433,13 +442,13 @@ Each of these is a procedure with a done-bar, and none of them touches the serve
 
 | # | Slice | Home | Done when |
 |---|---|---|---|
-| 1 | FlatBuffers → `WorldSnapshot` decoder and `apply_delta` | `sim_schema` | round-trip and hash tests pass for every section; the existing hand-written `decode_frame` in `seat_frames.rs` is replaced by it |
+| 1 | FlatBuffers → `WorldSnapshot` decoder and `apply_delta` | `sim_schema` | round-trip and hash tests pass for every section; `seat_frames.rs` reads frames through it; the merge matches the producer over real turns |
 | 2 | `sim_ai` crate: Link, `SeatView`, `Brain`, `PassBrain`, `ScriptedBrain`; launcher fills rival seats and adopts the exit rule; scenario test | `sim_ai`, `launcher`, `integration_tests` | a rival seat claimed by `sim_ai` moves a band from a script and the game is won or lost with it seated |
 | 3 | Instruments and bench: scoreboard, decision log, `bench`, baselines | `sim_ai`, `integration_tests` | `PassBrain` vs `PassBrain` reads as zero on every measure; `ScriptedBrain` vs `PassBrain` reads as non-zero |
 | 4 | `UtilityBrain`: `ConstantStance`, `Food`, `Land`, the arbiter with commitment; `ai_profiles.json` with two profiles; delete `StartProfileOverrides::ai_profile_overrides` | `sim_ai`, `core_sim` | lands with its Pass delta, its two ablations, and its profile-divergence number in the PR body |
 
 Slice 1 is the one the issue did not anticipate — "there is nothing to build in `core_sim`" is still
-true, but there is something to build in `sim_schema`, and it is the largest of the four. Slice 3
+true, but there was something to build in `sim_schema`, and it is the largest of the four. Slice 3
 comes before 4 deliberately: the real brain lands measured, on a harness already proven to read zero
 where zero is correct.
 

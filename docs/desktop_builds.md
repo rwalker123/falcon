@@ -19,10 +19,14 @@ ShadowScale-windows/                 ShadowScale-macos/
   ShadowScale.exe    <- dbl-click       ShadowScale.app      <- dbl-click
   ShadowScaleClient.exe                   Contents/MacOS/shadowscale_launcher
   shadow_scale_godot.dll                  Contents/Helpers/server
-  ShadowScaleClient.pck                   Contents/Helpers/ShadowScaleClient.app
-  server.exe                            README.txt
+  ShadowScaleClient.pck                   Contents/Helpers/sim_ai
+  server.exe                              Contents/Helpers/ShadowScaleClient.app
+  sim_ai.exe                            README.txt
   README.txt
 ```
+
+`sim_ai` is the AI player program (crate `sim_ai`): the launcher starts one per rival seat the
+server's roster names, beside the server (`.claude/rules/core_sim/launcher.md`).
 
 The server binary is self-contained: every `*_config.json` is `include_str!`-baked
 into it, so no data files ship alongside it and the default binds are correct.

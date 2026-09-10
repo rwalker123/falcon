@@ -14,6 +14,7 @@ WHAT'S IN HERE
   ShadowScale.exe         <- double-click this
   ShadowScaleClient.exe   the game itself (started automatically)
   server.exe              the simulation (started automatically)
+  sim_ai.exe              a rival player (started automatically, one per rival)
   shadow_scale_godot.dll  game engine plug-in (leave it next to the client)
   *.pck                   game data (leave it next to the client)
 

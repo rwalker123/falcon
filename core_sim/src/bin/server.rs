@@ -918,9 +918,28 @@ fn answer_seat_claim(
     }
 }
 
-/// **Drop the seat claims a world rebuild left stranded.** `new_game`, `reset_map` and a load each
-/// replace the roster, and a claim on a faction the new world does not have would hold that seat id
-/// unclaimable while gating nothing — the membership check refuses such a command anyway.
+/// **Drop the seat claims a world rebuild left stranded, and announce the roster.** `new_game`,
+/// `reset_map` and a load each replace the roster, and a claim on a faction the new world does not
+/// have would hold that seat id unclaimable while gating nothing — the membership check refuses
+/// such a command anyway.
+///
+/// ## `seats.roster` — the launcher's supervisor contract
+///
+/// Every world build ends here, so this is where the server states **which seats exist**, on the
+/// log stream it already publishes (`log_stream.rs`, JSON lines on the `log` port):
+///
+/// ```json
+/// {"level":"INFO","target":"shadow_scale::server","message":"seats.roster",
+///  "fields":{"factions":"[0,1,2]","world_epoch":3}}
+/// ```
+///
+/// `factions` is the registered faction ids in roster order, as a JSON array **in a string**
+/// (`tracing` fields carry no arrays); `world_epoch` is the build the roster belongs to. The
+/// launcher (`launcher/src/main.rs` `parse_roster_event`, the contract twin of this comment) reads
+/// the stream on a supervisor thread and starts one `sim_ai` per rival faction it names, reaping a
+/// child whose faction left. It is emitted from the main loop at the moment the roster changes and
+/// nowhere else: the launcher connects to the log port before it starts the human's client, and
+/// the boot world is idle until that client asks for one, so no roster can precede its reader.
 fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
     let roster = app.world.resource::<FactionRegistry>().factions().to_vec();
     for (seat, connection) in seats.retain_seats(&roster) {
@@ -931,6 +950,14 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
             "seat.dropped=the new roster does not hold this seat"
         );
     }
+    let faction_ids: Vec<u32> = roster.iter().map(|faction| faction.0).collect();
+    let factions = serde_json::to_string(&faction_ids).expect("a list of ids serialises");
+    info!(
+        target: "shadow_scale::server",
+        %factions,
+        world_epoch = app.world.resource::<WorldEpoch>().0,
+        "seats.roster"
+    );
 }
 
 /// **Publish the seat roster to the two places delivery depends on**, in one call so they cannot
