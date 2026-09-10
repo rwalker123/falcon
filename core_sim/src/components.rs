@@ -2035,11 +2035,20 @@ pub enum LaborTarget {
         /// **WHERE THIS CREW STOPS**, as a fraction of the deposit's capacity — [`Self::Forage`]'s
         /// own field, on a third and fourth branch.
         ///
-        /// [`DEFAULT_ESCAPEMENT_FLOOR`] when the player named none; validated `0.0..=1.0` at the
-        /// command boundary ([`floor_is_valid`]) and never clamped silently.
+        /// Validated `0.0..=1.0` at the command boundary ([`floor_is_valid`]) and never clamped
+        /// silently.
+        ///
+        /// ⛔ **WHEN THE PLAYER NAMED NONE IT DEPENDS ON THE GROUND, AND ONLY ON THIS BRANCH**
+        /// (issue #650, `server::unnamed_deposit_floor`): [`DEFAULT_ESCAPEMENT_FLOOR`] where the
+        /// deposit renews, [`STRIP_IT_BARE`] at `NEVER_RENEWS`. A [`Self::Forage`] or [`Self::Hunt`]
+        /// row keeps resolving absence to [`DEFAULT_ESCAPEMENT_FLOOR`] unconditionally — their
+        /// sources always renew. The client offers the dial only on renewing ground, so silence on a
+        /// quarry is *"nobody chose"*, and reading it as a chosen `0.5` is what misled four separate
+        /// readers of this field.
         ///
         /// **THE GRAMMAR ACCEPTS IT ON BOTH DEPOSIT BRANCHES, AND ON A FINITE ONE IT IS STORED,
-        /// PUBLISHED AND INERT** (issue #650). An escapement floor protects **regrowth**, so at
+        /// PUBLISHED AND INERT** (issue #650) — an **explicitly sent** floor is kept exactly as sent
+        /// on a rock body, which is why every reader below still asks about the rate itself. An escapement floor protects **regrowth**, so at
         /// `NEVER_RENEWS` there is no future for it to protect and
         /// `extraction::deposit_effective_floor` drops it: it caps no take and shortens no runway.
         ///

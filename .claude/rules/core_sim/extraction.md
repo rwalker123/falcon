@@ -199,6 +199,37 @@ token at the command boundary is the other rejected shape — it would make the 
 differ in shape for a value that simply has no effect, and `DepositSource::last_floor` stays honest
 about what the crews asked for either way.
 
+### ⛔ An ABSENT floor token on a finite working means ZERO, not the shared default
+
+`handle_assign_labor` resolves an omitted floor to `DEFAULT_ESCAPEMENT_FLOOR` (0.5) for every row in
+the game **except** an `extract` row on ground at `NEVER_RENEWS`, where `server::unnamed_deposit_floor`
+answers `STRIP_IT_BARE`. The client offers the dial only where a deposit regrows, so on a quarry it
+sends no token at all, and reading that silence as the shared 0.5 wrote a conservation choice onto a
+row where nobody made one — indistinguishable, in the field, from a player who chose 50%.
+
+The rate it reads is the **ground's**, un-scaled by `regrowth_multiplier` — `deposit_effective_floor`'s
+own reading verbatim, because two places forking on one fact fork on one reading of it.
+
+**A `Forage` or `Hunt` row is untouched:** a patch and a herd always renew, so the shared line is
+right for them. **A renewing deposit with no token still gets `DEFAULT_ESCAPEMENT_FLOOR`.** And an
+**explicitly sent** floor is stored exactly as sent on a finite working — the grammar stays uniform
+across the three webs (see the paragraph above), so the field can still be nonzero on a rock body.
+
+⛔ **The four readers keep their own conditions, and this does not replace them.**
+`deposit_effective_floor`, `deposit_lesson_floor` and the client's `composed_floor` / `floor_mark`
+each ask *"does this deposit regrow?"* independently. Because an explicit token still reaches a rock
+body's row, each must go on asking; the command boundary closing the *absence* case is defence in
+depth. `server::tests::an_unnamed_floor_is_zero_on_a_finite_working_and_the_default_on_one_that_renews`
+pins the fork (rolling hills carry renewing wood and rate-0 stone, so the two arms differ in the rate
+and in nothing else) and `a_forage_row_with_no_floor_token_still_carries_the_shipped_default` pins the
+shared line's survival.
+
+**It changed no behaviour, and that is asserted rather than claimed.**
+`extraction::a_rock_working_reads_the_same_at_the_shipped_default_and_at_the_new_zero` runs one
+working at the old value and the new one and compares stock, take, runway and lesson — across both
+extraction rungs, because `extraction:quarry` is where the take and runway would diverge (its own
+floor sits below 0.5) and `extraction:gathering` is the rung that earns `quarrying`.
+
 **Grammar:** `assign_labor <f> <b> extract <x> <y> <material> [floor] <workers>` — the `hunt` arm's
 shape with a material where the herd id goes, disambiguated **by tail length** because the free-form
 token is read positionally first and is never in the optional slot. It fails **closed** on the shared

@@ -522,6 +522,13 @@ const WHOLE_DEPOSIT_STANDING: f32 = 1.0;
 /// that simply has no effect. The row keeps carrying whatever was sent and
 /// [`DepositSource::last_floor`] keeps stamping it — **stored, published, and inert on a finite
 /// working** — because the sim knows the rate and the rule belongs with the fact.
+///
+/// ⛔ **AND IT STAYS EVEN THOUGH AN ABSENT TOKEN NOW RESOLVES TO ZERO THERE.**
+/// `server::unnamed_deposit_floor` answers *silence* on finite ground with
+/// [`crate::components::STRIP_IT_BARE`] so no reader is handed a `0.5` nobody chose, but an
+/// **explicit** floor is still stored as sent on a rock body, so `escapement` reaching here can
+/// still be nonzero on a working at [`NEVER_RENEWS`]. This fork is what makes it inert; deleting it
+/// as redundant would re-open the take bug on the one path the command boundary cannot see.
 pub fn deposit_effective_floor(
     capacity: f32,
     regrowth_rate: f32,
@@ -562,6 +569,11 @@ pub fn deposit_effective_floor(
 /// `systems::labor::source_is_still_teaching` in the shedding order answer *"what is this working
 /// teaching"* one turn apart; a working that taught at one rate and reported at another would thin a
 /// row it was still paying.
+///
+/// ⛔ **AND IT STAYS EVEN THOUGH AN ABSENT TOKEN NOW RESOLVES TO ZERO THERE**, for
+/// [`deposit_effective_floor`]'s reason one account over: `server::unnamed_deposit_floor` closes the
+/// *silence* case, not the explicit one, so a rock body's row can still arrive here carrying a real
+/// escapement and the lesson would price restraint that changed nothing.
 pub fn deposit_lesson_floor(regrowth_rate: f32, escapement: f32) -> f32 {
     if regrowth_rate <= NEVER_RENEWS {
         return crate::intensification::PRACTICE_AT_THE_PLAIN_RATE;

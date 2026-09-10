@@ -548,6 +548,110 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
     );
 }
 
+/// ⛔ **THE ZERO AN UNNAMED FLOOR NOW RESOLVES TO ON A ROCK BODY CHANGES NOTHING A CREW SEES**
+/// (issue #650) — the equivalence that makes `server::unnamed_deposit_floor` safe to land.
+///
+/// The command boundary used to answer an absent floor token with
+/// [`core_sim::DEFAULT_ESCAPEMENT_FLOOR`] on every row, so every quarry row in the game carried
+/// `0.5` without a player ever choosing it. It now answers [`core_sim::STRIP_IT_BARE`] where the
+/// ground never renews. **That is a change to what the field says, not to what the sim does**,
+/// because `extraction::deposit_effective_floor` and `extraction::deposit_lesson_floor` were
+/// already dropping the crew's floor on a rate-0 body — and this is the assertion of it: the same
+/// working, run the same turns, at the old value and the new one, comes to rest on the same stock,
+/// the same take, the same runway and the same lesson.
+///
+/// **Both extraction rungs, because no single one carries all four readings.**
+/// `extraction:quarry`'s own floor is `1 − 0.85`, *below* the `0.5` under test, so it is the one
+/// rung where the take and the runway would diverge if a guard were ever removed — and it earns no
+/// knowledge at all, being the top of its ladder. `extraction:gathering` is where the lesson lives
+/// (it earns `quarrying`), and its own `0.85` floor swallows both numbers, so it would prove
+/// nothing about the take. Run at both, the pair covers every reader.
+#[test]
+fn a_rock_working_reads_the_same_at_the_shipped_default_and_at_the_new_zero() {
+    /// Long enough for a take, a runway and a lesson to all be live, short enough that the body is
+    /// nowhere near cut out — an exhausted working reads equal for the wrong reason.
+    const A_SPELL_OF_QUARRYING: u32 = 4;
+
+    let at = UVec2::new(0, 0);
+    let working_at = |rung: Option<RungKey>, floor: f32| -> (f32, f32, i32, f32) {
+        let (mut world, home) = world_of(ROCK);
+        // `None` is the branch's **free floor** — `extraction:gathering`, which a working stands on
+        // with nothing built and which is what the shipped ladder has a crew earn `quarrying` from.
+        if let Some(rung) = rung {
+            seat_working(&mut world, at, STONE, rung);
+        }
+        let band = spawn_band_of(&mut world, home, STONE, 20, 6);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments[0].target = LaborTarget::Extract {
+                tile: at,
+                material: STONE.to_string(),
+                floor,
+            };
+        }
+        for _ in 0..A_SPELL_OF_QUARRYING {
+            run_full_turn(&mut world);
+        }
+        let working = world
+            .resource::<DepositRegistry>()
+            .source(at, STONE)
+            .expect("the crew opened the working")
+            .clone();
+        let ground = world
+            .resource::<TileRegistry>()
+            .index(at.x, at.y)
+            .and_then(|entity| world.get::<Tile>(entity))
+            .expect("the fixture tile is on the map")
+            .clone();
+        let runway = {
+            let config = world.resource::<ExtractionConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            core_sim::extraction::deposit_runway(&working, &ground, &config, &ladder)
+        };
+        let lesson = world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FACTION, core_sim::extraction::QUARRYING_DISCOVERY_ID)
+            .to_f32();
+        (working.stock, working.last_take, runway, lesson)
+    };
+
+    // The stock, the take and the runway, on the rung where the old default sat **below** the
+    // rung's own floor and would therefore have bound.
+    let on_the_quarry_rung = working_at(Some(RungKey::ExtractionQuarry), core_sim::STRIP_IT_BARE);
+    let (stock, take, runway, _) = on_the_quarry_rung;
+    assert!(
+        take > 0.0 && stock > 0.0 && runway > 0,
+        "**LIVENESS**: the quarry crew must actually be cutting, with a body left to project a \
+         runway over: stock {stock}, take {take}, runway {runway}"
+    );
+    assert_eq!(
+        working_at(
+            Some(RungKey::ExtractionQuarry),
+            core_sim::DEFAULT_ESCAPEMENT_FLOOR
+        ),
+        on_the_quarry_rung,
+        "a quarry-rung working must read identically at `0.5` and at `0` — the floor was already \
+         inert there, so the command boundary is free to stop inventing one"
+    );
+
+    // And the lesson, on the rung that teaches one.
+    let on_the_free_floor = working_at(None, core_sim::STRIP_IT_BARE);
+    assert!(
+        on_the_free_floor.3 > 0.0,
+        "**LIVENESS**: the gathering crew must still be earning `quarrying`, or the equality below \
+         is a statement about zero: {lesson}",
+        lesson = on_the_free_floor.3
+    );
+    assert_eq!(
+        working_at(None, core_sim::DEFAULT_ESCAPEMENT_FLOOR),
+        on_the_free_floor,
+        "and the lesson a rock working teaches must not move either: `deposit_lesson_floor` pays \
+         the plain rate there whatever the row carries"
+    );
+}
+
 /// **A SCATTER OF LOOSE STONE THAT COMES BACK** — the renewing half of the shipped stone table
 /// (periglacial steppe, 70 units at `0.015`), against [`ROCK`]'s rate of zero. Named because what
 /// the fixture wants of it is the *rate*, not the terrain.

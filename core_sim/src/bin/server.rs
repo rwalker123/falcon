@@ -3607,6 +3607,50 @@ fn validate_tame(
 /// *does* look at it sees the sustainable value, not a strip order.
 const SOURCE_NAMED_NOT_ASSIGNED: f32 = DEFAULT_ESCAPEMENT_FLOOR;
 
+/// **WHAT AN ABSENT FLOOR TOKEN MEANS ON A DEPOSIT ROW** — [`DEFAULT_ESCAPEMENT_FLOOR`] where the
+/// ground renews, [`core_sim::STRIP_IT_BARE`] where it never does (issue #650).
+///
+/// An escapement floor is a statement about **regrowth**: it names the stock a crew leaves standing
+/// so that it comes back. A body at [`core_sim::NEVER_RENEWS`] has no regrowth for a floor to
+/// protect, so *"leave half of it"* is not a policy anybody could hold there — and the client, which
+/// offers the dial only where a deposit renews, sends no token on a quarry at all. Resolving that
+/// silence to the shared `0.5` wrote a conservation choice onto a row where nobody made one, and
+/// four separate readers believed it. **Absence on finite ground therefore means the honest zero**,
+/// and a reader that reaches this row without asking about the rate is no longer misled by it.
+///
+/// ⛔ **THIS IS DEFENCE IN DEPTH, NOT A REPLACEMENT FOR THE FOUR GUARDS.**
+/// [`core_sim::extraction::deposit_effective_floor`], [`core_sim::extraction::deposit_lesson_floor`]
+/// and the client's `composed_floor` / `floor_mark` each keep their own *"does this deposit renew"*
+/// condition, and each must: an **explicit** token is still stored exactly as sent on a finite
+/// working (`components::LaborTarget::Extract::floor` — the grammar stays uniform across the three
+/// webs on purpose), so the field can still be nonzero there and every reader has to stay
+/// independently right about it. Do not simplify one away on the grounds that this now zeroes it.
+///
+/// ⛔ **A NAMED FLOOR IS NOT TOUCHED HERE.** This answers what *silence* means, nothing else — the
+/// caller only reaches it when the command carried no token.
+///
+/// **The rate read is the GROUND's, un-scaled by the rung's `regrowth_multiplier`**, which is
+/// [`core_sim::extraction::deposit_effective_floor`]'s own reading verbatim: a rung scales a rate,
+/// it does not make the ground finite, so two places forking on one fact fork on one reading of it.
+/// Ground the registry cannot resolve, or that holds none of this material, answers
+/// [`core_sim::NEVER_RENEWS`] exactly as [`core_sim::extraction::tile_deposit_regrowth`] does — and
+/// `validate_labor_policy` refuses that command anyway on any row with hands on it.
+fn unnamed_deposit_floor(app: &bevy::prelude::App, tile: UVec2, material: &str) -> f32 {
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    let regrowth_rate = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+        .map(|ground| core_sim::extraction::tile_deposit_regrowth(&extraction, material, ground))
+        .unwrap_or(core_sim::NEVER_RENEWS);
+    if regrowth_rate > core_sim::NEVER_RENEWS {
+        DEFAULT_ESCAPEMENT_FLOOR
+    } else {
+        core_sim::STRIP_IT_BARE
+    }
+}
+
 /// The feed channel a labor command reports on, resolved from the **role token** rather than from a
 /// built `LaborTarget` — the floor is validated before a target exists, and a rejection has to land
 /// on the channel the player was looking at.
@@ -3683,6 +3727,10 @@ fn handle_assign_labor(
     kit_id: Option<String>,
     take_species: Vec<String>,
 ) {
+    // **DID THE PLAYER NAME A FLOOR AT ALL** — kept before the line below resolves absence to the
+    // default, because the `extract` arm answers *absence* differently on ground that never renews
+    // (issue #650, [`unnamed_deposit_floor`]). Every other row reads only the resolved value.
+    let player_named_a_floor = floor.is_some();
     // **The floor FAILS CLOSED** (`docs/plan_harvest_floor.md` §4): absent means the default, but a
     // value outside `0.0..=1.0` is rejected with its own failure event rather than clamped. A clamp
     // would turn a typo into a quiet policy change on the one number the whole harvest model turns
@@ -3781,10 +3829,15 @@ fn handle_assign_labor(
             (Some(x), Some(y), Some(material)) if !material.is_empty() => LaborTarget::Extract {
                 tile: UVec2::new(x, y),
                 material: material.to_string(),
-                // **The same validated floor a Forage or Hunt row gets** — struck once at the top of
-                // this function, so all three webs fail closed on the identical bound rather than
-                // three times over.
-                floor,
+                // **The same validated floor a Forage or Hunt row gets when the player NAMED one** —
+                // struck once at the top of this function, so all three webs fail closed on the
+                // identical bound rather than three times over — and [`unnamed_deposit_floor`] when
+                // they named none, because on this web alone *absence* depends on the ground.
+                floor: if player_named_a_floor {
+                    floor
+                } else {
+                    unnamed_deposit_floor(app, UVec2::new(x, y), material)
+                },
             },
             _ => {
                 emit_command_failure(
@@ -20796,6 +20849,166 @@ mod tests {
                  the quarry's own rung floor is the only one it has"
             );
         }
+    }
+
+    /// **THE FLOOR A ROW ACTUALLY CARRIES**, read straight off the stored assignment — because what
+    /// the tests below assert is *what the command wrote*, not what any later reader made of it.
+    ///
+    /// Keyed by [`LaborTarget::same_source`], so the probe states the tile (and, on a deposit, the
+    /// material) and carries [`SOURCE_NAMED_NOT_ASSIGNED`] in the field being looked up.
+    fn assigned_floor(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        source: &LaborTarget,
+    ) -> Option<f32> {
+        app.world
+            .query::<(&PopulationCohort, &LaborAllocation)>()
+            .iter(&app.world)
+            .filter(|(cohort, _)| cohort.faction == faction)
+            .flat_map(|(_, allocation)| allocation.assignments.iter())
+            .find(|assignment| assignment.target.same_source(source))
+            .and_then(|assignment| match &assignment.target {
+                LaborTarget::Forage { floor, .. }
+                | LaborTarget::Hunt { floor, .. }
+                | LaborTarget::Extract { floor, .. } => Some(*floor),
+                _ => None,
+            })
+    }
+
+    /// A probe for [`assigned_floor`] naming one working.
+    fn working(material: &str) -> LaborTarget {
+        LaborTarget::Extract {
+            tile: WORKING,
+            material: material.to_string(),
+            floor: SOURCE_NAMED_NOT_ASSIGNED,
+        }
+    }
+
+    /// ⛔ **AN ABSENT FLOOR TOKEN MEANS ZERO ON GROUND THAT NEVER RENEWS, AND THE SHIPPED DEFAULT
+    /// WHERE IT DOES** (issue #650, [`unnamed_deposit_floor`]) — the source of four separate bugs,
+    /// closed at the command boundary.
+    ///
+    /// The client offers the escapement dial only where a deposit regrows, so on a finite working it
+    /// sends no token at all. Resolving that silence to [`DEFAULT_ESCAPEMENT_FLOOR`] — the line a
+    /// Forage and a Hunt row rightly share — wrote *"leave 50%"* onto every quarry row in the game
+    /// with nothing to distinguish it from a player who chose 50%, and four readers in turn believed
+    /// it. Silence on finite ground is now [`core_sim::STRIP_IT_BARE`]: nobody chose anything.
+    ///
+    /// **Both arms on ONE terrain, which is the whole design of the fixture.** Rolling hills carry
+    /// wood at `0.025` and stone at `0.0`, so the two rows differ in the ground's rate and in
+    /// nothing else — not the tile, not the band, not the command.
+    #[test]
+    fn an_unnamed_floor_is_zero_on_a_finite_working_and_the_default_on_one_that_renews() {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, TWO_DEPOSIT_TERRAIN);
+        spawn_idle_band(&mut app, faction, tile);
+
+        // **The fixture's own precondition**: the two materials really do straddle the condition
+        // `unnamed_deposit_floor` forks on. Without it both arms could be one population.
+        {
+            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+            let ground = app
+                .world
+                .get::<Tile>(tile)
+                .expect("the seeded tile carries its ground")
+                .clone();
+            assert_eq!(
+                core_sim::extraction::tile_deposit_regrowth(&extraction, "stone", &ground),
+                core_sim::NEVER_RENEWS,
+                "fixture: this ground's stone must be a body that never comes back"
+            );
+            assert!(
+                core_sim::extraction::tile_deposit_regrowth(&extraction, "wood", &ground)
+                    > core_sim::NEVER_RENEWS,
+                "fixture: …and its wood must come back, or the pair below is one reading twice"
+            );
+        }
+
+        // **THE REGRESSION.** A working that never renews, staffed with no token.
+        assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
+        assert_eq!(
+            assigned_floor(&mut app, faction, &working("stone")),
+            Some(core_sim::STRIP_IT_BARE),
+            "a finite working the player named no floor on must carry no floor — a `0.5` there is a \
+             conservation choice nobody made"
+        );
+
+        // **AND THE RENEWING ARM IS UNTOUCHED** — the dial is offered there, the client always
+        // sends one, and the shipped default is the sensible answer for a source that regrows.
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        assert_eq!(
+            assigned_floor(&mut app, faction, &working("wood")),
+            Some(DEFAULT_ESCAPEMENT_FLOOR),
+            "a renewing working with no token still gets the shipped default"
+        );
+
+        // ⛔ **AND AN EXPLICIT TOKEN IS STORED EXACTLY AS SENT, EVEN ON THE FINITE WORKING.** The
+        // grammar stays uniform across all three webs on purpose — a script or a raw command line
+        // can send one — and every downstream reader keeps its own *"does this renew"* condition,
+        // which is why the field being nonzero there is safe. This change is about what *absence*
+        // means, and nothing else.
+        assign_extract(
+            &mut app,
+            faction,
+            WORKING,
+            "stone",
+            Some(A_FLOOR_THE_PLAYER_TYPED),
+            BAND_WORKERS,
+        );
+        assert_eq!(
+            assigned_floor(&mut app, faction, &working("stone")),
+            Some(A_FLOOR_THE_PLAYER_TYPED),
+            "a floor the player actually named is kept verbatim on a rock body — stored, published \
+             and inert, never refused and never zeroed"
+        );
+    }
+
+    /// **A floor no default could be mistaken for** — off the shipped `0.5` and off both ends of the
+    /// dial, so *"stored exactly as sent"* is an assertion rather than a coincidence.
+    const A_FLOOR_THE_PLAYER_TYPED: f32 = 0.37;
+
+    /// ⛔ **A FORAGE ROW WITH NO FLOOR TOKEN STILL CARRIES THE SHIPPED DEFAULT** (issue #650) — the
+    /// proof that the fix above is scoped to the deposit web and left the shared line alone.
+    ///
+    /// A patch and a herd always regrow, so [`DEFAULT_ESCAPEMENT_FLOOR`] is exactly right for them
+    /// and the `None` arm at the top of [`handle_assign_labor`] is unchanged. Only the `extract`
+    /// arm, and only on ground at [`core_sim::NEVER_RENEWS`], answers differently.
+    #[test]
+    fn a_forage_row_with_no_floor_token_still_carries_the_shipped_default() {
+        let faction = FactionId(0);
+        let (mut app, coord) = sowable_ground_with_a_resident_band(faction);
+
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "forage".to_string(),
+            BAND_WORKERS,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            assigned_floor(
+                &mut app,
+                faction,
+                &LaborTarget::Forage {
+                    tile: coord,
+                    floor: SOURCE_NAMED_NOT_ASSIGNED,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
+                }
+            ),
+            Some(DEFAULT_ESCAPEMENT_FLOOR),
+            "the shared absent-means-default line is unharmed: a gathering crew nobody set a dial \
+             for still stops at the food peak"
+        );
     }
 
     /// The seeded amount is a product of two config numbers in single precision, so an exact `==`
