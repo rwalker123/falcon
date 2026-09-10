@@ -84,12 +84,14 @@ falls into the `+N` chip, which reports it as `⚒` through the roll-up the chip
 worked working is **not promoted** past a herd for the same reason a ready source is not — see
 "A ready source is deliberately NOT promoted into a visible slot" in the slot-lookup section.
 
-**THE MARKER'S PRESENCE IS THE "AND IT BEING WORKED".** A patch or a herd is on the map whether or
-not anybody works it, so its worked RING is what says *we work this*; a working's marker exists only
-where a crew is on it, so a ring would state that twice. It follows that a working takes **no
-tile-level outline fallback either** — the aggregate outline takes the SOURCE's colour, and a working
-is in neither food web's colour language. What the visible cap hides the `+N` chip reports; what far
-zoom hides is hidden on purpose.
+**THE MARKER'S PRESENCE IS THE "AND IT BEING WORKED" — AND IT WEARS THE FULL MARK SET ON TOP OF
+IT.** A worked working takes the ring, the tile outline, the band link and the rate pill a worked
+patch and a hunted herd take, through the same routines, in its own quarried slate
+(`BandOverlayRenderer.EXTRACT_WORKED_COLOR`); the whole grammar is
+`overlay-channels.md` → "A WORKED WORKING WEARS EVERY PART A HUNTED HERD WEARS", including the
+autopsy on the first cut, which shipped the `⚒N` plate alone. What the visible cap hides the `+N`
+chip reports; what far zoom hides is hidden on purpose — the tile outline is the fallback in both
+cases, exactly as it is for the two food webs.
 
 **THE GLYPH IS THE MATERIAL, NEVER THE RUNG'S VERB** (`FoodIcons.MATERIAL_ICONS` / `for_material`:
 `wood` → 🪵, `stone` → 🪨). This is `BADGE_READY_CHEVRON`'s collision one layer out — 🌲 is both
@@ -116,8 +118,13 @@ is WORKING it, which is a fact about the bands' labor rows — `BandOverlayRende
 mirror image of the `hidden_source_state` hand-off in the other direction, and by the same rule:
 threaded, never held, so neither renderer depends on the other.
 
-Frames: `map_working_worked` / `map_working_pair` / `map_working_overflow` / `map_working_farzoom` —
-`harness-map-probes.md`, which also records the sabotage runs behind the bare-ground and LOD claims.
+Frames: `map_working_worked` / `map_working_pair` / `map_working_overflow` / `map_working_farzoom`,
+plus the three parity states — `map_working_unselected` (the ring and the plate with nothing
+selected), `map_working_beside_herd` (**the side-by-side**: a worked working and a hunted herd in one
+picture, each hex probed for its own web's mark colour and for the absence of the other's) and
+`map_working_pair_marked` (two complete sets on one hex, their anchors asserted a ring's diameter
+apart). `harness-map-probes.md` records those probes and the sabotage runs behind the bare-ground and
+LOD claims.
 
 
 ## The slot lookup is public, and the overflow chip reports what it hides

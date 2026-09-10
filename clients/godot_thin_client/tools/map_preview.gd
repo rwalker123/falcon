@@ -3052,6 +3052,22 @@ func _assert_yield_label_component() -> void:
 		overlays._entry_materials({SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY:
 			YIELD_LABEL_MATERIAL_ROWS}).size() == YIELD_LABEL_MATERIAL_ROWS.size()
 		and overlays._entry_materials({}).is_empty())
+	# **THE ZERO NAMES THE ACCOUNT THE SOURCE PAYS INTO** (issue #650). Both halves are asserted: a
+	# working that took nothing still says WOOD, and a food row's zero is untouched — the same
+	# `SourceForecast.row_zero_account` answer the tile card's deposit rows and the work row's second
+	# line are held to, so the map cannot print a food figure on a source that pays a material.
+	_assert_map("yield label — a working that took nothing states its material's zero, not a food one",
+		overlays._yield_label_rate_text(0.0, 0.0, [], WORKING_MATERIAL_WOOD)
+			== WORKING_ZERO_PILL_FACE)
+	_assert_map("yield label — a FOOD row's zero is unchanged by the account argument",
+		overlays._yield_label_rate_text(0.0, 0.0, [], SourceForecast.YIELD_ACCOUNT_FOOD)
+			== YIELD_LABEL_EMPTY_FACE)
+	_assert_map("yield label — a source paying into NO account states no rate at all",
+		overlays._yield_label_rate_text(0.0, 0.0, [], SourceForecast.YIELD_ACCOUNT_NONE) == "")
+	_assert_map("yield label — an extract row's account is its OWN material, off the shared seam",
+		SourceForecast.row_zero_account(
+			{SourceForecast.ASSIGNMENT_MATERIAL_KEY: WORKING_MATERIAL_WOOD},
+			HudConst.LABOR_KIND_EXTRACT) == WORKING_MATERIAL_WOOD)
 	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
 		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
 			YIELD_LABEL_FODDER_RATE)
@@ -5495,6 +5511,46 @@ const WORKING_CREW := {
 	WORKING_MATERIAL_WOOD: 3,
 	WORKING_MATERIAL_STONE: 2,
 }
+# ---- THE WORKED WORKING'S PARITY WITH A WORKED HERD (issue #650) --------------------------------
+# A working wears the same ring / hex outline / band link / rate pill a hunted herd wears, in its own
+# colour (`BandOverlayRenderer.EXTRACT_WORKED_COLOR`). Ray reported the deposits carrying the badge
+# and NOTHING else beside a rabbit carrying all of it, so the claim is a SIDE-BY-SIDE: one frame
+# holding a worked working and a hunted herd, each hex reached by its OWN web's mark colour and by
+# neither the other's.
+#
+# The probe is a colour DISTANCE rather than the exact match `_frame_paints_near_hex` makes, because
+# every mark in this family is drawn at an alpha (0.95 ring, 0.60 link, 0.35 outline) and therefore
+# blends with the terrain under it — an exact test can only pass on a fully opaque mark. The claim is
+# made as a CONTRAST in one frame, so no absolute tolerance has to be tuned: the hex a mark is drawn
+# on must come at least this many times closer to that mark's colour than the hex it is NOT drawn on.
+# Measured on the shipped side-by-side frame at 53× for the extraction mark (0.005 against 0.267) and
+# 14× for the hunt mark (0.019 against 0.274); 3.0 is an order of magnitude below both and still far
+# above anything terrain variation produces.
+const WORKING_MARK_CONTRAST_MIN := 3.0
+# How far around a hex centre the mark probe looks, in hex radii. Wider than a hex, because the RING
+# docks to the source's edge slot and the LINK leaves the hex entirely — both are the marks under
+# test — but not so wide that it reaches the neighbour it is being contrasted against (the two probed
+# hexes are `WORKING_BARE_OFFSET - WORKING_WORKED_OFFSET` = 2 columns apart).
+const WORKING_MARK_PROBE_RADII := 0.7
+# …and the margin the HUE probe (`_max_blue_excess`) works to, for the half-alpha ring an UNSELECTED
+# band's working wears — see that function for why a distance probe cannot judge that one. Measured
+# on the shipped frame at 0.079 (the ringed hex leans +0.024 blue, bare ground −0.055), so this sits
+# at roughly a quarter of the real separation.
+const WORKING_MARK_BLUE_MARGIN := 0.02
+# The herd the side-by-side frame hunts, parked on the CONTROL hex — the one carrying deposits nobody
+# is cutting — so the two webs' marks land on two different hexes and can be told apart by position.
+const WORKING_BESIDE_HERD_ID := "game_deer_09"
+const WORKING_BESIDE_HERD_CREW := 4
+const WORKING_BESIDE_HERD_RATE := 0.05
+# What the WORKING's crew banked this turn, and what its pill must therefore read. A working pays a
+# MATERIAL and no food, so a bare food format would print `+0.00` here — the defect this arc has now
+# fixed on three surfaces (the compose button's second line, the work row's hover, and this pill).
+const WORKING_BESIDE_TAKE := 0.30
+const WORKING_BESIDE_PILL_FACE := "+0.30 wood"
+# …and the same working before its first turn resolves, which is the case a bare food format gets
+# WRONG rather than merely incomplete: the wire seeds no material take pre-commit, so the fall-through
+# reaches `SourceForecast.row_zero_account` and the ZERO has to name the material.
+const WORKING_ZERO_PILL_FACE := "+0.00 wood"
 ## The grid the far-zoom state renders on — fitted hexes must come out under `LOD_MIN_RADIUS`, which
 ## is where `compute_slots` returns early and every secondary marker (workings included) vanishes.
 const WORKING_FAR_GRID_W := 110
@@ -5554,6 +5610,94 @@ func _snapshot_workings(w: int, h: int, worked_materials: Array) -> Dictionary:
 			_working_deposit(bare_tile, WORKING_MATERIAL_STONE),
 		],
 	}
+
+## **THE SIDE-BY-SIDE** (issue #650): one band, one worked WOOD working on the left hex and one
+## hunted HERD on the right, both crewed by that band, so a frame holds a worked working and a worked
+## herd at the same zoom and the two can be read against each other directly. The herd stands on the
+## CONTROL hex — the one whose deposits nobody is cutting — which keeps the two webs' marks on two
+## different hexes and lets the probe contrast them.
+##
+## The working's row carries a resolved MATERIAL take and no food, which is what its pill states.
+func _snapshot_working_beside_herd() -> Dictionary:
+	var snap := _snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD])
+	var center := _work_grid_center(GRID_W, GRID_H)
+	var herd_tile: Vector2i = center + WORKING_BARE_OFFSET
+	var band: Dictionary = snap["populations"][0]
+	var assignments: Array = band["labor_assignments"]
+	# The working's own take, so the pill has a material rate to state rather than only a zero.
+	(assignments[0] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = [
+		{"material_id": WORKING_MATERIAL_WOOD, "amount": WORKING_BESIDE_TAKE},
+	]
+	(assignments[0] as Dictionary)["floor"] = WORK_PEAK_FLOOR
+	assignments.append({
+		"kind": SourceForecast.LABOR_KIND_HUNT, "workers": WORKING_BESIDE_HERD_CREW,
+		"fauna_id": WORKING_BESIDE_HERD_ID,
+		"target_x": herd_tile.x, "target_y": herd_tile.y,
+		"floor": WORK_PEAK_FLOOR, "improvement": "",
+		"actual_yield": WORKING_BESIDE_HERD_RATE, "sustainable_yield": WORKING_BESIDE_HERD_RATE,
+		"realized_yield": WORKING_BESIDE_HERD_RATE, "overdraws": false,
+	})
+	# The band reaches both hexes: the working is 1 west, the herd 1 east.
+	band["hunt_reach"] = int(band.get("work_range", 2))
+	snap["herds"] = [RUNG_FX.stamp_herd({
+		"id": WORKING_BESIDE_HERD_ID, "label": "Red Deer (%s)" % WORKING_BESIDE_HERD_ID,
+		"x": herd_tile.x, "y": herd_tile.y, "biomass": 800.0, "huntable": true,
+	})]
+	return snap
+
+## How close does the closest pixel around this hex come to `color`? `INF` when the frame is missing.
+##
+## The distance twin of `_frame_paints_near_hex`, and it exists because every mark in the
+## worked-source family is drawn at an ALPHA and therefore blends with the terrain beneath it — the
+## exact test that predicate makes can only pass on an opaque mark like the lethal hatch. A raw
+## distance is not a claim on its own (the autopsy under `_frame_marks_warning_near_hex` is about
+## exactly that), so callers use it as a RATIO between the hex a mark is on and one it is not.
+func _closest_mark_distance(image: Image, tile: Vector2i, color: Color,
+		radii: float = WORKING_MARK_PROBE_RADII) -> float:
+	if image == null:
+		return INF
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
+	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
+	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
+	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
+	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	var best := INF
+	var want := Vector3(color.r, color.g, color.b)
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			var got: Color = image.get_pixel(px, py)
+			best = minf(best, Vector3(got.r, got.g, got.b).distance_to(want))
+	return best
+
+## How far does the BLUEST pixel around this hex lean blue — `max(b - r)` over the probe box?
+##
+## **THE DISTANCE PROBE CANNOT ANSWER FOR AN UNSELECTED BAND'S RING, and it is the alpha that does
+## it.** That ring is drawn at `WORKED_RING_OTHER_ALPHA` (half), so its pixels are roughly half slate
+## and half terrain — measured 0.141 from `EXTRACT_WORKED_COLOR` against 0.267 for bare ground, a
+## ratio under 2 that no threshold separates from terrain variation. What survives the blend is the
+## HUE: the extraction mark is the only cool thing on this map, and every terrain on it reads warm
+## (red at or above blue). This is `_frame_marks_warning_near_hex`'s lesson — when a mark is blended
+## or antialiased past its own ink, ask for the property that distinguishes it rather than for the
+## colour itself.
+func _max_blue_excess(image: Image, tile: Vector2i,
+		radii: float = WORKING_MARK_PROBE_RADII) -> float:
+	if image == null:
+		return -INF
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
+	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
+	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
+	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
+	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	var best := -INF
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			var got: Color = image.get_pixel(px, py)
+			best = maxf(best, got.b - got.r)
+	return best
 
 ## The crowded hex from `_snapshot_mixed` — three wonders, a herd and a food site — with a WOOD
 ## working being cut on it too. Every visible slot is spoken for before the working is reached, so it
@@ -5667,10 +5811,12 @@ func _worked_working_states() -> void:
 		bool((_map._band_overlays.hidden_source_state().get(crowded, {}) as Dictionary).get("worked", false)))
 
 	# State "working far zoom" — the SAME crewed pair on a grid large enough that fitted hexes fall
-	# under `ICON_MIN_DETAIL_RADIUS`. `compute_slots` returns early there, so every secondary marker
-	# goes, workings included; a working has no tile-level fallback outline, so this hex must be
-	# clean. **The premise is asserted with the measured radius**, because an absence is only worth
-	# asserting where a presence would have been visible — and the pair frame above IS that presence.
+	# under `ICON_MIN_DETAIL_RADIUS`. `compute_slots` returns early there, so every secondary MARKER
+	# goes, workings included, and what survives is the tile-level outline — the LOD/overflow fallback
+	# the working now shares with the two food webs (issue #650), in its own slate rather than in
+	# either of theirs. So the claim here is about the SLOT, not about a clean hex. **The premise is
+	# asserted with the measured radius**, because an absence is only worth asserting where a presence
+	# would have been visible — and the pair frame above IS that presence.
 	_map.selected_tile = Vector2i(-1, -1)
 	_map.display_snapshot(_snapshot_workings(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
@@ -5690,3 +5836,94 @@ func _worked_working_states() -> void:
 			% [material, _map.last_hex_radius, LOD_MIN_RADIUS],
 			_map.secondary_slot_of(_map.secondary_working_key(
 				far_center.x, far_center.y, String(material))) < 0)
+
+	# State "working unselected" (issue #650) — THE PERSISTENT HALF. The same single crewed wood
+	# working with NO band selected: the ring and the `⚒3` plate are the marks that belong to the
+	# SOURCE and stay whatever is selected, exactly as a hunted herd's ring does. Read for a slate
+	# ring around the 🪵 and its plate, and for NO band link and NO rate pill — those are what
+	# selection buys, and the frame after this one is where they appear.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_unselected")
+	var unsel_tile := _work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET
+	var unsel_bare := _work_grid_center(GRID_W, GRID_H) + WORKING_BARE_OFFSET
+	var unsel_frame: Image = await _capture()
+	# The ring reaches the worked hex with nothing selected — a mark drawn only for the selected band
+	# would leave this frame carrying the badge alone, which is the state Ray reported.
+	var unsel_worked_blue := _max_blue_excess(unsel_frame, unsel_tile)
+	var unsel_bare_blue := _max_blue_excess(unsel_frame, unsel_bare)
+	_assert_map("map_working_unselected — the working's own ring is drawn with NO band selected (blue lean %.3f vs %.3f on the bare hex)"
+			% [unsel_worked_blue, unsel_bare_blue],
+		unsel_worked_blue - unsel_bare_blue >= WORKING_MARK_BLUE_MARGIN)
+
+	# State "working beside herd" (issue #650) — **THE SIDE-BY-SIDE, AND THE CLAIM RAY IS MAKING.**
+	# One selected band working a WOOD working on the left hex and hunting a DEER on the right, so the
+	# two webs' full mark sets sit in one frame at one zoom: each wears a ring, a hex outline, a link
+	# back to the band's token and a rate pill, differing only in the colour the ring already states.
+	# A frame alone cannot say the two are alike, so the marks are probed by colour: each hex must be
+	# reached by its OWN web's mark and not by the other's.
+	_map.display_snapshot(_snapshot_working_beside_herd())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_beside_herd")
+	var beside_center := _work_grid_center(GRID_W, GRID_H)
+	var beside_working: Vector2i = beside_center + WORKING_WORKED_OFFSET
+	var beside_herd: Vector2i = beside_center + WORKING_BARE_OFFSET
+	_assert_map("map_working_beside_herd — premise: both sources hold a marker slot to dock to",
+		_map.secondary_slot_of(_map.secondary_working_key(
+			beside_working.x, beside_working.y, WORKING_MATERIAL_WOOD)) >= 0
+		and _map.secondary_slot_of(_map.secondary_herd_key(WORKING_BESIDE_HERD_ID)) >= 0)
+	var beside_frame: Image = await _capture()
+	var working_slate := _closest_mark_distance(beside_frame, beside_working,
+		BandOverlayRenderer.EXTRACT_WORKED_COLOR)
+	var herd_slate := _closest_mark_distance(beside_frame, beside_herd,
+		BandOverlayRenderer.EXTRACT_WORKED_COLOR)
+	var herd_red := _closest_mark_distance(beside_frame, beside_herd, BandOverlayRenderer.HUNT_WORKED_COLOR)
+	var working_red := _closest_mark_distance(beside_frame, beside_working,
+		BandOverlayRenderer.HUNT_WORKED_COLOR)
+	_assert_map("map_working_beside_herd — the WORKING wears the extraction mark and the herd does not (%.3f vs %.3f)"
+			% [working_slate, herd_slate],
+		herd_slate >= working_slate * WORKING_MARK_CONTRAST_MIN)
+	_assert_map("map_working_beside_herd — the HERD wears the hunt mark and the working does not (%.3f vs %.3f)"
+			% [herd_red, working_red],
+		working_red >= herd_red * WORKING_MARK_CONTRAST_MIN)
+	# **AND THE PILL STATES THE WORKING'S OWN ACCOUNT**, through the same fall-through the frame's
+	# label is composed by — a working pays a material and no food, so a bare food format prints
+	# `+0.00` on a source that is producing.
+	var beside_row: Dictionary = (_snapshot_working_beside_herd()["populations"][0]
+		["labor_assignments"] as Array)[0]
+	var overlays: BandOverlayRenderer = _map._band_overlays
+	_assert_map("map_working_beside_herd — the working's pill states its MATERIAL rate, not a food one",
+		overlays._yield_label_rate_text(overlays._entry_realized_yield(beside_row), 0.0,
+			overlays._entry_materials(beside_row),
+			SourceForecast.row_zero_account(beside_row, HudConst.LABOR_KIND_EXTRACT))
+			== WORKING_BESIDE_PILL_FACE)
+
+	# **THE PAIR'S PARTS KEEP THEMSELVES APART.** Two workings on one hex hold two edge slots, so
+	# their rings, pills and links anchor to two points — anchoring to the hex centre would stack both
+	# sets on one spot and read as one working. Asserted as a separation wider than a ring's own
+	# diameter, which is what "do not overlap" means for the widest part either set draws.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pair_marked")
+	var pair_tile := _work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET
+	var pair_hex: Vector2 = _map._hex_center_wrapped(pair_tile.x, pair_tile.y,
+		_map.last_hex_radius, _map.last_origin)
+	var wood_mark_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_tile.x, pair_tile.y, WORKING_MATERIAL_WOOD))
+	var stone_mark_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_tile.x, pair_tile.y, WORKING_MATERIAL_STONE))
+	_assert_map("map_working_pair_marked — premise: both workings still hold marker slots (%d, %d)"
+			% [wood_mark_slot, stone_mark_slot], wood_mark_slot >= 0 and stone_mark_slot >= 0)
+	var wood_anchor: Vector2 = _map.secondary_slot_center(pair_hex, wood_mark_slot, _map.last_hex_radius)
+	var stone_anchor: Vector2 = _map.secondary_slot_center(pair_hex, stone_mark_slot, _map.last_hex_radius)
+	var ring_diameter: float = _map.last_hex_radius * BandOverlayRenderer.WORKED_RING_FACTOR * 2.0
+	_assert_map("map_working_pair_marked — the two workings' anchors clear a ring's diameter (%.1f px apart, ring %.1f)"
+			% [wood_anchor.distance_to(stone_anchor), ring_diameter],
+		wood_anchor.distance_to(stone_anchor) > ring_diameter)

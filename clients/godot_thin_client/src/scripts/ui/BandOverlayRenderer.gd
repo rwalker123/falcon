@@ -71,6 +71,13 @@ const RANGE_BORDER_EDGE_AXIAL: Array[Vector2i] = [
 # link and the per-source yield labels stay selection-only — N bands of links is spaghetti.
 const FORAGE_WORKED_COLOR := Color(0.46, 0.96, 0.46, 0.95)
 const HUNT_WORKED_COLOR := Color(0.92, 0.34, 0.30, 0.95)
+# **AND A THIRD COLOUR FOR THE THIRD WEB** (issue #650): a worked WORKING wears the same ring, link
+# and outline as a patch or a herd, in a hue that is in neither food web — quarried slate, one colour
+# for both branches, because a felled wood and a quarried rock are the same statement about the same
+# account. Desaturated on purpose: every other mark this pass draws is saturated (forage green, hunt
+# red, the azure scout border, the amber pending dashes), so slate is the one thing on the map it
+# cannot be mistaken for, and materials are the cool account beside two warm-blooded food webs.
+const EXTRACT_WORKED_COLOR := Color(0.68, 0.74, 0.80, 0.95)
 # Ring radius as a factor of the hex radius. A secondary marker is drawn at SECONDARY_ICON_SIZE_FACTOR
 # (0.55) of the hex, so the ring sits just outside its glyph — and deliberately INSIDE the food-harvest
 # ring (MapView.FOOD_HARVEST_RING_FACTOR 0.42 measured from the same centre), which is a different
@@ -134,10 +141,17 @@ const BADGE_UNSTAFFED_FORMAT := "%s⚠ "
 # OPPORTUNITY must never be amber; an unstaffed commitment is not an opportunity — it is the trouble
 # channel's own subject, and it wears the `HudStyle.WARN` the overdraw and under-herded marks do.
 const BADGE_BORDER_WIDTH := 1.2
-# Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
-# work-range ring — hunt reach = work_range + leash).
-const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
-const HUNT_WORKED_LINK_WIDTH := 2.5
+# THE SELECTED BAND'S LINK TO A SOURCE IT WORKS — a thin line from its token to the source's own
+# marker (the source can sit well outside the work-range ring: hunt reach = work_range + leash, and a
+# working is joined to whichever band opened it). ONE alpha and ONE width for every kind, applied to
+# the SOURCE's own ring colour by `_draw_worked_link`, so a link can never be a different weight from
+# web to web — the ring already carries which source this is.
+const WORKED_LINK_ALPHA := 0.60
+const WORKED_LINK_WIDTH := 2.5
+# A link whose two ends straddle the horizontal seam is a stripe across the whole map rather than a
+# join, so it is dropped: past this fraction of the rendered map width the two ends are not
+# neighbours. Shared by the CONFIRMED links and the dashed PENDING ones — one seam, one rule.
+const LINK_MAX_SPAN_FACTOR := 0.4
 # Selected-herd GRAZING RANGE (Grazing Phase 2b-iii): the tiles within `graze_range_radius` of the herd
 # — the EXACT ring the sim grazes and derives its carrying capacity K over — as a filled region + tile
 # outlines. Warm graze amber, deliberately DISTINCT from the band work-range ring's faint cyan (a herd's
@@ -224,7 +238,7 @@ var _deferred_source_badges: Array[Dictionary] = []
 ## warn}`. A cap that hides state silently reads as "nothing here", which is the very failure this
 ## feature exists to fix at a different scale — so the `+N` chip reports what it is covering.
 var _hidden_source_state: Dictionary = {}
-## THE WORKED WORKINGS this frame — `working_key → {tile, material, crew}` — see
+## THE WORKED WORKINGS this frame — `working_key → {tile, material, crew, selected}` — see
 ## `compute_worked_workings`, which is the one place it is built.
 var _worked_workings: Dictionary = {}
 
@@ -248,8 +262,8 @@ func reset_world_state() -> void:
 	_hidden_source_state.clear()
 	_worked_workings.clear()
 
-## **WHICH WORKINGS ARE BEING CUT, AND BY HOW MANY** — `working_key → {tile, material, crew}`, summed
-## across EVERY player band (issue #650). `MapView._draw` calls this FIRST and hands the answer to
+## **WHICH WORKINGS ARE BEING CUT, AND BY HOW MANY** — `working_key → {tile, material, crew,
+## selected}`, summed across EVERY player band (issue #650). `MapView._draw` calls this FIRST and hands the answer to
 ## `SecondaryMarkerRenderer.set_worked_workings`, because a working's marker exists only where a crew
 ## is on it: the slot pass needs this pass's answer, which is the reverse of the food/herd order.
 ##
@@ -305,6 +319,15 @@ func compute_worked_workings() -> Dictionary:
 				"tile": tile,
 				"material": material,
 				"crew": int(known.get("crew", 0)) + workers,
+				# **IS THE SELECTED BAND ONE OF THE CUTTERS** — an OR across the bands summed above,
+				# and it rides here for the same reason the crew does: this walk is the one place a
+				# working is joined to the bands working it, and the mark pass walks SOURCES rather
+				# than bands (the crew is already summed) so it has no band in hand to ask. The food
+				# webs reach the same answer per (band × source) as they draw, which is why they
+				# carry no such flag. It is what picks the ring's WEIGHT — bold for the selected
+				# band, thin for any other — exactly as `selected` does on the two food arms.
+				"selected": bool(known.get("selected", false))
+					or int(band.get("entity", -1)) == _view.selected_unit_id,
 			}
 	return _worked_workings
 
@@ -388,8 +411,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# so its improvement axis is structurally empty and its quarry's badge can
 						# only ever show a rung on OFFER, never one under way (issue #442). It carries
 						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
-						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
-						_queue_source_badge(_view._hex_center(qcol, qrow, radius, origin), qkey, LABOR_KIND_HUNT, qherd,
+						var qcenter := _view._hex_center(qcol, qrow, radius, origin)
+						_draw_worked_mark(qcenter, qkey, HUNT_WORKED_COLOR, selected, radius)
+						_queue_source_badge(qcenter, qkey, LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin,
 							int(builders.get(qkey, 0)))
 						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd,
@@ -415,8 +439,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var fkey := _view.secondary_food_key(tx, trow)
 				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
 				builders[fkey] = int(builders.get(fkey, 0)) + band_builders
-				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
-				_queue_source_badge(_view._hex_center(tcol, trow, radius, origin), fkey, LABOR_KIND_FORAGE,
+				var fcenter := _view._hex_center(tcol, trow, radius, origin)
+				_draw_worked_mark(fcenter, fkey, FORAGE_WORKED_COLOR, selected, radius)
+				_queue_source_badge(fcenter, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin,
 					int(builders[fkey]))
@@ -439,8 +464,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var hkey := _view.secondary_herd_key(herd_id)
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
 				builders[hkey] = int(builders.get(hkey, 0)) + band_builders
-				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
-				_queue_source_badge(_view._hex_center(hcol, hrow, radius, origin), hkey, LABOR_KIND_HUNT, herd,
+				var hcenter := _view._hex_center(hcol, hrow, radius, origin)
+				_draw_worked_mark(hcenter, hkey, HUNT_WORKED_COLOR, selected, radius)
+				_queue_source_badge(hcenter, hkey, LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin,
 					int(builders[hkey]))
 				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
@@ -448,16 +474,21 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 	# **THE WORKED WORKINGS** (issue #650), off the set `compute_worked_workings` resolved before the
 	# slot pass — this walk is over SOURCES rather than bands because the crew is already summed.
 	#
-	# **NO RING AND NO TILE OUTLINE, and that is the whole difference from the two food webs.** A
-	# patch or a herd is on the map whether or not anybody works it, so the ring is what says *we
-	# work this*; a working's MARKER only exists where a crew is on it, so its presence already
-	# carries that statement and a ring would say it twice. It follows that a working has no
-	# tile-level fallback either: at far zoom, and past the visible cap, the aggregate outline would
-	# be a mark in the food webs' own colour language for a source that is in neither. What the cap
-	# hides is reported by the `+N` chip's `⚒` below; what far zoom hides is hidden on purpose.
+	# **THE SAME `_draw_worked_mark` THE TWO FOOD WEBS GO THROUGH, in the working's own colour.** The
+	# first cut queued the badge alone on the argument that a working's marker exists only where a
+	# crew is on it, so a ring would state *we work this* twice — which is true of the ring's
+	# INFORMATION and false of the map: beside a hunted herd wearing a ring, a hex outline, a link
+	# and a rate, a lone `⚒1` plate read as a different and lesser kind of thing (Ray, issue #650).
+	# Parity is the requirement, so a working takes every part a patch and a herd take, through the
+	# same routines, and `EXTRACT_WORKED_COLOR` is what keeps it out of either food web's language —
+	# including on the tile-level outline, which is therefore its LOD/overflow fallback too.
 	for key in _worked_workings:
 		var working: Dictionary = _worked_workings[key]
 		var wtile: Vector2i = working.get("tile", Vector2i(-1, -1))
+		# The working's OWN wrap image, the one its marker and its badge are drawn on.
+		var wcenter := _view._hex_center_wrapped(wtile.x, wtile.y, radius, origin)
+		_draw_worked_mark(wcenter, key, EXTRACT_WORKED_COLOR,
+			bool(working.get("selected", false)), radius)
 		# **THE PLATE IS THE SHARED `⚒N` SOURCE BADGE, not a shape of its own** — the tile card's
 		# deposit row, the band badge and this plate are one spelling of one idea (`BADGE_CREW_GLYPH`
 		# → `HudSelectionVocab.SOURCE_CREW_MARK`), so a hex whose marker said one number beside a card
@@ -465,7 +496,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		# answers `_queue_source_badge` reaches for (`RungGates.rung_in_progress` /
 		# `next_rung_ready`) are the FOOD webs' — they answer nothing for an `extract` kind — and a
 		# working's ladder is declared from the Work board, so the plate states the crew and stops.
-		_queue_source_badge(_view._hex_center_wrapped(wtile.x, wtile.y, radius, origin), key,
+		_queue_source_badge(wcenter, key,
 			HudConst.LABOR_KIND_EXTRACT, {}, SourceForecast.IMPROVEMENT_NONE,
 			int(working.get("crew", 0)), radius, origin)
 		_note_if_hidden(key, wtile, HudConst.LABOR_KIND_EXTRACT, {},
@@ -502,12 +533,13 @@ func hidden_source_state() -> Dictionary:
 ## hunted herds on one hex drew two rates at the identical point, one exactly on top of the other — and
 ## a herd sharing a hex with a worked patch did the same. The rates belong to different sources, so
 ## they hang off the sources. The hex-centre fallback covers a source with no visible marker.
-func _label_anchor(col: int, row: int, key: String, radius: float, origin: Vector2) -> Vector2:
-	var center := _view._hex_center(col, row, radius, origin)
+## `hex_center` arrives resolved for `_draw_worked_mark`'s reason — the wrap image is the caller's to
+## pick, and a label must hang off the same copy of the hex its ring is drawn on.
+func _label_anchor(hex_center: Vector2, key: String, radius: float) -> Vector2:
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
-		return center
-	return _view.secondary_slot_center(center, slot, radius)
+		return hex_center
+	return _view.secondary_slot_center(hex_center, slot, radius)
 
 ## Queue this source's badge for the deferred flush. A source can be reached by more than one band, so
 ## the LAST queue for a key wins and carries the running crew total — cheaper and simpler than a second
@@ -635,15 +667,20 @@ func _draw_source_badge(entry: Dictionary) -> void:
 ## One source's worked mark: the ring on its marker's slot, plus the tile-level outline underneath.
 ## `slot_of(key) == -1` means the marker did not draw at all (overflowed or far zoom), so only the
 ## outline renders — the mark degrades to the aggregate rather than landing somewhere arbitrary.
-func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: bool,
-		radius: float, origin: Vector2) -> void:
+## `hex_center` is the source's ANCHOR HEX in screen space, passed in rather than derived from a
+## column here for `_queue_source_badge`'s reason one function down: the food and hunt arms anchor to
+## the BAND's wrap image (`eff_col + delta`, so a source across the seam draws beside the band that
+## works it) while a working anchors to its own marker's (`_hex_center_wrapped`). A mark that resolved
+## the wrap for itself would eventually disagree with the marker it rings.
+func _draw_worked_mark(hex_center: Vector2, key: String, color: Color, selected: bool,
+		radius: float) -> void:
 	var outline := color
 	outline.a = WORKED_TILE_OUTLINE_ALPHA
-	_view._outline_hex(col, row, radius, origin, outline, WORKED_TILE_OUTLINE_WIDTH)
+	_view._outline_hex_at(hex_center, radius, outline, WORKED_TILE_OUTLINE_WIDTH)
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
 		return
-	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
+	var center := _view.secondary_slot_center(hex_center, slot, radius)
 	var ring_radius := radius * WORKED_RING_FACTOR
 	var ring_color := color
 	if selected:
@@ -654,6 +691,27 @@ func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: 
 		ring_color.a = color.a * WORKED_RING_OTHER_ALPHA
 	var width := WORKED_RING_WIDTH_SELECTED if selected else WORKED_RING_WIDTH_OTHER
 	_view.draw_arc(center, ring_radius, 0, TAU, 28, ring_color, width)
+
+## THE SELECTED BAND → SOURCE LINK, one routine for every kind of source (issue #650). `color` is the
+## source's own RING colour and the alpha is applied here, so a hunted herd's link and a worked
+## working's can differ only in the hue the ring already stated — never in weight or opacity.
+##
+## `target` is the source's own MARKER anchor, not its hex centre, wherever the caller has one: two
+## workings on one hex are two markers in two edge slots, and links to the hex centre would land the
+## pair on the same point and read as one.
+##
+## A link whose ends straddle the horizontal seam is dropped rather than drawn across the whole map.
+func _draw_worked_link(band_center: Vector2, target: Vector2, color: Color) -> void:
+	if _link_spans_seam(band_center, target):
+		return
+	var link := color
+	link.a = WORKED_LINK_ALPHA
+	_view.draw_line(band_center, target, link, WORKED_LINK_WIDTH)
+
+## Are these two ends on opposite sides of the horizontal seam — i.e. would a line between them be a
+## stripe across the whole map rather than a join? One test for every link this renderer draws.
+func _link_spans_seam(a: Vector2, b: Vector2) -> bool:
+	return absf(a.x - b.x) > _view.last_map_size.x * LINK_MAX_SPAN_FACTOR
 
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - three RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
@@ -715,6 +773,13 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 		var kind := String(entry.get("kind", "")).strip_edges().to_lower()
 		if int(entry.get("workers", 0)) <= 0:
 			continue
+		# **WHICH ACCOUNT'S ZERO THIS ROW'S LABEL MAY PRINT**, resolved once for every arm off the
+		# SHARED seam (`SourceForecast.row_zero_account`) rather than per branch. A food row answers
+		# `food` and nothing about the two webs changes; an `extract` row answers its own MATERIAL,
+		# which is what stops a working that took nothing this turn reading `+0.00` in an account it
+		# does not pay into. The tile card's deposit rows and the work row's second line are held to
+		# the same answer by the same function, which is the whole reason it is not spelled here.
+		var zero_account := SourceForecast.row_zero_account(entry, kind)
 		if kind == LABOR_KIND_FORAGE:
 			var tcol := eff_col + _view._wrapped_col_delta(band_col, int(entry.get("target_x", -1)))
 			var trow := int(entry.get("target_y", -1))
@@ -726,13 +791,15 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
-				var fcenter := _label_anchor(tcol, trow, _view.secondary_food_key(int(entry.get("target_x", -1)), trow), radius, origin)
+				var fcenter := _label_anchor(_view._hex_center(tcol, trow, radius, origin),
+					_view.secondary_food_key(int(entry.get("target_x", -1)), trow), radius)
 				var forage_overdraw := yield_label_overdraw(entry)
 				# The FODDER component rides along for the one-slot rule in `_draw_yield_label`; a
 				# forage patch normally pays food, so it changes nothing here — except on the patch
 				# this exists for, a sown hay Field, which pays fodder alone.
 				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
-					_entry_floor_glyph(entry), _entry_fodder(entry), _entry_materials(entry))
+					_entry_floor_glyph(entry), _entry_fodder(entry), _entry_materials(entry),
+					zero_account)
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _view._herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -743,9 +810,15 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if herd_col < 0 or herd_row < 0 or herd_row >= _view.grid_height:
 				continue
 			var hc := _view._hex_center(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row, radius, origin)
-			# Link the band to the herd it is hunting (skip a wrap-spanning artifact).
-			if absf(band_center.x - hc.x) <= _view.last_map_size.x * 0.4:
-				_view.draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
+			# **THE LINK DOCKS TO THE HERD'S OWN MARKER**, the same anchor its rate pill hangs off, so
+			# the herd and a worked working state one relationship in one geometry (issue #650). It
+			# ran to the HEX CENTRE until the workings arrived — which overshoots past the marker on
+			# any hex whose herd sits in an edge slot, and draws two hunted herds on one hex as two
+			# lines to a single point. `_label_anchor` falls back to that centre where there is no
+			# marker to dock to, which is the case the old behaviour was always right for.
+			var hanchor := _label_anchor(hc, _view.secondary_herd_key(String(entry.get("fauna_id", ""))), radius)
+			# Link the band to the herd it is hunting.
+			_draw_worked_link(band_center, hanchor, HUNT_WORKED_COLOR)
 			# (The worked ring itself is drawn by `draw_worked_source_marks`, for EVERY player band.)
 			# Depletable herd: HEADLINE the STEADY realized average (`realized_yield`), NOT the
 			# kill-credit PULSE (`actual_yield` is 0 on a wait turn, a spike on a kill turn) — mirrors
@@ -755,8 +828,6 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# overhunt ⚠ flag is the sim-answered `overdraws` bool (it answers the crew's own floor) —
 			# NOT `actual > sustainable`, which false-positives on a kill turn when a banked animal spikes.
 			if show_yields and (entry.has("realized_yield") or entry.has("sustainable_yield")):
-				var hlabel := _label_anchor(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row,
-					_view.secondary_herd_key(String(entry.get("fauna_id", ""))), radius, origin)
 				var overhunt := yield_label_overdraw(entry)
 				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
 					else float(entry.get("sustainable_yield", 0.0))
@@ -765,8 +836,37 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				# it would only offer the label a fall-through it can never take. **THE MATERIALS ARE
 				# PASSED, and they are the arm that closes the inedible quarry's `+0.00`** — a wolf's
 				# steady food rate is honestly 0, and its pelts are the whole of what the hunt pays.
-				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, _entry_floor_glyph(entry),
-					0.0, _entry_materials(entry))
+				_queue_yield_label(hanchor, hunt_rate, overhunt, radius, _entry_floor_glyph(entry),
+					0.0, _entry_materials(entry), zero_account)
+		elif kind == HudConst.LABOR_KIND_EXTRACT:
+			# **4. THE WORKED WORKINGS' HALF OF WHAT SELECTION BUYS** (issue #650) — the link back to
+			# the band's token and the rate pill, the two parts the ring pass cannot draw because
+			# neither is a fact about the SOURCE alone. Through the same two routines the hunt arm
+			# above goes through, so a worked wood and a hunted herd cannot drift apart in dash,
+			# weight, plate or offset.
+			var material := String(entry.get("material", "")).strip_edges()
+			var wtile := Vector2i(int(entry.get("target_x", -1)), int(entry.get("target_y", -1)))
+			var wkey := _view.secondary_working_key(wtile.x, wtile.y, material)
+			# **THE `(tile, material)` JOIN IS ASKED ONCE, IN `compute_worked_workings`**, and this
+			# arm reads its answer rather than restating it: a row pointing at a hex the `deposits`
+			# section carries no such working on drew no marker and no ring, so a link and a pill
+			# hanging in that empty air would be the phantom the join exists to refuse.
+			if not _worked_workings.has(wkey):
+				continue
+			# The working's OWN wrap image and its OWN marker slot — two workings on one hex sit in
+			# two edge slots, so anchoring to the hex centre would land both links and both pills on
+			# one point.
+			var wanchor := _label_anchor(_view._hex_center_wrapped(wtile.x, wtile.y, radius, origin),
+				wkey, radius)
+			_draw_worked_link(band_center, wanchor, EXTRACT_WORKED_COLOR)
+			# **NO `has()` GATE, unlike the two food arms**, and it is the same asymmetry as the
+			# fodder argument one branch up read the other way round: a working ALWAYS pays into its
+			# material account — the material is half its identity — so there is always a rate to
+			# state, and `zero_account` is what makes an empty take read `+0.00 wood` rather than
+			# claim a food zero. Fodder is the structural zero here, as it is on a hunt row.
+			if show_yields:
+				_queue_yield_label(wanchor, _entry_realized_yield(entry), yield_label_overdraw(entry),
+					radius, _entry_floor_glyph(entry), 0.0, _entry_materials(entry), zero_account)
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -895,8 +995,28 @@ func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col:
 				var hcol := eff_col + _view._wrapped_col_delta(band_col, int(herd.get("x", -1)))
 				var hc := _view._hex_center(hcol, hrow, radius, origin)
 				_draw_dashed_hex(hcol, hrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
-				if absf(band_center.x - hc.x) <= _view.last_map_size.x * 0.4:
+				if not _link_spans_seam(band_center, hc):
 					_draw_dashed_line(band_center, hc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
+			elif kind == HudConst.LABOR_KIND_EXTRACT:
+				# **A JUST-ORDERED CREW ON A WORKING GETS THE SAME OPTIMISTIC PAIR** (issue #650). The
+				# record has always carried `extract` rows — `HudBandLaborState.record_pending_assign`
+				# takes the `material` half-key for exactly this row kind — and this pass read only
+				# the two food kinds, so ordering a crew onto a wood or a rock was the one assign in
+				# the client that drew NOTHING until the snapshot confirmed it.
+				var wrow := int(a.get("y", -1))
+				if wrow < 0 or wrow >= _view.grid_height:
+					continue
+				var wcol := eff_col + _view._wrapped_col_delta(band_col, int(a.get("x", -1)))
+				# The pending link hangs off the working's marker where one exists and off the hex
+				# centre where it does not — which is the ORDINARY case here, a working's marker
+				# existing only once a CONFIRMED crew is on it (`compute_worked_workings`). That is
+				# what `_label_anchor`'s fallback is, so no branch is written for it.
+				var wc := _label_anchor(_view._hex_center(wcol, wrow, radius, origin),
+					_view.secondary_working_key(int(a.get("x", -1)), wrow,
+						String(a.get("material", "")).strip_edges()), radius)
+				_draw_dashed_hex(wcol, wrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
+				if not _link_spans_seam(band_center, wc):
+					_draw_dashed_line(band_center, wc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
 	var move_variant: Variant = pend.get("move", {})
 	if move_variant is Dictionary and not (move_variant as Dictionary).is_empty():
 		var mrow := int((move_variant as Dictionary).get("y", -1))
@@ -904,7 +1024,7 @@ func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col:
 			var mcol := eff_col + _view._wrapped_col_delta(band_col, int((move_variant as Dictionary).get("x", -1)))
 			var mc := _view._hex_center(mcol, mrow, radius, origin)
 			_draw_dashed_hex(mcol, mrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
-			if absf(band_center.x - mc.x) <= _view.last_map_size.x * 0.4:
+			if not _link_spans_seam(band_center, mc):
 				_draw_dashed_line(band_center, mc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
 
 ## Draw the selected traveling unit's destination: a thin cyan line from its current tile to the
@@ -1054,7 +1174,8 @@ func _entry_floor_glyph(entry: Dictionary) -> String:
 		float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
 
 func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		fodder: float = 0.0, materials: Array = []) -> void:
+		fodder: float = 0.0, materials: Array = [],
+		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> void:
 	_deferred_yield_labels.append({
 		"tile_center": tile_center,
 		"value": value,
@@ -1063,6 +1184,7 @@ func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radi
 		"floor_glyph": floor_glyph,
 		"fodder": fodder,
 		"materials": materials,
+		"zero_account": zero_account,
 	})
 
 ## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
@@ -1073,7 +1195,8 @@ func flush_yield_labels() -> void:
 	_deferred_source_badges.clear()
 	for label in _deferred_yield_labels:
 		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
-			label["floor_glyph"], float(label.get("fodder", 0.0)), label.get("materials", []))
+			label["floor_glyph"], float(label.get("fodder", 0.0)), label.get("materials", []),
+			String(label.get("zero_account", SourceForecast.YIELD_ACCOUNT_FOOD)))
 	_deferred_yield_labels.clear()
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
@@ -1098,8 +1221,14 @@ func flush_yield_labels() -> void:
 ## #527 retired that account; the material vector is what replaced it, and it is a vector because a
 ## mammoth hide and a hare pelt are both `hide` and are not the same thing.)
 func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		fodder: float = 0.0, materials: Array = []) -> void:
-	var text := _yield_label_rate_text(value, fodder, materials)
+		fodder: float = 0.0, materials: Array = [],
+		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> void:
+	var text := _yield_label_rate_text(value, fodder, materials, zero_account)
+	# **A SOURCE WITH NO ACCOUNT TO BE EMPTY IN STATES NO RATE** — `row_zero_account`'s own caller
+	# contract, and the only way `_yield_label_rate_text` answers "". A plate drawn around it would be
+	# an empty pill claiming a reading the source cannot make.
+	if text == "":
+		return
 	var color := HudStyle.HEALTHY
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG
@@ -1128,13 +1257,25 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 ## name, and summing them is the retired trade axis under a new name. The plate sizes to the MEASURED
 ## run (`_draw_pill_plate`), so a two-material label is wide rather than clipped — which is a
 ## legibility question for `map_band_label_overlap`, not a reason to state less than the truth.
-func _yield_label_rate_text(value: float, fodder: float, materials: Array = []) -> String:
+func _yield_label_rate_text(value: float, fodder: float, materials: Array = [],
+		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> String:
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder >= YIELD_LABEL_COMPONENT_MIN:
 		return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % _format_yield_signed(fodder)
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder < YIELD_LABEL_COMPONENT_MIN:
 		var material_text := SourceForecast.signed_material_components(materials)
 		if material_text != "":
 			return material_text
+		# **NOTHING TOOK, SO THE ZERO NAMES THE ACCOUNT THIS SOURCE PAYS INTO** (issue #650). Every
+		# other arm above states a rate the take produced; this is the one place the label speaks
+		# for a take that produced none, and a bare `+0.00` is a claim about FOOD — false on a
+		# working, which pays a material and no food, and the third surface that fault has been
+		# fixed on. `SourceForecast.row_zero_account` is the shared answer, and the material names
+		# itself in the same idiom `signed_material_components` just declined to use.
+		if zero_account == SourceForecast.YIELD_ACCOUNT_NONE:
+			return ""
+		if zero_account != SourceForecast.YIELD_ACCOUNT_FOOD:
+			return SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT % [
+				_format_yield_signed(value), zero_account]
 	return _format_yield_signed(value)
 
 ## **THE ⚠ THIS LABEL FLIES — `LaborAssignment.overdraws`, read and never derived.** Split out for

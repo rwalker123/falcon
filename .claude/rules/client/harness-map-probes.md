@@ -750,7 +750,10 @@ That contrast is the frame — `map-markers.md` has the decision it renders.
 | `map_working_worked` | ONE crewed working (wood, `⚒3`) beside the bare pair | a single 🪵 in an edge slot with its plate, and the neighbour hex **empty** |
 | `map_working_pair` | BOTH workings on one hex crewed | 🪵 `⚒3` and 🪨 `⚒2` in two DIFFERENT slots — a hex cutting timber and quarrying rock cannot read as one working |
 | `map_working_overflow` | the `_snapshot_mixed` crowded hex, plus a crewed wood working | the `+3 ⚒` chip, which is what stops a capped marker reading as *nothing is happening here* |
-| `map_working_farzoom` | the same crewed pair on a 110×80 grid (fit r **12.7** < the 16.0 gate) | nothing but the band token and its range border |
+| `map_working_farzoom` | the same crewed pair on a 110×80 grid (fit r **12.7** < the 16.0 gate) | nothing but the band token, its range border and the faint tile outline the LOD fallback leaves |
+| `map_working_unselected` | ONE crewed wood working, NO band selected | the thin slate ring and the `⚒3` plate — the marks that belong to the SOURCE — and no link, no pill, no range borders |
+| `map_working_beside_herd` | one selected band cutting a wood working on the left hex and hunting a deer on the right | **the parity claim**: both wear a ring, a hex outline, a link to the band's token and a rate pill, differing only in colour and in what the pill counts (`+0.30 wood ♻` against `+0.05 ♻`) |
+| `map_working_pair_marked` | both workings on one hex crewed, band SELECTED | two complete sets that keep apart — two rings, two plates, two links and two pills, each docked to its own edge slot |
 
 **THE UNWORKED HEX'S CLAIM IS STRUCTURAL, NOT PHOTOGRAPHIC, and it is the one Ray's decision turns
 on.** `_assert_working_slots` reads `MapView.secondary_slot_of` for each `(tile, material)` key —
@@ -780,6 +783,24 @@ Sabotage-verified in two runs, each restored, and they fail independently:
 - **deleting `compute_slots`' LOD early-return** → exit 1 with the **two CREWED far-zoom** claims
   failing and the unworked ones still passing, which is the split that proves the two guards are
   measuring different things.
+
+**THE PARITY FRAMES ARE PROBED BY COLOUR, AND THE PROBE HAD TO CHANGE SHAPE ONCE.** *"Both wear the
+same parts"* is not a slot index, so `map_working_beside_herd` reads PIXELS: `_closest_mark_distance`
+takes the closest pixel around a hex to a mark's colour, and the claim is the RATIO between the hex a
+mark is drawn on and the hex it is not — 53× for the extraction mark and 14× for the hunt mark on the
+shipped frame, against a `WORKING_MARK_CONTRAST_MIN` of 3.0, so nothing absolute has to be tuned. It
+is a distance rather than `_frame_paints_near_hex`'s exact match because every mark in this family is
+drawn at an alpha (0.95 ring, 0.60 link, 0.35 outline) and therefore blends with the terrain under
+it.
+
+**And for the UNSELECTED ring the distance probe does not work at all** — that ring is drawn at
+`WORKED_RING_OTHER_ALPHA`, so it measured 0.141 from `EXTRACT_WORKED_COLOR` against 0.267 for bare
+ground, a ratio under 2 that no threshold separates from terrain variation. What survives the blend
+is the HUE, so `_max_blue_excess` asks for `max(b - r)` instead: the extraction mark is the only cool
+thing on this map and every terrain on it reads warm. Measured separation 0.079 (+0.024 on the ringed
+hex, −0.055 on bare ground) against a `WORKING_MARK_BLUE_MARGIN` of 0.02. This is
+`_frame_marks_warning_near_hex`'s lesson reaching a second mark: when a mark is blended or
+antialiased past its own ink, ask for the property that distinguishes it rather than for the colour.
 
 **The fixture states an honest `deposits` row even though the marker path reads only `tile_x` /
 `tile_y` / `material`** — every field it fills comes from `HudDepositVocab`'s own constants rather
