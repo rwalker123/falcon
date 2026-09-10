@@ -6,16 +6,25 @@
 //!   three rasters are `ScalarRasterState` fields on [`WorldSnapshot`] itself).
 //! - [`world`] — the flat [`WorldSnapshot`] / [`WorldDelta`] payloads, their header, and the
 //!   JSON codecs plus the on-disk [`MapExport`].
-//! - [`codec`] — the FlatBuffers encoders, one module per section.
+//! - [`codec`] — the FlatBuffers encoders **and decoders**, one module per section, each field's
+//!   two directions side by side.
+//! - [`apply_delta`] — `WorldSnapshot::apply_delta`, the merge that turns a decoded `WorldDelta`
+//!   back into the snapshot the server captured; one rule per producer diff shape.
+//! - [`fixture`] — the saturated fixture snapshot the codec round trip and the client decode guard
+//!   both consume; not re-exported at the root, because nothing but a test should reach for it.
 //!
-//! Every item is re-exported at the crate root, so consumers keep using `sim_schema::Foo`.
-//! When you add a snapshot field, append it to its section's `state` module **and** that
-//! section's `codec` module — see `sim_schema/README.md`.
+//! Every state/world/codec item is re-exported at the crate root, so consumers keep using
+//! `sim_schema::Foo`. When you add a snapshot field, append it to its section's `state` module
+//! **and** that section's `codec` module (serializer and decoder both), and seed it in `fixture`
+//! if it is repeated — see `sim_schema/README.md`.
 
+pub mod apply_delta;
 pub mod codec;
+pub mod fixture;
 pub mod state;
 pub mod world;
 
+pub use apply_delta::*;
 pub use codec::*;
 pub use state::*;
 pub use world::*;

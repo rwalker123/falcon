@@ -889,7 +889,7 @@ The FlatBuffers table survives unread on purpose: `AccessibleStockpile` /
 client decoder all stay, because deleting a FlatBuffers field costs a schema rebuild plus a
 decode-guard golden re-record for a table nothing reads. It simply always serializes as absent. The
 decode guard still exercises the decode path for it — that fixture is **synthetic**
-(`xtask/src/decode_fixture.rs` builds it, not the sim), so its golden is independent of what the
+(`sim_schema::fixture::saturated_snapshot` builds it, not the sim), so its golden is independent of what the
 capture publishes.
 
 ### `IntensificationKnowledgeState` publishes a CAPABILITY beside its rung gates

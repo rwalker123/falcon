@@ -101,8 +101,10 @@ Three things this is worth knowing for:
   here — sequential before/after batches on this machine drift by more than the effect.
 - **None of the four was ever on the wire**, so this was not a schema change: no `snapshot.fbs`
   slot, no client work, and `cargo xtask decode-guard` passes against the **unchanged** golden.
-  `decode_fixture.rs`'s `OFF_WIRE_SUBTREES` gate is correspondingly back to meaning one thing —
-  *encoded but not decoded* — instead of two.
+  The fixture builder's `OFF_WIRE_SUBTREES` gate — which had grown to exempt them — is gone
+  altogether: with the four deleted, and the two encoded-but-client-undecoded knowledge sections
+  now seeded for the codec round trip, `sim_schema::fixture::assert_no_empty_arrays` exempts
+  nothing.
 - **The one reader was a test**, `integration_tests/tests/fauna_fog.rs`'s
   `the_rollback_record_keeps_every_herd_the_display_list_hides`, which used
   `snapshot.herd_registry.len()` as the unfiltered count that proves the published `herds` list is a

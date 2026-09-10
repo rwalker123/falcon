@@ -296,15 +296,22 @@ path per machine, and a stray process can resolve to another session's server.
 
 ### The launcher
 
-`local_seats()` gains the rival seats, each a `LocalSeat` carrying the faction it fills and the
-program `sim_ai`; `fill_seat` passes the faction through. The unit test that pins "exactly one local
-seat" (`launcher/src/main.rs:803`) changes to pin the roster shape instead.
+**The rival roster is not known at boot.** The server decides it at every world build — boot,
+`new_game` from the client's menu (which picks the rival count), a load — and `retain_claimed_seats`
+drops the claims a rebuild orphans. So the launcher cannot fill rival seats from a static list; it
+**supervises** them. The server emits one structured event, `seats.roster` (the registered faction
+ids and the `world_epoch`), at each world build, on the log stream it already publishes
+(`core_sim/src/log_stream.rs`, JSON lines on the `log` port). The launcher reads that port on a
+supervisor thread and reconciles on every event: one `sim_ai --faction <id>` child per rival faction
+not yet running, adopted into the process group before anything else; a child whose faction left the
+roster is reaped. The human's client is filled first, exactly as today, and is told nothing new. An
+AI child that exits on its own leaves its seat vacant — auto-submitted — until the next roster event
+respawns it.
 
 **The decision #646 left here: the human's client owns the session window.** `wait_for_players`
 becomes *wait for the human's seat*; when that process exits, `Session`'s `Drop` reaps the AI
 processes and then the server, in that order. An AI process exiting early does not end the run — its
-seat goes vacant and the game continues, which is also the correct behaviour for a crashed rival. The
-rule goes into `.claude/rules/core_sim/launcher.md` when the code does.
+seat goes vacant and the game continues, which is also the correct behaviour for a crashed rival.
 
 ---
 

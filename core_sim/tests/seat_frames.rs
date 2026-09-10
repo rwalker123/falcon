@@ -30,7 +30,7 @@ use core_sim::{
     FactionId, FactionInventory, FrameSink, SnapshotAudiences, SnapshotHistory,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
-use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+use sim_schema::{decode_frame_flatbuffer, FramePayload};
 
 /// The stockpiled good each people is given, and how much — distinct amounts, so a row that reached
 /// the wrong seat's frame is unmistakable in the failure message rather than a plausible number.
@@ -134,55 +134,40 @@ struct FrameView {
     events: Vec<(u32, u64)>,
 }
 
+/// Decoded through `sim_schema`'s own decoder, so this file is also the proof that the decoder
+/// serves the **shipped** representation: real per-seat frames, not a hand-built world.
 fn decode_frame(bytes: &[u8]) -> FrameView {
-    let envelope = fb::root_as_envelope(bytes).expect("the frame is a valid envelope");
-    let payload = envelope
-        .payload_as_snapshot()
-        .expect("the frame carries a snapshot");
+    let FramePayload::Snapshot(snapshot) =
+        decode_frame_flatbuffer(bytes).expect("the frame is a valid envelope")
+    else {
+        panic!("the frame carries a snapshot");
+    };
     let mut view = FrameView::default();
-    if let Some(rows) = payload
-        .population()
-        .and_then(|section| section.populations())
-    {
-        for row in rows.iter() {
-            view.band_factions.push(row.faction());
-            // The redaction is an allow-list: a foreign row keeps identity and position and zeroes
-            // everything else, so a non-zero size is exactly *"this row was not redacted"*.
-            if row.size() > 0 {
-                view.bands_in_full.push(row.faction());
-            }
+    for cohort in &snapshot.populations {
+        view.band_factions.push(cohort.faction);
+        // The redaction is an allow-list: a foreign row keeps identity and position and zeroes
+        // everything else, so a non-zero size is exactly *"this row was not redacted"*.
+        if cohort.size > 0 {
+            view.bands_in_full.push(cohort.faction);
         }
     }
-    if let Some(rows) = payload
-        .population()
-        .and_then(|section| section.demographics())
-    {
-        view.demographics.extend(rows.iter().map(|r| r.faction()));
+    view.demographics
+        .extend(snapshot.demographics.iter().map(|row| row.faction));
+    for row in &snapshot.faction_inventory {
+        let quantity = row
+            .inventory
+            .iter()
+            .find(|entry| entry.item == STOCK_ITEM)
+            .map(|entry| entry.quantity)
+            .unwrap_or_default();
+        view.stockpiles.push((row.faction, quantity));
     }
-    if let Some(rows) = payload
-        .economy()
-        .and_then(|section| section.factionInventory())
-    {
-        for row in rows.iter() {
-            let quantity = row
-                .inventory()
-                .and_then(|items| {
-                    items
-                        .iter()
-                        .find(|entry| entry.item().unwrap_or_default() == STOCK_ITEM)
-                        .map(|entry| entry.quantity())
-                })
-                .unwrap_or_default();
-            view.stockpiles.push((row.faction(), quantity));
-        }
-    }
-    if let Some(rows) = payload
-        .campaign()
-        .and_then(|section| section.commandEvents())
-    {
-        view.events
-            .extend(rows.iter().map(|r| (r.faction(), r.seq())));
-    }
+    view.events.extend(
+        snapshot
+            .command_events
+            .iter()
+            .map(|event| (event.faction, event.seq)),
+    );
     view
 }
 
@@ -199,42 +184,26 @@ fn frame_for(app: &App, seat: FactionId) -> FrameView {
 
 /// `(frame_seq, base_frame_seq, is_full)` off an encoded frame of either kind.
 fn chain_of(bytes: &[u8]) -> (u64, u64, bool) {
-    let envelope = fb::root_as_envelope(bytes).expect("the frame is a valid envelope");
-    match envelope.payload_type() {
-        fb::SnapshotPayload::snapshot => {
-            let header = envelope
-                .payload_as_snapshot()
-                .and_then(|p| p.header())
-                .expect("a snapshot carries a header");
-            (header.frameSeq(), header.baseFrameSeq(), true)
-        }
-        fb::SnapshotPayload::delta => {
-            let header = envelope
-                .payload_as_delta()
-                .and_then(|p| p.header())
-                .expect("a delta carries a header");
-            (header.frameSeq(), header.baseFrameSeq(), false)
-        }
-        other => panic!("a published frame is a snapshot or a delta, not {other:?}"),
+    match decode_frame_flatbuffer(bytes).expect("the frame is a valid envelope") {
+        FramePayload::Snapshot(snapshot) => (
+            snapshot.header.frame_seq,
+            snapshot.header.base_frame_seq,
+            true,
+        ),
+        FramePayload::Delta(delta) => (delta.header.frame_seq, delta.header.base_frame_seq, false),
     }
 }
 
 /// The command-event rows of an encoded frame of either kind, as `(faction, seq)`.
 fn events_on(bytes: &[u8]) -> Vec<(u32, u64)> {
-    let envelope = fb::root_as_envelope(bytes).expect("the frame is a valid envelope");
-    let rows = match envelope.payload_type() {
-        fb::SnapshotPayload::snapshot => envelope
-            .payload_as_snapshot()
-            .and_then(|p| p.campaign())
-            .and_then(|section| section.commandEvents()),
-        fb::SnapshotPayload::delta => envelope
-            .payload_as_delta()
-            .and_then(|p| p.campaign())
-            .and_then(|section| section.commandEvents()),
-        other => panic!("a published frame is a snapshot or a delta, not {other:?}"),
+    let rows = match decode_frame_flatbuffer(bytes).expect("the frame is a valid envelope") {
+        FramePayload::Snapshot(snapshot) => snapshot.command_events,
+        // `None` is "nothing new fired this frame", which carries no rows.
+        FramePayload::Delta(delta) => delta.command_events.unwrap_or_default(),
     };
-    rows.map(|rows| rows.iter().map(|r| (r.faction(), r.seq())).collect())
-        .unwrap_or_default()
+    rows.iter()
+        .map(|event| (event.faction, event.seq))
+        .collect()
 }
 
 // =================================================================================================

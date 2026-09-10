@@ -210,6 +210,32 @@ impl KnowledgeLedgerEntryState {
     pub fn has_flag(&self, flag: KnowledgeLeakFlags) -> bool {
         self.flags.contains(flag)
     }
+
+    /// This entry's key as `WorldDelta::removed_knowledge_ledger` carries it — see
+    /// [`knowledge_ledger_wire_key`].
+    pub fn wire_key(&self) -> u64 {
+        knowledge_ledger_wire_key(self.owner_faction, self.discovery_id)
+    }
+}
+
+/// How many bits of the packed ledger key the owner faction occupies; the discovery id sits above.
+const KNOWLEDGE_LEDGER_KEY_OWNER_BITS: u32 = u32::BITS;
+
+/// **The ledger's wire key, packed once here.** A ledger row is keyed by `(owner_faction,
+/// discovery_id)`, and `WorldDelta::removed_knowledge_ledger` names a removed row by this one
+/// `u64`: the discovery id in the high half, the owner faction in the low half. The producer
+/// (`core_sim`), the merge (`WorldSnapshot::apply_delta`) and `sim_runtime`'s ledger views all
+/// pack and unpack through these two functions, so the shift is written in exactly one place.
+pub const fn knowledge_ledger_wire_key(owner_faction: u32, discovery_id: u32) -> u64 {
+    ((discovery_id as u64) << KNOWLEDGE_LEDGER_KEY_OWNER_BITS) | owner_faction as u64
+}
+
+/// The inverse of [`knowledge_ledger_wire_key`]: `(owner_faction, discovery_id)`.
+pub const fn knowledge_ledger_key_parts(key: u64) -> (u32, u32) {
+    (
+        (key & u32::MAX as u64) as u32,
+        (key >> KNOWLEDGE_LEDGER_KEY_OWNER_BITS) as u32,
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

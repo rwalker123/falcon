@@ -4244,6 +4244,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shadow_scale_flatbuffers",
+ "thiserror",
 ]
 
 [[package]]

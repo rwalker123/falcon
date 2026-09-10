@@ -1,8 +1,11 @@
 //! Governance-section FlatBuffers serialization.
 
-use crate::codec::{create_scalar_raster, FbBuilder};
+use crate::codec::{
+    create_scalar_raster, decode_rows, decode_scalar_raster, decode_scalars, map_rows, text,
+    unknown_enum, DecodeError, FbBuilder,
+};
 use crate::state::governance::{
-    CorruptionLedger, CorruptionSubsystem, CrisisGaugeState, CrisisMetricKind,
+    CorruptionEntry, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState, CrisisMetricKind,
     CrisisOverlayAnnotationState, CrisisOverlayState, CrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample, PowerIncidentSeverity, PowerIncidentState, PowerNodeState,
     PowerTelemetryState,
@@ -304,5 +307,262 @@ fn to_fb_corruption_subsystem(subsystem: CorruptionSubsystem) -> fb::CorruptionS
         CorruptionSubsystem::Trade => fb::CorruptionSubsystem::Trade,
         CorruptionSubsystem::Military => fb::CorruptionSubsystem::Military,
         CorruptionSubsystem::Governance => fb::CorruptionSubsystem::Governance,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` / `to_fb_*` above, in the same order.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_governance_section(
+    section: fb::GovernanceSection<'_>,
+    snapshot: &mut WorldSnapshot,
+) -> Result<(), DecodeError> {
+    snapshot.power = map_rows(section.power(), decode_power_node);
+    snapshot.power_metrics = section
+        .powerMetrics()
+        .map(decode_power_metrics)
+        .transpose()?
+        .unwrap_or_default();
+    snapshot.corruption = section
+        .corruption()
+        .map(decode_corruption)
+        .transpose()?
+        .unwrap_or_default();
+    snapshot.corruption_raster = section
+        .corruptionRaster()
+        .map(decode_scalar_raster)
+        .unwrap_or_default();
+    snapshot.crisis_telemetry = section
+        .crisisTelemetry()
+        .map(decode_crisis_telemetry)
+        .transpose()?
+        .unwrap_or_default();
+    snapshot.crisis_overlay = section
+        .crisisOverlay()
+        .map(decode_crisis_overlay)
+        .transpose()?
+        .unwrap_or_default();
+    Ok(())
+}
+
+pub(crate) fn decode_governance_section_delta(
+    section: fb::GovernanceSection<'_>,
+    delta: &mut WorldDelta,
+) -> Result<(), DecodeError> {
+    delta.power = map_rows(section.power(), decode_power_node);
+    delta.removed_power = decode_scalars(section.removedPower());
+    delta.power_metrics = section
+        .powerMetrics()
+        .map(decode_power_metrics)
+        .transpose()?;
+    delta.corruption = section.corruption().map(decode_corruption).transpose()?;
+    delta.corruption_raster = section.corruptionRaster().map(decode_scalar_raster);
+    delta.crisis_telemetry = section
+        .crisisTelemetry()
+        .map(decode_crisis_telemetry)
+        .transpose()?;
+    delta.crisis_overlay = section
+        .crisisOverlay()
+        .map(decode_crisis_overlay)
+        .transpose()?;
+    Ok(())
+}
+
+fn decode_power_node(node: fb::PowerNodeState<'_>) -> PowerNodeState {
+    PowerNodeState {
+        entity: node.entity(),
+        node_id: node.nodeId(),
+        generation: node.generation(),
+        demand: node.demand(),
+        efficiency: node.efficiency(),
+        storage_level: node.storageLevel(),
+        storage_capacity: node.storageCapacity(),
+        stability: node.stability(),
+        surplus: node.surplus(),
+        deficit: node.deficit(),
+        incident_count: node.incidentCount(),
+    }
+}
+
+fn to_state_power_incident_severity(
+    severity: fb::PowerIncidentSeverity,
+) -> Result<PowerIncidentSeverity, DecodeError> {
+    Ok(match severity {
+        fb::PowerIncidentSeverity::Warning => PowerIncidentSeverity::Warning,
+        fb::PowerIncidentSeverity::Critical => PowerIncidentSeverity::Critical,
+        other => return Err(unknown_enum("PowerIncidentSeverity", other.0)),
+    })
+}
+
+fn decode_power_metrics(
+    metrics: fb::PowerTelemetryState<'_>,
+) -> Result<PowerTelemetryState, DecodeError> {
+    Ok(PowerTelemetryState {
+        total_supply: metrics.totalSupply(),
+        total_demand: metrics.totalDemand(),
+        total_storage: metrics.totalStorage(),
+        total_capacity: metrics.totalCapacity(),
+        grid_stress_avg: metrics.gridStressAvg(),
+        surplus_margin: metrics.surplusMargin(),
+        instability_alerts: metrics.instabilityAlerts(),
+        incidents: decode_rows(metrics.incidents(), |incident| {
+            Ok(PowerIncidentState {
+                node_id: incident.nodeId(),
+                severity: to_state_power_incident_severity(incident.severity())?,
+                deficit: incident.deficit(),
+            })
+        })?,
+    })
+}
+
+fn to_state_crisis_metric_kind(
+    kind: fb::CrisisMetricKind,
+) -> Result<CrisisMetricKind, DecodeError> {
+    Ok(match kind {
+        fb::CrisisMetricKind::R0 => CrisisMetricKind::R0,
+        fb::CrisisMetricKind::GridStressPct => CrisisMetricKind::GridStressPct,
+        fb::CrisisMetricKind::UnauthorizedQueuePct => CrisisMetricKind::UnauthorizedQueuePct,
+        fb::CrisisMetricKind::SwarmsActive => CrisisMetricKind::SwarmsActive,
+        fb::CrisisMetricKind::PhageDensity => CrisisMetricKind::PhageDensity,
+        other => return Err(unknown_enum("CrisisMetricKind", other.0)),
+    })
+}
+
+fn to_state_crisis_severity_band(
+    band: fb::CrisisSeverityBand,
+) -> Result<CrisisSeverityBand, DecodeError> {
+    Ok(match band {
+        fb::CrisisSeverityBand::Safe => CrisisSeverityBand::Safe,
+        fb::CrisisSeverityBand::Warn => CrisisSeverityBand::Warn,
+        fb::CrisisSeverityBand::Critical => CrisisSeverityBand::Critical,
+        other => return Err(unknown_enum("CrisisSeverityBand", other.0)),
+    })
+}
+
+fn decode_crisis_telemetry(
+    telemetry: fb::CrisisTelemetryState<'_>,
+) -> Result<CrisisTelemetryState, DecodeError> {
+    Ok(CrisisTelemetryState {
+        gauges: decode_rows(telemetry.gauges(), |gauge| {
+            Ok(CrisisGaugeState {
+                kind: to_state_crisis_metric_kind(gauge.kind())?,
+                raw: gauge.raw(),
+                ema: gauge.ema(),
+                trend_per_100t: gauge.trendPer100t(),
+                warn_threshold: gauge.warnThreshold(),
+                critical_threshold: gauge.criticalThreshold(),
+                last_updated_tick: gauge.lastUpdatedTick(),
+                stale_ticks: gauge.staleTicks(),
+                band: to_state_crisis_severity_band(gauge.band())?,
+                history: map_rows(gauge.history(), |sample| CrisisTrendSample {
+                    tick: sample.tick(),
+                    value: sample.value(),
+                }),
+            })
+        })?,
+        modifiers_active: telemetry.modifiersActive(),
+        foreshock_incidents: telemetry.foreshockIncidents(),
+        containment_incidents: telemetry.containmentIncidents(),
+        warnings_active: telemetry.warningsActive(),
+        criticals_active: telemetry.criticalsActive(),
+    })
+}
+
+fn decode_crisis_overlay(
+    overlay: fb::CrisisOverlayState<'_>,
+) -> Result<CrisisOverlayState, DecodeError> {
+    Ok(CrisisOverlayState {
+        heatmap: overlay
+            .heatmap()
+            .map(decode_scalar_raster)
+            .unwrap_or_default(),
+        annotations: decode_rows(overlay.annotations(), |annotation| {
+            Ok(CrisisOverlayAnnotationState {
+                label: text(annotation.label()),
+                severity: to_state_crisis_severity_band(annotation.severity())?,
+                path: decode_scalars(annotation.path()),
+            })
+        })?,
+    })
+}
+
+fn decode_corruption(ledger: fb::CorruptionLedger<'_>) -> Result<CorruptionLedger, DecodeError> {
+    Ok(CorruptionLedger {
+        entries: decode_rows(ledger.entries(), |entry| {
+            Ok(CorruptionEntry {
+                subsystem: to_state_corruption_subsystem(entry.subsystem())?,
+                intensity: entry.intensity(),
+                incident_id: entry.incidentId(),
+                exposure_timer: entry.exposureTimer(),
+                restitution_window: entry.restitutionWindow(),
+                last_update_tick: entry.lastUpdateTick(),
+            })
+        })?,
+        reputation_modifier: ledger.reputationModifier(),
+        audit_capacity: ledger.auditCapacity(),
+    })
+}
+
+fn to_state_corruption_subsystem(
+    subsystem: fb::CorruptionSubsystem,
+) -> Result<CorruptionSubsystem, DecodeError> {
+    Ok(match subsystem {
+        fb::CorruptionSubsystem::Logistics => CorruptionSubsystem::Logistics,
+        fb::CorruptionSubsystem::Trade => CorruptionSubsystem::Trade,
+        fb::CorruptionSubsystem::Military => CorruptionSubsystem::Military,
+        fb::CorruptionSubsystem::Governance => CorruptionSubsystem::Governance,
+        other => return Err(unknown_enum("CorruptionSubsystem", other.0)),
+    })
+}
+
+#[cfg(test)]
+mod enum_round_trip_tests {
+    use super::*;
+
+    /// Every variant the encoder can write, the decoder reads back as the same variant.
+    #[test]
+    fn every_governance_enum_variant_round_trips() {
+        for kind in CrisisMetricKind::VALUES {
+            assert_eq!(
+                to_state_crisis_metric_kind(to_fb_crisis_metric_kind(kind)).expect("known"),
+                kind
+            );
+        }
+        for band in [
+            CrisisSeverityBand::Safe,
+            CrisisSeverityBand::Warn,
+            CrisisSeverityBand::Critical,
+        ] {
+            assert_eq!(
+                to_state_crisis_severity_band(to_fb_crisis_severity_band(band)).expect("known"),
+                band
+            );
+        }
+        for subsystem in [
+            CorruptionSubsystem::Logistics,
+            CorruptionSubsystem::Trade,
+            CorruptionSubsystem::Military,
+            CorruptionSubsystem::Governance,
+        ] {
+            assert_eq!(
+                to_state_corruption_subsystem(to_fb_corruption_subsystem(subsystem))
+                    .expect("known"),
+                subsystem
+            );
+        }
+        for severity in [
+            PowerIncidentSeverity::Warning,
+            PowerIncidentSeverity::Critical,
+        ] {
+            let wire = match severity {
+                PowerIncidentSeverity::Warning => fb::PowerIncidentSeverity::Warning,
+                PowerIncidentSeverity::Critical => fb::PowerIncidentSeverity::Critical,
+            };
+            assert_eq!(
+                to_state_power_incident_severity(wire).expect("known"),
+                severity
+            );
+        }
     }
 }
