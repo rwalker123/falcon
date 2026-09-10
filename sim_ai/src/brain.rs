@@ -1,46 +1,42 @@
-//! **Brains** — the plug the turn loop drives (`docs/plan_ai_opponents.md` §2).
+//! **Brains** — the plug the turn loop drives (`docs/plan_ai_opponents.md` §2;
+//! `docs/plan_ai_driver.md` §1).
 //!
 //! `decide` is handed the seat's view and hands back the commands to send this turn; the loop
-//! sends them and then submits `ready` whatever came back. Two brains ship in this slice:
+//! sends them and then submits `ready` whatever came back. Three brains ship, and two of them are
+//! configurations of one [`Composite`] — the layered shape with parts removed, not separate code:
 //!
-//! - [`PassBrain`] — submits nothing. The **control** in every comparison.
-//! - [`ScriptedBrain`] — replays a fixed command list. The **fixture**: it makes AI-driven turns
-//!   assertable without asserting on utility scores.
-//!
-//! ## The script format
-//!
-//! One command per line, in `sim_runtime::command_text` form (`parse_command_line`), prefixed with
-//! the tick it fires on:
-//!
-//! ```text
-//! # a comment; blank lines are ignored too
-//! 12: split_band {faction} {own_band:0} 4
-//! +0: assign_labor {faction} {own_band:0} …      # relative: the first tick this brain saw, plus 0
-//! ```
-//!
-//! `<tick>:` is absolute; `+<n>:` is relative to the first tick the brain decided on, for a script
-//! that cannot know what tick the world it joins will be at. A line fires on the turn whose tick
-//! equals its own, once.
-//!
-//! Two substitutions, resolved against the view at fire time so a script can name what it cannot
-//! know in advance: `{faction}` is this seat's faction, and `{own_band:N}` is the `band_id` of the
-//! N-th `populations` row (row order, zero-based) whose `faction` is this seat's. An unresolvable
-//! substitution — no such band — is a logged error and the line is skipped.
+//! | Brain | Orchestrator | Specialists | Arbiter |
+//! |---|---|---|---|
+//! | [`PassBrain`] | none | none | emits only `ready` — the **control** |
+//! | [`ScriptedBrain`] | none | `Scripted` | pass-through — the **fixture** |
+//! | [`UtilityBrain`] | `ConstantStance` | `Food`, `Land` | the six steps — the opponent |
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use rand::rngs::StdRng;
-use sim_runtime::{parse_command_line, CommandPayload};
-use tracing::{error, info};
+use sim_runtime::CommandPayload;
+use tracing::{info, warn};
 
-use crate::instruments::decisions::{Decision, DecisionRecord, DecisionSink, Outcome};
-use crate::view::SeatView;
+use crate::arbiter::{Arbiter, Offered};
+use crate::instruments::decisions::{AlarmRecord, DecisionRecord, DecisionSink, PlanRecord};
+use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG};
+use crate::orchestrator::constant::ConstantStance;
+use crate::orchestrator::{Orchestrator, Plan};
+use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError};
+use crate::specialists::food::Food;
+use crate::specialists::land::Land;
+use crate::specialists::scripted::{ScriptError, Scripted};
+use crate::specialists::{
+    Specialist, SpecialistId, DISABLEABLE_SPECIALISTS, SPECIALIST_FOOD, SPECIALIST_LAND,
+};
+use crate::view::{SeatMemory, SeatView};
 
 /// The plug. An external program in another language implements the same contract over the
 /// socket; inside this crate it is this trait.
 ///
 /// `sink` is where the brain's decision records go (`docs/plan_ai_driver.md` §8.1): a brain that
-/// weighs proposals writes one [`Decision`] per proposal, accepted or not, so every command it
+/// weighs proposals writes one `Decision` per proposal, accepted or not, so every command it
 /// returns has a row behind it (§10). A brain with nothing to say leaves the sink untouched — the
 /// `ready` row is the loop's, not the brain's.
 pub trait Brain {
@@ -50,6 +46,10 @@ pub trait Brain {
         rng: &mut StdRng,
         sink: &mut dyn DecisionSink,
     ) -> Vec<CommandPayload>;
+
+    /// A full frame at `tick` replaced the view (a resync, a rollback): memory stamped later than
+    /// it is for a world that no longer exists.
+    fn on_full_frame(&mut self, _tick: u64) {}
 }
 
 /// Submits end-turn and nothing else.
@@ -67,257 +67,292 @@ impl Brain for PassBrain {
     }
 }
 
-/// How the scripted brain names itself on the decision log: one `Scripted` specialist replaying
-/// its list at infinite score (`plan_ai_driver.md` §1), which the log states as a score of
-/// [`SCRIPT_SCORE`] accepted by a pass-through arbiter.
-pub const SCRIPTED_SPECIALIST: &str = "scripted";
-/// The one intent a script line carries.
-pub const SCRIPT_INTENT: &str = "script";
-/// The score a script line is logged at, raw and final alike: nothing outscores a script.
-pub const SCRIPT_SCORE: f32 = 1.0;
-/// A script line is one command.
-const COMMANDS_PER_SCRIPT_LINE: usize = 1;
-
-/// The placeholder for this seat's faction id.
-const FACTION_PLACEHOLDER: &str = "{faction}";
-/// The prefix of the own-band placeholder: `{own_band:N}`.
-const OWN_BAND_PLACEHOLDER_PREFIX: &str = "{own_band:";
-const PLACEHOLDER_CLOSE: char = '}';
-/// The line prefix of a tick relative to the first tick seen.
-const RELATIVE_TICK_PREFIX: char = '+';
-const TICK_SEPARATOR: char = ':';
-const COMMENT_PREFIX: char = '#';
-
-/// When a line fires.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FireAt {
-    Tick(u64),
-    /// This many ticks after the first tick the brain decided on.
-    AfterFirst(u64),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ScriptLine {
-    at: FireAt,
-    command: String,
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum ScriptError {
-    #[error("could not read the script {path}: {source}")]
-    Read {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("script line {line}: no `<tick>:` prefix")]
-    MissingTick { line: usize },
-    #[error("script line {line}: `{text}` is not a tick")]
-    InvalidTick { line: usize, text: String },
-    #[error("script line {line}: no command after the tick")]
-    EmptyCommand { line: usize },
+pub enum BrainError {
+    #[error(transparent)]
+    Profile(#[from] ProfileError),
+    #[error(
+        "`{0}` is not a specialist that can be disabled; the roster is {DISABLEABLE_SPECIALISTS:?}"
+    )]
+    NoSuchSpecialist(String),
 }
 
-/// Replays a fixed command list.
-pub struct ScriptedBrain {
+/// The layered shape: orchestrator → specialists → arbiter, over one memory.
+pub struct Composite {
     faction: u32,
-    lines: Vec<ScriptLine>,
-    first_tick: Option<u64>,
+    profile: AiProfile,
+    difficulty: Difficulty,
+    orchestrator: Option<Box<dyn Orchestrator>>,
+    specialists: Vec<Box<dyn Specialist>>,
+    arbiter: Arbiter,
+    memory: SeatMemory,
+    plan: Option<Plan>,
 }
 
-impl ScriptedBrain {
-    pub fn load(path: &Path, faction: u32) -> Result<Self, ScriptError> {
-        let text = std::fs::read_to_string(path).map_err(|source| ScriptError::Read {
-            path: path.display().to_string(),
-            source,
-        })?;
-        Self::from_script(&text, faction)
-    }
-
-    pub fn from_script(text: &str, faction: u32) -> Result<Self, ScriptError> {
-        Ok(Self {
+impl Composite {
+    fn new(
+        faction: u32,
+        profile: AiProfile,
+        difficulty: Difficulty,
+        orchestrator: Option<Box<dyn Orchestrator>>,
+        specialists: Vec<Box<dyn Specialist>>,
+        arbiter: Arbiter,
+    ) -> Self {
+        Self {
             faction,
-            lines: parse_script(text)?,
-            first_tick: None,
-        })
+            profile,
+            difficulty,
+            orchestrator,
+            specialists,
+            arbiter,
+            memory: SeatMemory::new(difficulty.memory_horizon_turns),
+            plan: None,
+        }
     }
 
-    /// The lines that fire on `tick`.
-    fn due(&self, tick: u64) -> impl Iterator<Item = &ScriptLine> {
-        let first = self.first_tick.unwrap_or(tick);
-        self.lines.iter().filter(move |line| match line.at {
-            FireAt::Tick(at) => at == tick,
-            FireAt::AfterFirst(offset) => first.saturating_add(offset) == tick,
-        })
+    #[cfg(test)]
+    pub fn specialist_ids(&self) -> Vec<SpecialistId> {
+        self.specialists.iter().map(|s| s.id()).collect()
+    }
+
+    /// The plan in force at `tick`: the orchestrator's when it re-plans, else the standing one,
+    /// else — with no orchestrator — the unbounded pass-through plan.
+    fn plan_for(&mut self, view: &SeatView, sink: &mut dyn DecisionSink) -> Plan {
+        let tick = view.tick();
+        let alarms = self.memory.take_alarms();
+        if let Some(orchestrator) = self.orchestrator.as_mut() {
+            if let Some(plan) = orchestrator.plan(view, &self.memory, &self.profile, &alarms) {
+                sink.record(DecisionRecord::Plan(PlanRecord {
+                    tick,
+                    stance: plan.stance.as_str().to_owned(),
+                    since_tick: plan.since_turn,
+                    budgets: plan.budgets_record(),
+                    priorities: plan.priorities_record(),
+                }));
+                self.plan = Some(plan);
+            }
+        }
+        self.plan
+            .clone()
+            .unwrap_or_else(|| Plan::pass_through(tick))
     }
 }
 
-impl Brain for ScriptedBrain {
+impl Brain for Composite {
     fn decide(
         &mut self,
         view: &SeatView,
-        _rng: &mut StdRng,
+        rng: &mut StdRng,
         sink: &mut dyn DecisionSink,
     ) -> Vec<CommandPayload> {
-        let tick = view.snapshot.header.tick;
-        if self.first_tick.is_none() {
-            self.first_tick = Some(tick);
+        let tick = view.tick();
+        self.memory.observe(view, self.faction);
+        // A command the sim refused last turn is a specialist's bug; say which, with the sim's reason.
+        for refused in view
+            .snapshot
+            .command_events
+            .iter()
+            .filter(|event| event.tick + EVENT_TICK_LAG == tick && event.faction == self.faction)
+            .filter(|event| event.label.ends_with(COMMAND_FAILED_LABEL_SUFFIX))
+        {
+            warn!(
+                tick,
+                label = %refused.label,
+                detail = refused.detail.as_deref().unwrap_or_default(),
+                "the server refused a command"
+            );
         }
-        let faction = self.faction;
-        let mut commands = Vec::new();
-        for line in self.due(tick) {
-            let resolved = match substitute(&line.command, faction, view) {
-                Ok(resolved) => resolved,
-                Err(err) => {
-                    error!(tick, line = %line.command, %err, "script line skipped");
-                    continue;
-                }
-            };
-            match parse_command_line(&resolved) {
-                Ok(payload) => {
-                    info!(tick, command = %resolved, "script line fires");
-                    sink.record(DecisionRecord::Decision(Decision {
-                        tick,
-                        specialist: SCRIPTED_SPECIALIST.to_owned(),
-                        intent: SCRIPT_INTENT.to_owned(),
-                        score_raw: SCRIPT_SCORE,
-                        score_final: SCRIPT_SCORE,
-                        outcome: Outcome::Accepted,
-                        reason: resolved.clone(),
-                        commands: COMMANDS_PER_SCRIPT_LINE,
-                    }));
-                    commands.push(payload);
-                }
-                Err(err) => error!(tick, line = %resolved, %err, "script line does not parse"),
+        let plan = self.plan_for(view, sink);
+
+        let mut offered = Vec::new();
+        for specialist in &mut self.specialists {
+            let id = specialist.id();
+            let proposals = specialist.propose(view, &plan, &self.memory);
+            if let Some(alarm) = proposals.alarm {
+                sink.record(DecisionRecord::Alarm(AlarmRecord {
+                    tick,
+                    specialist: alarm.specialist.to_owned(),
+                    alarm: alarm.kind.as_str().to_owned(),
+                }));
+                self.memory.push_alarm(alarm);
             }
+            offered.extend(proposals.proposals.into_iter().map(|proposal| Offered {
+                specialist: id,
+                proposal,
+            }));
         }
+
+        let working_age_total: u32 = view
+            .own_bands(self.faction)
+            .map(|band| band.working_age)
+            .sum();
+        let accepted = self.arbiter.arbitrate(
+            tick,
+            offered,
+            &plan,
+            &self.profile,
+            &self.difficulty,
+            &self.memory,
+            working_age_total,
+            rng,
+            sink,
+        );
+        let intents: BTreeSet<String> = accepted.iter().map(|a| a.intent.clone()).collect();
+        let commands: Vec<CommandPayload> = accepted
+            .into_iter()
+            .flat_map(|accepted| accepted.commands)
+            .collect();
+        self.memory.record_choices(tick, intents, commands.iter());
+        self.memory.remember_runways(view, self.faction);
         commands
     }
-}
 
-fn parse_script(text: &str) -> Result<Vec<ScriptLine>, ScriptError> {
-    let mut lines = Vec::new();
-    for (index, raw) in text.lines().enumerate() {
-        let line = index + 1;
-        let trimmed = raw.trim();
-        if trimmed.is_empty() || trimmed.starts_with(COMMENT_PREFIX) {
-            continue;
-        }
-        let Some((tick_text, command)) = trimmed.split_once(TICK_SEPARATOR) else {
-            return Err(ScriptError::MissingTick { line });
-        };
-        let tick_text = tick_text.trim();
-        let at = match tick_text.strip_prefix(RELATIVE_TICK_PREFIX) {
-            Some(offset) => FireAt::AfterFirst(parse_tick(offset, line)?),
-            None => FireAt::Tick(parse_tick(tick_text, line)?),
-        };
-        let command = command.trim();
-        if command.is_empty() {
-            return Err(ScriptError::EmptyCommand { line });
-        }
-        lines.push(ScriptLine {
-            at,
-            command: command.to_owned(),
-        });
-    }
-    Ok(lines)
-}
-
-fn parse_tick(text: &str, line: usize) -> Result<u64, ScriptError> {
-    text.trim().parse().map_err(|_| ScriptError::InvalidTick {
-        line,
-        text: text.to_owned(),
-    })
-}
-
-#[derive(Debug, thiserror::Error)]
-enum SubstitutionError {
-    #[error("`{{own_band:{index}}}`: this seat has only {own} band rows in the view")]
-    NoSuchOwnBand { index: usize, own: usize },
-    #[error("`{placeholder}` is not a placeholder this brain knows")]
-    Unknown { placeholder: String },
-}
-
-/// Resolve `{faction}` and `{own_band:N}` against the view.
-fn substitute(command: &str, faction: u32, view: &SeatView) -> Result<String, SubstitutionError> {
-    let mut out = String::with_capacity(command.len());
-    let mut rest = command;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let after_open = &rest[open..];
-        let Some(close) = after_open.find(PLACEHOLDER_CLOSE) else {
-            out.push_str(after_open);
-            return Ok(out);
-        };
-        let placeholder = &after_open[..=close];
-        if placeholder == FACTION_PLACEHOLDER {
-            out.push_str(&faction.to_string());
-        } else if let Some(index_text) = placeholder
-            .strip_prefix(OWN_BAND_PLACEHOLDER_PREFIX)
-            .and_then(|tail| tail.strip_suffix(PLACEHOLDER_CLOSE))
+    fn on_full_frame(&mut self, tick: u64) {
+        self.memory.forget_after(tick);
+        if self
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.since_turn > tick)
         {
-            let index: usize = index_text.parse().map_err(|_| SubstitutionError::Unknown {
-                placeholder: placeholder.to_owned(),
-            })?;
-            let own: Vec<u64> = view
-                .snapshot
-                .populations
-                .iter()
-                .filter(|cohort| cohort.faction == faction)
-                .map(|cohort| cohort.band_id)
-                .collect();
-            let band_id = own.get(index).ok_or(SubstitutionError::NoSuchOwnBand {
-                index,
-                own: own.len(),
-            })?;
-            out.push_str(&band_id.to_string());
-        } else {
-            return Err(SubstitutionError::Unknown {
-                placeholder: placeholder.to_owned(),
-            });
+            self.plan = None;
         }
-        rest = &after_open[close + 1..];
     }
-    out.push_str(rest);
-    Ok(out)
+}
+
+/// The fixture: one `Scripted` specialist through a pass-through arbiter.
+pub struct ScriptedBrain;
+
+impl ScriptedBrain {
+    pub fn load(path: &Path, faction: u32) -> Result<Composite, ScriptError> {
+        Ok(Self::composite(Scripted::load(path, faction)?, faction))
+    }
+
+    #[cfg(test)]
+    pub fn from_script(text: &str, faction: u32) -> Result<Composite, ScriptError> {
+        Ok(Self::composite(
+            Scripted::from_script(text, faction)?,
+            faction,
+        ))
+    }
+
+    fn composite(scripted: Scripted, faction: u32) -> Composite {
+        let profiles = AiProfiles::builtin();
+        let profile = profiles
+            .profile(profiles.default_profile_id())
+            .expect("the default profile exists")
+            .clone();
+        let difficulty = profiles
+            .difficulty(crate::profile::DEFAULT_DIFFICULTY)
+            .expect("the default difficulty exists");
+        Composite::new(
+            faction,
+            profile,
+            difficulty,
+            None,
+            vec![Box::new(scripted)],
+            Arbiter::PassThrough,
+        )
+    }
+}
+
+/// The opponent: `ConstantStance`, `Food`, `Land`, the six-step arbiter.
+pub struct UtilityBrain;
+
+impl UtilityBrain {
+    /// The composite for `profile_id` at `difficulty_id`, minus the `disabled` specialists.
+    pub fn build(
+        faction: u32,
+        profiles: &AiProfiles,
+        profile_id: &str,
+        difficulty_id: &str,
+        disabled: &[String],
+    ) -> Result<Composite, BrainError> {
+        for name in disabled {
+            if !DISABLEABLE_SPECIALISTS.contains(&name.as_str()) {
+                return Err(BrainError::NoSuchSpecialist(name.clone()));
+            }
+        }
+        let profile = profiles.profile(profile_id)?.clone();
+        let difficulty = profiles.difficulty(difficulty_id)?;
+        let enabled = |id: SpecialistId| !disabled.iter().any(|name| name == id);
+        let mut specialists: Vec<Box<dyn Specialist>> = Vec::new();
+        if enabled(SPECIALIST_FOOD) {
+            specialists.push(Box::new(Food::new(
+                faction,
+                profile.food,
+                profile.weight(crate::profile::WEIGHT_FOOD_SECURITY),
+            )));
+        }
+        if enabled(SPECIALIST_LAND) {
+            specialists.push(Box::new(Land::new(
+                faction,
+                profile.land,
+                profile.weight(crate::profile::WEIGHT_LAND_CLAIM),
+            )));
+        }
+        let roster: Vec<SpecialistId> = specialists.iter().map(|s| s.id()).collect();
+        let orchestrator = ConstantStance::new(
+            &roster,
+            difficulty.goal_cadence_turns,
+            profiles.tuning.alarm_budget_shift,
+        );
+        info!(
+            faction,
+            profile = profile_id,
+            difficulty = difficulty_id,
+            ?roster,
+            "utility brain"
+        );
+        Ok(Composite::new(
+            faction,
+            profile,
+            difficulty,
+            Some(Box::new(orchestrator)),
+            specialists,
+            Arbiter::Weighing,
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruments::decisions::{NullSink, VecSink};
+    use crate::instruments::decisions::{Decision, Outcome, VecSink};
+    use crate::profile::DEFAULT_DIFFICULTY;
+    use crate::specialists::food::tests::{a_view, FACTION};
+    use crate::specialists::scripted::{SCRIPT_INTENT, SCRIPT_SCORE};
+    use crate::specialists::SPECIALIST_SCRIPTED;
     use rand::SeedableRng;
-    use sim_runtime::{PopulationCohortState, WorldSnapshot};
+    use sim_runtime::{OrdersDirective, PopulationCohortState, WorldSnapshot};
 
-    const OUR_FACTION: u32 = 1;
-    const OTHER_FACTION: u32 = 0;
-    const OUR_FIRST_BAND: u64 = 7001;
-    const OUR_SECOND_BAND: u64 = 7002;
-    const THEIR_BAND: u64 = 9001;
     const A_TICK: u64 = 12;
+
+    fn rng() -> StdRng {
+        StdRng::seed_from_u64(0)
+    }
 
     fn a_view_at(tick: u64) -> SeatView {
         let mut snapshot = WorldSnapshot::default();
         snapshot.header.tick = tick;
-        for (faction, band_id) in [
-            (OTHER_FACTION, THEIR_BAND),
-            (OUR_FACTION, OUR_FIRST_BAND),
-            (OUR_FACTION, OUR_SECOND_BAND),
-        ] {
-            snapshot.populations.push(PopulationCohortState {
-                faction,
-                band_id,
-                ..Default::default()
-            });
-        }
+        snapshot.populations.push(PopulationCohortState {
+            faction: 1,
+            band_id: 7001,
+            ..Default::default()
+        });
         SeatView {
             snapshot,
             last_acted_tick: None,
         }
     }
 
-    fn rng() -> StdRng {
-        StdRng::seed_from_u64(0)
+    fn decisions(sink: VecSink) -> Vec<Decision> {
+        sink.0
+            .into_iter()
+            .filter_map(|record| match record {
+                DecisionRecord::Decision(decision) => Some(decision),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -330,106 +365,103 @@ mod tests {
     }
 
     #[test]
-    fn comments_blank_lines_and_both_tick_forms_parse() {
-        let lines = parse_script(
-            "# a comment\n\n12: split_band {faction} {own_band:0} 4\n  +2 :  ready 1  \n",
-        )
-        .expect("parses");
-        assert_eq!(
-            lines,
-            vec![
-                ScriptLine {
-                    at: FireAt::Tick(12),
-                    command: "split_band {faction} {own_band:0} 4".to_owned()
-                },
-                ScriptLine {
-                    at: FireAt::AfterFirst(2),
-                    command: "ready 1".to_owned()
-                },
-            ]
-        );
-        assert!(matches!(
-            parse_script("split_band 1 2 3"),
-            Err(ScriptError::MissingTick { line: 1 })
-        ));
-        assert!(matches!(
-            parse_script("x: split_band 1 2 3"),
-            Err(ScriptError::InvalidTick { line: 1, .. })
-        ));
-        assert!(matches!(
-            parse_script("3:   "),
-            Err(ScriptError::EmptyCommand { line: 1 })
-        ));
-    }
-
-    #[test]
-    fn a_line_fires_on_its_tick_with_its_placeholders_resolved_and_only_once() {
+    fn the_scripted_brain_records_slice_threes_decision_and_never_a_plan() {
         let mut brain = ScriptedBrain::from_script(
-            &format!("{A_TICK}: split_band {{faction}} {{own_band:1}} 4"),
-            OUR_FACTION,
+            &format!("{A_TICK}: split_band {{faction}} {{own_band:0}} 4"),
+            1,
         )
         .expect("parses");
         let mut sink = VecSink::default();
         assert!(brain
             .decide(&a_view_at(A_TICK - 1), &mut rng(), &mut sink)
             .is_empty());
-        assert!(sink.0.is_empty(), "a line that did not fire is no decision");
+        let commands = brain.decide(&a_view_at(A_TICK), &mut rng(), &mut sink);
+        assert_eq!(commands.len(), 1);
+        assert!(!sink.0.iter().any(|r| matches!(r, DecisionRecord::Plan(_))));
+        let decisions = decisions(sink);
+        assert_eq!(decisions.len(), 1);
+        let decision = &decisions[0];
+        assert_eq!(decision.specialist, SPECIALIST_SCRIPTED);
+        assert_eq!(decision.intent, SCRIPT_INTENT);
         assert_eq!(
-            brain.decide(&a_view_at(A_TICK), &mut rng(), &mut sink),
-            vec![CommandPayload::SplitBand {
-                faction_id: OUR_FACTION,
-                band_id: Some(OUR_SECOND_BAND),
-                workers: 4,
-            }]
+            (decision.score_raw, decision.score_final),
+            (SCRIPT_SCORE, SCRIPT_SCORE)
         );
-        assert_eq!(
-            sink.0,
-            vec![DecisionRecord::Decision(Decision {
-                tick: A_TICK,
-                specialist: SCRIPTED_SPECIALIST.to_owned(),
-                intent: SCRIPT_INTENT.to_owned(),
-                score_raw: SCRIPT_SCORE,
-                score_final: SCRIPT_SCORE,
-                outcome: Outcome::Accepted,
-                reason: format!("split_band {OUR_FACTION} {OUR_SECOND_BAND} 4"),
-                commands: COMMANDS_PER_SCRIPT_LINE,
-            })],
-            "one accepted decision per fired line"
-        );
-        assert!(brain
-            .decide(&a_view_at(A_TICK + 1), &mut rng(), &mut sink)
-            .is_empty());
+        assert_eq!(decision.outcome, Outcome::Accepted);
+        assert_eq!(decision.reason, "split_band 1 7001 4");
+        assert_eq!(decision.commands, 1);
     }
 
     #[test]
-    fn a_relative_tick_counts_from_the_first_tick_the_brain_saw() {
+    fn the_utility_brain_plans_on_its_first_turn_assigns_idle_hands_and_never_sends_ready() {
+        let profiles = AiProfiles::builtin();
         let mut brain =
-            ScriptedBrain::from_script("+1: split_band {faction} {own_band:0} 4", OUR_FACTION)
-                .expect("parses");
-        assert!(brain
-            .decide(&a_view_at(A_TICK), &mut rng(), &mut NullSink)
-            .is_empty());
+            UtilityBrain::build(FACTION, &profiles, "forager", DEFAULT_DIFFICULTY, &[]).unwrap();
         assert_eq!(
-            brain
-                .decide(&a_view_at(A_TICK + 1), &mut rng(), &mut NullSink)
-                .len(),
-            1
+            brain.specialist_ids(),
+            vec![SPECIALIST_FOOD, SPECIALIST_LAND]
         );
+        let mut sink = VecSink::default();
+        let commands = brain.decide(&a_view(), &mut rng(), &mut sink);
+        assert!(
+            !commands.iter().any(|c| matches!(
+                c,
+                CommandPayload::Orders {
+                    directive: OrdersDirective::Ready,
+                    ..
+                }
+            )),
+            "ready is the loop's, and always last"
+        );
+        assert!(
+            sink.0.iter().any(|r| matches!(r, DecisionRecord::Plan(_))),
+            "a plan on the first turn"
+        );
+        let decisions = decisions(sink);
+        let assigned = decisions
+            .iter()
+            .find(|d| d.intent == "food:assign:7001")
+            .expect("idle hands proposed");
+        assert_eq!(assigned.outcome, Outcome::Accepted);
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c, CommandPayload::AssignLabor { .. })));
     }
 
     #[test]
-    fn an_unresolvable_band_or_unknown_placeholder_skips_the_line() {
-        let mut brain = ScriptedBrain::from_script(
-            &format!(
-                "{A_TICK}: split_band {{faction}} {{own_band:5}} 4\n{A_TICK}: split_band {{faction}} {{nope}} 4"
-            ),
-            OUR_FACTION,
+    fn a_disabled_specialist_is_off_the_roster_and_an_unknown_one_is_refused() {
+        let profiles = AiProfiles::builtin();
+        let brain = UtilityBrain::build(
+            FACTION,
+            &profiles,
+            "rover",
+            "hard",
+            &[SPECIALIST_LAND.to_owned()],
         )
-        .expect("parses");
+        .unwrap();
+        assert_eq!(brain.specialist_ids(), vec![SPECIALIST_FOOD]);
+        assert!(matches!(
+            UtilityBrain::build(FACTION, &profiles, "rover", "hard", &["herd".to_owned()]),
+            Err(BrainError::NoSuchSpecialist(_))
+        ));
+        assert!(matches!(
+            UtilityBrain::build(FACTION, &profiles, "warlord", "hard", &[]),
+            Err(BrainError::Profile(_))
+        ));
+    }
+
+    #[test]
+    fn a_full_frame_earlier_than_the_plan_drops_it() {
+        let profiles = AiProfiles::builtin();
+        let mut brain =
+            UtilityBrain::build(FACTION, &profiles, "forager", DEFAULT_DIFFICULTY, &[]).unwrap();
         let mut sink = VecSink::default();
-        assert!(brain
-            .decide(&a_view_at(A_TICK), &mut rng(), &mut sink)
-            .is_empty());
-        assert!(sink.0.is_empty(), "a skipped line is no decision either");
+        brain.decide(&a_view(), &mut rng(), &mut sink);
+        assert!(brain.plan.is_some());
+        brain.on_full_frame(a_view().tick() - 1);
+        assert!(
+            brain.plan.is_none(),
+            "a rollback before the plan forgets it"
+        );
     }
 }

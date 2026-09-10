@@ -15,9 +15,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::measures::{
-    Measures, M_CRAFT_PREFIX, M_DEATHS_PREFIX, M_FOOD_STOCK, M_HUNGER_DEATHS_TOTAL,
-    M_INTENSIFICATION_PREFIX, M_POPULATION_CHILDREN, M_POPULATION_ELDERS, M_POPULATION_WORKING,
-    M_RECONNECTS, M_TURNS_LOST, M_VICTORY_PREFIX,
+    Measures, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX, M_FOOD_STOCK,
+    M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX, M_POPULATION_CHILDREN,
+    M_POPULATION_ELDERS, M_POPULATION_WORKING, M_RECONNECTS, M_STANCE_SWITCHES, M_TURNS_LOST,
+    M_VICTORY_PREFIX,
 };
 
 /// The report file, under `--out`.
@@ -26,33 +27,50 @@ pub const REPORT_FILE: &str = "report.json";
 /// **The ratcheted measures**, written to a baseline file with [`BASELINE_TOLERANCE`] each: the
 /// primary (population) and the guard (hunger deaths) of §8.2, plus the larder. Every other
 /// measure rides the report and the comparison, but only these fail a `--check`.
-pub const RATCHETED_MEASURES: [&str; 5] = [
+pub const RATCHETED_MEASURES: [&str; 7] = [
     M_POPULATION_CHILDREN,
     M_POPULATION_WORKING,
     M_POPULATION_ELDERS,
     M_FOOD_STOCK,
     M_HUNGER_DEATHS_TOTAL,
+    M_COMMANDS_FAILED_TOTAL,
+    M_STANCE_SWITCHES,
 ];
+/// The synthetic measure `--compare` adds per seat: the L1 distance between the two runs'
+/// intent histograms (Σ |Δ| over every `intent.*` key, an absent key reading 0) — the number
+/// "two profiles that visibly differ" resolves to (§8.2, profile divergence). 0 is the same
+/// behaviour; 2 is disjoint.
+pub const M_INTENT_DISTANCE_L1: &str = "intent_distance_l1";
+/// The seat specs of a baseline entry are joined by this into the entry's key.
+const BASELINE_KEY_SEPARATOR: &str = " ";
 /// The tolerance a regenerated baseline carries: none, because the replay is exact.
 pub const BASELINE_TOLERANCE: f64 = 0.0;
 
-/// **The shipped baseline** (`sim_ai/bench/baselines.json`): the all-Pass control on these two
-/// seeds for this many turns, the run every later brain is compared to. Regenerated with
-/// `sim_ai bench --seeds 11,23 --turns 30 --seats 1=pass --seats 2=pass --write-baselines
-/// sim_ai/bench/baselines.json`, in the PR that moves it, with the numbers in the PR body.
+/// **The shipped baselines** (`sim_ai/bench/baselines.json`): the all-Pass control and the
+/// utility forager on these two seeds for this many turns — the runs every later brain is compared
+/// to. Regenerated with `sim_ai bench --seeds 11,23 --turns 30 --seats <one of the sets below>
+/// --write-baselines sim_ai/bench/baselines.json` (one run per set; the file merges), in the PR
+/// that moves it, with the numbers in the PR body.
 #[cfg(test)]
 pub const BASELINE_SEEDS: [u64; 2] = [11, 23];
 #[cfg(test)]
 pub const BASELINE_TURNS: u64 = 30;
 #[cfg(test)]
-pub const BASELINE_SEATS: [&str; 2] = ["1=pass", "2=pass"];
+pub const BASELINE_SEAT_SETS: [[&str; 2]; 2] =
+    [["1=pass", "2=pass"], ["1=utility:forager", "2=pass"]];
 /// The shipped file, embedded so a test can hold it to the constants above without a path.
 #[cfg(test)]
 const SHIPPED_BASELINES: &str = include_str!("../../bench/baselines.json");
 
 /// **The measures that are better lower**: a check fails when they rise past the tolerance. Every
 /// other measure is better higher and fails when it drops.
-const LOWER_IS_BETTER: [&str; 3] = [M_HUNGER_DEATHS_TOTAL, M_TURNS_LOST, M_RECONNECTS];
+const LOWER_IS_BETTER: [&str; 5] = [
+    M_HUNGER_DEATHS_TOTAL,
+    M_TURNS_LOST,
+    M_RECONNECTS,
+    M_COMMANDS_FAILED_TOTAL,
+    M_STANCE_SWITCHES,
+];
 const LOWER_IS_BETTER_PREFIXES: [&str; 1] = [M_DEATHS_PREFIX];
 
 /// Measure prefixes the printed table leaves out (the report carries them): one row per
@@ -88,7 +106,7 @@ pub struct Report {
     pub check: Option<CheckOutcome>,
 }
 
-/// `baselines.json`.
+/// One entry of `baselines.json`: a seat set's measures on pinned seeds and turns.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Baselines {
     pub seeds: Vec<u64>,
@@ -97,6 +115,12 @@ pub struct Baselines {
     pub measures: RunMeasures,
     /// Measure name → absolute tolerance. Only measures named here are checked.
     pub tolerance: BTreeMap<String, f64>,
+}
+
+/// `baselines.json`: one entry per seat set, keyed by the specs joined with a space.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BaselinesFile {
+    pub runs: BTreeMap<String, Baselines>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -161,21 +185,38 @@ impl Report {
         })
     }
 
-    /// `this − other`, per seed, seat and measure both runs measured. The other run must have the
-    /// same seeds, turns and seats, or the deltas would compare different questions.
+    /// `this − other`, per seed, seat and measure both runs measured, plus
+    /// [`M_INTENT_DISTANCE_L1`] per seat. The other run must have the same seeds, turns and seat
+    /// **factions** — the brains may differ, which is what a comparison is for.
     pub fn compare(&self, other: &Report) -> Result<RunMeasures, RatchetError> {
-        self.require_same_shape("--compare", &other.seeds, other.turns, &other.seats)?;
-        Ok(subtract(&self.measures, &other.measures))
+        if self.seeds != other.seeds
+            || self.turns != other.turns
+            || seat_factions(&self.seats) != seat_factions(&other.seats)
+        {
+            return Err(RatchetError::Mismatch(format!(
+                "--compare: this run has seeds {:?} / turns {} / seats {:?}, the other has {:?} / {} / {:?}",
+                self.seeds, self.turns, self.seats, other.seeds, other.turns, other.seats
+            )));
+        }
+        let mut deltas = subtract(&self.measures, &other.measures);
+        for (seed, seats) in &mut deltas {
+            for (seat, measures) in seats {
+                let ours = self.measures.get(seed).and_then(|s| s.get(seat));
+                let theirs = other.measures.get(seed).and_then(|s| s.get(seat));
+                if let (Some(ours), Some(theirs)) = (ours, theirs) {
+                    measures.insert(
+                        M_INTENT_DISTANCE_L1.to_owned(),
+                        Some(intent_distance_l1(ours, theirs)),
+                    );
+                }
+            }
+        }
+        Ok(deltas)
     }
 
-    /// Hold this run against `baselines`: every violation, or none.
-    pub fn check(&self, baselines: &Baselines) -> Result<Vec<Violation>, RatchetError> {
-        self.require_same_shape(
-            "--check",
-            &baselines.seeds,
-            baselines.turns,
-            &baselines.seats,
-        )?;
+    /// Hold this run against the file's entry for its seat set: every violation, or none.
+    pub fn check(&self, file: &BaselinesFile) -> Result<Vec<Violation>, RatchetError> {
+        let baselines = file.find(&self.seeds, self.turns, &self.seats)?;
         let mut violations = Vec::new();
         for (seed, seats) in &baselines.measures {
             for (seat, measures) in seats {
@@ -224,22 +265,6 @@ impl Report {
                 .map(|measure| ((*measure).to_owned(), BASELINE_TOLERANCE))
                 .collect(),
         }
-    }
-
-    fn require_same_shape(
-        &self,
-        what: &str,
-        seeds: &[u64],
-        turns: u64,
-        seats: &[String],
-    ) -> Result<(), RatchetError> {
-        if self.seeds != seeds || self.turns != turns || self.seats != seats {
-            return Err(RatchetError::Mismatch(format!(
-                "{what}: this run has seeds {:?} / turns {} / seats {:?}, the other has {seeds:?} / {turns} / {seats:?}",
-                self.seeds, self.turns, self.seats
-            )));
-        }
-        Ok(())
     }
 
     /// The text table: one block per seed, a row per measure, a column per seat — and, with a
@@ -320,6 +345,13 @@ impl Report {
 }
 
 impl Baselines {
+    /// The entry's key in the file.
+    pub fn key(&self) -> String {
+        self.seats.join(BASELINE_KEY_SEPARATOR)
+    }
+}
+
+impl BaselinesFile {
     pub fn read(path: &Path) -> Result<Self, RatchetError> {
         let text = fs::read_to_string(path).map_err(|source| RatchetError::Read {
             path: path.display().to_string(),
@@ -331,6 +363,41 @@ impl Baselines {
         })
     }
 
+    /// The file at `path`, or an empty one when there is none yet — a first `--write-baselines`.
+    pub fn read_or_empty(path: &Path) -> Result<Self, RatchetError> {
+        if path.is_file() {
+            Self::read(path)
+        } else {
+            Ok(Self::default())
+        }
+    }
+
+    /// Add or replace the entry for `baselines`' seat set.
+    pub fn upsert(&mut self, baselines: Baselines) {
+        self.runs.insert(baselines.key(), baselines);
+    }
+
+    /// The entry for exactly this run shape, or a mismatch naming what the file holds.
+    pub fn find(
+        &self,
+        seeds: &[u64],
+        turns: u64,
+        seats: &[String],
+    ) -> Result<&Baselines, RatchetError> {
+        self.runs
+            .values()
+            .find(|entry| entry.seeds == seeds && entry.turns == turns && entry.seats == seats)
+            .ok_or_else(|| {
+                RatchetError::Mismatch(format!(
+                    "--check: no baseline for seeds {seeds:?} / turns {turns} / seats {seats:?}; the file holds {:?}",
+                    self.runs
+                        .values()
+                        .map(|entry| format!("{:?} / {} / {}", entry.seeds, entry.turns, entry.key()))
+                        .collect::<Vec<_>>()
+                ))
+            })
+    }
+
     pub fn write(&self, path: &Path) -> Result<(), RatchetError> {
         let text = serde_json::to_string_pretty(self).expect("baselines serialise");
         fs::write(path, text).map_err(|source| RatchetError::Write {
@@ -338,6 +405,32 @@ impl Baselines {
             source,
         })
     }
+}
+
+/// The faction of each seat spec — the part before `=`.
+fn seat_factions(seats: &[String]) -> Vec<&str> {
+    seats
+        .iter()
+        .map(|seat| {
+            seat.split_once('=')
+                .map_or(seat.as_str(), |(faction, _)| faction)
+        })
+        .collect()
+}
+
+/// Σ |a − b| over the union of the two seats' `intent.*` keys.
+fn intent_distance_l1(ours: &Measures, theirs: &Measures) -> f64 {
+    let keys: std::collections::BTreeSet<&String> = ours
+        .keys()
+        .chain(theirs.keys())
+        .filter(|key| key.starts_with(M_INTENT_PREFIX))
+        .collect();
+    keys.into_iter()
+        .map(|key| {
+            let share = |measures: &Measures| measures.get(key).copied().flatten().unwrap_or(0.0);
+            (share(ours) - share(theirs)).abs()
+        })
+        .sum()
 }
 
 fn lower_is_better(measure: &str) -> bool {
@@ -410,12 +503,18 @@ mod tests {
         }
     }
 
-    fn baselines_with(measures: &[(&str, Option<f64>)], tolerance: f64) -> Baselines {
+    fn baselines_with(measures: &[(&str, Option<f64>)], tolerance: f64) -> BaselinesFile {
         let mut baselines = report_with(measures).as_baselines();
         for value in baselines.tolerance.values_mut() {
             *value = tolerance;
         }
-        baselines
+        let mut file = BaselinesFile::default();
+        file.upsert(baselines);
+        file
+    }
+
+    fn entry(file: &mut BaselinesFile) -> &mut Baselines {
+        file.runs.values_mut().next().unwrap()
     }
 
     #[test]
@@ -446,7 +545,7 @@ mod tests {
     #[test]
     fn a_measure_without_a_tolerance_entry_or_a_value_is_not_checked() {
         let mut baselines = baselines_with(&[(M_FOOD_STOCK, Some(10.0))], 0.0);
-        baselines.tolerance.remove(M_FOOD_STOCK);
+        entry(&mut baselines).tolerance.remove(M_FOOD_STOCK);
         let dropped = report_with(&[(M_FOOD_STOCK, Some(0.0))]);
         assert!(dropped.check(&baselines).unwrap().is_empty());
         let unmeasured = baselines_with(&[(M_FOOD_STOCK, None)], 0.0);
@@ -464,8 +563,20 @@ mod tests {
         ));
         let mut baselines = report.as_baselines();
         baselines.seeds.push(8);
+        let mut file = BaselinesFile::default();
+        file.upsert(baselines);
         assert!(matches!(
-            report.check(&baselines),
+            report.check(&file),
+            Err(RatchetError::Mismatch(_))
+        ));
+        // A comparison across brains on the same factions is allowed; across factions is not.
+        let mut utility = report.clone();
+        utility.seats = vec!["1=utility:rover".to_owned()];
+        assert!(report.compare(&utility).is_ok());
+        let mut other_faction = report.clone();
+        other_faction.seats = vec!["2=pass".to_owned()];
+        assert!(matches!(
+            report.compare(&other_faction),
             Err(RatchetError::Mismatch(_))
         ));
     }
@@ -478,31 +589,52 @@ mod tests {
         let seat = &delta[SEED][SEAT];
         assert_eq!(seat[M_FOOD_STOCK], Some(2.0));
         assert_eq!(seat[M_POPULATION_WORKING], None);
+        assert_eq!(
+            seat[M_INTENT_DISTANCE_L1],
+            Some(0.0),
+            "no intents on either side"
+        );
     }
 
     #[test]
-    fn the_shipped_baselines_are_the_all_pass_control_on_the_pinned_seeds() {
-        let baselines: Baselines =
+    fn the_intent_distance_is_the_l1_gap_between_two_histograms() {
+        let food = format!("{M_INTENT_PREFIX}food:assign");
+        let land = format!("{M_INTENT_PREFIX}land:move");
+        let ours = report_with(&[(&food, Some(0.75)), (&land, Some(0.25))]);
+        let theirs = report_with(&[(&food, Some(1.0))]);
+        let delta = ours.compare(&theirs).unwrap();
+        assert!((delta[SEED][SEAT][M_INTENT_DISTANCE_L1].unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_shipped_baselines_hold_the_control_and_the_forager_on_the_pinned_seeds() {
+        let file: BaselinesFile =
             serde_json::from_str(SHIPPED_BASELINES).expect("the shipped baselines parse");
-        assert_eq!(baselines.seeds, BASELINE_SEEDS);
-        assert_eq!(baselines.turns, BASELINE_TURNS);
-        assert_eq!(baselines.seats, BASELINE_SEATS);
-        for measure in RATCHETED_MEASURES {
-            assert!(
-                baselines.tolerance.contains_key(measure),
-                "{measure} is ratcheted but carries no tolerance"
-            );
-        }
-        for seed in BASELINE_SEEDS {
-            let seats = &baselines.measures[&seed.to_string()];
-            for seat in BASELINE_SEATS {
-                let (faction, _) = seat.split_once('=').unwrap();
-                let measures = &seats[faction];
-                for measure in RATCHETED_MEASURES {
-                    assert!(
-                        matches!(measures.get(measure), Some(Some(_))),
-                        "seed {seed} seat {faction}: {measure} is unmeasured in the shipped file"
-                    );
+        assert_eq!(file.runs.len(), BASELINE_SEAT_SETS.len());
+        for seats in BASELINE_SEAT_SETS {
+            let seats: Vec<String> = seats.iter().map(|s| (*s).to_owned()).collect();
+            let baselines = file
+                .find(&BASELINE_SEEDS, BASELINE_TURNS, &seats)
+                .expect("an entry per shipped seat set");
+            for measure in RATCHETED_MEASURES {
+                assert!(
+                    baselines.tolerance.contains_key(measure),
+                    "{measure} is ratcheted but carries no tolerance"
+                );
+            }
+            for seed in BASELINE_SEEDS {
+                let by_seat = &baselines.measures[&seed.to_string()];
+                for seat in &seats {
+                    let (faction, brain) = seat.split_once('=').unwrap();
+                    let measures = &by_seat[faction];
+                    for measure in RATCHETED_MEASURES {
+                        // The orchestrator row is null on a seat with no orchestrator.
+                        let pass_seat = brain == "pass" && measure == M_STANCE_SWITCHES;
+                        assert!(
+                            pass_seat || matches!(measures.get(measure), Some(Some(_))),
+                            "seed {seed} seat {faction}: {measure} is unmeasured in the shipped file"
+                        );
+                    }
                 }
             }
         }

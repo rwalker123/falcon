@@ -8,14 +8,19 @@
 //! follows — **always**, even when the brain returned nothing. A mid-turn recapture arrives with
 //! the same tick and is never acted on twice.
 //!
-//! The same binary is the bench harness: `sim_ai bench …` (`bench.rs`) starts a server and one
+//! The same binary is the bench harness: `sim_ai bench …` (`bench/`) starts a server and one
 //! player process per seat, and measures them from their logs. Without that first word the
 //! process plays — the launcher's invocation (`sim_ai --ports-file … --faction N`) is unchanged.
 
+mod arbiter;
 mod bench;
 mod brain;
+mod geometry;
 mod instruments;
 mod link;
+mod orchestrator;
+mod profile;
+mod specialists;
 mod view;
 
 use std::net::{IpAddr, SocketAddr};
@@ -28,13 +33,14 @@ use rand::SeedableRng;
 use sim_runtime::{CommandPayload, OrdersDirective};
 use tracing::{error, info, warn};
 
-use brain::{Brain, PassBrain, ScriptedBrain};
+use brain::{Brain, PassBrain, ScriptedBrain, UtilityBrain};
 use instruments::decisions::{
     DecisionRecord, DecisionSink, LinkEventKind, LinkRecord, NullSink, ReadyRecord,
 };
 use instruments::scoreboard::ScoreRow;
 use instruments::Instruments;
 use link::{Endpoints, Link, LinkEvent};
+use profile::{AiProfiles, DEFAULT_DIFFICULTY};
 use view::{FrameOutcome, Perception};
 
 /// The launcher's contract: the handshake file it writes for every child. Contract twin of
@@ -63,6 +69,18 @@ const PLAY_SUBCOMMAND: &str = "play";
 pub enum BrainKind {
     Pass,
     Scripted,
+    Utility,
+}
+
+impl BrainKind {
+    /// The token the bench's seat spec and `--brain` share.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BrainKind::Pass => "pass",
+            BrainKind::Scripted => "scripted",
+            BrainKind::Utility => "utility",
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -89,6 +107,18 @@ struct Args {
     /// The command script (required for `--brain scripted`).
     #[arg(long, required_if_eq("brain", "scripted"))]
     script: Option<PathBuf>,
+    /// The personality (`data/ai_profiles.json` → `profiles`); default the file's first entry.
+    #[arg(long)]
+    profile: Option<String>,
+    /// The follow-through (`data/ai_profiles.json` → `difficulties`).
+    #[arg(long, default_value = DEFAULT_DIFFICULTY)]
+    difficulty: String,
+    /// A profiles file replacing the embedded one whole; missing or broken fails the process.
+    #[arg(long)]
+    profiles: Option<PathBuf>,
+    /// A specialist left off the utility brain's roster (repeatable) — the ablations.
+    #[arg(long)]
+    disable: Vec<String>,
     /// The brain's rng seed; `0` derives it from the faction.
     #[arg(long, default_value_t = DERIVE_SEED_FROM_FACTION)]
     seed: u64,
@@ -115,7 +145,11 @@ enum RunError {
     #[error(transparent)]
     Link(#[from] link::LinkError),
     #[error(transparent)]
-    Script(#[from] brain::ScriptError),
+    Script(#[from] specialists::scripted::ScriptError),
+    #[error(transparent)]
+    Profile(#[from] profile::ProfileError),
+    #[error(transparent)]
+    Brain(#[from] brain::BrainError),
 }
 
 fn main() {
@@ -145,15 +179,9 @@ fn main() {
     }
 }
 
-fn run(args: Args) -> Result<(), RunError> {
-    let endpoints = resolve_endpoints(&args)?;
+fn build_brain(args: &Args) -> Result<Box<dyn Brain>, RunError> {
     let faction = args.faction;
-    let seed = if args.seed == DERIVE_SEED_FROM_FACTION {
-        u64::from(faction)
-    } else {
-        args.seed
-    };
-    let mut brain: Box<dyn Brain> = match args.brain {
+    Ok(match args.brain {
         BrainKind::Pass => Box::new(PassBrain),
         BrainKind::Scripted => {
             let script = args
@@ -162,7 +190,35 @@ fn run(args: Args) -> Result<(), RunError> {
                 .expect("clap requires --script for scripted");
             Box::new(ScriptedBrain::load(script, faction)?)
         }
+        BrainKind::Utility => {
+            let profiles = match &args.profiles {
+                Some(path) => AiProfiles::load(path)?,
+                None => AiProfiles::builtin(),
+            };
+            let profile_id = args
+                .profile
+                .clone()
+                .unwrap_or_else(|| profiles.default_profile_id().to_owned());
+            Box::new(UtilityBrain::build(
+                faction,
+                &profiles,
+                &profile_id,
+                &args.difficulty,
+                &args.disable,
+            )?)
+        }
+    })
+}
+
+fn run(args: Args) -> Result<(), RunError> {
+    let endpoints = resolve_endpoints(&args)?;
+    let faction = args.faction;
+    let seed = if args.seed == DERIVE_SEED_FROM_FACTION {
+        u64::from(faction)
+    } else {
+        args.seed
     };
+    let mut brain = build_brain(&args)?;
     let mut instruments = match &args.log_dir {
         Some(log_dir) => {
             info!(log_dir = %log_dir.display(), "instruments open");
@@ -191,7 +247,12 @@ fn run(args: Args) -> Result<(), RunError> {
         };
         match event {
             LinkEvent::Frame(bytes) => match perception.ingest(&bytes) {
-                FrameOutcome::Replaced | FrameOutcome::Applied => {}
+                FrameOutcome::Replaced => {
+                    if let Some(view) = perception.view_mut() {
+                        brain.on_full_frame(view.tick());
+                    }
+                }
+                FrameOutcome::Applied => {}
                 FrameOutcome::ChainBroken(err) => {
                     warn!(%err, "asking for a full frame");
                     link.resync()?;
@@ -406,5 +467,27 @@ mod tests {
         assert_eq!(play.faction, 2);
         assert_eq!(play.turns, Some(5));
         assert_eq!(play.brain, BrainKind::Pass);
+        let utility = Args::try_parse_from([
+            "sim_ai",
+            "--ports-file",
+            "ports.json",
+            "--faction",
+            "2",
+            "--brain",
+            "utility",
+            "--profile",
+            "rover",
+            "--difficulty",
+            "hard",
+            "--disable",
+            "land",
+        ])
+        .expect("the utility invocation parses");
+        assert_eq!(utility.brain, BrainKind::Utility);
+        assert_eq!(utility.profile.as_deref(), Some("rover"));
+        assert_eq!(utility.difficulty, "hard");
+        assert_eq!(utility.disable, vec!["land"]);
+        let brain = build_brain(&utility).expect("builds");
+        drop(brain);
     }
 }

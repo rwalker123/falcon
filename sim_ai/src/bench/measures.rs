@@ -15,6 +15,7 @@ use std::path::Path;
 
 use crate::instruments::decisions::{DecisionRecord, LinkEventKind, Outcome, DECISIONS_FILE};
 use crate::instruments::scoreboard::{ScoreRow, DEATH_CAUSES, DEATH_CAUSE_HUNGER, SCOREBOARD_FILE};
+use crate::specialists::INTENT_SEPARATOR;
 
 /// Measure name → value. `None` is "the log cannot answer this yet".
 pub type Measures = BTreeMap<String, Option<f64>>;
@@ -47,6 +48,12 @@ pub const M_DEATHS_PREFIX: &str = "deaths.";
 pub const M_VICTORY_PREFIX: &str = "victory.";
 /// The guard: hunger deaths summed over every row of the run.
 pub const M_HUNGER_DEATHS_TOTAL: &str = "hunger_deaths_total";
+/// Commands the sim refused, summed over the run — a specialist proposing what the server will
+/// not take.
+pub const M_COMMANDS_FAILED_TOTAL: &str = "commands_failed_total";
+/// `intent.<specialist>:<kind>`: the share of accepted decisions under each intent class — the
+/// histogram two profiles are told apart by (§8.2, profile divergence).
+pub const M_INTENT_PREFIX: &str = "intent.";
 // --- per specialist ------------------------------------------------------------------------------
 pub const M_SPECIALIST_PREFIX: &str = "specialist.";
 pub const M_ACCEPTED: &str = "accepted";
@@ -128,6 +135,8 @@ fn whole_seat(rows: &[ScoreRow], measures: &mut Measures) {
         .filter_map(|row| row.deaths_by_cause.get(DEATH_CAUSE_HUNGER))
         .sum();
     put(measures, M_HUNGER_DEATHS_TOTAL, f64::from(hunger_total));
+    let failed_total: u32 = rows.iter().map(|row| row.commands_failed).sum();
+    put(measures, M_COMMANDS_FAILED_TOTAL, f64::from(failed_total));
     let Some(last) = rows.last() else {
         return;
     };
@@ -226,6 +235,24 @@ fn specialists(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Mea
         .map(|decision| decision.specialist.as_str())
         .collect();
     let span = tick_span(rows);
+    // The intent histogram: accepted decisions by `<specialist>:<kind>`, as shares.
+    let accepted_all: Vec<_> = decisions
+        .iter()
+        .filter(|decision| decision.outcome == Outcome::Accepted)
+        .collect();
+    let mut histogram: BTreeMap<String, u32> = BTreeMap::new();
+    for decision in &accepted_all {
+        *histogram
+            .entry(intent_class_key(&decision.intent))
+            .or_insert(0) += 1;
+    }
+    for (class, count) in histogram {
+        put(
+            measures,
+            format!("{M_INTENT_PREFIX}{class}"),
+            f64::from(count) / accepted_all.len() as f64,
+        );
+    }
     for name in names {
         let own: Vec<_> = decisions
             .iter()
@@ -286,6 +313,15 @@ fn specialists(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Mea
         };
         put(measures, format!("{prefix}{M_LIVENESS}"), liveness);
         put(measures, format!("{prefix}{M_INTENT_CHURN}"), churn);
+    }
+}
+
+/// `<specialist>:<kind>` of an intent key — the first two tokens; a bare key is its own class.
+fn intent_class_key(intent: &str) -> String {
+    let mut tokens = intent.split(INTENT_SEPARATOR);
+    match (tokens.next(), tokens.next()) {
+        (Some(specialist), Some(kind)) => format!("{specialist}{INTENT_SEPARATOR}{kind}"),
+        _ => intent.to_owned(),
     }
 }
 
@@ -404,6 +440,7 @@ mod tests {
             craft_knowledge: BTreeMap::new(),
             deaths_by_cause: deaths,
             victory_progress: BTreeMap::from([("survive".to_owned(), 0.1)]),
+            commands_failed: u32::from(tick == FIRST_TICK + 2),
         }
     }
 
@@ -472,6 +509,7 @@ mod tests {
             f64::from(last.population_working)
         );
         assert_eq!(value(&measures, M_HUNGER_DEATHS_TOTAL), 2.0);
+        assert_eq!(value(&measures, M_COMMANDS_FAILED_TOTAL), 1.0);
         assert_eq!(
             value(&measures, &format!("{M_INTENSIFICATION_PREFIX}corral")),
             0.25
@@ -504,6 +542,13 @@ mod tests {
         assert_eq!(land(&format!("{M_REJECTED_PREFIX}conflict")), 2.0);
         assert_eq!(land(M_LIVENESS), NOT_LIVE, "the second window is empty");
         assert_eq!(land(M_INTENT_CHURN), 0.5);
+        // Four accepted with bare intents: forage, hunt, cultivate, forage.
+        assert_eq!(value(&measures, &format!("{M_INTENT_PREFIX}forage")), 0.5);
+        assert_eq!(value(&measures, &format!("{M_INTENT_PREFIX}hunt")), 0.25);
+        assert_eq!(
+            value(&measures, &format!("{M_INTENT_PREFIX}cultivate")),
+            0.25
+        );
     }
 
     #[test]

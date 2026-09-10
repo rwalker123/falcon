@@ -12,6 +12,12 @@
 //!    least one scoreboard measure at the last tick differs from the same seat under Pass — the
 //!    issue's bar, "acts instead of passing", as a number.
 //!
+//! 3. Utility-vs-Pass: the utility seat's `Food` specialist is live (accepted > 0 in every
+//!    window), and nothing it sent was refused — neither by the seat gate (`command.rejected` in
+//!    the server log) nor by the sim (`commands_failed_total`, the feed's `… failed` rows). A
+//!    proposal the server refuses is a bug in the specialist's command construction, and this is
+//!    where it shows.
+//!
 //! **Why it lives in `core_sim/tests/`.** The bench needs the built `server`, and
 //! `CARGO_BIN_EXE_server` is only defined for the package owning that bin; `sim_ai` is resolved as
 //! its sibling (`common::ai_process`). The 30-turn baselines in `sim_ai/bench/baselines.json` are
@@ -37,7 +43,16 @@ const REPORT_FILE: &str = "report.json";
 /// The measure name the bench gives a specialist's accepted count (`sim_ai/src/bench/measures.rs`).
 const SCRIPTED_ACCEPTED_MEASURE: &str = "specialist.scripted.accepted";
 /// Measure prefixes that are not scoreboard fields: the layers other than the whole seat.
-const NON_SCOREBOARD_PREFIXES: [&str; 3] = ["specialist.", "link.", "orchestrator."];
+const NON_SCOREBOARD_PREFIXES: [&str; 4] = ["specialist.", "link.", "orchestrator.", "intent."];
+/// The utility seat under test, and the measures the bench gives its Food specialist.
+const UTILITY_SEAT_SPEC: &str = "1=utility:forager";
+const FOOD_ACCEPTED_MEASURE: &str = "specialist.food.accepted";
+const FOOD_LIVENESS_MEASURE: &str = "specialist.food.liveness";
+/// Commands the sim refused, summed over the run (`sim_ai/src/bench/measures.rs`).
+const COMMANDS_FAILED_MEASURE: &str = "commands_failed_total";
+/// The seat gate's refusal markers in the server log (`core_sim/src/bin/server.rs`).
+const REJECTED_MARKERS: [&str; 2] = ["command.rejected", "command.split.rejected"];
+const SERVER_LOG_FILE: &str = "server.log";
 
 /// Run the built bench on [`MAP_SEED`] for [`TURNS`] with `seats`, into `out`, plus `extra` args.
 fn bench(sim_ai: &Path, out: &Path, seats: &[String], extra: &[&str]) -> serde_json::Value {
@@ -154,4 +169,40 @@ fn the_bench_is_exact_on_a_replay_and_reads_a_scripted_seat_as_non_zero() {
         "the scripted seat's scoreboard at the last tick is the Pass seat's, field for field: \
          acting changed nothing measurable\n{acted:?}"
     );
+}
+
+/// ⛔ **The utility brain acts, is live, and sends nothing the server refuses.**
+#[test]
+fn the_utility_seat_is_live_and_nothing_it_sends_is_refused() {
+    let scratch = Scratch::new("ai_bench_utility");
+    let sim_ai = sim_ai_binary();
+    let out = scratch.dir.join("utility");
+    let seats = [UTILITY_SEAT_SPEC.to_owned(), PASS_SEATS[1].to_owned()];
+    let report = bench(&sim_ai, &out, &seats, &[]);
+    let measures = seat_measures(&report, RIVAL_SEAT);
+    assert!(
+        measures[FOOD_ACCEPTED_MEASURE].as_f64().unwrap_or(0.0) > 0.0,
+        "the Food specialist accepted nothing: {measures:?}"
+    );
+    assert_eq!(
+        measures[FOOD_LIVENESS_MEASURE].as_f64(),
+        Some(1.0),
+        "the Food specialist was not live in every window: {measures:?}"
+    );
+    assert_eq!(
+        measures[COMMANDS_FAILED_MEASURE].as_f64(),
+        Some(0.0),
+        "the sim refused a command the utility seat sent: {measures:?}"
+    );
+    let server_log = common::ai_process::strip_ansi(
+        &fs::read_to_string(out.join(MAP_SEED).join(SERVER_LOG_FILE))
+            .expect("the server log reads"),
+    );
+    for marker in REJECTED_MARKERS {
+        assert!(
+            !server_log.contains(marker),
+            "the seat gate refused a command ({marker}):\n{}",
+            common::ai_process::log_tail(&out.join(MAP_SEED).join(SERVER_LOG_FILE))
+        );
+    }
 }

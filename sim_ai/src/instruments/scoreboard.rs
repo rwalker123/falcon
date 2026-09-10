@@ -30,8 +30,13 @@ const DEATH_COUNT_KEY: &str = "count";
 /// on tick T, then `advance_tick` runs and the frame is captured at T + 1 — both inside
 /// `TurnStage::Snapshot`, in that order (`core_sim/src/lib.rs`). So the deaths of the turn that
 /// produced frame T are the `died` rows stamped T − 1.
-const EVENT_TICK_LAG: u64 = 1;
+pub const EVENT_TICK_LAG: u64 = 1;
 const DETAIL_KEY_VALUE_SEPARATOR: char = '=';
+/// **The label a sim-level command refusal carries**: `"<Kind> failed"`, from
+/// `emit_command_failure` in `core_sim/src/bin/server.rs`. A command the seat gate refuses never
+/// reaches the feed (it is a `command.rejected` log line); one the sim refuses — an out-of-reach
+/// patch, a split below the floor — is this row, and it is the specialist's bug to count.
+pub const COMMAND_FAILED_LABEL_SUFFIX: &str = " failed";
 
 /// **The cause vocabulary.** Restated from `DeathCause::as_str` in `core_sim/src/components.rs`,
 /// one word, lowercase, stable — a wire contract the client keys off as well. The bench's guard
@@ -76,6 +81,9 @@ pub struct ScoreRow {
     pub deaths_by_cause: BTreeMap<String, u32>,
     /// Victory mode id → progress, for this seat's faction (the frame is viewer-scoped).
     pub victory_progress: BTreeMap<String, f32>,
+    /// Commands of this faction the sim refused in the turn that produced this frame
+    /// ([`COMMAND_FAILED_LABEL_SUFFIX`] rows) — a proposal the server would not take.
+    pub commands_failed: u32,
 }
 
 impl ScoreRow {
@@ -159,6 +167,13 @@ impl ScoreRow {
             *deaths_by_cause.entry(cause.to_owned()).or_insert(0) += count;
         }
 
+        let commands_failed = snapshot
+            .command_events
+            .iter()
+            .filter(|event| event.tick + EVENT_TICK_LAG == tick && event.faction == faction)
+            .filter(|event| event.label.ends_with(COMMAND_FAILED_LABEL_SUFFIX))
+            .count() as u32;
+
         let victory_progress = snapshot
             .victory
             .modes
@@ -187,6 +202,7 @@ impl ScoreRow {
             craft_knowledge,
             deaths_by_cause,
             victory_progress,
+            commands_failed,
         }
     }
 }
@@ -359,6 +375,32 @@ mod tests {
             "this turn's deaths only, this faction's only"
         );
         assert_eq!(row.victory_progress.len(), snapshot.victory.modes.len());
+        assert_eq!(row.commands_failed, 0, "no refusal rows in the fixture");
+    }
+
+    #[test]
+    fn a_refused_command_is_counted_from_its_failed_label_in_the_turn_that_produced_the_frame() {
+        const FACTION: u32 = 3;
+        let mut snapshot = fixture_for(FACTION);
+        let tick = snapshot.header.tick;
+        let failed = |tick: u64, faction: u32| CommandEventState {
+            tick,
+            kind: "forage".to_owned(),
+            faction,
+            label: format!("Harvest{COMMAND_FAILED_LABEL_SUFFIX}"),
+            detail: Some("assign_labor: no gathering site".to_owned()),
+            seq: 0,
+        };
+        snapshot.command_events.extend([
+            failed(tick - EVENT_TICK_LAG, FACTION),
+            failed(tick - EVENT_TICK_LAG, FACTION),
+            failed(tick - EVENT_TICK_LAG - 1, FACTION),
+            failed(tick - EVENT_TICK_LAG, FACTION + 1),
+        ]);
+        assert_eq!(
+            ScoreRow::from_snapshot(&snapshot, FACTION).commands_failed,
+            2
+        );
     }
 
     #[test]

@@ -1,0 +1,30 @@
+{
+  "_comment": "Who a rival people is (profiles) and how well it follows through (difficulties) — docs/plan_ai_opponents.md §4, §6; docs/plan_ai_driver.md §6. Every numeric lever the utility brain reads lives here; each key has exactly one consumer (`.claude/rules/core_sim/ai-driver.md` → The profile file).",
+  "profiles": {
+    "forager": {
+      "archetype": "consolidate",
+      "behaviors": { "will_raid": false, "will_trade": true },
+      "weights": { "food_security": 0.9, "land_claim": 0.3, "contact_seeking": 0.2 },
+      "commitment": 0.6,
+      "food": { "runway_floor_turns": 6, "dead_row_turns": 4, "poor_yield_fraction": 0.25 },
+      "land": { "known_tiles_floor": 12, "split_size": 40, "horizon_tiles": 3, "scout_workers": 1 }
+    },
+    "rover": {
+      "archetype": "expand",
+      "behaviors": { "will_raid": false, "will_trade": true },
+      "weights": { "food_security": 0.4, "land_claim": 0.9, "contact_seeking": 0.5 },
+      "commitment": 0.4,
+      "food": { "runway_floor_turns": 3, "dead_row_turns": 3, "poor_yield_fraction": 0.25 },
+      "land": { "known_tiles_floor": 30, "split_size": 25, "horizon_tiles": 5, "scout_workers": 2 }
+    }
+  },
+  "difficulties": {
+    "easy": { "selection_top_k": 3, "goal_cadence_turns": 12, "memory_horizon_turns": 10 },
+    "normal": { "selection_top_k": 2, "goal_cadence_turns": 8, "memory_horizon_turns": 30 },
+    "hard": { "selection_top_k": 1, "goal_cadence_turns": 4, "memory_horizon_turns": 0 }
+  },
+  "tuning": {
+    "_comment_alarm_budget_shift": "The share of the worker budget the orchestrator moves to an alarming specialist for one cadence, taken from the others in proportion to what they hold.",
+    "alarm_budget_shift": 0.25
+  }
+}

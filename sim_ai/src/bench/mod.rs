@@ -41,7 +41,7 @@ use tracing::info;
 use crate::link::{Endpoints, Link, UnseatedConnection};
 use crate::BrainKind;
 use measures::{measures_for_seat, Measures};
-use ratchet::{Baselines, CheckOutcome, Report, RunMeasures, REPORT_FILE};
+use ratchet::{BaselinesFile, CheckOutcome, Report, RunMeasures, REPORT_FILE};
 
 // =================================================================================================
 // The world
@@ -97,6 +97,8 @@ const ENV_PORT_BASE: &str = "SIM_PORT_BASE";
 const ENV_RUST_LOG: &str = "RUST_LOG";
 /// `seat.claimed` is an INFO line; the bench reads it.
 const SERVER_LOG_FILTER: &str = "info";
+/// The seats' default; an operator's own `RUST_LOG` is passed through instead when set, so a
+/// seat can be run at `debug` from the bench.
 const SEAT_LOG_FILTER: &str = "info";
 
 const CONFIG_FILE: &str = "simulation_config.json";
@@ -131,20 +133,29 @@ const LOG_TAIL_LINES: usize = 30;
 const ANSI_ESCAPE: char = '\x1b';
 const ANSI_SGR_END: char = 'm';
 
-/// The seat spec's separators: `<faction>=<brain>[:<script>]`.
+/// The seat spec's separators: `<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*`.
 const SEAT_SPEC_BRAIN_SEPARATOR: char = '=';
-const SEAT_SPEC_SCRIPT_SEPARATOR: char = ':';
+const SEAT_SPEC_ARG_SEPARATOR: char = ':';
+const SEAT_SPEC_DIFFICULTY_SEPARATOR: char = '@';
+const SEAT_SPEC_DISABLE_SEPARATOR: char = '~';
+const SEAT_SPEC_USAGE: &str = "<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*";
 
 // =================================================================================================
 // Arguments
 // =================================================================================================
 
-/// One seat to fill: `<faction>=<brain>[:<script>]`, e.g. `1=pass` or `2=scripted:orders.txt`.
+/// One seat to fill: `<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*` —
+/// `1=pass`, `2=scripted:orders.txt`, `1=utility:forager`, `1=utility:rover@hard~land`. The
+/// token after `:` is a script for `scripted` and a profile for `utility`; `@` names a difficulty
+/// and each `~` a specialist left off the roster (both `utility` only).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatSpec {
     pub faction: u32,
     pub brain: BrainKind,
     pub script: Option<PathBuf>,
+    pub profile: Option<String>,
+    pub difficulty: Option<String>,
+    pub disabled: Vec<String>,
     /// The spec as given, the key the report and baselines carry.
     text: String,
 }
@@ -155,29 +166,61 @@ impl FromStr for SeatSpec {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let (faction, rest) = text
             .split_once(SEAT_SPEC_BRAIN_SEPARATOR)
-            .ok_or_else(|| format!("`{text}`: expected <faction>=<brain>[:<script>]"))?;
+            .ok_or_else(|| format!("`{text}`: expected {SEAT_SPEC_USAGE}"))?;
         let faction: u32 = faction
             .trim()
             .parse()
             .map_err(|_| format!("`{faction}` is not a faction id"))?;
-        let (brain, script) = match rest.split_once(SEAT_SPEC_SCRIPT_SEPARATOR) {
-            Some((brain, script)) => (brain, Some(PathBuf::from(script))),
+        // Peel the trailing `~specialist` tokens, then the `@difficulty`, then the `:arg`.
+        let mut disabled = Vec::new();
+        let mut rest = rest;
+        while let Some((head, tail)) = rest.rsplit_once(SEAT_SPEC_DISABLE_SEPARATOR) {
+            disabled.insert(0, tail.trim().to_owned());
+            rest = head;
+        }
+        let (rest, difficulty) = match rest.split_once(SEAT_SPEC_DIFFICULTY_SEPARATOR) {
+            Some((head, difficulty)) => (head, Some(difficulty.trim().to_owned())),
+            None => (rest, None),
+        };
+        let (brain, arg) = match rest.split_once(SEAT_SPEC_ARG_SEPARATOR) {
+            Some((brain, arg)) => (brain, Some(arg.trim().to_owned())),
             None => (rest, None),
         };
         let brain = match brain.trim() {
             "pass" => BrainKind::Pass,
             "scripted" => BrainKind::Scripted,
-            other => return Err(format!("`{other}` is not a brain (pass | scripted)")),
+            "utility" => BrainKind::Utility,
+            other => {
+                return Err(format!(
+                    "`{other}` is not a brain (pass | scripted | utility)"
+                ))
+            }
         };
-        if brain == BrainKind::Scripted && script.is_none() {
+        if brain != BrainKind::Utility && (difficulty.is_some() || !disabled.is_empty()) {
             return Err(format!(
-                "`{text}`: scripted needs a script (`scripted:<path>`)"
+                "`{text}`: only utility takes a difficulty or a disabled specialist"
             ));
         }
+        if brain == BrainKind::Pass && arg.is_some() {
+            return Err(format!("`{text}`: pass takes no argument"));
+        }
+        let (script, profile) = match brain {
+            BrainKind::Scripted => (
+                Some(PathBuf::from(arg.ok_or_else(|| {
+                    format!("`{text}`: scripted needs a script (`scripted:<path>`)")
+                })?)),
+                None,
+            ),
+            BrainKind::Utility => (None, arg),
+            BrainKind::Pass => (None, None),
+        };
         Ok(Self {
             faction,
             brain,
             script,
+            profile,
+            difficulty,
+            disabled,
             text: text.to_owned(),
         })
     }
@@ -207,7 +250,7 @@ pub struct BenchArgs {
     /// Turns each seat plays.
     #[arg(long)]
     pub turns: u64,
-    /// A seat to fill, `<faction>=<brain>[:<script>]`; repeatable.
+    /// A seat to fill, `<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*`; repeatable.
     #[arg(long = "seats", required = true)]
     pub seats: Vec<SeatSpec>,
     /// Where the run's logs and `report.json` go.
@@ -367,7 +410,7 @@ pub fn run(args: BenchArgs) -> Result<(), BenchError> {
     }
     let mut violations = 0;
     if let Some(baselines_path) = &args.check {
-        let baselines = Baselines::read(baselines_path)?;
+        let baselines = BaselinesFile::read(baselines_path)?;
         let found = report.check(&baselines)?;
         violations = found.len();
         report.check = Some(CheckOutcome {
@@ -376,7 +419,10 @@ pub fn run(args: BenchArgs) -> Result<(), BenchError> {
         });
     }
     if let Some(path) = &args.write_baselines {
-        report.as_baselines().write(path)?;
+        // Merged, not replaced: the file holds one entry per seat set.
+        let mut file = BaselinesFile::read_or_empty(path)?;
+        file.upsert(report.as_baselines());
+        file.write(path)?;
         info!(path = %path.display(), "baselines written");
     }
     report.write(&args.out.join(REPORT_FILE))?;
@@ -647,7 +693,10 @@ fn spawn_seat(
         .args(["--turns", &turns.to_string()])
         .arg("--log-dir")
         .arg(&log_dir)
-        .env(ENV_RUST_LOG, SEAT_LOG_FILTER)
+        .env(
+            ENV_RUST_LOG,
+            std::env::var(ENV_RUST_LOG).unwrap_or_else(|_| SEAT_LOG_FILTER.to_owned()),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
@@ -666,6 +715,18 @@ fn spawn_seat(
                 .args(["--brain", "scripted"])
                 .arg("--script")
                 .arg(script);
+        }
+        BrainKind::Utility => {
+            command.args(["--brain", "utility"]);
+            if let Some(profile) = &seat.profile {
+                command.args(["--profile", profile]);
+            }
+            if let Some(difficulty) = &seat.difficulty {
+                command.args(["--difficulty", difficulty]);
+            }
+            for specialist in &seat.disabled {
+                command.args(["--disable", specialist]);
+            }
         }
     }
     Ok(Process {
@@ -745,11 +806,26 @@ mod tests {
         assert_eq!(scripted.script, Some(PathBuf::from("orders.txt")));
         assert!("2=scripted".parse::<SeatSpec>().is_err(), "no script");
         assert!("x=pass".parse::<SeatSpec>().is_err(), "no faction");
-        assert!(
-            "1=utility".parse::<SeatSpec>().is_err(),
-            "no such brain yet"
-        );
         assert!("1".parse::<SeatSpec>().is_err(), "no brain");
+        let utility: SeatSpec = "1=utility".parse().expect("the default profile");
+        assert_eq!(utility.brain, BrainKind::Utility);
+        assert_eq!(
+            (utility.profile, utility.difficulty, utility.disabled),
+            (None, None, vec![])
+        );
+        let full: SeatSpec = "1=utility:rover@hard~land~food".parse().expect("full form");
+        assert_eq!(full.profile.as_deref(), Some("rover"));
+        assert_eq!(full.difficulty.as_deref(), Some("hard"));
+        assert_eq!(full.disabled, vec!["land", "food"]);
+        assert_eq!(full.to_string(), "1=utility:rover@hard~land~food");
+        assert!(
+            "1=pass@hard".parse::<SeatSpec>().is_err(),
+            "pass has no difficulty"
+        );
+        assert!(
+            "1=pass:x".parse::<SeatSpec>().is_err(),
+            "pass takes no argument"
+        );
     }
 
     #[test]

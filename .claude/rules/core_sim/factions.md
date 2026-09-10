@@ -1075,7 +1075,7 @@ has the roster it was created with, whatever the config default says now. That i
 rest of `WorldStatics` is saved rather than recomputed — re-deriving a world's ground truth from
 tuning that has moved produces a *different world*.
 
-## A free slot
+## AI tuning is not a start-profile field
 
-`StartProfileOverrides::ai_profile_overrides` is parsed and read by nothing. It is where per-faction
-AI behaviour tuning would attach when there is an AI to tune.
+A start profile is per campaign and AI tuning is per seat, so it lives in `sim_ai/data/ai_profiles.json`
+(`docs/plan_ai_opponents.md` §7, `.claude/rules/core_sim/ai-driver.md`), on the other side of a socket.
