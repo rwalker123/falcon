@@ -1813,3 +1813,49 @@ elders: Flat vector interface mark of an elder figure standing straight on and s
 # `crops/` warns about — so this one wears its STRAP and is slim and upright, where `trade.png` is
 # a strapless gathered sack. If they cannot be told apart at 13px side by side, this one loses.
 kit_fallback: Flat vector interface mark of a simple shoulder satchel, one slim upright rounded pouch with a plain flat flap across its top and a single broad carrying strap looping up from its sides, taller than it is wide, no buckle, no stitching, no pocket detail, no gathered neck, no knot, no tie ends, no box, no crate, no tool, no weapon, no hand, no figure, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm mid tan and a pale cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, the flap and the strap drawn as the darker tone and no thinner than one sixth of the icon width, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the satchel on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
+
+
+# ============================================================================
+# WORKINGS  ->  assets/icons/workings/  (resolver arrives with the art)
+# ============================================================================
+#
+# The eighth family, and the one added by issue #650 (the extraction arc's client half).
+# A MAP-MARKER family, so it takes the HOUSE STYLE above wholesale — 24px, thick charcoal
+# outline, no ground shadow, magenta ground. It is NOT one of the three HUD sub-style
+# families; do not start from `crops/`.
+#
+# Keyed by the sim's MATERIAL id from `core_sim/src/data/materials.json` — `wood`, `stone`,
+# and whatever the minerals arc adds. Two files today.
+#
+# STATUS: NOT GENERATED. `ui/FoodIcons.for_material` currently answers the OS emoji — 🪵 for
+# wood, 🪨 for stone — which is what `SecondaryMarkerRenderer.draw_workings` draws. The
+# emoji are the fallback the bundled art replaces, exactly as `stages/` replaced ⛺/🛖/🏘️.
+# The resolver lands with the PNGs; there is no empty table to fill in the meantime.
+#
+# ⛔ THE MARKER MEANS **A WORKING BEING WORKED**, NOT THE MATERIAL LYING THERE. Untouched
+# ground draws nothing at all (Ray's decision — nearly every land tile holds stone, so
+# marking unworked deposits would bury the map). So both subjects must read as *material
+# that has been cut and stacked by people*, never as scenery: a standing tree is forest
+# TERRAIN and a boulder is a rock body, and either would say the opposite of what the marker
+# is for.
+#
+# ⛔ THE TWO MUST DIFFER BY SILHOUETTE, NOT BY COLOUR. They can appear in two edge slots of
+# ONE hex — a wooded highland holds both — at 24px over terrain that is itself brown and
+# grey. So the read is ROUND CUT ENDS against SQUARED BLOCKS; if they are told apart only by
+# hue, they have failed. This is `crops/`'s collision rule applied to a two-member family.
+#
+# ⛔ `stone` MUST NOT READ AS `sites/great_peak.png`. That icon is a natural mountain
+# silhouette in cool slate grey and stone blue, and a rounded grey mass in the same palette
+# would collide with it on the same map. The separation is that these blocks are CUT — flat
+# faces, square corners, stacked by hand.
+
+
+# wood.png — material id `wood`
+# The cut ends are the whole read: they are what says "felled and stacked" rather than
+# "a tree", and they are the round half of the silhouette contrast with `stone`.
+wood: Flat vector game icon of a small stack of three cut logs resting one above two, each log a plain cylinder lying horizontally with its sawn circular end facing the viewer, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire stack and around each sawn end, flat limited color palette in warm mid-brown bark with pale sand-cream cut ends that read clearly against the bark, simple two-tone shading, no bark texture, no grain lines, no growth rings, no leaves, no branches, no standing tree, no axe, no tool, no stump, no ground line, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# stone.png — material id `stone`
+# Squared and stacked is the read, and it is also what keeps this off `great_peak`'s
+# natural-mountain silhouette. Keep the corners hard; a rounded pile is a boulder.
+stone: Flat vector game icon of a small stack of three squared cut stone blocks resting one above two, each block a plain rectangular slab with hard square corners and flat quarried faces, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire stack and one dividing line between the blocks, flat limited color palette in warm mid-grey stone with a paler grey top face so the stacking reads, simple two-tone shading, no speckle, no texture, no cracks, no rubble, no loose chips, no rounded boulder, no mountain, no pick, no tool, no ground line, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
