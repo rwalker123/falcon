@@ -144,9 +144,23 @@ a real export before tuning against them.
 **(a) The tile is drawn survivable.** `TileSurvivability.is_lethal` — the single authority the tile
 chip's ⚠, the map overlay's hatch and `AttentionController._decline_reason` all read — tests
 `temperature < cold_onset_temp`, i.e. **0 °C**. Between 6.5 °C and 0 °C the ground ends the band and
-every one of those three surfaces says it is fine. This is the same class as issue #614 (a
-`Temperate` tile that killed); that fix moved the *death* onset and the *morale* onset was never
-re-examined beside it.
+every one of those three surfaces says it is fine.
+
+⛔ **The two thresholds were half a degree apart until they were not, and the gap opened behind a
+deliberate change.** `cold.onset_temp` shipped at **6.0 °C** — so the tile warning sat within
+0.5 ° of the morale break-even and covered it almost exactly. Commit `84777e06`
+(*"6 °C was never cold enough to kill anyone"*) lowered it to **0.0 °C** and raised
+`mortality_scale` 0.00159 → 0.00175 to compensate. That is a sound call **about deaths** and this
+report does not dispute it. What it also did — invisibly, because nothing connects the two levers —
+was move the only warning a player gets 6.5 ° away from the temperature at which the band actually
+becomes unviable. The morale lever was not part of that change and has never been re-examined
+beside it.
+
+**The stale comment is the evidence nobody noticed.** `hud_selection_vocab.gd` still reasons from
+the old value in prose — *"temperature alone does not reach Hostile until −13.5 °C, while people
+start dying at 6.0 °C"* — which is why the surrounding argument (that a warning folded into
+habitability would be silent across the gap) is right for a threshold that no longer exists. The
+behaviour follows the wire and is correct; only the reasoning is a version behind.
 
 **(b) The death feed's cold warning exists and is starved of its input.**
 
@@ -217,9 +231,11 @@ Grouped by which finding they answer. They are not alternatives to each other.
 1. Give the client a **second** threshold from the wire — the morale break-even — and let the tile
    chip, the overlay and the decline reason distinguish *"this ground kills people"* from *"this
    ground ends your band"*. No model change at all.
-2. Or align the two onsets deliberately, so the temperature at which morale starts draining and the
-   temperature at which cold starts killing are one decision rather than two independently-tuned
-   numbers that happen to be 6.5 ° apart.
+2. Or align the two onsets deliberately, so *"where morale starts draining"* and *"where cold starts
+   killing"* are one decision rather than two levers that drifted apart when only one of them moved.
+   Note this is the direction that **re-opens `84777e06`**: pulling the death onset back up to 6.5 °
+   restores the thing that commit deliberately removed. Pushing the morale onset *down* to 0 ° is
+   the other half of the same alignment and does not.
 
 **For the feed (Finding 5b) — the rung ladder is right; feed it:**
 3. Stop letting the flat old-age term win the bracket comparison. The narrowest form is to compare
@@ -245,6 +261,10 @@ without giving the model a floor).
 
 ## See Also
 
+- `docs/population_collapse_ux_proposal.html` — **the options, rendered.** A temperature slider
+  driving the tile card, the attention row and the event dock through the same arithmetic this
+  report measures, so each option can be read at every temperature the map produces rather than
+  argued about in prose. Open it in a browser.
 - `docs/plan_settlement_population.md` — the arc this belongs to; demographics are its Phase 1.
 - `docs/plan_population_growth_model.md` — the fertility factors this report holds constant.
 - `docs/plan_early_game_labor.md` — the per-worker forage rates and the TOE/equipment tiers that

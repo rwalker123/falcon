@@ -1,0 +1,715 @@
+<title>The cold a band dies of — reporting proposal</title>
+
+<style>
+  /* ============================================================
+     Tokens. Shared with docs/event_dock_ux_proposal.html and
+     docs/band_panel_ux_proposal.html on purpose: these are one
+     series of proposals about one HUD. The DOCUMENT shell is
+     theme-aware; the PROTOTYPE stage keeps the game's own dark
+     console palette in both themes.
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 68ch;
+    --r: 3px;
+
+    /* The game's own console palette — fixed in both document themes. */
+    --g-panel:    #111a1e;
+    --g-panel-2:  #0e161a;
+    --g-line:     #26363c;
+    --g-line-soft:#1b282d;
+    --g-ink:      #e9efe9;
+    --g-dim:      #9db0ad;
+    --g-faint:    #6f8380;
+    --g-signal:   #4fe0cf;
+    --g-warn:     #f2b13f;
+    --g-healthy:  #76cd80;
+    --g-danger:   #e8746a;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #080e10;
+    --panel:       #111a1e;
+    --panel-2:     #0e161a;
+    --line:        #26363c;
+    --line-soft:   #1b282d;
+    --ink:         #e9efe9;
+    --dim:         #9db0ad;
+    --faint:       #6f8380;
+    --signal:      #4fe0cf;
+    --signal-wash: rgba(79, 224, 207, 0.12);
+    --warn:        #f2b13f;
+    --healthy:     #76cd80;
+    --danger:      #e8746a;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.62;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 24px 100px; }
+  .prose { max-width: var(--measure); }
+
+  h1 { font-size: 27px; line-height: 1.22; margin: 0 0 6px; letter-spacing: -0.015em; }
+  h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--faint); margin: 52px 0 14px; font-weight: 600;
+  }
+  h3 { font-size: 17px; margin: 30px 0 8px; letter-spacing: -0.01em; }
+  p  { margin: 0 0 13px; }
+  .lede { font-size: 17px; color: var(--dim); margin: 0 0 4px; }
+  .sub  { font-size: 13px; color: var(--faint); margin: 0 0 26px; font-family: var(--mono); }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--panel-2); padding: 1px 4px; border-radius: 2px; }
+  .rule { height: 1px; background: var(--line); border: 0; margin: 42px 0; }
+
+  /* ---- the instrument ------------------------------------------------- */
+  .instrument {
+    background: var(--g-panel);
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    padding: 20px 22px 22px;
+    margin: 18px 0 0;
+    color: var(--g-ink);
+  }
+  .instrument .head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .instrument .head .t { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--g-faint); }
+  .bigtemp { font-family: var(--mono); font-size: 30px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+
+  input[type=range] { width: 100%; accent-color: var(--g-signal); margin: 0; }
+
+  .ticks { position: relative; height: 40px; margin: 2px 0 14px; font-family: var(--mono); font-size: 10px; }
+  .ticks .tk { position: absolute; transform: translateX(-50%); text-align: center; white-space: nowrap; }
+  .ticks .tk .bar { width: 1px; height: 9px; margin: 0 auto 3px; background: currentColor; opacity: 0.8; }
+  .ticks .tk.morale { color: var(--g-warn); }
+  .ticks .tk.death  { color: var(--g-danger); }
+  .ticks .tk.alert  { color: var(--g-signal); }
+  .ticks .tk.plain  { color: var(--g-faint); }
+  .ticks .tk.lo     { top: 20px; }
+
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px; background: var(--g-line-soft); border: 1px solid var(--g-line-soft); }
+  .ro { background: var(--g-panel-2); padding: 9px 11px; }
+  .ro .k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--g-faint); }
+  .ro .v { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .ro .n { font-size: 10.5px; color: var(--g-faint); font-family: var(--mono); }
+  .v.good { color: var(--g-healthy); }
+  .v.bad  { color: var(--g-danger); }
+  .v.warn { color: var(--g-warn); }
+
+  /* ---- option columns -------------------------------------------------- */
+  .cols { display: grid; gap: 16px; margin: 16px 0 0; }
+  .cols.two   { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .cols.three { grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
+  .col { min-width: 0; }
+  .col > .hdr { margin-bottom: 7px; }
+  .hdr .name { font-size: 13px; font-weight: 600; }
+  .hdr .name .tag {
+    font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    padding: 1px 5px; border-radius: 2px; margin-right: 7px; vertical-align: 1px;
+  }
+  .tag.today { background: var(--panel-2); color: var(--faint); border: 1px solid var(--line); }
+  .tag.opt   { background: var(--signal-wash); color: var(--signal); border: 1px solid var(--signal); }
+  .hdr .why { font-size: 12.5px; color: var(--faint); line-height: 1.5; margin-top: 3px; }
+
+  /* ---- the mocked tile card ------------------------------------------- */
+  .tilecard {
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: var(--r);
+    color: var(--g-ink); padding: 11px 12px 12px; font-size: 12.5px;
+  }
+  .tilecard .tname { font-size: 13.5px; margin-bottom: 8px; }
+  .tilecard .tname .co { font-family: var(--mono); font-size: 10.5px; color: var(--g-faint); margin-left: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+    padding: 2px 7px; border-radius: 9px;
+    border: 1px solid var(--g-line); background: var(--g-panel-2); color: var(--g-dim);
+    white-space: nowrap;
+  }
+  .chip .ck { color: var(--g-faint); }
+  .chip.danger { border-color: var(--g-danger); color: #f6cdc8; background: rgba(232,116,106,0.10); }
+  .chip.warn   { border-color: var(--g-warn);   color: #f7dcae; background: rgba(242,177,63,0.10); }
+  .hover {
+    margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--g-faint);
+    border-top: 1px dashed var(--g-line-soft); padding-top: 7px; min-height: 2.6em;
+  }
+  .hover .hk { color: var(--g-dim); }
+  .hover em { color: var(--g-faint); font-style: italic; }
+
+  /* ---- the mocked attention row ---------------------------------------- */
+  .attn {
+    margin-top: 9px; background: var(--g-panel-2); border: 1px solid var(--g-line-soft);
+    border-radius: var(--r); padding: 7px 10px; font-size: 12.5px; color: var(--g-dim);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .attn .dot { flex: none; font-size: 11px; }
+  .attn .bn { color: var(--g-ink); }
+  .attn .rsn { font-family: var(--mono); font-size: 10.5px; margin-left: auto; }
+  .attn.d-alert .dot, .attn.d-alert .rsn { color: var(--g-danger); }
+  .attn.d-warn  .dot, .attn.d-warn  .rsn { color: var(--g-warn); }
+  .attn.d-quiet .dot, .attn.d-quiet .rsn { color: var(--g-faint); }
+
+  /* ---- the mocked event dock ------------------------------------------- */
+  .dock {
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: var(--r);
+    overflow: hidden;
+  }
+  .dock .dhdr {
+    font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--g-faint); padding: 6px 12px; border-bottom: 1px solid var(--g-line-soft);
+    background: var(--g-panel-2);
+  }
+  .ev {
+    display: flex; align-items: baseline; gap: 9px; padding: 5px 12px; min-width: 0;
+    border-left: 2px solid transparent; font-size: 12.5px; line-height: 1.45;
+    color: var(--g-ink);
+  }
+  .ev + .ev { border-top: 1px solid rgba(27,40,45,0.75); }
+  .ev .glyph { flex: none; width: 14px; text-align: center; font-size: 12px; }
+  .ev .turn {
+    flex: none; font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums;
+    color: rgba(143,212,255,0.85);
+  }
+  .ev .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev .detail { flex: none; font-family: var(--mono); font-size: 10px; color: var(--g-faint); }
+  .ev.alert   { border-left-color: var(--g-danger); }
+  .ev.alert .glyph { color: var(--g-danger); }
+  .ev.alert .label { color: #f6cdc8; }
+  .ev.notable { border-left-color: rgba(79,224,207,0.55); }
+  .ev.notable .glyph { color: var(--g-signal); }
+  .ev.routine { border-left-color: transparent; }
+  .ev.routine .glyph { color: var(--g-faint); }
+  .ev.routine .label { color: var(--g-dim); }
+  .ev.is-empty { color: var(--g-faint); font-style: italic; padding: 9px 12px; font-size: 12px; }
+
+  .verdictline {
+    margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--g-faint);
+  }
+  .verdictline b { font-weight: 600; }
+  .verdictline .hit  { color: var(--g-healthy); }
+  .verdictline .miss { color: var(--g-danger); }
+
+  /* ---- tables ---------------------------------------------------------- */
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 10px 0 4px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); font-weight: 600; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+
+  .note {
+    border-left: 2px solid var(--warn); background: var(--panel-2);
+    padding: 10px 14px; margin: 16px 0; font-size: 13.5px;
+  }
+  .note .nt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--warn); font-weight: 600; }
+
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .presets button {
+    font: inherit; font-size: 11.5px; font-family: var(--mono);
+    background: var(--g-panel-2); color: var(--g-dim);
+    border: 1px solid var(--g-line); border-radius: 2px; padding: 3px 9px; cursor: pointer;
+  }
+  .presets button:hover { color: var(--g-ink); border-color: var(--g-signal); }
+</style>
+
+<div class="wrap">
+
+<div class="prose">
+  <h1>The cold a band dies of</h1>
+  <p class="lede">Two reporting options, side by side, driven by the shipped arithmetic.</p>
+  <p class="sub">issue #431 · docs/plan_population_collapse.md · research prototype, nothing here is implemented</p>
+
+  <p>A band dies at <b>6.5&nbsp;°C</b> — the morale break-even, where the climate drain overtakes the
+  settling gain. Output floors at&nbsp;×0.5, an equipped gatherer drops from 0.400 food/worker to
+  0.200 against a break-even of 0.2298, and the band declines for ever. Every lethality surface in
+  the HUD keys off a <em>different</em> number: <b>0.0&nbsp;°C</b>, where cold starts killing
+  people directly.</p>
+
+  <div class="note">
+    <div class="nt">These two thresholds were half a degree apart until recently</div>
+    <p style="margin:4px 0 0"><code>cold.onset_temp</code> was <b>6.0&nbsp;°C</b> — so the tile
+    warning covered the morale cliff almost exactly. It was lowered to <b>0.0&nbsp;°C</b> in
+    <code>84777e06</code> (“6&nbsp;°C was never cold enough to kill anyone”), a reasonable
+    playtest call about <em>deaths</em>. Nothing moved the morale lever with it, and the gap opened
+    behind the change. The stale comment in <code>hud_selection_vocab.gd</code> still says
+    “people start dying at 6.0&nbsp;°C”.</p>
+  </div>
+
+  <p>Drag the temperature. Everything below recomputes from the real formulas —
+  <code>tile_morale_pressure</code>, <code>discontent_output_modifier</code>,
+  <code>temperature_fraction</code> and <code>advance_demographics</code>' bracket weights — on the
+  shipped opening band of 30.</p>
+</div>
+
+<div class="instrument">
+  <div class="head">
+    <div class="t">Tile temperature</div>
+    <div class="bigtemp" id="temp-read">4.0&nbsp;°C</div>
+  </div>
+  <input type="range" id="temp" min="-18.5" max="18" step="0.1" value="4">
+  <div class="ticks" id="ticks"></div>
+
+  <div class="readouts">
+    <div class="ro"><div class="k">Morale settles</div><div class="v" id="ro-morale">—</div><div class="n" id="ro-morale-n">—</div></div>
+    <div class="ro"><div class="k">Output</div><div class="v" id="ro-mult">—</div><div class="n">discontent modifier</div></div>
+    <div class="ro"><div class="k">Food / worker</div><div class="v" id="ro-food">—</div><div class="n" id="ro-food-n">—</div></div>
+    <div class="ro"><div class="k">Cold deaths</div><div class="v" id="ro-deaths">—</div><div class="n" id="ro-deaths-n">—</div></div>
+    <div class="ro"><div class="k">Band</div><div class="v" id="ro-verdict">—</div><div class="n" id="ro-verdict-n">—</div></div>
+  </div>
+
+  <div class="presets">
+    <button data-t="10">10 °C — comfortable</button>
+    <button data-t="6.4">6.4 °C — one tick past the cliff</button>
+    <button data-t="4">4 °C — “Temperate”, and fatal</button>
+    <button data-t="-1.9">−1.9 °C — the playtest tile</button>
+    <button data-t="-10">−10 °C</button>
+    <button data-t="-18">−18 °C — coldest the map makes</button>
+  </div>
+</div>
+
+<hr class="rule">
+
+<h2>Surface A · the tile card, the map hatch, the attention row</h2>
+<div class="prose">
+  <p>All three read one predicate — <code>TileSurvivability.is_lethal</code> — so they cannot
+  disagree, and today they are all wrong in the same direction together. The option is whether that
+  predicate answers <em>one</em> question or <em>two</em>.</p>
+</div>
+
+<div class="cols two">
+  <div class="col">
+    <div class="hdr">
+      <div class="name"><span class="tag today">today</span>One threshold, at 0.0 °C</div>
+      <div class="why">The chip warns when people freeze. Between 6.5 and 0 °C the ground ends the
+      band and the card reads as ordinary temperate terrain.</div>
+    </div>
+    <div class="tilecard">
+      <div class="tname">Mixed woodland <span class="co">(41, 28)</span></div>
+      <div class="chips" id="a-today-chips"></div>
+      <div class="hover" id="a-today-hover"></div>
+    </div>
+    <div class="attn" id="a-today-attn">
+      <span class="dot">●</span><span class="bn">Ashfoot</span>
+      <span id="a-today-attn-txt">—</span>
+      <span class="rsn" id="a-today-attn-rsn">—</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="hdr">
+      <div class="name"><span class="tag opt">option 1</span>Two thresholds — kills people / ends the band</div>
+      <div class="why">A second number on the wire: the morale break-even. Amber says
+      <em>this ground ends your band</em>, red says <em>this ground kills people</em>. No model
+      change — the sim already computes both.</div>
+    </div>
+    <div class="tilecard">
+      <div class="tname">Mixed woodland <span class="co">(41, 28)</span></div>
+      <div class="chips" id="a-opt-chips"></div>
+      <div class="hover" id="a-opt-hover"></div>
+    </div>
+    <div class="attn" id="a-opt-attn">
+      <span class="dot">●</span><span class="bn">Ashfoot</span>
+      <span id="a-opt-attn-txt">—</span>
+      <span class="rsn" id="a-opt-attn-rsn">—</span>
+    </div>
+  </div>
+</div>
+
+<div class="prose">
+  <p style="margin-top:18px"><b>The alternative to option 1 is a model change</b>: move
+  <code>cold.onset_temp</code> back up to meet the morale cliff, or move the morale lever down to
+  meet the death onset, so there is one line again. That is cheaper to render and more expensive to
+  decide — it changes who dies and where, not just what the card says. It is direction&nbsp;2 in the
+  report and it is not mocked here, because visually it is just today's card with the red arriving
+  6.5&nbsp;° earlier.</p>
+</div>
+
+<hr class="rule">
+
+<h2>Surface B · the death feed</h2>
+<div class="prose">
+  <p>The rung ladder is already right: <code>bracket=working</code> and <code>bracket=child</code>
+  claim <code>RUNG_ALERT</code>, <code>bracket=elder</code> stays Notable on purpose. What it never
+  receives is a worker. <code>push_demographic_events</code> pools deaths onto one carry and labels
+  the event with the largest-<em>contributing</em> bracket, and the flat
+  <code>elder_mortality_rate</code> of 0.20 wins that comparison until about −17.3&nbsp;°C.</p>
+  <p><b>Nothing in <code>hud_event_vocab.gd</code> changes in any of these.</b> Only which event the
+  sim emits.</p>
+</div>
+
+<div class="cols three">
+  <div class="col">
+    <div class="hdr">
+      <div class="name"><span class="tag today">today</span>Largest bracket wins</div>
+      <div class="why">One event per whole person. Old age outweighs cold nearly everywhere, so
+      the ⚠ the ladder defines is unreachable.</div>
+    </div>
+    <div class="dock"><div class="dhdr">Events</div><div id="b-today"></div></div>
+    <div class="verdictline" id="b-today-v"></div>
+  </div>
+
+  <div class="col">
+    <div class="hdr">
+      <div class="name"><span class="tag opt">option 3a</span>Compare on non-age deaths</div>
+      <div class="why">Old age is the one term that is never news, so it is excluded from the
+      <em>comparison</em> only — it still counts toward the head-count and still names the event
+      when nothing else killed anyone.</div>
+    </div>
+    <div class="dock"><div class="dhdr">Events</div><div id="b-3a"></div></div>
+    <div class="verdictline" id="b-3a-v"></div>
+  </div>
+
+  <div class="col">
+    <div class="hdr">
+      <div class="name"><span class="tag opt">option 3b</span>One event per bracket</div>
+      <div class="why">Every bracket that lost someone speaks. Truthful and noisy — and it needs
+      three carries, which <code>DemographicFlowAccumulator</code> documents as stranding
+      sub-person remainders for ever.</div>
+    </div>
+    <div class="dock"><div class="dhdr">Events</div><div id="b-3b"></div></div>
+    <div class="verdictline" id="b-3b-v"></div>
+  </div>
+</div>
+
+<div class="prose">
+  <h3>What each one costs</h3>
+</div>
+<div class="scroll">
+<table>
+  <thead><tr><th>Option</th><th>Sim change</th><th>Client change</th><th>Keeps head-count exact?</th><th>Risk</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>3a</b> non-age comparison</td>
+      <td>One predicate in <code>push_demographic_events</code></td>
+      <td>None</td>
+      <td class="num">Yes — one carry, untouched</td>
+      <td>A turn where old age genuinely dominates still says “old age”, which is correct but means the ⚠ is still not <em>every</em> cold turn</td>
+    </tr>
+    <tr>
+      <td><b>3b</b> per-bracket events</td>
+      <td>Three carries, replacing the pooled one</td>
+      <td>None</td>
+      <td class="num">No — strands a remainder per bracket</td>
+      <td>Reintroduces exactly the leak the pooled carry was built to remove; also triples feed volume on a cold tile</td>
+    </tr>
+    <tr>
+      <td><b>3c</b> promote on <code>cause</code></td>
+      <td>None — client-side rung rule</td>
+      <td>One row in <code>DETAIL_STATUS_STYLE</code></td>
+      <td class="num">Yes</td>
+      <td>Breaks the ladder's own rule that <em>a death's rung is its bracket</em>, and an elder dying of cold would alert — the case #614 deliberately left on Notable</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="prose">
+  <p style="margin-top:18px"><b>3a is the recommendation.</b> It is the smallest change, it needs no
+  client edit, it preserves the pooled carry's head-count exactness, and it does not touch the
+  bracket rule the ladder is built on.</p>
+</div>
+
+<hr class="rule">
+
+<h2>Reading the two surfaces together</h2>
+<div class="prose">
+  <p>They fail independently and they compound. At 3&nbsp;°C the card says temperate, the feed says
+  old age, and the band is on a curve to zero. Fixing <em>either</em> one makes the situation
+  legible; fixing surface&nbsp;A makes it legible <em>before</em> anybody has died, which is the
+  only point at which the player can still walk the band somewhere else.</p>
+</div>
+
+<script>
+  // ---- the shipped arithmetic, restated ---------------------------------
+  // simulation_config.json
+  var SETTLING_GAIN = 0.01, AMBIENT = 18.0, TOLERANCE = 9.0, MORALE_PENALTY = 0.004;
+  // wellbeing_config.json
+  var CONTENT_MORALE = 0.6, FLOOR_MORALE = 0.1, DISCONTENT_WEIGHT = 1.0, FLOOR_MULT = 0.5;
+  // demographics_config.json
+  var COLD_ONSET = 0.0, COLD_SCALE = 0.00175, COLD_MAX = 0.10;
+  var VULN_CHILD = 1.25, VULN_WORK = 1.0, VULN_ELDER = 1.5;
+  var ELDER_MORTALITY = 0.20;
+  var PER_CAPITA = 0.16, F_CHILD = 0.6, F_WORK = 1.0, F_ELDER = 0.8;
+  // the opening band: initial_distribution x 30
+  var C0 = 30 * 0.334, W0 = 30 * 0.593, E0 = 30 * 0.073;
+  // equipment.json flint basket: 8.0 biomass x provisions_per_biomass 0.05
+  var EQUIPPED = 0.40;
+  // the derived thresholds
+  var MORALE_BREAKEVEN = AMBIENT - (TOLERANCE + SETTLING_GAIN / MORALE_PENALTY); // 6.5
+  var ALERT_CROSSOVER = -17.3;
+
+  function climateDrain(t) { return Math.max(0, Math.abs(t - AMBIENT) - TOLERANCE) * MORALE_PENALTY; }
+  function moraleSettlesAt(t) { return (SETTLING_GAIN - climateDrain(t)) >= 0 ? 1.0 : 0.0; }
+  function discontent(m) {
+    var span = CONTENT_MORALE - FLOOR_MORALE;
+    return Math.min(1, Math.max(0, (CONTENT_MORALE - m) / span));
+  }
+  function outputMult(t) {
+    return Math.max(FLOOR_MULT, 1 - discontent(moraleSettlesAt(t)) * DISCONTENT_WEIGHT);
+  }
+  function coldBase(t) {
+    if (t >= COLD_ONSET) return 0;
+    return Math.min((COLD_ONSET - t) * COLD_SCALE, COLD_MAX);
+  }
+  function breakEven() {
+    return PER_CAPITA * (C0 * F_CHILD + W0 * F_WORK + E0 * F_ELDER) / W0;
+  }
+  // one turn of a WELL-FED band: the temperature term is the only mortality besides old age
+  function deaths(t) {
+    var b = coldBase(t);
+    return {
+      child:   C0 * b * VULN_CHILD,
+      working: W0 * b * VULN_WORK,
+      elder:   E0 * b * VULN_ELDER + E0 * ELDER_MORTALITY,
+      elderAge: E0 * ELDER_MORTALITY,
+      elderCold: E0 * b * VULN_ELDER
+    };
+  }
+  function fmt(n, d) { return n.toFixed(d === undefined ? 2 : d); }
+
+  // ---- ticks -------------------------------------------------------------
+  var TMIN = -18.5, TMAX = 18;
+  function pct(t) { return ((t - TMIN) / (TMAX - TMIN)) * 100; }
+  (function ticks() {
+    var host = document.getElementById("ticks");
+    var marks = [
+      { t: 18,               cls: "plain",  txt: "18°",             lo: false },
+      { t: MORALE_BREAKEVEN, cls: "morale", txt: "6.5° the band dies", lo: false },
+      { t: COLD_ONSET,       cls: "death",  txt: "0° people freeze", lo: true },
+      { t: ALERT_CROSSOVER,  cls: "alert",  txt: "−17.3° the ⚠ fires", lo: false },
+      { t: TMIN,             cls: "plain",  txt: "−18.5°",          lo: true }
+    ];
+    marks.forEach(function (m) {
+      var d = document.createElement("div");
+      d.className = "tk " + m.cls + (m.lo ? " lo" : "");
+      d.style.left = pct(m.t) + "%";
+      d.innerHTML = '<div class="bar"></div>' + m.txt;
+      host.appendChild(d);
+    });
+  })();
+
+  // ---- chip + row builders ----------------------------------------------
+  function chip(host, key, val, cls) {
+    var c = document.createElement("span");
+    c.className = "chip" + (cls ? " " + cls : "");
+    c.innerHTML = '<span class="ck">' + key + '</span> ' + val;
+    host.appendChild(c);
+  }
+  function bandName(t) {
+    if (t <= 0) return "Polar";
+    if (t <= 3) return "Boreal";
+    if (t <= 18) return "Temperate";
+    return "Tropical";
+  }
+  function ev(host, rung, glyph, label, detail) {
+    var r = document.createElement("div");
+    r.className = "ev " + rung;
+    r.innerHTML = '<span class="glyph">' + glyph + '</span>' +
+                  '<span class="turn">T47</span>' +
+                  '<span class="label">' + label + '</span>' +
+                  '<span class="detail">' + detail + '</span>';
+    host.appendChild(r);
+  }
+  function empty(host, txt) {
+    var r = document.createElement("div");
+    r.className = "ev is-empty";
+    r.textContent = txt;
+    host.appendChild(r);
+  }
+  function clear(id) { var e = document.getElementById(id); e.textContent = ""; return e; }
+
+  // ---- render ------------------------------------------------------------
+  function render(t) {
+    var mult = outputMult(t);
+    var eff  = EQUIPPED * mult;
+    var be   = breakEven();
+    var base = coldBase(t);
+    var d    = deaths(t);
+    var lethalToday = t < COLD_ONSET;
+    var endsBand    = t < MORALE_BREAKEVEN;
+
+    document.getElementById("temp-read").innerHTML = fmt(t, 1) + "&nbsp;°C";
+
+    // readouts
+    var m = document.getElementById("ro-morale");
+    m.textContent = moraleSettlesAt(t) === 1 ? "1.00" : "0.00";
+    m.className = "v " + (moraleSettlesAt(t) === 1 ? "good" : "bad");
+    document.getElementById("ro-morale-n").textContent =
+      (SETTLING_GAIN - climateDrain(t) >= 0 ? "+" : "") + fmt(SETTLING_GAIN - climateDrain(t), 4) + "/turn";
+
+    var mu = document.getElementById("ro-mult");
+    mu.textContent = "×" + fmt(mult, 2);
+    mu.className = "v " + (mult === 1 ? "good" : "bad");
+
+    var fo = document.getElementById("ro-food");
+    fo.textContent = fmt(eff, 3);
+    fo.className = "v " + (eff > be ? "good" : "bad");
+    document.getElementById("ro-food-n").textContent =
+      (eff > be ? "clears " : "under ") + fmt(be, 4);
+
+    var de = document.getElementById("ro-deaths");
+    de.textContent = base > 0 ? fmt(base * 100, 2) + "%" : "none";
+    de.className = "v " + (base > 0 ? "warn" : "good");
+    document.getElementById("ro-deaths-n").textContent =
+      base > 0 ? "of each bracket, pre-weight" : "above the 0 °C onset";
+
+    var ve = document.getElementById("ro-verdict");
+    ve.textContent = eff > be ? "grows" : "dies";
+    ve.className = "v " + (eff > be ? "good" : "bad");
+    document.getElementById("ro-verdict-n").textContent =
+      eff > be ? "food clears the line" : "declines with no floor";
+
+    // ---- surface A: today -------------------------------------------------
+    var h = clear("a-today-chips");
+    chip(h, "Terrain", "Mixed woodland");
+    chip(h, "Climate", (lethalToday ? "⚠ " : "") + bandName(t) + " · " + fmt(t, 1) + " °C",
+         lethalToday ? "danger" : "");
+    chip(h, "Habitability", climateDrain(t) >= 0.09 ? "Hostile" : "Fair");
+    document.getElementById("a-today-hover").innerHTML = lethalToday
+      ? '<span class="hk">hover:</span> ' + fmt(base * 100, 1) + "% increased mortality per turn due to severe cold"
+      : '<span class="hk">hover:</span> <em>no survivability warning on this tile</em>';
+
+    var at = document.getElementById("a-today-attn");
+    var atx = document.getElementById("a-today-attn-txt");
+    var arn = document.getElementById("a-today-attn-rsn");
+    if (lethalToday) {
+      at.className = "attn d-alert"; atx.textContent = "is shrinking"; arn.textContent = "lethal cold";
+    } else if (endsBand) {
+      at.className = "attn d-warn"; atx.textContent = "is shrinking"; arn.textContent = "harsh climate";
+    } else {
+      at.className = "attn d-quiet"; atx.textContent = "is steady"; arn.textContent = "—";
+    }
+
+    // ---- surface A: option 1 ---------------------------------------------
+    var h2 = clear("a-opt-chips");
+    chip(h2, "Terrain", "Mixed woodland");
+    chip(h2, "Climate",
+         (lethalToday ? "⚠ " : (endsBand ? "⚠ " : "")) + bandName(t) + " · " + fmt(t, 1) + " °C",
+         lethalToday ? "danger" : (endsBand ? "warn" : ""));
+    chip(h2, "Habitability", climateDrain(t) >= 0.09 ? "Hostile" : "Fair");
+    var hv = document.getElementById("a-opt-hover");
+    if (lethalToday) {
+      hv.innerHTML = '<span class="hk">hover:</span> ' + fmt(base * 100, 1) +
+        "% increased mortality per turn due to severe cold — and this ground cannot sustain a band";
+    } else if (endsBand) {
+      hv.innerHTML = '<span class="hk">hover:</span> this ground cannot sustain a band: ' +
+        "morale falls here, and a discontented band produces half as much food as it eats";
+    } else {
+      hv.innerHTML = '<span class="hk">hover:</span> <em>no warning — the band holds here</em>';
+    }
+
+    var ot = document.getElementById("a-opt-attn");
+    var otx = document.getElementById("a-opt-attn-txt");
+    var orn = document.getElementById("a-opt-attn-rsn");
+    if (lethalToday) {
+      ot.className = "attn d-alert"; otx.textContent = "is shrinking"; orn.textContent = "lethal cold";
+    } else if (endsBand) {
+      ot.className = "attn d-alert"; otx.textContent = "is shrinking"; orn.textContent = "barren cold";
+    } else {
+      ot.className = "attn d-quiet"; otx.textContent = "is steady"; orn.textContent = "—";
+    }
+
+    // ---- surface B --------------------------------------------------------
+    var anyCold = base > 0;
+    var winnerIsElder = d.elder >= d.working && d.elder >= d.child;
+
+    // today: largest contributing bracket, cause = that bracket's dominant term
+    var bt = clear("b-today");
+    if (winnerIsElder) {
+      ev(bt, "notable", "✦", "An elder died of old age in Ashfoot", "elder · old age");
+    } else {
+      ev(bt, "alert", "⚠", "A worker died of cold in Ashfoot", "worker · cold");
+    }
+    document.getElementById("b-today-v").innerHTML = anyCold
+      ? (winnerIsElder
+          ? '<span class="miss">✕</span> cold is killing ' + fmt(d.child + d.working, 2) +
+            ' workers and children per turn, and the feed says old age'
+          : '<span class="hit">✓</span> the ⚠ fires')
+      : 'no cold deaths at this temperature';
+
+    // 3a: compare on NON-AGE deaths only
+    var b3a = clear("b-3a");
+    if (anyCold) {
+      var nonAgeElder = d.elderCold;
+      var winner = (d.working >= d.child && d.working >= nonAgeElder) ? "worker"
+                 : (d.child >= nonAgeElder ? "child" : "elder");
+      if (winner === "elder") {
+        ev(b3a, "notable", "✦", "An elder died of cold in Ashfoot", "elder · cold");
+      } else {
+        ev(b3a, "alert", "⚠",
+           (winner === "worker" ? "A worker" : "A child") + " died of cold in Ashfoot",
+           winner + " · cold");
+      }
+    } else {
+      ev(b3a, "notable", "✦", "An elder died of old age in Ashfoot", "elder · old age");
+    }
+    document.getElementById("b-3a-v").innerHTML = anyCold
+      ? '<span class="hit">✓</span> the ⚠ fires at every temperature where cold takes a worker'
+      : 'no cold deaths — old age names the event, correctly';
+
+    // 3b: one event per bracket that lost someone
+    var b3b = clear("b-3b");
+    if (anyCold) {
+      ev(b3b, "alert", "⚠", "A worker died of cold in Ashfoot", "worker · cold");
+      ev(b3b, "alert", "⚠", "A child died of cold in Ashfoot", "child · cold");
+      ev(b3b, "notable", "✦", "An elder died of old age in Ashfoot", "elder · old age");
+    } else {
+      ev(b3b, "notable", "✦", "An elder died of old age in Ashfoot", "elder · old age");
+    }
+    document.getElementById("b-3b-v").innerHTML = anyCold
+      ? '<span class="hit">✓</span> the ⚠ fires · <span class="miss">✕</span> three carries, three stranded remainders'
+      : 'no cold deaths at this temperature';
+  }
+
+  var slider = document.getElementById("temp");
+  slider.addEventListener("input", function () { render(parseFloat(slider.value)); });
+  Array.prototype.forEach.call(document.querySelectorAll(".presets button"), function (b) {
+    b.addEventListener("click", function () {
+      slider.value = b.getAttribute("data-t");
+      render(parseFloat(slider.value));
+    });
+  });
+  render(parseFloat(slider.value));
+</script>
+
+</div>
