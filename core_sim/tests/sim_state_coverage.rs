@@ -189,7 +189,7 @@ const WORLD_STATIC_RESOURCES: [&str; 18] = [
 ];
 
 /// Infrastructure, session-scoped, or not understood. The last three are the honest ones.
-const NOT_SIM_STATE_RESOURCES: [(&str, &str); 10] = [
+const NOT_SIM_STATE_RESOURCES: [(&str, &str); 11] = [
     (
         "FloraQuoteCache",
         "a memo of a pure function of ground + config; it re-derives on demand and its own \
@@ -206,6 +206,14 @@ const NOT_SIM_STATE_RESOURCES: [(&str, &str); 10] = [
     (
         "SnapshotCaptureMode",
         "a one-frame flag set around `recapture_snapshot_in_place`",
+    ),
+    (
+        "SnapshotAudiences",
+        "which seats this PROCESS is publishing frames to — a fact about its sockets, not about the \
+         world. A save is a world with N seats and who sat in them is not saved \
+         (`docs/plan_multiplayer_seats.md` §4.5); it is a resource at all only because the capture \
+         is an ECS system and has to read it, which is what `SeatRegistry` — a main-loop local — \
+         does not",
     ),
     (
         "WorldEpoch",

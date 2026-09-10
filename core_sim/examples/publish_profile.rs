@@ -1,7 +1,9 @@
 //! Ad-hoc harness for the snapshot-publication budget (`.claude/rules/core_sim/turn-profiling.md`).
 //!
-//! Prints the three rows that arc is measured in, all from the standard recipe — the shipped 80×52
-//! `earthlike` / `late_forager_tribe` config with the map seed **pinned**:
+//! Prints the rows that arc is measured in, all from the standard recipe — the shipped 80×52
+//! `earthlike` / `late_forager_tribe` config with the map seed **pinned**. Rows 4 and 5 sweep a
+//! denominator each (map size, seat count) and are interleaved across their arms; `IDLE_ONLY=1`
+//! prints row 2 alone, which is how two *binaries* are compared (see `main`):
 //!
 //! 1. **publisher** — the per-frame `publish.*` breakdown, drained from
 //!    `SnapshotHistory::last_publish_profile()`, plus a census of which whole-section comparisons
@@ -36,7 +38,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use core_sim::{build_headless_app, run_turn, turn_profile, SnapshotHistory};
+use core_sim::{
+    build_headless_app, run_turn, turn_profile, FactionId, SnapshotAudiences, SnapshotHistory,
+};
 use sim_runtime::WorldDelta;
 
 /// Turns resolved before measurement starts, so the profile is a steady-state frame rather than a
@@ -56,11 +60,26 @@ const MAP_SEED_KEY: &str = "map_seed";
 /// The config key holding the map dimensions, overridden by the scaling sweep.
 const GRID_SIZE_KEY: &str = "grid_size";
 
+/// The config key pinning how many rivals a new world takes, overridden by the seat sweep.
+const AI_FACTION_COUNT_KEY: &str = "default_ai_faction_count";
+
+/// The seat counts row 5 sweeps. **1 is the shipped single-player game** and the arm every other
+/// row in this file measures; 4 is a full local table.
+const SWEEP_SEATS: [usize; 3] = [1, 2, 4];
+
+/// Rivals the seat sweep's world is built with, so `SWEEP_SEATS`'s largest arm has a real faction
+/// behind every seat. A seat naming a faction the roster does not have would capture a fully
+/// redacted world — the *cheap* path — and flatter the sweep.
+const SEAT_SWEEP_AI_FACTIONS: u64 = 3;
+
 /// Milliseconds per second, for rendering.
 const MILLIS_PER_SECOND: f64 = 1_000.0;
 
 /// Percent, for the share column.
 const PERCENT: f64 = 100.0;
+
+/// Set it to print the idle row alone, for a two-binary A/B — see `main`.
+const IDLE_ONLY_VAR: &str = "IDLE_ONLY";
 
 /// The parent scope every `publish.*` sub-label is reported as a share of.
 const DIFF_LABEL: &str = "publish.diff";
@@ -82,14 +101,26 @@ const SWEEP_GRIDS: [(u32, u32); 3] = [(40, 26), (80, 52), (160, 104)];
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 fn main() {
-    let pinned = write_pinned_config(None);
+    let pinned = write_pinned_config(None, None);
     std::env::set_var("SIM_CONFIG_PATH", &pinned);
 
     println!("\nmap_seed={PINNED_MAP_SEED:#x}  warmups={WARMUP_TURNS}  frames={MEASURED_FRAMES}");
+    // **`IDLE_ONLY=1` prints row 2 and nothing else** — the mode for comparing two *binaries*.
+    //
+    // Interleaving is the only trustworthy way to compare a before against an after
+    // (`.claude/rules/core_sim/turn-profiling.md` → "Read shares, not absolutes"), and interleaving
+    // across a code change means alternating two builds run-for-run. A full run prints four rows and
+    // takes minutes — long enough for the machine to move between the two arms, which is the very
+    // drift the comparison is trying to see through. One row makes a round cheap enough to alternate.
+    if std::env::var(IDLE_ONLY_VAR).is_ok() {
+        turn_row("idle (publisher shut down)", Publisher::ShutDown);
+        return;
+    }
     publisher_row();
     turn_row("idle (publisher shut down)", Publisher::ShutDown);
     turn_row("busy (publisher concurrent)", Publisher::Running);
     build_breakdown_row();
+    seat_row();
 }
 
 /// Whether the turn row runs against a live publisher.
@@ -234,7 +265,7 @@ fn build_breakdown_row() {
     let mut apps: Vec<_> = SWEEP_GRIDS
         .iter()
         .map(|grid| {
-            std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(*grid)));
+            std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(*grid), None));
             let mut app = build_headless_app();
             app.world.resource_mut::<SnapshotHistory>().shutdown();
             for _ in 0..WARMUP_TURNS {
@@ -316,6 +347,86 @@ fn build_breakdown_row() {
     }
 }
 
+/// Row 5: **what a second and a fourth seat cost the turn thread**, at the shipped 80×52.
+///
+/// One frame is captured per occupied seat (`snapshot::SnapshotAudiences`), so the question this
+/// row answers is the marginal one: how much of a capture is shared between seats and how much is
+/// paid again. Reported as ms per turn and as the **increment per extra seat**, which is the figure
+/// that scales.
+///
+/// Interleaved across the arms for the same reason the grid sweep is: sequential batches on this
+/// machine drift by more than the effect. Idle, so the publisher's own per-seat work (diff, encode,
+/// socket) is deliberately not in it — that lands on the publisher thread, and row 1 prices it.
+fn seat_row() {
+    std::env::set_var(
+        "SIM_CONFIG_PATH",
+        write_pinned_config(None, Some(SEAT_SWEEP_AI_FACTIONS)),
+    );
+    let mut apps: Vec<_> = SWEEP_SEATS
+        .iter()
+        .map(|seats| {
+            let mut app = build_headless_app();
+            app.world.resource_mut::<SnapshotHistory>().shutdown();
+            let audience: Vec<FactionId> = (0..*seats as u32).map(FactionId).collect();
+            app.world.resource_mut::<SnapshotAudiences>().set(audience);
+            for _ in 0..WARMUP_TURNS {
+                run_turn(&mut app);
+            }
+            app
+        })
+        .collect();
+
+    let mut turn = vec![Duration::ZERO; SWEEP_SEATS.len()];
+    // Every capture label, so the row says *where* a seat's cost lands and not only how much it is.
+    let mut rows: Vec<(&'static str, Vec<Duration>)> = Vec::new();
+    for _ in 0..MEASURED_FRAMES {
+        for (idx, app) in apps.iter_mut().enumerate() {
+            turn_profile::begin_turn();
+            let started = Instant::now();
+            run_turn(app);
+            turn[idx] += started.elapsed();
+            for phase in turn_profile::take() {
+                if phase.label != BUILD_LABEL && !phase.label.starts_with(BUILD_PREFIX) {
+                    continue;
+                }
+                match rows.iter_mut().find(|(label, _)| *label == phase.label) {
+                    Some((_, totals)) => totals[idx] += phase.total,
+                    None => {
+                        let mut totals = vec![Duration::ZERO; SWEEP_SEATS.len()];
+                        totals[idx] = phase.total;
+                        rows.push((phase.label, totals));
+                    }
+                }
+            }
+        }
+    }
+    rows.insert(0, ("run_turn", turn));
+
+    let frames = MEASURED_FRAMES as f64;
+    let ms = |total: Duration| total.as_secs_f64() * MILLIS_PER_SECOND / frames;
+    println!("\nper-seat capture cost, idle, interleaved across seat counts (80x52)");
+    print!("{:<34}", "seats");
+    for seats in SWEEP_SEATS.iter() {
+        print!("{seats:>12}");
+    }
+    println!("{:>14}", "ms/extra seat");
+    for (label, totals) in &rows {
+        print!("{:<34}", label.trim_start_matches("snapshot."));
+        for total in totals.iter() {
+            print!("{:>12.3}", ms(*total));
+        }
+        // The slope between the first and last arm: what one more seat adds.
+        let first = ms(totals[0]);
+        let last = ms(totals[SWEEP_SEATS.len() - 1]);
+        let extra_seats = (SWEEP_SEATS[SWEEP_SEATS.len() - 1] - SWEEP_SEATS[0]) as f64;
+        println!("{:>14.3}", (last - first) / extra_seats);
+    }
+
+    for mut app in apps {
+        app.world.resource_mut::<SnapshotHistory>().shutdown();
+    }
+}
+
 /// The counts every section's cost is divided by, read off one published snapshot per grid.
 struct Denominators {
     tiles: u32,
@@ -357,7 +468,7 @@ impl Denominators {
 /// **before** the warm-ups (that is what makes it the idle row), and with no publisher there is no
 /// published snapshot to count.
 fn denominators_of(grid: (u32, u32)) -> Denominators {
-    std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(grid)));
+    std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(grid), None));
     let mut app = build_headless_app();
     for _ in 0..WARMUP_TURNS {
         run_turn(&mut app);
@@ -451,7 +562,7 @@ fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 38] {
 
 /// Copy the **current** shipped `simulation_config.json` with the seed pinned, and return its path.
 /// `grid` overrides the map dimensions (row 4's sweep); `None` keeps the shipped size.
-fn write_pinned_config(grid: Option<(u32, u32)>) -> PathBuf {
+fn write_pinned_config(grid: Option<(u32, u32)>, ai_factions: Option<u64>) -> PathBuf {
     let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("data")
@@ -461,13 +572,17 @@ fn write_pinned_config(grid: Option<(u32, u32)>) -> PathBuf {
     let mut config: serde_json::Value =
         serde_json::from_str(&text).expect("shipped simulation_config.json should parse");
     config[MAP_SEED_KEY] = serde_json::json!(PINNED_MAP_SEED);
-    let suffix = match grid {
+    let mut suffix = match grid {
         Some((width, height)) => {
             config[GRID_SIZE_KEY] = serde_json::json!({ "x": width, "y": height });
             format!("_{width}x{height}")
         }
         None => String::new(),
     };
+    if let Some(ai_factions) = ai_factions {
+        config[AI_FACTION_COUNT_KEY] = serde_json::json!(ai_factions);
+        suffix.push_str(&format!("_ai{ai_factions}"));
+    }
 
     // One file per grid, so a run's three worlds cannot race each other's config on disk.
     let out = std::env::temp_dir().join(format!("publish_profile_simulation_config{suffix}.json"));

@@ -23,6 +23,7 @@ server side, so the two ends of the wire have the same shape.
 |--------|-------|
 | `lib.rs` | The gdextension entry point (`ShadowScaleExtension` + `entry_symbol`) and the crate's public re-exports. Nothing else — no decode logic |
 | `bridge/command.rs` | `CommandBridge` (`#[godot_api]`), the command worker thread, `command_sender`, `resolve_entry_path` |
+| `bridge/command_link.rs` | **The seated command connection** — one long-lived socket that holds this client's faction seat, its reader thread, its reconnect/re-claim clock, and `dispatch`, the one place that decides whether a command rides it or a throwaway one (`.claude/rules/client/command-transport.md`) |
 | `bridge/script_host.rs` | `ScriptHostBridge` (`#[godot_api]`) over the embedded script runtime |
 | `bridge/decoder.rs` | `SnapshotDecoder` (`#[godot_api]`) + the free `decode_snapshot` / `decode_delta`. **The only entry into the decode path** (`SnapshotLoader.gd` is its one caller) |
 | `bridge/variant.rs` | `Variant` ↔ `serde_json` marshalling shared by the bridges |

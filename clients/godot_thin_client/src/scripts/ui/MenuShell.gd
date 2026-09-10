@@ -181,11 +181,13 @@ const RIVALS_CONTROL_ROW_HEIGHT := 18.0
 ## The caption under the row, in its four states. It is a CAPTION, always on screen, for the same
 ## reason the Theme row's is: the one thing the control cannot show is why it is offering what it is.
 const RIVALS_CAPTION_PENDING := "Asking how many this map can seat…"
-## **THE ASK WENT UNANSWERED, AND THAT IS NOT A DEAD END — but it has a consequence, and the caption
-## names it.** No count is sent in this state, and the server answers an absent count with its
-## unattended roster: a world with no rivals in it. A player who wanted neighbours and hit a failed
-## ask must not have to infer that from a sentence about the server's own settings.
-const RIVALS_CAPTION_UNAVAILABLE := "The server did not say how many this map can seat, so this world will be built with no rivals — yours would be the only people in it."
+## **AN UNANSWERED ASK GETS NO CAPTION AT ALL — the row states its COUNT instead.** There were two
+## sentences here, one for a server that replied without a count and one for a server that never
+## replied, and both were rejected on sight: the row's question is *how many others?*, its answer is
+## *none*, and the readout says that in one word. A player has no model of capacity queries and needs
+## none to pick a map size, so the reason a number is missing belongs in the log and in
+## `.claude/rules/client/new-game-setup.md` — never on this screen. What an unreachable server costs
+## the player is said once, by "Begin the trail" being unavailable, and nowhere else.
 ## A genuine 0 ceiling: a grid too small to seat a second start at the distance worldgen keeps between
 ## them. Not a failure, and not rendered as one.
 const RIVALS_CAPTION_ALONE := "This map is too small to seat another people apart from yours — you will be alone in the world."
@@ -197,8 +199,31 @@ const RIVALS_CAPTION_CEILING_FORMAT := "Others share the world, each taking its 
 ## The summary line's value for a count that was never offered. It stays distinct from an explicit
 ## `none` because the REQUEST is different — no count is named, and the server answers that with its
 ## unattended roster — even though both land on a world with no rivals in it.
+## **HOW OFTEN AN UNREACHABLE SERVER IS ASKED AGAIN**, while the setup pane is up and only while it
+## believes nothing is listening. A clock exists here at all because this state now DISABLES "Begin
+## the trail": a latched block has to clear itself, and the alternatives are controls a stuck player
+## has no reason to find (leave the pane and come back, or click a different map size). Slow enough
+## that the failed connects are not a spin — a refused TCP connect on localhost returns immediately,
+## so this interval is the whole cost — and quick enough that a server started after the client is
+## picked up before the player has read the caption twice.
+const RIVALS_RETRY_SECONDS := 3.0
+
 const RIVALS_SUMMARY_UNSET := "none asked for"
 const RIVALS_SUMMARY_NONE := "none"
+
+# ---- the rail notice: what is wrong with this session ---------------------------------------------
+## **THE ONE SENTENCE FOR "NOTHING IS LISTENING", AND THE ONLY PLACE THIS SCREEN EXPLAINS ITSELF.**
+## Raised by two paths that are the same fact — a capacity ask that reached no server (this shell's own
+## `_server_unreachable`), and a run that could not start because the seat claim went unanswered
+## (`Main._on_seat_refused`, which hands this very constant back through `set_notice`). One statement
+## and one thing to do about it: a player has no model of seats, claims or capacity queries, and the
+## rival row deliberately says nothing at all, so this line is what stops a greyed-out
+## "Begin the trail" being unexplained.
+const NOTICE_NO_SERVER := "Unable to connect to the server. Please try restarting the game."
+## How solid the notice's DANGER wash sits over the rail. The same weight `HudStyle.SIGNAL_WASH` gives
+## a selected nav row, in the other state colour: a notice must read as a condition, never as a
+## control the player could press.
+const NOTICE_WASH_ALPHA := 0.14
 
 # ---- layout constants (named; no bare literals) ----
 const LANDING_PAD_X := 72.0
@@ -336,6 +361,27 @@ var _rival_caption: Label = null
 ## is something worth keeping on screen only once there is something on screen. Reset with the pane,
 ## because a freshly built row has nothing to preserve.
 var _rivals_answered_once := false
+## **THE LATCH THAT SAYS "NOTHING IS LISTENING"**, held ACROSS the retry that would otherwise blink it.
+## Set by a transport failure, cleared by any answer that came from a server; a `PENDING` seam
+## deliberately leaves it alone, because that pending ask is this screen's own retry and re-rendering
+## it as "asking…" would flicker both the caption and the button every `RIVALS_RETRY_SECONDS`. It is
+## also why a merely-pending FIRST ask — the normal case for a moment at every startup — never
+## disables anything: the latch is false until something has actually failed. See
+## `_note_server_reachability`.
+var _server_unreachable := false
+## The setup pane's primary action, held so the reachability latch can lock and unlock it. Rebuilt and
+## re-nulled with the pane, exactly like the rival row's nodes.
+var _begin_button: Button = null
+## The re-ask clock, running only while `_server_unreachable` and only while the setup pane is up.
+var _capacity_retry: Timer = null
+
+## **THE RAIL NOTICE'S TEXT AND NODES** (`set_notice`). Held rather than passed straight to a label
+## because the owner can hand a notice in before this shell has built anything — `LandingScreen`
+## reads it out of the `GameLaunch` handoff in its own `_ready`, which runs before nothing at all is
+## guaranteed to exist here. Empty text is the healthy case and draws nothing.
+var _notice_text := ""
+var _notice_panel: PanelContainer = null
+var _notice_label: Label = null
 
 ## **THE SAVE CHANNEL SEAM, INJECTED** (`set_save_slots`). `MenuShell` holds no socket and no handle
 ## to `Main` — the same boundary the fog row keeps — so the owner builds the seam over its command
@@ -416,6 +462,15 @@ func _build() -> void:
 	_pane_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pane_scroll.add_child(_pane_body)
 
+	# The re-ask clock. Built here rather than on demand so it has the shell's lifetime and there is
+	# exactly one of it; it is STOPPED unless the setup pane is up and the server is unreachable
+	# (`_refresh_capacity_retry`), so a healthy screen never runs it.
+	_capacity_retry = Timer.new()
+	_capacity_retry.wait_time = RIVALS_RETRY_SECONDS
+	_capacity_retry.autostart = false
+	_capacity_retry.timeout.connect(_on_capacity_retry_timeout)
+	add_child(_capacity_retry)
+
 
 func _build_rail() -> void:
 	var wordmark := VBoxContainer.new()
@@ -439,6 +494,23 @@ func _build_rail() -> void:
 	campaign.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	campaign.add_theme_font_size_override("font_size", CAMPAIGN_SIZE)
 	wordmark.add_child(campaign)
+
+	# **THE NOTICE SITS ON THE RAIL, ABOVE THE NAV IT POINTS AT.** It is built once with the rail and
+	# not with a pane: the thing it reports (a run that could not start) is a fact about the SESSION,
+	# so it must survive every pane change and sit beside the two moves that answer it — New Game and
+	# Load Game, the rows directly below.
+	_notice_panel = PanelContainer.new()
+	_notice_panel.visible = false
+	_notice_panel.add_theme_stylebox_override("panel", _notice_stylebox())
+	# **THE BOX HOLDS ONE SENTENCE AND NOTHING ELSE** — no eyebrow, no heading. The border is what says
+	# something is wrong; a label over one line of plain prose only adds a second thing to read.
+	_notice_label = Label.new()
+	_notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_notice_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_notice_label.add_theme_font_size_override("font_size", BODY_SIZE)
+	_notice_label.add_theme_color_override("font_color", HudStyle.INK)
+	_notice_panel.add_child(_notice_label)
+	_rail.add_child(_notice_panel)
 
 	_nav_box = VBoxContainer.new()
 	_nav_box.add_theme_constant_override("separation", NAV_GAP)
@@ -473,6 +545,7 @@ func _apply_mode() -> void:
 		_active_pane = "resume" if is_pause else PANE_NEW_GAME
 	_apply_shell_layout()
 	_rebuild_nav()
+	_apply_notice()
 	_show_pane(_active_pane)
 
 
@@ -647,6 +720,7 @@ func _show_pane(pane_id: String) -> void:
 	_rival_readout = null
 	_rival_caption = null
 	_rivals_answered_once = false
+	_begin_button = null
 	for child in _pane_body.get_children():
 		child.queue_free()
 	match pane_id:
@@ -666,6 +740,8 @@ func _show_pane(pane_id: String) -> void:
 			_build_exit_pane()
 		"resume":
 			pass  # empty pane — the nav Resume row is the whole affordance
+	# The re-ask clock belongs to the setup pane, so it starts and stops with the pane that owns it.
+	_refresh_capacity_retry()
 
 
 func _build_setup_pane() -> void:
@@ -702,11 +778,14 @@ func _build_setup_pane() -> void:
 	_refresh_summary()
 
 	var actions := _make_actions_row()
-	var begin := Button.new()
-	begin.text = "Begin the trail"
-	HudStyle.apply_button(begin, "primary")
-	begin.pressed.connect(_on_begin_pressed)
-	actions.add_child(begin)
+	_begin_button = Button.new()
+	_begin_button.text = "Begin the trail"
+	HudStyle.apply_button(_begin_button, "primary")
+	_begin_button.pressed.connect(_on_begin_pressed)
+	actions.add_child(_begin_button)
+	# A pane built while nothing is listening opens with the action already locked, rather than locking
+	# it a frame later when the next answer lands.
+	_refresh_begin_enabled()
 
 	var preview := Button.new()
 	preview.text = "Preview map"
@@ -1200,6 +1279,45 @@ func _on_begin_pressed() -> void:
 	)
 
 
+# ---- the rail notice --------------------------------------------------------
+
+## **SAY WHY THE PLAYER IS BACK ON THIS SCREEN, IN ONE SENTENCE.** Shown on the rail above the nav.
+## `""` hides it, which is the healthy path: a session that started normally never calls this with
+## text.
+##
+## The owner picks the words because only it knows which refusal it was — `Main` distinguishes a seat
+## held by another player from a server that never answered — and for the unreachable case it hands
+## back `NOTICE_NO_SERVER`, the same line this shell raises on its own. That shared constant is what
+## makes `_notice_line` able to show ONE box: the two paths are the same fact and cannot stack.
+##
+## Safe before or after `_ready`, and safe to call twice.
+func set_notice(text: String) -> void:
+	_notice_text = text
+	if _built:
+		_apply_notice()
+
+
+func _apply_notice() -> void:
+	if _notice_panel == null or not is_instance_valid(_notice_panel):
+		return
+	var line := _notice_line()
+	_notice_label.text = line
+	_notice_panel.visible = not line.is_empty()
+
+
+## **ONE BOX, ONE LINE, TWO WAYS TO EARN IT.** The owner's notice wins when there is one, and the
+## shell raises `NOTICE_NO_SERVER` for its own unreachable state otherwise — so the player never sees
+## the same sentence twice on one screen, which is exactly what two boxes would have given them the
+## moment a bounced-back session also failed its capacity ask.
+##
+## **It hangs off the LATCH, not off the seam's state**, so it appears and disappears with the greyed
+## "Begin the trail" and never on a merely pending ask.
+func _notice_line() -> String:
+	if not _notice_text.is_empty():
+		return _notice_text
+	return NOTICE_NO_SERVER if _server_unreachable else ""
+
+
 # ---- New Game: the rival-peoples count --------------------------------------
 
 ## **INJECT THE CAPACITY SEAM.** The owner builds it over its command client and hands it in, exactly
@@ -1211,6 +1329,10 @@ func set_faction_capacity(seam: FactionCapacity) -> void:
 		return
 	if not _faction_capacity.capacity_changed.is_connected(_on_capacity_changed):
 		_faction_capacity.capacity_changed.connect(_on_capacity_changed)
+	# A seam can be handed in already carrying a verdict (it asked before this shell existed), so the
+	# latch is read from it now rather than only on the next answer.
+	_note_server_reachability()
+	_apply_notice()
 	# The setup pane is the LANDING SCREEN'S OPENING PANE — it is up before the owner has finished
 	# standing its seams up, so the first ask is made here rather than only from `_activate_item`.
 	if _built and _active_pane == PANE_NEW_GAME:
@@ -1230,6 +1352,8 @@ func _request_faction_capacity() -> void:
 ## lives in the same pane, and rebuilding a text field under a player mid-word is the caret defect the
 ## Save pane already paid for; nothing else in the setup pane depends on this answer.
 func _on_capacity_changed() -> void:
+	# Read FIRST: the caption and the primary action both derive from it.
+	_note_server_reachability()
 	if _faction_capacity != null and _faction_capacity.state == FactionCapacity.STATE_READY:
 		if _rival_picked:
 			# A pick made on a bigger map cannot outlive the switch to a smaller one.
@@ -1238,6 +1362,70 @@ func _on_capacity_changed() -> void:
 			_rival_count = _faction_capacity.default_count
 	_refresh_rivals_row()
 	_refresh_summary()
+	_refresh_begin_enabled()
+	_refresh_capacity_retry()
+	_apply_notice()
+
+
+## **IS ANYTHING LISTENING?** The one writer of `_server_unreachable`, and the reason a transport
+## failure now reads differently from every other one:
+##
+## - a failure the seam calls unreachable (`FactionCapacity.ERROR_TRANSPORT`) SETS it — no server
+##   answered, so no world can be built and the run is blocked;
+## - a `READY` answer, or a failure carrying a token a SERVER sent, CLEARS it — something is there;
+## - `PENDING` leaves it exactly as it was. That is what makes the state stable across the retry
+##   clock: the ask in flight over a dead server is this screen's own, and re-rendering it as
+##   "asking…" would blink the caption and unlock the button for the length of a round trip. It is
+##   equally what keeps the FIRST pending ask harmless — the latch starts false, so a healthy startup
+##   never disables anything.
+func _note_server_reachability() -> void:
+	if _faction_capacity == null:
+		_server_unreachable = false
+		return
+	if _faction_capacity.state == FactionCapacity.STATE_FAILED:
+		_server_unreachable = _faction_capacity.server_is_unreachable()
+	elif _faction_capacity.state != FactionCapacity.STATE_PENDING:
+		_server_unreachable = false
+	if _server_unreachable:
+		return
+	# **A SERVER THAT ANSWERED HAS RETRACTED "cannot connect", whoever put it on screen.** The line a
+	# failed session left behind (`set_notice`) says the same thing as this shell's own, so it goes
+	# with the same evidence — a stale one sitting over a working New Game screen is the defect the
+	# retry clock exists to avoid. A refusal carrying a DIFFERENT sentence is a different fact (a seat
+	# held by another player, a server running another game) and is left alone.
+	if _notice_text == NOTICE_NO_SERVER:
+		_notice_text = ""
+
+
+## **THE ONE ACTION THIS SCREEN WITHHOLDS, AND ONLY FOR THE ONE STATE THAT MAKES IT A LIE.** With no
+## server there is nothing to send `new_game` to: pressing Begin swapped to `Main.tscn`, which sat on
+## a black loading screen forever. Every other unanswered state still starts a game (a count is simply
+## omitted), so this is the only gate — see `.claude/rules/client/new-game-setup.md`.
+func _refresh_begin_enabled() -> void:
+	if _begin_button == null or not is_instance_valid(_begin_button):
+		return
+	_begin_button.disabled = _server_unreachable
+
+
+## Run the re-ask clock exactly while it can do something: the setup pane is the pane, and the screen
+## believes nothing is listening. Stopped in every other state, so a healthy screen and every other
+## pane are as quiet as they were before this existed.
+func _refresh_capacity_retry() -> void:
+	if _capacity_retry == null or not is_instance_valid(_capacity_retry):
+		return
+	var wanted := _server_unreachable and _active_pane == PANE_NEW_GAME
+	if wanted and _capacity_retry.is_stopped():
+		_capacity_retry.start()
+	elif not wanted and not _capacity_retry.is_stopped():
+		_capacity_retry.stop()
+
+
+## One re-ask per tick. `FactionCapacity.retry` is a no-op unless the seam is FAILED, so a tick that
+## lands while the previous ask is still in flight costs nothing and no ask is ever doubled.
+func _on_capacity_retry_timeout() -> void:
+	if _faction_capacity == null or not _server_unreachable or _active_pane != PANE_NEW_GAME:
+		return
+	_faction_capacity.retry()
 
 
 ## The row: the slider and its readout when there is a range to offer, and the caption in every state.
@@ -1343,16 +1531,40 @@ func _rebuild_rivals_row(wants_slider: bool, ceiling: int) -> void:
 		_rival_slider.value_changed.connect(_on_rival_slider_changed)
 		_rivals_box.add_child(row)
 	else:
-		# The control's height with no control in it, so the caption below sits where it always sits.
+		# **NO RANGE TO OFFER, SO THE ROW SHOWS THE COUNT AND NOT A CONTROL.** The readout sits where the
+		# slider's readout sits, reading `None`: with no answer the world is built with no rivals, and
+		# that is a number the row can state without inventing a range it cannot honour. The row keeps
+		# `RIVALS_CONTROL_ROW_HEIGHT`, so the seed field and the summary below do not move when an
+		# answer changes the row's shape.
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.custom_minimum_size.y = RIVALS_CONTROL_ROW_HEIGHT
+
 		var reserved := Control.new()
 		reserved.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		reserved.custom_minimum_size.y = RIVALS_CONTROL_ROW_HEIGHT
-		_rivals_box.add_child(reserved)
+		reserved.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(reserved)
+
+		_rival_readout = Label.new()
+		_rival_readout.text = _rival_readout_text(0)
+		_rival_readout.custom_minimum_size.x = RIVALS_READOUT_MIN_WIDTH
+		_rival_readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+		_rival_readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
+		row.add_child(_rival_readout)
+		_rivals_box.add_child(row)
 
 	_rival_caption = Label.new()
 	_rival_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_rival_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rival_caption.add_theme_font_size_override("font_size", HINT_SIZE)
+	# **THE CAPTION HOLDS ITS LINE EVEN WHEN IT HAS NOTHING TO SAY.** A failed ask leaves the text
+	# empty, and an empty Label is zero pixels tall — everything below the row would rise by a line
+	# the moment an ask failed. The reserved height is READ from the font the label will draw in
+	# rather than written down, so a theme change cannot make it wrong.
+	var caption_font := _rival_caption.get_theme_font("font")
+	if caption_font != null:
+		_rival_caption.custom_minimum_size.y = caption_font.get_height(HINT_SIZE)
 	_rivals_box.add_child(_rival_caption)
 
 
@@ -1371,10 +1583,15 @@ func _apply_rivals_caption(state: String, answered: bool, ceiling: int) -> void:
 	if not _rivals_row_is_built():
 		return
 	if not answered:
-		var pending := state == FactionCapacity.STATE_PENDING or state == FactionCapacity.STATE_IDLE
-		_rival_caption.text = RIVALS_CAPTION_PENDING if pending else RIVALS_CAPTION_UNAVAILABLE
-		_rival_caption.add_theme_color_override(
-			"font_color", HudStyle.INK_FAINT if pending else HudStyle.WARN)
+		# **A FAILED ASK SAYS NOTHING.** The readout already reads `None`, which is the count this world
+		# will be built with; a sentence about the server on top of that is an explanation of the
+		# client's plumbing. The latch is read as well as the state so the retry clock cannot flip this
+		# line back to "asking…" every `RIVALS_RETRY_SECONDS`.
+		if _server_unreachable or state == FactionCapacity.STATE_FAILED:
+			_rival_caption.text = ""
+			return
+		_rival_caption.text = RIVALS_CAPTION_PENDING
+		_rival_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 		return
 	_rival_caption.text = RIVALS_CAPTION_ALONE if ceiling == 0 else RIVALS_CAPTION_CEILING_FORMAT % ceiling
 	_rival_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
@@ -1968,6 +2185,18 @@ func _selectable_stylebox(selected: bool) -> StyleBoxFlat:
 	sb.set_border_width_all(1)
 	sb.border_color = HudStyle.SIGNAL_DEEP if selected else HudStyle.LINE
 	_pad_stylebox(sb, CARD_PAD, CARD_PAD)
+	return sb
+
+
+## The rail notice's chrome: a DANGER wash under a DANGER hairline, at the nav row's own padding so the
+## block lines up with the rows beneath it.
+func _notice_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(HudStyle.DANGER, NOTICE_WASH_ALPHA)
+	sb.set_corner_radius_all(CTRL_RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = HudStyle.DANGER
+	_pad_stylebox(sb, NAV_PAD_X, NAV_PAD_Y)
 	return sb
 
 

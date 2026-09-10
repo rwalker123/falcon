@@ -71,6 +71,7 @@ pub mod routes;
 pub mod save;
 pub mod save_store;
 mod scalar;
+pub mod seats;
 mod sedentarization;
 mod sedentarization_config;
 mod settlement_stage_config;
@@ -410,9 +411,13 @@ pub use resources::{
     TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
+pub use seats::{
+    ConnectionId, ConnectionIdAllocator, SeatClaimRefusal, SeatClaimant, SeatRegistry, SeatToken,
+    SeatTurnGate, SeatTurnLimits, TurnWait,
+};
 pub use snapshot::{
     command_events_to_state, publish_baseline_snapshot, recapture_snapshot_in_place, FrameSink,
-    SnapshotHistory, StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
+    SnapshotAudiences, SnapshotHistory, StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
@@ -839,6 +844,10 @@ pub fn build_headless_app() -> App {
         .init_resource::<starting_loadout::StartingLoadout>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
+        // **Who the world publishes a frame to.** Empty at boot: a world with no claimed seat
+        // publishes the single `ViewerFaction` view, which is every test and every single-player
+        // session before its client claims. The server rewrites it from `SeatRegistry`.
+        .insert_resource(snapshot::SnapshotAudiences::default())
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)
         .insert_resource(espionage_roster)

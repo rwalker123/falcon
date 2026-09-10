@@ -52,8 +52,8 @@ a player starting a game.
 > which is **none** — the roster a `cargo run` server, a test harness or an unattended `new_game`
 > comes up with, deliberately split from the map-scaled number the New Game screen pre-selects. The
 > two requests are still different (an explicit `0` names the count whatever the config says), but
-> the world they land on is the same by default. Every sentence the client writes about the absent
-> case has to say *no rivals*, and the failure caption does.
+> the world they land on is the same by default. The row says so without a sentence: with no answer to
+> offer, the readout reads `None`, which is the count the absent argument lands on.
 
 **So "the count shown is the count sent" is load-bearing, not incidental.** A player who never
 touches the slider still sends the number the row opened on — `_on_capacity_changed` seeds
@@ -65,20 +65,50 @@ without standing a client up.
 
 ## The control shows only what it has been told
 
-A slider exists **only** when the answer landed and its ceiling is at least one. Pending, failed and
-a genuine 0 ceiling each get their own caption instead, in the `MenuShell` idiom the Theme row set:
-a caption is always on screen, never a tooltip, because the thing the control cannot show is why it
-is offering what it is.
+A slider exists **only** when the answer landed and its ceiling is at least one. Every other state
+shows **the readout alone, reading `None`** — the count the world will actually be built with — in the
+same column the slider's readout occupies, so the row always states a number and never invents a range
+it cannot honour.
 
 - **A 0 ceiling is not a failure.** A grid with no room for a second start reads as *"you will be
-  alone in the world"*, and the pane sends an explicit `0` — the count it just told the player they
-  are getting.
-- **A failed ask is not a dead end, but it has a consequence and the caption names it**: no count is
-  sent, so the world is built with **no rivals in it**. `Begin the trail` stays live — the player is
-  never blocked — and the summary reads `none asked for`, which stays distinct from the explicit
-  `none` because the request is.
-- **Re-entering the pane is the retry**, exactly as the saves panes' "Try again" button is: a
-  rebuild-driven retry would spin the socket for as long as the screen is open.
+  alone in the world"* under the `None`, and the pane sends an explicit `0` — the count it just told
+  the player they are getting.
+- **A FAILED ASK GETS NO CAPTION AT ALL.** There were two sentences under this row — one for a server
+  that answered without a count, one for a server that never answered — and both are gone. The row's
+  question is *how many others?*, its answer is *none*, and the readout says that in one word; a
+  paragraph about capacity queries under a slider explains the client's plumbing to someone who has
+  no model of it.
+- **THE REASON MOVED TO THE RAIL; IT WAS NOT DELETED.** Removing the caption and stopping there left
+  a greyed-out "Begin the trail" with nothing anywhere saying why, which is worse than the caption
+  that was wrong. So an unreachable server raises the shell's one-line notice above the nav —
+  `MenuShell.NOTICE_NO_SERVER`, *"Unable to connect to the server. Please try restarting the game."*
+  One explanation, in one place, in the player's terms; the row stays silent and the box says the
+  thing the button cannot.
+- **`Begin the trail` is DISABLED for one state only: nothing is listening.** With no server there is
+  nothing to send `new_game` to — the press used to swap to a `Main` that sat on a black loading
+  screen forever. `FactionCapacity.server_is_unreachable` is the test (the `transport` token, and only
+  it), so a server that answered without a count still starts a game with the argument omitted.
+  `Preview map` stays live throughout: that pane is the client's own preset list and asks nothing.
+- **A merely PENDING ask disables nothing and says nothing.** That is the normal case for a moment at
+  every startup, and a primary action — or a notice — that blinked on every open would be worse than
+  the bug this fixed. `MenuShell._server_unreachable` is the latch that makes the two
+  distinguishable: a transport failure sets it, any answer FROM a server clears it, and a `PENDING`
+  seam leaves it alone — which is also what stops the retry below flickering the state it is retrying.
+  **The button, the notice and the retry clock all hang off that one latch**, so they appear and
+  disappear together and a stale "cannot connect" cannot sit over a working screen.
+- **ONE BOX, NEVER TWO.** A session bounced back from a failed seat claim arrives with the SAME
+  sentence already handed in (`set_notice`, from `Main`), and its capacity ask then fails too.
+  `_notice_line` prefers the handed-in text and falls back to the latch, so the two paths render one
+  box; and because both carry `NOTICE_NO_SERVER`, an answer retracts the handed-in copy as well
+  (`_note_server_reachability`). A refusal whose sentence is a DIFFERENT fact — a seat held by another
+  player — is left standing, since a reachable server does not make it untrue.
+- **An unreachable server heals itself, on a clock.** `RIVALS_RETRY_SECONDS` (3 s) re-asks while the
+  latch holds AND the setup pane is up, and nothing else runs it. A blocking state has to clear
+  without the player finding the one control that re-asks; a refused TCP connect on localhost returns
+  immediately, so the interval is the whole cost. Re-entering the pane still retries, as the saves
+  panes' "Try again" does, and a rebuild still never does — that would spin the socket once per redraw.
+- **The summary keeps `none asked for`**, distinct from the explicit `none`, because the REQUEST is
+  different even though both worlds end up with no rivals.
 
 **The pick survives a size change; the ceiling clamps it.** A count chosen on a roomy map meets the
 smaller map's ceiling through `clamp_count`, and a player who has NOT touched the control follows the
@@ -104,8 +134,10 @@ transitions rather than the states:
   `set_value_no_signal`, since this is not the player moving the control), the readout, the caption.
   `_rebuild_rivals_row` is the only path that frees anything, and only a genuine shape change
   (no-slider → slider, or the reverse) reaches it.
-- **Both shapes are the same height.** The caption-only states put a `RIVALS_CONTROL_ROW_HEIGHT`
-  spacer where the control would be, so even a real shape change moves nothing below the row.
+- **Both shapes are the same height.** The no-slider state puts its readout in a row of
+  `RIVALS_CONTROL_ROW_HEIGHT`, so even a real shape change moves nothing below the row — and the
+  caption reserves one line of its own font's height even when a failed ask leaves it EMPTY, since a
+  zero-height Label would raise everything below it the moment an ask failed.
   Measured across all seven rendered states: the caption sits at the same y, and so do the seed field
   and the summary.
 
@@ -130,16 +162,22 @@ the load once reported as a success, are in `save-load-menu.md`.
 
 | Script | Purpose |
 |--------|---------|
-| `FactionCapacity.gd` (`class_name FactionCapacity`) | The `faction_capacity` seam, modelled on `SaveSlots`: `set_sender`/`deliver`, `request(width, height)` (a repeat of an answered grid is dropped), `retry`, the four states, `permits`/`clamp_count`, and `NO_COUNT` — "never offered a choice", which is not a number. **Owns no socket** |
+| `FactionCapacity.gd` (`class_name FactionCapacity`) | The `faction_capacity` seam, modelled on `SaveSlots`: `set_sender`/`deliver`, `request(width, height)` (a repeat of an answered grid is dropped), `retry`, the four states, `permits`/`clamp_count`, `NO_COUNT` — "never offered a choice", which is not a number — and **`server_is_unreachable()`**, the one place the `transport` token is told apart from a refusal a server sent, since this seam owns the token vocabulary. **Owns no socket** |
 | `QueryRequestIds.gd` (`class_name QueryRequestIds`) | The one request-id allocator for every seam on the native query worker: `REQUEST_ID_BASE` (clear of `ForecastQuery`), `IDS_PER_SESSION`, `reserve_block()` |
 
 ## Verify
 
 `menu_preview` renders the row through the seam's real `deliver`, from canned replies —
 `menu_new_game_rivals_pending`, `menu_new_game_rivals`, `menu_new_game_rivals_picked`,
-`menu_new_game_rivals_alone`, `menu_new_game_rivals_unavailable`, and the map-size click itself in
+`menu_new_game_rivals_alone`, `menu_new_game_rivals_unavailable` (a server answered, no count),
+`menu_new_game_rivals_no_server` (nothing answered), `menu_new_game_rivals_recovered` (it came back),
+`menu_landing_seat_refused` (the rail notice), and the map-size click itself in
 `menu_new_game_rivals_reask` / `_reasked` — and asserts what a frame cannot show: that no slider is
-offered without a ceiling, that a failed ask still offers `Begin the trail`, that the resolved count
-on the wire matches the pick, that the control across a re-ask is the SAME NODE at the SAME RECT with
-the row's height and the summary unchanged, that the row is the same height with and without a
-slider, and that the capacity seam's ids are disjoint from the save seam's. Details in `.claude/rules/client/harness-menu-workbench.md`.
+offered without a ceiling, that an unanswered ask reads `None` and adds no sentence, that
+`Begin the trail` is offered in every state but the unreachable one and withheld in that one, that the
+rail notice is up in that state and GONE once a server answers — including the copy a bounced session
+handed in — that the retry does not change what is on screen, that the resolved count on the wire
+matches the pick, that
+the control across a re-ask is the SAME NODE at the SAME RECT with the row's height and the summary
+unchanged, that the row is the same height with and without a slider, and that the capacity seam's ids
+are disjoint from the save seam's. Details in `.claude/rules/client/harness-menu-workbench.md`.

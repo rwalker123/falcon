@@ -270,6 +270,41 @@ message SetHerdOutputCommand {
   float fraction = 3;
 }
 
+// ---------------------------------------------------------------------------------------------
+// SEATS - a connection says WHICH FACTION IT DRIVES, and the server thereafter takes the faction
+// from the seat rather than from the wire (docs/plan_multiplayer_seats.md 4.1).
+//
+// Every accepted command socket is minted an opaque connection id. A claim ties that connection to
+// one faction seat: after it, a faction-bearing command whose `faction_id` is not the claimed seat's
+// is REFUSED and logged, never rewritten to the claimed seat - a silent correction would hide the
+// client bug that sent it. A second claim on an occupied seat is refused, and a connection that has
+// claimed no seat may send only the commands that name no faction.
+//
+// Claiming is NOT authentication. It has no credentials and no reconnection token; a seat may be
+// claimed once, and it frees when its connection closes.
+message ClaimSeatCommand {
+  // Correlates the reply, exactly as QueryCommand.request_id does. The client owns the numbering.
+  uint64 request_id = 1;
+  // The seat wanted - a faction id in this world's roster (FactionRegistry). Unknown is refused.
+  uint32 faction_id = 2;
+}
+
+// The answer to a ClaimSeatCommand, carried on QueryReplyEnvelope because that is the command
+// socket's ONE way back (the same reason SaveOpReply rides it).
+message ClaimSeatReply {
+  bool ok = 1;
+  // Echoed so a client can assert the answer is about the seat it asked for.
+  uint32 faction_id = 2;
+  // A machine-readable snake_case token when `ok` is false ("unknown_seat", "seat_occupied",
+  // "already_seated"); the client owns the prose.
+  string error = 3;
+  // **A per-claim bearer secret: the token this seat's STREAM socket must present** to be sent this
+  // seat's frames, written as its first eight bytes little-endian. A random u64, NOT the connection's
+  // id - a stream that presents it receives that seat's private world, so treat it as a secret: hold
+  // it, present it, and keep it out of anything you log. 0 on a refusal.
+  uint64 seat_token = 4;
+}
+
 // The Telling (fork tier): answer a pending narrative fork. `beat_id` names the fork the faction
 // has on the table and `choice_id` one of that beat's authored choices; the choice's writes land in
 // the BeatLedger (declared stance offsets, flags), the beat is marked fired, and its echo line joins
@@ -875,6 +910,12 @@ message SaveOpReply {
 //
 // A query is answered from the LIVE world: this band's own equipment wear, this kit, this party
 // size, this floor.
+//
+// ⛔ THE THREE FORECAST QUESTIONS CARRY A `faction_id` AND ARE SEAT-GATED. Each is answered out of
+// that faction's private state, so it must be asked on the connection holding that faction's seat
+// (`ClaimSeatCommand`); anyone else is answered "not_your_seat". `list_saves` and `faction_capacity`
+// name no faction and are deliberately NOT gated — they are asked from the landing screen before a
+// world, and therefore before any seat, exists.
 message QueryCommand {
   // Correlates the reply. The client owns the numbering; the server only echoes it.
   uint64 request_id = 1;
@@ -1016,12 +1057,15 @@ message QueryReplyEnvelope {
     SaveOpReply save_op = 7;
     // 7 is held by `save_op`, so the faction capacity answer takes 8.
     FactionCapacityReply faction_capacity = 8;
+    // 8 is held by `faction_capacity`, so the seat claim's answer takes 9. A claim is a COMMAND
+    // rather than a question; it rides this envelope for the same reason `save_op` does.
+    ClaimSeatReply seat_claim = 9;
   }
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token
 // ("no_active_world", "unknown_herd", "unknown_band", "unknown_kit", "kit_wrong_job",
-// "invalid_floor", "invalid_party") — the client owns the prose.
+// "invalid_floor", "invalid_party", "not_your_seat") — the client owns the prose.
 message QueryError {
   string reason = 1;
 }
@@ -1349,5 +1393,7 @@ message CommandEnvelope {
     // renumber). It was authored against 69 on a branch cut before the loadout picker landed and
     // was moved on the merge: a tag is the wire, so two messages can never share one.
     SetHerdOutputCommand set_herd_output = 70;
+    // 70 is held by `set_herd_output`, so the seat claim takes 71 (append-only; never renumber).
+    ClaimSeatCommand claim_seat = 71;
   }
 }

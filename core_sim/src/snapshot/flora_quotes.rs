@@ -35,6 +35,15 @@
 //! same live `World` holding the same map, and anything that *did* move is caught by one of the two
 //! checks above.
 //!
+//! # The bare-ground rate block rides here too
+//!
+//! [`WildGroundQuotes`] holds the five per-row derivations that reduce to a function of the ground
+//! whenever a patch has no commitment and nothing banked — the rates, the material rows, the
+//! per-species rate rows and the Field rung's price. They are memoized **under the identity above,
+//! unchanged**: their inputs are the tile's own basket plus the same three config handles, so the
+//! bare-ground block adds no invalidation surface. Its own rationale, and the measurement that found
+//! it, are in `.claude/rules/core_sim/turn-profiling.md` → "The BARE-GROUND row is a memo too".
+//!
 //! # What is deliberately NOT memoized
 //!
 //! The `plant:field` **site refusal** stays a per-turn derivation at its call site, for a reason
@@ -53,10 +62,13 @@ use crate::components::Tile;
 use crate::flora_config::{FloraConfig, FloraShare};
 use crate::forage::{
     commit_fodder_payoff, commit_material_payoff, commit_payoff, commit_yield_ratio,
-    crop_field_cost_multiplier, tile_flora_composition, tile_forage_capacity, wild_payoff,
+    crop_field_cost_multiplier, patch_field_cost_multiplier, patch_fodder_per_biomass,
+    patch_material_yields, patch_provisions_per_biomass, patch_species_rates,
+    tile_flora_composition, tile_forage_capacity, wild_payoff, ForagePatch, SpeciesRate,
 };
 use crate::intensification::{LadderConfig, RungKey};
 use crate::labor_config::{ForageLaborConfig, LaborConfig};
+use crate::materials_config::MaterialYieldDef;
 
 use super::FORECAST_OUTPUT_MULTIPLIER;
 
@@ -76,6 +88,34 @@ struct CachedQuotes {
     resource_terrain: TerrainType,
     composition: Arc<[FloraShare]>,
     shares: Arc<[FloraShareInfo]>,
+    wild: WildGroundQuotes,
+}
+
+/// **WHAT A PATCH ON THIS TILE PAYS WHILE NOTHING IS COMMITTED TO IT** — the five per-row
+/// derivations that reduce to a function of the ground the moment a patch is bare
+/// ([`crate::forage::patch_is_wild_ground`], which carries the proof).
+///
+/// Every one of them is derived here by calling **the shipped seam itself** against a bare
+/// [`crate::forage::ForagePatch`] on this tile, never by a wild-only re-statement of its arithmetic —
+/// the rule [`crate::forage::wild_payoff`] and `commit_payoff` already follow one field over. So a
+/// change to any of the five moves the memo with it, and the readout's two routes cannot come to
+/// disagree about what bare ground pays.
+///
+/// **`Arc<[_]>` on the two lists** for [`FloraQuoteCache::composition`]'s reason: a patch row borrows
+/// them for the length of its own construction rather than deep-copying a `String` per named plant
+/// per material, which is most of what these two cost.
+pub(crate) struct WildGroundQuotes {
+    /// [`crate::forage::patch_provisions_per_biomass`] on bare ground.
+    pub(crate) provisions_per_biomass: f32,
+    /// The fodder twin.
+    pub(crate) fodder_per_biomass: f32,
+    /// [`crate::forage::patch_field_cost_multiplier`] on bare ground — the ladder-relative price of a
+    /// Sow of the rung's own auto-picked crop, before any leg has stamped one.
+    pub(crate) field_cost_multiplier: f32,
+    /// [`crate::forage::patch_material_yields`] on bare ground: one row per named plant per material.
+    pub(crate) material_yields: Arc<[MaterialYieldDef]>,
+    /// [`crate::forage::patch_species_rates`] on bare ground: one row per named plant.
+    pub(crate) species_rates: Arc<[SpeciesRate]>,
 }
 
 /// The basket handed back for ground the sweep never visited. Built once rather than per call —
@@ -194,6 +234,14 @@ impl FloraQuoteCache {
             .map_or_else(|| no_shares_here(), |cached| &cached.composition)
     }
 
+    /// **WHAT BARE GROUND ON THIS TILE PAYS** — see [`WildGroundQuotes`]. **`None` for a coord the
+    /// sweep never visited**, the same absent-means-nothing convention the two basket accessors above
+    /// use: a caller with no entry derives live, which is the correct answer for ground the capture
+    /// has not described rather than a fabricated rate block.
+    pub(crate) fn wild_ground(&self, tile: UVec2) -> Option<&WildGroundQuotes> {
+        self.entries.get(&tile).map(|cached| &cached.wild)
+    }
+
     /// Entries currently held — for the guards, which assert on what the memo *did* rather than on
     /// the timings it changed.
     #[cfg(test)]
@@ -231,12 +279,14 @@ impl FloraQuoteSweep<'_> {
         } = self;
         let resource_terrain = tile.resource_terrain();
         let derive = || {
-            let (composition, shares) = derive_tile_quotes(flora, forage, ladder, tile, *map_seed);
+            let (composition, shares, wild) =
+                derive_tile_quotes(flora, forage, ladder, tile, *map_seed);
             CachedQuotes {
                 terrain: tile.terrain,
                 resource_terrain,
                 composition: Arc::from(composition),
                 shares: Arc::from(shares),
+                wild,
             }
         };
         let held = match entries.entry(tile.position) {
@@ -255,8 +305,8 @@ impl FloraQuoteSweep<'_> {
 
 /// **What grows on this tile, and what each plant would pay once committed to** — the whole derived
 /// block, in one pure function of ground and config so the memo above has something exact to key on.
-/// Returns the tile's raw basket beside the quoted one, because both are memo entries and both come
-/// out of the same realization draw.
+/// Returns the tile's raw basket beside the quoted one and [`WildGroundQuotes`], because all three
+/// are memo entries and all three come out of the same realization draw.
 ///
 /// The quotes are taken against **this tile's own `K`** — never the live patch's — and at the
 /// standing crop each rung *settles* at, so they answer "what would this ground pay once this crop is
@@ -267,7 +317,7 @@ fn derive_tile_quotes(
     ladder: &LadderConfig,
     tile: &Tile,
     map_seed: u64,
-) -> (Vec<FloraShare>, Vec<FloraShareInfo>) {
+) -> (Vec<FloraShare>, Vec<FloraShareInfo>, WildGroundQuotes) {
     let tile_capacity = tile_forage_capacity(forage, tile);
     let composition = tile_flora_composition(flora, forage, tile, map_seed).into_owned();
     // What this tile pays left wild — the denominator every ratio on this tile divides by, resolved
@@ -409,7 +459,47 @@ fn derive_tile_quotes(
             }
         })
         .collect();
-    (composition, quotes)
+    let wild = derive_wild_ground_quotes(
+        flora,
+        forage,
+        ladder,
+        tile.position,
+        tile_capacity,
+        &composition,
+    );
+    (composition, quotes, wild)
+}
+
+/// **THE BARE-GROUND RATE BLOCK** — [`WildGroundQuotes`], derived by asking the five shipped seams
+/// about a patch on this tile that nothing has been committed to or worked on.
+///
+/// The patch is built exactly as the readout's own redaction builds one (`ForagePatch::new`, which
+/// `ForagePatch::as_wild_ground` also defers to), so *"what the memo answers"* and *"what a wild patch
+/// derives"* are one construction rather than two that agree. Its capacity is the tile's own `K`; none
+/// of the five reads it, and passing anything else would be inventing a number the readout could
+/// disagree with.
+fn derive_wild_ground_quotes(
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
+    tile: UVec2,
+    tile_capacity: f32,
+    composition: &[FloraShare],
+) -> WildGroundQuotes {
+    let bare = ForagePatch::new(tile, tile_capacity);
+    WildGroundQuotes {
+        provisions_per_biomass: patch_provisions_per_biomass(&bare, composition, flora, forage),
+        fodder_per_biomass: patch_fodder_per_biomass(&bare, composition, flora, forage),
+        field_cost_multiplier: patch_field_cost_multiplier(
+            &bare,
+            composition,
+            flora,
+            forage,
+            ladder,
+        ),
+        material_yields: Arc::from(patch_material_yields(&bare, composition, flora, forage)),
+        species_rates: Arc::from(patch_species_rates(&bare, composition, flora, forage)),
+    }
 }
 
 /// **What a crop that cannot be sown here quotes as its Sow price** — `0`, the wire's "no figure",
@@ -455,7 +545,7 @@ mod tests {
         let mut sweep = cache.sweep(&flora, &labor, &ladder, 99, UVec2::new(16, 16));
         for tile in &tiles {
             let cached = sweep.quotes(tile).to_vec();
-            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, &ladder, tile, 99);
+            let (_, fresh, _) = derive_tile_quotes(&flora, &labor.forage, &ladder, tile, 99);
             assert_eq!(cached, fresh, "tile {:?}", tile.position);
         }
 
@@ -463,13 +553,127 @@ mod tests {
         let mut sweep = cache.sweep(&flora, &labor, &ladder, 99, UVec2::new(16, 16));
         for tile in &tiles {
             let cached = sweep.quotes(tile).to_vec();
-            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, &ladder, tile, 99);
+            let (_, fresh, _) = derive_tile_quotes(&flora, &labor.forage, &ladder, tile, 99);
             assert_eq!(
                 cached, fresh,
                 "tile {:?} on the second sweep",
                 tile.position
             );
         }
+    }
+
+    /// **The bare-ground rate block is what a bare patch derives live** — the property the readout's
+    /// two routes rest on ([`WildGroundQuotes`]). Asserted against the shipped seams themselves,
+    /// never against recorded numbers, so a retune of the roster or the gains moves both sides.
+    ///
+    /// It sweeps several biomes because the five values are basket-dependent: a single biome would
+    /// let a memo that answered one tile's basket for every tile pass everywhere.
+    #[test]
+    fn the_bare_ground_quotes_are_what_a_bare_patch_derives_live() {
+        let (flora, labor, ladder) = configs();
+        let forage = &labor.forage;
+        let mut cache = FloraQuoteCache::default();
+        let tiles: Vec<Tile> = [
+            TerrainType::MixedWoodland,
+            TerrainType::AlluvialPlain,
+            TerrainType::PrairieSteppe,
+            TerrainType::RiverDelta,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(x, terrain)| tile_at(UVec2::new(x as u32, 4), terrain))
+        .collect();
+
+        let mut sweep = cache.sweep(&flora, &labor, &ladder, 99, UVec2::new(16, 16));
+        for tile in &tiles {
+            sweep.quotes(tile);
+        }
+        let mut saw_a_material_row = false;
+        for tile in &tiles {
+            let composition = cache.tile_composition(tile.position).to_vec();
+            let bare = ForagePatch::new(tile.position, tile_forage_capacity(forage, tile));
+            // The gate the readout applies before it reads the memo at all: a freshly built patch is
+            // bare ground, and if it were not, every value below would be answering the wrong patch.
+            assert!(
+                crate::forage::patch_is_wild_ground(&bare),
+                "a fresh patch on {:?} is bare ground",
+                tile.terrain
+            );
+            let wild = cache
+                .wild_ground(tile.position)
+                .expect("the sweep visited this tile");
+            assert_eq!(
+                wild.provisions_per_biomass,
+                patch_provisions_per_biomass(&bare, &composition, &flora, forage),
+                "provisions on {:?}",
+                tile.terrain
+            );
+            assert_eq!(
+                wild.fodder_per_biomass,
+                patch_fodder_per_biomass(&bare, &composition, &flora, forage),
+                "fodder on {:?}",
+                tile.terrain
+            );
+            assert_eq!(
+                wild.field_cost_multiplier,
+                patch_field_cost_multiplier(&bare, &composition, &flora, forage, &ladder),
+                "field price on {:?}",
+                tile.terrain
+            );
+            assert_eq!(
+                &wild.material_yields[..],
+                &patch_material_yields(&bare, &composition, &flora, forage)[..],
+                "material rows on {:?}",
+                tile.terrain
+            );
+            assert_eq!(
+                &wild.species_rates[..],
+                &patch_species_rates(&bare, &composition, &flora, forage)[..],
+                "species rates on {:?}",
+                tile.terrain
+            );
+            saw_a_material_row |= !wild.material_yields.is_empty();
+        }
+        // Liveness: an all-empty material column would satisfy every equality above while saying
+        // nothing about the decomposition the memo exists to skip.
+        assert!(
+            saw_a_material_row,
+            "at least one swept biome's basket must pay a material"
+        );
+    }
+
+    /// **A commitment or banked work takes the LIVE route, and both halves of the gate are why.**
+    /// The memo's values are a property of the ground, so a patch whose basket has been reweighted —
+    /// or whose Field leg has stamped its own price — must not be answered from it.
+    #[test]
+    fn a_committed_or_worked_patch_is_not_bare_ground() {
+        let (flora, labor, ladder) = configs();
+        let tile = tile_at(UVec2::new(2, 2), TerrainType::AlluvialPlain);
+        let capacity = tile_forage_capacity(&labor.forage, &tile);
+
+        let mut committed = ForagePatch::new(tile.position, capacity);
+        committed.species = Some(
+            crate::forage::default_species_for_rung(
+                &crate::forage::tile_flora_composition(&flora, &labor.forage, &tile, 99),
+                &flora,
+                RungKey::PlantTended,
+            )
+            .expect("alluvial ground grows something tendable"),
+        );
+        assert!(
+            !crate::forage::patch_is_wild_ground(&committed),
+            "a committed patch is not bare ground"
+        );
+
+        let mut worked = ForagePatch::new(tile.position, capacity);
+        worked.set_ladder_position(
+            crate::forage::plant_rung_span(RungKey::PlantTended, &ladder).1,
+            &ladder,
+        );
+        assert!(
+            !crate::forage::patch_is_wild_ground(&worked),
+            "a patch carrying banked work is not bare ground"
+        );
     }
 
     /// **The published `role` is the ROSTER's role, for every plant on every tile** — the display
@@ -656,7 +860,7 @@ mod tests {
         let mut saw_a_material = false;
         let mut saw_a_bare_staple = false;
         for tile in &tiles {
-            let (composition, quotes) =
+            let (composition, quotes, _) =
                 derive_tile_quotes(&flora, forage, &ladder, tile, SWEEP_SEED);
             let capacity = capacity_of(tile);
             for quote in &quotes {

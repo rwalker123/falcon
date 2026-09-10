@@ -33,7 +33,22 @@ func _ready() -> void:
 	_shell.exit_requested.connect(_on_exit_requested)
 	_shell.apply_theme_requested.connect(_on_apply_theme_requested)
 	_shell.load_requested.connect(_on_load_requested)
+	_show_pending_notice()
 	_setup_query_seams()
+
+
+## **READ THE ONE MESSAGE A FAILED SESSION LEFT BEHIND, AND CLEAR IT.** `Main` bounces back here when a
+## run cannot start at all — the seat claim was refused or went unanswered — and the reason travels in
+## the `GameLaunch` handoff, the same channel the launch parameters take the other way. It is shown on
+## the shell's rail, beside the two rows that resolve it, rather than centred alone on a black screen
+## with nothing to do.
+##
+## **Cleared as it is read**, which is also what stops the message outliving the problem: the next
+## arrival here (Abandon, a theme apply, a second run) carries nothing unless something wrote a fresh
+## one. Nothing on this screen re-claims a seat, so being here cannot regenerate the failure either.
+func _show_pending_notice() -> void:
+	_shell.set_notice(GameLaunch.pending_landing_notice)
+	GameLaunch.pending_landing_notice = ""
 
 
 ## Stand the query seams up. **A failure here is not fatal and must not be**: the landing screen is

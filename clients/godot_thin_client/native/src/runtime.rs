@@ -4,8 +4,6 @@ use rquickjs::{Context, Ctx, Exception, Function, Runtime, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
-use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex};
@@ -14,7 +12,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use sim_runtime::scripting::{ScriptManifest, ScriptManifestRef, SimScriptState};
-use sim_runtime::{parse_command_line, CommandEncodeError, CommandEnvelope, CommandPayload};
+use sim_runtime::{parse_command_line, CommandEnvelope, CommandPayload};
 
 #[derive(Debug, Error)]
 pub enum ScriptError {
@@ -1035,7 +1033,11 @@ fn dispatch_proto_command(
             payload: command_payload,
             correlation_id,
         };
-        match transmit_proto_command(&endpoint.host, endpoint.port, &envelope) {
+        // **The same routing rule the GDScript command path takes** — a script's command is no
+        // different from a panel's, so it goes out on the seated connection unless it is a host verb
+        // (`bridge/command_link.rs`). Sending it on a throwaway socket would have every
+        // faction-bearing script command refused as `not_this_connections_seat`.
+        match crate::bridge::command_link::dispatch(&endpoint.host, endpoint.port, &envelope) {
             Ok(_) => {
                 send_command_event(shared, true, line.clone(), correlation_id, None);
             }
@@ -1071,29 +1073,6 @@ fn send_command_event(
         event: "commands.issue.result".to_string(),
         payload,
     });
-}
-
-pub(crate) fn transmit_proto_command(
-    host: &str,
-    port: u16,
-    envelope: &CommandEnvelope,
-) -> Result<(), String> {
-    let bytes = envelope
-        .encode_to_vec()
-        .map_err(|CommandEncodeError::Encode(err)| format!("encode error: {err}"))?;
-    let addr = format!("{}:{}", host, port);
-    let mut stream = TcpStream::connect(&addr).map_err(|err| format!("connect error: {err}"))?;
-    let _ = stream.set_nodelay(true);
-    stream
-        .write_all(&(bytes.len() as u32).to_le_bytes())
-        .map_err(|err| format!("length write error: {err}"))?;
-    stream
-        .write_all(&bytes)
-        .map_err(|err| format!("payload write error: {err}"))?;
-    stream
-        .flush()
-        .map_err(|err| format!("flush error: {err}"))?;
-    Ok(())
 }
 
 fn register_descriptor(shared: &ScriptSharedState, descriptor: &JsonValue) -> Result<(), String> {

@@ -47,6 +47,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `roads.md` | The roads in the ground: the rung ladder painted INTO the terrain composite, the tile card's road readout, the `roadwork` pool | `hud_route_vocab.gd`, `terrain_blend.gdshader`, `TerrainRenderer.gd`, `dict/routes.rs` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `save-load-menu.md` | The save/load menu: the query-worker seam, the panes and their four list states, the load handoff, the config-drift notice | `SaveSlots.gd`, `ConfigDriftNotice.gd`, `MenuShell.gd`, `LandingScreen.gd` |
+| `command-transport.md` | One seated command connection: the seat claim, the token the SNAPSHOT stream greets with, which verbs stay off it, reconnect, and End Turn as a submission | `CommandClient.gd`, `SeatClaim.gd`, `SnapshotStream.gd`, `SnapshotLoader.gd`, `bridge/command_link.rs`, `Main.gd` |
 | `new-game-setup.md` | The New Game pane's rival-peoples count: the capacity ask, the optional argument that means "you decide", and the shared query-id allocator | `FactionCapacity.gd`, `MenuShell.gd`, `LandingScreen.gd`, `Main.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
 | `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
@@ -58,6 +59,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `harness-map-probes.md` | `map_preview` marker states, `blend_probe` edge blending | `map_preview.gd`, `blend_probe.gd` |
 | `harness-menu-workbench.md` | `MenuShell`, the workbench, the shell budget gate | `menu_preview.gd`, `workbench_*.gd` |
 | `harness-headless-guards.md` | The `--headless` decode/field/alias guards | `decode_guard.gd` + the five other `tools/*_guard.gd`/`.tscn` pairs it lists (NOT `command_guard.gd` — that is `harness-band-panel.md`) |
+| `harness-live-seat.md` | `live_seat_probe` — the ONE harness that needs a running server: the seated link, one faction-bearing command, one turn | `live_seat_probe.gd`, `live_seat_probe.tscn` |
 | `turn-profiling.md` | Where an applied snapshot's time goes (the client costs ~10× the sim), the `TurnProfile` contract and its flag | `TurnProfile.gd`, `Main.gd`, `SnapshotLoader.gd`, `MapView.gd`, `bridge/decoder.rs` |
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |

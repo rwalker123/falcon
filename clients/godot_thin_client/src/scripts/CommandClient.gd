@@ -101,6 +101,24 @@ func send_query(request_id: int, ask: Dictionary) -> bool:
     push_warning("CommandBridge query error: %s" % result.get("error", "unknown error"))
     return false
 
+## **CLAIM THE SEAT THAT DRIVES `faction_id`.** Returns whether the ask reached the bridge — the
+## ANSWER arrives on the same drain `send_query`'s does, under `request_id`.
+##
+## The server takes the faction a command acts on from the seat the *connection* claimed rather than
+## from the id on the wire (`.claude/rules/client/command-transport.md`), so until this is granted
+## every band order is refused. **Ask once per session**: the native link re-claims by itself on a
+## reconnect, and a second claim on a live connection is refused (`already_seated`) by design.
+func claim_seat(faction_id: int, request_id: int) -> bool:
+    if _bridge == null:
+        return false
+    var result: Variant = _bridge.call("claim_seat", host, proto_port, faction_id, request_id)
+    if typeof(result) != TYPE_DICTIONARY:
+        return false
+    if bool(result.get("ok", false)):
+        return true
+    push_warning("CommandBridge seat claim error: %s" % result.get("error", "unknown error"))
+    return false
+
 ## Drain the answers that have landed since the last call. **Call it once a frame**: this is the one
 ## hop from the native query worker onto the main thread.
 func poll_query_replies() -> Array:

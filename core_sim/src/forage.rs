@@ -1468,6 +1468,27 @@ pub fn composition_for_rung<'a>(
     }
 }
 
+/// **IS THIS PATCH BARE GROUND — nothing committed, nothing banked?**
+///
+/// The predicate the `forage_patches` readout gates its per-tile rate memo on
+/// (`snapshot/flora_quotes.rs` → `WildGroundQuotes`), and **both halves are load-bearing**, which is
+/// why it is one seam rather than two reads at a call site:
+///
+/// - **no committed species** ⇒ every basket seam on this patch answers the *tile's own* mix at
+///   every rung. [`composition_for_rung`]'s first arm returns the tile basket unreweighted, and
+///   [`basket_rate`] applies the favored-crop conversion gain to nothing, so the rate is
+///   rung-**independent** and [`interpolate`] over it is the identity. That is what makes the whole
+///   rate block a function of the ground rather than of where the patch stands.
+/// - **nothing banked** ([`RUNG_UNSTARTED`]) ⇒ [`patch_field_cost_multiplier`] is still the live
+///   measure of the ground rather than this patch's stamped price, and [`patch_composition`] is the
+///   tile's basket **borrowed** rather than a blend (there is no credit to blend across).
+///
+/// A patch that fails either half derives live, which is the >0% case the memo deliberately does not
+/// try to cover: a commitment is exactly what makes these numbers a property of the *patch*.
+pub(crate) fn patch_is_wild_ground(patch: &ForagePatch) -> bool {
+    patch.species.is_none() && patch.ladder_position() <= RUNG_UNSTARTED
+}
+
 /// **WHAT A SOW COSTS ON GROUND THE CROP ALREADY HOLDS `crop_share` OF**, as a multiple of the
 /// `plant:field` rung's declared `work_cost` (`docs/plan_standing_upkeep.md` §4.15).
 ///
@@ -4210,14 +4231,50 @@ pub(crate) fn forage_forecast(
     // the very readout the selection exists to move.
     take_species: &TakeSelection,
 ) -> SourceYieldForecast {
-    // **A Field takes the ORDINARY path.** It used to short-circuit into a managed, seasonless,
-    // never-drawn-down harvest — the model this arc retired, because a rung may change production and
-    // no rung changes the draw. So the forecast is one shape at every plant rung, which is also what
-    // makes it interpolate.
     // The patch's IN-EFFECT conversion rate — the same one `forage_take` pays with, so every ceiling
     // the forecast composes is the number the sim will hand over.
     let rate =
         patch_provisions_per_biomass_taking(patch, tile_composition, flora, forage, take_species);
+    forage_forecast_at_rate(
+        patch,
+        tile_composition,
+        forage,
+        flora,
+        per_worker_gather_biomass,
+        output_multiplier,
+        take_species,
+        rate,
+    )
+}
+
+/// [`forage_forecast`] for a caller that **has already resolved the patch's conversion rate** and
+/// publishes it beside the forecast.
+///
+/// It exists for one reason and it is a measured one: the `forage_patches` readout ships
+/// `provisionsPerBiomass` on the same row, so letting the forecast derive it again meant
+/// [`patch_provisions_per_biomass`] — a basket average over every named plant — was evaluated twice
+/// per patch per turn from identical inputs (`.claude/rules/core_sim/turn-profiling.md`). The wrapper
+/// above keeps the one-argument-fewer form for the six callers that have no such value in hand, so
+/// the rate still has exactly one definition.
+///
+/// ⛔ **`rate` MUST be `patch_provisions_per_biomass_taking(patch, …, take_species)`** — the same
+/// selection the forecast's own stock terms are narrowed by. Handing the whole basket's rate to a
+/// forecast for a *narrowed* crew would price its take at plants it is not carrying home.
+#[allow(clippy::too_many_arguments)] // the wrapper's inputs, plus the rate it no longer derives
+pub(crate) fn forage_forecast_at_rate(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    per_worker_gather_biomass: f32,
+    output_multiplier: f32,
+    take_species: &TakeSelection,
+    rate: f32,
+) -> SourceYieldForecast {
+    // **A Field takes the ORDINARY path.** It used to short-circuit into a managed, seasonless,
+    // never-drawn-down harvest — the model this arc retired, because a rung may change production and
+    // no rung changes the draw. So the forecast is one shape at every plant rung, which is also what
+    // makes it interpolate.
     // **THE SELECTION RIDES THE TWO STOCK TERMS, which is what keeps the ceiling one expression.**
     // `ceiling_at` is `max(0, B − floor·K) × rate`, and scaling both `B` and `K` by the selected
     // share scales that room by exactly the share — the same number `forage_take` multiplies its

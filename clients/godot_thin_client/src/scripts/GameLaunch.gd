@@ -50,6 +50,18 @@ var pending_load_slot: String = ""
 var active_load_slot: String = ""
 
 
+## **WHY A SESSION ENDED BEFORE IT BEGAN** — one message for the landing screen to show once it is
+## back up, in the same handoff direction the launch parameters travel the other way.
+##
+## Written by `Main` when a run cannot start at all: the seat claim was refused or unanswered, so no
+## world is coming and no order would be obeyed (`Main._return_to_landing`). `LandingScreen` shows it
+## on the shell's rail and CLEARS it, so it is reported exactly once and a later return to the landing
+## screen — an Abandon, a theme apply — carries nothing.
+##
+## `""` when nothing is being reported, which is every healthy path.
+var pending_landing_notice: String = ""
+
+
 ## Install the saved theme and rebuild the scene so it takes effect now.
 ##
 ## **REBUILT IN PROCESS RATHER THAN RELAUNCHED**, for two reasons. The first is the window: a process

@@ -18,6 +18,12 @@
 //! FIFO channel gives that for free; a pool would not, and no amount of sequence-number checking on
 //! the client makes an out-of-order delta applicable.
 //!
+//! **That survives per-seat delivery unchanged, and it is why the fan-out is not a pool.** A turn
+//! queues one frame per audience on the same FIFO, the same thread publishes them in the order they
+//! were queued, and a *global* order is a per-seat order restricted to one seat's frames. A worker
+//! per seat would give each seat its own ordering and no cheaper diff — the diff already fans out
+//! across sections on a bounded pool inside `publish` (`capture::DIFF_POOL_THREADS`).
+//!
 //! **Backpressure.** The queue is bounded ([`PUBLISH_QUEUE_DEPTH`]) and a full queue **blocks the
 //! turn thread**. Dropping is not available: turn-path deltas chain on `base_frame_seq`, so a
 //! dropped intermediate leaves every later delta naming a frame the client never applied, and the
@@ -41,6 +47,7 @@ use sim_runtime::{
 };
 
 use super::capture::{Publication, PublishState, StoredSnapshot};
+use crate::orders::FactionId;
 use crate::turn_profile::PhaseTiming;
 
 /// How many captured frames may sit between the turn thread and the publisher.
@@ -57,7 +64,11 @@ const PUBLISH_QUEUE_DEPTH: usize = 2;
 /// binary's* concern: the library publishes whether or not anything is listening, which is what
 /// lets every test drive real publication with no socket at all.
 pub trait FrameSink: Send + Sync + 'static {
-    fn publish_frame(&self, frame: &Arc<Vec<u8>>);
+    /// Deliver one frame to **the seat it was captured for**. A sink that cannot route (a test
+    /// double, a file writer) is free to ignore the seat; the socket does not — a frame is one
+    /// viewer's world, and delivering it to another seat's client is the disclosure PR #648 closed
+    /// on the frame's contents.
+    fn publish_frame(&self, seat: FactionId, frame: &Arc<Vec<u8>>);
 }
 
 /// What the turn thread hands the publisher.
@@ -68,11 +79,17 @@ pub trait FrameSink: Send + Sync + 'static {
 /// frame on the turn thread's critical path. That is the one place in this file where a byte counts.
 #[allow(clippy::large_enum_variant)]
 enum PublishRequest {
-    /// A captured world to hash, diff, encode and broadcast.
+    /// A captured world to diff, encode and deliver — and **the seat it was captured for**, which
+    /// selects the baselines it is diffed against and the clients it goes to.
     Frame {
+        seat: FactionId,
         snapshot: WorldSnapshot,
         kind: Publication,
     },
+    /// **The audience set this capture is about to publish for.** Queued ahead of its frames and
+    /// applied in the same order, so publication forgets a seat nothing captures for any more
+    /// without the turn thread having to wait on the publisher to say so.
+    Audiences(Vec<FactionId>),
     /// A FIFO barrier. The publisher answers it only after every frame queued ahead of it has been
     /// published, which is what makes [`SnapshotHistory::locked`] a safe read rather than a race.
     Sync(Sender<()>),
@@ -126,10 +143,21 @@ impl SnapshotHistory {
         self.locked().sink = Some(sink);
     }
 
-    /// Publish a resolved TURN. Returns as soon as the snapshot is queued — blocking only if the
-    /// publisher is [`PUBLISH_QUEUE_DEPTH`] frames behind.
-    pub fn update(&mut self, snapshot: WorldSnapshot) {
+    /// **State the audience set the frames about to be queued belong to.** Called by the capture
+    /// once per pass, before its frames.
+    pub fn retain_audiences(&mut self, audiences: Vec<FactionId>) {
+        self.send(PublishRequest::Audiences(audiences));
+    }
+
+    /// Publish a resolved TURN for one seat. Returns as soon as the snapshot is queued — blocking
+    /// only if the publisher is [`PUBLISH_QUEUE_DEPTH`] frames behind.
+    ///
+    /// **One call per audience per turn.** The capture builds a frame per seat and queues each here;
+    /// the publisher applies them in order, so seat 0's frame is never diffed against seat 1's
+    /// baselines.
+    pub fn update(&mut self, seat: FactionId, snapshot: WorldSnapshot) {
         self.send(PublishRequest::Frame {
+            seat,
             snapshot,
             kind: Publication::Turn,
         });
@@ -137,8 +165,9 @@ impl SnapshotHistory {
 
     /// Publish a mid-tick RECAPTURE — a world-mutating command changed the world between turns.
     /// See `PublishState::publish` for why these deltas are cumulative and safe to lose.
-    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) {
+    pub fn refresh_latest(&mut self, seat: FactionId, snapshot: WorldSnapshot) {
         self.send(PublishRequest::Frame {
+            seat,
             snapshot,
             kind: Publication::Recapture,
         });
@@ -175,8 +204,33 @@ impl SnapshotHistory {
         self.locked().is_empty()
     }
 
+    /// The primary audience's latest published frame — see [`Self::primary_audience`].
     pub fn latest_entry(&self) -> Option<StoredSnapshot> {
         self.locked().latest_entry()
+    }
+
+    /// **The seat every seat-blind accessor on this handle answers for**: the lowest-numbered
+    /// audience that has published. One client — single player, every test, the idle boot app —
+    /// means exactly one audience, so those accessors mean what they always meant.
+    pub fn primary_audience(&self) -> Option<FactionId> {
+        self.locked().primary_audience()
+    }
+
+    /// The audiences this world has published to, in seat order.
+    pub fn audiences(&self) -> Vec<FactionId> {
+        self.locked().audiences()
+    }
+
+    /// One named seat's latest published frame.
+    pub fn latest_entry_for(&self, seat: FactionId) -> Option<StoredSnapshot> {
+        self.locked().latest_entry_for(seat)
+    }
+
+    /// **Forget a seat's baselines**, so whoever claims that seat next is baselined on a full frame.
+    /// Called when a seat is released; a stale baseline would leave the next occupant holding rows
+    /// it was never sent.
+    pub fn drop_audience(&mut self, seat: FactionId) {
+        self.locked().drop_audience(seat);
     }
 
     pub fn entry(&self, tick: u64) -> Option<StoredSnapshot> {
@@ -186,23 +240,23 @@ impl SnapshotHistory {
     /// The most recently published world. An accessor rather than the field it used to be, because
     /// the frame that produced it may still be in flight — see the module header.
     pub fn last_snapshot(&self) -> Option<Arc<WorldSnapshot>> {
-        self.locked().last_snapshot.clone()
+        self.locked().last_snapshot()
     }
 
     pub fn last_delta(&self) -> Option<Arc<WorldDelta>> {
-        self.locked().last_delta.clone()
+        self.locked().last_delta()
     }
 
     /// The last full flat frame published for this world — `Some` only on a world's first
     /// publication and after a rollback / `Resync`. Test and diagnostic access; the publisher puts
     /// frames on the wire itself.
     pub fn encoded_snapshot_flat(&self) -> Option<Arc<Vec<u8>>> {
-        self.locked().encoded_snapshot_flat.clone()
+        self.locked().encoded_snapshot_flat()
     }
 
     /// The last flat delta published for this world.
     pub fn encoded_delta_flat(&self) -> Option<Arc<Vec<u8>>> {
-        self.locked().encoded_delta_flat.clone()
+        self.locked().encoded_delta_flat()
     }
 
     /// The last published frame's per-phase breakdown, as the publisher measured it. The twin of
@@ -211,26 +265,43 @@ impl SnapshotHistory {
         self.locked().last_publish_profile.clone()
     }
 
-    pub fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
-        self.locked().reset_to_entry(entry);
+    /// Rewind one seat's baselines to a frame it published.
+    pub fn reset_to_entry_for(&mut self, seat: FactionId, entry: &StoredSnapshot) {
+        self.locked().reset_to_entry_for(seat, entry);
     }
 
-    pub fn publish_full_frame(&mut self, entry: &StoredSnapshot) -> Arc<Vec<u8>> {
-        self.locked().publish_full_frame(entry)
+    /// **Rewind every audience's baselines to its own latest frame** — what a rollback owes, since
+    /// it moved the world under all of them at once.
+    pub fn reset_all_to_latest_entry(&mut self) {
+        self.locked().reset_all_to_latest_entry();
     }
 
-    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<Arc<Vec<u8>>> {
+    /// Re-publish one seat's latest frame whole, on a **fresh** sequence number. The `Resync`
+    /// answer, for the asking seat.
+    pub fn publish_full_frame_for(&mut self, seat: FactionId) -> Option<Arc<Vec<u8>>> {
+        self.locked().publish_full_frame_for(seat)
+    }
+
+    /// [`Self::publish_full_frame_for`] every audience, each on its own fresh number.
+    pub fn publish_full_frame_for_all(&mut self) -> Vec<(FactionId, Arc<Vec<u8>>)> {
+        self.locked().publish_full_frame_for_all()
+    }
+
+    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Vec<(FactionId, Arc<Vec<u8>>)> {
         self.locked().update_axis_bias(bias)
     }
 
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
-    ) -> Option<Arc<Vec<u8>>> {
+    ) -> Vec<(FactionId, Arc<Vec<u8>>)> {
         self.locked().update_influencers(states)
     }
 
-    pub fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<Arc<Vec<u8>>> {
+    pub fn update_corruption(
+        &mut self,
+        ledger: CorruptionLedger,
+    ) -> Vec<(FactionId, Arc<Vec<u8>>)> {
         self.locked().update_corruption(ledger)
     }
 
@@ -281,25 +352,33 @@ impl Drop for SnapshotHistory {
 fn run_publisher(requests: Receiver<PublishRequest>, state: Arc<Mutex<PublishState>>) {
     while let Ok(request) = requests.recv() {
         match request {
-            PublishRequest::Frame { snapshot, kind } => {
+            PublishRequest::Frame {
+                seat,
+                snapshot,
+                kind,
+            } => {
                 let tick = snapshot.header.tick;
                 // The sink is cloned out and the frame broadcast *after* the guard is dropped: the
                 // socket write is somebody else's thread, and holding publication's lock across it
                 // would stall every reader for no reason.
                 let (frame, sink) = {
                     let mut publish = lock(&state);
-                    let frame = publish.publish(snapshot, kind);
+                    let frame = publish.publish(seat, snapshot, kind);
                     publish.last_publish_profile = crate::turn_profile::publish_take();
                     (frame, publish.sink.clone())
                 };
                 if let (Some(frame), Some(sink)) = (frame.as_ref(), sink.as_ref()) {
-                    sink.publish_frame(frame);
+                    sink.publish_frame(seat, frame);
                 }
                 log::debug!(
-                    "publish.frame tick={} bytes={}",
+                    "publish.frame tick={} seat={} bytes={}",
                     tick,
+                    seat,
                     frame.map(|frame| frame.len()).unwrap_or(0)
                 );
+            }
+            PublishRequest::Audiences(audiences) => {
+                lock(&state).retain_audiences(&audiences);
             }
             // Dropping the reply sender answers just as well as sending does — the waiter is
             // `recv`ing, and a disconnect wakes it. Sending is the honest form of "queue drained".

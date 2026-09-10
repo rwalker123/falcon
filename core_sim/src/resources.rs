@@ -188,6 +188,17 @@ pub struct SimulationConfig {
     /// one turn cost five. Turns are human-paced and a save is a cadence thing, so the honest shape
     /// is "how often", decided here rather than assumed in the hook.
     pub autosave_interval_turns: u64,
+    /// **How long an open turn waits for an OCCUPIED seat that has gone silent**, in seconds, before
+    /// the server submits `end_turn` on its behalf and resolves.
+    ///
+    /// Waiting is the default and this is the only thing that ends a wait early: one mechanism for a
+    /// wedged AI process and for a human who walked away (`docs/plan_multiplayer_seats.md` §4.2). It
+    /// is a **live-loop scheduling** lever and never a rule inside the resolve, which is also the
+    /// replay path and must not consult a clock.
+    ///
+    /// A *vacant* seat is not waited for at all, so this value has no effect on a single-human game:
+    /// see `.claude/rules/core_sim/factions.md` → "Waiting is the default".
+    pub seat_turn_timeout_seconds: f32,
 }
 
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
@@ -277,6 +288,13 @@ pub enum SimulationConfigError {
     )]
     ZeroCommandEventsRetentionTurns,
     #[error(
+        "`seat_turn_timeout_seconds` must be a positive, finite number of seconds: it is how long an \
+         open turn waits for an occupied seat that has gone silent, and 0 would auto-submit for a \
+         live player the instant anyone else was ready - which is not a short wait, it is no waiting \
+         at all"
+    )]
+    NonPositiveSeatTurnTimeout,
+    #[error(
         "`faction_start_min_separation` must be at least 1: it is the distance worldgen holds \
          between two factions' start tiles, and 0 would let two peoples open the campaign standing \
          on the same hex — which is not a cramped map, it is no placement at all"
@@ -358,6 +376,8 @@ struct SimulationConfigData {
     command_events_retention_turns: u64,
     #[serde(default = "default_autosave_interval_turns")]
     autosave_interval_turns: u64,
+    #[serde(default = "default_seat_turn_timeout_seconds")]
+    seat_turn_timeout_seconds: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -504,6 +524,9 @@ impl SimulationConfigData {
         if self.faction_start_min_separation == 0 {
             return Err(SimulationConfigError::ZeroFactionStartMinSeparation);
         }
+        if !self.seat_turn_timeout_seconds.is_finite() || self.seat_turn_timeout_seconds <= 0.0 {
+            return Err(SimulationConfigError::NonPositiveSeatTurnTimeout);
+        }
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_topology: MapTopology {
@@ -552,6 +575,7 @@ impl SimulationConfigData {
             fog_enabled: self.fog_enabled,
             command_events_retention_turns: self.command_events_retention_turns,
             autosave_interval_turns: self.autosave_interval_turns,
+            seat_turn_timeout_seconds: self.seat_turn_timeout_seconds,
         })
     }
 }
@@ -583,6 +607,14 @@ fn default_command_events_retention_turns() -> u64 {
 /// absorbs, rather than every turn paying it.
 fn default_autosave_interval_turns() -> u64 {
     10
+}
+
+/// **Two minutes.** The wait is a wedge-breaker, not a chess clock: a turn in a strategy game is
+/// legitimately minutes of a human's thinking, so a snug value would end turns players were still
+/// taking — and the cost of being generous is only that a genuinely dead process holds the others up
+/// once, for this long, before the world moves on without it.
+fn default_seat_turn_timeout_seconds() -> f32 {
+    120.0
 }
 
 fn default_map_preset_id() -> String {
