@@ -282,7 +282,7 @@ func _resolve_assign_band() -> Dictionary:
 ## is shared with move-band and targeting, neither of which has a source in hand to ask about.
 ##
 ## Reported from play: a tile worked by Band 3 opened a sheet composing for Band 1, a band four tiles
-## away with no idle crew and the patch outside its forage range. Every live reading on the sheet moved
+## away with no idle crew and the patch outside its work range. Every live reading on the sheet moved
 ## when the picker was corrected; the composed crew did not, and a composed 0 against a standing 2 turns
 ## the commit button into `Unassign`.
 ##

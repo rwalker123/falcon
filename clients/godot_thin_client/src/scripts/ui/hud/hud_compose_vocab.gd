@@ -850,10 +850,16 @@ const HARVEST_ASSIGN_BUTTON := "Harvest"
 # its `Forage` arm does — so both sheets refuse in the same sentence, composed here once. Two
 # spellings of one limit is two limits as far as a player can tell.
 #
-# ⛔ **THE RANGE'S NAME IS THE ONE THE CLIENT ALREADY USES FOR THIS NUMBER, and it is deliberately
-# not a per-crew word.** `hunt reach` is a DIFFERENT quantity (`band_work_range` plus the leash), so
-# the two names in this client name two numbers; a third name for `band_work_range` on the digger
-# sheet would read as a third limit.
+# ⛔ **THE RANGE IS CALLED `work range`, WHICH IS THE SIM'S OWN NAME FOR THE NUMBER, and it was
+# `forage range` until issue #650.** That word was only ever right because foraging was the one web
+# with the gate: a digger told they are beyond their *forage* range is being refused in another web's
+# vocabulary. `LaborConfig::band_work_range` is what BOTH arms measure against, and the sim's own
+# lapse event already reads *"out of the band's work range"* — so the refusal and the abandonment a
+# player reads a turn later now use one word, and the Workbench's `Band work range` dial is a third
+# surface that always did.
+#
+# ⛔ **`hunt reach` IS NOT THIS NUMBER AND KEEPS ITS OWN NAME.** It is `band_work_range` PLUS the
+# leash, so the two names in this client name two quantities rather than one thing twice.
 #
 # **AND IT IS A PLAIN REFUSAL RATHER THAN THE HUNT SHEET'S OFFER.** A herd beyond reach can be
 # followed by a detached party, so that sheet says so (`"…Detach a party to follow it."`). Nothing in
@@ -863,7 +869,7 @@ const HARVEST_ASSIGN_BUTTON := "Harvest"
 #
 # Args: `[x, y, distance, work_range]`.
 const WORK_RANGE_REFUSAL_FORMAT := \
-    "(%d,%d) is %d tiles away — beyond this band's forage range (%d)."
+    "(%d,%d) is %d tiles away — beyond this band's work range (%d)."
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the

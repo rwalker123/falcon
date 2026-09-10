@@ -1652,7 +1652,7 @@ func _restore_road_queue(inherited: Array) -> void:
 func run(harness) -> void:
 	h = harness
 
-	# State 2 — a food tile selected, band WITHIN forage range: the Tile card's "Assign foragers"
+	# State 2 — a food tile selected, band WITHIN work range: the Tile card's "Assign foragers"
 	# controls (a "Band:" dropdown naming the actor band + a Foragers −/+ count + an enabled **Forage**
 	# button). With one player band the dropdown is a single item ("Band 1").
 	h._show_tile(BaseFx.food_tile_fixture())

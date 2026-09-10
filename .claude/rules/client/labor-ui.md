@@ -2631,7 +2631,7 @@ instead would run `begin_*_source`, which re-defaults the band from the resolver
 player's own pick.
 
 **What it cost while the seed was source-only** (reported from play, on a tile worked by Band 3 with
-two foragers): the sheet opened on Band 1 — out of forage range, no idle crew — because the compose
+two foragers): the sheet opened on Band 1 — out of work range, no idle crew — because the compose
 key was already this tile from an earlier interaction, so the band resolver never ran again. Switching
 the picker to Band 3 moved every LIVE reading (`2 of 4 useful`, the standing-crew line) while the
 COMPOSED count stayed at Band 1's. A composed 0 against a standing 2 makes the commit button
@@ -5660,7 +5660,7 @@ spelled and never a raw count.
     **`work_range`** (the plain `workRange` field, NOT `hunt_reach`; already decoded/on the marker):
     **within range** → enabled **Forage**; **beyond range** → the button is **disabled** + an
     out-of-range hint (`HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT` — `"(x,y) is N tiles away — beyond
-    this band's forage range (R)"`), no alternative.
+    this band's work range (R)"`), no alternative.
     Reuses the same `_hex_distance_wrapped` / `SourceForecast.band_tile` / grid-dim plumbing and explicit
     selected-band threading as the herd hunt. ⛔ **THE MEASUREMENT AND THE SENTENCE ARE SHARED WITH THE
     TWO DEPOSIT SHEETS** since issue #650 — `_mount_work_range_refusal`, one gate for every surface

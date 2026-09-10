@@ -191,7 +191,7 @@ paths:
       three — the sheet is transient and modal, targeting is a question the client has asked and is
       waiting on, and this one is still there afterwards, so it yields.
     - **Nothing is re-derived.** Every yield, forecast, ceiling and gate reason comes from the same
-      call it came from when the block lived in the drawer, and the forage range gate / herd
+      call it came from when the block lived in the drawer, and the work range gate / herd
       local-vs-expedition branch still read the **selected band's** position, explicitly threaded.
   - `_selected_subject` (`SUBJECT_LAND|UNIT|HERD`) says which KIND of row is lit;
     `_selected_unit`/`_selected_herd` stay authoritative for WHICH. **The auto-select rule is

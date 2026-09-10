@@ -4024,7 +4024,7 @@ func _assert_composes_for_panel_band(state: String, colony: Dictionary, composed
 
 # ---- THE SHEET OPENS ON THE BAND ALREADY WORKING THE SOURCE, AND A BAND SWITCH RE-SEEDS ----------
 # Reported from play, on a tile worked by Band 3 with two foragers while the panel showed Band 3: the
-# sheet opened on Band 1 — four tiles away, out of forage range, no idle crew — and switching the
+# sheet opened on Band 1 — four tiles away, out of work range, no idle crew — and switching the
 # picker to Band 3 moved every LIVE reading (`2 of 4 useful`, the standing-crew line) while the
 # COMPOSED count stayed at Band 1's. With a composed 0 against a standing 2 the commit button became
 # `Unassign`, one press from stripping the two real foragers off the tile, and the improvement

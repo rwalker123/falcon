@@ -525,9 +525,19 @@ explicitly rather than relying on the comparison — a gate that read *unknown* 
 refuse every sheet on a frame that arrived before the grid did.
 
 ⛔ **THE SENTENCE IS ONE CONST, `HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`.** Two spellings of one
-limit is two limits as far as a player can tell. Its range word is the one the client already used for
-`band_work_range` on the forage sheet; `hunt reach` names a **different** quantity (`band_work_range`
-plus the leash), so a third name here would read as a third limit.
+limit is two limits as far as a player can tell.
+
+⛔ **AND THE RANGE IS CALLED `work range`, WHICH IS THE SIM'S NAME FOR IT.** The forage sheet said
+`forage range` for the whole life of that gate, and it read correctly only because foraging was the
+one web that had one — a digger refused in the *forage* vocabulary is being told about another web's
+limit. `LaborConfig::band_work_range` is what both arms measure against; the sim's own lapse event
+already reads *"out of the band's work range"*, so the refusal and the abandonment a player reads a
+turn later now use one word, and the Workbench's `Band work range` dial (`tuning_manifest.json`) is a
+third surface that always did. **The forage string moved with it** — that is the point of sharing the
+const rather than half of it.
+
+⛔ **`hunt reach` IS NOT THIS NUMBER AND KEEPS ITS OWN NAME**: it is `band_work_range` PLUS the leash,
+so the two names in this client name two quantities rather than one thing twice.
 
 ⛔ **IT IS A PLAIN REFUSAL, NOT THE HUNT SHEET'S OFFER.** A herd beyond reach offers a detached party
 (*"…Detach a party to follow it."*), because a herd can be followed. The expedition missions are
@@ -1201,7 +1211,7 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |
 | `workings_quarry_reach` | **THE CLIENT/SIM DIVERGENCE, WITH CHECKABLE NUMBERS** — a quarry worked down to 700 of 2200, i.e. BETWEEN the rung's own 330 of floor and the sheet's default 1100, which is the one stock where `composed_floor`'s renews condition changes an answer. Its four producer claims are read at `DEFAULT_HARVEST_FLOOR` and pin the composition to the rung's 0.15, the room to the wire's own published `reachable` (370), the cap to `ceil(370 / 2.2)` = 169 cutters, and the sheet to the band's own 3 diggers at their whole `6.60 STONE`. Pre-fix every one of them collapsed — floor 0.50, room 0, cap 0, the crew clamped away and the take blank — which is a quarry reporting itself worked out with fifty turns left in it. **The renewing scatter is asserted UNCHANGED beside it, both directions** (the rung's 0.85 winning at the default, a dial of 0.90 winning over the rung), which is what makes the fix narrow rather than a floor that stopped composing |
 
-| `workings_out_of_range` | **THE GATE THE DEPOSIT SHEETS HAD NONE OF** — the chapter's band left where the shared fixture camps it, 52 tiles from this hex against a `work_range` of 2: the refusal sentence WITH its distance in it, asserted equal to the forage sheet's own shared format, and the commit dead beside it. **Both branches**, because Ray guessed the wood had it too and one builder serves them: the digger sheet on the same hex is asserted to refuse in the same words |
+| `workings_out_of_range` | **THE GATE THE DEPOSIT SHEETS HAD NONE OF** — the chapter's band left where the shared fixture camps it, 52 tiles from this hex against a `work_range` of 2: the refusal sentence WITH its distance in it (`… beyond this band's work range (2).`), asserted equal to the forage sheet's own shared format, and the commit dead beside it. **Both branches**, because Ray guessed the wood had it too and one builder serves them: the digger sheet on the same hex is asserted to refuse in the same words |
 | `workings_tile_crews` | **THE TILE SAYS THE DIGGING IS HAPPENING** — one hex, a wood crew of 2 and a rock crew of 4, each on its own material row. The counts DIFFER on purpose: equal ones would pass a card that composed one number and printed it twice, which is the tile-keyed collapse the `material` field exists to prevent, so the frame also asserts neither row wears the other's count. And no bill or countdown arrives with the crew |
 | `workings_tile_crews_other_band` | **THE COUNT IS THE HEX'S, NOT THE PICKED BAND'S** — the same two workings, held by a band that is NOT the faction's default actor (a second, empty band is listed first). The rows read exactly as they did above, which is what "minimal display when the owning band is not selected" buys; a count taken off the selected band would go to zero here. Untouched ground under a CREWLESS band is asserted beside it to carry no crew mark of any count, the other half of `crew_clause`'s fork |
 
