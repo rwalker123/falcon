@@ -38,6 +38,12 @@ granted (`seat.claimed`, with the connection id and the faction), and the handsh
 name that connection anyway: a stream socket knows only the secret. `SeatToken` has a redacted
 `Debug` and no `Display`, so putting it in a log line does not compile.
 
+**A greeting can name a connection the broadcaster does not hold, and there are two readings of
+that** — the connection was *dropped* (a wedged peer evicted while its handshake was still in
+flight), or it has *not been registered yet*, because its `StreamClient` is still in the handoff
+channel. Only the first is a state; the second was a bug, and the drain that closes it is below
+("A greeting that outruns its own client").
+
 **The token is resolved to a seat at DELIVERY, not at the handshake**, off a table
 (`SnapshotServer::set_seats`) the server rewrites whenever a claim or a release moves. Both
 directions matter: a stream that greets a moment before its claim registers is seated as soon as the
@@ -48,7 +54,9 @@ its socket is still open* — otherwise the next occupant's private world would 
 
 Three ways to hold no seat: the peer sends no token within `handshake_timeout`, it sends
 `SeatToken::NONE`, or its token names no live claim — **which is what a guessed or stale token is**.
-All three are the same state, and it is
+A fourth — a correct token discarded because its greeting overtook its own registration — was a
+**bug**, not a state, and is closed by `seat_greeting` ("A greeting that outruns its own client"
+below). All three remaining are the same state, and it is
 **silence, not a refusal**: the connection stays registered (a socket the server closes under a tool
 is not a defined state) and no frame is ever written to it.
 
@@ -77,6 +85,53 @@ the table at delivery.
 > A client is therefore **unseated between registration and its greeting** and receives nothing in
 > that window. That is the dropped-first-frame race `world-handoff.md` already describes, healed the
 > same way: the client asks.
+
+### A greeting that outruns its own client — a fourth way to hold no seat, now closed
+
+There was a **fourth** way, and unlike the three above it was not a state but a defect: a connection
+that greeted correctly could stay unseated **for the whole life of its socket**, receiving nothing,
+with the server showing `connected_clients() == 1` and `seated_clients() == 0` forever.
+
+The mechanism is the two handoffs racing. The accept thread sends the `StreamClient` and *then*
+spawns the handshake; the handshake reads eight bytes that a real client has already written and
+sends the `Greeting`. So both channels can be ready at the same instant, and `select!` picks at
+random among ready operations — if it took the greeting first, the lookup found no client, the token
+was silently discarded, and **nothing ever re-sent it**. The `handshake_timeout` cannot catch it: the
+read already succeeded.
+
+**`seat_greeting` closes it by draining `new_clients` and retrying the lookup once**, and that is a
+proof rather than a mitigation: the send on `new_clients` **happens before** `spawn_handshake` is
+called, and a send that fails closes the connection without spawning a handshake at all — so whenever
+a greeting exists, its `StreamClient` is already in that channel or already in the list. A greeting
+still unmatched after the drain is the genuine "already dropped" case and is discarded as before.
+Because the drain registers clients, the greeting arm restates **both** `connected` and `seated`.
+
+⛔ **Two nearby fixes are wrong.** Biasing the `select!` toward `new_clients` only narrows the
+window. Reading the greeting on the accept thread is the head-of-line stall the thread split exists
+to remove. And the handoff-before-handshake order in `spawn_accept_thread` now has a **second**
+reason to stay that way, recorded there: reversing it would put a greeting's client in neither the
+channel nor the list.
+
+**Yes, this could strand a real Godot client.** The client claims its seat on the command socket,
+then opens the stream and writes the token immediately, which is exactly the shape that queues both
+messages together; and it never reconnects a snapshot stream, so the session is dead until the player
+restarts — the loading overlay never clears, because `new_game` is retried unboundedly but every
+resulting frame is addressed to a seat the connection is not holding. What makes it rare rather than
+constant is that the broadcaster is normally parked in `select!` and consumes the client the moment
+it is sent; both messages only queue together when the broadcaster is busy across the window between
+the two sends. That is a **load** condition, which is why it surfaced first on CI.
+
+`network.rs`'s `greeting_order_tests` pin it, and they reach past `start_snapshot_server_with_limits`
+to `spawn_broadcast_thread` **because nothing above that layer can choose which ready arm is served**
+— the shipped socket suite passed 8 runs out of 8 on the defect. Two of the three drive the ordering
+with no threads at all (`seat_greeting` against a client sitting in the channel); the third queues
+both handoffs in accept-thread order and starts the real broadcast thread.
+
+> **The failure is deterministic on a fresh thread, which is why it is not a coin flip.**
+> `crossbeam-channel`'s `select!` shuffles its operations with a **thread-local RNG seeded from a
+> constant** (`utils.rs`), so a broadcast thread facing two ready channels on its *first* select
+> resolves them the same way every run. Measured: 40 replays, 40 strandings. Do not reason about this
+> path as "half the time".
 
 ## The topology: two threads, a channel each way, no shared client list
 

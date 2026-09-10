@@ -317,6 +317,13 @@ fn spawn_accept_thread(
                 // holding a dup of that socket would hold it open until its own timeout — which is
                 // exactly the EOF `the_accept_thread_keeps_running_while_a_write_is_blocked` waits
                 // for.
+                //
+                // ⛔ **THAT ORDER — HAND THE CLIENT OVER, THEN SPAWN THE HANDSHAKE — IS ALSO WHAT
+                // MAKES [`seat_greeting`] TOTAL.** It is what guarantees that a greeting's
+                // `StreamClient` is already in the handoff channel by the time the greeting
+                // arrives, so draining that channel always finds it. Reversing the two would let a
+                // greeting name a client that is in neither the channel nor the list, and that
+                // connection would stay unseated for the rest of its life.
                 let reader = match stream.try_clone() {
                     Ok(reader) => Some(reader),
                     Err(err) => {
@@ -463,13 +470,10 @@ fn spawn_broadcast_thread(
                 },
                 recv(greetings) -> greeting => match greeting {
                     Ok(greeting) => {
-                        // A greeting for a client already dropped (a wedged peer evicted while its
-                        // handshake was still in flight) names nobody and is discarded.
-                        if let Some(client) =
-                            clients.iter_mut().find(|client| client.id == greeting.client)
-                        {
-                            client.token = greeting.token;
-                        }
+                        seat_greeting(&mut clients, &new_clients, &greeting);
+                        // The drain inside `seat_greeting` can register clients, so **both** counts
+                        // are restated here — the greeting arm is a second way into the client list.
+                        connected.store(clients.len(), Ordering::Relaxed);
                         seated.store(seated_count(&clients), Ordering::Relaxed);
                     }
                     Err(_) => {
@@ -501,6 +505,56 @@ fn spawn_broadcast_thread(
             }
         }
     });
+}
+
+/// **Attach a greeting's seat token to the connection it names**, registering any client still in
+/// the handoff channel first if that connection is not in the list yet.
+///
+/// ⛔ **A GREETING CAN OUTRUN ITS OWN CLIENT, AND THE DRAIN IS WHAT MAKES THE LOOKUP TOTAL.** The
+/// accept thread sends the [`StreamClient`] and only *then* spawns the handshake, so a client whose
+/// token is already sitting in the socket buffer can have its greeting queued while its
+/// `StreamClient` is still in `new_clients` — and `select!` picks at random among ready operations,
+/// so the broadcaster may take the greeting first. Without the drain that greeting names nobody, the
+/// token is discarded, nothing re-sends it, and the connection stays registered-but-unseated **for
+/// the rest of its life**, receiving no frames at all.
+///
+/// The drain closes it rather than narrowing it: the send on `new_clients` **happens before**
+/// `spawn_handshake` is called, and a send that fails closes the connection without spawning a
+/// handshake at all — so whenever a greeting exists, its client is already in that channel or in the
+/// list. Biasing the `select!` toward `new_clients` would only shrink the window, and reading the
+/// greeting on the accept thread would restore the head-of-line stall the thread split exists to
+/// remove (`.claude/rules/core_sim/snapshot-socket.md`).
+fn seat_greeting(
+    clients: &mut Vec<StreamClient>,
+    new_clients: &Receiver<StreamClient>,
+    greeting: &Greeting,
+) {
+    if attach_token(clients, greeting) {
+        return;
+    }
+    clients.extend(new_clients.try_iter());
+    if !attach_token(clients, greeting) {
+        // Now genuinely nobody: the connection was dropped (a wedged peer evicted while its
+        // handshake was still in flight), so the token has no socket to belong to.
+        log::info!(
+            "A snapshot seat token arrived for a connection that is no longer registered; \
+             discarding it"
+        );
+    }
+}
+
+/// Sets `greeting`'s token on the client it names, reporting whether that client was found.
+fn attach_token(clients: &mut [StreamClient], greeting: &Greeting) -> bool {
+    match clients
+        .iter_mut()
+        .find(|client| client.id == greeting.client)
+    {
+        Some(client) => {
+            client.token = greeting.token;
+            true
+        }
+        None => false,
+    }
 }
 
 /// How many registered clients have presented a seat token — the count [`SnapshotServer::seated_clients`]
@@ -546,4 +600,170 @@ fn deliver_frame(clients: &mut Vec<StreamClient>, holders: &[SeatToken], frame: 
             }
         }
     });
+}
+
+/// Guards for the ordering of the two handoffs the broadcaster selects over — see [`seat_greeting`].
+///
+/// These reach past `start_snapshot_server_with_limits` and drive `spawn_broadcast_thread` (and its
+/// greeting helper) directly, because the property is about **which of two ready channels the
+/// broadcaster takes first**, and nothing above this layer can choose that: the accept and handshake
+/// threads decide when each message is queued, and `select!` decides at random which is served. A
+/// socket-level test can only hope to hit the ordering, which is why the shipped suite passed on the
+/// defect these pin.
+#[cfg(test)]
+mod greeting_order_tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// The token every client here presents. Any non-[`SeatToken::NONE`] value serves — what these
+    /// pin is whether the token is *attached*, not which seat it resolves to.
+    const TEST_TOKEN: SeatToken = SeatToken::from_wire(7);
+    /// The id the accept thread would have minted for the connection under test.
+    const TEST_CLIENT: u64 = 0;
+    /// Capacity for the test channels. Nothing here queues more than a couple of messages; the
+    /// figure only has to be more than that.
+    const TEST_CHANNEL_CAPACITY: usize = 8;
+
+    /// How many times [`a_greeting_taken_before_its_client_still_seats_that_client`] replays the
+    /// ordering. One is enough on the current `crossbeam-channel`, whose `select!` shuffle is a
+    /// thread-local seeded with a constant — so a fresh broadcast thread facing two ready channels
+    /// resolves them the same way every run — but that is an implementation detail of the
+    /// dependency, and repeating makes the guard survive its RNG changing.
+    const RACE_REPLAYS: usize = 16;
+    /// How long one replay waits for the client to be seated before calling it stranded. Generous
+    /// because scheduling three threads on a loaded box is not the failure under test; a passing
+    /// replay never comes close to it.
+    const SEATING_DEADLINE: Duration = Duration::from_secs(5);
+    /// Gap between polls while waiting out [`SEATING_DEADLINE`].
+    const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+    /// A real, connected socket to hang a [`StreamClient`] on. The peer end is returned so it stays
+    /// open for the life of the test — a closed peer would let the broadcaster drop the client for
+    /// an unrelated reason.
+    fn connected_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+        let addr = listener.local_addr().expect("read the listener address");
+        let peer = TcpStream::connect(addr).expect("connect to the loopback listener");
+        let (stream, _) = listener.accept().expect("accept the loopback connection");
+        (peer, stream)
+    }
+
+    fn pending_client(stream: TcpStream) -> StreamClient {
+        StreamClient {
+            id: TEST_CLIENT,
+            stream,
+            token: SeatToken::NONE,
+        }
+    }
+
+    /// **The ordering, with no threads in it at all**: the client is in the handoff channel — where
+    /// the accept thread put it before spawning the handshake — but has not been registered yet, and
+    /// its greeting is served first.
+    #[test]
+    fn a_greeting_names_a_client_still_in_the_handoff_channel() {
+        let (_peer, stream) = connected_pair();
+        let (client_sender, new_clients) = bounded::<StreamClient>(TEST_CHANNEL_CAPACITY);
+        client_sender
+            .send(pending_client(stream))
+            .expect("hand the client over");
+
+        let mut clients: Vec<StreamClient> = Vec::new();
+        seat_greeting(
+            &mut clients,
+            &new_clients,
+            &Greeting {
+                client: TEST_CLIENT,
+                token: TEST_TOKEN,
+            },
+        );
+
+        assert_eq!(
+            clients.len(),
+            1,
+            "the drained client must be registered, not merely inspected"
+        );
+        assert_eq!(clients[0].token, TEST_TOKEN, "its token must be attached");
+        assert_eq!(seated_count(&clients), 1);
+    }
+
+    /// A greeting for a connection in neither the list nor the channel is still discarded — the
+    /// drain must not turn "already dropped" into a hang or a phantom client.
+    #[test]
+    fn a_greeting_for_a_dropped_client_is_discarded() {
+        let (client_sender, new_clients) = bounded::<StreamClient>(TEST_CHANNEL_CAPACITY);
+        let mut clients: Vec<StreamClient> = Vec::new();
+        seat_greeting(
+            &mut clients,
+            &new_clients,
+            &Greeting {
+                client: TEST_CLIENT,
+                token: TEST_TOKEN,
+            },
+        );
+        assert!(clients.is_empty());
+        assert_eq!(seated_count(&clients), 0);
+        drop(client_sender);
+    }
+
+    /// The same ordering through the **real broadcast thread**: both handoffs are queued before it
+    /// starts, in the order the accept thread produces them, and the client must end up seated
+    /// whichever arm `select!` serves first.
+    #[test]
+    fn a_greeting_taken_before_its_client_still_seats_that_client() {
+        for replay in 0..RACE_REPLAYS {
+            let (client_sender, new_clients) = bounded::<StreamClient>(TEST_CHANNEL_CAPACITY);
+            let (greeting_sender, greetings) = bounded::<Greeting>(TEST_CHANNEL_CAPACITY);
+            let (frame_sender, frames) =
+                bounded::<(FactionId, Arc<Vec<u8>>)>(TEST_CHANNEL_CAPACITY);
+            let connected = Arc::new(AtomicUsize::new(0));
+            let seated = Arc::new(AtomicUsize::new(0));
+            let seats = Arc::new(Mutex::new(HashMap::new()));
+            let (_peer, stream) = connected_pair();
+
+            // The accept thread's order: the client is handed over first, and only then does the
+            // handshake it spawns produce the greeting. Both are queued before the broadcaster runs,
+            // which is the state a loaded box reaches whenever the broadcaster is busy across the
+            // window between the two sends.
+            client_sender
+                .send(pending_client(stream))
+                .expect("hand the client over");
+            greeting_sender
+                .send(Greeting {
+                    client: TEST_CLIENT,
+                    token: TEST_TOKEN,
+                })
+                .expect("present the seat token");
+
+            spawn_broadcast_thread(
+                new_clients,
+                greetings,
+                frames,
+                Arc::clone(&connected),
+                Arc::clone(&seated),
+                seats,
+            );
+
+            let deadline = Instant::now() + SEATING_DEADLINE;
+            while seated.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+                thread::sleep(POLL_INTERVAL);
+            }
+            assert_eq!(
+                seated.load(Ordering::Relaxed),
+                1,
+                "replay {replay}: the client greeted correctly and was never seated, so it would \
+                 receive no frame for the life of its connection"
+            );
+            assert_eq!(
+                connected.load(Ordering::Relaxed),
+                1,
+                "replay {replay}: a client registered by the greeting arm must be counted there too"
+            );
+
+            // Dropping the frame sender is what stops the broadcast thread, exactly as dropping
+            // `SnapshotServer` does.
+            drop(frame_sender);
+            drop(client_sender);
+            drop(greeting_sender);
+        }
+    }
 }
