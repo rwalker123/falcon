@@ -9,11 +9,9 @@ The one-sentence version: **an orchestrator turns personality into a plan; speci
 into scored proposals; an arbiter turns proposals into this turn's commands; and every one of those
 hand-offs is a typed value that can be logged, replayed against a fixture, and compared across runs.**
 
-> **On the word "orchestrator".** `plan_multiplayer_seats.md` §4.2 and `docs/architecture.md` use
-> "orchestrator" for the *server's* turn scheduler (`SeatTurnGate` in code). Here it names the top
-> layer of the AI, which is the sense the issue brief uses. Nothing in code shares the name — the
-> server side is `SeatTurnGate` — so the collision is prose-only, and the two server mentions should
-> say "turn scheduler" once this lands.
+> **"Orchestrator" means the AI's top layer and nothing else.** The server's turn-waiting logic is
+> the *turn scheduler* (`SeatTurnGate` in code); the two design docs that once called it the
+> orchestrator now say so.
 
 ---
 
