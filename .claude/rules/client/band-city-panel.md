@@ -2034,6 +2034,28 @@ over-wide zone cannot pass by accident: every pre-existing width assertion in th
 satisfied by one far too wide. It is **paired with liveness** — the hint renders, the POOLS block renders,
 and the board really drew zero rows — since a zone rendering nothing is trivially not stretched.
 
+### …AND IT DRAWS NO FILTER CHIPS, because `All 0` filters nothing and explains nothing
+
+Reported from the same screen: *"then a All 0, no clue what all 0 is?"* Every chip in the row is
+CONDITIONAL — forage / hunt / attention / ready each render only for a non-empty set — but `All` was
+unconditional, being the reset. So a band working nothing rendered exactly ONE chip, reading `All 0`,
+filtering nothing, directly above the hint line that already says *"No sources worked yet."*
+
+**`_build_work_chips` answers `null` on an empty model set** and the caller omits the row, the
+omission being the block's own rather than a caller's second test of the same emptiness.
+
+⛔ **THE GUARD IS ON `models`, NEVER ON `filtered`.** A band WITH sources whose current filter matches
+none of them must still get its chips — **that row is the only way to clear the filter**, and hiding
+it there would strand the player with an empty board and no control. The two emptinesses are
+different states and only one of them is chrome.
+
+It is safe for the zone's arithmetic without a new term because `_work_board_capacity` — which charges
+`WORK_CHIPS_HEIGHT` unconditionally — is never consulted on this path: an empty `models` gives an
+empty `filtered`, and that branch returns above it. **`band_panel_work_empty_wide` asserts no chips
+and the hint still rendering, paired in the same frame family with the busy band one push earlier
+asserting that a band WITH sources does draw them** — an absence asserted alone passes on a builder
+that never draws chips anywhere.
+
 **The `_queue_expanded` branch two lines above returns without declaring too, and is left alone
 deliberately.** It inherits the count from the SAME band's previous render (the expanded queue is entered
 from a board that had just declared), so every shipped frame reads one column and no stretch is
@@ -3285,9 +3307,9 @@ on it, and that refusal is in the handler rather than the parser, so a parser-le
 ### THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c)
 
 `docs/plan_standing_upkeep.md` §4.9 item 9c. The block draws at most `BUILD_QUEUE_ROWS_MAX` entry
-rows plus `+N more`, and **there is no cap on the queue itself** — so a fourth job was queued and
-funded with no row, and nothing past the third could be seen, reordered or withdrawn from the UI at
-all. The `+N more` row said so and offered nothing.
+rows, and **there is no cap on the queue itself** — so a fourth job was queued and funded with no row,
+and nothing past the third could be seen, reordered or withdrawn from the UI at all. The `+N more`
+said so and offered nothing.
 
 **THE 3-ROW BLOCK IS UNTOUCHED, AND THAT IS THE DESIGN.** It is a SUMMARY — what the pool is funding,
 and what is next — and it stays exactly as wide, as tall and as capped as it was; the ceiling was not
@@ -3307,12 +3329,12 @@ BUILD QUEUE ▴                            3 builders · Tillage kit
 │                       … every entry, scrolling …            │ ▼
 ```
 
-**TWO DOORS IN, ONE DOOR OUT.** The `BUILD QUEUE` header is the toggle **both ways** and is available
-whenever the block exists — including a queue too short to draw an overflow row. `+N more` is a
-second door **IN only**: the expanded view has no overflow row left to press, so the header is the
-only way back. Its tooltip changed with it (`BUILD_QUEUE_OVERFLOW_TOOLTIP` had been stale twice over
-— it named the command line, which the drag replaced, and then said the hidden entries were out of
-reach, which this replaces).
+**ONE DOOR, ON THE HEAD, IN BOTH DIRECTIONS.** See "ONE CONTROL IN TWO STATES" below — the queue's
+head and both rosters' now carry the same three-state disclosure control, and the separate `+N more`
+row under the entries is gone. It shipped for one slice as *two doors in, one door out*: the header
+toggled both ways and was available whenever the block existed, while a `+N more` ROW was a second
+door IN only. That is the shape play found undiscoverable, and the queue kept it exactly as long as
+the rosters did.
 
 - **THE DISCLOSURE IS `▾` / `▴`, NOT THIS CLIENT'S OTHER CARET PAIR.** `DetailFormat.BREAKDOWN_CARET_*`
   and `hud_crafting_vocab.GROUP_HEAD_CARET_*` fold with `▾`/`▸`, and **`▸` is `BUILD_QUEUE_HEAD_MARKER`
@@ -3510,10 +3532,12 @@ row is a board row that does not draw** — raising the cap moves the loss. The 
 the same zone instead, spending nothing permanent, exactly as the build queue's expansion is.
 
 **IT IS THE BUILD QUEUE'S DOOR, WRITTEN ONCE.** `_build_roster_expanded` /
-`_make_zone_head_a_toggle` / `_toggle_roster_expanded` / `_build_roster_overflow_door` are the
-generalized shape of `_build_build_queue_expanded` / `_make_queue_head_a_toggle` /
-`_toggle_queue_expanded`, and the two modes now share the head-toggle helper, the disclosure
-vocabulary and the scroll-offset restore.
+`_make_zone_head_a_toggle` / `_toggle_roster_expanded` are the generalized shape of
+`_build_build_queue_expanded` / `_make_queue_head_a_toggle` / `_toggle_queue_expanded`, and the two
+modes share the head-toggle helper, the disclosure vocabulary and the scroll-offset restore. **The
+sharing went further, not less far**: `_make_zone_head_a_toggle` BUILDS the affordance for all three
+blocks now, so the separate `_build_roster_overflow_door` / `_build_build_queue_overflow_row` are both
+deleted — see "ONE CONTROL IN TWO STATES" below.
 
 #### ONE FLAG NAMES WHICH ROSTER, BECAUSE THE TWO MUST EXCLUDE EACH OTHER TOO
 
@@ -3564,38 +3588,120 @@ one.** ⛔ **ONE name for both rosters, because only one of them can be open** �
 sanctions for one node. Its IFF carries one term more than the queue's: it exists exactly when a
 roster is expanded AND its block was DRAWN, since the empty fall-through builds none.
 
-#### THE `+N more` IS A DOOR, AND THE HEAD IS THE WAY BACK
+#### ONE CONTROL IN TWO STATES, ON THE HEAD — for the BUILD QUEUE and both ROSTERS
 
-A ghost `Button` on `HudWidgets.compact` carrying the count it already carried, with
-`ROSTER_OVERFLOW_TOOLTIP` on `BUILD_QUEUE_OVERFLOW_TOOLTIP`'s shape — what it opens, and that the head
-is the way back. ⛔ **It fires on the RELEASE, inside the row**, which is `BaseButton`'s own default
+The door and the way back were **two controls in two places**: a full-width `+N more` ghost Button
+under the rows to open, and the bare head — wearing a `▾` at head type size — to fold back. Reported
+from play: *"it is not obvious at all how to get back… I wonder if we can put the `+1 more` on the
+Groundwork line, then clicking it once expands, then it is obvious to the user they click there again
+to get back. The little dot next to Groundwork on the expanded view should be changed to something
+more obvious that it collapses back."* The way back had been found by accident.
+
+**The principle: the control that opens a thing and the control that closes it are in the SAME PLACE,
+and both say what they do in words.** So the affordance sits on the head, immediately after the title
+(`GROUNDWORK  +1 more ▾`), and the separate overflow ROW is deleted from all three blocks.
+
+> ##### ⛔ THREE STATES, AND THE ASYMMETRY BETWEEN THE LAST TWO IS THE WHOLE RULE
+>
+> | state | affordance | head is a toggle? |
+> |---|---|---|
+> | collapsed, rows over the cap | `+N more ▾` | yes |
+> | **expanded** | `Show less ▴` | yes, **always**, whatever the row count |
+> | collapsed, rows all drawn | **nothing** | **no** |
+>
+> The third row is the point of the table: **a head that toggles but shows nothing is the invisible
+> affordance this whole change exists to remove.** The head was previously a toggle *whenever the
+> block existed*, which is what made the way back unfindable.
+>
+> **But `expanded` is unconditional.** A band that abandons a working — or finishes a job — while the
+> list is open drops under the cap, and an affordance gated on overflow would VANISH at that moment,
+> stranding the player in a mode with the board drawn over and nothing on screen saying how to get it
+> back. `band_panel_preview` asserts that case directly on both blocks, and it is the ONLY claim the
+> gating sabotage breaks (2 failures, one per block).
+
+**IT IS A SMALL GHOST `Button`, NOT A BARE `Label`.** The full-width row it replaced was very
+discoverable, and that is why the EXPAND direction worked; moving it onto the head must not trade
+that away for plain text. So it stays a `Button` — `HudStyle` ghost, `HudWidgets.compact` at
+`WORK_ROW_FONT_SIZE` / `WORK_PAGER_PADDING_V`, `INK_DIM` — just a small one sitting in a head.
+**The whole head stays clickable as well**: the bigger target, and exactly the behaviour Ray found
+and asked to have made obvious rather than removed. Both paths call the one mutator, the Button's own
+press being what a `Button` consumes rather than passing up to the head's `gui_input`.
+
+⛔ **A WORD, NOT A GLYPH ALONE.** `▴` at `ZONE_HEAD_FONT_SIZE` beside a heading is what Ray read as
+*"the little dot next to Groundwork"*. `zone_disclosure_face(expanded, remaining)` is the ONE composer
+of both faces — `ZONE_DISCLOSURE_MORE_FORMAT % n` or `ZONE_SHOW_LESS_LABEL`, then the caret: **the
+word carries the meaning and the caret carries the direction.**
+
+⛔ **It fires on the RELEASE, inside the control**, which is `BaseButton`'s own default
 (`ACTION_MODE_BUTTON_RELEASE`) and deliberately not re-implemented on `gui_input`: the handler ends in
 `_repage_work_zone`, which frees every node in the zone, and *any press handler that rebuilds its own
 subtree kills every gesture that could start under it* — PR #574's autopsy.
 
-**The head is the toggle BOTH ways and is available whenever the block exists**, including a roster
-short enough to draw no overflow row at all; `+N more` is a second door IN only.
+##### ⛔ DELETING THE ROW MEANS THE BLOCK HEIGHTS LOSE THEIR `+1` LINE
 
-> ##### ⛔ THE WORKINGS HEAD HAS BUTTONS IN IT AND THE QUEUE'S DOES NOT
+`roadwork_roster_height`, `workings_roster_height` and `build_queue_block_height` each added a
+`WORK_ROW_HEIGHT` line when the list overflowed. That row does not render any more, so the term is
+gone — and **a stale term silently steals a board row**: all three answers are threaded into
+`build_queue_rows_max` AND `_work_board_capacity`, and the zone `clip_contents`.
+`build_queue_rows_max` lost the matching `if entries > afforded: afforded -= 1` in the same breath (it
+held a row back for that overflow row), which is why its `entries` argument is now deliberately
+unread — the ceiling is a fact about the BOX, not about the list.
+
+##### ⛔ ALL THREE HEAD HEIGHTS ARE MEASURED, AND THE BUTTON IS WHAT SETS THEM
+
+`HudWidgets.zone_head` declares `ZONE_HEAD_HEIGHT` (20) as a MINIMUM and an `HBoxContainer` grows to
+its tallest child, so the compact ghost button — not the title, and no longer the workings head's
+compact stepper — is what sets each row. Measured on the drawn heads by
+`band_panel_preview._assert_zone_head_reserves`, which prints reserved against drawn:
+
+| constant | with the button | without it | was |
+|---|---|---|---|
+| `BUILD_QUEUE_HEAD_HEIGHT` | **22.0** | 20.0 | `ZONE_HEAD_HEIGHT` (20) |
+| `ROADWORK_ROSTER_HEAD_HEIGHT` | **22.0** | 20.0 | `ZONE_HEAD_HEIGHT` (20) |
+| `WORKINGS_ROSTER_HEAD_HEIGHT` | **22.0** | 21.0 (the stepper alone) | 21.0 |
+
+⛔ **Each reserves the TALLER of its two states.** The affordance's three states mean one head draws
+at two different heights depending on the band, and a block reserves ONE figure: the contract is
+*reserved ≥ drawn*. Forking a height function on whether the affordance renders would put a third
+opinion about the same 2px into `build_queue_rows_max` and `_work_board_capacity` to buy back less
+than a tenth of a row. **Three constants, not one shared figure** — they happen to agree today, and
+three heads holding different controls are three measurements; one defined from another would be a
+coincidence written down as a rule.
+
+##### ⛔ ONE TOOLTIP, TAKING THE BLOCK'S OWN NOUN
+
+There were FOUR constants saying one sentence in two shapes — `BUILD_QUEUE_OVERFLOW_TOOLTIP`,
+`BUILD_QUEUE_DISCLOSURE_TOOLTIP`, `ROSTER_OVERFLOW_TOOLTIP`, `ROSTER_DISCLOSURE_TOOLTIP` — and two of
+them ended *"press the header to come back"*, which stops being true the moment the control IS the
+header. They are one `ZONE_DISCLOSURE_TOOLTIP_FORMAT` over `ZONE_DISCLOSURE_NOUN_QUEUE` /
+`ZONE_DISCLOSURE_NOUN_ROSTER` now, worn by the head AND by the button on it. `ZONE_DISCLOSURE_MORE_FORMAT`
+replaced the two per-block `+%d more` spellings for the same reason.
+
+> ##### ⛔ THE WORKINGS HEAD HAS TWO BUTTONS IN IT NOW
 >
 > `_build_workings_roster_head` mounts the `quarrywork` pool's STEPPER on the row the toggle is
-> installed on. A `Button` consumes its own click and does not propagate to the parent's `gui_input`,
-> so the stepper keeps staffing the pool and does not fold the mode — **and that is a condition this
-> helper had never met, so it is ASSERTED with a real `push_input` press rather than assumed**
-> (`assign_labor 0 4904 quarrywork 3` emitted, `_roster_expanded` unmoved).
+> installed on, and the disclosure control is a second `Button` beside it. A `Button` consumes its own
+> click and does not propagate to the parent's `gui_input`, so the stepper keeps staffing the pool and
+> does not fold the mode — **and that is a condition this helper had never met, so it is ASSERTED with
+> a real `push_input` press rather than assumed** (`assign_labor 0 4904 quarrywork 3` emitted,
+> `_roster_expanded` unmoved).
 >
 > **The `Label` → `MOUSE_FILTER_PASS` sweep is kept and is what makes both true at once**: a readout
 > Label takes `STOP` for its own tooltip and would otherwise swallow a press landing on it, and the
-> sweep is scoped to Labels precisely so the stepper's Buttons keep consuming their own clicks.
+> sweep is scoped to Labels precisely so both Buttons keep consuming their own clicks.
+
+⛔ **THE AFFORDANCE GOES AFTER THE TITLE, NEVER BEFORE THE READOUT**
+(`ZONE_DISCLOSURE_AFTER_TITLE_INDEX`). It takes its width out of the head's EXPANDING spacer rather
+than off the right-hand readout, which states the builders count and their kit (or, on the workings
+head, mounts the stepper) and may not give up a character.
 
 #### THE VOCABULARY IS ONE SPELLING, AND THE OFFSET RESTORE IS ONE HELPER
 
-`BUILD_QUEUE_DISCLOSURE_COLLAPSED` / `_EXPANDED` / `_FONT_SIZE` / `_META` are renamed
-`ZONE_DISCLOSURE_*`, used by the queue and both rosters: *this block opens* is ONE idea, and a
-`ROSTER_DISCLOSURE_*` pair defined from the queue's would be a second name for one glyph. Only the
-TOOLTIPS fork, each naming its own subject (`BUILD_QUEUE_DISCLOSURE_TOOLTIP` /
-`ROSTER_DISCLOSURE_TOOLTIP`, the latter naming no roster, since one head opens `Roads kept` and the
-other `Workings`).
+`BUILD_QUEUE_DISCLOSURE_COLLAPSED` / `_EXPANDED` / `_META` are renamed `ZONE_DISCLOSURE_*`, used by
+the queue and both rosters: *this block opens* is ONE idea, and a `ROSTER_DISCLOSURE_*` pair defined
+from the queue's would be a second name for one glyph. The tooltips converged on one format too — see
+"ONE TOOLTIP, TAKING THE BLOCK'S OWN NOUN" above. (`ZONE_DISCLOSURE_FONT_SIZE` went with the bare
+glyph: the affordance is a `Button` at `WORK_ROW_FONT_SIZE` now.)
 
 ⛔ **`ZONE_DISCLOSURE_META` RIDES THREE HEADS, SO A READER MUST SCOPE ITS SEARCH TO A BLOCK.** A
 panel-wide `_find_meta_control` answers with whichever head the tree reaches first, and in the
@@ -3620,9 +3726,12 @@ counted rows would pass on a renderer that drew five rows without controls, whic
 restated. `harness-band-panel.md` → "THE ROSTER DOOR" carries the fixture, the claims and the
 falsification counts.
 
-**Frames:** `band_panel_workings_roster_collapsed` (3 rows, `+2 more`, two workings with no row and
-therefore no `⌃` and no `✕`) · `band_panel_workings_roster_expanded` (all five, each with both
-controls, no board, no other roster) · `band_panel_roadwork_roster_expanded` (the same builder on the
+**Frames:** `band_panel_workings_roster_collapsed` (3 rows, `+2 more ▾` on the head, two workings with
+no row and therefore no `⌃` and no `✕`) · `band_panel_workings_roster_expanded` (all five, each with
+both controls, no board, no other roster) ·
+`band_panel_workings_roster_expanded_under_the_cap` (the stranding case: two rows left, `Show less ▴`
+still on the head) · `band_panel_queue_expanded_under_the_cap` (its queue twin) ·
+`band_panel_roadwork_roster_expanded` (the same builder on the
 other roster) · `band_panel_workings_roster_expanded_tight` (the 1920 BOTTOM dock, the shortest work
 zone this panel ships — 380 × 356, the list declaring 193px of it).
 

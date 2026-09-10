@@ -2450,11 +2450,28 @@ consults the sight axis — **no frame rendered before it existed changes.**
 `kit_token` gained the `SendExpedition` arm, that verb having left the `NotKitBearing` list. Without
 both halves the drive would prove only that a line PARSES.
 
+## `All 0` — an absence claim that needs the presence one push earlier
+
+`band_panel_work_empty_wide` already staged the only band in this file that works NOTHING (the
+zero-source path, reached by cycling off a busy band — the ordering is the reproduction, see
+`band-city-panel.md` → "AN EMPTY WORK BOARD STILL DECLARES ITS WIDTH"). It gains the chips claim:
+**no chips row at all**, plus the hint still rendering, since "no chips" is otherwise satisfied by a
+zone drawing nothing.
+
+⛔ **THE PRESENCE IS ASSERTED ON THE BUSY BAND ONE PUSH EARLIER**, in the same function — an absence
+asserted alone passes on a builder that never draws chips anywhere.
+
+**`_work_chip_count()` counts by `WORK_CHIP_TOOLTIP`, never by matching a face**: `All 0` is precisely
+the face under test, and it is the same probe `_assert_queue_expanded_shape` already uses, so "the
+chips are gone" means one thing wherever it is claimed.
+
 ## THE ROSTER DOOR — the fixture that did not exist, and the claim that is not a row count
 
 **MEASURED, BEFORE AND AFTER, ON THIS TREE**: `1202 : PASS / 515 assert OK / 176 frames` →
-`1238 / 524 / 180`, exit 0 both times. The behaviour is `band-city-panel.md` → "THE ROSTER DOOR"; what
-belongs here is the fixture and what each claim can tell apart.
+`1238 / 524 / 180`, exit 0 both times. Moving the door ONTO the head — and extending the same control
+to the BUILD QUEUE — took it to `1274 / 528 / 182`. The behaviour is `band-city-panel.md` → "THE
+ROSTER DOOR" and "ONE CONTROL IN TWO STATES"; what belongs here is the fixture and what each claim can
+tell apart.
 
 ⛔ **NO FIXTURE IN THIS FILE HAD MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
 DEFECT.** Both rosters cap at `ROADWORK_ROSTER_ROWS_MAX`, every roster state staged exactly three
@@ -2477,14 +2494,16 @@ no idle hands and a dead `+`, and the stepper claim would have proved nothing.
 ### The four states, and what each one alone cannot tell
 
 - **`band_panel_workings_roster_collapsed`** — the PAIRED NEGATIVE, and it runs first. Three rows and
-  a `+2 more`, plus the claim that matters as an absence: the other two workings have **no row, no
-  `⌃` and no `✕` at all**. An absence is worth asserting only where a presence would otherwise have
-  been visible, which is why it is the same frame family as the expansion.
+  a `+2 more ▾` **on the head**, plus the claim that matters as an absence: the other two workings
+  have **no row, no `⌃` and no `✕` at all**. An absence is worth asserting only where a presence would
+  otherwise have been visible, which is why it is the same frame family as the expansion. It also
+  asserts the door is a DESCENDANT OF THE HEAD — a door anywhere else is the two-controls-in-two-places
+  shape the correction removed, and no reachability claim would notice.
 - **`band_panel_workings_roster_expanded`** — reached by a **REAL** `_drive_click` on the door
   (`pressed.emit()` cannot see a control that is covered, zero-size or filtered out of the hit test,
-  and this is a ghost Button in a 28px roster row). Every model has a row, every row its `⌃` AND its
-  `✕`; no `+N more` left; the board GONE rather than squeezed; the OTHER roster gone with it; the
-  POOLS block still above.
+  and this is a small ghost Button in a head row). Every model has a row, every row its `⌃` AND its
+  `✕`; the head's ONE control now reads `Show less ▴` and stands for no hidden row; the board GONE
+  rather than squeezed; the OTHER roster gone with it; the POOLS block still above.
 - **`band_panel_roadwork_roster_expanded`** — the same builder on the other roster, one frame being
   enough for a second caller of one function, plus the claim that GROUNDWORK folded.
 - **`band_panel_workings_roster_expanded_tight`** — the 1920 BOTTOM dock, the shortest work zone this
@@ -2492,6 +2511,46 @@ no idle hands and a dead `+`, and the stepper claim would have proved nothing.
   so the claim on the tightest dock is `_assert_zone_content_fits`; the geometry is PRINTED beside it
   (`WORK zone box 380 × 356, pools 110, expanded roster declares 193px = 6.9 rows of 28`) rather than
   asserted, a near-miss and a comfortable fit being the same green line otherwise.
+
+### THE THREE-STATE TABLE, ASSERTED DIRECTLY — including the row that is an ABSENCE
+
+`band-city-panel.md` → "ONE CONTROL IN TWO STATES" is the design; these are the claims.
+
+- **collapsed over the cap** — `band_panel_workings_roster_collapsed` (5 workings) and
+  `band_panel_queue_collapsed_long` (14 entries): the head carries the button, its face is
+  `zone_disclosure_face(false, hidden)` **composed rather than spelled**, and its `*_OVERFLOW_META`
+  equals the count of rows with no row of their own.
+- **expanded** — the same two blocks one press later: face `Show less ▴`, meta `0`.
+- **collapsed and drawn WHOLE** — the ABSENCE, and it is paired with a presence in the same family
+  every time. `band_panel_roadwork_roster` keeps exactly the cap, so **no door and the head is NOT a
+  toggle** (`_roster_head_toggle` answers `null`). On the queue it is a FORK inside
+  `_assert_build_queue_block`, on the very count that function just asserted — so every state that
+  calls it claims one or the other, and the presence and the absence cannot drift into two frames.
+
+⛔ **THE STRANDING CASE IS ITS OWN CLAIM, ON BOTH BLOCKS.**
+`_assert_the_expanded_roster_cannot_strand_the_player` re-pushes the door band holding only
+`DOOR_WORKINGS_KEPT_AFTER_DROP` (2) while the list is OPEN;
+`_assert_the_expanded_queue_cannot_strand_the_player` does the same with
+`QUEUE_STRANDING_ENTRIES` (= `BUILD_QUEUE_ROWS_MAX`, the boundary rather than a number beside it).
+Each then asserts the collapse affordance is STILL there, and — one press later, on the same band —
+that folding back leaves a list drawn whole with no door. **Frames:**
+`band_panel_workings_roster_expanded_under_the_cap`, `band_panel_queue_expanded_under_the_cap`.
+
+**FALSIFIED:** making the expanded affordance conditional on overflow (dropping `not expanded` from
+`_make_zone_head_a_toggle`'s guard and passing the real overflow from both expanded builders) fails
+**exactly 2** claims — one per block, both the stranding one — and nothing else. The narrowness is the
+point: the sabotage is invisible to every other frame, which is precisely why the case needs a claim
+of its own.
+
+⛔ **THE HEAD HEIGHTS ARE MEASURED BY THE HARNESS, NOT ASSERTED INTO EXISTENCE.**
+`_assert_zone_head_reserves(where, block, reserved)` is one helper over all three blocks: it PRINTS
+`block head reserves Xpx, draws Ypx` and asserts `reserved ≥ drawn`. The print is what the constants
+are corrected from — the zone `clip_contents`, so a head drawing taller than its block reserved takes
+the difference off the bottom of the BOARD in silence. The with-button cases need their own call
+sites, because the states that assert each block by default are the ones drawn WHOLE:
+`band_panel_workings_roster` measures 21 (stepper only) while
+`band_panel_workings_roster_collapsed` measures 22 (stepper + door), and `band_panel_roadwork_roster`
+measures 20 while `band_panel_roadwork_roster_expanded` measures 22.
 
 ⛔ **`_assert_the_expanded_roster_reaches_every_working` WALKS THE MODELS, NEVER A LIST THIS FILE
 TYPED TWICE.** It asks the controller's own `_workings_roster_models` for the keys and requires a row

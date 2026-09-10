@@ -1990,14 +1990,9 @@ const ROADWORK_ROSTER_HERE := "Here, in camp"
 ## non-zero `Roadwork` count would say *this band keeps nothing*, which is a readout that lies.
 const ROADWORK_ROSTER_UNSEEN_LINE := "The roads this band keeps are not in sight."
 
-## The `+N more` foot, the build queue block's own word for the same thing — a roster longer than the
-## zone can hold states what it is not showing rather than truncating in silence.
-##
-## ⛔ **AND IT IS A DOOR NOW, NOT A NOTICE** (the roster door, `.claude/rules/client/band-city-panel.md`).
-## Pressing it opens the whole roster over the Work zone, where every row has its own controls — which
-## on the WORKINGS roster is the only way a fourth working's `⌃` and `✕` can be reached at all. The
-## head above is the same door and the only way back.
-const ROADWORK_ROSTER_OVERFLOW_FORMAT := "+%d more"
+## The roster's overflow face, its `Show less` twin and the composer of both, are the ZONE-WIDE
+## disclosure family now — `ZONE_DISCLOSURE_MORE_FORMAT` / `ZONE_SHOW_LESS_LABEL` /
+## `zone_disclosure_face`, shared with the BUILD QUEUE. One control shape over three blocks.
 
 ## **ROWS BEFORE THE FOOT TAKES OVER.** Small on purpose: this block sits above the build queue and
 ## the board in a zone that clips, and every row it draws is a board row that does not. Three is the
@@ -2026,6 +2021,27 @@ const ROADWORK_ROSTER_ABANDON_META := "roadwork_roster_abandon"
 ## The muted case-2 line, so its presence is assertable rather than inferred from a row count.
 const ROADWORK_ROSTER_UNSEEN_META := "roadwork_roster_unseen"
 
+## ⛔ **WHAT THE ROAD ROSTER'S HEAD RESERVES WITH THE DISCLOSURE BUTTON ON IT — MEASURED, not
+## `ZONE_HEAD_HEIGHT`.** This head was a bare title row at `ZONE_HEAD_HEIGHT` (20) while the `+N more`
+## door was a full-width row below the rows; the door is a small ghost `Button` on this row now, and
+## an `HBoxContainer` grows to its tallest child, so the button's own minimum sets the row.
+## `band_panel_preview._assert_roadwork_roster_head` prints the reserved figure beside the drawn one,
+## which is what makes this a measurement rather than a re-derivation — the work zone `clip_contents`,
+## so a head drawing taller than the block reserved takes the difference off the bottom of the board
+## in silence.
+##
+## **MEASURED ON THE DRAWN HEAD: 22.0px** (`band_panel_roadwork_roster_expanded`), against the
+## **20.0** the same head draws with no button on it (`band_panel_roadwork_roster`, a band keeping
+## exactly the cap). A `compact` ghost button at `WORK_ROW_FONT_SIZE` / `WORK_PAGER_PADDING_V` is 2px
+## taller than the title row it stands beside.
+##
+## ⛔ **IT IS THE TALLER OF THE TWO, DELIBERATELY.** The three states of the disclosure control mean
+## this head draws at 20 or at 22 depending on the band, and the block reserves ONE figure: the
+## contract is *reserved ≥ drawn*, so the constant is what the head CAN take. Forking the height
+## function on whether the affordance renders would put a third opinion about the same 2px into
+## `build_queue_rows_max` and `_work_board_capacity`, to buy back less than a tenth of a row.
+const ROADWORK_ROSTER_HEAD_HEIGHT := 22.0
+
 ## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, the rule both blocks
 ## beside it keep. The work zone `clip_contents`, so a block that drew without being paid for in
 ## `_work_board_capacity`'s chrome term silently slices board rows off the bottom.
@@ -2036,15 +2052,21 @@ const ROADWORK_ROSTER_UNSEEN_META := "roadwork_roster_unseen"
 ## `visible` is the count of KEPT ROADS THIS BAND CAN SEE; `unseen_line` is whether the muted line
 ## above is drawn (case 2: a bill with nothing in sight). They are the block's two inputs rather than
 ## its height, so the arithmetic stays in one place.
+##
+## ⛔ **THERE IS NO `+1` FOR AN OVERFLOW ROW ANY MORE.** The `+N more` door moved ONTO the head, so
+## the block draws its head, its rows and nothing else. A term left here for a row that no longer
+## renders would silently steal a board row: this one answer is threaded into `build_queue_rows_max`
+## AND `_work_board_capacity`, and the work zone `clip_contents`.
+##
+## ⛔ **AND THE HEAD TERM IS `ROADWORK_ROSTER_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head
+## carries the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
 static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
     if visible <= 0 and not unseen_line:
         return 0.0
     var lines := mini(visible, ROADWORK_ROSTER_ROWS_MAX)
-    if visible > ROADWORK_ROSTER_ROWS_MAX:
-        lines += 1
     if unseen_line:
         lines += 1
-    return ZONE_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
+    return ROADWORK_ROSTER_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
 
 # ---- THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for (arc #583) ------------
 #
@@ -2107,13 +2129,21 @@ const ZONE_HEADER_WORKINGS_ROSTER := ROLE_NAME_QUARRYWORK
 ## a re-derivation — the work zone `clip_contents`, so a head drawing taller than the block reserved
 ## takes the difference off the bottom of the board in silence.
 ##
-## **IT IS `ZONE_HEAD_HEIGHT` PLUS ONE PIXEL, and that is the whole of what the pool's control cost
-## this block.** Measured on the drawn head: **21.0px** against the 20 a bare title row takes, the
-## compact stepper's own button minimum being what sets it. So the block's height moves by 1px against
-## the road roster's, and it moves through the SAME single-resolution seam — `_fill_work_zone_column`
-## resolves `workings_roster_height` once and hands it to both `build_queue_rows_max` and
-## `_work_board_capacity` — so nothing in the zone's arithmetic learns about the head separately.
-const WORKINGS_ROSTER_HEAD_HEIGHT := 21.0
+## ⛔ **AND THE STEPPER IS NO LONGER THE TALLEST THING ON IT.** The head carries the roster's
+## DISCLOSURE BUTTON too now (the roster door moved onto the head), a `compact` ghost button at
+## `WORK_ROW_FONT_SIZE` / `WORK_PAGER_PADDING_V` — taller than the compact stepper at
+## `WORK_STEPPER_FONT_SIZE`, so it is the button that sets this row and the road roster's alike.
+##
+## **RE-MEASURED ON THE DRAWN HEAD: 22.0px** (`band_panel_workings_roster_collapsed` /
+## `…_expanded`, the door on the head), against the **21.0** the stepper alone takes on a band at or
+## under the cap (`band_panel_workings_roster`) and the 20 a bare title row takes. It reserves the
+## TALLER of its two states for `ROADWORK_ROSTER_HEAD_HEIGHT`'s reason. It is now the SAME figure as
+## that constant and still its own: the heads are measured separately because they hold different
+## controls, and one defined from the other would be a coincidence written down as a rule. It moves through
+## the SAME single-resolution seam — `_fill_work_zone_column` resolves `workings_roster_height` once
+## and hands it to both `build_queue_rows_max` and `_work_board_capacity` — so nothing in the zone's
+## arithmetic learns about the head separately.
+const WORKINGS_ROSTER_HEAD_HEIGHT := 22.0
 
 ## The head's stepper, as a stable handle. **Valued the ROLE it staffs**, so a harness reads *this is
 ## the workings pool's control* rather than *a stepper exists somewhere in the block* — and so the
@@ -2195,15 +2225,16 @@ const WORKINGS_ROSTER_UNSEEN_LINE := "The ground this band works is not in sight
 ## roster be here*.
 ##
 ## ⛔ **IT IS NOT `roadwork_roster_height` DELEGATED, and the difference is the HEAD.** This block's
-## head carries the `quarrywork` pool's own stepper, so it reserves `WORKINGS_ROSTER_HEAD_HEIGHT`
-## rather than the bare `ZONE_HEAD_HEIGHT` the road roster's title row costs. The ROWS term is
+## head carries the `quarrywork` pool's own stepper as well as the disclosure button, so it reserves
+## its own MEASURED `WORKINGS_ROSTER_HEAD_HEIGHT` rather than the road roster's. The ROWS term is
 ## identical, which is why the two functions read alike and are still two answers.
+##
+## ⛔ **NO `+1` FOR AN OVERFLOW ROW** — `roadwork_roster_height`'s note, for the same two capacity
+## readers and the same clipping zone.
 static func workings_roster_height(visible: int, unseen_line: bool) -> float:
     if visible <= 0 and not unseen_line:
         return 0.0
     var lines := mini(visible, ROADWORK_ROSTER_ROWS_MAX)
-    if visible > ROADWORK_ROSTER_ROWS_MAX:
-        lines += 1
     if unseen_line:
         lines += 1
     return WORKINGS_ROSTER_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
@@ -2274,10 +2305,12 @@ const BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT := 1.0
 ## the chips, the POOLS block, one board row, the pager, the block's own head and the gaps between
 ## them — and divides what is left by the row height.
 ##
-## **THE OVERFLOW ROW IS TAKEN OFF THE ANSWER, NOT ADDED TO THE COST.** `build_queue_block_height`
-## draws a `+N more` row BESIDE the capped entries rather than in place of one, so a zone that affords
-## two rows and is handed four entries shows ONE entry and the overflow — the drawn count is the same
-## either way, and computing it here is what stops the reservation and the render disagreeing.
+## ⛔ **THE OVERFLOW ROW IS GONE, AND SO IS THE ROW THIS HELD BACK FOR IT.** It used to read *the
+## overflow row is taken off the ANSWER, not added to the cost* — `build_queue_block_height` drew a
+## `+N more` row beside the capped entries, so a zone affording two rows and handed four entries
+## showed ONE entry and the overflow. The `+N more` is on the block's HEAD now, in height the head
+## already reserves, so a queue that overflows costs the same as one that does not and every afforded
+## row goes to an ENTRY. A `-1` left here would give a board row to nothing.
 ## ⛔ **`roster_height` IS THE ROADWORK ROSTER'S SHARE, AND IT IS A TERM HERE FOR THE SAME REASON THE
 ## POOLS BLOCK IS** (arc #532). The roster renders BETWEEN the pools and this queue, so a ceiling that
 ## did not subtract it would hand the queue rows the roster is already standing in — and the zone
@@ -2288,7 +2321,11 @@ const BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT := 1.0
 ## reverse, or both — so each block's height AND its own gap are counted only where that block draws.
 ## Summing them into one argument would charge one gap for two blocks, which is the 6px disagreement
 ## `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` was added to close.
-static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entries: int,
+## ⛔ **`entries` IS DELIBERATELY UNREAD NOW.** It was the input to the held-back overflow row, and the
+## ceiling is a fact about the BOX rather than about the list: a queue of four and a queue of forty
+## afford the same rows. It stays in the signature because every caller has it and because a term that
+## depends on the list is exactly what has to be re-argued if a future block puts a row back.
+static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, _entries: int,
         roster_height: float = 0.0, workings_height: float = 0.0) -> int:
     # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
     # divides for are QUEUE rows, which are one line each.
@@ -2299,13 +2336,13 @@ static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, entri
         gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
     if workings_height > 0.0:
         gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
+    # The first head term is the WORK ZONE's own; the second is this block's, which carries the
+    # disclosure button and is measured separately for it.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
-        + ZONE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
+        + BUILD_QUEUE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
         + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height + workings_height \
         + float(ZONE_BLOCK_SEPARATION) * gaps
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
-    if entries > afforded:
-        afforded -= 1
     return clampi(afforded, BUILD_QUEUE_ROWS_MIN, BUILD_QUEUE_ROWS_MAX)
 
 ## The HEAD marker — the one entry the whole builders pool is standing on. Its slot is reserved on
@@ -2425,16 +2462,10 @@ static func build_queue_subject(kind: String, x: int, y: int, herd_label: String
         return BUILD_QUEUE_ROAD_SUBJECT_FORMAT % [x, y]
     return BUILD_QUEUE_TILE_SUBJECT_FORMAT % [x, y]
 
-## The truncation row. **A truncated list with nothing under it reads as the whole list**, which is
-## the faction page's standing rule for a capped list, applied to the band's own.
-const BUILD_QUEUE_OVERFLOW_FORMAT := "+%d more"
-
-## **AND IT IS A DOOR NOW, NOT A NOTICE** (`docs/plan_standing_upkeep.md` §4.9 item 9c). The sentence that
-## sent the player to the command line went with the drag handle (§4.7b ③), and the one that said the
-## hidden entries were out of reach went with the EXPANSION — pressing this row opens the whole queue
-## over the Work zone, where every entry has a row, both arrows and its own settings strip. The head
-## above is the same door and the only way back.
-const BUILD_QUEUE_OVERFLOW_TOOLTIP := "Show the whole queue. The Work board makes way for it; press the BUILD QUEUE header to come back."
+## The queue's truncation words and its hover are the ZONE-WIDE disclosure family now —
+## `ZONE_DISCLOSURE_MORE_FORMAT` and `zone_disclosure_tooltip`, shared with both rosters. **A
+## truncated list with nothing under it reads as the whole list** is still the rule; what changed is
+## that the thing standing under it moved onto the head, so there is one control instead of two.
 
 ## The withdrawal. Same `✕` and same steady DANGER ink the parties zone's recall control wears — a
 ## destructive control reads as one — and, like that one, it asks nothing first: `unqueue` withdraws a
@@ -2839,6 +2870,15 @@ const BUILD_QUEUE_BLOCK_META := "build_queue_block"
 ## longer puts it on a node.
 const BUILD_QUEUE_ROW_META := "build_queue_row"
 
+## The DOOR's own meta, on the disclosure button the BUILD QUEUE head carries — so a frame can find
+## the control and press it where the player presses it, rather than by matching the face's rendered
+## digits. **Valued the entries the collapsed block is NOT drawing**, which is `0` in the expanded
+## state and on any queue the block draws whole. It rode a `+N more` ROW under the entries until that
+## row and the head's own toggle became one control (`zone_disclosure_face`).
+##
+## ⛔ **THE BUTTON CARRIES THIS *AND* `ZONE_DISCLOSURE_META`**, being one control doing both jobs: the
+## count it stands for, and which way the next press goes. `ROSTER_OVERFLOW_META` is its twin on the
+## two rosters, its own name so a scan for one cannot answer with the other.
 const BUILD_QUEUE_OVERFLOW_META := "build_queue_overflow"
 
 const BUILD_QUEUE_MARKER_META := "build_queue_marker"
@@ -2868,6 +2908,23 @@ const BUILD_QUEUE_KIT_PICKER_META := "build_queue_kit_picker"
 ## strip is the one that opened rather than *a* strip exists somewhere in the block.
 const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 
+## ⛔ **WHAT THE BUILD QUEUE'S HEAD RESERVES WITH THE DISCLOSURE BUTTON ON IT — MEASURED, not
+## `ZONE_HEAD_HEIGHT`.** This head was a bare title row at `ZONE_HEAD_HEIGHT` (20) while the `+N more`
+## door was an entry-height row under the entries; the door is a small ghost `Button` on this row now,
+## and an `HBoxContainer` grows to its tallest child, so the button's own minimum sets the row.
+## `band_panel_preview._assert_build_queue_head` prints the reserved figure beside the drawn one,
+## which is what makes this a measurement rather than a re-derivation — the work zone `clip_contents`,
+## so a head drawing taller than the block reserved takes the difference off the bottom of the board
+## in silence.
+##
+## **MEASURED ON THE DRAWN HEAD: 22.0px** (`band_panel_queue_collapsed_long`, the door on the head),
+## against the **20.0** the same head draws on a queue the block already renders whole
+## (`the three-entry queue`). It reserves the TALLER of its two states for
+## `ROADWORK_ROSTER_HEAD_HEIGHT`'s reason. The same figure the two roster heads measure, and still its
+## own constant: three heads holding different controls are three measurements, and one defined from
+## another would be a coincidence written down as a rule.
+const BUILD_QUEUE_HEAD_HEIGHT := 22.0
+
 ## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers.** The work zone
 ## `clip_contents`, so a block that drew without being paid for in `_work_board_capacity`'s chrome
 ## term would silently slice board rows off the bottom of the zone. Reserving and drawing from one
@@ -2889,15 +2946,22 @@ const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 ## from the strip's own — and a strip that also lists an entry's LEGS has a height that varies, so
 ## what a caller states is the CONTENT and `build_queue_settings_height` remains the one arithmetic
 ## both the reservation and the render read.
+##
+## ⛔ **THERE IS NO `+1` FOR AN OVERFLOW ROW ANY MORE**, and it had to come out of `build_queue_rows_max`
+## in the same breath. The `+N more` door moved ONTO the head, so the block draws its head, the rows
+## it can afford and (open-only) one settings strip. A term left here for a row that no longer renders
+## would silently steal a board row: this answer is threaded into `_work_board_capacity` and the work
+## zone `clip_contents`.
+##
+## ⛔ **AND THE HEAD TERM IS `BUILD_QUEUE_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head carries
+## the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
 static func build_queue_block_height(entries: int, rows_max: int,
         settings_legs: int = 0, settings_crop: bool = false, settings_kit: bool = false,
         settings_one_line: bool = true) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
-    if entries > rows_max:
-        rows += 1
-    return ZONE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
+    return BUILD_QUEUE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
         + build_queue_settings_height(settings_legs, settings_crop, settings_kit, settings_one_line)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
@@ -2932,11 +2996,36 @@ const ZONE_DISCLOSURE_COLLAPSED := "▾"
 
 const ZONE_DISCLOSURE_EXPANDED := "▴"
 
-## It rides the head's own type size — it is part of the title, not a control beside it — and takes
-## its width out of the head's EXPANDING spacer rather than off the right-hand readout, which states
-## the builders count and their kit (or, on the workings head, mounts the `quarrywork` stepper) and
-## may not give up a character.
-const ZONE_DISCLOSURE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
+## **THE COLLAPSED FACE'S WORDS** — how many rows the block is not drawing. ⛔ **ONE FORMAT FOR ALL
+## THREE BLOCKS.** The build queue and the two rosters each had their own `+%d more`, which was three
+## names for one string the moment the three controls became one shape.
+const ZONE_DISCLOSURE_MORE_FORMAT := "+%d more"
+
+## …and the EXPANDED face's. **A WORD, NOT A GLYPH ALONE.** A bare `▴` beside a heading was read from
+## play as *"the little dot next to Groundwork"* — a caret at head type size is not a disclosure
+## control to anyone who has not been told it is one. The word carries the meaning and the caret
+## carries the direction, in both states.
+const ZONE_SHOW_LESS_LABEL := "Show less"
+
+## …and the ONE composer of both faces: the words, then the caret that says which way the press goes.
+## Two spellings of *words then caret* are how one block's collapsed face and another's expanded one
+## come to sit at different widths in heads whose height is MEASURED.
+const ZONE_DISCLOSURE_FACE_FORMAT := "%s %s"
+
+## The face a zone block's head disclosure control wears. `remaining` is the rows the collapsed block
+## is NOT drawing; it is unread when `expanded`, the expanded list drawing every row it has.
+static func zone_disclosure_face(expanded: bool, remaining: int) -> String:
+    if expanded:
+        return ZONE_DISCLOSURE_FACE_FORMAT % [ZONE_SHOW_LESS_LABEL, ZONE_DISCLOSURE_EXPANDED]
+    return ZONE_DISCLOSURE_FACE_FORMAT % [
+        ZONE_DISCLOSURE_MORE_FORMAT % remaining, ZONE_DISCLOSURE_COLLAPSED]
+
+## **THE CONTROL SITS IMMEDIATELY AFTER THE TITLE, and that placement is load-bearing.** It takes its
+## width out of the head's EXPANDING spacer rather than off the right-hand readout, which states the
+## builders count and their kit (or, on the workings head, mounts the `quarrywork` stepper) and may
+## not give up a character. So the head reads `BUILD QUEUE  +2 more ▾` and everything on the right of
+## the spacer keeps the width it had.
+const ZONE_DISCLOSURE_AFTER_TITLE_INDEX := 1
 
 ## The head row's own meta, so a frame can find the toggle and press it where the player presses it.
 ## Valued the EXPANDED flag, so the glyph and the state cannot be asserted apart.
@@ -2946,12 +3035,23 @@ const ZONE_DISCLOSURE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
 ## is a ROSTER's rather than the queue's.
 const ZONE_DISCLOSURE_META := "zone_disclosure"
 
-const BUILD_QUEUE_DISCLOSURE_TOOLTIP := "Show the whole queue over the Work board, or fold it back to the top three and the sources."
+## ⛔ **ONE SENTENCE FOR ALL THREE BLOCKS, TAKING THE BLOCK'S OWN NOUN.** There were four constants
+## saying this in two shapes — a `*_DISCLOSURE_TOOLTIP` per block and a `*_OVERFLOW_TOOLTIP` beside it
+## — and two of them ended *"press the header to come back"*, which stops being true the moment the
+## control IS the header. One format is what stops two states and three blocks wording this four ways.
+##
+## It states what the control is FOR in BOTH directions, the same press being the way in and the way
+## back, and it names no particular roster: one roster head opens `Roads kept` and the other
+## `Workings`, and the sentence has to be true of both.
+const ZONE_DISCLOSURE_TOOLTIP_FORMAT := "Show every row of this %s over the Work board, or fold it back and give the board its space again."
 
-## …and the rosters' twin. It names no roster: one head opens `Roads kept` and the other `Workings`,
-## and the sentence has to be true of both. Like the queue's, it states what the head is FOR in both
-## directions, since the head is the only way back out of the mode.
-const ROSTER_DISCLOSURE_TOOLTIP := "Show every row of this roster over the Work board, or fold it back to the first three and the sources."
+## The nouns that format takes — the block saying what KIND of list it is holding back.
+const ZONE_DISCLOSURE_NOUN_QUEUE := "queue"
+const ZONE_DISCLOSURE_NOUN_ROSTER := "roster"
+
+static func zone_disclosure_tooltip(noun: String) -> String:
+    return ZONE_DISCLOSURE_TOOLTIP_FORMAT % noun
+
 
 ## **THE THIRD SANCTIONED `ScrollContainer` IN THIS PANEL** (`PARTIES_LIST_NAME` under
 ## `ZONE_PARTIES`, `BAND_ZONE_SCROLL_NAME` under `ZONE_BAND`, this one under `ZONE_WORK`, and
@@ -2977,15 +3077,15 @@ const BUILD_QUEUE_EXPANDED_SCROLL_NAME := "BuildQueueList"
 ## assertion loudly, which is this zone's standing contract; a floor would turn that into a silent
 ## clip of the bottom row, since the zone `clip_contents`.
 static func build_queue_expanded_scroll_height(box_height: float, pools_fund_mode: bool) -> float:
-    return zone_expanded_scroll_height(box_height, pools_fund_mode, ZONE_HEAD_HEIGHT)
+    return zone_expanded_scroll_height(box_height, pools_fund_mode, BUILD_QUEUE_HEAD_HEIGHT)
 
 ## …and the ONE arithmetic behind it, over every block that can take the zone (`docs/plan_standing_upkeep.md`
 ## §4.9 item 9c; the roster door, `.claude/rules/client/band-city-panel.md`).
 ##
 ## ⛔ **THE BLOCK'S OWN CHROME IS THE ONLY TERM THAT DIFFERS, WHICH IS EXACTLY WHY IT IS THE
-## PARAMETER — AND IT IS NOT JUST THE HEAD.** The queue's head and the road roster's are bare
-## `zone_head` title rows at `ZONE_HEAD_HEIGHT`; the workings roster's mounts the `quarrywork` pool's
-## stepper and reserves `WORKINGS_ROSTER_HEAD_HEIGHT`; and EITHER roster adds a `WORK_ROW_HEIGHT`
+## PARAMETER — AND IT IS NOT JUST THE HEAD.** All three heads carry a disclosure BUTTON and each
+## reserves its own MEASURED figure — `BUILD_QUEUE_HEAD_HEIGHT`,
+## `ROADWORK_ROSTER_HEAD_HEIGHT`, `WORKINGS_ROSTER_HEAD_HEIGHT`; and either roster adds a `WORK_ROW_HEIGHT`
 ## unseen line above its list when the pool holds more than this band can see. Everything else above
 ## the list — the work head, the POOLS block, the two block separations between the three blocks — is
 ## the same for all three, and a second expression of it is how one mode comes to declare a viewport
@@ -3014,13 +3114,14 @@ static func zone_expanded_scroll_height(box_height: float, pools_fund_mode: bool
 ## no scroll — and never otherwise.
 const ROSTER_EXPANDED_SCROLL_NAME := "ZoneRosterList"
 
-## The `+N more` DOOR's own meta, valued the count it stands for — so a frame can find the control and
-## press it where the player presses it, rather than by matching the format's rendered digits.
+## The DOOR's own meta, on the disclosure button the roster head carries — so a frame can find the
+## control and press it where the player presses it, rather than by matching the face's rendered
+## digits. **Valued the rows the collapsed block is NOT drawing**, which is `0` in the expanded state
+## and on any roster at or under the cap.
+##
+## ⛔ **THE BUTTON CARRIES THIS *AND* `ZONE_DISCLOSURE_META`**, being one control doing both jobs: the
+## count it stands for, and which way the next press goes.
 const ROSTER_OVERFLOW_META := "roster_overflow"
-
-## The `+N more` door's hover, on `BUILD_QUEUE_OVERFLOW_TOOLTIP`'s shape: what it opens, and that the
-## head above is the way back. It names no roster for `ROSTER_DISCLOSURE_TOOLTIP`'s reason.
-const ROSTER_OVERFLOW_TOOLTIP := "Show every row of this roster. The Work board makes way for it; press the roster's own header to come back."
 
 ## The gaps above that viewport: work head → pools, pools → queue block. Named rather than spelled,
 ## the same way `BUILD_QUEUE_ROOM_GAP_COUNT` is, because it is a COUNT and not a height.

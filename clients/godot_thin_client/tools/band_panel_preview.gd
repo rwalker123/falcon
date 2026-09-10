@@ -2600,6 +2600,11 @@ func _render_empty_work_zone_states() -> void:
 	# one column, and the state proves nothing about a count that went stale.
 	_assert_band_panel("band_panel_work_empty_wide: precondition — the busy band earns more than one board column (%d)"
 			% busy_columns, busy_columns > 1)
+	# **THE PRESENCE HALF OF THE `All 0` CLAIM, in the same frame family as its absence.** A band WITH
+	# sources draws its chips row; the claim one push below is that a band with none draws no row at
+	# all, and an absence asserted alone passes on a builder that never draws chips anywhere.
+	_assert_band_panel("…and a band WITH sources draws its filter chips (%d)" % _work_chip_count(),
+		_work_chip_count() > 0)
 
 	_push_bands([_unworked_band_fixture()])
 	await _settle()
@@ -2607,6 +2612,15 @@ func _render_empty_work_zone_states() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_empty_work_zone_is_one_column("band_panel_work_empty_wide")
+	# ⛔ **AND NO FILTER CHIPS AT ALL.** `All` was drawn unconditionally with `models.size()`, so a band
+	# working nothing rendered ONE chip reading `All 0` — filtering nothing, directly above the hint
+	# line that already says there are no sources. Reported from play as *"then a All 0, no clue what
+	# all 0 is?"*. The row is chrome here and the hint is the answer, so the row does not build.
+	_assert_band_panel("⛔ …and a band working NOTHING draws no chips row at all — no `All 0` (%d chips)"
+			% _work_chip_count(), _work_chip_count() == 0)
+	# …with the hint that replaced it still there, or "no chips" is satisfied by a zone drawing nothing.
+	_assert_band_panel("…while the line that DOES answer the question still renders",
+		_has_label_containing(_panel, HudWorkVocab.WORK_EMPTY_HINT))
 
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
@@ -2647,6 +2661,18 @@ func _assert_empty_work_zone_is_one_column(where: String) -> void:
 		return
 	for failure in failures:
 		_fail("%s — %s" % [where, failure])
+
+## The work board's FILTER CHIPS, counted by the one tooltip every chip in the row wears — the way
+## `_assert_queue_expanded_shape` already finds them, so "the chips are gone" means the same thing
+## wherever it is claimed. **Never by matching a face**: `All 0` is precisely the face under test.
+func _work_chip_count() -> int:
+	var chips := 0
+	var buttons: Array[Button] = []
+	_collect_buttons_typed(_panel, buttons)
+	for button in buttons:
+		if button.tooltip_text == HudWorkVocab.WORK_CHIP_TOOLTIP:
+			chips += 1
+	return chips
 
 ## The reference band with every TAKE row removed — a band that works nothing at all, which is turn one
 ## of a new game and the state `HudWorkVocab.WORK_EMPTY_HINT` exists for.
@@ -15449,8 +15475,10 @@ const QUEUE_ROW_WORKERS := 1
 ## two and `+2 more`. Nothing else moved — the board's row count is unchanged at every dock in the matrix.
 ##
 ## **ONE IS `HudWorkVocab.BUILD_QUEUE_ROWS_MIN`, i.e. the floor rather than a number with room under it**,
-## which is what makes it the honest reading: the block draws one entry row plus its overflow, and
-## `build_queue_rows_max` clamps there however short the box gets. The claims made against it still BITE —
+## which is what makes it the honest reading: the block draws one entry row and states the rest on its
+## HEAD, and `build_queue_rows_max` clamps there however short the box gets. It stayed ONE when the
+## `+N more` row was deleted, the row the ceiling used to hold back being paid for by the 2px the head
+## grew — measured, not predicted. The claims made against it still BITE —
 ## a block that drew NO entry row fails them, since they compare for equality against this count rather
 ## than merely requiring the block to exist.
 ##
@@ -16928,6 +16956,17 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 		not tiles.has(ROSTER_UNKEPT_TILE))
 	_assert_band_panel("…with one row per road THIS band keeps and can see — 3 (got %d)" % rows.size(),
 		rows.size() == 3)
+	_assert_zone_head_reserves("band_panel_roadwork_roster", block,
+		HudWorkVocab.ROADWORK_ROSTER_HEAD_HEIGHT)
+	# ⛔ **THE THIRD ROW OF THE DISCLOSURE TABLE, AND IT IS AN ABSENCE.** This band keeps exactly the
+	# cap, so the block draws every road it has: there is nothing behind the door, so there is NO door
+	# and the head is NOT a toggle. A head that toggles while showing nothing is the invisible
+	# affordance the whole arrangement exists to remove. Its paired presences are the door chapter's,
+	# on a band keeping five (`band_panel_workings_roster_collapsed` / `…_expanded`).
+	_assert_band_panel("⛔ …and a roster drawn WHOLE carries no `+N more` at all — nothing is behind it",
+		_roster_overflow_door(HudConst.LABOR_KIND_ROADWORK) == null)
+	_assert_band_panel("⛔ …and its head is NOT a toggle either, there being nothing to open",
+		_roster_head_toggle(HudConst.LABOR_KIND_ROADWORK) == null)
 	# **The bail is a FLOOR, not an equality**: a filter that let an extra road through must go on to
 	# fail the ORDER and the VALUE claims below by name, not take them out of the run with it.
 	if rows.size() < 3:
@@ -18034,20 +18073,30 @@ func _assert_workings_roster_head(where: String, block: Control, want_mark: bool
 	_assert_band_panel("%s: …and the shortfall mark is %s (found %s)"
 			% [where, "flown" if want_mark else "absent", marks],
 		marks.is_empty() != want_mark)
-	# **RESERVED >= DRAWN, printed.** The block declares its own minimum from
-	# `HudWorkVocab.workings_roster_height`; what the HEAD draws is what that expression's head term
-	# has to cover.
+	_assert_zone_head_reserves(where, block, HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT)
+	_assert_band_panel(("%s: …and the block RESERVES what it DRAWS (%.0f reserved, %.0f drawn)")
+			% [where, block.custom_minimum_size.y,
+				block.get_combined_minimum_size().y],
+		block.custom_minimum_size.y + ZONE_BOUNDS_TOLERANCE
+			>= block.get_combined_minimum_size().y)
+
+## ⛔ **RESERVED >= DRAWN ON A ZONE BLOCK'S HEAD, PRINTED — for all three of them.** Each block
+## declares its own minimum from its own height function, and the HEAD term of that expression is a
+## MEASURED constant rather than `ZONE_HEAD_HEIGHT`: an `HBoxContainer` grows to its tallest child,
+## and every one of these heads now carries the disclosure BUTTON (the workings head carries the
+## `quarrywork` stepper besides). The zone `clip_contents`, so a head drawing taller than its block
+## reserved takes the difference off the bottom of the BOARD in silence — which is why the figure is
+## printed rather than merely asserted: the print is what the constant is corrected from.
+func _assert_zone_head_reserves(where: String, block: Control, reserved: float) -> void:
 	var head := block.get_child(0) as Control
-	if head != null:
-		var drawn: float = head.get_combined_minimum_size().y
-		_assert_band_panel(("%s: …and the head RESERVES what it DRAWS (%.0f reserved, %.0f drawn)")
-				% [where, HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT, drawn],
-			HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT + ZONE_BOUNDS_TOLERANCE >= drawn)
-		_assert_band_panel(("%s: …and the block RESERVES what it DRAWS (%.0f reserved, %.0f drawn)")
-				% [where, block.custom_minimum_size.y,
-					block.get_combined_minimum_size().y],
-			block.custom_minimum_size.y + ZONE_BOUNDS_TOLERANCE
-				>= block.get_combined_minimum_size().y)
+	if head == null:
+		_fail("%s — the block has no head row to measure" % where)
+		return
+	var drawn: float = head.get_combined_minimum_size().y
+	print("band_panel_preview: %s — block head reserves %.1fpx, draws %.1fpx" % [where, reserved, drawn])
+	_assert_band_panel("%s: …and the head RESERVES what it DRAWS (%.1f reserved, %.1f drawn)"
+			% [where, reserved, drawn],
+		reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
 
 ## The head's TITLE label, found by its own text — the head is an `HBoxContainer` whose first Label is
 ## the title, and a positional read would be asserting against `HudWidgets.zone_head`'s child order
@@ -18122,7 +18171,12 @@ const DOOR_HUNT_WORKERS := 2
 ## workings the band holds — five two-hand crews would spend the workforce the stepper claim needs.
 const DOOR_CUTTERS := 1
 
-func _door_band_fixture() -> Dictionary:
+## ⛔ **HOW MANY OF THE FIVE THE BAND STILL HOLDS.** The stranding claim needs this band to drop UNDER
+## the cap without changing anything else about it, which is a band putting workings down — the
+## `deposits` wire is untouched, since a working nobody cuts is still ground that exists.
+const DOOR_WORKINGS_KEPT_AFTER_DROP := 2
+
+func _door_band_fixture(kept: int = DOOR_WORKINGS.size()) -> Dictionary:
 	var band := _band_fixture()
 	band["quarrywork_demand"] = WORKINGS_DEMAND
 	band["quarrywork_supplied"] = WORKINGS_SUPPLIED
@@ -18142,7 +18196,7 @@ func _door_band_fixture() -> Dictionary:
 		{"kind": HudConst.LABOR_KIND_ROADWORK, "workers": ROSTER_ROADWORK_WORKERS,
 			"target_x": -1, "target_y": -1, "fauna_id": ""},
 	]
-	for held in DOOR_WORKINGS:
+	for held in DOOR_WORKINGS.slice(0, kept):
 		var tile: Vector2i = held[0]
 		rows.append({
 			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": DOOR_CUTTERS,
@@ -18237,8 +18291,22 @@ func _assert_the_roster_door_opens_the_whole_list() -> void:
 	_assert_band_panel("…and the `+%d more` is a BUTTON now, not an inert label"
 			% hidden.size(),
 		door != null and int(door.get_meta(HudWorkVocab.ROSTER_OVERFLOW_META)) == hidden.size())
-	_assert_band_panel("…whose hover says what it opens AND that the head is the way back",
-		door != null and door.tooltip_text == HudWorkVocab.ROSTER_OVERFLOW_TOOLTIP)
+	_assert_band_panel("…whose face is the collapsed one and whose hover states BOTH directions of the one control (`%s`)"
+			% ("" if door == null else door.text),
+		door != null and door.text == HudWorkVocab.zone_disclosure_face(false, hidden.size())
+			and door.tooltip_text == HudWorkVocab.zone_disclosure_tooltip(
+				HudWorkVocab.ZONE_DISCLOSURE_NOUN_ROSTER))
+	# ⛔ **AND IT IS ON THE HEAD, WHICH IS THE WHOLE CORRECTION.** The door and the way back were two
+	# controls in two places — a full-width row under the rows to open, the bare head to fold back —
+	# and the way back was found by accident. A door anywhere but the head is that defect returning.
+	var collapsed_head := _workings_block().get_child(0) as Control
+	_assert_band_panel("…and it sits ON the roster's own HEAD, which is also the way back",
+		door != null and collapsed_head != null and collapsed_head.is_ancestor_of(door))
+	# ⛔ **AND THIS IS THE STATE THE HEAD CONSTANT IS MEASURED FROM** — the stepper AND the button on
+	# one `HBoxContainer`, which is the tallest this row gets. `band_panel_workings_roster` measures the
+	# same head with no door on it, and the constant has to cover both.
+	_assert_zone_head_reserves("band_panel_workings_roster_collapsed (door on the head)",
+		_workings_block(), HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT)
 	_assert_band_panel("…and the collapsed head's disclosure reads COLLAPSED",
 		_roster_head_toggle(HudConst.LABOR_KIND_QUARRYWORK) != null
 			and not bool(_roster_head_toggle(HudConst.LABOR_KIND_QUARRYWORK)
@@ -18265,8 +18333,17 @@ func _assert_the_roster_door_opens_the_whole_list() -> void:
 	_assert_zone_content_fits()
 	_assert_scroll_only_where_sanctioned()
 	_assert_the_expanded_roster_reaches_every_working("the tall LEFT dock", keys)
-	_assert_band_panel("…and there is no `+N more` row left, every working having a row of its own",
-		_roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK) == null)
+	_assert_zone_head_reserves("band_panel_workings_roster_expanded", _workings_block(),
+		HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT)
+	# ⛔ **THE SAME CONTROL, THE OTHER FACE.** There is no `+N more` row anywhere — there is no such row
+	# any more — and the head's own control now reads `Show less ▴` and stands for nothing hidden.
+	var open_door := _roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK)
+	_assert_band_panel("…and the head's one control now reads `%s`, standing for no hidden row (`%s`)"
+			% [HudWorkVocab.zone_disclosure_face(true, 0),
+				"" if open_door == null else open_door.text],
+		open_door != null
+			and open_door.text == HudWorkVocab.zone_disclosure_face(true, 0)
+			and int(open_door.get_meta(HudWorkVocab.ROSTER_OVERFLOW_META)) == 0)
 	_assert_band_panel("…while the source BOARD is GONE, not squeezed — %d rows"
 			% _work_board_row_count(),
 		_work_board_row_count() == 0)
@@ -18295,9 +18372,16 @@ func _assert_the_roster_door_opens_the_whole_list() -> void:
 		road_rows.size() == road_models.size() and road_models.size() > DOOR_WORKINGS_DRAWN)
 	_assert_band_panel("…and the WORKINGS roster is the one that folded — one roster at a time",
 		_workings_block() == null)
+	# ⛔ **THE ROAD ROSTER'S HEAD WITH ITS DOOR ON IT**, which `band_panel_roadwork_roster` cannot
+	# measure: that band keeps exactly the cap, so its head carries no button at all.
+	_assert_zone_head_reserves("band_panel_roadwork_roster_expanded", _roster_block(),
+		HudWorkVocab.ROADWORK_ROSTER_HEAD_HEIGHT)
 
 	# ---- (f) THE TIGHTEST BOX: the mode open on the shortest work zone this panel ships -----------
 	await _assert_the_expanded_roster_fits_the_tightest_dock(keys)
+
+	# ---- (g) THE STRANDING CASE — why the EXPANDED affordance is unconditional --------------------
+	await _assert_the_expanded_roster_cannot_strand_the_player()
 
 	# **THE MODE IS CLOSED ON THE WAY OUT.** It is zone MODE and survives a band change by design, so
 	# a state left expanded would re-render every frame below this one over a roster instead of a board.
@@ -18334,6 +18418,47 @@ func _assert_the_expanded_roster_reaches_every_working(where: String, keys: Arra
 			% [where, trackless], trackless.is_empty())
 	_assert_band_panel("%s: …and its `✕`, which is the only other way to stop being billed for it (missing %s)"
 			% [where, dropless], dropless.is_empty())
+
+## ⛔ **THE STRANDING CASE — why the EXPANDED head's affordance is unconditional and the collapsed
+## one is not.** The list is open; the band then PUTS WORKINGS DOWN until the collapsed block could
+## draw every row it has. An affordance gated on *rows over the cap* would VANISH at that moment,
+## leaving the player in a mode with no way out of it — the zone drawn over by a roster, the board
+## gone, and nothing on screen saying how to get the board back. That asymmetry is the whole rule.
+##
+## **The pairing is in this same function, on this same band**: expanded it must be there, collapsed
+## it must NOT — the third row of the table — so neither claim can pass by the control simply always
+## drawing or never drawing.
+func _assert_the_expanded_roster_cannot_strand_the_player() -> void:
+	_hud._bandpanel._roster_expanded = HudConst.LABOR_KIND_QUARRYWORK
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_door_band_fixture(DOOR_WORKINGS_KEPT_AFTER_DROP)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_roster_expanded_under_the_cap")
+	_assert_zone_content_fits()
+	var rows := _workings_rows_drawn()
+	_assert_band_panel("the band puts workings down WHILE THE LIST IS OPEN — %d left, at or under the cap of %d (drew %d)"
+			% [DOOR_WORKINGS_KEPT_AFTER_DROP, DOOR_WORKINGS_DRAWN, rows.size()],
+		rows.size() == DOOR_WORKINGS_KEPT_AFTER_DROP
+			and _hud._bandpanel._roster_expanded == HudConst.LABOR_KIND_QUARRYWORK)
+	var open_door := _roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK)
+	_assert_band_panel("⛔ …and the head STILL carries `%s`, or the player is stranded in a mode with no way out (`%s`)"
+			% [HudWorkVocab.zone_disclosure_face(true, 0),
+				"" if open_door == null else open_door.text],
+		open_door != null
+			and open_door.text == HudWorkVocab.zone_disclosure_face(true, 0))
+	# **AND THE PAIRED ABSENCE, on the same band one press later** — folded back, the block draws every
+	# row it has, so the door is gone and the head is not a toggle.
+	_hud._bandpanel._toggle_roster_expanded(HudConst.LABOR_KIND_QUARRYWORK)
+	await _settle()
+	_assert_band_panel("⛔ …while folding it back leaves a roster drawn WHOLE with no door on its head",
+		_hud._bandpanel._roster_expanded == &""
+			and _roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK) == null
+			and _roster_head_toggle(HudConst.LABOR_KIND_QUARRYWORK) == null)
+	# …and the five-working band back, so the chapter's cleanup restores what it thinks it is restoring.
+	_push_bands([_door_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
 
 ## ⛔ **THE WORKINGS HEAD HAS BUTTONS IN IT AND THE QUEUE'S DOES NOT** — a condition the head-toggle
 ## helper had never met. A `Button` consumes its own click and does not propagate to the parent's
@@ -18966,8 +19091,14 @@ func _assert_queue_expanded_shape(where: String, entries: int) -> void:
 	_assert_band_panel("…and the pager went with the pages (%d)" % pagers, pagers == 0)
 	_assert_band_panel("…and no work inspector can be open in this mode",
 		_hud._bandpanel._work_open_key == "")
-	_assert_band_panel("…and there is no `+N more` row left, every entry having a row of its own",
-		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null)
+	# ⛔ **THE SAME CONTROL, THE OTHER FACE** — the `+N more` ROW is gone from the client entirely, and
+	# the head's own control reads `Show less ▴` here and stands for nothing hidden.
+	var door := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
+	_assert_band_panel("%s: …and the head's one control reads `%s`, standing for no hidden entry (`%s`)"
+			% [where, HudWorkVocab.zone_disclosure_face(true, 0),
+				"" if door == null else (door as Button).text],
+		door is Button and (door as Button).text == HudWorkVocab.zone_disclosure_face(true, 0)
+			and int(door.get_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)) == 0)
 	# **WHAT IT KEEPS.** The zone's own head, so the player knows where they are; and the POOLS block
 	# directly above the list it funds, which is the whole reason §4.7 moved keeping onto this tab.
 	var zone: Variant = _panel._zones.get(BandCityPanel.ZONE_WORK)
@@ -19039,8 +19170,8 @@ func _assert_queue_expansion_doors() -> void:
 			% _work_board_row_count(),
 		_work_board_row_count() > 0 and _hud._bandpanel._work_open_key == "")
 	_assert_zone_content_fits()
-	# ③ …AND THE HEADER IS THE DOOR IN TOO, which is what makes it available to a queue too short to
-	# draw an overflow row at all.
+	# ③ …AND THE WHOLE HEADER IS THE DOOR IN TOO, not just the button on it: the row around the control
+	# stays clickable, which is the bigger target and the behaviour the player found on their own.
 	head = _queue_head_toggle()
 	if head == null:
 		_fail("queue expansion — the collapsed head carries no disclosure to press")
@@ -19338,10 +19469,12 @@ func _assert_queue_expanded_survives_an_empty_queue() -> void:
 	_push_bands([_build_long_queue_band_fixture()])
 	_hud._bandpanel.rerender()
 	await _settle()
-	_assert_band_panel("…and reselecting the band that HAS a queue comes back EXPANDED, %d rows and no `+N more`"
-			% _build_queue_rows().size(),
+	var back := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
+	_assert_band_panel("…and reselecting the band that HAS a queue comes back EXPANDED, %d rows and a `%s` on the head"
+			% [_build_queue_rows().size(), HudWorkVocab.zone_disclosure_face(true, 0)],
 		_hud._bandpanel._queue_expanded and _expanded_queue_scroll() != null
-			and _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null)
+			and back is Button
+			and (back as Button).text == HudWorkVocab.zone_disclosure_face(true, 0))
 
 ## **A REAL `▲` AND A REAL `▼` ON A ROW BELOW THE COLLAPSED CAP** — a row that exists only because the
 ## expansion drew it — each asserted to send that row's WIRE index.
@@ -19433,6 +19566,50 @@ func _assert_queue_expanded_settings() -> void:
 		_hud._bandpanel._toggle_queue_settings(_hud._bandpanel._queue_open_key)
 		await _settle()
 
+## ⛔ **THE STRANDING CASE — why the EXPANDED head's affordance is unconditional and the collapsed
+## one is not.** The list is open; the band then finishes jobs until the queue is short enough for the
+## collapsed block to draw whole. An affordance gated on *rows over the cap* would VANISH at that
+## moment, leaving the player in a mode with no way out of it — the zone drawn over by a list, the
+## board gone, and nothing on screen saying how to get the board back.
+##
+## **The pairing is in this same function, on this same band**: expanded it must be there, collapsed
+## it must NOT — the third row of the table — so neither claim can pass by the control simply always
+## drawing or never drawing.
+func _assert_the_expanded_queue_cannot_strand_the_player() -> void:
+	if not _hud._bandpanel._queue_expanded:
+		_hud._bandpanel._toggle_queue_expanded()
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches(_build_queue_patches(QUEUE_STRANDING_ENTRIES))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
+	_push_bands([_build_queue_band_fixture(QUEUE_STRANDING_ENTRIES)])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_queue_expanded_under_the_cap")
+	_assert_zone_content_fits()
+	_assert_band_panel("the queue drops to %d entries — at or under the cap — while the list is OPEN"
+			% QUEUE_STRANDING_ENTRIES,
+		_hud._bandpanel._queue_expanded and _expanded_queue_scroll() != null)
+	var open_door := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
+	_assert_band_panel("⛔ …and the head STILL carries `%s`, or the player is stranded in a mode with no way out (`%s`)"
+			% [HudWorkVocab.zone_disclosure_face(true, 0),
+				"" if open_door == null else (open_door as Button).text],
+		open_door is Button
+			and (open_door as Button).text == HudWorkVocab.zone_disclosure_face(true, 0))
+	# **AND THE PAIRED ABSENCE, on the same band one press later** — folded back, the block draws every
+	# entry it has, so the door is gone and the head is not a toggle.
+	_hud._bandpanel._toggle_queue_expanded()
+	await _settle()
+	_assert_band_panel("⛔ …while folding it back leaves a queue drawn WHOLE with no door on its head",
+		not _hud._bandpanel._queue_expanded
+			and _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META) == null
+			and _find_meta_control(_panel, HudWorkVocab.ZONE_DISCLOSURE_META) == null)
+	_hud._bandpanel._toggle_queue_expanded()
+	await _settle()
+
+## How short the queue drops to under the player's feet — the CAP itself, the largest count the
+## collapsed block still draws whole, so the fixture is the boundary rather than a number beside it.
+const QUEUE_STRANDING_ENTRIES := HudWorkVocab.BUILD_QUEUE_ROWS_MAX
+
 ## **THE EXPANSION'S STATES**, on a queue LONGER than any other in this file. The paired negative runs
 ## first, on the same band.
 func _render_queue_expanded_states() -> void:
@@ -19495,6 +19672,8 @@ func _render_queue_expanded_states() -> void:
 	if not _hud._bandpanel._queue_expanded:
 		_hud._bandpanel._toggle_queue_expanded()
 	await _assert_queue_positions_are_the_wires("band_panel_queue_expanded_hidden_entry")
+	# ---- (i) THE STRANDING CASE — the reason the EXPANDED affordance is unconditional ------------
+	await _assert_the_expanded_queue_cannot_strand_the_player()
 	# …and out of the mode, so everything below this block starts where it did before it.
 	if _hud._bandpanel._queue_expanded:
 		_hud._bandpanel._toggle_queue_expanded()
@@ -19883,6 +20062,19 @@ func _assert_build_queue_block(entries: int, where: String, rows_drawn: int = -1
 	_assert_band_panel("…and EXACTLY the head wears the `%s` marker (marked positions %s)"
 			% [HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, str(marked)],
 		marked == [SourceForecast.BUILD_QUEUE_HEAD])
+	_assert_zone_head_reserves(where, block, HudWorkVocab.BUILD_QUEUE_HEAD_HEIGHT)
+	# ⛔ **THE THIRD ROW OF THE DISCLOSURE TABLE ON THE QUEUE.** A block that drew every entry it has
+	# carries no door and its head is not a toggle; a block that truncated carries both. Stated as a
+	# FORK on the very count this function just asserted, so the presence and the absence are one
+	# claim over every state that calls it rather than two frames that could drift apart.
+	var door := _find_meta_control(block, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
+	var toggle := _find_meta_control(block, HudWorkVocab.ZONE_DISCLOSURE_META)
+	if entries > wanted:
+		_assert_band_panel("%s: …and a TRUNCATED queue carries the door on its head and is a toggle"
+				% where, door != null and toggle != null)
+	else:
+		_assert_band_panel("⛔ %s: …while a queue drawn WHOLE carries no door and its head is NOT a toggle"
+				% where, door == null and toggle == null)
 
 ## **THE DATE COLUMN STATES A COMPLETION TURN, AND THE CLAIM IS THE ADDITION** (§4.7). The chained
 ## `≈42` / `≈61` counts read as three independent spans when they are cumulative, so the column now
@@ -20010,17 +20202,25 @@ func _assert_build_queue_absent() -> void:
 	_assert_band_panel("…while its work board still renders its rows (%d)"
 			% _work_board_row_count(), _work_board_row_count() > 0)
 
-## The overflow row stands for the rest, and it says how many.
+## The head's DOOR stands for the rest, and it says how many. It was a `+N more` ROW under the entries
+## until the door and the way back became one control on the head.
 func _assert_build_queue_overflow(entries: int, rows_drawn: int) -> void:
 	var overflow := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
 	if overflow == null:
-		_fail("a %d-entry queue draws no `+N more` row" % entries)
+		_fail("a %d-entry queue drawing %d puts no `+N more` on its head" % [entries, rows_drawn])
 		return
 	var remaining := entries - rows_drawn
-	_assert_band_panel("…and the overflow row stands for the rest — `%s`"
-			% (HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining),
+	var face := HudWorkVocab.zone_disclosure_face(false, remaining)
+	_assert_band_panel("…and the head's door stands for the rest — `%s` (drew `%s`)"
+			% [face, (overflow as Button).text],
 		int(overflow.get_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)) == remaining
-			and _has_label_containing(overflow, HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining))
+			and overflow is Button and (overflow as Button).text == face)
+	# ⛔ **ON THE HEAD, NOT UNDER THE ROWS.** A door anywhere else is the two-controls-in-two-places
+	# shape this replaced, and the reachability claims would not notice.
+	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
+	var head: Control = null if block == null else block.get_child(0) as Control
+	_assert_band_panel("…and it sits ON the BUILD QUEUE head, which is also the way back",
+		head != null and head.is_ancestor_of(overflow))
 
 ## The block is PAID FOR in `_work_board_capacity`'s chrome, so the board keeps rows to page through.
 ## The zone CLIPS, so a block drawn without being paid for takes its height off the bottom of the

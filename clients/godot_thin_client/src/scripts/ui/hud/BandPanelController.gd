@@ -1988,7 +1988,11 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         col.add_child(_build_build_queue_block(band, queued, queue_rows_max))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
     _reconcile_work_filter(models)
-    col.add_child(_build_work_chips(models))
+    # **NO SOURCES, NO CHIPS ROW** — the builder answers `null` there, and the omission is the block's
+    # own rather than a caller's test of the same emptiness.
+    var chips := _build_work_chips(models)
+    if chips != null:
+        col.add_child(chips)
     var filtered := _filter_work_models(models)
     _sort_work_models(filtered)
     # Drop an inspector pinned to a source that has left the filtered set (unassigned, filtered out).
@@ -2503,23 +2507,19 @@ func _build_roadwork_roster_block(band: Dictionary, models: Array) -> VBoxContai
     block.add_theme_constant_override("separation", 0)
     block.custom_minimum_size = Vector2(0.0,
         HudWorkVocab.roadwork_roster_height(models.size(), unseen))
+    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
     var head := HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, "")
-    # **THE HEAD IS THE DOOR, AND IT IS AVAILABLE WHENEVER THE BLOCK EXISTS** — including a roster
-    # short enough to draw no `+N more` row at all, which is what makes the expansion reachable on a
-    # two-road band and what makes it the only way back out of the mode.
-    _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_ROADWORK)
+    # **THE DOOR IS ON THE HEAD, AND IT IS THE ONLY DOOR** — `+N more ▾` here, `Show less ▴` when the
+    # list is open, and NOTHING on a roster the block already draws whole.
+    _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_ROADWORK, models.size() - drawn)
     block.add_child(head)
     if unseen:
         var line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
         line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
         line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
         block.add_child(line)
-    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
     for index in range(drawn):
         block.add_child(_build_roadwork_roster_row(band, models[index] as Dictionary))
-    if models.size() > drawn:
-        block.add_child(_build_roster_overflow_door(HudConst.LABOR_KIND_ROADWORK,
-            models.size() - drawn))
     return block
 
 ## One roster row: where the road is, what state it is in, and the `✕` that puts it down.
@@ -2666,25 +2666,24 @@ func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContai
     block.add_theme_constant_override("separation", 0)
     block.custom_minimum_size = Vector2(0.0,
         HudWorkVocab.workings_roster_height(models.size(), unseen))
+    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
     var head := _build_workings_roster_head(band)
-    # **THE HEAD IS THE DOOR TOO, and it is the head WITH THE POOL STEPPER ON IT** — a `Button`
-    # consumes its own click, so the stepper still staffs `quarrywork` and does not toggle the mode.
-    _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_QUARRYWORK)
+    # **THE DOOR IS ON THIS HEAD TOO, and this is the head WITH THE POOL STEPPER ALREADY ON IT** — two
+    # `Button`s in one row now, each consuming its own click, so the stepper still staffs `quarrywork`
+    # and does not toggle the mode. That is asserted with a real press, not assumed.
+    _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_QUARRYWORK, models.size() - drawn)
     block.add_child(head)
     if unseen:
         var line := HudWidgets.alloc_hint_label(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_LINE)
         line.set_meta(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_META, true)
         line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
         block.add_child(line)
-    var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
-    for index in range(drawn):
-        block.add_child(_build_workings_roster_row(band, models[index] as Dictionary))
     # ⛔ **THE `+N more` IS A DOOR, AND ON THIS ROSTER IT IS THE FIX RATHER THAN A CONVENIENCE.**
     # `_open_deposit_track` has exactly one caller — a roster ROW — so a band's fourth working could be
     # neither climbed nor put down while its keeping was still billed against the `quarrywork` pool.
-    if models.size() > drawn:
-        block.add_child(_build_roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK,
-            models.size() - drawn))
+    # The door is on the head above, which is where the way back already was.
+    for index in range(drawn):
+        block.add_child(_build_workings_roster_row(band, models[index] as Dictionary))
     return block
 
 ## **THE BLOCK'S HEAD *IS* THE `quarrywork` POOL** (arc #583) — the block title, the shortfall mark,
@@ -3645,7 +3644,7 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     # player who has just staffed the role must not read a header telling them nobody is on it.
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
-    block.add_child(_build_build_queue_head(band, builders))
+    block.add_child(_build_build_queue_head(band, builders, queued.size() - drawn))
     for index in range(drawn):
         var entry: Dictionary = queued[index] as Dictionary
         # **A PENDING ROW NEVER WEARS THE HEAD MARKER, not even when it is the only row.** The head is
@@ -3664,8 +3663,6 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
         # expansion read as that row's rather than as a panel of its own.
         if index == open_index:
             block.add_child(_build_queue_settings_strip(band, entry))
-    if queued.size() > drawn:
-        block.add_child(_build_build_queue_overflow_row(queued.size() - drawn))
     return block
 
 ## **THE QUEUE OVER THE WHOLE WORK ZONE — every entry, in a scrolling list** (§4.9 item 9c).
@@ -3697,7 +3694,9 @@ func _build_build_queue_expanded(band: Dictionary, queued: Array,
     var confirmed := _queue_rank_keys(band).size()
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
-    block.add_child(_build_build_queue_head(band, builders))
+    # **NO ENTRY IS HIDDEN IN THIS MODE, so the count the collapsed face states is zero** — the face
+    # is `Show less ▴` here, which `zone_disclosure_face` composes without reading it.
+    block.add_child(_build_build_queue_head(band, builders, ZONE_NOTHING_HIDDEN))
     var scroll := ScrollContainer.new()
     scroll.name = HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME
     scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3801,10 +3800,12 @@ func _build_roster_expanded(band: Dictionary, kind: StringName, models: Array, u
     block.size_flags_vertical = Control.SIZE_EXPAND_FILL
     var head: HBoxContainer = _build_workings_roster_head(band) if is_workings \
         else HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, "")
-    _make_roster_head_a_toggle(head, kind)
+    # **NO ROW IS HIDDEN IN THIS MODE, so the count the collapsed face states is zero** — the face is
+    # `Show less ▴` here, which `zone_disclosure_face` composes without reading it.
+    _make_roster_head_a_toggle(head, kind, ZONE_NOTHING_HIDDEN)
     block.add_child(head)
     var chrome := HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT if is_workings \
-        else HudWorkVocab.ZONE_HEAD_HEIGHT
+        else HudWorkVocab.ROADWORK_ROSTER_HEAD_HEIGHT
     if unseen:
         var line := HudWidgets.alloc_hint_label(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_LINE
             if is_workings else HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
@@ -3838,11 +3839,36 @@ func _build_roster_expanded(band: Dictionary, kind: StringName, models: Array, u
         func() -> bool: return _roster_expanded_scroll == scroll)
     return block
 
-## The roster head's toggle, in whichever mode it is drawn — collapsed or expanded, both rosters.
-func _make_roster_head_a_toggle(head: HBoxContainer, kind: StringName) -> void:
+## **THE DOOR AND THE WAY BACK ARE ONE CONTROL, IN ONE PLACE** — the roster's own head, in whichever
+## mode it is drawn and on both rosters. It shipped for one slice as two controls in two places: a
+## full-width `+N more` button UNDER the rows to open, and the bare head to fold back. Reported from
+## play — *"it is not obvious at all how to get back"* — the way back having been found by accident.
+##
+## > ⛔ **THREE STATES, AND THE ASYMMETRY BETWEEN THE LAST TWO IS THE WHOLE RULE.**
+## >
+## > | state | affordance | head is a toggle? |
+## > |---|---|---|
+## > | collapsed, rows over the cap | `+N more ▾` | yes |
+## > | **expanded** | `Show less ▴` | yes, **always**, whatever the row count |
+## > | collapsed, rows at or under the cap | **nothing** | **no** |
+## >
+## > A head that toggles but SHOWS nothing is the invisible affordance this whole arrangement exists
+## > to remove, which is why the third row draws neither. **But `expanded` is unconditional**: a band
+## > that abandons a working while the list is open drops under the cap, and a toggle that vanished
+## > there would strand the player in the expanded view with no way back at all.
+##
+## ⛔ **THE BUILD QUEUE'S HEAD IS THE SAME THREE STATES** — `_make_queue_head_a_toggle` beside this
+## one, on the same helper and the same table. It was left as *the toggle is available whenever the
+## block exists, with a bare `▾` and a separate `+N more` row* for one slice; that is the identical
+## discoverability shape, so it is corrected in the same breath rather than left to drift.
+func _make_roster_head_a_toggle(head: HBoxContainer, kind: StringName, remaining: int) -> void:
     _make_zone_head_a_toggle(head, _roster_expanded == kind,
-        HudWorkVocab.ROSTER_DISCLOSURE_TOOLTIP,
-        _toggle_roster_expanded.bind(kind))
+        HudWorkVocab.ZONE_DISCLOSURE_NOUN_ROSTER, _toggle_roster_expanded.bind(kind),
+        remaining, HudWorkVocab.ROSTER_OVERFLOW_META)
+
+## **A LIST WITH NOTHING BEHIND ITS CAP** — the count `_make_zone_head_a_toggle` reads as *there is no
+## list to open*, and what either expanded builder passes, every one of its rows being drawn.
+const ZONE_NOTHING_HIDDEN := 0
 
 ## Open a roster over the whole Work zone, or fold it back to the summary block — the mode's ONE
 ## mutator, driven by the roster's own head both ways and by its `+N more` row inward.
@@ -3864,32 +3890,6 @@ func _toggle_roster_expanded(kind: StringName) -> void:
         _work_open_key = ""
         _roster_expanded_scroll_offset = 0
     _repage_work_zone()
-
-## `+2 more` — the rest of the roster, as a DOOR rather than a notice.
-##
-## **A `Button`, NOT `alloc_hint_label`** (the roster door): the row it replaced stated a count and
-## offered nothing, while on the WORKINGS roster the rows it stands for carry the only `⌃` that can
-## climb a working's ladder and the only `✕` that can put it down.
-##
-## ⛔ **IT FIRES ON THE RELEASE, INSIDE THE ROW**, which is what a `BaseButton` does by default
-## (`ACTION_MODE_BUTTON_RELEASE`) — deliberately not re-implemented on `gui_input`. The handler ends in
-## `_repage_work_zone`, which frees every node in the zone, and a press-time rebuild kills every
-## gesture that could start under it.
-func _build_roster_overflow_door(kind: StringName, remaining: int) -> Button:
-    var more := Button.new()
-    more.set_meta(HudWorkVocab.ROSTER_OVERFLOW_META, remaining)
-    more.text = HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % remaining
-    more.tooltip_text = HudWorkVocab.ROSTER_OVERFLOW_TOOLTIP
-    more.alignment = HORIZONTAL_ALIGNMENT_LEFT
-    more.focus_mode = Control.FOCUS_NONE
-    more.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-    more.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-    HudStyle.apply_button(more, "ghost")
-    HudWidgets.compact(more, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    more.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    more.pressed.connect(func() -> void: _toggle_roster_expanded(kind))
-    return more
 
 ## Open the whole queue over the Work zone, or fold it back to the summary block — the mode's ONE
 ## mutator, driven by the BUILD QUEUE header both ways and by the `+N more` row inward.
@@ -3923,16 +3923,45 @@ func _toggle_queue_expanded() -> void:
 ## own subtree kills every drag that could start under it* is the general rule PR #574's autopsy
 ## named, after the queue rows' own toggle shipped on the press and left the reorder gesture dead.
 ## Inside the row, because `mouse_focus` latches on the press.
-func _make_queue_head_a_toggle(head: HBoxContainer) -> void:
-    _make_zone_head_a_toggle(head, _queue_expanded, HudWorkVocab.BUILD_QUEUE_DISCLOSURE_TOOLTIP,
-        _toggle_queue_expanded)
+func _make_queue_head_a_toggle(head: HBoxContainer, remaining: int) -> void:
+    _make_zone_head_a_toggle(head, _queue_expanded,
+        HudWorkVocab.ZONE_DISCLOSURE_NOUN_QUEUE, _toggle_queue_expanded,
+        remaining, HudWorkVocab.BUILD_QUEUE_OVERFLOW_META)
 
 ## **THE HEAD IS THE TOGGLE, BOTH WAYS — for the build queue and for BOTH ROSTERS** (the roster door,
 ## `.claude/rules/client/band-city-panel.md`). One helper over three blocks: all three heads are
 ## `HudWidgets.zone_head` `HBoxContainer`s with the title at index 0 and an expanding spacer at 1, so
 ## the glyph insertion is the same in each.
 ##
-## `expanded` is the state the glyph and the meta report; `on_toggle` is what the release fires.
+## `expanded` is the state the affordance and the meta report; `on_toggle` is what the release fires;
+## `remaining` is how many rows the collapsed block is NOT drawing; `noun` and `count_meta` are the
+## block saying what kind of list it holds and under which handle its count can be read.
+##
+## > ⛔ **THREE STATES, AND THE ASYMMETRY BETWEEN THE LAST TWO IS THE WHOLE RULE.**
+## >
+## > | state | affordance | head is a toggle? |
+## > |---|---|---|
+## > | collapsed, rows over the cap | `+N more ▾` | yes |
+## > | **expanded** | `Show less ▴` | yes, **always**, whatever the row count |
+## > | collapsed, rows all drawn | **nothing** | **no** |
+## >
+## > A head that toggles but SHOWS nothing is the invisible affordance this whole arrangement exists
+## > to remove, which is why the third row draws neither. **But `expanded` is unconditional**: a band
+## > that abandons a working (or finishes a job) while the list is open drops under the cap, and a
+## > toggle that vanished there would strand the player in the expanded view with no way back at all.
+##
+## ⛔ **THE AFFORDANCE IS A GHOST `Button`, NOT A BARE GLYPH.** It was a `▾` at head type size while
+## the way IN was a separate full-width row below the rows; the caret was read from play as *"the
+## little dot next to Groundwork"* and the way back was found by accident. The door and the way back
+## are ONE control in ONE place now: a small `HudWidgets.compact` Button at `WORK_ROW_FONT_SIZE`,
+## keeping the discoverability the full-width row had. **The head around it stays clickable too** —
+## the bigger target, and the behaviour the player already discovered — and both paths call the one
+## mutator, the Button's own press being what a `Button` consumes rather than passing to `gui_input`.
+##
+## ⛔ **THE BUTTON SIZES THE HEAD ROW IT SITS IN**, an `HBoxContainer` growing to its tallest child —
+## so `BUILD_QUEUE_HEAD_HEIGHT` / `ROADWORK_ROSTER_HEAD_HEIGHT` / `WORKINGS_ROSTER_HEAD_HEIGHT` are
+## MEASURED against it and not derived. It declares no `custom_minimum_size` of its own: a floor here
+## would be a second opinion about a height those three constants record.
 ##
 ## > ⛔ **THE WORKINGS HEAD HAS BUTTONS IN IT AND THE QUEUE'S DOES NOT.**
 ## > `_build_workings_roster_head` mounts the `quarrywork` pool's STEPPER on this row. A `Button`
@@ -3950,18 +3979,31 @@ func _make_queue_head_a_toggle(head: HBoxContainer) -> void:
 ## own subtree kills every gesture that could start under it* is the general rule PR #574's autopsy
 ## named, after the queue rows' own toggle shipped on the press and left the reorder drag dead. Inside
 ## the row, because `mouse_focus` latches on the press.
-func _make_zone_head_a_toggle(head: HBoxContainer, expanded: bool, tooltip: String,
-        on_toggle: Callable) -> void:
-    var glyph := Label.new()
-    glyph.text = HudWorkVocab.ZONE_DISCLOSURE_EXPANDED if expanded \
-        else HudWorkVocab.ZONE_DISCLOSURE_COLLAPSED
-    glyph.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    glyph.add_theme_font_size_override("font_size",
-        HudWorkVocab.ZONE_DISCLOSURE_FONT_SIZE)
-    glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    glyph.set_meta(HudWorkVocab.ZONE_DISCLOSURE_META, expanded)
-    head.add_child(glyph)
-    head.move_child(glyph, 1)
+func _make_zone_head_a_toggle(head: HBoxContainer, expanded: bool, noun: String,
+        on_toggle: Callable, remaining: int, count_meta: String) -> void:
+    if not expanded and remaining <= ZONE_NOTHING_HIDDEN:
+        return
+    var tooltip := HudWorkVocab.zone_disclosure_tooltip(noun)
+    var mark := Button.new()
+    mark.set_meta(HudWorkVocab.ZONE_DISCLOSURE_META, expanded)
+    mark.set_meta(count_meta, ZONE_NOTHING_HIDDEN if expanded else remaining)
+    mark.text = HudWorkVocab.zone_disclosure_face(expanded, remaining)
+    mark.tooltip_text = tooltip
+    mark.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    mark.focus_mode = Control.FOCUS_NONE
+    mark.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    HudStyle.apply_button(mark, "ghost")
+    HudWidgets.compact(mark, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    mark.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    # ⛔ **IT FIRES ON THE RELEASE, INSIDE THE CONTROL** — `BaseButton`'s own default
+    # (`ACTION_MODE_BUTTON_RELEASE`), deliberately not re-implemented on `gui_input`, for the reason
+    # the head's own handler is written that way below.
+    mark.pressed.connect(func() -> void: on_toggle.call())
+    head.add_child(mark)
+    # **IMMEDIATELY AFTER THE TITLE**, so the head reads left to right as `GROUNDWORK  +1 more ▾` and
+    # the expanding spacer at what is now index 2 still pushes the readout and the stepper right —
+    # the readout may not give up a character (`ZONE_DISCLOSURE_AFTER_TITLE_INDEX`).
+    head.move_child(mark, HudWorkVocab.ZONE_DISCLOSURE_AFTER_TITLE_INDEX)
     head.set_meta(HudWorkVocab.ZONE_DISCLOSURE_META, expanded)
     head.mouse_filter = Control.MOUSE_FILTER_STOP
     head.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -4243,7 +4285,7 @@ func _build_queue_leg_line(leg: Dictionary, in_flight: bool) -> HBoxContainer:
 ##
 ## **THE KIT COMES FROM `_role_kit_id`, THE SAME RESOLUTION THE BUILDERS CARD'S GEAR LINE STATES.**
 ## One call, so the header and the card cannot name two different webs' tools for one pool.
-func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
+func _build_build_queue_head(band: Dictionary, builders: int, remaining: int) -> HBoxContainer:
     var head: HBoxContainer
     if builders <= 0:
         head = HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_BUILD_QUEUE,
@@ -4257,7 +4299,10 @@ func _build_build_queue_head(band: Dictionary, builders: int) -> HBoxContainer:
             HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
     # **THE HEAD IS THE EXPANSION'S TOGGLE IN BOTH MODES AND ON BOTH FORKS** (§4.9 item 9c) — a band with no
     # builders has a queue to read like any other, and the `⚠` head is the one it has.
-    _make_queue_head_a_toggle(head)
+    # **AND IT CARRIES THE DOOR ITSELF NOW**: `+N more ▾` collapsed over the cap, `Show less ▴`
+    # expanded, and nothing at all on a queue the block already draws whole — the three-state table on
+    # `_make_zone_head_a_toggle`.
+    _make_queue_head_a_toggle(head, remaining)
     return head
 
 ## One queue entry: the head marker, the source's mark, the job face, its date, and the withdrawal.
@@ -4828,46 +4873,6 @@ func _emit_build_order(band: Dictionary, model: Dictionary, position: int) -> vo
         "position": position,
     })
 
-## `+2 more` — the rest of the queue, at the same row height and in the quiet ink.
-##
-## **A TRUNCATED LIST WITH NOTHING UNDER IT READS AS THE WHOLE LIST**, which is the faction page's
-## standing rule for a capped list applied to the band's own.
-##
-## **AND IT IS A DOOR NOW** (§4.9 item 9c): pressing it opens the whole queue over the Work zone, where the
-## entries it stands for each have a row, both arrows and their own settings strip. It is the SECOND
-## door in — the BUILD QUEUE header above is the first, and the only one back out — and it fires on
-## the RELEASE INSIDE THE ROW for the reason the header does: the handler rebuilds the zone it is
-## standing in.
-func _build_build_queue_overflow_row(remaining: int) -> PanelContainer:
-    var row := PanelContainer.new()
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
-    row.set_meta(HudWorkVocab.BUILD_QUEUE_OVERFLOW_META, remaining)
-    row.tooltip_text = HudWorkVocab.BUILD_QUEUE_OVERFLOW_TOOLTIP
-    row.mouse_filter = Control.MOUSE_FILTER_STOP
-    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-    row.gui_input.connect(func(event: InputEvent) -> void:
-        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-                and not event.pressed \
-                and Rect2(Vector2.ZERO, row.size).has_point(event.position):
-            _toggle_queue_expanded())
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    row.add_child(line)
-    var spacer := Label.new()
-    spacer.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(spacer)
-    var label := Label.new()
-    label.text = HudWorkVocab.BUILD_QUEUE_OVERFLOW_FORMAT % remaining
-    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
-    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(label)
-    return row
-
 ## The entry's job face — the declared verb plus the source it stands on.
 ##
 ## **THE VERB'S WORD AND GLYPH ARE `HudFormat.policy_face`'s**, i.e. the SAME pair the board row's
@@ -5363,9 +5368,25 @@ func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
 ## **A chip for an EMPTY set never renders** — a kind the band works none of is dead weight in a row
-## that is otherwise live summary, and an always-present `⚠ 0` reads as an alarm. `All` always shows
-## (it is the reset), so the row is never empty.
+## that is otherwise live summary, and an always-present `⚠ 0` reads as an alarm. `All` is the reset
+## and shows whenever the row does, so a drawn row is never empty.
+##
+## ⛔ **AND A BAND WORKING NOTHING GETS NO ROW AT ALL** — `null`. `All` was unconditional, so an empty
+## board rendered ONE chip reading `All 0`, filtering nothing, directly above the hint line that
+## already says *"No sources worked yet."* Reported from play as *"then a All 0, no clue what all 0
+## is?"*.
+##
+## ⛔ **THE GUARD IS ON `models`, NEVER ON THE FILTERED SET.** A band WITH sources whose current
+## filter matches none of them must still get its chips: that row is the only way to clear the filter,
+## and hiding it there would strand the player with an empty board and no control. The two
+## emptinesses are different states and only one of them is chrome.
+##
+## Safe for the zone's arithmetic because `_work_board_capacity` — which charges `WORK_CHIPS_HEIGHT`
+## unconditionally — is never consulted on this path: an empty `models` gives an empty `filtered`, and
+## that branch returns above it.
 func _build_work_chips(models: Array) -> HFlowContainer:
+    if models.is_empty():
+        return null
     var chips := HFlowContainer.new()
     chips.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_CHIPS_HEIGHT)
     chips.add_theme_constant_override("h_separation", HudWorkVocab.WORK_CHIP_SEPARATION)
