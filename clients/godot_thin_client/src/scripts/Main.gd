@@ -66,6 +66,11 @@ var seat_claim: SeatClaim = null
 # too: the link re-claims on reconnect, and a standing "orders will not be obeyed" alert that has
 # since become false is worse than the alert never appearing.
 var _seat_refusal_reported: bool = false
+## **HAS THIS SESSION ALREADY BOUNCED BACK TO THE LANDING SCREEN?** One scene change per `Main`, and the
+## latch is what makes that literal: `change_scene_to_file` is deferred to the end of the frame, so a
+## second refusal arriving in the same frame (the native link re-claims on every reconnect) would ask
+## for the swap twice. See `_return_to_landing`.
+var _seat_bounce_taken: bool = false
 # Where the snapshot stream will be opened, resolved at _ready but DIALLED only once the seat claim
 # is answered — the socket's first bytes are the token that grant carries.
 var _stream_host: String = ""
@@ -3199,9 +3204,58 @@ func _on_seat_refused(faction_id: int, error: String) -> void:
     var reason := SeatClaim.error_prose(error)
     push_warning("seat claim for faction %d refused: %s" % [faction_id, error])
     _seat_refusal_reported = true
+    # **BEFORE THE REVEAL THERE IS NO RUN TO STAY IN.** The two surfaces below are the right ones for a
+    # seat lost mid-game; pre-reveal they amount to one sentence centred on a black rectangle with
+    # nothing to press, so the player goes back to the screen that owns starting a run instead.
+    if not _world_revealed:
+        # **THE UNREACHABLE CASE BORROWS THE SHELL'S OWN SENTENCE** (`MenuShell.NOTICE_NO_SERVER`),
+        # because the landing screen raises that same line for itself whenever its capacity ask cannot
+        # reach a server: one constant is what makes the player see ONE box rather than two saying the
+        # same thing, and it is what lets a server coming up clear both at once. The other refusals are
+        # not "could not connect" — a seat held by another player, a server running a different game —
+        # so each keeps its own one-sentence prose.
+        _return_to_landing(MenuShell.NOTICE_NO_SERVER
+            if error == SeatClaim.ERROR_TRANSPORT else reason)
+        return
     _note_system_event(SeatClaim.REFUSED_HEADLINE, reason, true, HudEventVocab.KIND_SYSTEM)
     if loading_overlay != null and loading_overlay.visible:
         _set_loading_overlay_text(reason)
+
+
+## **GO BACK TO THE LANDING SCREEN, CARRYING THE REASON.** For a fault that lands BEFORE a world exists,
+## which today is exactly one thing: a seat claim refused or unanswered — the failure that leaves a
+## session unable to send a single order.
+##
+## **DELIBERATELY NOT THE TREATMENT `_abandon_resync` GETS**, and the two differ on both axes that
+## matter. There, a world is on screen and the detection is INFERRED from silence, so the response has
+## to be undoable: a pause menu opened over the last frame, dismissible with ESC. Here the failure is
+## stated on the wire and there is no world at all — nothing is being taken away by leaving, and there
+## is nothing to dismiss the menu back onto. One mechanism would have to be wrong at one end.
+##
+## **WHY THIS CANNOT BOUNCE THE PLAYER IN A LOOP** — three independent reasons, the first sufficient:
+##   * the landing screen CLAIMS NO SEAT. It opens a command client for `list_saves` and
+##     `faction_capacity` and nothing else, so arriving there cannot reproduce the failure; only a
+##     player pressing New Game or Load Game comes back to `Main`.
+##   * with nothing listening, neither press is offered: `MenuShell` disables "Begin the trail" while
+##     the capacity ask reports an unreachable server, and the saves list reports the same failure in
+##     place of rows (`.claude/rules/client/new-game-setup.md`).
+##   * `_seat_bounce_taken` allows one swap per `Main`, and the run's armed parameters are cleared on
+##     the way out — the same clearing `_on_pause_abandon` performs — so nothing left behind re-launches
+##     anything.
+func _return_to_landing(notice: String) -> void:
+    if _seat_bounce_taken:
+        return
+    _seat_bounce_taken = true
+    var launch: Node = get_node_or_null("/root/GameLaunch")
+    if launch != null:
+        launch.set("pending_landing_notice", notice)
+        # The run is over before it began, so its parameters stop being anybody's answer — otherwise a
+        # theme apply on the landing screen would rebuild the world this session failed to start.
+        launch.set("active_new_game", null)
+        launch.set("active_load_slot", "")
+        launch.set("pending_new_game", null)
+        launch.set("pending_load_slot", "")
+    get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
 
 
 ## Drain the forecast answers that landed this frame into the HUD's seam, and let it retire any

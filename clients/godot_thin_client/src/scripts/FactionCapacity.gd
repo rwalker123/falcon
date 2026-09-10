@@ -45,7 +45,16 @@ const STATE_FAILED := "failed"
 const NO_COUNT := -1
 
 ## The bridge's own failure token, in the same vocabulary the server's refusals use.
+## **IT IS THE ONE TOKEN THAT MEANS "NO SERVER ANSWERED AT ALL"** — nothing reached a listener, so
+## nothing about the map, the count or the run is known. Every other token in this field came FROM a
+## server, which is a different fact and a different caption (`MenuShell._apply_rivals_caption`).
 const ERROR_TRANSPORT := "transport"
+## The one non-transport refusal this question can actually come back with today: a capacity ask that
+## reached a server and was routed to the world answerer instead of the pre-world one
+## (`sim_runtime::commands::query_error::WRONG_ANSWERER`). Named so the state "a server answered and
+## still gave no count" is drivable from `menu_preview` with a token from the real vocabulary rather
+## than an invented string.
+const ERROR_WRONG_ANSWERER := "wrong_answerer"
 
 var state: String = STATE_IDLE
 var error: String = ""
@@ -103,9 +112,12 @@ func request(width: int, height: int) -> void:
 		capacity_changed.emit()
 
 
-## Ask the same question again after a failure. The setup pane calls this when it is re-opened rather
-## than on every rebuild: a dead server heals on its own, but a rebuild-driven retry would spin the
-## socket for as long as the screen is up.
+## Ask the same question again after a failure. Never driven by a rebuild — that would spin the socket
+## once per redraw. `MenuShell` calls it when the setup pane is re-opened, and, while the server is
+## UNREACHABLE, on its own slow clock (`MenuShell.RIVALS_RETRY_SECONDS`), because that state now
+## blocks the run and so has to heal without the player finding the one control that re-asks.
+## A no-op in every state but `STATE_FAILED`, so a retry landing on an ask already in flight costs
+## nothing.
 func retry() -> void:
 	if state != STATE_FAILED:
 		return
@@ -122,6 +134,16 @@ func deliver(replies: Array) -> void:
 	for reply_variant in replies:
 		if reply_variant is Dictionary:
 			_deliver_one(reply_variant as Dictionary)
+
+
+## **DID THE ASK EVER REACH A SERVER?** `true` only for a failure carrying [`ERROR_TRANSPORT`] —
+## the ask never got an answer from anything, so the server is unreachable and no world can be built
+## from this screen at all. A failure carrying any other token is a server that answered without a
+## usable count, which is a lesser fact: the world can still be built, just without a chosen rival
+## count. **The classification lives here** because this seam owns the token vocabulary; the views
+## over it ask rather than compare strings.
+func server_is_unreachable() -> bool:
+	return state == STATE_FAILED and error == ERROR_TRANSPORT
 
 
 ## Is `count` a rival count this grid's answer permits? `NO_COUNT` — "let the server decide" — is

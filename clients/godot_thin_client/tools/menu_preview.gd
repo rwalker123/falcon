@@ -34,6 +34,9 @@ const LOAD_PANE_ID := "load"
 const SAVE_PANE_ID := "save"
 # …and of the setup pane, whose rival-peoples control is fed from the capacity seam below.
 const NEW_GAME_PANE_ID := "new_game"
+# The setup pane's primary action, matched on rather than retyped at each assertion: the frames below
+# claim things about whether it is OFFERED, and a typo would silently assert nothing.
+const BEGIN_BUTTON_LABEL := "Begin the trail"
 
 # ---- faction-capacity fixtures --------------------------------------------------------------------
 # The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`: a hex-packing count
@@ -308,17 +311,21 @@ func _run_new_game_states() -> void:
 			% _shell._resolved_rival_count())
 	await _save("menu_new_game_rivals_alone")
 
-	# --- THE ASK FAILED, and the screen still starts a game. The argument is omitted entirely
-	# (`NO_COUNT`), which the server answers with its unattended roster — no rivals — rather than
-	# with a number this screen guessed. The caption is what tells the player that.
+	# --- A SERVER ANSWERED AND STILL GAVE NO COUNT, and the screen starts a game anyway. The argument
+	# is omitted entirely (`NO_COUNT`), which the server answers with its unattended roster — no
+	# rivals — rather than with a number this screen guessed. The caption is what tells the player
+	# that. **The token matters here**: it is a refusal a SERVER sent (`wrong_answerer`), which is a
+	# different fact from nothing answering at all — that state is `_run_server_unreachable_states`
+	# below, and collapsing the two is the defect this pair pins.
 	_pick_map_size(SIZE_KEY_ROOMIEST)
-	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	_fail_capacity(FactionCapacity.ERROR_WRONG_ANSWERER)
 	await _settle()
 	_assert_no_rival_slider("failed")
 	if _shell._resolved_rival_count() != FactionCapacity.NO_COUNT:
 		_fail("rivals: a failed ask put %d on the wire instead of omitting the argument"
 			% _shell._resolved_rival_count())
-	_assert_begin_is_offered()
+	_assert_says_none("a server answered without a count")
+	_assert_begin_is_offered("a server answered without a count")
 	await _save("menu_new_game_rivals_unavailable")
 
 	await _assert_the_shown_count_is_the_count_sent()
@@ -326,6 +333,113 @@ func _run_new_game_states() -> void:
 	await _assert_row_height_is_stable()
 	await _assert_an_answer_survives_leaving_the_pane()
 	_assert_capacity_ids_are_disjoint_from_the_save_seam()
+	await _run_server_unreachable_states()
+	await _run_landing_notice_state()
+
+
+## **NOTHING IS LISTENING — the state the New Game screen used to blame on the rival count.** With no
+## server the ask cannot be answered at all, so no world can be built: the caption names the server and
+## "Begin the trail" is DISABLED. Three claims a frame cannot make, in the order the states arrive:
+##
+##   * a merely PENDING ask disables nothing (the normal case for a moment at every startup);
+##   * the retry the shell runs on its own clock does not FLICKER the state it is retrying;
+##   * a server that comes back unlocks the screen — the caption, the slider and the button all return.
+##
+## Driven through the shipped paths throughout: a real map-size click puts the ask in flight, and the
+## retry goes through `MenuShell._on_capacity_retry_timeout`, which is what the shell's `Timer` calls.
+func _run_server_unreachable_states() -> void:
+	_bg.color = HudStyle.GROUND
+	_shell.mode = MenuShell.LANDING
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	await _settle()
+
+	# --- an ask in flight over an answered row: still startable. The ⛔ case — a button that blinked
+	# disabled on every open would be worse than the bug being fixed.
+	_pick_map_size(SIZE_KEY_STANDARD)
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: the size click did not put an ask in flight (%s)" % _capacity_seam.state)
+	await _settle()
+	_assert_begin_is_offered("an ask merely in flight")
+
+	# --- …and nothing answers it. The cause on the caption, the run withheld.
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	await _settle()
+	_assert_no_rival_slider("no server")
+	_assert_says_none("no server")
+	_assert_begin_is_withheld("no server")
+	_assert_notice_reads("no server", MenuShell.NOTICE_NO_SERVER)
+	if _shell._capacity_retry.is_stopped():
+		_fail("rivals: an unreachable server left no clock re-asking, so the screen cannot recover")
+	await _save("menu_new_game_rivals_no_server")
+
+	# --- THE RETRY IS NOT A STATE CHANGE. It leaves the seam PENDING, and rendering that as "asking…"
+	# would put a caption back under the row and unlock the button every `RIVALS_RETRY_SECONDS`. No
+	# PNG: the claim is about the frame NOT changing, which is what a second identical picture cannot
+	# show.
+	_shell._on_capacity_retry_timeout()
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: the retry clock put no fresh ask in flight (%s)" % _capacity_seam.state)
+	await _settle()
+	_assert_says_none("a retry of an unreachable server")
+	_assert_begin_is_withheld("a retry of an unreachable server")
+	_assert_notice_reads("a retry of an unreachable server", MenuShell.NOTICE_NO_SERVER)
+
+	# --- THE SERVER CAME BACK. The unreachable state must not outlive the problem.
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	if _shell._rival_caption.text != MenuShell.RIVALS_CAPTION_CEILING_FORMAT % CAPACITY_MAX_STANDARD:
+		_fail("rivals: an answer after an unreachable server left the caption reading %s"
+			% _shell._rival_caption.text)
+	_assert_begin_is_offered("the server came back")
+	_assert_notice_reads("the server came back", "")
+	if _find_slider(_shell._rivals_box) == null:
+		_fail("rivals: an answer after an unreachable server offered no slider")
+	if not _shell._capacity_retry.is_stopped():
+		_fail("rivals: the re-ask clock is still running against a server that answered")
+	await _save("menu_new_game_rivals_recovered")
+	await _assert_a_bounced_sessions_notice_is_retracted_too()
+
+
+## **THE LINE A FAILED RUN LEFT BEHIND GOES WITH THE SAME EVIDENCE.** `Main` hands the landing screen
+## the shell's own `NOTICE_NO_SERVER` after an unanswered seat claim, so a server that comes up while
+## the player is still on this screen must clear THAT copy as well — a stale "cannot connect" over a
+## working New Game pane is the defect the retry clock exists to prevent. No PNG: the claim is that a
+## box is gone, and the `_recovered` still already shows an empty rail.
+func _assert_a_bounced_sessions_notice_is_retracted_too() -> void:
+	_shell.set_notice(MenuShell.NOTICE_NO_SERVER)
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	await _settle()
+	_assert_notice_reads("a bounced session, still unreachable", MenuShell.NOTICE_NO_SERVER)
+	if _count_notice_boxes(_shell) != 1:
+		_fail("landing notice: the shell says the same thing in %d boxes at once"
+			% _count_notice_boxes(_shell))
+	_capacity_seam.retry()
+	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	await _settle()
+	_assert_notice_reads("a bounced session, after the server answered", "")
+
+
+## **THE OTHER SCREEN THIS PAIR OF DEFECTS OWNS: a run that could not start at all.** `Main` bounces
+## back here when the seat claim goes unanswered, and the reason is shown ON THE RAIL beside New Game
+## and Load Game rather than centred alone on a black loading overlay with nothing to press. The
+## sentence is the shell's own `NOTICE_NO_SERVER`, which is exactly what `Main` hands back for an
+## unanswered claim — one constant, so the frame renders what a player reads and the two paths cannot
+## stack into two boxes.
+##
+## Rendered last, and with the capacity ask still failed, because that is the true shape of the session
+## it reports: nothing is listening, so the notice and the withheld Begin are on screen together.
+func _run_landing_notice_state() -> void:
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	# A real size click is what re-asks, and nothing answers it — the same shipped pair the state above
+	# uses, rather than poking the seam.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	_shell.set_notice(MenuShell.NOTICE_NO_SERVER)
+	await _settle()
+	if not _shell._notice_panel.visible:
+		_fail("landing notice: a session's failure was handed in and nothing showed it")
+	await _save("menu_landing_seat_refused")
 
 
 ## **AN ANSWER CAN LAND ON A PANE THAT IS GONE**, and it must not take the shell with it. No PNG: the
@@ -498,11 +612,72 @@ func _assert_no_rival_slider(state_name: String) -> void:
 		_fail("rivals (%s): a slider is offered with no ceiling to offer it against" % state_name)
 
 
-## **A CAPACITY ANSWER NEVER BLOCKS THE RUN.** The one thing every failure state above owes the
-## player is a game they can still start.
-func _assert_begin_is_offered() -> void:
-	if not _find_button_containing(_shell, "Begin the trail"):
-		_fail("rivals: an unanswered capacity ask left no way to begin the run")
+## **ONLY AN UNREACHABLE SERVER BLOCKS THE RUN.** Every other unanswered state still owes the player a
+## game they can start — a count is simply omitted — so this asserts the button is both THERE and live.
+func _assert_begin_is_offered(state_name: String) -> void:
+	var begin := _find_button(_shell, BEGIN_BUTTON_LABEL)
+	if begin == null:
+		_fail("rivals (%s): there is no way to begin the run at all" % state_name)
+	elif begin.disabled:
+		_fail("rivals (%s): the run is blocked by a state that can still start one" % state_name)
+
+
+## …and its twin: with nothing listening, the button must be present and LOCKED. Present, because a
+## vanished action is a layout the player cannot ask about; locked, because pressing it swapped to a
+## `Main` that sat on a black loading screen forever.
+func _assert_begin_is_withheld(state_name: String) -> void:
+	var begin := _find_button(_shell, BEGIN_BUTTON_LABEL)
+	if begin == null:
+		_fail("rivals (%s): the primary action vanished instead of locking" % state_name)
+	elif not begin.disabled:
+		_fail("rivals (%s): a run that cannot work is still offered" % state_name)
+
+
+## **THE ONE PLACE THIS SCREEN EXPLAINS ITSELF.** A greyed-out "Begin the trail" with nothing saying
+## why is the state this notice exists to prevent, and `""` is the assertion that it CLEARS — which is
+## the half that pins a stale "cannot connect" cannot outlive the server coming back.
+func _assert_notice_reads(state_name: String, expected: String) -> void:
+	var panel := _shell._notice_panel
+	if panel == null or not is_instance_valid(panel):
+		_fail("notice (%s): the rail has no notice box at all" % state_name)
+		return
+	if expected.is_empty():
+		if panel.visible:
+			_fail("notice (%s): a notice is still on screen reading %s"
+				% [state_name, _shell._notice_label.text])
+		return
+	if not panel.visible:
+		_fail("notice (%s): nothing on screen says why" % state_name)
+	elif _shell._notice_label.text != expected:
+		_fail("notice (%s): the rail reads %s" % [state_name, _shell._notice_label.text])
+
+
+## How many VISIBLE boxes carry the notice sentence. One is the contract: the shell's own unreachable
+## state and a bounced session's handed-in line are the same fact, and a player must not read it twice.
+func _count_notice_boxes(node: Node) -> int:
+	var found := 0
+	if node is Label and (node as Label).text == MenuShell.NOTICE_NO_SERVER and (node as Label).is_visible_in_tree():
+		found += 1
+	for child in node.get_children():
+		found += _count_notice_boxes(child)
+	return found
+
+
+## **AN UNANSWERED ASK STATES ITS COUNT AND EXPLAINS NOTHING.** Two claims in one, because they are one
+## decision: the readout reads `None` — the count the world will actually be built with — and the
+## caption is EMPTY, no sentence about servers or capacity queries. Asserted rather than eyeballed
+## because a paragraph creeping back under this row looks like a deliberate caption in a frame.
+func _assert_says_none(state_name: String) -> void:
+	if _shell._rival_readout == null or not is_instance_valid(_shell._rival_readout):
+		_fail("rivals (%s): the row shows no count at all" % state_name)
+	elif _shell._rival_readout.text != MenuShell.RIVALS_READOUT_NONE:
+		_fail("rivals (%s): the readout reads %s, not the count that will be used"
+			% [state_name, _shell._rival_readout.text])
+	if _shell._rival_caption == null or not is_instance_valid(_shell._rival_caption):
+		_fail("rivals (%s): the caption node is gone, so the row's height is not held" % state_name)
+	elif _shell._rival_caption.text != "":
+		_fail("rivals (%s): an unanswered ask explains itself on screen: %s"
+			% [state_name, _shell._rival_caption.text])
 
 
 ## The capacity seam's ids must not be read by the save seam, which shares its drain. Both are built
@@ -991,12 +1166,19 @@ func _assert_confirm_names_the_slot() -> void:
 
 
 func _find_button_containing(node: Node, needle: String) -> bool:
+	return _find_button(node, needle) != null
+
+
+## The same walk, handing the BUTTON back: the rival-count states assert on its `disabled` flag, not
+## merely on its existence. One traversal, so the two questions cannot drift apart.
+func _find_button(node: Node, needle: String) -> Button:
 	if node is Button and (node as Button).text.contains(needle):
-		return true
+		return node as Button
 	for child in node.get_children():
-		if _find_button_containing(child, needle):
-			return true
-	return false
+		var found := _find_button(child, needle)
+		if found != null:
+			return found
+	return null
 
 
 ## The button is BUILT hidden and shown only while the pick differs from what is on screen, so a

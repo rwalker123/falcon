@@ -64,11 +64,33 @@ only the date row carries a fixed stamp, since that branch has no bucket to drif
 **…AND THE NEW GAME PANE'S RIVAL COUNT, over the same fake transport.** `_run_new_game_states`
 injects a real `FactionCapacity` seam on the same sender and walks the row's states:
 `menu_new_game_rivals_pending` (the ask in flight), `menu_new_game_rivals` (answered, opened on the
-server's default), `menu_new_game_rivals_picked` (the player drags the slider), and the two states no
+server's default), `menu_new_game_rivals_picked` (the player drags the slider), and the states no
 healthy stack reaches — `menu_new_game_rivals_alone`, a grid with no room for a second people, and
-`menu_new_game_rivals_unavailable`, an ask that failed. The re-ask is driven by a real map-size click
-through `_on_size_input`, because a new size IS the new question
+the two failures the row must NOT collapse: `menu_new_game_rivals_unavailable`, where a server
+answered without a count (`wrong_answerer`, a token from the server's own vocabulary), and
+`menu_new_game_rivals_no_server`, where nothing answered at all. The re-ask is driven by a real
+map-size click through `_on_size_input`, because a new size IS the new question
 (`.claude/rules/client/new-game-setup.md`).
+
+**The unreachable server has a three-state arc of its own** (`_run_server_unreachable_states`), and
+each step is a claim a single frame cannot make: an ask merely in flight leaves `Begin the trail`
+LIVE (a button blinking unavailable on every open would be worse than the bug), the failure withholds
+it and starts the re-ask clock, the clock's own retry changes NOTHING on screen (no PNG — the claim is
+that the frame does not change, which a second identical picture cannot show), and
+`menu_new_game_rivals_recovered` is the answer landing: caption, slider and button all back, clock
+stopped. `_assert_says_none` is the wording gate underneath it — the readout must read `None` and the
+caption must be EMPTY, because a paragraph creeping back under this row would look like a deliberate
+caption in a frame.
+
+**`_assert_notice_reads` is the other half of that gate, and the two are a pair**: the row explains
+nothing, so the RAIL must — a greyed-out "Begin the trail" with no line anywhere saying why is the
+state the notice exists to prevent, and it is asserted on the same frame. Its `""` form is the more
+load-bearing one: it pins that the notice CLEARS when a server answers, which no still can show.
+`_assert_a_bounced_sessions_notice_is_retracted_too` takes it one step further, since a session that
+bounced back from a failed seat claim arrives with the sentence already handed in — it must render as
+ONE box (counted, not eyeballed) and must go with the same answer. `menu_landing_seat_refused` is the
+last still: the rail notice on the landing screen, rendered from `MenuShell.NOTICE_NO_SERVER`, the one
+constant both paths use.
 
 **The map-size click has its own pair**, `menu_new_game_rivals_reask` (the ask in flight over a
 previous answer) and `_reasked` (the new ceiling landed), because that is the click a player makes
@@ -93,10 +115,11 @@ by making the shell send only an explicit pick: it fails naming `showed 2 … ca
 
 Five more assertions ride with the state frames, and every one covers something the PNG cannot show: opening the pane
 must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
-without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout), a failed
-ask must still leave `Begin the trail` on screen, and the count that would go on the wire must match
-the state — the pick when there is one, an explicit `0` on a 0 ceiling, and
-`FactionCapacity.NO_COUNT` after a failure, which omits the argument entirely.
+without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout),
+`Begin the trail` must be on screen and LIVE in every failure but the unreachable one — where it must
+be on screen and LOCKED, since a vanished action is a layout the player cannot ask about — and the
+count that would go on the wire must match the state: the pick when there is one, an explicit `0` on a
+0 ceiling, and `FactionCapacity.NO_COUNT` after a failure, which omits the argument entirely.
 `_assert_capacity_ids_are_disjoint_from_the_save_seam` is the id half, and it checks the CONSEQUENCE
 rather than the mechanism: a capacity answer must finish nothing on the save seam. It cannot stage
 the case the tie-break count exists for — two seams built inside the same microsecond — because the

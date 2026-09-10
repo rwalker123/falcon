@@ -127,11 +127,59 @@ it was granted on goes away, since a second claim on a live connection is refuse
 by design. A command is likewise written at most once: a write that fails drops the link and tells the
 caller, rather than replaying onto a fresh socket where the server may already have had it.
 
-## A refused seat is reported on two surfaces
+## A refused seat is reported where the player can act, and that is TWO different places
 
-The failure to design against is *"nothing I click does anything"*. `Main._on_seat_refused` therefore
-puts every refusal — including a claim that went unanswered, which arrives carrying the transport
-token — on both surfaces that can be looking at the moment it lands:
+The failure to design against is *"nothing I click does anything"*. What the report looks like turns
+on one question `Main._on_seat_refused` asks first — **has a world been revealed?** — because before
+the reveal there is no run to stay in, and after it there is one that must not be taken away.
+
+### Before the reveal: back to the landing screen, one sentence on the rail
+
+Pre-reveal the only surface up is the loading overlay, and a refusal there used to re-word it: one
+sentence centred on a black rectangle, with nothing to press and nothing ESC could do about it. So
+`_return_to_landing` writes the reason into `GameLaunch.pending_landing_notice` and changes scene to
+`LandingScreen`, which shows it on the shell's rail (`MenuShell.set_notice`) and clears it as it
+reads — beside New Game and Load Game, the two moves that resolve it.
+
+**The wording is one plain statement plus the one thing to do about it**, and it is deliberately not a
+report on the mechanism: *"Unable to connect to the server. Please try restarting the game."* A player
+has no model of seats, claims or requests and needs none in order to restart a game; that detail
+belongs in the log line beside it and in this file. An earlier three-line version naming the
+unanswered seat request was rejected on sight.
+
+**The constant belongs to the SHELL, not to `Main` (`MenuShell.NOTICE_NO_SERVER`)**, because the
+landing screen raises the same line for itself whenever its own `faction_capacity` ask cannot reach a
+server (`.claude/rules/client/new-game-setup.md`). One constant is what makes the two paths ONE box:
+a bounced session whose capacity ask then fails would otherwise say the same thing twice on one
+screen, and a server coming up would clear only one of them.
+
+**It is the transport token's wording only, and the other refusals keep their own.** A claim can also
+come back `seat_occupied`, `unknown_seat` or `already_seated`, and none of those is "could not
+connect" — a seat held by another player and a server running a different game have different causes
+and different fixes. Each already has a one-sentence prose line (`SeatClaim.ERROR_PROSE`), and that
+is what the notice carries for them.
+
+**This is NOT `_abandon_resync`'s treatment, and the two differ on both axes that decide it.** There a
+world is on screen and the detection is *inferred from silence*, so the response has to be undoable —
+a pause menu over the last frame, dismissible. Here the failure is stated on the wire and there is no
+world at all, so nothing is taken away by leaving and there would be nothing to dismiss the menu back
+onto. One mechanism would have to be wrong at one end.
+
+**Nothing can bounce the player in a loop**, for three independent reasons and the first is
+sufficient: the landing screen **claims no seat** — it opens a command client for `list_saves` and
+`faction_capacity` and nothing else — so arriving there cannot reproduce the failure, and only a
+player press returns to `Main`. With nothing listening neither press is offered anyway: `MenuShell`
+disables "Begin the trail" and the saves list reports the failure in place of rows
+(`.claude/rules/client/new-game-setup.md`). And `_seat_bounce_taken` allows one scene change per
+`Main` — `change_scene_to_file` is deferred to the end of the frame, so a second refusal in the same
+frame would otherwise ask for the swap twice — while the run's armed launch parameters
+(`active_new_game`, `active_load_slot`, both pending slots) are cleared on the way out, the same
+clearing `_on_pause_abandon` performs, so nothing left behind re-launches anything.
+
+### After the reveal: the two standing surfaces, and the run stays
+
+A seat lost mid-game means a world on screen that will no longer take orders, so the report goes to
+both surfaces that can be looking at the moment it lands:
 
 - **the event dock's System channel, as an alert** — the client's standing surface for a fault the
   player did not cause, the same one a dropped command socket and a `resync` report on, and the only
@@ -142,6 +190,9 @@ token — on both surfaces that can be looking at the moment it lands:
 
 Deliberately not a modal: neither the client nor the player can fix this, and a dialog would take away
 the one thing left — reading the map of a game they cannot command.
+
+The loading overlay is still re-worded on this path, because the reveal gate can be holding it open
+over a world that HAS been revealed once — a re-grant under a new token, a rebuild.
 
 **A grant that follows a report RETRACTS it**, on the same channel and, if the player is still on the
 loading overlay, on that too. This is what makes the alert safe to raise on a transient fault: the
@@ -306,5 +357,7 @@ client is still trying, because after a server restart it is.
 | `native/src/bridge/command.rs` | `CommandBridge` (`#[godot_api]`) — `send_line`, `send_query`, `claim_seat`, `poll_query_replies` — and the worker that keeps a send off Godot's main thread. It decides *when* a command is written; `command_link` decides *where* |
 | `native/src/runtime.rs` | The embedded script host. Its `commands.issue` path takes the SAME `command_link::dispatch`, so a script's faction-bearing command is seated like a panel's |
 | `CommandClient.gd` | The GDScript face of the bridge: endpoint precedence, `send_line`'s two-error contract, `send_query`, `claim_seat` |
+| `GameLaunch.gd` | `pending_landing_notice` — the one message a failed pre-reveal session leaves for the landing screen, in the same handoff direction the launch parameters travel the other way. Written by `Main`, read AND CLEARED by `LandingScreen`, so it is reported exactly once |
+| `ui/MenuShell.gd` | `NOTICE_NO_SERVER` and `set_notice(text)` — the rail notice above the nav: ONE sentence in a `DANGER`-bordered box, no eyebrow and no heading, hidden when there is nothing to say (every healthy path). `_notice_line` resolves the owner's text over the shell's own unreachable latch, so the two paths can never stack. Built with the RAIL, not with a pane, because what it reports is a fact about the SESSION and has to survive every pane change |
 | `SeatClaim.gd` | The seat seam: one reserved request id, the refusal tokens and their prose, `seated(faction_id, seat_token)` / `refused`. Asked once — the link re-claims by itself, and each re-grant carries a new token |
-| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal on the two surfaces above, opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync` |
+| `Main.gd` | Builds the seam and claims at boot, pumps the drain into it, reports a refusal — pre-reveal by returning to the landing screen with the reason (`_return_to_landing`, `MenuShell.NOTICE_NO_SERVER`, `_seat_bounce_taken`), post-reveal on the two standing surfaces above — opens/replaces the snapshot stream from the grant (`_open_snapshot_stream`), gates the world request on `_snapshot_stream_ready`, and sends `order <faction> ready` for End Turn. It also owns the baseline chase — `_tick_resync`, the one `_ask_for_resync` sender, `RESYNC_ANSWER_TIMEOUT` / `RESYNC_UNANSWERED_ATTEMPT_BUDGET`, and `_abandon_resync` |
