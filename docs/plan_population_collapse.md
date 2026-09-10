@@ -212,6 +212,36 @@ survivable, the feed said an elder died of old age, and the population fell. Bot
 (a) because its threshold is the wrong one of the two, (b) because the bracket that would have
 tripped it never wins the comparison.
 
+## Finding 6 — morale is what kills the band, and the wellbeing stance says it must not
+
+`docs/plan_civ_wellbeing.md`, first bullet under **"Design stance (agreed)"**:
+
+> **Morale never kills.** Low morale relocates people or drags output — it does not cause faction
+> population loss or death. Population loss stays with starvation / cold.
+
+`AttentionController._decline_reason` reasons from that stance directly (*"since morale no longer
+kills (discontent relocates people)"*) when ranking why a band is shrinking.
+
+**The measured chain at 4 °C is morale → discontent → ×0.5 output → income under break-even →
+starvation deaths.** Nothing else participates: the tile is above `cold.onset_temp`, the land is not
+the binding constraint, and the band is equipped. Findings 3 and 4 are that chain; this finding is
+only that the chain exists where a stated stance says it should not.
+
+**The threshold is exact.** A fully-discontented equipped band clears break-even if and only if
+
+```
+productivity.floor_mult  >  0.2298 / 0.400  =  0.575
+```
+
+It ships at **0.50**. Between those two numbers, maximal discontent is sufficient *on its own* to
+end a well-sited, well-equipped band.
+
+**Whether that is a violation is a reading, and the reading is not this document's to make.** The
+deaths *are* starvation deaths and *are* labelled `cause=hunger`, so "population loss stays with
+starvation" is literally true. What is not true is that morale merely "drags output": at
+`floor_mult` 0.50 the drag is lethal by itself. Recorded here as a measurement beside the stance it
+sits against; direction 5 is where it would be acted on.
+
 ## What this does NOT find
 
 - **The labor allocator does not fall off a cliff.** `LaborAllocation::normalize` sheds one hand at a
@@ -223,9 +253,14 @@ tripped it never wins the comparison.
 - **The population cap is not involved.** `simulation_config.json`'s `population_cap` of 25 000 never
   fires at these scales.
 
-## Candidate directions — for decision, not pre-committed
+## Candidate directions — the fix slice's menu, not this document's decision
 
-Grouped by which finding they answer. They are not alternatives to each other.
+Issue #431 asks for a fix to be *proposed* after the investigation, not chosen by it. These are the
+proposals. They are grouped by which finding they answer and they are **not alternatives to each
+other**; picking among them is the fix slice's first act.
+
+⛔ **None of them re-opens `84777e06`'s call about where cold kills, except direction 2, which says
+so on its own line.** That tuning is settled; this document measures around it.
 
 **For the unwarned lethal band (Finding 4 + 5a) — the smallest change with the largest effect:**
 1. Give the client a **second** threshold from the wire — the morale break-even — and let the tile
