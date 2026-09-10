@@ -7083,8 +7083,14 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
             _close_party_compose()
             _on_split_band_pressed(band, workers))
     sheet.add_child(confirm)
-    sheet.add_child(HudWidgets.alloc_hint_label(
-        blocked if blocked != "" else HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
+    # **THE FOOTER IS THE AFTER-NOTE, ALWAYS, AND THE REFUSAL RIDES THE BUTTON'S TOOLTIP.** One label
+    # whose TEXT swapped between the two changed the sheet's height the moment the stepper crossed a
+    # floor, and the sheet is bottom-anchored: it answers a height change by jumping upward under the
+    # cursor that is still on the stepper. The note describes what the verb does, which is true
+    # whether or not this composition is legal, so drawing it unconditionally makes the footer a
+    # fixed block. The reason is not lost — `confirm.tooltip_text` above carries BOTH floors' refusal
+    # sentences on the disabled button, which is the control the reason is about.
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
 
 ## One `key   value` line on the split sheet — the `FactionRollup._stat_row` shape, kept local
 ## because the parties zone has no shared detail-row widget and one sheet does not justify minting a
