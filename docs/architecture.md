@@ -85,7 +85,7 @@ What was intentionally kept (it is simulation/2D data, not 3D rendering):
 - **Replay and rollback are unaffected.** A seat emits commands rather than mutating the world, so decisions land in the command log (`LogEntry::Command`) and a rollback replays them without re-consulting the occupant. **A non-deterministic occupant — an LLM, a human — costs the determinism suites nothing.** Rollback does need to become host-only, and an occupant needs to react to `Command::Resync`.
 - **Occupancy is a session fact, never save state.** A save is a world with N seats; who sat in them is not in `SimState`.
 
-**AI-side** (`docs/plan_ai_opponents.md`): a planned `sim_ai` binary crate depends on `sim_runtime` for the wire types and **not** on `core_sim`, so "the AI may not read the simulation directly" is a build error rather than a review comment. The seat's decoded frame *is* its perception — there is deliberately no second representation of what a faction can see.
+**AI-side** (`docs/plan_ai_opponents.md`): a planned `sim_ai` binary crate depends on `sim_runtime` for the wire types and **not** on `core_sim`, so "the AI may not read the simulation directly" is a build error rather than a review comment. The seat's decoded frame *is* its perception — there is deliberately no second representation of what a faction can see. The layering inside that process, and the instruments that measure each layer, are `docs/plan_ai_driver.md`.
 
 ---
 
@@ -139,6 +139,7 @@ See `core_sim/CLAUDE.md` for full world generation pipeline details.
 | `docs/godot_inspector_plan.md` | Inspector migration progress |
 | `docs/plan_multiplayer_seats.md` | The seat model — connection identity, turn waiting, per-viewer frames, who launches a player |
 | `docs/plan_ai_opponents.md` | What fills a seat — brain patterns, personality vectors, the LLM path, difficulty |
+| `docs/plan_ai_driver.md` | The AI player process — orchestrator / specialists / arbiter layering, how each layer is measured, the growth procedure |
 
 The engineering **backlog** is not a file — it lives in GitHub Issues + the Falcon Backlog
 project (https://github.com/users/rwalker123/projects/2). See root `CLAUDE.md` → Task Tracking.
