@@ -1005,6 +1005,16 @@ visible → rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with the build queue's ow
 and the foot are SHARED with the road roster deliberately: the two sit in one zone answering the same
 shape of question, and two caps would be two answers to *how long may a roster be here*.
 
+⛔ **AND THE `+N more` IS A DOOR NOW, WHICH IS WHAT MAKES THE CAP SURVIVABLE ON THIS ROSTER.** It was
+an inert `alloc_hint_label`, and `_open_deposit_track` — the `⌃` that opens a working's rung ladder,
+and the card the second `abandon_working` button lives on — has exactly ONE caller, which is a roster
+ROW: so a band's FOURTH working could be neither climbed nor put down while its keeping was still
+billed against the `quarrywork` pool. Pressing the foot opens the whole roster over the Work zone,
+where every working has a row and every row its two controls. The cap itself is unchanged and is not
+raised — the zone `clip_contents` and every roster row is a board row that does not draw, so raising
+it moves the loss. The whole shape lives with the zone that owns it, `band-city-panel.md` → "THE
+ROSTER DOOR".
+
 ⛔ **CASE 1 TAKES THE POOL'S STEPPER WITH IT, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.** With
 the control on the head, a band holding no working and owing no bill has nowhere to staff
 `quarrywork` — which is the honest arrangement: there is nothing to keep, so there is nothing to

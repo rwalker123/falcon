@@ -2450,6 +2450,84 @@ consults the sight axis — **no frame rendered before it existed changes.**
 `kit_token` gained the `SendExpedition` arm, that verb having left the `NotKitBearing` list. Without
 both halves the drive would prove only that a line PARSES.
 
+## THE ROSTER DOOR — the fixture that did not exist, and the claim that is not a row count
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `1202 : PASS / 515 assert OK / 176 frames` →
+`1238 / 524 / 180`, exit 0 both times. The behaviour is `band-city-panel.md` → "THE ROSTER DOOR"; what
+belongs here is the fixture and what each claim can tell apart.
+
+⛔ **NO FIXTURE IN THIS FILE HAD MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
+DEFECT.** Both rosters cap at `ROADWORK_ROSTER_ROWS_MAX`, every roster state staged exactly three
+rows, so the cap never truncated anything — and the thing it truncates is the only control that opens
+a working's ladder (`_open_deposit_track` has ONE caller and it is a roster ROW) and the only other
+control that stops the band being billed for it. Two disjoint frame families with the defect living in
+the gap, one more time.
+
+**`DOOR_WORKINGS` IS FIVE HOLDINGS ON THREE TILES, NOT FIVE TILES.** The near hex and the mid hex each
+carry BOTH materials, so the fixture is `(tile, material)` pairs — the identity a working actually
+has, and the shape a tile-keyed roster cannot draw. The road roster gains two roads for the same
+reason, so the shared builder is exercised on a block that also overflows.
+
+⛔ **THE BAND'S WORKFORCE IS BUDGETED, and that is what makes the head's stepper pressable at all.**
+The `+` is gated on `effective_idle > 0`, so `_door_band_fixture` writes its OWN `labor_assignments`
+— trimmed source rows, both pools, five one-cutter holdings, 14 of 16 — rather than layering five
+crews on top of the reference band's 13. A fixture that merely appended would have staged a band with
+no idle hands and a dead `+`, and the stepper claim would have proved nothing.
+
+### The four states, and what each one alone cannot tell
+
+- **`band_panel_workings_roster_collapsed`** — the PAIRED NEGATIVE, and it runs first. Three rows and
+  a `+2 more`, plus the claim that matters as an absence: the other two workings have **no row, no
+  `⌃` and no `✕` at all**. An absence is worth asserting only where a presence would otherwise have
+  been visible, which is why it is the same frame family as the expansion.
+- **`band_panel_workings_roster_expanded`** — reached by a **REAL** `_drive_click` on the door
+  (`pressed.emit()` cannot see a control that is covered, zero-size or filtered out of the hit test,
+  and this is a ghost Button in a 28px roster row). Every model has a row, every row its `⌃` AND its
+  `✕`; no `+N more` left; the board GONE rather than squeezed; the OTHER roster gone with it; the
+  POOLS block still above.
+- **`band_panel_roadwork_roster_expanded`** — the same builder on the other roster, one frame being
+  enough for a second caller of one function, plus the claim that GROUNDWORK folded.
+- **`band_panel_workings_roster_expanded_tight`** — the 1920 BOTTOM dock, the shortest work zone this
+  panel ships. The viewport is declared off the zone's own box and is **not clamped up to a floor**,
+  so the claim on the tightest dock is `_assert_zone_content_fits`; the geometry is PRINTED beside it
+  (`WORK zone box 380 × 356, pools 110, expanded roster declares 193px = 6.9 rows of 28`) rather than
+  asserted, a near-miss and a comfortable fit being the same green line otherwise.
+
+⛔ **`_assert_the_expanded_roster_reaches_every_working` WALKS THE MODELS, NEVER A LIST THIS FILE
+TYPED TWICE.** It asks the controller's own `_workings_roster_models` for the keys and requires a row
+for each, then requires each row to carry both controls. **A probe that counted rows would pass on a
+renderer that drew five rows without controls, which is the defect restated.**
+
+> #### ⛔ THE STEPPER PRESS RE-RENDERS THE *SELECTION* INTO THE PANEL, AND THIS FILE'S SELECTION IS
+> STALE
+>
+> The trap `_assert_crew_edit_keeps_the_kit` already records, met again: `_emit_assign_labor` →
+> `_after_pending_change` re-renders the SELECTED unit, which here is an unstamped `_band_fixture()`
+> left behind long ago — so the panel band comes back with no `band_id`, and BOTH rosters' membership
+> tests then match nothing (a road is filtered on its keeper's `band_id`, a working on this band's own
+> `extract` rows). **Measured: every claim after the press reported an EMPTY roster.** The door's band
+> is re-pushed straight after it, and the optimistic overlay cleared with it.
+
+> #### ⛔ A RESTORE IS AN ASSIGNMENT, NEVER A SECOND TOGGLE
+>
+> `_assert_the_roster_door_excludes_the_zones_other_expansions` put the zone back with a second
+> `_toggle_queue_expanded()`. A toggle is a function of the state it is undoing, so under a BROKEN
+> exclusion it lands on the OPPOSITE value and leaves the queue's expansion open over every state
+> below — **measured under sabotage as 61 failures burying the three claims that had actually
+> fired**. It assigns `_queue_expanded = false` and re-pages instead, and the same sabotage then
+> reports exactly 3.
+>
+> The two KEYS in that block are likewise set directly: what is under test is the MUTATOR's clear, and
+> reaching them through their own togglers would re-render the zone between the precondition and the
+> claim.
+
+### The falsifications
+
+| Restored defect | Failures |
+|---|---|
+| the expanded list capped at `ROADWORK_ROSTER_ROWS_MAX` (the door opening onto the same truncation) | **3**, and every one is the reachability claim — both docks' `EVERY working this band holds has a row — 3 of 5 (missing ["68,18:wood", "71,12:stone"])` and the road roster's `3 of 5 kept`. Nothing else moves: the block still draws, the head still toggles, the frames still fit |
+| the exclusion removed from `_toggle_roster_expanded` and `_toggle_queue_expanded` | **3** — the two keys (`precondition` / `precondition`), the queue's expansion (`queue expanded true`), and the other direction (`roster quarrywork, queue expanded false`) |
+
 ## The workings roster's rung TRACK (issue #650)
 
 One frame and eight assertions appended to `_assert_the_workings_roster_names_its_workings`, plus a

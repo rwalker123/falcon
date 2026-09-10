@@ -270,6 +270,35 @@ var _queue_open_key: String = ""
 ## EVERY band on the first selection of an idle one, which is the band-change fold the paragraph above
 ## exists to prevent.
 var _queue_expanded: bool = false
+## **WHICH ROSTER IS DRAWN OVER THE WHOLE WORK ZONE** — `&""` for none, else that roster's own kind key
+## (`HudConst.LABOR_KIND_ROADWORK` / `LABOR_KIND_QUARRYWORK`). The build queue's door, generalized over
+## the zone's two rosters (the roster door, `.claude/rules/client/band-city-panel.md`).
+##
+## ⛔ **ONE FLAG NAMING WHICH, RATHER THAN A BOOL EACH, BECAUSE THE TWO ROSTERS MUST EXCLUDE EACH OTHER
+## TOO.** The one-expansion rule is about the ZONE — a board row, a queue row and a roster row are
+## three different subjects, and expanding two states neither clearly — so one flag makes the exclusion
+## structural instead of a pair of tests free to drift. It excludes with `_queue_expanded`,
+## `_queue_open_key` and `_work_open_key` through the existing mutators.
+##
+## **IT IS ZONE MODE, WHICH IS THE PLAYER'S, so it is NOT reset on a band change**, exactly as
+## `_queue_expanded` is not.
+##
+## ⛔ **AND AN EMPTY ROSTER FALLS THROUGH TO THE COLLAPSED PATH WITH THE FLAG LEFT ALONE.** No models
+## and no bill means no block, no block means no head, and the head is the way back — but the
+## fall-through draws no block either, so nothing is stranded. CLEARING the flag there would cancel the
+## mode for every band the moment one holding nothing is selected, which is the band-change fold this
+## flag is documented as not doing.
+var _roster_expanded: StringName = &""
+## The expanded ROSTER list's `ScrollContainer` while it is mounted — the queue's twin, held for the
+## same reason the offset needs a node to be read off at the top of the next fill. `null` in every
+## collapsed render.
+var _roster_expanded_scroll: ScrollContainer = null
+## **HOW FAR DOWN THE EXPANDED ROSTER THE PLAYER IS, CARRIED ACROSS EVERY REBUILD OF IT.** A press on a
+## row's `⌃` or `✕` re-renders the zone, and a snapshot re-renders it once a turn; a list rebuilt at 0
+## would throw the player back to the top on each of them, and the rows only a scrolled list can reach
+## are exactly the ones the mode exists to reach. `_queue_expanded_scroll_offset`'s contract exactly,
+## including the reset on ENTERING the mode.
+var _roster_expanded_scroll_offset: int = 0
 ## The expanded list's `ScrollContainer` while it is mounted, held for the DRAG's edge auto-scroll
 ## alone — the pump reads its rect and writes its `scroll_vertical`, and must reach it without
 ## re-rendering the block the gesture is standing on. `null` in every collapsed render.
@@ -1859,9 +1888,13 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # another hook. `_build_build_queue_expanded` restores it onto the list it is about to build.
     if _queue_expanded_scroll != null and is_instance_valid(_queue_expanded_scroll):
         _queue_expanded_scroll_offset = _queue_expanded_scroll.scroll_vertical
+    # …and the ROSTER door's place in ITS list, taken at the same moment and for the same reason.
+    if _roster_expanded_scroll != null and is_instance_valid(_roster_expanded_scroll):
+        _roster_expanded_scroll_offset = _roster_expanded_scroll.scroll_vertical
     # The previous fill's nodes are about to be freed, so the auto-scroll's handle is dropped before
     # anything can read a dangling one; the expanded builder is what re-seats it.
     _queue_expanded_scroll = null
+    _roster_expanded_scroll = null
     # **THE DESTINATION TRACK IS DISMISSED BY ANY RE-FILL** (`docs/plan_standing_upkeep.md` §2.8). The
     # card is anchored to a row this pass is about to free, and its every figure is a function of the
     # source's position, the faction's knowledge and the queue — so a card left up over the rebuilt
@@ -1888,18 +1921,43 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # anywhere the two are separated. It is omitted entirely on a band with nothing to say, and its
     # reserved height is threaded into BOTH capacity terms below — the zone clips.
     var roster_models := _roadwork_roster_models(band)
-    var roster_h := HudWorkVocab.roadwork_roster_height(roster_models.size(),
-        _roadwork_roster_unseen(band, roster_models.size()))
-    var roster := _build_roadwork_roster_block(band, roster_models)
-    if roster != null:
-        col.add_child(roster)
+    var roster_unseen := _roadwork_roster_unseen(band, roster_models.size())
+    var roster_h := HudWorkVocab.roadwork_roster_height(roster_models.size(), roster_unseen)
     # **AND WHICH WORKINGS IT IS HOLDING, directly under that** (arc #583). A second roster answering
     # a second pool card's question, resolved and paid for exactly as the first is — its own height,
     # its own gap, threaded into BOTH capacity terms below because the zone clips. The two appear
     # independently, so neither may be folded into the other's term.
     var workings_models := _workings_roster_models(band)
-    var workings_h := HudWorkVocab.workings_roster_height(workings_models.size(),
-        _workings_roster_unseen(band, workings_models.size()))
+    var workings_unseen := _workings_roster_unseen(band, workings_models.size())
+    var workings_h := HudWorkVocab.workings_roster_height(workings_models.size(), workings_unseen)
+    # **THE POOLS BLOCK'S OWN ANSWER IS RESOLVED HERE RATHER THAN BELOW THE ROSTERS**, because the
+    # roster door's fork needs it and that fork stands in front of the two collapsed blocks. It is read
+    # off the block the fill just built, so the number subtracted and the number drawn cannot come from
+    # two different answers to "is the fund-mode row rendering?".
+    var pools_fund_mode := bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
+    # ⛔ **THE ROSTER DOOR — the whole of ONE roster over the whole zone** (the roster door,
+    # `.claude/rules/client/band-city-panel.md`). The build queue's fork, generalized: the work head,
+    # the POOLS block, the roster's own head and every row in a scrolling list — and no chips, no
+    # board, no pager, no queue block and no OTHER roster, so `_work_board_capacity` is not consulted
+    # at all in this mode either.
+    # ⛔ **AN EMPTY ROSTER FALLS THROUGH AND LEAVES THE FLAG ALONE.** The builder answers `null`
+    # exactly where the collapsed block builder would — no models AND no bill — so the fall-through
+    # draws no block either and nothing is stranded; clearing the flag here would cancel the mode for
+    # every band the moment one holding nothing is selected.
+    if _roster_expanded != &"":
+        var expanded_roster: VBoxContainer = null
+        if _roster_expanded == HudConst.LABOR_KIND_ROADWORK:
+            expanded_roster = _build_roster_expanded(band, _roster_expanded, roster_models,
+                roster_unseen, pools_fund_mode)
+        elif _roster_expanded == HudConst.LABOR_KIND_QUARRYWORK:
+            expanded_roster = _build_roster_expanded(band, _roster_expanded, workings_models,
+                workings_unseen, pools_fund_mode)
+        if expanded_roster != null:
+            col.add_child(expanded_roster)
+            return
+    var roster := _build_roadwork_roster_block(band, roster_models)
+    if roster != null:
+        col.add_child(roster)
     var workings := _build_workings_roster_block(band, workings_models)
     if workings != null:
         col.add_child(workings)
@@ -1910,8 +1968,8 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # **THE ROW CAP IS THE ZONE'S ANSWER, NOT THE CONSTANT'S** (§4.7): the pools block took ~82px out
     # of a 300px horizontal work zone, which is more than the authored ceiling can give back, while
     # the narrow shell's swapped host has 400px spare at that same ceiling. Resolved ONCE here so the
-    # block and the capacity below cannot cap differently.
-    var pools_fund_mode := bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
+    # block and the capacity below cannot cap differently. (`pools_fund_mode` is resolved above the
+    # roster fork, which needs it; it is the same one answer.)
     # **THE EXPANSION IS A FORK, NOT A WIDENING** (§4.9 item 9c). The whole
     # queue takes the whole zone: the work head above it, the POOLS block directly above the list they
     # fund, and every entry in a scrolling list — and NO chips, no board, no pager, no inspector and
@@ -2445,7 +2503,12 @@ func _build_roadwork_roster_block(band: Dictionary, models: Array) -> VBoxContai
     block.add_theme_constant_override("separation", 0)
     block.custom_minimum_size = Vector2(0.0,
         HudWorkVocab.roadwork_roster_height(models.size(), unseen))
-    block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, ""))
+    var head := HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, "")
+    # **THE HEAD IS THE DOOR, AND IT IS AVAILABLE WHENEVER THE BLOCK EXISTS** — including a roster
+    # short enough to draw no `+N more` row at all, which is what makes the expansion reachable on a
+    # two-road band and what makes it the only way back out of the mode.
+    _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_ROADWORK)
+    block.add_child(head)
     if unseen:
         var line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
         line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
@@ -2455,10 +2518,8 @@ func _build_roadwork_roster_block(band: Dictionary, models: Array) -> VBoxContai
     for index in range(drawn):
         block.add_child(_build_roadwork_roster_row(band, models[index] as Dictionary))
     if models.size() > drawn:
-        var more := HudWidgets.alloc_hint_label(
-            HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % (models.size() - drawn))
-        more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-        block.add_child(more)
+        block.add_child(_build_roster_overflow_door(HudConst.LABOR_KIND_ROADWORK,
+            models.size() - drawn))
     return block
 
 ## One roster row: where the road is, what state it is in, and the `✕` that puts it down.
@@ -2605,7 +2666,11 @@ func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContai
     block.add_theme_constant_override("separation", 0)
     block.custom_minimum_size = Vector2(0.0,
         HudWorkVocab.workings_roster_height(models.size(), unseen))
-    block.add_child(_build_workings_roster_head(band))
+    var head := _build_workings_roster_head(band)
+    # **THE HEAD IS THE DOOR TOO, and it is the head WITH THE POOL STEPPER ON IT** — a `Button`
+    # consumes its own click, so the stepper still staffs `quarrywork` and does not toggle the mode.
+    _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_QUARRYWORK)
+    block.add_child(head)
     if unseen:
         var line := HudWidgets.alloc_hint_label(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_LINE)
         line.set_meta(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_META, true)
@@ -2614,11 +2679,12 @@ func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContai
     var drawn := mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
     for index in range(drawn):
         block.add_child(_build_workings_roster_row(band, models[index] as Dictionary))
+    # ⛔ **THE `+N more` IS A DOOR, AND ON THIS ROSTER IT IS THE FIX RATHER THAN A CONVENIENCE.**
+    # `_open_deposit_track` has exactly one caller — a roster ROW — so a band's fourth working could be
+    # neither climbed nor put down while its keeping was still billed against the `quarrywork` pool.
     if models.size() > drawn:
-        var more := HudWidgets.alloc_hint_label(
-            HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % (models.size() - drawn))
-        more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-        block.add_child(more)
+        block.add_child(_build_roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK,
+            models.size() - drawn))
     return block
 
 ## **THE BLOCK'S HEAD *IS* THE `quarrywork` POOL** (arc #583) — the block title, the shortfall mark,
@@ -3683,15 +3749,147 @@ func _build_build_queue_expanded(band: Dictionary, queued: Array,
 ## off, so the only reachable case is a gesture starting in the frame this is waiting out — declined
 ## here rather than assumed impossible.
 func _restore_queue_scroll_offset(scroll: ScrollContainer) -> void:
-    if _queue_expanded_scroll_offset <= 0:
+    await _restore_scroll_offset(scroll, _queue_expanded_scroll_offset,
+        func() -> bool: return _queue_expanded_scroll == scroll and not _queue_drag_in_flight())
+
+## ⛔ **THE ONE DEFERRED SCROLL RESTORE, SHARED BY EVERY EXPANDED LIST IN THIS ZONE** — the queue's and
+## the roster door's. The one-frame wait is the part that must never be re-derived, which is exactly
+## why there is one of these rather than one per list.
+##
+## `still_current` is what a caller uses to decline a STALE restore: the queue passes its identity test
+## AND `_queue_drag_in_flight`, the rosters have no drag and pass only the identity test.
+func _restore_scroll_offset(scroll: ScrollContainer, want: int,
+        still_current: Callable) -> void:
+    if want <= 0:
         return
-    var want := _queue_expanded_scroll_offset
     await _host.get_tree().process_frame
     if not is_instance_valid(scroll) or not scroll.is_inside_tree():
         return
-    if _queue_expanded_scroll != scroll or _queue_drag_in_flight():
+    if not bool(still_current.call()):
         return
     scroll.scroll_vertical = want
+
+## **ONE ROSTER OVER THE WHOLE WORK ZONE — every row it holds, in a scrolling list** (the roster door,
+## `.claude/rules/client/band-city-panel.md`), or `null` where the block does not exist at all.
+##
+## ⛔ **IT ANSWERS `null` ON EXACTLY THE STATE THE COLLAPSED BUILDERS DO** — no models AND no unseen
+## bill — so the fill falls through to a collapsed path that draws nothing either, and the flag is left
+## alone rather than cancelling the mode for every band.
+##
+## **IT RE-SPELLS NOTHING.** The head is `_build_workings_roster_head` or `HudWidgets.zone_head`, the
+## rows are `_build_workings_roster_row` / `_build_roadwork_roster_row` — so the `⌃`, the `✕`, the
+## jump link and every gate they carry are INHERITED, which is what makes the fourth working reachable
+## rather than re-implemented.
+##
+## **THE UNSEEN LINE RENDERS IN THIS MODE TOO.** It is a fact about the pool versus the visible rows,
+## and it is at its most relevant when the player has opened the full list and still cannot see
+## everything — so the block draws its head, that line and an empty list.
+##
+## **THE LIST DECLARES A FIXED VIEWPORT off the zone's own box** (`HudWorkVocab.zone_expanded_scroll_height`),
+## the sanction every scroll in this panel is admitted under: what the list holds never reaches the
+## zone's reservation. The unseen line is charged to the head term, being chrome above the list.
+func _build_roster_expanded(band: Dictionary, kind: StringName, models: Array, unseen: bool,
+        pools_fund_mode: bool) -> VBoxContainer:
+    if models.is_empty() and not unseen:
+        return null
+    var is_workings := kind == HudConst.LABOR_KIND_QUARRYWORK
+    var block := VBoxContainer.new()
+    block.set_meta(HudWorkVocab.WORKINGS_ROSTER_BLOCK_META if is_workings
+        else HudWorkVocab.ROADWORK_ROSTER_BLOCK_META, models.size())
+    block.add_theme_constant_override("separation", 0)
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    var head: HBoxContainer = _build_workings_roster_head(band) if is_workings \
+        else HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_ROADWORK_ROSTER, "")
+    _make_roster_head_a_toggle(head, kind)
+    block.add_child(head)
+    var chrome := HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT if is_workings \
+        else HudWorkVocab.ZONE_HEAD_HEIGHT
+    if unseen:
+        var line := HudWidgets.alloc_hint_label(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_LINE
+            if is_workings else HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
+        line.set_meta(HudWorkVocab.WORKINGS_ROSTER_UNSEEN_META if is_workings
+            else HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
+        line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+        block.add_child(line)
+        chrome += HudWorkVocab.WORK_ROW_HEIGHT
+    var scroll := ScrollContainer.new()
+    scroll.name = HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME
+    scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    scroll.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.zone_expanded_scroll_height(_zone_box().y, pools_fund_mode, chrome))
+    var list := VBoxContainer.new()
+    list.add_theme_constant_override("separation", 0)
+    list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # A scrolled child must not claim the viewport's height as its own, or a short roster would stretch
+    # its rows down the zone — the parties list's own rule, for the same reason.
+    list.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    scroll.add_child(list)
+    for model_variant in models:
+        var model: Dictionary = model_variant as Dictionary
+        list.add_child(_build_workings_roster_row(band, model) if is_workings
+            else _build_roadwork_roster_row(band, model))
+    block.add_child(scroll)
+    _roster_expanded_scroll = scroll
+    _restore_scroll_offset(scroll, _roster_expanded_scroll_offset,
+        func() -> bool: return _roster_expanded_scroll == scroll)
+    return block
+
+## The roster head's toggle, in whichever mode it is drawn — collapsed or expanded, both rosters.
+func _make_roster_head_a_toggle(head: HBoxContainer, kind: StringName) -> void:
+    _make_zone_head_a_toggle(head, _roster_expanded == kind,
+        HudWorkVocab.ROSTER_DISCLOSURE_TOOLTIP,
+        _toggle_roster_expanded.bind(kind))
+
+## Open a roster over the whole Work zone, or fold it back to the summary block — the mode's ONE
+## mutator, driven by the roster's own head both ways and by its `+N more` row inward.
+##
+## ⛔ **ONE EXPANSION OPEN AT A TIME IN THE WHOLE ZONE, AND THAT NOW MEANS THREE SUBJECTS.** Opening a
+## roster clears the build queue's expansion, the queue's settings key and the work inspector's key: a
+## board row, a queue row and a roster row are three different subjects, and a `_work_open_key` left
+## set would spring the inspector back on the collapse the way the queue's own clear exists to prevent.
+## **The other direction is in the OTHER mutators** (`_toggle_queue_expanded`, `_toggle_queue_settings`,
+## `_toggle_work_inspector`), never at a call site.
+##
+## **ENTERING IT ALSO OPENS THE LIST AT THE TOP.** The offset is a place in ONE list and is carried
+## across that list's rebuilds; a fresh entry into the mode is not one of those.
+func _toggle_roster_expanded(kind: StringName) -> void:
+    _roster_expanded = &"" if _roster_expanded == kind else kind
+    if _roster_expanded != &"":
+        _queue_expanded = false
+        _queue_open_key = ""
+        _work_open_key = ""
+        _roster_expanded_scroll_offset = 0
+    _repage_work_zone()
+
+## `+2 more` — the rest of the roster, as a DOOR rather than a notice.
+##
+## **A `Button`, NOT `alloc_hint_label`** (the roster door): the row it replaced stated a count and
+## offered nothing, while on the WORKINGS roster the rows it stands for carry the only `⌃` that can
+## climb a working's ladder and the only `✕` that can put it down.
+##
+## ⛔ **IT FIRES ON THE RELEASE, INSIDE THE ROW**, which is what a `BaseButton` does by default
+## (`ACTION_MODE_BUTTON_RELEASE`) — deliberately not re-implemented on `gui_input`. The handler ends in
+## `_repage_work_zone`, which frees every node in the zone, and a press-time rebuild kills every
+## gesture that could start under it.
+func _build_roster_overflow_door(kind: StringName, remaining: int) -> Button:
+    var more := Button.new()
+    more.set_meta(HudWorkVocab.ROSTER_OVERFLOW_META, remaining)
+    more.text = HudWorkVocab.ROADWORK_ROSTER_OVERFLOW_FORMAT % remaining
+    more.tooltip_text = HudWorkVocab.ROSTER_OVERFLOW_TOOLTIP
+    more.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    more.focus_mode = Control.FOCUS_NONE
+    more.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    more.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    more.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
+    HudStyle.apply_button(more, "ghost")
+    HudWidgets.compact(more, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    more.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    more.pressed.connect(func() -> void: _toggle_roster_expanded(kind))
+    return more
 
 ## Open the whole queue over the Work zone, or fold it back to the summary block — the mode's ONE
 ## mutator, driven by the BUILD QUEUE header both ways and by the `+N more` row inward.
@@ -3707,6 +3905,9 @@ func _toggle_queue_expanded() -> void:
     _queue_expanded = not _queue_expanded
     if _queue_expanded:
         _work_open_key = ""
+        # …and the ROSTER door, the zone's third subject (the roster door,
+        # `.claude/rules/client/band-city-panel.md`). One expansion at a time is a ZONE rule.
+        _roster_expanded = &""
         _queue_expanded_scroll_offset = 0
     _repage_work_zone()
 
@@ -3723,24 +3924,48 @@ func _toggle_queue_expanded() -> void:
 ## named, after the queue rows' own toggle shipped on the press and left the reorder gesture dead.
 ## Inside the row, because `mouse_focus` latches on the press.
 func _make_queue_head_a_toggle(head: HBoxContainer) -> void:
+    _make_zone_head_a_toggle(head, _queue_expanded, HudWorkVocab.BUILD_QUEUE_DISCLOSURE_TOOLTIP,
+        _toggle_queue_expanded)
+
+## **THE HEAD IS THE TOGGLE, BOTH WAYS — for the build queue and for BOTH ROSTERS** (the roster door,
+## `.claude/rules/client/band-city-panel.md`). One helper over three blocks: all three heads are
+## `HudWidgets.zone_head` `HBoxContainer`s with the title at index 0 and an expanding spacer at 1, so
+## the glyph insertion is the same in each.
+##
+## `expanded` is the state the glyph and the meta report; `on_toggle` is what the release fires.
+##
+## > ⛔ **THE WORKINGS HEAD HAS BUTTONS IN IT AND THE QUEUE'S DOES NOT.**
+## > `_build_workings_roster_head` mounts the `quarrywork` pool's STEPPER on this row. A `Button`
+## > consumes its own click and does not propagate to the parent's `gui_input`, so the stepper keeps
+## > working and does not toggle the expansion — **asserted with a real `push_input` press rather than
+## > assumed**, this being a condition the helper had never met before the rosters took it.
+##
+## **THE `Label` → `MOUSE_FILTER_PASS` SWEEP IS KEPT AND IS LOAD-BEARING.** A readout Label takes
+## `STOP` for its own tooltip (`HudWidgets.set_label_tooltip`) and would otherwise swallow a press
+## landing on it; `PASS` keeps the hover and lets the event carry on up to the row. It is scoped to
+## Labels precisely so the stepper's Buttons keep consuming their own clicks.
+##
+## ⛔ **IT FIRES ON THE RELEASE, INSIDE THE ROW.** Every one of these toggles ends in
+## `_repage_work_zone`, which frees every node in the zone — and *any press handler that rebuilds its
+## own subtree kills every gesture that could start under it* is the general rule PR #574's autopsy
+## named, after the queue rows' own toggle shipped on the press and left the reorder drag dead. Inside
+## the row, because `mouse_focus` latches on the press.
+func _make_zone_head_a_toggle(head: HBoxContainer, expanded: bool, tooltip: String,
+        on_toggle: Callable) -> void:
     var glyph := Label.new()
-    glyph.text = HudWorkVocab.BUILD_QUEUE_DISCLOSURE_EXPANDED if _queue_expanded \
-        else HudWorkVocab.BUILD_QUEUE_DISCLOSURE_COLLAPSED
+    glyph.text = HudWorkVocab.ZONE_DISCLOSURE_EXPANDED if expanded \
+        else HudWorkVocab.ZONE_DISCLOSURE_COLLAPSED
     glyph.add_theme_color_override("font_color", HudStyle.INK_DIM)
     glyph.add_theme_font_size_override("font_size",
-        HudWorkVocab.BUILD_QUEUE_DISCLOSURE_FONT_SIZE)
+        HudWorkVocab.ZONE_DISCLOSURE_FONT_SIZE)
     glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    glyph.set_meta(HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META, _queue_expanded)
+    glyph.set_meta(HudWorkVocab.ZONE_DISCLOSURE_META, expanded)
     head.add_child(glyph)
     head.move_child(glyph, 1)
-    head.set_meta(HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META, _queue_expanded)
+    head.set_meta(HudWorkVocab.ZONE_DISCLOSURE_META, expanded)
     head.mouse_filter = Control.MOUSE_FILTER_STOP
     head.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-    head.tooltip_text = HudWorkVocab.BUILD_QUEUE_DISCLOSURE_TOOLTIP
-    # The readout Label takes `STOP` for its own tooltip (`HudWidgets.set_label_tooltip`), which would
-    # swallow a press landing on it. `PASS` is the drag handle's shipped trick: the label is still
-    # found for the hover, so `BUILD_QUEUE_BUILDERS_TOOLTIP` survives, and the event carries on up to
-    # the row.
+    head.tooltip_text = tooltip
     for child in head.get_children():
         if child is Label and (child as Label).mouse_filter == Control.MOUSE_FILTER_STOP:
             (child as Label).mouse_filter = Control.MOUSE_FILTER_PASS
@@ -3748,7 +3973,7 @@ func _make_queue_head_a_toggle(head: HBoxContainer) -> void:
         if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
                 and not event.pressed \
                 and Rect2(Vector2.ZERO, head.size).has_point(event.position):
-            _toggle_queue_expanded())
+            on_toggle.call())
 
 ## **WHICH DRAWN ENTRY HAS ITS SETTINGS STRIP OPEN, AND WHAT THAT STRIP HOLDS** — `{index, legs,
 ## crop}`, `index == -1` for none. The block's one answer to that question, so the height it reserves,
@@ -3819,6 +4044,7 @@ func _toggle_queue_settings(key: String) -> void:
     # (`docs/plan_standing_upkeep.md` §4.7b). See `_toggle_work_inspector` for the defect this closes.
     if _queue_open_key != "":
         _work_open_key = ""
+        _roster_expanded = &""
     _repage_work_zone()
 
 ## **THE OPEN ENTRY'S SETTINGS — the crop today, the KIT beside it in §4.7a ②.** That is the reason
@@ -6958,6 +7184,7 @@ func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
     if _work_open_key != "":
         _queue_open_key = ""
+        _roster_expanded = &""
     _repage_work_zone()
 
 ## Mount, re-target or take down the inspector card against what the fill just resolved.

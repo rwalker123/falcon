@@ -7739,6 +7739,7 @@ const SANCTIONED_SCROLLS := [
 	[HudWorkVocab.PARTIES_LIST_NAME, BandCityPanel.ZONE_PARTIES],
 	[HudWorkVocab.BAND_ZONE_SCROLL_NAME, BandCityPanel.ZONE_BAND],
 	[HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME, BandCityPanel.ZONE_WORK],
+	[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 ]
 
 ## GUARD: the zone model is NO-SCROLL by construction, with **exactly two sanctioned exceptions** —
@@ -7818,6 +7819,26 @@ func _assert_scroll_only_where_sanctioned() -> void:
 			% [str(_hud._bandpanel._queue_expanded), str(work_mounted),
 				int(counts[HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME])],
 		int(counts[HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME]) == (1 if wants_list else 0))
+	# ⛔ **AND THE ROSTER DOOR'S LIST, WHOSE IFF CARRIES ONE MORE TERM.** A roster expanded on a band
+	# that holds nothing falls through to the collapsed path, which builds no scroll — so the claim is
+	# *iff a roster is expanded AND its BLOCK was drawn*, read off the rendered block rather than off
+	# the flag alone. `_roster_block_for` is what says which block the flag names.
+	var roster_block := _roster_block_for(_hud._bandpanel._roster_expanded)
+	var wants_roster := _hud._bandpanel._roster_expanded != &"" and work_mounted \
+		and roster_block != null
+	_assert_band_panel("…and the WORK zone carries the expanded ROSTER list IFF a roster is expanded and drawn (expanded `%s`, block %s, %d found)"
+			% [String(_hud._bandpanel._roster_expanded), str(roster_block != null),
+				int(counts[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME])],
+		int(counts[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME]) == (1 if wants_roster else 0))
+
+## The roster BLOCK a kind key names, off the live panel — `null` for `&""` and for a kind whose block
+## the fill declined to draw.
+func _roster_block_for(kind: StringName) -> Control:
+	if kind == HudConst.LABOR_KIND_QUARRYWORK:
+		return _workings_block()
+	if kind == HudConst.LABOR_KIND_ROADWORK:
+		return _roster_block()
+	return null
 
 func _collect_scroll_containers(node: Node, into: Array[Node]) -> void:
 	if node is ScrollContainer:
@@ -15657,6 +15678,13 @@ func _render_queue_control_states() -> void:
 	# stalled in silence. Appended at the end of the chapter: it pushes a band of its own and restores
 	# the reorder fixture, so no frame above it moves.
 	await _assert_an_uncrewed_queued_source_still_draws()
+	# **(h) THE ROSTER DOOR — the whole of ONE roster over the whole Work zone**
+	# (`.claude/rules/client/band-city-panel.md`). The two rosters cap at three rows each, and
+	# GROUNDWORK's `+N more` was an inert label — so a band's fourth working could be neither
+	# climbed nor put down, `_open_deposit_track` having exactly one caller and it being a roster
+	# ROW. Appended at the very END of the chapter: it pushes its own band, its own deposits and
+	# its own road network, and restores all three, so no frame above it moves.
+	await _assert_the_roster_door_opens_the_whole_list()
 
 ## One queued entry's key by web, off the block's own model list.
 func _queue_entry_key(animal: bool) -> String:
@@ -18030,6 +18058,406 @@ func _label_titled_under_head(block: Control, title: String) -> Label:
 			return label as Label
 	return null
 
+# =====================================================================================
+#  THE ROSTER DOOR — the whole of ONE roster over the whole Work zone
+# =====================================================================================
+# The build queue's expansion, generalized over the zone's two rosters
+# (`.claude/rules/client/band-city-panel.md`). The 3-row cap is untouched and stays; what the door
+# adds is a way to reach the rows it does not draw.
+#
+# ⛔ **THERE WAS NO FIXTURE WITH MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
+# DEFECT.** `_open_deposit_track` — the `⌃` that opens a working's rung ladder — has ONE caller, and
+# it is a roster ROW; the ladder card is also where the second `abandon_working` button lives. So a
+# band's fourth working could be neither climbed nor put down while its keeping was still billed
+# against the `quarrywork` pool, and every roster frame in this file staged exactly three rows.
+
+## FIVE workings across the roster's three tiles, so the collapsed block draws 3 and states `+2 more`.
+## **The pairs are `(tile, material)`**, which is a working's whole identity: the near hex and the mid
+## hex each carry BOTH materials, so the fixture is five holdings on three tiles rather than five
+## tiles — the shape a tile-keyed roster cannot draw and the shape the cap actually truncates.
+const DOOR_WORKINGS := [
+	[ROSTER_NEAR_TILE, WORKINGS_STONE],
+	[ROSTER_NEAR_TILE, WORKINGS_WOOD],
+	[ROSTER_MID_TILE, WORKINGS_STONE],
+	[ROSTER_MID_TILE, WORKINGS_WOOD],
+	[ROSTER_FAR_TILE, WORKINGS_STONE],
+]
+
+## How many of them the collapsed block draws, and how many the door stands for. Derived from the
+## shipped cap rather than typed, so a cap re-dial moves the expectation with it.
+const DOOR_WORKINGS_DRAWN := HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX
+
+## The two extra roads that take the ROADWORK roster over the same cap, so the second half of the
+## shared builder is exercised on a block that also draws a `+N more`. Due west of camp, so their
+## locators cannot collide with `ROSTER_MID_LOCATOR`'s.
+const DOOR_ROAD_NEAR_TILE := Vector2i(70, 18)
+const DOOR_ROAD_MID_TILE := Vector2i(69, 18)
+
+## The five deposit rows this band holds, plus the roster's own THREE negatives, unchanged — a door
+## that admitted a working this band does not work would be a longer list of the wrong thing.
+func _door_workings_rows() -> Array:
+	var rows: Array = []
+	for held in DOOR_WORKINGS:
+		var tile: Vector2i = held[0]
+		var material: String = held[1]
+		rows.append(_workings_row(tile, material, material == WORKINGS_WOOD,
+			WORKINGS_WOOD_TAKE if material == WORKINGS_WOOD else WORKINGS_STONE_TAKE))
+	# **THE NEGATIVES RIDE ALONG**: untouched ground on a hex this band DOES hold, which a roster
+	# reading the deposit list rather than the band's own `extract` rows would draw as a sixth row.
+	rows.append(_unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true))
+	rows.append(_unopened_workings_row(ROSTER_UNKEPT_TILE, WORKINGS_STONE, false))
+	return rows
+
+## The band that holds all five, and keeps five roads besides — ONE band, so the roster-vs-roster
+## exclusion is a claim about one zone rather than about two fixtures.
+##
+## ⛔ **ITS WORKFORCE IS BUDGETED, and that is what makes the head's stepper pressable at all.** The
+## `+` is gated on `effective_idle > 0`, and a band whose rows spend more than its `working_age` has
+## none — so the two source rows are trimmed to leave two hands free after the pools and the five
+## holdings, rather than the reference band's own crews being layered on top of them.
+const DOOR_FORAGE_WORKERS := 3
+const DOOR_HUNT_WORKERS := 2
+
+## One cutter per working. A row held at ANY crew is held, and the fixture's subject is how MANY
+## workings the band holds — five two-hand crews would spend the workforce the stepper claim needs.
+const DOOR_CUTTERS := 1
+
+func _door_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["quarrywork_demand"] = WORKINGS_DEMAND
+	band["quarrywork_supplied"] = WORKINGS_SUPPLIED
+	band["quarrywork_shortfall"] = WORKINGS_SHORTFALL
+	band["roadwork_demand"] = ROSTER_ROADWORK_DEMAND
+	band["roadwork_supplied"] = ROSTER_ROADWORK_SUPPLIED
+	band["roadwork_shortfall"] = ROSTER_ROADWORK_SHORTFALL
+	var rows: Array = [
+		{"kind": "forage", "workers": DOOR_FORAGE_WORKERS, "workers_needed": 2, "floor": 0.5,
+			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48,
+			"kit_id": BandFx.KIT_DEFAULT_FORAGE},
+		{"kind": "hunt", "workers": DOOR_HUNT_WORKERS, "fauna_id": "game_deer_07", "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20,
+			"kit_id": BandFx.KIT_DEFAULT_HUNT},
+		{"kind": HudConst.LABOR_KIND_QUARRYWORK, "workers": WORKINGS_POOL_WORKERS,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+		{"kind": HudConst.LABOR_KIND_ROADWORK, "workers": ROSTER_ROADWORK_WORKERS,
+			"target_x": -1, "target_y": -1, "fauna_id": ""},
+	]
+	for held in DOOR_WORKINGS:
+		var tile: Vector2i = held[0]
+		rows.append({
+			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": DOOR_CUTTERS,
+			"target_x": tile.x, "target_y": tile.y, "fauna_id": "",
+			"material": String(held[1]),
+		})
+	band["labor_assignments"] = rows
+	return band
+
+## The roster's own three roads plus two more, so ROADWORK overflows its cap as well.
+func _door_roads() -> Array:
+	var roads := _roster_roads()
+	roads.append(_roster_road_row(DOOR_ROAD_NEAR_TILE, HudRouteVocab.RUNG_KEY_PATH,
+		ROSTER_BAND_ID, true))
+	roads.append(_roster_road_row(DOOR_ROAD_MID_TILE, HudRouteVocab.RUNG_KEY_DIRT_ROAD,
+		ROSTER_BAND_ID, true))
+	return roads
+
+## Every working this band holds, by the roster's own `(tile, material)` handle, off the LIVE panel
+## band — so the claim below walks the MODELS rather than a list this file typed twice.
+func _door_working_keys() -> Array:
+	var keys: Array = []
+	for model_variant in _hud._bandpanel._workings_roster_models(
+			_hud._band_labor.panel_band()):
+		var model: Dictionary = model_variant
+		var tile: Vector2i = model["tile"]
+		keys.append("%d,%d:%s" % [tile.x, tile.y, String(model["material"])])
+	return keys
+
+## The `+N more` DOOR on the roster whose kind is named, or `null` where the block drew none.
+func _roster_overflow_door(kind: StringName) -> Button:
+	var block := _roster_block_for(kind)
+	if block == null:
+		return null
+	return _find_meta_control(block, HudWorkVocab.ROSTER_OVERFLOW_META) as Button
+
+## The disclosure toggle on a roster's own head — scoped to that roster's BLOCK, because
+## `ZONE_DISCLOSURE_META` rides three heads now and a panel-wide search answers with the first.
+func _roster_head_toggle(kind: StringName) -> Control:
+	var block := _roster_block_for(kind)
+	if block == null:
+		return null
+	return _find_meta_control(block, HudWorkVocab.ZONE_DISCLOSURE_META)
+
+## ⛔ **THE ROSTER DOOR — and the claim that matters is REACHABILITY, not that the block drew.**
+##
+## A renderer that drew five rows without controls is the defect restated, so the expanded view is
+## asserted to give EVERY working model a row AND every row its declaring `⌃`; the collapsed view is
+## asserted to HIDE two of them in the same frame family, an absence being worth asserting only where
+## a presence would otherwise have been visible.
+##
+## **The exclusion is asserted BOTH ways round** (`band_panel_queue_settings_exclusive`'s own rule — a
+## builder that never opens one of them passes half), and roster-vs-roster besides, the two rosters
+## being the pair a per-list flag would let drift.
+func _assert_the_roster_door_opens_the_whole_list() -> void:
+	# The crafts and the catalog first, for the roster block's own reason: with no catalog no row
+	# draws a `⌃` at all and every reachability claim below would pass vacuously.
+	_hud.update_intensification([_workings_knowledge_row()])
+	_hud.update_deposit_rungs(_deposit_rung_catalog())
+	_hud.update_route_rungs(_road_queue_catalog())
+	_hud.update_road_network(_door_roads())
+	_hud.update_deposits(_door_workings_rows())
+	_push_bands([_door_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+	# ---- (a) THE PAIRED NEGATIVE — the same band, COLLAPSED --------------------------------------
+	await _save("band_panel_workings_roster_collapsed")
+	_assert_zone_content_fits()
+	_assert_scroll_only_where_sanctioned()
+	var keys := _door_working_keys()
+	_assert_band_panel("precondition: the door's band holds %d workings, more than the block can draw (got %d: %s)"
+			% [DOOR_WORKINGS.size(), keys.size(), keys],
+		keys.size() == DOOR_WORKINGS.size())
+	var collapsed_rows := _workings_rows_drawn()
+	_assert_band_panel("the collapsed WORKINGS roster draws its cap and no more — %d (got %d)"
+			% [DOOR_WORKINGS_DRAWN, collapsed_rows.size()],
+		collapsed_rows.size() == DOOR_WORKINGS_DRAWN)
+	# ⛔ **THE ABSENCE, IN THE SAME FRAME FAMILY AS THE PRESENCE.** These two workings have no row, so
+	# they have no `⌃` and no `✕` — which is the whole defect, stated as what the collapsed view does.
+	var collapsed_keys: Array = []
+	for row in collapsed_rows:
+		collapsed_keys.append(String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META)))
+	var hidden: Array = []
+	for key in keys:
+		if not collapsed_keys.has(key):
+			hidden.append(key)
+	_assert_band_panel("…so %d of them have NO row, no `⌃` and no `✕` at all (%s)"
+			% [hidden.size(), hidden],
+		hidden.size() == DOOR_WORKINGS.size() - DOOR_WORKINGS_DRAWN)
+	var door := _roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK)
+	_assert_band_panel("…and the `+%d more` is a BUTTON now, not an inert label"
+			% hidden.size(),
+		door != null and int(door.get_meta(HudWorkVocab.ROSTER_OVERFLOW_META)) == hidden.size())
+	_assert_band_panel("…whose hover says what it opens AND that the head is the way back",
+		door != null and door.tooltip_text == HudWorkVocab.ROSTER_OVERFLOW_TOOLTIP)
+	_assert_band_panel("…and the collapsed head's disclosure reads COLLAPSED",
+		_roster_head_toggle(HudConst.LABOR_KIND_QUARRYWORK) != null
+			and not bool(_roster_head_toggle(HudConst.LABOR_KIND_QUARRYWORK)
+				.get_meta(HudWorkVocab.ZONE_DISCLOSURE_META)))
+
+	# ---- (b) A REAL CLICK ON THE DOOR, and EVERY working reachable behind it ---------------------
+	# ⛔ **A REAL PRESS, because `pressed.emit()` cannot see a control that is covered, zero-size or
+	# filtered out of the hit test** — and this control is a ghost Button in a 28px roster row.
+	if _is_headless():
+		push_warning("band_panel_preview: the roster door needs a real viewport — skipped under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		_hud._bandpanel._toggle_roster_expanded(HudConst.LABOR_KIND_QUARRYWORK)
+		await _settle()
+	elif door == null:
+		_fail("roster door — the collapsed block drew no `+N more` row to press")
+		return
+	else:
+		await _drive_click(_canvas_to_window(door.get_global_rect().get_center()))
+		await _settle()
+	_assert_band_panel("a REAL click on `+%d more` opens the whole roster over the Work zone"
+			% hidden.size(),
+		_hud._bandpanel._roster_expanded == HudConst.LABOR_KIND_QUARRYWORK)
+	await _save("band_panel_workings_roster_expanded")
+	_assert_zone_content_fits()
+	_assert_scroll_only_where_sanctioned()
+	_assert_the_expanded_roster_reaches_every_working("the tall LEFT dock", keys)
+	_assert_band_panel("…and there is no `+N more` row left, every working having a row of its own",
+		_roster_overflow_door(HudConst.LABOR_KIND_QUARRYWORK) == null)
+	_assert_band_panel("…while the source BOARD is GONE, not squeezed — %d rows"
+			% _work_board_row_count(),
+		_work_board_row_count() == 0)
+	_assert_band_panel("…and the OTHER roster goes with it, one roster at a time",
+		_roster_block() == null)
+	var pools := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
+	_assert_band_panel("…and the POOLS block stays directly above the roster it funds",
+		pools != null)
+
+	# ---- (c) THE HEAD WITH BUTTONS IN IT ---------------------------------------------------------
+	await _assert_the_pool_stepper_survives_the_head_toggle()
+
+	# ---- (d) THE EXCLUSION, BOTH WAYS, AND ROSTER-VS-ROSTER ---------------------------------------
+	_assert_the_roster_door_excludes_the_zones_other_expansions()
+
+	# ---- (e) THE ROAD ROSTER TAKES THE SAME DOOR — one builder, so one frame is enough ------------
+	_hud._bandpanel._toggle_roster_expanded(HudConst.LABOR_KIND_ROADWORK)
+	await _settle()
+	await _save("band_panel_roadwork_roster_expanded")
+	_assert_zone_content_fits()
+	_assert_scroll_only_where_sanctioned()
+	var road_rows := _roster_rows()
+	var road_models := _hud._bandpanel._roadwork_roster_models(_hud._band_labor.panel_band())
+	_assert_band_panel("the expanded ROADWORK roster draws ONE ROW PER ROAD — %d of %d kept (the block drew %d)"
+			% [road_rows.size(), road_models.size(), DOOR_WORKINGS_DRAWN],
+		road_rows.size() == road_models.size() and road_models.size() > DOOR_WORKINGS_DRAWN)
+	_assert_band_panel("…and the WORKINGS roster is the one that folded — one roster at a time",
+		_workings_block() == null)
+
+	# ---- (f) THE TIGHTEST BOX: the mode open on the shortest work zone this panel ships -----------
+	await _assert_the_expanded_roster_fits_the_tightest_dock(keys)
+
+	# **THE MODE IS CLOSED ON THE WAY OUT.** It is zone MODE and survives a band change by design, so
+	# a state left expanded would re-render every frame below this one over a roster instead of a board.
+	_hud._bandpanel._roster_expanded = &""
+	_hud.update_road_network([])
+	_hud.update_route_rungs([])
+	_restore_workings_roster_fixture()
+	await _settle()
+
+## ⛔ **THE CLAIM THAT MATTERS: every working MODEL has a row, and every row carries its `⌃`.** A probe
+## that only counted rows would pass on a renderer that drew five rows without controls, which is the
+## defect restated — the `⌃` is `_open_deposit_track`'s one caller, so a row without one is a working
+## whose ladder cannot be reached and whose `✕`, which lives on that ladder's card, cannot either.
+func _assert_the_expanded_roster_reaches_every_working(where: String, keys: Array) -> void:
+	var rows := _workings_rows_drawn()
+	var drawn: Array = []
+	var trackless: Array = []
+	var dropless: Array = []
+	for row in rows:
+		var key := String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META))
+		drawn.append(key)
+		if _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_TRACK_META) == null:
+			trackless.append(key)
+		if _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META) == null:
+			dropless.append(key)
+	var missing: Array = []
+	for key in keys:
+		if not drawn.has(key):
+			missing.append(key)
+	_assert_band_panel("%s: EVERY working this band holds has a row — %d of %d (missing %s)"
+			% [where, drawn.size(), keys.size(), missing],
+		missing.is_empty() and drawn.size() == keys.size())
+	_assert_band_panel("%s: …and EVERY one of them carries its declaring `⌃`, which is the only way onto its ladder (missing %s)"
+			% [where, trackless], trackless.is_empty())
+	_assert_band_panel("%s: …and its `✕`, which is the only other way to stop being billed for it (missing %s)"
+			% [where, dropless], dropless.is_empty())
+
+## ⛔ **THE WORKINGS HEAD HAS BUTTONS IN IT AND THE QUEUE'S DOES NOT** — a condition the head-toggle
+## helper had never met. A `Button` consumes its own click and does not propagate to the parent's
+## `gui_input`, so the `quarrywork` stepper should keep staffing the pool and should NOT fold the mode
+## — **asserted with a real `push_input` press rather than assumed**, since which of the two wins is
+## Godot's answer and not this client's.
+func _assert_the_pool_stepper_survives_the_head_toggle() -> void:
+	if _is_headless():
+		push_warning("band_panel_preview: the head stepper press needs a real viewport — skipped under the %s display driver"
+			% HEADLESS_DISPLAY_DRIVER)
+		return
+	var block := _workings_block()
+	if block == null:
+		_fail("roster door — no expanded workings block to press a stepper on")
+		return
+	var stepper := _find_meta_control(block, HudWorkVocab.WORKINGS_ROSTER_STEPPER_META)
+	if stepper == null:
+		_fail("roster door — the expanded head carries no `quarrywork` stepper")
+		return
+	var plus := _find_stepper_plus(stepper)
+	if plus == null:
+		_fail("roster door — the head's stepper has no `+` to press")
+		return
+	var was: StringName = _hud._bandpanel._roster_expanded
+	var seen: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: seen.append(payload)
+	_hud.assign_labor_requested.connect(sink)
+	await _drive_click(_canvas_to_window(plus.get_global_rect().get_center()))
+	await _settle()
+	_hud.assign_labor_requested.disconnect(sink)
+	var line := "" if seen.is_empty() \
+		else String(MAIN_SCRIPT.format_assign_labor(seen[0]).get("line", ""))
+	var want := " %s %d" % [HudConst.LABOR_KIND_QUARRYWORK, WORKINGS_POOL_WORKERS + 1]
+	_assert_band_panel("a REAL press on the head's `+` STAFFS the pool — the stepper's Button consumes its own click (\"%s\")"
+			% line,
+		line.ends_with(want))
+	_assert_band_panel("⛔ …and it does NOT fold the expansion the head is the toggle for (`%s`)"
+			% String(_hud._bandpanel._roster_expanded),
+		_hud._bandpanel._roster_expanded == was)
+	# ⛔ **THE PRESS RE-RENDERS THE *SELECTION* INTO THE PANEL, and this file's selection is a stale
+	# UNSTAMPED band** — the trap `_assert_crew_edit_keeps_the_kit` already records. The panel band
+	# comes back carrying `entity` and no `band_id`, and BOTH rosters' membership tests then match
+	# nothing: a road is filtered on its keeper's `band_id` and a working on this band's own `extract`
+	# rows. Measured: every claim below reported an EMPTY roster until the door's band was re-pushed.
+	# The optimistic overlay goes with it, so the pool below reads the fixture's own count again.
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_door_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## ⛔ **ONE EXPANSION OPEN AT A TIME IS A ZONE RULE, AND THE ZONE HAS THREE SUBJECTS NOW** — a board
+## row, a queue row and a roster row. Asserted in BOTH directions, plus roster-vs-roster, which is the
+## pair a bool-per-list would let drift.
+##
+## **The two KEYS are set directly, which is the honest form of this claim**: what is under test is
+## the MUTATOR's clear, and reaching them through their own togglers would re-render the zone between
+## the precondition and the claim.
+func _assert_the_roster_door_excludes_the_zones_other_expansions() -> void:
+	var panel := _hud._bandpanel
+	panel._queue_open_key = "precondition"
+	panel._work_open_key = "precondition"
+	panel._roster_expanded = &""
+	panel._toggle_roster_expanded(HudConst.LABOR_KIND_QUARRYWORK)
+	_assert_band_panel("opening a roster CLEARS the queue's settings key and the work inspector's (`%s` / `%s`)"
+			% [panel._queue_open_key, panel._work_open_key],
+		panel._queue_open_key == "" and panel._work_open_key == "")
+	# …and the build queue's own expansion, the third subject.
+	panel._queue_expanded = true
+	panel._roster_expanded = &""
+	panel._toggle_roster_expanded(HudConst.LABOR_KIND_QUARRYWORK)
+	_assert_band_panel("…and the build queue's expansion with it (queue expanded %s)"
+			% str(panel._queue_expanded),
+		not panel._queue_expanded
+			and panel._roster_expanded == HudConst.LABOR_KIND_QUARRYWORK)
+	# ⛔ **AND THE OTHER DIRECTION, or a builder that never opens the queue passes the half above.**
+	panel._toggle_queue_expanded()
+	_assert_band_panel("…and opening the QUEUE closes the roster (roster `%s`, queue expanded %s)"
+			% [String(panel._roster_expanded), str(panel._queue_expanded)],
+		panel._roster_expanded == &"" and panel._queue_expanded)
+	# ⛔ **THE ZONE IS PUT BACK BY ASSIGNMENT, NEVER BY A SECOND TOGGLE.** A toggle is a function of
+	# the state it is undoing, so under a BROKEN exclusion it lands on the opposite value and leaves
+	# the queue's expansion open over every state below — measured under sabotage as **61** failures
+	# burying the three claims above, which is the cascade that makes a falsification unreadable.
+	panel._queue_expanded = false
+	panel._roster_expanded = &""
+	panel._repage_work_zone()
+	# ⛔ **AND ROSTER AGAINST ROSTER, which is the whole reason the flag NAMES one.**
+	panel._toggle_roster_expanded(HudConst.LABOR_KIND_QUARRYWORK)
+	panel._toggle_roster_expanded(HudConst.LABOR_KIND_ROADWORK)
+	_assert_band_panel("…and opening ROADWORK closes GROUNDWORK — the two rosters exclude each other too (`%s`)"
+			% String(panel._roster_expanded),
+		panel._roster_expanded == HudConst.LABOR_KIND_ROADWORK)
+	panel._toggle_roster_expanded(HudConst.LABOR_KIND_ROADWORK)
+	_assert_band_panel("…and pressing a roster's own door again folds it back (`%s`)"
+			% String(panel._roster_expanded),
+		panel._roster_expanded == &"")
+	panel._toggle_roster_expanded(HudConst.LABOR_KIND_QUARRYWORK)
+
+## ⛔ **THE VIEWPORT IS DECLARED OFF THE ZONE'S OWN BOX AND IS NOT CLAMPED UP TO A FLOOR**, so the
+## claim that matters on the shortest dock this panel ships is that the zone still FITS. A floor would
+## turn a failure here into a silent clip of the bottom row, the zone being `clip_contents`.
+func _assert_the_expanded_roster_fits_the_tightest_dock(keys: Array) -> void:
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_hud._bandpanel._roster_expanded = HudConst.LABOR_KIND_QUARRYWORK
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_roster_expanded_tight")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_scroll_only_where_sanctioned()
+	_assert_the_expanded_roster_reaches_every_working("the 1920 BOTTOM dock", keys)
+	var box: Vector2 = _hud._bandpanel._zone_box()
+	var pools := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
+	var fund_mode := pools != null and bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
+	var declared := HudWorkVocab.zone_expanded_scroll_height(box.y, fund_mode,
+		HudWorkVocab.WORKINGS_ROSTER_HEAD_HEIGHT)
+	print("band_panel_preview: band_panel_workings_roster_expanded_tight — WORK zone box %.0f × %.0f, pools %.0f (fund row %s), expanded roster declares %.0fpx = %.1f rows of %.0f"
+		% [box.x, box.y, HudWorkVocab.pools_block_height(fund_mode), str(fund_mode),
+			declared, declared / HudWorkVocab.WORK_ROW_HEIGHT, HudWorkVocab.WORK_ROW_HEIGHT])
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+
 ## Put the world back the way the states after this one expect it — the deposits section cleared, the
 ## `_restore_roadwork_roster_fixture` idiom one branch over.
 func _restore_workings_roster_fixture() -> void:
@@ -18452,8 +18880,14 @@ func _expanded_queue_scroll() -> ScrollContainer:
 
 ## The BUILD QUEUE head row — the toggle itself, which carries the disclosure meta. `_find_meta_control`
 ## visits a node before its children, so this is the row and not the glyph Label inside it.
+##
+## ⛔ **SCOPED TO THE QUEUE BLOCK, because `ZONE_DISCLOSURE_META` IS ON THREE HEADS NOW** (the roster
+## door). A panel-wide search answers with whichever head the tree reaches first, and in the collapsed
+## zone the two ROSTERS are built above the queue.
 func _queue_head_toggle() -> Control:
-	return _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META)
+	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
+	return null if block == null \
+		else _find_meta_control(block, HudWorkVocab.ZONE_DISCLOSURE_META)
 
 ## The KEY a drawn queue row belongs to, read back off the controller's own `_queue_row_nodes` map —
 ## a row carries its RANK as a meta and not its key, so this is the only honest direction.
@@ -18594,7 +19028,7 @@ func _assert_queue_expansion_doors() -> void:
 		_fail("queue expansion — the expanded head carries no disclosure to press")
 		return
 	_assert_band_panel("…and the head's disclosure reads EXPANDED while it is open",
-		bool(head.get_meta(HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META)))
+		bool(head.get_meta(HudWorkVocab.ZONE_DISCLOSURE_META)))
 	await _drive_click(_canvas_to_window(head.get_global_rect().get_center()))
 	await _settle()
 	_assert_band_panel("…and a REAL click on the BUILD QUEUE header folds it back to the summary block",
@@ -18612,7 +19046,7 @@ func _assert_queue_expansion_doors() -> void:
 		_fail("queue expansion — the collapsed head carries no disclosure to press")
 		return
 	_assert_band_panel("…the collapsed head's disclosure reads COLLAPSED",
-		not bool(head.get_meta(HudWorkVocab.BUILD_QUEUE_DISCLOSURE_META)))
+		not bool(head.get_meta(HudWorkVocab.ZONE_DISCLOSURE_META)))
 	await _drive_click(_canvas_to_window(head.get_global_rect().get_center()))
 	await _settle()
 	_assert_band_panel("…and a REAL click on it opens the expansion again — the header is BOTH doors",

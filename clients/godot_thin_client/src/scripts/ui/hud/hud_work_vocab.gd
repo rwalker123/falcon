@@ -1992,6 +1992,11 @@ const ROADWORK_ROSTER_UNSEEN_LINE := "The roads this band keeps are not in sight
 
 ## The `+N more` foot, the build queue block's own word for the same thing — a roster longer than the
 ## zone can hold states what it is not showing rather than truncating in silence.
+##
+## ⛔ **AND IT IS A DOOR NOW, NOT A NOTICE** (the roster door, `.claude/rules/client/band-city-panel.md`).
+## Pressing it opens the whole roster over the Work zone, where every row has its own controls — which
+## on the WORKINGS roster is the only way a fourth working's `⌃` and `✕` can be reached at all. The
+## head above is the same door and the only way back.
 const ROADWORK_ROSTER_OVERFLOW_FORMAT := "+%d more"
 
 ## **ROWS BEFORE THE FOOT TAKES OVER.** Small on purpose: this block sits above the build queue and
@@ -2910,32 +2915,47 @@ static func build_queue_block_height(entries: int, rows_max: int,
 # which zone this is) and the POOLS block stays directly above the list it funds, which is the whole
 # reason §4.7 moved keeping onto this tab.
 
-## The disclosure glyph on the BUILD QUEUE head, which is the toggle BOTH ways — `+N more` is a second
-## door IN only, the expanded view having no overflow row left to press.
+## The disclosure glyph on a zone block's head, which is the toggle BOTH ways — an overflow row is a
+## second door IN only, the expanded view having no overflow row left to press.
+##
+## ⛔ **ONE SPELLING, THREE BLOCKS.** The BUILD QUEUE head and both roster heads wear this pair, and it
+## is neutral rather than queue-named for that reason: *this block opens* is ONE idea, and a
+## `ROSTER_DISCLOSURE_*` pair defined from the queue's would be a second name for one glyph.
 ##
 ## **`▾` / `▴` RATHER THAN THIS FILE'S OTHER CARET PAIR.** `DetailFormat.BREAKDOWN_CARET_*` and
 ## `hud_crafting_vocab.GROUP_HEAD_CARET_*` fold with `▾`/`▸`, and `▸` is already
-## `BUILD_QUEUE_HEAD_MARKER` two rows below this head — the entry the builders pool is standing on.
-## One glyph meaning *folded* on the head and *funded* on a row of the same block is a collision this
-## block cannot afford, so the pair is `hud_event_vocab`'s `CARET_DOWN` / `CARET_UP` instead: down to
-## open the list downward, up to fold it back.
-const BUILD_QUEUE_DISCLOSURE_COLLAPSED := "▾"
+## `BUILD_QUEUE_HEAD_MARKER` two rows below the queue's head — the entry the builders pool is standing
+## on. One glyph meaning *folded* on the head and *funded* on a row of the same block is a collision
+## that block cannot afford, so the pair is `hud_event_vocab`'s `CARET_DOWN` / `CARET_UP` instead: down
+## to open the list downward, up to fold it back.
+const ZONE_DISCLOSURE_COLLAPSED := "▾"
 
-const BUILD_QUEUE_DISCLOSURE_EXPANDED := "▴"
+const ZONE_DISCLOSURE_EXPANDED := "▴"
 
 ## It rides the head's own type size — it is part of the title, not a control beside it — and takes
 ## its width out of the head's EXPANDING spacer rather than off the right-hand readout, which states
-## the builders count and their kit and may not give up a character.
-const BUILD_QUEUE_DISCLOSURE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
-
-const BUILD_QUEUE_DISCLOSURE_TOOLTIP := "Show the whole queue over the Work board, or fold it back to the top three and the sources."
+## the builders count and their kit (or, on the workings head, mounts the `quarrywork` stepper) and
+## may not give up a character.
+const ZONE_DISCLOSURE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
 
 ## The head row's own meta, so a frame can find the toggle and press it where the player presses it.
 ## Valued the EXPANDED flag, so the glyph and the state cannot be asserted apart.
-const BUILD_QUEUE_DISCLOSURE_META := "build_queue_disclosure"
+##
+## ⛔ **IT IS ON THREE HEADS NOW, SO A HARNESS MUST SCOPE ITS SEARCH TO A BLOCK.** A panel-wide
+## `_find_meta_control` answers with whichever head the tree reaches first, which in the collapsed zone
+## is a ROSTER's rather than the queue's.
+const ZONE_DISCLOSURE_META := "zone_disclosure"
 
-## **THE THIRD AND LAST SANCTIONED `ScrollContainer` IN THIS PANEL** (`PARTIES_LIST_NAME` under
-## `ZONE_PARTIES`, `BAND_ZONE_SCROLL_NAME` under `ZONE_BAND`, this one under `ZONE_WORK`).
+const BUILD_QUEUE_DISCLOSURE_TOOLTIP := "Show the whole queue over the Work board, or fold it back to the top three and the sources."
+
+## …and the rosters' twin. It names no roster: one head opens `Roads kept` and the other `Workings`,
+## and the sentence has to be true of both. Like the queue's, it states what the head is FOR in both
+## directions, since the head is the only way back out of the mode.
+const ROSTER_DISCLOSURE_TOOLTIP := "Show every row of this roster over the Work board, or fold it back to the first three and the sources."
+
+## **THE THIRD SANCTIONED `ScrollContainer` IN THIS PANEL** (`PARTIES_LIST_NAME` under
+## `ZONE_PARTIES`, `BAND_ZONE_SCROLL_NAME` under `ZONE_BAND`, this one under `ZONE_WORK`, and
+## `ROSTER_EXPANDED_SCROLL_NAME` beside it under the same zone).
 ##
 ## It is safe for the identical reason the other two are: a `ScrollContainer` reports no minimum on
 ## its scrolling axis, so what the list holds never reaches the zone's reservation, and what it DOES
@@ -2957,8 +2977,50 @@ const BUILD_QUEUE_EXPANDED_SCROLL_NAME := "BuildQueueList"
 ## assertion loudly, which is this zone's standing contract; a floor would turn that into a silent
 ## clip of the bottom row, since the zone `clip_contents`.
 static func build_queue_expanded_scroll_height(box_height: float, pools_fund_mode: bool) -> float:
-    return box_height - ZONE_HEAD_HEIGHT - pools_block_height(pools_fund_mode) - ZONE_HEAD_HEIGHT \
+    return zone_expanded_scroll_height(box_height, pools_fund_mode, ZONE_HEAD_HEIGHT)
+
+## …and the ONE arithmetic behind it, over every block that can take the zone (`docs/plan_standing_upkeep.md`
+## §4.9 item 9c; the roster door, `.claude/rules/client/band-city-panel.md`).
+##
+## ⛔ **THE BLOCK'S OWN CHROME IS THE ONLY TERM THAT DIFFERS, WHICH IS EXACTLY WHY IT IS THE
+## PARAMETER — AND IT IS NOT JUST THE HEAD.** The queue's head and the road roster's are bare
+## `zone_head` title rows at `ZONE_HEAD_HEIGHT`; the workings roster's mounts the `quarrywork` pool's
+## stepper and reserves `WORKINGS_ROSTER_HEAD_HEIGHT`; and EITHER roster adds a `WORK_ROW_HEIGHT`
+## unseen line above its list when the pool holds more than this band can see. Everything else above
+## the list — the work head, the POOLS block, the two block separations between the three blocks — is
+## the same for all three, and a second expression of it is how one mode comes to declare a viewport
+## the other's dock cannot hold.
+##
+## ⛔ **THE ARGUMENT CARRIES ITS CONTENT IN ITS NAME.** It was `head_height` while the roster's caller
+## was already passing head + unseen line through it, which reads as an invitation to hand it a bare
+## head and silently under-reserve by a row on every band with an unseen working. That is
+## `_draw_yield_label`'s retired `policy` parameter in a second place: a name narrower than the value
+## is a defect waiting for its next caller.
+##
+## ⛔ **NOT CLAMPED UP TO A FLOOR**: the zone `clip_contents`, so a dock too short for the mode must
+## fail `_assert_zone_content_fits` loudly rather than slice its bottom row.
+static func zone_expanded_scroll_height(box_height: float, pools_fund_mode: bool,
+        chrome_above_list: float) -> float:
+    return box_height - ZONE_HEAD_HEIGHT - pools_block_height(pools_fund_mode) - chrome_above_list \
         - float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_EXPANDED_GAP_COUNT
+
+## **THE FOURTH SANCTIONED `ScrollContainer` IN THIS PANEL, and the second CONDITIONAL one** — the
+## expanded ROSTER's list, under `ZONE_WORK` beside the queue's.
+##
+## ⛔ **ONE NAME FOR BOTH ROSTERS, because only one of them can be open.** `_roster_expanded` names
+## which roster has the zone, so a road list and a workings list can never be mounted at once and two
+## names would be two sanctions for one node. It must exist EXACTLY when a roster is expanded AND its
+## block is drawn — an expanded roster with no block falls through to the collapsed path, which builds
+## no scroll — and never otherwise.
+const ROSTER_EXPANDED_SCROLL_NAME := "ZoneRosterList"
+
+## The `+N more` DOOR's own meta, valued the count it stands for — so a frame can find the control and
+## press it where the player presses it, rather than by matching the format's rendered digits.
+const ROSTER_OVERFLOW_META := "roster_overflow"
+
+## The `+N more` door's hover, on `BUILD_QUEUE_OVERFLOW_TOOLTIP`'s shape: what it opens, and that the
+## head above is the way back. It names no roster for `ROSTER_DISCLOSURE_TOOLTIP`'s reason.
+const ROSTER_OVERFLOW_TOOLTIP := "Show every row of this roster. The Work board makes way for it; press the roster's own header to come back."
 
 ## The gaps above that viewport: work head → pools, pools → queue block. Named rather than spelled,
 ## the same way `BUILD_QUEUE_ROOM_GAP_COUNT` is, because it is a COUNT and not a height.
