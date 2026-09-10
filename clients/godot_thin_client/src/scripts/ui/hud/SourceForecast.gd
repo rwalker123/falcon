@@ -367,6 +367,23 @@ const PICKER_FODDER_PRODUCT_FORMAT := "%s fodder"
 ## **Do not add one.**
 const PICKER_MATERIAL_PRODUCT_FORMAT := "%s %s"
 
+## **WHETHER THE FIGURE SAYS THE MATERIAL'S NAME AT ALL** — the argument
+## `signed_material_components` takes, named at both call sites because a bare `true` beside a row
+## array says nothing about which of the two readouts is being asked for.
+##
+## ⛔ **`MATERIAL_UNNAMED` IS ONLY LEGIBLE WHERE SOMETHING BESIDE THE FIGURE ALREADY NAMES THE
+## MATERIAL, AND ONLY WHERE THERE IS EXACTLY ONE OF THEM.** Two un-named figures joined by
+## `COMPONENT_SEPARATOR` are two numbers with nothing to tell them apart, which is worse than the
+## repetition the form exists to remove. Its one caller is the map's on-tile pill over a WORKING
+## (issue #650): a working takes ONE material by construction — the pair `(tile, material)` is its
+## identity — and the pill hangs over that working's own marker, which is the material's own mark
+## (`FoodIcons.for_material`, 🪵 / 🪨). The icon is the noun, so the noun was the icon twice.
+##
+## Every other readout takes `MATERIAL_NAMED`: a work-board row, a picker face and a drawer summary
+## are all read away from any mark that could carry the material.
+const MATERIAL_NAMED := true
+const MATERIAL_UNNAMED := false
+
 ## The picker face's product line for a source's yield VECTOR — `0.96 food`, `0.62 food · 0.40 fodder`
 ## (a tended patch carrying a hay crop), `1.80 fodder` (a hay-only meadow). Same food-leads order and
 ## same render-only-when-non-zero rule as `yield_components`, in words instead of glyphs and without
@@ -6769,13 +6786,21 @@ static func material_rows_of(source: Dictionary) -> Array[Dictionary]:
 ## (`band-city-panel.md` → "THE ROW IS TWO LINES") — so **no caller has one fixed slot any more**, and
 ## the bound was deleted rather than left parameterised: an unreachable cap is a thing the next reader
 ## assumes is load-bearing.
-static func signed_material_components(rows: Array) -> String:
+## **`name_material` DROPS THE NOUN AND NOTHING ELSE** (issue #650) — same rows, same display floor,
+## same sign, same join. See `MATERIAL_NAMED` / `MATERIAL_UNNAMED` above for the one condition under
+## which a figure may go un-named, which is a fact about the CALLER's surface rather than about the
+## rows: the gate this function is asked to be (`""` when there is nothing to say) is unchanged by
+## it, so a caller that only tests emptiness need not pass one.
+static func signed_material_components(rows: Array,
+        name_material: bool = MATERIAL_NAMED) -> String:
     var parts: Array[String] = []
     for row in material_payoff_rows(rows):
         var amount := float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
-        if has_component(amount):
-            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
-                format_signed(amount), String(row[MATERIAL_PAYOFF_ID_KEY])])
+        if not has_component(amount):
+            continue
+        var figure := format_signed(amount)
+        parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
+            figure, String(row[MATERIAL_PAYOFF_ID_KEY])] if name_material else figure)
     return COMPONENT_SEPARATOR.join(parts)
 
 ## One per-material vector times a scalar — a per-biomass vector through the escapement room, a

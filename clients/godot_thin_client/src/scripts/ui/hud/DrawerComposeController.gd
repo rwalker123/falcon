@@ -5019,7 +5019,7 @@ func _fill_deposit_branch(host: VBoxContainer, branch: String, tile_info: Dictio
         var summary_model: Dictionary = {}
         if not standing.is_empty():
             summary_model = _standing_summary_model(standing, HudConst.LABOR_KIND_EXTRACT,
-                crew_label.to_lower())
+                crew_label.to_lower(), working)
         models.append({"key": subject_key, "summary": summary_model, "working": working})
         shape.append([subject_key] + _standing_actions_shape(summary_model))
     # **ONE CHILD PER WORKING, summary or not** — it is the button's own second line since Ray moved
@@ -5666,7 +5666,14 @@ func _standing_assignment(kind: String, x: int, y: int, herd_id: String) -> Dict
 ## SAME `SourceForecast.source_yield_readout` call. The rate is never recomputed here.
 ## The standing-summary's display model — the values `_build_standing_summary_from_model` renders,
 ## computed ONCE so the drawer-actions shape signature and the in-place patch read one computation.
-func _standing_summary_model(assignment: Dictionary, kind: String, noun: String) -> Dictionary:
+## `working` is the `deposits` ROW this summary is about, and it is passed by the DEPOSIT caller
+## alone (issue #650). The leading mark is a floor ZONE glyph, and a working that does not renew has
+## no peak for a floor to sit on and was offered no dial to set one with — so its mark forks on
+## `HudDepositVocab.floor_mark`, this arc's one fork, which needs the row the rate lives on. An
+## `extract` row arriving without one answers the finite reading (no mark), which is the safe way
+## round: the failure it forbids is a quarry claiming ♻.
+func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
+        working: Dictionary = {}) -> Dictionary:
     # `has_yield` is the ONE key `SourceForecast.source_yield_readout` reads that is not on the wire assignment —
     # it gates the rate on a CONFIRMED source (`_band_labor.effective_worker_map` sets it false for a
     # pending, yield-less optimistic assign). Everything else — actual/sustainable/realized,
@@ -5674,9 +5681,12 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String)
     var m := assignment.duplicate()
     m["has_yield"] = assignment.has("actual_yield")
     var readout := SourceForecast.source_yield_readout(m, kind)
+    var floor := float(assignment.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
+    var mark := HudDepositVocab.floor_mark(working, floor) \
+        if kind == HudConst.LABOR_KIND_EXTRACT \
+        else FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
     var text := HudComposeVocab.STANDING_SUMMARY_FORMAT % [
-        FoodIcons.for_floor_zone(SourceForecast.floor_zone(
-            float(assignment.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))),
+        mark,
         int(assignment.get("workers", 0)),
         noun,
     ]

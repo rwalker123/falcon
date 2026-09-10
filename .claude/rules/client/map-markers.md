@@ -103,6 +103,14 @@ the one `_working_renders` predicate both the slot pass and the draw guard ask (
 contract — a source given a slot it then declines to draw leaves a hole in the ring and pushes a real
 marker into the chip).
 
+**AND BECAUSE THE MARKER NAMES THE MATERIAL, THE PILL OVER IT DOES NOT.** Ray, on a live frame
+holding a worked rock and a worked log: *"remove the wood and stone text, it is obvious from the icon
+what it is."* A working's rate pill reads `+0.40 ♻`, the shape the forage pill beside it already
+had, and the noun survives only where this working's marker did NOT draw — LOD-suppressed, overflowed
+into the `+N` chip, or a material `FoodIcons.for_material` has no glyph for, all of which
+`secondary_slot_of(key) < 0` answers in one test. The draw is `overlay-channels.md` → "the on-tile
+yield label carries ONE component"; the condition is here because it is a fact about the MARKER.
+
 **THE KEY IS THE `(tile, material)` PAIR** (`working_key`, `MapView.secondary_working_key`), the same
 identity `HudBandLaborState.extract_assignment_of` and the tile card's rows use: a hex cutting timber
 AND quarrying rock is TWO markers, and a tile-only key would collapse them. Within one hex the

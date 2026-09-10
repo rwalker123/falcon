@@ -204,6 +204,14 @@ one a patch and a herd render. **A working pays no food**, so its zero belongs t
 plant and animal webs — `labor-ui.md` → "a WORKED ROW's zero account is decided by its KIND" — and it
 is keyed off the row's `material`, the same half-identity every other join in this arc carries.
 
+⛔ **AND THE LINE'S LEADING MARK TAKES §7'S FORK, SO A FINITE WORKING LEADS WITH NO GLYPH AT ALL**
+(issue #650). That mark is a floor ZONE glyph and `♻` is the PEAK's, which a working offered no dial
+cannot honestly wear — `HudDepositVocab.floor_mark`, the same one the map's rate pill takes, so
+`Assign diggers ▸` and the pill over the same rock cannot answer differently. The `deposits` row is
+passed to `_standing_summary_model` for exactly this; an `extract` call arriving without one answers
+the finite reading rather than the confident one. The reasoning is `overlay-channels.md` → "a
+working's mark forks on the ground's renewal rate".
+
 ⛔ **THE NUMBER IS THE SIM'S AND THE UNIT IS THE CLIENT'S.** `LaborAllocation.last_yields` is written
 by turn resolution and, for `Forage` and `Hunt`, by the assign-time forecast seed
 (`core_sim/src/bin/server.rs` → `seed_source_yield`); a working's material take rides the same

@@ -29,13 +29,17 @@ class_name HudDepositVocab
 ## else, because rock does not come back and *leave half the seam* on a quarry means never getting
 ## half the seam.
 ##
+## ⛔ **AND THEREFORE THE FLOOR MARK TOO** (`floor_mark`, issue #650). A dial that was never offered
+## leaves a floor nobody chose on the row, and the zone that floor lands in is the one whose glyph
+## claims a renewal — so the two follow one fork or the map marks a quarry ♻.
+##
 ## ⛔ **NOTHING HERE RE-DERIVES A NUMBER THE SIM ALREADY ANSWERED.** The bill, its shortfall, the
 ## keeper count, the neglect countdown, the runway and the sustainable take are all published fields;
 ## the composers read them and nothing else. `HudRouteVocab`'s rule one branch over, and it is the
 ## same rule for the same reason.
 ##
 ## It reads `SourceForecast` / `DetailFormat` / `HudSelectionVocab` / `HudLoadoutVocab` /
-## `HudComposeVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` **inside functions only,
+## `HudComposeVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` / `FoodIcons` **inside functions only,
 ## never in a `const`** — the vocab modules' shared contract, so this leaf adds no load cycle even
 ## where the reference points back at a module that reads THIS one (`RungGates` does).
 
@@ -179,6 +183,33 @@ static func regrowth_rate_of(deposit: Dictionary) -> float:
 ## and the un-scaled rate would have to reach the wire.
 static func renews(deposit: Dictionary) -> bool:
 	return regrowth_rate_of(deposit) > REGROWTH_NEVER_RENEWS
+
+## What a working with no floor to mark wears: nothing at all.
+const FLOOR_MARK_NONE := ""
+
+## **THE FLOOR MARK A WORKING WEARS — AND A FINITE ONE WEARS NONE** (issue #650). The zone glyph says
+## where a crew's floor sits relative to the source's PEAK, and `♻` is the mark for sitting ON it:
+## *the most this ground gives, forever*. A rate-0 rock body has no peak — every take is stock that
+## does not grow back — so `♻` over a quarry is a renewal the ground cannot make, and it is §7's fork
+## read the wrong way round rather than a wording slip.
+##
+## ⛔ **AND THE FLOOR IT WOULD BE MARKING IS NOT ONE THE PLAYER EVER CHOSE.** The compose sheet offers
+## the dial only where the ground grows back (`DrawerComposeController._build_deposit_assign_controls`,
+## the same `renews()`), so a finite working's row carries `SourceForecast.DEFAULT_HARVEST_FLOOR`
+## because nobody was asked — and that default is exactly the value classifying as the peak. The mark
+## was drawn at its most confident on the one working that has no floor at all.
+##
+## **THE SILENCE IS THE ESTABLISHED ANSWER, NOT A NEW ONE.** `HudFormat.panel_expedition_summary`
+## drops the glyph from a DENIAL row for this reason — that mission's `expedition_floor` is a real
+## zone (`strip`) belonging to a floor it never chose — and a finite working is the same shape. What
+## a finite working's warning IS remains the RUNWAY (`runway_clause`, the fork one screen up), which
+## the tile card and the roster state and a hex-sized pill has never had room for.
+##
+## A renewing working is untouched: it is offered the dial, so its mark reads the zone it is set to.
+static func floor_mark(deposit: Dictionary, floor: float) -> String:
+	if not renews(deposit):
+		return FLOOR_MARK_NONE
+	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
 
 # ---- THE ESCAPEMENT FLOOR (issue #650) ---------------------------------------------------------
 

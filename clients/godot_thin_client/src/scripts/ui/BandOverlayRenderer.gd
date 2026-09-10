@@ -200,6 +200,14 @@ const YIELD_OVERHUNT_FLAG := "⚠"
 # existing anchor (so the text does not shift) and scales with the font, like the label itself.
 const YIELD_LABEL_PLATE_BG := Color(0.04, 0.05, 0.07, 0.82)
 const YIELD_LABEL_PLATE_PAD_FACTOR := 0.45   # horizontal padding per side, as a fraction of the font size
+# The plate is drawn with no border at all (`_draw_pill_plate` is passed no border colour), so its
+# inked reach is measured with none — `MapView.COUNT_PILL_NO_BORDER_WIDTH`'s note, on this pill.
+const YIELD_LABEL_PLATE_NO_BORDER := 0.0
+# **HOW FAR A PILL IS LIFTED OFF ONE ALREADY PLACED THIS FRAME**, as a multiple of its own plate
+# height: one whole plate plus a quarter, so the two read as two stacked pills with daylight between
+# them rather than as one tall plate. See `flush_yield_labels`, which is where the lift happens and
+# why it is a lift rather than a cull or a merge.
+const YIELD_LABEL_STACK_STEP_FACTOR := 1.25
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -334,13 +342,20 @@ func compute_worked_workings() -> Dictionary:
 ## Does the `deposits` section carry a working of `material` on this hex — the `(tile, material)` join
 ## every other surface makes, restated here because this renderer holds no deposit model.
 func _working_on_tile(tile: Vector2i, material: String) -> bool:
+	return not _working_row(tile, material).is_empty()
+
+## The `deposits` row for this `(tile, material)` pair, `{}` where the section carries none. The join
+## every other surface makes, restated here because this renderer holds no deposit model — and it
+## answers the ROW rather than a bool because the pill needs a FIELD off it (`regrowth_rate`, through
+## `HudDepositVocab.floor_mark`) and not only the row's existence.
+func _working_row(tile: Vector2i, material: String) -> Dictionary:
 	var rows: Variant = _view.deposit_tile_lookup.get(tile, null)
 	if not (rows is Array):
-		return false
+		return {}
 	for row in (rows as Array):
 		if row is Dictionary and HudDepositVocab.material_of(row as Dictionary) == material:
-			return true
-	return false
+			return row as Dictionary
+	return {}
 
 ## EVERY player band's worked sources, drawn whatever is selected (docs/plan_worked_source_marks.md).
 ##
@@ -864,9 +879,24 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# material account — the material is half its identity — so there is always a rate to
 			# state, and `zero_account` is what makes an empty take read `+0.00 wood` rather than
 			# claim a food zero. Fodder is the structural zero here, as it is on a hunt row.
+			# **THE MARK FORKS ON THE GROUND'S OWN RENEWAL RATE, NOT ON THE FLOOR ALONE** (issue
+			# #650) — `HudDepositVocab.floor_mark`, this arc's one fork, asked of the working's own
+			# row. A finite seam is offered no dial, so the floor on its row is a default nobody
+			# chose, and `♻` over a quarry claims a renewal the rock cannot make.
+			#
+			# **AND THE MATERIAL DOES NOT NAME ITSELF WHERE ITS MARKER ALREADY DOES.** A slot of
+			# `0..cap-1` means this working's marker DREW — and a working's marker IS its material's
+			# mark (`SecondaryMarkerRenderer._working_renders` denies a slot to a material this
+			# client has no glyph for) — so the pill hangs under a 🪵 or a 🪨 and the noun repeated
+			# it. `-1` (LOD-suppressed, overflowed into the `+N` chip, or an unmarked material) is
+			# the case where nothing else on the hex says which account this is, and there the noun
+			# stays: the badge pass skips on the same test for the same reason.
 			if show_yields:
 				_queue_yield_label(wanchor, _entry_realized_yield(entry), yield_label_overdraw(entry),
-					radius, _entry_floor_glyph(entry), 0.0, _entry_materials(entry), zero_account)
+					radius, HudDepositVocab.floor_mark(_working_row(wtile, material),
+						_entry_floor(entry)),
+					0.0, _entry_materials(entry), zero_account,
+					_view.secondary_slot_of(wkey) >= 0)
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -1170,12 +1200,19 @@ func _entry_materials(entry: Dictionary) -> Array:
 ## floor and the decoder always inserts it, so an absent one means the wire never described this
 ## assignment; the sim's own default is then the honest reading.
 func _entry_floor_glyph(entry: Dictionary) -> String:
-	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(
-		float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
+	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(_entry_floor(entry)))
+
+## The assignment's own escapement floor. Split out because the WORKING arm needs the NUMBER rather
+## than the mark — a working's mark forks on the ground's renewal rate as well as on the floor
+## (`HudDepositVocab.floor_mark`) — and two readers spelling the same default is how the food webs'
+## floor and the workings' floor would come to disagree about what an absent field means.
+func _entry_floor(entry: Dictionary) -> float:
+	return float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
 
 func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
 		fodder: float = 0.0, materials: Array = [],
-		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> void:
+		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD,
+		marker_names_material: bool = false) -> void:
 	_deferred_yield_labels.append({
 		"tile_center": tile_center,
 		"value": value,
@@ -1185,19 +1222,57 @@ func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radi
 		"fodder": fodder,
 		"materials": materials,
 		"zero_account": zero_account,
+		"marker_names_material": marker_names_material,
 	})
 
 ## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
 ## rings, links, pending overlays and targeting — so nothing paints over the labels.
+##
+## ⛔ **ONE PILL PER SOURCE, AND TWO CROWDED PILLS ARE LIFTED APART RATHER THAN MERGED** (issue #650).
+## Every label in this batch is already anchored to its own source's MARKER (`_label_anchor`) and
+## drawn on its own plate — there has never been a grouping pass — but the plate has no border and
+## every plate is the same ink, so two that OVERLAP ink one continuous dark shape. Ray read a wood
+## and a rock as `+0.40 stone ♻  +0.30 wood ♻` on a single plate for exactly that reason: two
+## workings sit in two EDGE SLOTS of one hex (or on two adjacent hexes), which puts their anchors
+## about 1.2 hex radii apart in x and at the SAME y, while a plate stating a material ran wider than
+## that. Two numbers on one plate have nothing saying which belongs to which marker.
+##
+## So the batch is PLACED as well as drawn: a pill whose inked footprint would intersect one already
+## placed this frame is lifted straight UP by `YIELD_LABEL_STACK_STEP_FACTOR` plate heights, and
+## re-tested. **The lift is vertical because the x is the association** — a pill sits directly over
+## its own marker, so moving it sideways is the one direction that would break the thing the split is
+## for.
+##
+## ⛔ **AND IT IS A LIFT RATHER THAN A CULL.** The band NAME PILL family answers crowding by dropping
+## the later label outright (`BandMarkerRenderer._reserve_name_pills`), which is right for a name the
+## player can read off the card instead; a rate is the whole of what selection buys on this source and
+## there is nowhere else on the map to read it. Placement is in QUEUE order — snapshot order, the
+## same rule the secondary slots fill in — so a pill does not flicker between rows frame to frame.
 func flush_yield_labels() -> void:
 	for badge in _deferred_source_badges:
 		_draw_source_badge(badge)
 	_deferred_source_badges.clear()
+	var placed: Array[Rect2] = []
 	for label in _deferred_yield_labels:
-		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
-			label["floor_glyph"], float(label.get("fodder", 0.0)), label.get("materials", []),
-			String(label.get("zero_account", SourceForecast.YIELD_ACCOUNT_FOOD)))
+		_draw_yield_label(label, placed)
 	_deferred_yield_labels.clear()
+
+## Where this pill lands: its anchored centre, or as far above it as it takes to clear every pill
+## already placed this frame. Bounded by the number placed — each pass clears at least the topmost
+## rect it collided with — so a crowded frame terminates rather than looping.
+func _lift_clear_of_placed(center: Vector2, half: Vector2, placed: Array[Rect2]) -> Vector2:
+	var step := half.y * 2.0 * YIELD_LABEL_STACK_STEP_FACTOR
+	var lifted := center
+	for _attempt in range(placed.size() + 1):
+		var blocked := false
+		for taken in placed:
+			if taken.intersects(Rect2(lifted - half, half * 2.0)):
+				blocked = true
+				break
+		if not blocked:
+			return lifted
+		lifted.y -= step
+	return lifted
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
@@ -1217,32 +1292,50 @@ func flush_yield_labels() -> void:
 ## order: food when there is food (every edible quarry and every forage patch), else the fodder rate
 ## spelled with the WORD (fodder has no glyph), else the MATERIALS, each naming itself. A sown hay
 ## Field therefore reads `+0.40 fodder ♻` and a hunted wolf pack `+0.22 hide ⇊`, rather than the
-## `+0.00` that said either was worth nothing. (A trade branch sat between food and fodder until arc
+## `+0.00` that said either was worth nothing.
+##
+## ⛔ **`marker_names_material` DROPS THE MATERIAL'S NOUN, AND ONLY THE NOUN.** A worked WORKING's
+## pill hangs over a marker that IS the material (🪵 / 🪨), so `+0.40 stone ♻` said the same
+## thing twice in the one place on the map with no room to; it reads `+0.40 ♻`, the shape a worked
+## patch beside it already had. The flag is the caller's answer about its own SURFACE, never a fact
+## about the rows — the hunt arm passes nothing, a deer's marker saying nothing about `hide`. (A trade branch sat between food and fodder until arc
 ## #527 retired that account; the material vector is what replaced it, and it is a vector because a
 ## mammoth hide and a hare pelt are both `hide` and are not the same thing.)
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		fodder: float = 0.0, materials: Array = [],
-		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> void:
-	var text := _yield_label_rate_text(value, fodder, materials, zero_account)
+func _draw_yield_label(label: Dictionary, placed: Array[Rect2]) -> void:
+	var radius := float(label.get("radius", 0.0))
+	var text := _yield_label_rate_text(float(label.get("value", 0.0)),
+		float(label.get("fodder", 0.0)), label.get("materials", []),
+		String(label.get("zero_account", SourceForecast.YIELD_ACCOUNT_FOOD)),
+		bool(label.get("marker_names_material", false)))
 	# **A SOURCE WITH NO ACCOUNT TO BE EMPTY IN STATES NO RATE** — `row_zero_account`'s own caller
 	# contract, and the only way `_yield_label_rate_text` answers "". A plate drawn around it would be
 	# an empty pill claiming a reading the source cannot make.
 	if text == "":
 		return
 	var color := HudStyle.HEALTHY
-	if overhunt:
+	if bool(label.get("overhunt", false)):
 		text += " " + YIELD_OVERHUNT_FLAG
 		color = HudStyle.WARN
+	var floor_glyph := String(label.get("floor_glyph", ""))
 	if floor_glyph != "":
 		text += " " + floor_glyph
 	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
+	var tile_center: Vector2 = label.get("tile_center", Vector2.ZERO)
 	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
 	# Dark rounded plate behind the text so the label pops on ANY terrain (bare text washed out on the
 	# light tan biomes). Same pill chrome as the count badges, sized to the MEASURED text+glyph run.
 	var font: Font = ThemeDB.fallback_font
 	if font != null:
 		var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-		_view._draw_pill_plate(label_center, text_size, font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
+		var pad := font_size * YIELD_LABEL_PLATE_PAD_FACTOR
+		# **THE INKED HALF-EXTENT, END CAPS INCLUDED — `MapView.pill_half_extent` and never a
+		# re-derivation.** A plate reaches a further half-height left and right than the body it was
+		# measured from, which is the term every "how wide is this label" calculation forgets and the
+		# one that decides whether two pills are touching.
+		var half := _view.pill_half_extent(text_size, pad, YIELD_LABEL_PLATE_NO_BORDER)
+		label_center = _lift_clear_of_placed(label_center, half, placed)
+		placed.append(Rect2(label_center - half, half * 2.0))
+		_view._draw_pill_plate(label_center, text_size, pad, YIELD_LABEL_PLATE_BG)
 	_view._draw_marker_glyph(label_center, text, font_size, color)
 
 ## THE ONE-SLOT CHOICE, on its own so it can be asserted: which of the accounts this label states, and
@@ -1257,12 +1350,22 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 ## name, and summing them is the retired trade axis under a new name. The plate sizes to the MEASURED
 ## run (`_draw_pill_plate`), so a two-material label is wide rather than clipped — which is a
 ## legibility question for `map_band_label_overlap`, not a reason to state less than the truth.
+##
+## ⛔ **`marker_names_material` IS SAFE ONLY BECAUSE A WORKING TAKES ONE MATERIAL** — its identity is
+## the `(tile, material)` pair — so the un-named join states exactly one figure. Two un-named figures
+## would be two numbers with nothing between them, which `SourceForecast.MATERIAL_UNNAMED` says at
+## more length. It is threaded to BOTH material arms below (the rate and the account's zero), because
+## a pill that dropped the noun off one and kept it on the other would name the account only on the
+## turns the source produced nothing.
 func _yield_label_rate_text(value: float, fodder: float, materials: Array = [],
-		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> String:
+		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD,
+		marker_names_material: bool = false) -> String:
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder >= YIELD_LABEL_COMPONENT_MIN:
 		return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % _format_yield_signed(fodder)
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder < YIELD_LABEL_COMPONENT_MIN:
-		var material_text := SourceForecast.signed_material_components(materials)
+		var material_text := SourceForecast.signed_material_components(materials,
+			SourceForecast.MATERIAL_UNNAMED if marker_names_material \
+				else SourceForecast.MATERIAL_NAMED)
 		if material_text != "":
 			return material_text
 		# **NOTHING TOOK, SO THE ZERO NAMES THE ACCOUNT THIS SOURCE PAYS INTO** (issue #650). Every
@@ -1274,6 +1377,12 @@ func _yield_label_rate_text(value: float, fodder: float, materials: Array = [],
 		if zero_account == SourceForecast.YIELD_ACCOUNT_NONE:
 			return ""
 		if zero_account != SourceForecast.YIELD_ACCOUNT_FOOD:
+			# **AND THE ZERO DROPS THE NOUN ON THE SAME CONDITION THE RATE DOES.** This arm exists
+			# because a bare `+0.00` is a claim about FOOD — but that is only true where nothing else
+			# says otherwise, and a pill hanging under a 🪵 is not such a place. The mark under the
+			# figure names the account whether the take was 0.30 or nothing at all.
+			if marker_names_material:
+				return _format_yield_signed(value)
 			return SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT % [
 				_format_yield_signed(value), zero_account]
 	return _format_yield_signed(value)

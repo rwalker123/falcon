@@ -5546,7 +5546,11 @@ const WORKING_BESIDE_HERD_RATE := 0.05
 # MATERIAL and no food, so a bare food format would print `+0.00` here — the defect this arc has now
 # fixed on three surfaces (the compose button's second line, the work row's hover, and this pill).
 const WORKING_BESIDE_TAKE := 0.30
-const WORKING_BESIDE_PILL_FACE := "+0.30 wood"
+# ⛔ **AND THE FACE CARRIES NO NOUN, BECAUSE THIS FRAME'S WORKING HAS A MARKER** (issue #650). The
+# pill hangs over the 🪵 its own material drew, so the name would be the mark restated in words;
+# the marker-less form (`+0.30 wood`, what a far-zoom or overflowed working still gets) is asserted
+# beside its own frame in `map_working_pills`.
+const WORKING_BESIDE_PILL_FACE := "+0.30"
 # …and the same working before its first turn resolves, which is the case a bare food format gets
 # WRONG rather than merely incomplete: the wire seeds no material take pre-commit, so the fall-through
 # reaches `SourceForecast.row_zero_account` and the ZERO has to name the material.
@@ -5737,6 +5741,104 @@ func _assert_working_slots(label: String, w: int, h: int, worked: Array, bare: A
 			% [label, material, bare_tile.x, bare_tile.y],
 			_map.secondary_slot_of(bkey) < 0)
 
+# ---- THE PILL ITSELF: the noun comes off, and two pills keep apart (issue #650) ------------------
+# Ray, on a live frame holding a worked rock and a worked log on adjacent hexes: *"remove the wood and
+# stone text, it is obvious from the icon what it is."* A working's marker IS its material's mark, so
+# the noun said it twice in the one place on the map with no room to say anything twice; the pill
+# reads `+0.40 ♻`, which is the shape the forage pill three hexes over always had.
+#
+# **THE THREE TAKES DIFFER, AND THAT IS WHAT MAKES THE FRAME FALSIFIABLE.** Three pills reading one
+# figure would pass a renderer that composed a single label and drew it three times — the tile-keyed
+# collapse this arc guards against on every other surface — and with the nouns gone the figure is the
+# only thing left to tell two pills apart.
+const WORKING_PILL_WOOD_TAKE := 0.30
+const WORKING_PILL_STONE_TAKE := 0.40
+const WORKING_PILL_FORAGE_TAKE := 0.42
+const WORKING_PILL_WOOD_FACE := "+0.30"
+const WORKING_PILL_WOOD_NAMED_FACE := "+0.30 wood"
+const WORKING_PILL_STONE_ZERO_FACE := "+0.00"
+const WORKING_PILL_STONE_ZERO_NAMED_FACE := "+0.00 stone"
+const WORKING_PILL_FORAGE_FACE := "+0.42"
+const WORKING_PILL_FODDER_FACE := "+0.40 fodder"
+# The hex the STONE working sits on: next door to the wood one, which is RAY'S OWN GEOMETRY and not
+# the one `map_working_pair_marked` already stages (two workings in two edge slots of ONE hex). Both
+# pills anchor at the same height about a hex apart, which is what two plates wide enough to state a
+# material merged into one dark shape.
+const WORKING_PILL_STONE_OFFSET := Vector2i(-2, 0)
+# The crew on the forage patch beside them, and the patch's own tile is the CONTROL hex — the one
+# whose deposits nobody cuts — so the plant web's pill sits clear of both workings.
+const WORKING_PILL_FORAGE_CREW := 2
+# A stand-in plate for the PLACEMENT probe — half-extents in pixels, wide and short like the real
+# thing, since a rate pill is many times wider than it is tall and therefore collides side to side
+# long before it collides vertically. `_lift_clear_of_placed` takes the half-extent as an argument
+# precisely so a claim about the RULE needs no font, no zoom and no frame.
+const WORKING_PILL_PROBE_HALF := Vector2(40.0, 8.0)
+# Two anchors this far apart in x — closer than the plate is wide, so the second pill lands on the
+# first and has to be lifted off it. Ray's geometry in miniature.
+const WORKING_PILL_PROBE_GAP := 30.0
+# ---- AND THE ZOOM WHERE THE LIFT ACTUALLY FIRES -------------------------------------------------
+# The plate's font is CLAMPED at `YIELD_LABEL_MIN_FONT`, so below a certain hex radius the pill stops
+# shrinking with the map while the gap between two edge slots goes on closing — and two workings on
+# ONE hex then collide however short their text is. Dropping the noun raised the zoom at which that
+# happens; it did not abolish it, which is why the lift exists and why a frame has to show it.
+#
+# This grid fits ABOVE `MapView.ICON_MIN_DETAIL_RADIUS` (or no marker draws at all and the state
+# guards nothing — `map_working_farzoom`'s claim, inverted) and far enough below `GRID_W`'s ~83px that
+# the two slots sit about 34px apart under two ~68px plates.
+const WORKING_CROWDED_GRID_W := 48
+const WORKING_CROWDED_GRID_H := 36
+
+## **RAY'S FRAME**: one band cutting a WOOD working and a STONE working on ADJACENT hexes, and
+## foraging a patch on the control hex three columns over — three pills at one zoom, so the two
+## workings' can be read against each other AND against the shape the plant web already had.
+##
+## The stone is the rate-**0** body `_working_deposit` gives every `extraction` row, and the wood
+## renews, so the pair is also the ♻ fork's own frame: same floor on both assignments, one mark
+## between them.
+func _snapshot_working_pills() -> Dictionary:
+	var snap := _snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD])
+	var center := _work_grid_center(GRID_W, GRID_H)
+	var stone_tile: Vector2i = center + WORKING_PILL_STONE_OFFSET
+	var patch_tile: Vector2i = center + WORKING_BARE_OFFSET
+	var band: Dictionary = snap["populations"][0]
+	var assignments: Array = band["labor_assignments"]
+	# The wood crew's own resolved take, so its pill states a rate rather than only an account's zero.
+	(assignments[0] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = [
+		{"material_id": WORKING_MATERIAL_WOOD, "amount": WORKING_PILL_WOOD_TAKE},
+	]
+	(assignments[0] as Dictionary)["floor"] = WORK_PEAK_FLOOR
+	assignments.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": int(WORKING_CREW[WORKING_MATERIAL_STONE]),
+		"target_x": stone_tile.x, "target_y": stone_tile.y,
+		"material": WORKING_MATERIAL_STONE,
+		"floor": WORK_PEAK_FLOOR,
+		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
+			{"material_id": WORKING_MATERIAL_STONE, "amount": WORKING_PILL_STONE_TAKE},
+		],
+	})
+	assignments.append({
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": WORKING_PILL_FORAGE_CREW,
+		"target_x": patch_tile.x, "target_y": patch_tile.y, "improvement": "",
+		"floor": WORK_PEAK_FLOOR, "overdraws": false,
+		"actual_yield": WORKING_PILL_FORAGE_TAKE,
+		"realized_yield": WORKING_PILL_FORAGE_TAKE,
+	})
+	# The patch ROW itself, because a fixture staging an assignment against ground the wire carries no
+	# source for is this harness's own documented hazard — and it is what the pill's marker docks to.
+	snap["forage_patches"] = [{
+		"x": patch_tile.x, "y": patch_tile.y,
+		"ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false,
+		"current_rung": RUNG_FX.patch_rung_key(false, false),
+		"sow_site_refusal": "",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+	(snap["deposits"] as Array).append(
+		_working_deposit(stone_tile, WORKING_MATERIAL_STONE))
+	return snap
+
 func _worked_working_states() -> void:
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
@@ -5899,7 +6001,7 @@ func _worked_working_states() -> void:
 	_assert_map("map_working_beside_herd — the working's pill states its MATERIAL rate, not a food one",
 		overlays._yield_label_rate_text(overlays._entry_realized_yield(beside_row), 0.0,
 			overlays._entry_materials(beside_row),
-			SourceForecast.row_zero_account(beside_row, HudConst.LABOR_KIND_EXTRACT))
+			SourceForecast.row_zero_account(beside_row, HudConst.LABOR_KIND_EXTRACT), true)
 			== WORKING_BESIDE_PILL_FACE)
 
 	# **THE PAIR'S PARTS KEEP THEMSELVES APART.** Two workings on one hex hold two edge slots, so
@@ -5927,3 +6029,117 @@ func _worked_working_states() -> void:
 	_assert_map("map_working_pair_marked — the two workings' anchors clear a ring's diameter (%.1f px apart, ring %.1f)"
 			% [wood_anchor.distance_to(stone_anchor), ring_diameter],
 		wood_anchor.distance_to(stone_anchor) > ring_diameter)
+
+	# State "working pills" (issue #650) — **RAY'S OWN FRAME, AND THE THREE CLAIMS IT CARRIES.** A
+	# worked WOOD and a worked STONE on ADJACENT hexes with the band selected, a worked forage PATCH
+	# three columns the other side of it. Read for: three pills of ONE shape, each over its own
+	# marker, each stating a figure and no noun — and the ♻ on the wood and the forage and NOT on
+	# the rate-0 rock between them.
+	_map.display_snapshot(_snapshot_working_pills())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pills")
+	var pill_center := _work_grid_center(GRID_W, GRID_H)
+	var pill_wood: Vector2i = pill_center + WORKING_WORKED_OFFSET
+	var pill_stone: Vector2i = pill_center + WORKING_PILL_STONE_OFFSET
+	var pill_overlays: BandOverlayRenderer = _map._band_overlays
+	# **THE PREMISE, AND IT IS THE NOUN-DROP'S OWN CONDITION.** The pill sheds the material's name
+	# only where this working's MARKER drew it (`secondary_slot_of >= 0`), so a frame where either
+	# marker was LOD-suppressed or overflowed would be showing the named form and proving nothing.
+	var pill_wood_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pill_wood.x, pill_wood.y, WORKING_MATERIAL_WOOD))
+	var pill_stone_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pill_stone.x, pill_stone.y, WORKING_MATERIAL_STONE))
+	_assert_map("map_working_pills — premise: both workings' markers drew, which is what lets the pill drop the noun (%d, %d)"
+			% [pill_wood_slot, pill_stone_slot],
+		pill_wood_slot >= 0 and pill_stone_slot >= 0)
+	# **THE NOUN, ASKED OF THE RENDERER AS AN A/B** — a PNG cannot carry it (`+0.30` and `+0.30 wood`
+	# are the same badge at map scale), and the pair is what stops "always drop the noun" passing:
+	# the marker-less form still names the material, which is the form a far-zoom or overflowed
+	# working still gets.
+	var pill_wood_rows: Array = [
+		{"material_id": WORKING_MATERIAL_WOOD, "amount": WORKING_PILL_WOOD_TAKE}]
+	_assert_map("map_working_pills — a working whose marker names the material states the figure alone",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, pill_wood_rows,
+			WORKING_MATERIAL_WOOD, true) == WORKING_PILL_WOOD_FACE)
+	_assert_map("map_working_pills — with no marker to name it, the material names itself as before",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, pill_wood_rows,
+			WORKING_MATERIAL_WOOD, false) == WORKING_PILL_WOOD_NAMED_FACE)
+	# **AND THE ACCOUNT'S ZERO DROPS IT ON THE SAME CONDITION.** A pill that shed the noun off the
+	# rate and kept it on the zero would name the account only on the turns the working produced
+	# nothing, which is the one reading that arm exists to make honest.
+	_assert_map("map_working_pills — a marked working that took nothing states a bare zero, its marker carrying the account",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, [], WORKING_MATERIAL_STONE, true)
+			== WORKING_PILL_STONE_ZERO_FACE)
+	_assert_map("map_working_pills — an unmarked working's zero still names its material",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, [], WORKING_MATERIAL_STONE, false)
+			== WORKING_PILL_STONE_ZERO_NAMED_FACE)
+	# **THE TWO FOOD WEBS ARE UNTOUCHED BY THE FLAG**, which is the half Ray fenced off: a patch's
+	# food figure never wore a noun, and FODDER's word is not a material's name and must survive a
+	# caller that happens to pass the flag.
+	_assert_map("map_working_pills — a food rate is the same figure whatever the marker says",
+		pill_overlays._yield_label_rate_text(WORKING_PILL_FORAGE_TAKE, 0.0, [],
+			SourceForecast.YIELD_ACCOUNT_FOOD, true) == WORKING_PILL_FORAGE_FACE
+		and pill_overlays._yield_label_rate_text(WORKING_PILL_FORAGE_TAKE, 0.0, [],
+			SourceForecast.YIELD_ACCOUNT_FOOD, false) == WORKING_PILL_FORAGE_FACE)
+	_assert_map("map_working_pills — fodder keeps its WORD, which is an account's name and not a material's",
+		pill_overlays._yield_label_rate_text(0.0, FODDER_FIELD_RATE, [],
+			SourceForecast.YIELD_ACCOUNT_FOOD, true) == WORKING_PILL_FODDER_FACE)
+	# **THE ♻ IS THE GROUND'S ANSWER, NOT THE FLOOR'S** (issue #650). Both assignments carry
+	# `WORK_PEAK_FLOOR`, so the floor alone says `♻` for both — which is exactly what the map drew
+	# on a rate-0 quarry before the fork. The pair is the claim: same floor, one mark.
+	var pill_wood_row := pill_overlays._working_row(pill_wood, WORKING_MATERIAL_WOOD)
+	var pill_stone_row := pill_overlays._working_row(pill_stone, WORKING_MATERIAL_STONE)
+	_assert_map("map_working_pills — premise: the floor alone would mark BOTH workings renewable",
+		FoodIcons.for_floor_zone(SourceForecast.floor_zone(WORK_PEAK_FLOOR))
+			== FoodIcons.FLOOR_ZONE_ICONS[SourceForecast.FLOOR_ZONE_PEAK])
+	_assert_map("map_working_pills — the renewing WOOD wears the floor's own mark",
+		HudDepositVocab.floor_mark(pill_wood_row, WORK_PEAK_FLOOR)
+			== FoodIcons.for_floor_zone(SourceForecast.floor_zone(WORK_PEAK_FLOOR)))
+	_assert_map("map_working_pills — the rate-0 STONE wears NO mark, a quarry having no peak to sit on",
+		HudDepositVocab.floor_mark(pill_stone_row, WORK_PEAK_FLOOR)
+			== HudDepositVocab.FLOOR_MARK_NONE)
+	# **AND TWO CROWDED PILLS ARE LIFTED APART RATHER THAN MERGED.** The rule is asked of
+	# `_lift_clear_of_placed` directly, over plate rects: what a frame cannot show is that the second
+	# pill is a SEPARATE plate, two overlapping ones inking exactly the shape one wide plate does.
+	# The x is asserted UNMOVED, because the x is the whole association between a pill and its marker.
+	var pill_taken: Array[Rect2] = [Rect2(
+		Vector2.ZERO - WORKING_PILL_PROBE_HALF, WORKING_PILL_PROBE_HALF * 2.0)]
+	var pill_wanted := Vector2(WORKING_PILL_PROBE_GAP, 0.0)
+	var pill_landed := pill_overlays._lift_clear_of_placed(
+		pill_wanted, WORKING_PILL_PROBE_HALF, pill_taken)
+	_assert_map("map_working_pills — a pill landing on one already placed is lifted clear of it (y %.1f → %.1f)"
+			% [pill_wanted.y, pill_landed.y],
+		not pill_taken[0].intersects(Rect2(
+			pill_landed - WORKING_PILL_PROBE_HALF, WORKING_PILL_PROBE_HALF * 2.0)))
+	_assert_map("map_working_pills — and it is lifted STRAIGHT up, the x being what ties a pill to its own marker",
+		is_equal_approx(pill_landed.x, pill_wanted.x) and pill_landed.y < pill_wanted.y)
+	# The negative: a pill with room is not moved at all, so the lift is a response to crowding
+	# rather than a stagger every frame pays for.
+	var pill_clear := Vector2(WORKING_PILL_PROBE_HALF.x * 4.0, 0.0)
+	_assert_map("map_working_pills — a pill that clears everything placed stays exactly where its marker put it",
+		pill_overlays._lift_clear_of_placed(pill_clear, WORKING_PILL_PROBE_HALF, pill_taken)
+			== pill_clear)
+
+	# State "working pills crowded" (issue #650) — **THE LIFT, ON A FRAME.** The same two workings in
+	# the two edge slots of ONE hex, at a zoom where the pill's font has bottomed out on
+	# `YIELD_LABEL_MIN_FONT` and the plates are twice as wide as the gap between their anchors. Read
+	# for: TWO plates, one above the other, each still centred over its own marker — never one wide
+	# plate carrying two figures, which is what this pair drew before `flush_yield_labels` started
+	# placing the batch.
+	_map.display_snapshot(_snapshot_workings(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pills_crowded")
+	# **THE PREMISE IS THE ZOOM**, and it is stated with the measured radius in it: below the detail
+	# gate every marker vanishes and this frame would be showing an empty hex rather than two pills
+	# keeping apart. `map_working_farzoom` makes the same claim from the other side.
+	_assert_map("map_working_pills_crowded — premise: the fitted radius %.1f is still above the detail gate %.1f, so both markers draw"
+			% [_map.last_hex_radius, MAP_VIEW.ICON_MIN_DETAIL_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.ICON_MIN_DETAIL_RADIUS)
+	_assert_working_slots("map_working_pills_crowded", WORKING_CROWDED_GRID_W,
+		WORKING_CROWDED_GRID_H, [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE],
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])

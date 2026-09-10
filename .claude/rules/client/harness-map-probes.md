@@ -752,8 +752,10 @@ That contrast is the frame — `map-markers.md` has the decision it renders.
 | `map_working_overflow` | the `_snapshot_mixed` crowded hex, plus a crewed wood working | the `+3 ⚒` chip, which is what stops a capped marker reading as *nothing is happening here* |
 | `map_working_farzoom` | the same crewed pair on a 110×80 grid (fit r **12.7** < the 16.0 gate) | nothing but the band token, its range border and the faint tile outline the LOD fallback leaves |
 | `map_working_unselected` | ONE crewed wood working, NO band selected | the thin slate ring and the `⚒3` plate — the marks that belong to the SOURCE — and no link, no pill, no range borders |
-| `map_working_beside_herd` | one selected band cutting a wood working on the left hex and hunting a deer on the right | **the parity claim**: both wear a ring, a hex outline, a link to the band's token and a rate pill, differing only in colour and in what the pill counts (`+0.30 wood ♻` against `+0.05 ♻`) |
+| `map_working_beside_herd` | one selected band cutting a wood working on the left hex and hunting a deer on the right | **the parity claim**: both wear a ring, a hex outline, a link to the band's token and a rate pill, differing only in colour and in what the pill counts (`+0.30 ♻` against `+0.05 ♻` — the working's noun came off in issue #650, its marker being the material) |
 | `map_working_pair_marked` | both workings on one hex crewed, band SELECTED | two complete sets that keep apart — two rings, two plates, two links and two pills, each docked to its own edge slot |
+| `map_working_pills` | **Ray's own frame**: a worked WOOD and a worked STONE on ADJACENT hexes, a worked forage PATCH three columns over, band selected | three pills of ONE shape (`+0.40` · `+0.30 ♻` · `+0.42 ♻`), each over its own marker, **no material noun on any of them** — and the `♻` on the renewing wood and the patch but NOT on the rate-0 rock between them |
+| `map_working_pills_crowded` | the same two workings in the two edge slots of ONE hex, fitted to r **28.2** (above the 16.0 detail gate) | the LIFT: TWO plates, one above the other, each still centred over its own marker — at this zoom the font has bottomed out on `YIELD_LABEL_MIN_FONT` and the plates are twice as wide as the gap between their anchors |
 
 **THE UNWORKED HEX'S CLAIM IS STRUCTURAL, NOT PHOTOGRAPHIC, and it is the one Ray's decision turns
 on.** `_assert_working_slots` reads `MapView.secondary_slot_of` for each `(tile, material)` key —
@@ -762,6 +764,25 @@ SAME frame against each other. That pairing is what makes it falsifiable: a rend
 lights the bare hex's keys, a renderer marking nothing darkens the worked hex's, and neither passes.
 It also asks for the **stone on the WORKED hex**, which nobody is cutting, because every other
 assertion in that state is satisfied by a renderer keyed on the TILE rather than the pair.
+
+**THE PILL'S OWN CLAIMS ARE ASKED OF THE RENDERER, NOT OF THE PNG** (issue #650). `+0.30` and
+`+0.30 wood` are the same badge at map scale, so `map_working_pills` drives
+`_yield_label_rate_text` directly as an A/B on `marker_names_material` — the marked form states the
+figure alone, the marker-less form still names the material — and does it for the RATE and for the
+ACCOUNT'S ZERO, since a pill that dropped the noun off one and kept it on the other would name the
+account only on the turns the working produced nothing. The two food webs are asserted UNCHANGED
+beside them (a food rate is the same figure either way; fodder keeps its WORD, an account's name not
+a material's), which is what stops "always drop the noun" passing. The `♻` fork is a third pair on
+the same frame: `HudDepositVocab.floor_mark` asked of both rows at the SAME floor, with the
+floor-ALONE reading asserted as the premise — without that premise a mark missing for any other
+reason would pass.
+
+**AND THE PLACEMENT RULE IS ASKED OF `_lift_clear_of_placed` OVER RECTS**, because what a frame
+cannot show is that the upper pill is a SEPARATE plate: two overlapping plates ink exactly the shape
+one wide plate does. Three claims — a pill landing on one already placed comes back clear of it, it
+is lifted STRAIGHT up (the x being the whole association between a pill and its marker), and a pill
+with room is not moved at all, so the lift is a response to crowding rather than a stagger every
+frame pays for.
 
 **The pair frame adds the two claims a slot index cannot carry**: that the two markers hold DIFFERENT
 slots (a tile-keyed renderer collapses them and still passes the presence claims), and that the two

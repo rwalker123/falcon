@@ -724,6 +724,56 @@ name, and summing them is the retired trade axis under a new name. `_draw_pill_p
 MEASURED run, so a two-material label is wide rather than clipped — a legibility question for
 `map_band_label_overlap`, not a reason to state less than the truth.
 
+### ⛔ THE MATERIAL'S NOUN COMES OFF WHERE THE MARKER UNDER IT IS THE MATERIAL
+
+Issue #650. Ray, on a live frame holding a worked rock and a worked log on adjacent hexes: *"remove
+the wood and stone text, it is obvious from the icon what it is."* A worked WORKING's pill hangs over
+a marker that IS its material (🪵 / 🪨), so `+0.40 stone ♻` said the same thing twice in the one
+place on the map with no room to say anything twice. It reads **`+0.40 ♻`** — the shape the forage
+pill three hexes over already had.
+
+- **The gate is `secondary_slot_of(working_key) >= 0`, i.e. *did this working's marker draw*.** A slot
+  of `-1` — LOD-suppressed, overflowed into the `+N` chip, or a material this client has no glyph for
+  (`SecondaryMarkerRenderer._working_renders` denies it a slot) — is exactly the case where nothing
+  else on the hex names the account, and there the noun stays. The source-badge pass skips on the
+  same test for the same reason.
+- **The two FOOD WEBS are untouched.** A hunted wolf pack still reads `+0.22 hide ⇊`: a deer's marker
+  says nothing about `hide`, so the noun is the only thing naming that account. The flag
+  (`marker_names_material`) is the CALLER's statement about its own surface, never a fact about the
+  rows, and the hunt arm passes none.
+- **It drops the noun off the ACCOUNT'S ZERO on the same condition**, or a working would name its
+  material only on the turns it produced nothing — which is the one reading the zero arm exists to
+  make honest.
+- **It is safe only because a working takes ONE material**, its identity being the `(tile, material)`
+  pair. `SourceForecast.MATERIAL_UNNAMED` carries that condition: two un-named figures joined by
+  `COMPONENT_SEPARATOR` would be two numbers with nothing between them, which is worse than the
+  repetition. The named form is the default and every other readout in the HUD takes it.
+
+### ⛔ ONE PILL PER MARKER — TWO CROWDED PILLS ARE LIFTED APART, NEVER MERGED
+
+Ray read that same frame as **one dark plate carrying two figures**, and the labels were never
+merged: each is anchored to its own source's slot (`_label_anchor`) and drawn on its own plate, and
+there has never been a grouping pass. What merged was the INK. The plate has no border and every
+plate is the same colour, so two that OVERLAP ink one continuous dark shape — and two workings sit
+either in two EDGE SLOTS of one hex or on two adjacent hexes, about 1.2 hex radii apart in x and at
+the SAME y, under plates that ran wider than that.
+
+**`flush_yield_labels` therefore PLACES the batch as well as drawing it**: a pill whose inked
+footprint (`MapView.pill_half_extent`, end caps included — never a re-derivation) would intersect one
+already placed this frame is lifted straight UP by `YIELD_LABEL_STACK_STEP_FACTOR` plate heights and
+re-tested, bounded by the batch size.
+
+- **The lift is VERTICAL because the x is the association.** A pill sits directly over its own marker,
+  so sideways is the one direction that would break the thing the split is for.
+- **A LIFT rather than the nameplate family's CULL.** `BandMarkerRenderer._reserve_name_pills` drops
+  the later label outright, which is right for a name the player can read off the card instead; a rate
+  is the whole of what selection buys on that source and there is nowhere else on the map to read it.
+- **Placement is in QUEUE order** — snapshot order, the rule the secondary slots already fill in — so
+  a pill cannot flicker between rows frame to frame.
+- **Dropping the noun did not abolish the collision, which is why the lift exists.** The font is
+  clamped at `YIELD_LABEL_MIN_FONT`, so below a certain hex radius the plate stops shrinking with the
+  map while the gap between two edge slots goes on closing. `map_working_pills_crowded` is that zoom.
+
 **AND WHEN A SOURCE TOOK NOTHING, THE ZERO NAMES THE ACCOUNT IT PAYS INTO** (issue #650). Every arm
 above states a rate the take produced; this is the one place the label speaks for a take that produced
 none, and a bare `+0.00` is a claim about FOOD — false on a working, which pays a material and no
@@ -756,7 +806,8 @@ render-only-when-non-zero rule lives in `labor-ui.md`.
 
 The label's trailing glyph is the assignment's floor ZONE mark — `_entry_floor_glyph(entry)` =
 `FoodIcons.for_floor_zone(SourceForecast.floor_zone(entry.floor))`, the same mark the work board's
-mark column and the floor picker wear. It travels through `_queue_yield_label` → the deferred batch →
+mark column and the floor picker wear. **On a WORKING it is `HudDepositVocab.floor_mark` instead, and
+a finite one wears none** — see below. It travels through `_queue_yield_label` → the deferred batch →
 `_draw_yield_label` as `floor_glyph`, a **resolved glyph**, and every one of those hops spends it
 as-is.
 
@@ -769,6 +820,32 @@ would have shown it were frozen with it missing. The parameter carries its conte
 (`floor_glyph`), which is what makes the second lookup unwritable.
 
 The guard is `map_preview._assert_work_floor_marks` — see `harness-map-probes.md`.
+
+#### ⛔ …BUT A WORKING'S MARK FORKS ON THE GROUND'S RENEWAL RATE, AND A FINITE ONE WEARS NONE
+
+Issue #650. `♻` is the PEAK zone's mark — *the most this ground gives, forever* — and a rate-0 rock
+body has no peak: every take is stock that does not grow back. The extract arm therefore resolves its
+mark through **`HudDepositVocab.floor_mark(deposit, floor)`**, this arc's one fork (`renews()`,
+`regrowth_rate > 0`, never `branch`), asked of the working's own `deposits` row — which the renderer
+reaches through `_working_row(tile, material)`, the `(tile, material)` join it already made to refuse
+a phantom marker. A renewing wood is unchanged and reads the zone it is set to.
+
+**AND THE FLOOR IT WOULD HAVE BEEN MARKING IS ONE NOBODY CHOSE.** The compose sheet offers the dial
+only where the ground grows back, so a finite working's row carries `DEFAULT_HARVEST_FLOOR` — 0.5,
+which is exactly the value that classifies as the peak. The mark was drawn at its most confident on
+the one working that has no floor at all. **The silence is the established answer**, not a new one:
+`HudFormat.panel_expedition_summary` drops the glyph from a DENIAL row because that mission's floor is
+a real zone belonging to a floor it never chose. What a finite working's warning IS remains the
+RUNWAY, which the tile card and the roster state and a hex-sized pill has never had room for.
+
+**The same fork reaches the drawer's standing summary** (`DrawerComposeController._standing_summary_model`
+takes the `deposits` row on its `extract` calls), so `Assign diggers ▸`'s second line and the map pill
+cannot answer differently about one working. An `extract` row arriving without a row answers the finite
+reading, which is the safe way round: the failure being forbidden is a quarry claiming `♻`.
+
+Frames: `map_working_pills` (a renewing wood, a rate-0 rock and a forage patch at one zoom — one mark
+between the two workings), with `HudDepositVocab.floor_mark` asked of both rows at the SAME floor and
+the floor-alone reading asserted as the premise.
 
 
 ---
