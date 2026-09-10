@@ -5741,7 +5741,7 @@ func _assert_working_slots(label: String, w: int, h: int, worked: Array, bare: A
 			% [label, material, bare_tile.x, bare_tile.y],
 			_map.secondary_slot_of(bkey) < 0)
 
-# ---- THE PILL ITSELF: the noun comes off, and two pills keep apart (issue #650) ------------------
+# ---- THE PILL ITSELF: the noun comes off, and two crowded pills are LEFT to overlap (#650) -------
 # Ray, on a live frame holding a worked rock and a worked log on adjacent hexes: *"remove the wood and
 # stone text, it is obvious from the icon what it is."* A working's marker IS its material's mark, so
 # the noun said it twice in the one place on the map with no room to say anything twice; the pill
@@ -5768,19 +5768,12 @@ const WORKING_PILL_STONE_OFFSET := Vector2i(-2, 0)
 # The crew on the forage patch beside them, and the patch's own tile is the CONTROL hex — the one
 # whose deposits nobody cuts — so the plant web's pill sits clear of both workings.
 const WORKING_PILL_FORAGE_CREW := 2
-# A stand-in plate for the PLACEMENT probe — half-extents in pixels, wide and short like the real
-# thing, since a rate pill is many times wider than it is tall and therefore collides side to side
-# long before it collides vertically. `_lift_clear_of_placed` takes the half-extent as an argument
-# precisely so a claim about the RULE needs no font, no zoom and no frame.
-const WORKING_PILL_PROBE_HALF := Vector2(40.0, 8.0)
-# Two anchors this far apart in x — closer than the plate is wide, so the second pill lands on the
-# first and has to be lifted off it. Ray's geometry in miniature.
-const WORKING_PILL_PROBE_GAP := 30.0
-# ---- AND THE ZOOM WHERE THE LIFT ACTUALLY FIRES -------------------------------------------------
+# ---- AND THE ZOOM WHERE TWO PILLS ACTUALLY TOUCH ------------------------------------------------
 # The plate's font is CLAMPED at `YIELD_LABEL_MIN_FONT`, so below a certain hex radius the pill stops
 # shrinking with the map while the gap between two edge slots goes on closing — and two workings on
-# ONE hex then collide however short their text is. Dropping the noun raised the zoom at which that
-# happens; it did not abolish it, which is why the lift exists and why a frame has to show it.
+# ONE hex then overlap however short their text is. Dropping the noun raised the zoom at which that
+# happens and did not abolish it, which is why the crowded frame is worth keeping: it is the state
+# where the accepted overlap can be looked at.
 #
 # This grid fits ABOVE `MapView.ICON_MIN_DETAIL_RADIUS` (or no marker draws at all and the state
 # guards nothing — `map_working_farzoom`'s claim, inverted) and far enough below `GRID_W`'s ~83px that
@@ -6100,34 +6093,16 @@ func _worked_working_states() -> void:
 	_assert_map("map_working_pills — the rate-0 STONE wears NO mark, a quarry having no peak to sit on",
 		HudDepositVocab.floor_mark(pill_stone_row, WORK_PEAK_FLOOR)
 			== HudDepositVocab.FLOOR_MARK_NONE)
-	# **AND TWO CROWDED PILLS ARE LIFTED APART RATHER THAN MERGED.** The rule is asked of
-	# `_lift_clear_of_placed` directly, over plate rects: what a frame cannot show is that the second
-	# pill is a SEPARATE plate, two overlapping ones inking exactly the shape one wide plate does.
-	# The x is asserted UNMOVED, because the x is the whole association between a pill and its marker.
-	var pill_taken: Array[Rect2] = [Rect2(
-		Vector2.ZERO - WORKING_PILL_PROBE_HALF, WORKING_PILL_PROBE_HALF * 2.0)]
-	var pill_wanted := Vector2(WORKING_PILL_PROBE_GAP, 0.0)
-	var pill_landed := pill_overlays._lift_clear_of_placed(
-		pill_wanted, WORKING_PILL_PROBE_HALF, pill_taken)
-	_assert_map("map_working_pills — a pill landing on one already placed is lifted clear of it (y %.1f → %.1f)"
-			% [pill_wanted.y, pill_landed.y],
-		not pill_taken[0].intersects(Rect2(
-			pill_landed - WORKING_PILL_PROBE_HALF, WORKING_PILL_PROBE_HALF * 2.0)))
-	_assert_map("map_working_pills — and it is lifted STRAIGHT up, the x being what ties a pill to its own marker",
-		is_equal_approx(pill_landed.x, pill_wanted.x) and pill_landed.y < pill_wanted.y)
-	# The negative: a pill with room is not moved at all, so the lift is a response to crowding
-	# rather than a stagger every frame pays for.
-	var pill_clear := Vector2(WORKING_PILL_PROBE_HALF.x * 4.0, 0.0)
-	_assert_map("map_working_pills — a pill that clears everything placed stays exactly where its marker put it",
-		pill_overlays._lift_clear_of_placed(pill_clear, WORKING_PILL_PROBE_HALF, pill_taken)
-			== pill_clear)
-
-	# State "working pills crowded" (issue #650) — **THE LIFT, ON A FRAME.** The same two workings in
-	# the two edge slots of ONE hex, at a zoom where the pill's font has bottomed out on
-	# `YIELD_LABEL_MIN_FONT` and the plates are twice as wide as the gap between their anchors. Read
-	# for: TWO plates, one above the other, each still centred over its own marker — never one wide
-	# plate carrying two figures, which is what this pair drew before `flush_yield_labels` started
-	# placing the batch.
+	# State "working pills crowded" (issue #650) — **THE ACCEPTED OVERLAP, ON A FRAME.** The same two
+	# workings in the two edge slots of ONE hex, at a zoom where the pill's font has bottomed out on
+	# `YIELD_LABEL_MIN_FONT` and the plates are wider than the gap between their anchors. Read for: two
+	# pills at the SAME height, each directly over its own marker, their plates touching.
+	#
+	# ⛔ **THIS FRAME ONCE ASSERTED A LIFT, AND THE LIFT IS GONE.** A placement pass raised the second
+	# pill clear of the first; Ray, on the live frame it shipped on: *"having 1 way up there is worse
+	# then letting them overlapp a bit. I would move the pill back down"*. So the state now guards what
+	# was bought by accepting the overlap — every pill over its own marker — and would FAIL again if
+	# anything started moving a pill off its anchor to keep two plates apart.
 	_map.display_snapshot(_snapshot_workings(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H,
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
 	_map.selected_unit_id = BAND_ENTITY
@@ -6143,3 +6118,56 @@ func _worked_working_states() -> void:
 	_assert_working_slots("map_working_pills_crowded", WORKING_CROWDED_GRID_W,
 		WORKING_CROWDED_GRID_H, [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE],
 		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	# **WHERE EACH PILL HANGS IS ASKED OF THE RENDERER**, through the very function that decides it
+	# (`_label_anchor`) rather than from the picture — two plates that overlap ink one continuous dark
+	# shape, so a PNG cannot tell "two pills, each on its own marker" from "one wide pill".
+	var crowded_tile := _work_grid_center(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H) \
+		+ WORKING_WORKED_OFFSET
+	var crowded_hex: Vector2 = _map._hex_center_wrapped(crowded_tile.x, crowded_tile.y,
+		_map.last_hex_radius, _map.last_origin)
+	var crowded_wood_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_WOOD))
+	var crowded_stone_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_STONE))
+	var crowded_wood_anchor: Vector2 = pill_overlays._label_anchor(crowded_hex,
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_WOOD),
+		_map.last_hex_radius)
+	var crowded_stone_anchor: Vector2 = pill_overlays._label_anchor(crowded_hex,
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_STONE),
+		_map.last_hex_radius)
+	_assert_map("map_working_pills_crowded — each pill anchors to its OWN marker's slot centre, never to the shared hex centre",
+		crowded_wood_anchor == _map.secondary_slot_center(crowded_hex, crowded_wood_slot,
+				_map.last_hex_radius)
+		and crowded_stone_anchor == _map.secondary_slot_center(crowded_hex, crowded_stone_slot,
+				_map.last_hex_radius)
+		and crowded_wood_anchor != crowded_hex and crowded_stone_anchor != crowded_hex)
+	# **AND BOTH SIT LEVEL.** `_draw_yield_label` lifts every pill by the SAME `YIELD_LABEL_OFFSET_FACTOR`
+	# of the hex radius off its own anchor and by nothing else, so two pills on one hex share a y and
+	# differ only in the x that ties each to its marker. A placement pass re-added here would break this
+	# line first.
+	var crowded_pill_rise := Vector2(0.0,
+		-_map.last_hex_radius * BandOverlayRenderer.YIELD_LABEL_OFFSET_FACTOR)
+	var crowded_wood_pill: Vector2 = crowded_wood_anchor + crowded_pill_rise
+	var crowded_stone_pill: Vector2 = crowded_stone_anchor + crowded_pill_rise
+	_assert_map("map_working_pills_crowded — the two pills sit at the SAME height (%.1f, %.1f), neither moved off its anchor"
+			% [crowded_wood_pill.y, crowded_stone_pill.y],
+		is_equal_approx(crowded_wood_pill.y, crowded_stone_pill.y)
+		and not is_equal_approx(crowded_wood_pill.x, crowded_stone_pill.x))
+	# **THE PREMISE IS THAT THE PLATES REALLY DO TOUCH AT THIS ZOOM** — "each on its own marker even
+	# where they overlap" is vacuous on a frame where they never met. The plate is measured off the
+	# pill's own rate text WITHOUT its floor mark, which UNDER-measures the drawn one: a pair that
+	# overlaps at this width overlaps at the true one.
+	var crowded_face := pill_overlays._yield_label_rate_text(0.0, 0.0, [],
+		WORKING_MATERIAL_WOOD, true)
+	var crowded_font_size := clampi(
+		int(_map.last_hex_radius * BandOverlayRenderer.YIELD_LABEL_SIZE_FACTOR),
+		BandOverlayRenderer.YIELD_LABEL_MIN_FONT, BandOverlayRenderer.YIELD_LABEL_MAX_FONT)
+	var crowded_font: Font = ThemeDB.fallback_font
+	var crowded_half: Vector2 = _map.pill_half_extent(
+		crowded_font.get_string_size(crowded_face, HORIZONTAL_ALIGNMENT_LEFT, -1, crowded_font_size),
+		crowded_font_size * BandOverlayRenderer.YIELD_LABEL_PLATE_PAD_FACTOR,
+		MAP_VIEW.COUNT_PILL_NO_BORDER_WIDTH)
+	_assert_map("map_working_pills_crowded — premise: the plates overlap (%.1f px between centres, %.1f px wide) and are left to"
+			% [absf(crowded_wood_pill.x - crowded_stone_pill.x), crowded_half.x * 2.0],
+		Rect2(crowded_wood_pill - crowded_half, crowded_half * 2.0).intersects(
+			Rect2(crowded_stone_pill - crowded_half, crowded_half * 2.0)))

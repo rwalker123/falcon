@@ -200,14 +200,6 @@ const YIELD_OVERHUNT_FLAG := "⚠"
 # existing anchor (so the text does not shift) and scales with the font, like the label itself.
 const YIELD_LABEL_PLATE_BG := Color(0.04, 0.05, 0.07, 0.82)
 const YIELD_LABEL_PLATE_PAD_FACTOR := 0.45   # horizontal padding per side, as a fraction of the font size
-# The plate is drawn with no border at all (`_draw_pill_plate` is passed no border colour), so its
-# inked reach is measured with none — `MapView.COUNT_PILL_NO_BORDER_WIDTH`'s note, on this pill.
-const YIELD_LABEL_PLATE_NO_BORDER := 0.0
-# **HOW FAR A PILL IS LIFTED OFF ONE ALREADY PLACED THIS FRAME**, as a multiple of its own plate
-# height: one whole plate plus a quarter, so the two read as two stacked pills with daylight between
-# them rather than as one tall plate. See `flush_yield_labels`, which is where the lift happens and
-# why it is a lift rather than a cull or a merge.
-const YIELD_LABEL_STACK_STEP_FACTOR := 1.25
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -1228,51 +1220,26 @@ func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radi
 ## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
 ## rings, links, pending overlays and targeting — so nothing paints over the labels.
 ##
-## ⛔ **ONE PILL PER SOURCE, AND TWO CROWDED PILLS ARE LIFTED APART RATHER THAN MERGED** (issue #650).
-## Every label in this batch is already anchored to its own source's MARKER (`_label_anchor`) and
-## drawn on its own plate — there has never been a grouping pass — but the plate has no border and
-## every plate is the same ink, so two that OVERLAP ink one continuous dark shape. Ray read a wood
-## and a rock as `+0.40 stone ♻  +0.30 wood ♻` on a single plate for exactly that reason: two
-## workings sit in two EDGE SLOTS of one hex (or on two adjacent hexes), which puts their anchors
-## about 1.2 hex radii apart in x and at the SAME y, while a plate stating a material ran wider than
-## that. Two numbers on one plate have nothing saying which belongs to which marker.
+## ⛔ **ONE PILL PER SOURCE, EACH DRAWN AT ITS OWN ANCHOR — AND TWO THAT OVERLAP SIMPLY OVERLAP**
+## (issue #650). Every label in this batch is anchored to its own source's MARKER (`_label_anchor`)
+## and drawn on its own plate; there is no grouping pass and no placement pass. Two workings sit
+## about 1.2 hex radii apart at the SAME y (two edge slots of one hex, or two adjacent hexes), so
+## at low zoom — where the font has bottomed out on `YIELD_LABEL_MIN_FONT` while the gap goes on
+## closing — their borderless plates touch and ink one continuous dark shape.
 ##
-## So the batch is PLACED as well as drawn: a pill whose inked footprint would intersect one already
-## placed this frame is lifted straight UP by `YIELD_LABEL_STACK_STEP_FACTOR` plate heights, and
-## re-tested. **The lift is vertical because the x is the association** — a pill sits directly over
-## its own marker, so moving it sideways is the one direction that would break the thing the split is
-## for.
-##
-## ⛔ **AND IT IS A LIFT RATHER THAN A CULL.** The band NAME PILL family answers crowding by dropping
-## the later label outright (`BandMarkerRenderer._reserve_name_pills`), which is right for a name the
-## player can read off the card instead; a rate is the whole of what selection buys on this source and
-## there is nowhere else on the map to read it. Placement is in QUEUE order — snapshot order, the
-## same rule the secondary slots fill in — so a pill does not flicker between rows frame to frame.
+## **THAT OVERLAP IS ACCEPTED DELIBERATELY.** A collision pass that lifted the later pill clear
+## shipped briefly and was removed: Ray, on a live frame, *"having 1 way up there is worse then
+## letting them overlapp a bit"*. A pill moved away from its marker costs more than two plates
+## touching, because the pill's POSITION is the whole of what ties a rate to the source it came
+## from — so a pill is never lifted, staggered, nudged or culled here. Do not re-add it as an
+## improvement. The x is the association, and the y is what says "this hex's".
 func flush_yield_labels() -> void:
 	for badge in _deferred_source_badges:
 		_draw_source_badge(badge)
 	_deferred_source_badges.clear()
-	var placed: Array[Rect2] = []
 	for label in _deferred_yield_labels:
-		_draw_yield_label(label, placed)
+		_draw_yield_label(label)
 	_deferred_yield_labels.clear()
-
-## Where this pill lands: its anchored centre, or as far above it as it takes to clear every pill
-## already placed this frame. Bounded by the number placed — each pass clears at least the topmost
-## rect it collided with — so a crowded frame terminates rather than looping.
-func _lift_clear_of_placed(center: Vector2, half: Vector2, placed: Array[Rect2]) -> Vector2:
-	var step := half.y * 2.0 * YIELD_LABEL_STACK_STEP_FACTOR
-	var lifted := center
-	for _attempt in range(placed.size() + 1):
-		var blocked := false
-		for taken in placed:
-			if taken.intersects(Rect2(lifted - half, half * 2.0)):
-				blocked = true
-				break
-		if not blocked:
-			return lifted
-		lifted.y -= step
-	return lifted
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
@@ -1301,7 +1268,7 @@ func _lift_clear_of_placed(center: Vector2, half: Vector2, placed: Array[Rect2])
 ## about the rows — the hunt arm passes nothing, a deer's marker saying nothing about `hide`. (A trade branch sat between food and fodder until arc
 ## #527 retired that account; the material vector is what replaced it, and it is a vector because a
 ## mammoth hide and a hare pelt are both `hide` and are not the same thing.)
-func _draw_yield_label(label: Dictionary, placed: Array[Rect2]) -> void:
+func _draw_yield_label(label: Dictionary) -> void:
 	var radius := float(label.get("radius", 0.0))
 	var text := _yield_label_rate_text(float(label.get("value", 0.0)),
 		float(label.get("fodder", 0.0)), label.get("materials", []),
@@ -1327,15 +1294,8 @@ func _draw_yield_label(label: Dictionary, placed: Array[Rect2]) -> void:
 	var font: Font = ThemeDB.fallback_font
 	if font != null:
 		var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-		var pad := font_size * YIELD_LABEL_PLATE_PAD_FACTOR
-		# **THE INKED HALF-EXTENT, END CAPS INCLUDED — `MapView.pill_half_extent` and never a
-		# re-derivation.** A plate reaches a further half-height left and right than the body it was
-		# measured from, which is the term every "how wide is this label" calculation forgets and the
-		# one that decides whether two pills are touching.
-		var half := _view.pill_half_extent(text_size, pad, YIELD_LABEL_PLATE_NO_BORDER)
-		label_center = _lift_clear_of_placed(label_center, half, placed)
-		placed.append(Rect2(label_center - half, half * 2.0))
-		_view._draw_pill_plate(label_center, text_size, pad, YIELD_LABEL_PLATE_BG)
+		_view._draw_pill_plate(label_center, text_size,
+			font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
 	_view._draw_marker_glyph(label_center, text, font_size, color)
 
 ## THE ONE-SLOT CHOICE, on its own so it can be asserted: which of the accounts this label states, and

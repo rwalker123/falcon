@@ -755,7 +755,7 @@ That contrast is the frame — `map-markers.md` has the decision it renders.
 | `map_working_beside_herd` | one selected band cutting a wood working on the left hex and hunting a deer on the right | **the parity claim**: both wear a ring, a hex outline, a link to the band's token and a rate pill, differing only in colour and in what the pill counts (`+0.30 ♻` against `+0.05 ♻` — the working's noun came off in issue #650, its marker being the material) |
 | `map_working_pair_marked` | both workings on one hex crewed, band SELECTED | two complete sets that keep apart — two rings, two plates, two links and two pills, each docked to its own edge slot |
 | `map_working_pills` | **Ray's own frame**: a worked WOOD and a worked STONE on ADJACENT hexes, a worked forage PATCH three columns over, band selected | three pills of ONE shape (`+0.40` · `+0.30 ♻` · `+0.42 ♻`), each over its own marker, **no material noun on any of them** — and the `♻` on the renewing wood and the patch but NOT on the rate-0 rock between them |
-| `map_working_pills_crowded` | the same two workings in the two edge slots of ONE hex, fitted to r **28.2** (above the 16.0 detail gate) | the LIFT: TWO plates, one above the other, each still centred over its own marker — at this zoom the font has bottomed out on `YIELD_LABEL_MIN_FONT` and the plates are twice as wide as the gap between their anchors |
+| `map_working_pills_crowded` | the same two workings in the two edge slots of ONE hex, fitted to r **28.2** (above the 16.0 detail gate) | the ACCEPTED OVERLAP: two pills at the SAME height, each directly over its own marker, plates touching — at this zoom the font has bottomed out on `YIELD_LABEL_MIN_FONT` and the plates are wider than the gap between their anchors |
 
 **THE UNWORKED HEX'S CLAIM IS STRUCTURAL, NOT PHOTOGRAPHIC, and it is the one Ray's decision turns
 on.** `_assert_working_slots` reads `MapView.secondary_slot_of` for each `(tile, material)` key —
@@ -777,12 +777,21 @@ the same frame: `HudDepositVocab.floor_mark` asked of both rows at the SAME floo
 floor-ALONE reading asserted as the premise — without that premise a mark missing for any other
 reason would pass.
 
-**AND THE PLACEMENT RULE IS ASKED OF `_lift_clear_of_placed` OVER RECTS**, because what a frame
-cannot show is that the upper pill is a SEPARATE plate: two overlapping plates ink exactly the shape
-one wide plate does. Three claims — a pill landing on one already placed comes back clear of it, it
-is lifted STRAIGHT up (the x being the whole association between a pill and its marker), and a pill
-with room is not moved at all, so the lift is a response to crowding rather than a stagger every
-frame pays for.
+**AND WHERE EACH CROWDED PILL HANGS IS ASKED OF `_label_anchor`, NOT OF THE PNG**, because two
+overlapping plates ink exactly the shape one wide plate does — a picture cannot tell "two pills, each
+on its own marker" from "one wide pill". `map_working_pills_crowded` asserts three things off the
+renderer: each pill anchors to its OWN marker's slot centre (never the shared hex centre, which a
+tile-keyed renderer would collapse them onto), the two sit at the SAME height and differ only in the
+x that ties each to its marker, and — the premise, or the rest passes vacuously — the two plates
+MEASURABLY intersect at that zoom, sized through `MapView.pill_half_extent` off the pill's own rate
+text. The text is measured without its floor mark, which under-measures the drawn plate, so the
+premise is conservative.
+
+⛔ **THE STATE ONCE ASSERTED A LIFT.** A placement pass (`_lift_clear_of_placed`) raised a colliding
+pill clear of the plates already inked that frame; Ray, on the live frame — *"having 1 way up there
+is worse then letting them overlapp a bit"* — and it is gone. The frame was RETARGETED rather than
+deleted: the crowded geometry is still the only place the overlap can be looked at, and what it
+guards now is what accepting the overlap bought.
 
 **The pair frame adds the two claims a slot index cannot carry**: that the two markers hold DIFFERENT
 slots (a tile-keyed renderer collapses them and still passes the presence claims), and that the two

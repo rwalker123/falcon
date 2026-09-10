@@ -749,30 +749,33 @@ pill three hexes over already had.
   `COMPONENT_SEPARATOR` would be two numbers with nothing between them, which is worse than the
   repetition. The named form is the default and every other readout in the HUD takes it.
 
-### ⛔ ONE PILL PER MARKER — TWO CROWDED PILLS ARE LIFTED APART, NEVER MERGED
+### ⛔ ONE PILL PER MARKER, EACH AT ITS OWN ANCHOR — AND TWO THAT OVERLAP ARE LEFT TO
 
 Ray read that same frame as **one dark plate carrying two figures**, and the labels were never
 merged: each is anchored to its own source's slot (`_label_anchor`) and drawn on its own plate, and
 there has never been a grouping pass. What merged was the INK. The plate has no border and every
 plate is the same colour, so two that OVERLAP ink one continuous dark shape — and two workings sit
 either in two EDGE SLOTS of one hex or on two adjacent hexes, about 1.2 hex radii apart in x and at
-the SAME y, under plates that ran wider than that.
+the SAME y, under plates that ran wider than that. Dropping the noun raised the zoom at which they
+touch; it did not abolish it, the font being clamped at `YIELD_LABEL_MIN_FONT` while the gap between
+two edge slots goes on closing. `map_working_pills_crowded` is that zoom.
 
-**`flush_yield_labels` therefore PLACES the batch as well as drawing it**: a pill whose inked
-footprint (`MapView.pill_half_extent`, end caps included — never a re-derivation) would intersect one
-already placed this frame is lifted straight UP by `YIELD_LABEL_STACK_STEP_FACTOR` plate heights and
-re-tested, bounded by the batch size.
+**THE REMAINING OVERLAP IS ACCEPTED DELIBERATELY.** `flush_yield_labels` draws the batch and does not
+place it: every pill lands at its own anchor, raised by the one `YIELD_LABEL_OFFSET_FACTOR` every
+other pill is raised by, and two whose plates meet simply meet.
 
-- **The lift is VERTICAL because the x is the association.** A pill sits directly over its own marker,
-  so sideways is the one direction that would break the thing the split is for.
-- **A LIFT rather than the nameplate family's CULL.** `BandMarkerRenderer._reserve_name_pills` drops
-  the later label outright, which is right for a name the player can read off the card instead; a rate
-  is the whole of what selection buys on that source and there is nowhere else on the map to read it.
-- **Placement is in QUEUE order** — snapshot order, the rule the secondary slots already fill in — so
-  a pill cannot flicker between rows frame to frame.
-- **Dropping the noun did not abolish the collision, which is why the lift exists.** The font is
-  clamped at `YIELD_LABEL_MIN_FONT`, so below a certain hex radius the plate stops shrinking with the
-  map while the gap between two edge slots goes on closing. `map_working_pills_crowded` is that zoom.
+- ⛔ **A COLLISION PASS SHIPPED HERE AND WAS REMOVED — DO NOT RE-ADD IT AS AN IMPROVEMENT.**
+  `_lift_clear_of_placed` lifted a colliding pill straight up off any plate already inked that frame.
+  Ray, on the live frame it shipped on: *"having 1 way up there is worse then letting them overlapp a
+  bit. I would move the pill back down"*. It guarded an ambiguity nobody had reported and made the
+  ordinary two-workings frame worse to do it.
+- **A pill's POSITION is the whole of what ties a rate to its source.** There is no leader line, no
+  colour key and no name on the plate — only "it is over that marker" — so a pill moved away from its
+  anchor costs more than two plates touching, in every direction and at every distance. That is the
+  trade, and it is why the cure is not a stagger, a nudge, a cull or a merge either.
+- **What the accepted overlap bought is what `map_working_pills_crowded` now asserts**: both pills at
+  their own `_label_anchor`, at the SAME height, each centred in x on its own marker, with the plates
+  measured as genuinely intersecting so the claim cannot pass vacuously.
 
 **AND WHEN A SOURCE TOOK NOTHING, THE ZERO NAMES THE ACCOUNT IT PAYS INTO** (issue #650). Every arm
 above states a rate the take produced; this is the one place the label speaks for a take that produced
