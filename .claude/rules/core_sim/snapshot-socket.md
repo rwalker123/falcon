@@ -112,7 +112,7 @@ bound that long, which is inherent to a blocking accept and harmless for a proce
 ## A write is timed, and a client that exceeds it is dropped
 
 Accepted sockets carry `set_write_timeout(limits.write_timeout)`. A timed-out `write_all` is an
-`Err`, and `broadcast_frame`'s `retain_mut` drops that client.
+`Err`, and `deliver_frame`'s `retain_mut` drops that client.
 
 **Dropping is mandatory, not a policy choice.** The wire format is a `u32` length prefix followed by
 the payload, and `write_all` does not report how much it wrote before failing — so a timed-out write

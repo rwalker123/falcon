@@ -26,8 +26,8 @@ use bevy::prelude::*;
 mod faction_support;
 
 use core_sim::{
-    run_turn, CommandEventEntry, CommandEventKind, CommandEventLog, FactionId, FactionInventory,
-    FrameSink, SnapshotAudiences, SnapshotHistory,
+    recapture_snapshot_in_place, run_turn, CommandEventEntry, CommandEventKind, CommandEventLog,
+    FactionId, FactionInventory, FrameSink, SnapshotAudiences, SnapshotHistory,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -621,5 +621,91 @@ fn a_seat_that_joins_late_is_baselined_on_a_full_frame() {
     assert_eq!(
         frame_seq, FIRST_PUBLICATION_SEQ,
         "a fresh publication state starts its own chain at {FIRST_PUBLICATION_SEQ}"
+    );
+}
+
+/// ⛔ **A SEAT WHOSE STATE IS FRESH AT A *RECAPTURE* IS BASELINED TOO — THE PUBLICATION RULE HOLDS
+/// WHATEVER THE `Publication` KIND.**
+///
+/// The turn path is the one the case above covers, and it is not the only way a fresh publication
+/// state meets its first frame. A **command-link reconnect** drops the seat's state
+/// (`sync_seat_delivery`) and the very next thing the loop does with a world-mutating command is
+/// *recapture* — no turn in between. A recapture deliberately holds its baseline, which is what makes
+/// its deltas cumulative; held on a state holding nothing it produced a delta naming
+/// `base_frame_seq == 0`, a frame the client cannot apply. It dropped it, asked to resync, and got
+/// `resync.no_world` — because the same arm pushed no ring entry either — until its retry budget ran
+/// out and it declared a live world gone.
+///
+/// Both halves are asserted, and the second is what stops the fix over-reaching: the *established*
+/// seat's frame on that same recapture is still a delta, so the cumulative-delta rule is untouched
+/// for every seat that has a baseline to hold.
+#[test]
+fn a_seat_whose_state_is_fresh_at_a_recapture_is_baselined_on_a_full_frame() {
+    let mut app = a_world_with_two_seats();
+    let recorder = Arc::new(Recorder::default());
+    app.world
+        .resource::<SnapshotHistory>()
+        .attach_sink(Arc::clone(&recorder) as Arc<dyn FrameSink>);
+    run_turn(&mut app);
+    drain_publisher(&app);
+
+    // The reconnect: `sync_seat_delivery` drops the released seat's publication state, and the
+    // re-claim builds a fresh one. Same effect, without standing the server loop up.
+    app.world
+        .resource_mut::<SnapshotHistory>()
+        .drop_audience(RIVAL);
+
+    // And what happens next is a world-mutating command, not a turn.
+    recapture_snapshot_in_place(&mut app.world);
+    drain_publisher(&app);
+
+    let rival_frames = recorder.for_seat(RIVAL);
+    let (frame_seq, base_frame_seq, full) = chain_of(
+        rival_frames
+            .last()
+            .expect("the rejoining seat was published to"),
+    );
+    assert!(
+        full,
+        "the rejoining seat's first frame came out of a RECAPTURE and must still be a full \
+         baseline; it was sent a delta against rows it does not hold, and a resync would have \
+         answered `resync.no_world`"
+    );
+    assert_eq!(
+        base_frame_seq, NO_BASE_FRAME_SEQ,
+        "a full frame names no base"
+    );
+    assert_eq!(
+        frame_seq, FIRST_PUBLICATION_SEQ,
+        "a fresh publication state starts its own chain at {FIRST_PUBLICATION_SEQ}"
+    );
+
+    // The ring entry is the other half of the same defect: a recapture that pushed none left
+    // `latest_entry` empty, so the resync the dropped delta provoked had nothing to answer with.
+    assert!(
+        app.world
+            .resource_mut::<SnapshotHistory>()
+            .publish_full_frame_for(RIVAL)
+            .is_some(),
+        "a first publication must push a ring entry, or `Command::Resync` answers \
+         `resync.no_world` for a live world"
+    );
+
+    // The established seat is untouched: it holds a baseline, so its recapture frame is the
+    // cumulative delta it always was.
+    let (_, home_base, home_full) = chain_of(
+        recorder
+            .for_seat(HOME)
+            .last()
+            .expect("the seated player was published to"),
+    );
+    assert!(
+        !home_full,
+        "a recapture must stay a DELTA for a seat that holds a baseline — the first-publication \
+         rule is about having nothing to hold, not about recaptures"
+    );
+    assert!(
+        home_base > NO_BASE_FRAME_SEQ,
+        "and it names the frame that seat is holding"
     );
 }

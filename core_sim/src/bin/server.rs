@@ -554,15 +554,15 @@ fn main() {
                 continue;
             }
             Command::ReleaseSeat => {
-                if let Some(seat) = seats.release(connection) {
-                    info!(
-                        target: "shadow_scale::server",
-                        %connection,
-                        faction = %seat,
-                        "seat.released=connection closed"
-                    );
-                    sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
-                }
+                release_seat_and_settle(
+                    &mut app,
+                    &mut seats,
+                    connection,
+                    &snapshot_flat_server,
+                    &mut command_log,
+                    &mut turn_gate,
+                    world_active,
+                );
                 continue;
             }
             other => {
@@ -681,6 +681,8 @@ fn dispatch_connection_command(
 ///   answers `None` for: the world verbs.
 /// - the **host verbs** ([`is_host_verb`]) go the other way — they move the world for everyone, so a
 ///   *seated* connection may not send them.
+/// - the **solo verbs** ([`solo_only_verb`]) are refused once a second seat is occupied — the one
+///   rule keyed on how many players there are rather than on who sent it.
 fn seat_authorizes(seats: &SeatRegistry, connection: ConnectionId, command: &Command) -> bool {
     if let Some((faction, label)) = commanding_faction(command) {
         if !seats.commands_faction(connection, faction) {
@@ -705,7 +707,46 @@ fn seat_authorizes(seats: &SeatRegistry, connection: ConnectionId, command: &Com
         );
         return false;
     }
+    if let Some(label) = solo_only_verb(command) {
+        if seats.is_shared() {
+            warn!(
+                target: "shadow_scale::command",
+                command = label,
+                %connection,
+                claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+                occupied_seats = seats.occupied_seats().len(),
+                "command.rejected=another_player_is_seated"
+            );
+            return false;
+        }
+    }
     true
+}
+
+/// **The verbs that are a convenience with one player and a DISCLOSURE with two**, and what to call
+/// the refusal in the log.
+///
+/// `SetFogEnabled` is the whole set. Fog off is a single-player and dev convenience — the `F` key and
+/// the Options toggle — but `fog_enabled` is read by the *capture*, not by a renderer:
+/// `snapshot_forage_patches`' `improvement_is_legible` short-circuits on `!fog_enabled`, so with it
+/// off **every** seat's frame publishes every rival patch's owner, its cultivation and field progress,
+/// its rung yields and its true carrying capacity, foreign bands stop being redacted and
+/// `herd_is_visible` stops filtering. `.claude/rules/core_sim/factions.md` states that `fog_enabled`
+/// must never become a disclosure switch, and with a second player seated that is exactly what it is.
+///
+/// ⛔ **This is deliberately NOT expressed as a host verb.** "Host" means *holds no seat*
+/// ([`SeatRegistry::may_issue_host_verb`]), and any process may connect and simply decline to claim
+/// one — so host-gating this would move the hole rather than close it. The rule that actually holds is
+/// about the *world*: with one occupant there is nobody to disclose to, and with two there is.
+///
+/// It is not only a grief vector. The client pushes its local `ClientSettings.fog_of_war_enabled`
+/// preference and re-checks it on every snapshot, so two players with opposite preferences would flip
+/// the world's fog against each other indefinitely, one command per frame each.
+fn solo_only_verb(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::SetFogEnabled { .. } => Some("set_fog"),
+        _ => None,
+    }
 }
 
 /// **May this connection ask this question?** The query channel's half of the seat gate — `None` to
@@ -926,6 +967,43 @@ fn sync_seat_delivery(
     // An emptied list is "back to the single `ViewerFaction` view" — what an unattended server and
     // every test publish — and never "publish nothing".
     app.world.resource_mut::<SnapshotAudiences>().set(occupied);
+}
+
+/// **Free the seat a closing connection held, AND re-assess the open turn** — the loop's
+/// `ReleaseSeat` arm, whole, so the second half cannot be dropped from it.
+///
+/// ⛔ **The re-assessment is the point.** [`SeatTurnGate`] is consulted only by
+/// [`settle_open_turn`] or on a deadline wake, and a vacated seat is exactly the input that changes
+/// its answer: with one seat submitted and another silent the gate is armed on the silent one, so its
+/// disconnect left the turn resolving `seat_turn_timeout_seconds` later even though `assess` would now
+/// answer `TurnWait::Resolve` — **a vacant seat never holds the turn** (`seats.rs`). The arm used to
+/// `continue` past the settle at the foot of the loop, which is how the remaining players came to wait
+/// out a full timeout for somebody who had already gone.
+///
+/// It settles through [`settle_open_turn_and_publish`] rather than the bare settle, so the seats that
+/// remain are published the world the departure left, exactly as every other command's arm is.
+///
+/// A connection that held no seat is a no-op: nothing changed, so there is nothing to re-assess.
+fn release_seat_and_settle(
+    app: &mut bevy::prelude::App,
+    seats: &mut SeatRegistry,
+    connection: ConnectionId,
+    flat_server: &SnapshotServer,
+    command_log: &mut Option<CommandLog>,
+    turn_gate: &mut SeatTurnGate,
+    world_active: bool,
+) {
+    let Some(seat) = seats.release(connection) else {
+        return;
+    };
+    info!(
+        target: "shadow_scale::server",
+        %connection,
+        faction = %seat,
+        "seat.released=connection closed"
+    );
+    sync_seat_delivery(app, seats, flat_server);
+    settle_open_turn_and_publish(app, command_log, seats, turn_gate, world_active);
 }
 
 /// **HOW THE FOUR QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
@@ -10478,10 +10556,13 @@ fn is_replayable(command: &Command) -> bool {
 /// somebody's order or the server's own business; a wildcard would silently answer "nobody's" and
 /// take the new verb out of the membership gate below.
 ///
-/// A faction named *inside* a payload is not a commanding faction and is not returned here:
-/// espionage verbs legitimately name another faction as owner or target
-/// ([`Command::QueueEspionageMission`]), and a shipment's destination is cross-faction by
-/// construction ([`resolve_shipment`]).
+/// A faction named *inside* a payload is still a commanding faction when it is the faction the verb
+/// **acts as**: [`Command::QueueEspionageMission`] carries `QueueMissionParams::owner`, and
+/// `handle_queue_espionage_mission` queues the mission out of *that* faction's roster and budgets — so
+/// the envelope being empty makes it no less that faction's order. What genuinely names another
+/// faction and stays free is a **target**: `QueueMissionParams::target_owner` is who the mission is
+/// aimed at, and a shipment's destination is cross-faction by construction
+/// ([`resolve_shipment`]).
 fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
     match command {
         Command::Orders { faction, .. } => Some((*faction, "orders")),
@@ -10523,11 +10604,18 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
         Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
         Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
+        // The faction the mission is **run by**, out of whose roster and budget it is queued. Its
+        // `target_owner` sibling is who it is aimed at and is deliberately not read here.
+        Command::QueueEspionageMission { params } => {
+            Some((params.owner, "queue_espionage_mission"))
+        }
         Command::Turn(_)
         | Command::ResetMap { .. }
         | Command::Rollback { .. }
+        // The two espionage CATALOG verbs. Neither names a faction anywhere in its payload: they
+        // edit `EspionageCatalog` — the agent-generator templates and the queue defaults — which is
+        // tuning for the whole world, the same shape as `SetCrisisAutoSeed` and `ReloadConfig`.
         | Command::UpdateEspionageGenerators { .. }
-        | Command::QueueEspionageMission { .. }
         | Command::UpdateEspionageQueueDefaults { .. }
         | Command::ReloadConfig { .. }
         | Command::SetCrisisAutoSeed { .. }
@@ -11472,13 +11560,6 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
     }
 }
 
-/// Roll the world back to `tick`.
-///
-/// The world is rebuilt from [`CommandLog`]'s origin `SimState` replayed forward — the save state,
-/// which carries everything a turn reads — and the client's frame is then **derived from that
-/// restored world** by recapturing it, not fetched from a parallel archive. There is one history of
-/// worlds, so there is nothing for a second one to disagree with;
-/// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` asserts the result end to end.
 /// **Answer `Command::Resync` for the asking connection's seat.**
 ///
 /// The client asks for this when it cannot apply a delta (`docs/plan_delta_streaming.md` §3.3), so
@@ -11533,6 +11614,13 @@ fn handle_resync(
     }
 }
 
+/// Roll the world back to `tick`.
+///
+/// The world is rebuilt from [`CommandLog`]'s origin `SimState` replayed forward — the save state,
+/// which carries everything a turn reads — and the client's frame is then **derived from that
+/// restored world** by recapturing it, not fetched from a parallel archive. There is one history of
+/// worlds, so there is nothing for a second one to disagree with;
+/// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` asserts the result end to end.
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
@@ -21065,6 +21153,10 @@ mod tests {
     /// `autosave_interval_turns == 0` is autosave off — see [`two_seat_world`].
     const NO_AUTOSAVE: u64 = 0;
 
+    /// The loop's `world_active` flag, for the fixtures that have generated a world. The idle boot
+    /// app is the only `false`, and nothing in the seat cases runs on it.
+    const WORLD_IS_ACTIVE: bool = true;
+
     /// **Two seats on one world** — [`build_world_app`]'s world with a rival in the roster, so the
     /// turn queue awaits two factions.
     ///
@@ -21845,5 +21937,325 @@ mod tests {
 
         drop(second_client);
         server.join().expect("the accept loop exits cleanly");
+    }
+
+    /// ⛔ **FOG OFF IS A CONVENIENCE WITH ONE PLAYER AND A DISCLOSURE WITH TWO.**
+    ///
+    /// `fog_enabled` is read by the **capture**, not by a renderer: with it false
+    /// `improvement_is_legible` short-circuits and every seat's frame publishes every rival patch's
+    /// owner, its progress and its true carrying capacity, and the foreign-band redaction stops.
+    /// `factions.md` says it must never become a disclosure switch, so a seated second player is what
+    /// closes it — refused for **everyone**, the host included, because with two players in the world
+    /// the operator channel turning fog off discloses just as much.
+    ///
+    /// The single-seat half is the regression that matters: the `F` key and the Options toggle are
+    /// shipped behaviour and must be untouched.
+    #[test]
+    fn fog_off_is_refused_once_a_second_seat_is_occupied() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let flat = loopback_snapshot_server();
+        let fog_of =
+            |app: &bevy::prelude::App| app.world.resource::<SimulationConfig>().fog_enabled;
+
+        assert!(fog_of(&app), "a world boots with fog on");
+
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down alone");
+
+        // One player: exactly as it shipped.
+        for (sender, enabled) in [(HOME_CLIENT, false), (UNSEATED_CLIENT, true)] {
+            dispatch_connection_command(
+                &mut app,
+                sender,
+                Command::SetFogEnabled { enabled },
+                &seats,
+                &mut log,
+                &flat,
+            );
+            assert_eq!(
+                fog_of(&app),
+                enabled,
+                "with one seat occupied, connection {sender} must toggle fog exactly as the F key \
+                 and the Options switch always have"
+            );
+        }
+
+        // A second player sits down, and the switch closes — for the seated connections and for the
+        // host alike.
+        let logged_before_the_refusals = log.as_ref().expect("the log").entries.len();
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the second player sits down");
+        for sender in [
+            HOME_CLIENT,
+            RIVAL_CLIENT,
+            UNSEATED_CLIENT,
+            ConnectionId::INTERNAL,
+        ] {
+            assert!(
+                !seat_authorizes(&seats, sender, &Command::SetFogEnabled { enabled: false }),
+                "connection {sender} was allowed to turn fog off with another player seated"
+            );
+            dispatch_connection_command(
+                &mut app,
+                sender,
+                Command::SetFogEnabled { enabled: false },
+                &seats,
+                &mut log,
+                &flat,
+            );
+            assert!(
+                fog_of(&app),
+                "connection {sender} turned every seat's redaction off for everyone"
+            );
+        }
+        assert_eq!(
+            log.as_ref().expect("the log").entries.len(),
+            logged_before_the_refusals,
+            "and a refused fog toggle never enters the timeline — a replay has no seats and would \
+             apply it"
+        );
+
+        // The rule is about the WORLD, not about who sent it: the second player leaves and the
+        // switch opens again.
+        assert_eq!(seats.release(RIVAL_CLIENT), Some(RIVAL));
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            Command::SetFogEnabled { enabled: false },
+            &seats,
+            &mut log,
+            &flat,
+        );
+        assert!(
+            !fog_of(&app),
+            "back to one player, fog is a convenience again"
+        );
+    }
+
+    /// The tick a queued mission names. Any value does: the gate decides before the mission is
+    /// looked up.
+    const MISSION_TICK: u64 = 3;
+    /// The agent the queued mission names, for the same reason.
+    const MISSION_AGENT: u32 = 1;
+    /// The discovery it is aimed at, likewise.
+    const MISSION_DISCOVERY: u32 = 1;
+    /// The budget adjustment the counter-intel verb carries. Any non-zero value does, for the same
+    /// reason: the gate decides before the budget is touched.
+    const BUDGET_NUDGE: f32 = 1.0;
+    /// A mission id that need not exist — the refusal under test happens before the catalog is read,
+    /// and the accepted half is observed in the timeline rather than in the roster.
+    const MISSION_ID: &str = "seat_gate_probe";
+
+    /// A mission **run by** `owner` and aimed at the other seat.
+    fn queue_mission_run_by(owner: FactionId) -> Command {
+        let target = if owner == HOME { RIVAL } else { HOME };
+        Command::QueueEspionageMission {
+            params: QueueMissionParams {
+                mission_id: EspionageMissionId::new(MISSION_ID),
+                owner,
+                target_owner: target,
+                discovery_id: MISSION_DISCOVERY,
+                agent: EspionageAgentHandle(MISSION_AGENT),
+                target_tier: None,
+                scheduled_tick: MISSION_TICK,
+            },
+        }
+    }
+
+    /// **Every espionage and counter-intel verb, with the faction it ACTS AS** — the sweep as a
+    /// table, so the family is answered in one place rather than verb by verb.
+    ///
+    /// The two catalog verbs name no faction anywhere in their payload: they edit `EspionageCatalog`
+    /// (the agent-generator templates, the queue defaults), which is world tuning of the same shape
+    /// as `SetCrisisAutoSeed`.
+    fn espionage_family(owner: FactionId) -> Vec<(&'static str, Command, Option<FactionId>)> {
+        vec![
+            (
+                "queue_espionage_mission",
+                queue_mission_run_by(owner),
+                Some(owner),
+            ),
+            (
+                "update_counter_intel_policy",
+                Command::UpdateCounterIntelPolicy {
+                    faction: owner,
+                    policy: SecurityPolicy::Standard,
+                },
+                Some(owner),
+            ),
+            (
+                "adjust_counter_intel_budget",
+                Command::AdjustCounterIntelBudget {
+                    faction: owner,
+                    reserve: None,
+                    delta: Some(scalar_from_f32(BUDGET_NUDGE)),
+                },
+                Some(owner),
+            ),
+            (
+                "update_espionage_generators",
+                Command::UpdateEspionageGenerators {
+                    updates: Vec::new(),
+                },
+                None,
+            ),
+            (
+                "update_espionage_queue_defaults",
+                Command::UpdateEspionageQueueDefaults {
+                    scheduled_tick_offset: Some(MISSION_TICK),
+                    target_tier: None,
+                },
+                None,
+            ),
+        ]
+    }
+
+    /// ⛔ **A MISSION IS QUEUED BY THE SEAT THAT RUNS IT, AND `owner` IS THAT SEAT.**
+    ///
+    /// `QueueMissionParams::owner` is the faction the mission is *run by* —
+    /// `handle_queue_espionage_mission` takes its agents out of that faction's roster and spends that
+    /// faction's budget — so a connection sending one with somebody else's `owner` is acting as
+    /// another faction. It was harmless while `commanding_faction` only fed a membership check; this
+    /// arc reuses it as the authorization classifier, which is what gave that `None` arm a
+    /// consequence.
+    ///
+    /// The `target_owner` half is asserted too: who a mission is *aimed at* is cross-faction by
+    /// construction, and a gate that read the target would refuse every real mission there is.
+    #[test]
+    fn an_espionage_mission_may_only_be_queued_by_the_seat_that_runs_it() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let flat = loopback_snapshot_server();
+
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival's client");
+
+        // The sweep: the whole family classified in one place.
+        for (label, command, acting) in espionage_family(HOME) {
+            assert_eq!(
+                commanding_faction(&command).map(|(faction, _)| faction),
+                acting,
+                "{label} names the wrong acting faction"
+            );
+        }
+
+        // The refusal, observed in the TIMELINE: a queue verb is replayable, so an authorized one is
+        // logged and a refused one must not be — a replay has no seats and would apply it.
+        dispatch_connection_command(
+            &mut app,
+            RIVAL_CLIENT,
+            queue_mission_run_by(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        assert!(
+            log.as_ref().expect("the log").entries.is_empty(),
+            "the rival's client queued a mission out of the HOME faction's roster and budget"
+        );
+
+        // And the seat's own client sends the identical command, so the refusal above is the gate
+        // and not a fixture that could never have worked.
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            queue_mission_run_by(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        assert_eq!(
+            log.as_ref().expect("the log").entries.len(),
+            1,
+            "a mission run by the sender's own seat is its order to give, whatever faction it names \
+             as the TARGET"
+        );
+    }
+
+    /// ⛔ **A DISCONNECT RESOLVES THE TURN THE DEPARTING SEAT WAS HOLDING.**
+    ///
+    /// The gate is re-assessed only by [`settle_open_turn`] or on a deadline wake, so the loop's
+    /// release arm has to reach one — [`release_seat_and_settle`] *is* that arm, and this drives it.
+    /// With the release skipping the settle, the remaining player waited out the whole
+    /// `seat_turn_timeout_seconds` for a seat that was already vacant, which contradicts the arc's
+    /// own rule that a vacant seat never holds the turn.
+    ///
+    /// **There is no sleep in this test, and that is the assertion**: the shipped timeout is a
+    /// two-minute wait, so a turn that resolves here resolved on the vacancy and not on a clock.
+    #[test]
+    fn a_disconnect_resolves_the_turn_the_departing_seat_was_holding() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let flat = loopback_snapshot_server();
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("home sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival");
+
+        let opening_tick = tick_of(&app);
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            end_turn_for(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        assert_eq!(
+            tick_of(&app),
+            opening_tick,
+            "the rival is occupied and silent, so the turn waits"
+        );
+        assert!(
+            turn_gate.deadline().is_some(),
+            "and the wait is armed on it — which is the state the disconnect has to clear"
+        );
+
+        // The rival's process dies: its read loop delivers `ReleaseSeat`.
+        release_seat_and_settle(
+            &mut app,
+            &mut seats,
+            RIVAL_CLIENT,
+            &flat,
+            &mut log,
+            &mut turn_gate,
+            WORLD_IS_ACTIVE,
+        );
+
+        assert_eq!(
+            tick_of(&app),
+            opening_tick + 1,
+            "the seat holding the turn is vacant now, so the turn resolves — the remaining players \
+             must not wait out a timeout for somebody who has gone"
+        );
+        assert_eq!(
+            turn_gate.deadline(),
+            None,
+            "and nothing is still being waited on"
+        );
+        assert_eq!(
+            logged_turns(&log),
+            1,
+            "the resolved turn is in the timeline"
+        );
+        assert_eq!(
+            logged_orders(&log),
+            vec![HOME],
+            "only the real submission is logged; the vacant seat's rides the Turn entry"
+        );
     }
 }

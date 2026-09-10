@@ -938,6 +938,10 @@ impl SeatPublishState {
     /// order is idempotent, and missing an intermediate one is harmless. It also means the next
     /// turn's delta still carries everything the command changed.
     ///
+    /// ⛔ **The one exception is a seat's FIRST publication, which is a baseline whatever the
+    /// kind** — there is no baseline to hold and therefore nothing cumulative to lose. Stated at
+    /// the top of the body, with why a held baseline made a fresh seat's stream unrecoverable.
+    ///
     /// It used to re-encode a FULL flat snapshot instead — per world-mutating command, so a player
     /// assigning labor to three sources and moving a band paid four full encodes, which is the
     /// cost that arc removed from the turn path re-entering by the side door.
@@ -957,12 +961,29 @@ impl SeatPublishState {
         // `SnapshotHeader::hash`). Retired in #393 rather than merely moved off the turn thread,
         // because moving dead work still pays for it.
 
+        // ⛔ **A SEAT'S FIRST PUBLICATION IS ITS BASELINE, WHATEVER THE [`Publication`] KIND.**
+        //
+        // `frame_seq == 0` means this client holds nothing, so there is no baseline to hold and
+        // nothing cumulative to preserve — the two properties the recapture path's `Baseline::Hold`
+        // exists to protect. What a held baseline would give a fresh seat instead is a delta naming
+        // `base_frame_seq == 0`, a frame the client cannot apply: it drops it, asks for a resync, and
+        // `publish_full_frame_for` answers `resync.no_world` because the recapture pushed no ring
+        // entry either. That is a live game reporting itself gone, and it is reachable in normal play
+        // — a command-link reconnect drops the seat's state (`sync_seat_delivery`) and the next
+        // world-mutating command recaptures onto the fresh one.
+        //
+        // Stated here, once, rather than at each path that can create a state, so the property holds
+        // by construction instead of by every creation path remembering to force a turn first.
+        let first_publication = self.frame_seq == 0;
+
         // The baselines are mutated IN PLACE by the fan-out below, so the recapture path states its
         // intent up front rather than by declining to store a returned map: a mid-tick recapture
         // holds the baseline where the last resolved turn left it, which is what makes its deltas
         // cumulative.
         let write = match kind {
             Publication::Turn => Baseline::Advance,
+            // A first publication advances for the reason above; every later recapture holds.
+            Publication::Recapture if first_publication => Baseline::Advance,
             Publication::Recapture => Baseline::Hold,
         };
 
@@ -1260,7 +1281,11 @@ impl SeatPublishState {
         // out as a full snapshot — a first-turn delta is not equivalent to one, because a field
         // that happens to equal its default compares unchanged and is never sent.
         let (frame_seq, base_frame_seq) = self.next_publication();
-        let first_publication = base_frame_seq == 0;
+        debug_assert_eq!(
+            first_publication,
+            base_frame_seq == 0,
+            "`first_publication` is read before the sequence is claimed and must mean the same thing after"
+        );
         let mut snapshot = snapshot;
         snapshot.header.frame_seq = frame_seq;
         let mut delta = delta;
@@ -1275,7 +1300,7 @@ impl SeatPublishState {
             Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()))
         };
 
-        if kind == Publication::Recapture {
+        if kind == Publication::Recapture && !first_publication {
             // Re-baseline the ring's CURRENT entry so a rollback to this tick restores the
             // post-command world, then stop: no baseline commit, no new ring entry.
             self.last_snapshot = Some(snapshot_arc);
@@ -3771,13 +3796,17 @@ pub struct SnapshotCaptureMode {
 /// | [`recapture_snapshot_in_place`] | **refreshed, never pushed** | held | delta |
 /// | this | pushed | held | full |
 ///
+/// The recapture row describes a seat that already holds a frame; a seat's *first* publication is a
+/// baseline whatever the [`Publication`] kind (see `SeatPublishState::publish`).
+///
 /// It exists because a world can arrive **already resolved** — a save loaded into a fresh app. Such
-/// a world must not run a turn (it would age the population it just restored) and must not merely
-/// recapture: a recapture refreshes `history.back_mut()`, and on a freshly built app the ring is
-/// empty, so there is nothing to refresh. The entry is never pushed, `latest_entry()` stays `None`,
-/// `Resync` answers `resync.no_world` forever, and the client's first frame for the new epoch is a
-/// **delta** rather than the baseline its world-handoff gate waits for. That is not a hypothetical:
-/// it is what a loaded game did.
+/// a world must not run a turn (it would age the population it just restored), and a recapture is the
+/// wrong statement of intent for it: a recapture *holds* the baseline and refreshes
+/// `history.back_mut()`, so on a freshly built app the only thing standing between it and an unusable
+/// frame is the first-publication rule. Before that rule existed the ring stayed empty,
+/// `latest_entry()` stayed `None`, `Resync` answered `resync.no_world` forever, and the client's first
+/// frame for the new epoch was a **delta** rather than the baseline its world-handoff gate waits for.
+/// That was not a hypothetical: it is what a loaded game did.
 ///
 /// `capture_snapshot` reads `SimulationTick` through a `Res` and never writes it — the advance lives
 /// in `advance_tick`, a different system in the same stage — which is what makes "full capture

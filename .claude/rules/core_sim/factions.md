@@ -305,7 +305,7 @@ clamp the server actually applies.
 
 ## Command authorization
 
-Four gates, at four different distances from the player.
+Five gates, at five different distances from the player.
 
 - **The seat, in the dispatcher, before the log.** `seat_authorizes(&SeatRegistry, ConnectionId,
   &Command)` (`bin/server.rs`) asks *is this connection the claimant of the faction this command
@@ -324,6 +324,10 @@ Four gates, at four different distances from the player.
   exist is the exact defect the gate removes (before it, such a command ran to its handler and was
   refused downstream by `no_such_band` / `wrong_faction`, which reads as a real faction that happens
   to own nothing).
+- **The seat count, for the verbs that only make sense alone.** `solo_only_verb(&Command)`
+  (`bin/server.rs`) names the verbs a *shared* world refuses whoever sends them; `seat_authorizes`
+  applies it against `SeatRegistry::is_shared`. See "Fog off is a solo verb" below — it is the whole
+  set, and the one gate keyed on how many players there are rather than on who asked.
 - **Ownership, per resolver.** `resolve_starting_unit_entity`, `resolve_expedition_entity` and
   `band_entity_and_tile` all require `cohort.faction == faction`: a band id is a durable, guessable
   handle, so a resolver matching on the id alone would hand a caller another faction's band.
@@ -331,9 +335,26 @@ Four gates, at four different distances from the player.
   ("Band {id} is not one of your people…"); the resolver's gate is defence in depth behind it, not
   its replacement.
 
-**A faction named inside a payload is not a commanding faction and is not gated.** Espionage verbs
-legitimately name another faction as owner or target, and `resolve_shipment` deliberately never asks
-faction at all — a cross-faction trade destination works by construction.
+**A faction in a payload is gated when the verb ACTS AS it, and free when the verb only NAMES it.**
+The distinction is the verb's own, not the envelope's: `Command::QueueEspionageMission` carries
+`QueueMissionParams::owner`, and `handle_queue_espionage_mission` takes the agent out of *that*
+faction's roster and spends *that* faction's budget — so `commanding_faction` returns it, exactly as
+it returns the `faction` on the envelope of `UpdateCounterIntelPolicy` and `AdjustCounterIntelBudget`.
+A **target** is the free half: `QueueMissionParams::target_owner` is who the mission is aimed at, and
+`resolve_shipment` deliberately never asks faction at all — a cross-faction trade destination works by
+construction.
+
+The two espionage **catalog** verbs, `UpdateEspionageGenerators` and `UpdateEspionageQueueDefaults`,
+name no faction anywhere: they edit `EspionageCatalog` — the agent-generator templates and the queue
+defaults — which is world tuning of the same shape as `SetCrisisAutoSeed`. `commanding_faction`
+answering `None` for those two is a statement about their payload, not an exemption.
+
+> ⛔ **THE `None` ARM IS NOW AN AUTHORIZATION DECISION, WHICH IT WAS NOT BEFORE SEATS.**
+> `commanding_faction` used to feed only the membership check, so answering `None` for a
+> faction-bearing payload merely skipped a registry lookup — invisible. `seat_authorizes` reuses the
+> same classifier, so `None` now reads *"anybody may send this"*. That is how a queued espionage
+> mission came to be sendable with another seat's `owner`: the arm was written when it cost nothing.
+> A new verb carrying a faction in its payload must say which half it is.
 
 ## Seats — a connection claims the faction it drives
 
@@ -397,6 +418,11 @@ Two consequences worth stating:
   so a released seat's old token names nothing from that moment — which is the same property
   `set_seats` gives the delivery side (`snapshot-socket.md`).
 
+`command.proto`'s `ClaimSeatReply.seat_token` comment carries the same contract, in the same words:
+that comment is the **only** statement of it a third-party client author reads, so a `.proto` calling
+it a legible connection id invites exactly the logging the redacted `Debug` makes unrepresentable in
+Rust and the client mirrors with `SEAT_TOKEN_LOG_REDACTION`.
+
 ⛔ **A token never enters the simulation.** It is session state like the rest of `seats.rs`: not in
 `SimState`, not in the command log, not in a published frame, and drawn from a source no `map_seed`
 can reach. That is what keeps `determinism.rs` and `replay_determinism.rs` blind to it — a token
@@ -440,10 +466,36 @@ the operator channel (the Inspector, the CLI, `ConnectionId::INTERNAL`). That is
 this phase can express, claiming being explicitly not authentication, and it buys the property the
 plan asks for — a *player* cannot rewind the world the other players are in.
 
+### Fog off is a solo verb, and a seated second player closes it
+
+`fog_enabled` is read by the **capture**, not by a renderer. `snapshot_forage_patches`'
+`improvement_is_legible` short-circuits on `!fog_enabled`, so with fog off *every* seat's frame
+publishes every rival patch's `owner`, its cultivation and field progress, its rung yields and its true
+`carrying_capacity`; the foreign-band redaction drops to tier 2 for every band on the map, and
+`herd_is_visible` stops filtering. So `set_fog` is a convenience while there is nobody to disclose to
+and a **disclosure switch** the moment there is — which is what the callout under "the herd path's
+visibility seam" forbids it from becoming.
+
+The rule is therefore about the *world*, not about the sender: `solo_only_verb` names the verb and
+`SeatRegistry::is_shared` answers whether a second seat is occupied, and a refusal is logged
+(`command.rejected=another_player_is_seated`). With one seat — single player, the `F` key, the Options
+switch, every dev session — nothing changes at all, and the switch opens again when the second player
+leaves.
+
+> ⛔ **THIS IS DELIBERATELY NOT A HOST VERB.** "Host" means *holds no seat*, and any process may
+> connect and simply decline to claim one — so host-gating `set_fog` would move the hole rather than
+> close it. It is refused from the operator channel too, for the same reason it is refused from a seat:
+> with two players in the world, fog off discloses both of their worlds to both of them.
+>
+> Nor is it only a grief vector. The client pushes its local `ClientSettings.fog_of_war_enabled`
+> preference and re-checks it on every snapshot, so **two players with opposite preferences would flip
+> the world's fog against each other indefinitely**, one command per frame each.
+
 After a rollback the world is behind every occupant's memory and plans. The full frame
-`handle_rollback` publishes **is** the `Command::Resync` answer; what the seat protocol adds is naming
-who it was for (`rollback.resync_delivered`, one line per claimant), because delivery is still one
-broadcast to every stream client.
+`handle_rollback` publishes **is** the `Command::Resync` answer — and there is one per seat.
+`publish_full_frame_for_all()` re-baselines every seat and `deliver(seat, frame)` addresses each
+frame to that seat's own stream clients, so a rewind hands no seat another's world;
+`rollback.resync_delivered` names who each one was for, one line per claimant.
 
 ### A question is gated too, and a refusal comes back as a reply
 
@@ -502,6 +554,14 @@ model decides *which of those the live loop waits for*, in `SeatTurnGate::assess
 The main loop blocks on `recv_deadline` when a wait is armed and on plain `recv` when it is not, so an
 idle server is still idle.
 
+**A `ReleaseSeat` re-assesses the gate, because vacating a seat is exactly the input that changes its
+answer.** With one seat submitted and another silent the gate is armed on the silent one, so its
+disconnect makes `assess` answer `Resolve` — a vacant seat never holds the turn — and the remaining
+players must not sit out `seat_turn_timeout_seconds` for somebody who has gone. `assess` is consulted
+only by `settle_open_turn` or on a deadline wake, so `release_seat_and_settle` is the release and the
+settle in one function: the loop's arm `continue`s past the settle at the foot of the loop, and the
+two halves being separable is what let the second go missing.
+
 > ⛔ **THE TIMEOUT IS A LIVE-PATH SCHEDULING DECISION AND NEVER A RULE INSIDE THE RESOLVE.**
 > `resolve_turn_with_auto_orders` keeps its **unconditional** force-submit because `LogEntry::Turn`
 > re-enters it on replay. A real seat's submission is a logged `Command::Orders`, so a replay finds
@@ -541,6 +601,20 @@ in `sim_state_coverage.rs`'s not-sim-state table with its reason, beside `Snapsh
 released.** A fresh state has `frame_seq == 0`, which is what makes a joining seat's first frame a
 full baseline rather than a delta against rows it never received; and a stale one left behind by a
 disconnect would baseline the *next* occupant of that seat against a world it has not been sent.
+
+> ⛔ **A SEAT'S FIRST PUBLICATION IS ITS BASELINE WHATEVER THE `Publication` KIND — INCLUDING A
+> RECAPTURE.**
+> A recapture deliberately *holds* its baseline, which is what makes its deltas cumulative
+> (`turn-profiling.md`). Held on a state holding nothing there is no baseline to hold and nothing
+> cumulative to preserve, and what it produced instead was a delta naming `base_frame_seq == 0` — a
+> frame the client cannot apply. It dropped it, asked to resync, and `publish_full_frame_for` answered
+> `resync.no_world` because the same arm pushed no ring entry either; after the client's retry budget
+> it reported a **live** world as gone. `SeatPublishState::publish` states the rule once, at the top,
+> so it holds by construction rather than by each creation path remembering to force a turn first.
+>
+> Both paths reach it in normal play: a command-link reconnect drops the state (`sync_seat_delivery`)
+> and the next world-mutating command recaptures onto the fresh one; a turn is merely the case that
+> happened to be covered.
 
 **A rollback rewinds every seat, and each to its own frame.** `handle_rollback` recaptures — which
 builds a frame per audience — then `reset_all_to_latest_entry` + `publish_full_frame_for_all`, one
@@ -727,7 +801,8 @@ and an absent faction map, both read as not-visible, matching the all-unexplored
 > Fog decides what you can **see**; it is not an entitlement switch. With fog off every foreign band
 > gets a row — you can see where their camps are — and every one of those rows is still **redacted**.
 > Wiring `fog_enabled` into the ownership branch would turn a rendering/debug convenience into a
-> data-disclosure toggle, which is the failure this callout exists to name.
+> data-disclosure toggle, which is the failure this callout exists to name. The patch path made it one
+> anyway, from the other end — see "Fog off is a solo verb" for the gate that closes it.
 
 ### What follows from redacting, downstream of the row
 

@@ -298,10 +298,10 @@ message ClaimSeatReply {
   // A machine-readable snake_case token when `ok` is false ("unknown_seat", "seat_occupied",
   // "already_seated"); the client owns the prose.
   string error = 3;
-  // **The connection's own id, handed back as the token the STREAM socket presents** so the two
-  // sockets of one seat can be correlated (plan 7 leaves the mechanism open; this is it). Only
-  // meaningful once frames are delivered per seat rather than broadcast, so nothing reads it yet.
-  // 0 on a refusal.
+  // **A per-claim bearer secret: the token this seat's STREAM socket must present** to be sent this
+  // seat's frames, written as its first eight bytes little-endian. A random u64, NOT the connection's
+  // id - a stream that presents it receives that seat's private world, so treat it as a secret: hold
+  // it, present it, and keep it out of anything you log. 0 on a refusal.
   uint64 seat_token = 4;
 }
 

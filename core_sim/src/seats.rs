@@ -235,6 +235,15 @@ impl SeatRegistry {
         self.claims.keys().copied().collect()
     }
 
+    /// **Is there another player in this world?** More than one seat occupied.
+    ///
+    /// A predicate rather than a count comparison at the call site, because it is the *meaning* that
+    /// the one rule keyed on it needs: `SetFogEnabled` is a convenience while there is nobody to
+    /// disclose to and a disclosure switch the moment there is (`server.rs`'s `solo_only_verb`).
+    pub fn is_shared(&self) -> bool {
+        self.claims.len() > 1
+    }
+
     /// Every claimant, in seat-id order — who a world-wide event has to reach, and the id its log
     /// lines name.
     pub fn claimants(&self) -> Vec<(FactionId, ConnectionId)> {
