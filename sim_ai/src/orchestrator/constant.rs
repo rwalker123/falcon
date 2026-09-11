@@ -116,6 +116,18 @@ impl Orchestrator for ConstantStance {
         self.current = Some(plan.clone());
         Some(plan)
     }
+
+    /// Drop a plan the new epoch is earlier than, so the very next `plan` is due at the new tick
+    /// rather than waiting out a `since_turn` from a world that no longer exists.
+    fn forget_after(&mut self, tick: u64) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|plan| plan.since_turn > tick)
+        {
+            self.current = None;
+        }
+    }
 }
 
 #[cfg(test)]

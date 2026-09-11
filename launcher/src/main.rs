@@ -125,9 +125,16 @@ const AI_STEM: &str = "sim_ai";
 /// control the bench measures every other brain against — a default meant for
 /// tests. The shipped game wants rivals that play, so the launcher names the
 /// brain instead of inheriting that one. Contract twin of `BrainKind::as_str`
-/// in `sim_ai/src/main.rs`; the value is passed through verbatim and `sim_ai`
-/// refuses an unknown one.
+/// in `sim_ai/src/main.rs`.
 const AI_BRAIN_DEFAULT: &str = "utility";
+/// ⛔ **EVERY BRAIN `sim_ai` ACCEPTS, RESTATED — because a rejected one dies
+/// invisibly.** `sim_ai`'s clap refuses an unknown `--brain`, but it does so
+/// *after* the launcher has spawned it: `spawn()` succeeds, the child exits 2 in
+/// milliseconds, the reconcile loop reaps the corpse, and a typo in
+/// [`ENV_AI_BRAIN`] costs the run every rival with nothing said anywhere. So the
+/// value is checked here, before anything starts. Contract twin of `BrainKind`
+/// in `sim_ai/src/main.rs`: a variant added there is added here.
+const AI_BRAIN_NAMES: [&str; 3] = ["pass", "scripted", "utility"];
 /// Replaces [`AI_BRAIN_DEFAULT`] for one run — how a developer puts the rivals
 /// back on `pass` (or on `scripted`) without a rebuild, the same way the server's
 /// own levers are set (`core_sim/CLAUDE.md` → Environment Overrides). Empty or
@@ -208,6 +215,10 @@ fn run() -> Result<(), String> {
     // object covers this process being killed outright. It is created before the
     // first spawn so that every child — server and seats alike — joins it the
     // instant it exists.
+    // Before anything is spawned: a `SIM_AI_BRAIN` the AI would refuse is a run
+    // with no rivals at all, so it stops here, with the offending value named.
+    let rival_brain = rival_brain()?;
+
     let group = ProcessGroup::kill_on_close()?;
 
     let server = Command::new(&layout.server)
@@ -223,7 +234,7 @@ fn run() -> Result<(), String> {
 
     // From here on every exit path must reap every child, so ownership moves
     // into a guard rather than being cleaned up at each `return`.
-    let mut session = Session::new(server, ports_file.clone());
+    let mut session = Session::new(server, ports_file.clone(), rival_brain);
     group.adopt(session.server(), SERVER_LABEL)?;
 
     wait_for_ready(&mut session, &ports_file)?;
@@ -458,21 +469,66 @@ struct RosterEvent {
     world_epoch: u64,
 }
 
+/// A line that **is** the roster event and whose fields the launcher could not
+/// read: the contract broke, and that is a different thing from a line about
+/// something else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RosterEventRejected {
+    /// Which clause of the contract failed, in the launcher's words.
+    reason: &'static str,
+    /// The frame verbatim, so the mismatch is legible rather than described.
+    payload: String,
+}
+
+impl RosterEventRejected {
+    fn message(&self) -> String {
+        format!(
+            "the server's {ROSTER_EVENT_MESSAGE} event {}, so no rival players could be started \
+             for this world: {}",
+            self.reason, self.payload
+        )
+    }
+}
+
 /// The `seats.roster` event, if this log line is one. The contract twin of
-/// `retain_claimed_seats` in `core_sim/src/bin/server.rs`; any other line —
-/// another event, a malformed frame — is `None`.
-fn parse_roster_event(line: &[u8]) -> Option<RosterEvent> {
+/// `core_sim::log_stream::emit_seats_roster`.
+///
+/// ⛔ **THREE ANSWERS, NOT TWO.** `None` is *some other line* — the log stream
+/// carries every event the server emits, and skipping them is the normal case.
+/// `Some(Err(_))` is this line **being** the roster event and failing to parse,
+/// which is the launcher's whole contract broken and must never be swallowed as
+/// though it were one more line about something else: changing the event's
+/// `factions` field from `%` to `?` is enough to produce it, and the packaged
+/// game then ships with zero rivals and zero diagnostics.
+fn parse_roster_event(line: &[u8]) -> Option<Result<RosterEvent, RosterEventRejected>> {
     let envelope: serde_json::Value = serde_json::from_slice(line).ok()?;
     if envelope.get("target")?.as_str()? != ROSTER_EVENT_TARGET
         || envelope.get("message")?.as_str()? != ROSTER_EVENT_MESSAGE
     {
         return None;
     }
-    let fields = envelope.get("fields")?;
-    let factions: Vec<u32> =
-        serde_json::from_str(fields.get(ROSTER_FIELD_FACTIONS)?.as_str()?).ok()?;
-    let world_epoch = fields.get(ROSTER_FIELD_WORLD_EPOCH)?.as_u64()?;
-    Some(RosterEvent {
+    Some(
+        roster_fields(&envelope).map_err(|reason| RosterEventRejected {
+            reason,
+            payload: String::from_utf8_lossy(line).into_owned(),
+        }),
+    )
+}
+
+/// The roster event's two fields, or the clause of the contract that failed.
+fn roster_fields(envelope: &serde_json::Value) -> Result<RosterEvent, &'static str> {
+    let fields = envelope.get("fields").ok_or("carries no `fields` object")?;
+    let factions = fields
+        .get(ROSTER_FIELD_FACTIONS)
+        .and_then(serde_json::Value::as_str)
+        .ok_or("names no `factions` string (a tracing field recorded with `?` quotes itself)")?;
+    let factions: Vec<u32> = serde_json::from_str(factions)
+        .map_err(|_| "carries a `factions` string that is not a JSON array of faction ids")?;
+    let world_epoch = fields
+        .get(ROSTER_FIELD_WORLD_EPOCH)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("names no numeric `world_epoch`")?;
+    Ok(RosterEvent {
         factions,
         world_epoch,
     })
@@ -517,10 +573,14 @@ fn watch_roster(addr: SocketAddr, sender: Sender<RosterEvent>) {
     loop {
         if let Ok(mut stream) = TcpStream::connect(addr) {
             while let Some(line) = read_log_frame(&mut stream) {
-                if let Some(event) = parse_roster_event(&line) {
-                    if sender.send(event).is_err() {
-                        return;
+                match parse_roster_event(&line) {
+                    Some(Ok(event)) => {
+                        if sender.send(event).is_err() {
+                            return;
+                        }
                     }
+                    Some(Err(rejected)) => report_warning(&rejected.message()),
+                    None => {}
                 }
             }
         }
@@ -530,7 +590,10 @@ fn watch_roster(addr: SocketAddr, sender: Sender<RosterEvent>) {
 
 /// One `[u32 LE length][JSON]` frame off the log stream, or `None` on EOF or a
 /// frame that cannot be a log line.
-fn read_log_frame(stream: &mut TcpStream) -> Option<Vec<u8>> {
+///
+/// Generic over the reader only so the contract test can feed it bytes the
+/// server's own encoder produced, rather than a socket.
+fn read_log_frame<R: Read>(stream: &mut R) -> Option<Vec<u8>> {
     let mut prefix = [0u8; LOG_FRAME_PREFIX_BYTES];
     stream.read_exact(&mut prefix).ok()?;
     let len = u32::from_le_bytes(prefix) as usize;
@@ -649,15 +712,19 @@ struct Session {
     /// One `sim_ai` per rival faction the server's roster names, keyed by faction.
     rivals: Vec<(u32, Child)>,
     ports_file: PathBuf,
+    /// The `--brain` every rival is spawned on, resolved and **validated** before
+    /// this session existed ([`rival_brain`]).
+    rival_brain: String,
 }
 
 impl Session {
-    fn new(server: Child, ports_file: PathBuf) -> Self {
+    fn new(server: Child, ports_file: PathBuf, rival_brain: String) -> Self {
         Self {
             server,
             players: Vec::new(),
             rivals: Vec::new(),
             ports_file,
+            rival_brain,
         }
     }
 
@@ -757,9 +824,28 @@ impl Session {
     ) -> Result<(), String> {
         let mut kept = Vec::with_capacity(self.rivals.len());
         for (faction, mut child) in self.rivals.drain(..) {
-            let exited = matches!(child.try_wait(), Ok(Some(_)));
-            if exited {
-                continue;
+            // ⛔ **A RIVAL THAT DIED SAYS SO.** Reaping in silence covered every
+            // way this seat can fail at startup — a `--brain` clap refuses, a seat
+            // claim the server will not grant, a panic — and roster events fire
+            // only on a world build, so within one world the seat then stays empty
+            // for the rest of the session with nothing anywhere to read.
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        report_warning(&format!(
+                            "{AI_PLAYER_LABEL} on seat {faction} exited ({status}); that seat is \
+                             unplayed until the next world build."
+                        ));
+                    }
+                    continue;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    report_warning(&format!(
+                        "Lost track of {AI_PLAYER_LABEL} on seat {faction}: {err}"
+                    ));
+                    continue;
+                }
             }
             if roster.contains(&faction) {
                 kept.push((faction, child));
@@ -794,7 +880,7 @@ impl Session {
             .arg("--faction")
             .arg(faction.to_string())
             .arg("--brain")
-            .arg(rival_brain())
+            .arg(&self.rival_brain)
             .current_dir(data_dir)
             .env(ENV_PORTS_FILE, ports_file)
             .stdin(Stdio::null())
@@ -843,18 +929,30 @@ impl Drop for Session {
     }
 }
 
-/// The brain a rival is spawned on: `$SIM_AI_BRAIN` when it is set to something,
-/// else [`AI_BRAIN_DEFAULT`].
-fn rival_brain() -> String {
+/// The brain every rival is spawned on: `$SIM_AI_BRAIN` when it is set to
+/// something, else [`AI_BRAIN_DEFAULT`]. Resolved once, before the server
+/// starts, so a rejected value stops the launch loudly instead of costing every
+/// rival silently.
+fn rival_brain() -> Result<String, String> {
     brain_from_override(std::env::var(ENV_AI_BRAIN).ok())
 }
 
 /// [`rival_brain`]'s rule, apart from the environment so it can be tested
-/// without one: an override is honoured only when it carries a value.
-fn brain_from_override(override_value: Option<String>) -> String {
-    override_value
-        .filter(|brain| !brain.trim().is_empty())
-        .unwrap_or_else(|| AI_BRAIN_DEFAULT.to_owned())
+/// without one: an override is honoured only when it carries a value, and only
+/// when that value names a brain [`AI_BRAIN_NAMES`] holds.
+fn brain_from_override(override_value: Option<String>) -> Result<String, String> {
+    let Some(named) = override_value.filter(|brain| !brain.trim().is_empty()) else {
+        return Ok(AI_BRAIN_DEFAULT.to_owned());
+    };
+    let named = named.trim().to_owned();
+    if AI_BRAIN_NAMES.contains(&named.as_str()) {
+        return Ok(named);
+    }
+    Err(format!(
+        "{ENV_AI_BRAIN} is set to `{named}`, which is not a brain {AI_STEM} plays. The choices \
+         are {}.",
+        AI_BRAIN_NAMES.join(", ")
+    ))
 }
 
 /// Deletes the handshake file if present, ignoring failure — a stale file is an
@@ -997,6 +1095,17 @@ fn report_error(message: &str) {
     show_error_dialog(message);
 }
 
+/// A problem the run **survives**, said out loud rather than swallowed.
+///
+/// No dialog: these arrive from the supervisor thread while the player is in the
+/// game, and a modal box per malformed log line would be worse than the fault it
+/// reports. `stderr` is the launcher's one diagnostic channel — it reaches a
+/// developer running the package from a terminal, and the packaged Windows build
+/// has no console at all, which is exactly why the swallowing was invisible.
+fn report_warning(message: &str) {
+    eprintln!("{ERROR_DIALOG_TITLE}: warning: {message}");
+}
+
 #[cfg(windows)]
 fn show_error_dialog(message: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
@@ -1084,13 +1193,34 @@ mod tests {
     /// comparison.
     #[test]
     fn a_rival_spawns_on_the_utility_brain_unless_the_environment_says_otherwise() {
-        assert_eq!(brain_from_override(None), AI_BRAIN_DEFAULT);
-        assert_eq!(brain_from_override(Some(String::new())), AI_BRAIN_DEFAULT);
+        let default = Ok(AI_BRAIN_DEFAULT.to_owned());
+        assert_eq!(brain_from_override(None), default);
+        assert_eq!(brain_from_override(Some(String::new())), default);
+        assert_eq!(brain_from_override(Some("   ".to_owned())), default);
         assert_eq!(
-            brain_from_override(Some("   ".to_owned())),
-            AI_BRAIN_DEFAULT
+            brain_from_override(Some("pass".to_owned())),
+            Ok("pass".to_owned())
         );
-        assert_eq!(brain_from_override(Some("pass".to_owned())), "pass");
+    }
+
+    /// ⛔ **A BRAIN `sim_ai` WOULD REFUSE NEVER REACHES A `spawn()`.** `spawn`
+    /// succeeds for any name, clap then rejects it, and the child is gone in
+    /// milliseconds — reaped without a word, leaving a game with no rivals and
+    /// no diagnostics. The check is here, and the message names the value.
+    #[test]
+    fn a_brain_the_ai_does_not_play_is_refused_with_the_value_named() {
+        let refused = brain_from_override(Some("utilty".to_owned()))
+            .expect_err("a misspelt brain is not a brain");
+        assert!(refused.contains("utilty"), "{refused}");
+        assert!(refused.contains(ENV_AI_BRAIN), "{refused}");
+        for brain in AI_BRAIN_NAMES {
+            assert!(refused.contains(brain), "{refused}");
+            assert_eq!(
+                brain_from_override(Some(brain.to_owned())),
+                Ok(brain.to_owned()),
+                "every brain the AI plays is accepted"
+            );
+        }
     }
 
     /// The contract twin of the server's `seats.roster` event: the shape its
@@ -1100,14 +1230,98 @@ mod tests {
         let line = br#"{"timestamp_ms":1,"level":"INFO","target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"[0,1,2]","world_epoch":3}}"#;
         assert_eq!(
             parse_roster_event(line),
-            Some(RosterEvent {
+            Some(Ok(RosterEvent {
                 factions: vec![0, 1, 2],
                 world_epoch: 3,
-            })
+            }))
         );
         let other = br#"{"timestamp_ms":1,"level":"INFO","target":"shadow_scale::server","message":"seat.claimed","fields":{"faction":"1"}}"#;
         assert_eq!(parse_roster_event(other), None);
         assert_eq!(parse_roster_event(b"not json"), None);
+    }
+
+    /// ⛔ **A ROSTER LINE THE PARSER REFUSES IS NOT A LINE TO SKIP.** It is the
+    /// supervisor contract broken, and the launcher has to say so — the exact
+    /// shape `?factions` instead of `%factions` produces, which is one character
+    /// in the server and costs the packaged game every rival.
+    #[test]
+    fn a_roster_line_the_parser_refuses_is_rejected_and_not_silently_skipped() {
+        // `?factions` — the tracing Debug sigil — quotes the string it records.
+        let debug_sigil = br#"{"level":"INFO","target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"\"[0,1,2]\"","world_epoch":3}}"#;
+        let rejected = match parse_roster_event(debug_sigil) {
+            Some(Err(rejected)) => rejected,
+            other => panic!("a roster-shaped line must not read as another line: {other:?}"),
+        };
+        let message = rejected.message();
+        assert!(message.contains(ROSTER_EVENT_MESSAGE), "{message}");
+        assert!(
+            message.contains(ROSTER_FIELD_FACTIONS) && message.contains("[0,1,2]"),
+            "the offending frame is quoted back verbatim: {message}"
+        );
+        // The other two clauses answer the same way.
+        assert!(
+            matches!(
+                parse_roster_event(
+                    br#"{"target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"[0]"}}"#
+                ),
+                Some(Err(_))
+            ),
+            "a roster event with no world_epoch"
+        );
+        assert!(
+            matches!(
+                parse_roster_event(
+                    br#"{"target":"shadow_scale::server","message":"seats.roster"}"#
+                ),
+                Some(Err(_))
+            ),
+            "a roster event with no fields"
+        );
+    }
+
+    /// ⛔ **PINNED TO THE SERVER'S OWN EMIT, NOT TO A HAND-WRITTEN STRING.** The
+    /// only guard this contract had asserted against a JSON literal, so the
+    /// launcher and the server could drift apart without a single test moving:
+    /// changing `%factions` to `?factions` in the server left every launcher test
+    /// green and shipped a game with zero rivals.
+    ///
+    /// So this drives the **real** chain — `core_sim::log_stream::emit_seats_roster`
+    /// through the **real** `LogForwardLayer`, serialized the way the log-stream
+    /// server serializes it, framed the way it frames it — into `read_log_frame`
+    /// and `parse_roster_event`.
+    #[test]
+    fn the_servers_own_roster_emit_parses() {
+        use tracing_subscriber::prelude::*;
+
+        const FACTIONS: [u32; 3] = [0, 1, 2];
+        const WORLD_EPOCH: u32 = 3;
+
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let subscriber =
+            tracing_subscriber::registry().with(core_sim::log_stream::LogForwardLayer::new(sender));
+        tracing::subscriber::with_default(subscriber, || {
+            core_sim::log_stream::emit_seats_roster(&FACTIONS, WORLD_EPOCH);
+        });
+        let envelope = receiver.try_recv().expect("the server emitted the event");
+
+        // `run_log_stream`'s own encoding: the envelope as JSON behind a u32 LE length.
+        let payload = serde_json::to_vec(&envelope).expect("the envelope serialises");
+        let mut framed = (payload.len() as u32).to_le_bytes().to_vec();
+        framed.extend_from_slice(&payload);
+        let mut stream = std::io::Cursor::new(framed);
+        let line = read_log_frame(&mut stream).expect("one whole frame");
+
+        assert_eq!(
+            parse_roster_event(&line),
+            Some(Ok(RosterEvent {
+                factions: FACTIONS.to_vec(),
+                world_epoch: WORLD_EPOCH as u64,
+            })),
+            "the launcher reads what the server writes: {}",
+            String::from_utf8_lossy(&line)
+        );
+        assert_eq!(envelope.target, ROSTER_EVENT_TARGET);
+        assert_eq!(envelope.message, ROSTER_EVENT_MESSAGE);
     }
 
     /// Reconciliation, on stand-in children: a roster spawns one rival per
@@ -1127,7 +1341,11 @@ mod tests {
         let data_dir = std::env::temp_dir();
         let group = ProcessGroup::kill_on_close().expect("a process group");
         let stand_in = Path::new("sleep");
-        let mut session = Session::new(spawn_sleeper(), ports_file.clone());
+        let mut session = Session::new(
+            spawn_sleeper(),
+            ports_file.clone(),
+            AI_BRAIN_DEFAULT.to_owned(),
+        );
 
         // `sleep` needs a duration; the stand-in program gets the faction as its
         // argument, which is a legal (short) duration — long enough for the
@@ -1202,7 +1420,11 @@ mod tests {
         /// A rival's stand-in, so the reap covers the supervised children too.
         const A_RIVAL_FACTION: u32 = 1;
 
-        let mut session = Session::new(spawn_sleeper(), ports_file.clone());
+        let mut session = Session::new(
+            spawn_sleeper(),
+            ports_file.clone(),
+            AI_BRAIN_DEFAULT.to_owned(),
+        );
         let mut pids = vec![session.server().id()];
         for _ in 0..PLAYER_COUNT {
             pids.push(session.adopt_player(spawn_sleeper()).id());

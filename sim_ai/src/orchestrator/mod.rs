@@ -126,4 +126,16 @@ pub trait Orchestrator {
         profile: &AiProfile,
         alarms: &[Alarm],
     ) -> Option<Plan>;
+
+    /// ⛔ **A DROPPED PLAN MUST DROP THE CADENCE THAT MADE IT.** A full frame at `tick` replaced the
+    /// view with a world the standing plan is *later* than (a `new_game`, a load, a rollback), so
+    /// the brain forgets it — and unless the orchestrator forgets its own bookkeeping with it, the
+    /// next `plan` is still measured against the old world's `since_turn`.
+    ///
+    /// That is not a cosmetic mismatch. The new epoch starts at tick 0, `tick − since_turn`
+    /// underflows to nothing, no re-plan is due, and `Composite::plan_for` falls back to
+    /// [`Plan::pass_through`] — empty budgets and zero priorities, so `Food::budget_workers` is 0,
+    /// every consideration returns `None` and the seat plays nothing at all until the old world's
+    /// cadence would have come round.
+    fn forget_after(&mut self, _tick: u64) {}
 }

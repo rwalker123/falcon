@@ -383,9 +383,10 @@ path per machine, and a stray process can resolve to another session's server.
 
 ### The launcher
 
-**The rival roster is not known at boot.** The server decides it at every world build — boot,
-`new_game` from the client's menu (which picks the rival count), a load — and `retain_claimed_seats`
-drops the claims a rebuild orphans. So the launcher cannot fill rival seats from a static list; it
+**The rival roster is not known at boot.** The server decides it at every world build —
+`reset_map`, `new_game` from the client's menu (which picks the rival count), `load_game` — and
+`retain_claimed_seats` drops the claims a rebuild orphans. A bare boot builds no world and so
+announces no roster; the first event of a session comes from the first of those three. So the launcher cannot fill rival seats from a static list; it
 **supervises** them. The server emits one structured event, `seats.roster` (the registered faction
 ids and the `world_epoch`), at each world build, on the log stream it already publishes
 (`core_sim/src/log_stream.rs`, JSON lines on the `log` port). The launcher reads that port on a

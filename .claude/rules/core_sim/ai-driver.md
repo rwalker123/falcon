@@ -132,7 +132,11 @@ a `warn!` per command the sim refused last turn — the feed's `… failed` rows
 (a `plan` record when it re-plans); every specialist proposes (an `alarm` record per alarm, queued
 for the *next* plan); the arbiter; `memory.record_choices` (the accepted intents, and the move
 target any accepted `MoveBand` carries); `memory.remember_runways`. `on_full_frame(tick)` forgets
-everything stamped later than `tick` and drops a plan adopted after it.
+everything stamped later than `tick`, drops a plan adopted after it, **and resets the orchestrator's
+goal cadence** (`Orchestrator::forget_after`) so the dropped plan is re-planned at the new epoch's
+first tick. Dropping the plan alone left `since_turn` in the future: `plan()` then returned `None`
+for a full cadence and `plan_for` fell back to `Plan::pass_through`, whose budgets and priorities are
+empty — a rival that played nothing for the first 8 turns after every New Game or Load.
 
 **`ConstantStance`.** Stance = the archetype's. Budgets = the weights of the enabled specialists
 normalised (`food_security → food`, `land_claim → land`; `contact_seeking` is read and funds nothing
@@ -167,7 +171,11 @@ job's default on the wire).
 - *idle hands* — a band's idle workers onto the source a crew of that size takes the most from,
   as many as the budget allows. Intent `food:assign:<band>`.
 - *runway* — under the alarm, the band's lowest-yielding worked row is emptied onto its highest,
-  as far as the budget reaches. `food:runway:<band>`.
+  as far as the budget reaches, **only when the highest actually pays `food.runway_gain_fraction`
+  more per worker than the lowest**. Distinctness is not improvement: two rows paying the same rate
+  otherwise produced a shuffle between identical rows every turn under the alarm, scored highest
+  exactly when the band was starving, and one-order-per-band then rejected *idle hands* as a
+  conflict. `food:runway:<band>`.
 - *overuse* — a row whose `actual_yield > sustainable_yield`, a hunt row the sim marks
   `hunt_useful_workers == 0`, or a **dead row** (below) is emptied onto the next-best source.
   `food:relieve:<source>`.
@@ -205,8 +213,9 @@ provisions_per_biomass)`) is below its `food_consumption`, and no better patch i
   posts `land.scout_workers` scouts with `assign_labor … scout <n>`, once. `land:scout:<band>`.
   ⛔ **The `scout <x> <y>` verb is retired server-side** (`command.retired=ignored`,
   `core_sim/src/bin/server.rs`); the standing scout role posts vantage points around the band.
-- *better ground* — while the runway is falling, a discovered, unowned, **unoccupied** patch within
-  the horizon with a higher **per-worker yield** than the band's own proposes `move_band`, and the
+- *better ground* — while the runway is falling, a discovered, unowned, **unoccupied**, **workable**
+  patch within the horizon with a higher **per-worker yield** than the band's own proposes
+  `move_band`, and the
   intent persists until arrival: the memory holds the target and re-proposes the same
   `land:move:<band>` each turn, which is what the commitment bonus rewards.
 - *room* — under `Expand`, a band above `land.split_size` standing on ground the faction owns
@@ -220,7 +229,16 @@ paying 0.548. Ranked on capacity, *better ground* correctly found nothing better
 starved where it stood: 17 → 5 workers, 19 hunger deaths, with `Land` silent for all 30 turns. So
 `better_patch` filters **and** maximises on `patch_per_worker_yield` — the same accessor `Food`
 rates a source with (`specialists/food.rs`), so the two specialists cannot drift apart — and
-`carrying_capacity` survives only as the tiebreak between equal rates. The alarm above is the same
+`carrying_capacity` survives only as the tiebreak between equal rates.
+
+⛔ **And on ground `Food` will actually work.** `Food::reachable_sources` filters patches on
+`is_food_site`, because `assign_labor … forage` is refused *"nobody gathers here"* off a food module
+(`plant_rung_site_refusal`, `core_sim/src/bin/server.rs`). `Land` shares that predicate
+(`workable_patch_at`, `specialists/food.rs`) on all four of its paths — `better_patch`,
+`own_per_worker_yield`, `harvest_here` and `alarm`. Rate-eligibility is one accessor pair, not two:
+without the site half, *better ground* walked the band onto a high-rate non-site patch that `Food`
+then excluded on arrival, and a non-site patch counted as "something better in view" and suppressed
+`land_short` from the other direction. The alarm above is the same
 correction: it once compared a *stock* to a *rate* (`195.0 < 4.09`) and so could never fire.
 
 ⛔ **Contact hands a band over.** The sim's knowledge migration (`advance_population_migration`,
@@ -272,6 +290,7 @@ and `rover` (expand). Each key has one consumer:
 | `food.runway_floor_turns` | `Food` | the `food_short` alarm and *runway* |
 | `food.dead_row_turns` | `Food` | consecutive poor turns before a row is dead |
 | `food.poor_yield_fraction` | `Food` | the share of the forecast a row must realize per worker |
+| `food.runway_gain_fraction` | `Food` | the per-worker gain *runway* must buy before it moves anyone |
 | `land.known_tiles_floor` | `Land` | *blind*'s floor |
 | `land.split_size` | `Land` | *room*'s band size |
 | `land.horizon_tiles` | `Land` | how far *blind* counts and *better ground* looks |

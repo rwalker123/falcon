@@ -38,8 +38,9 @@
 //! property of the whole scheme: a decoded value then says, in plain text, which wire field it came
 //! from, so an accessor wired to the wrong field is legible in a diff rather than merely different.
 //!
-//! A **boolean** leaf alternates on the parity of its path, so two flags in one table disagree and
-//! a bool↔bool swap in a decoder moves the bytes.
+//! A **boolean** leaf takes a value *sequence* across the rows of its section, one per flag of its
+//! table ([`flag_value`]), so no two flags of a table ever read alike and a bool↔bool swap in a
+//! decoder moves the bytes.
 //!
 //! Two rules keep saturation type-safe:
 //! - A string leaf is replaced **only when its default is empty**. Rust `String` fields default to
@@ -71,18 +72,26 @@ pub const GRID_W: u32 = 4;
 pub const GRID_H: u32 = 3;
 pub const GRID_CELLS: usize = (GRID_W * GRID_H) as usize;
 
-/// Rows per repeated section. Two, not one: a per-row sentinel varies with the row index, so a
+/// Rows per repeated section. More than one, so a per-row sentinel varies with the row index and a
 /// builder that returns the first element for every row (or reuses one offset) is visible.
-pub const ROWS: usize = 2;
+///
+/// ⛔ **THREE, BECAUSE A TABLE CARRIES FOUR FLAGS AND EVERY ONE OF THEM MUST TAKE BOTH VALUES.** A
+/// bool↔bool swap inside a table is only visible when the two flags disagree on some row, so each
+/// flag of a table needs its own value *sequence* across the rows ([`flag_value`]) — and a sequence
+/// that is constant leaves one of that flag's two encodings off the wire entirely, which is the
+/// hole `true`-everywhere saturation used to have. With `n` rows there are `2ⁿ − 2` non-constant
+/// sequences; the widest tables here (`herds`, `forage_patches`, `populations`) carry four flags,
+/// and two rows offer only two non-constant sequences. Three rows offer six.
+pub const ROWS: usize = 3;
 
 /// ⛔ **A ROW'S X AND Y MUST NEVER BE EQUAL.** The offset the structural fixups give a row's `y`
 /// over its `x`.
 ///
-/// Without it the two coordinates are the same number on every row of a two-row section — `i %
-/// GRID_W` and `i % GRID_H` both reduce to `i` for `i` in `{0, 1}` — and a decoder that reads
-/// `y()` into `x` and `x()` into `y` round-trips **byte-identically**: the swap is invisible to
-/// both gates. One is the smallest offset that separates them and still lands inside a 4×3 grid
-/// for every row.
+/// Without it the two coordinates are the same number on the leading rows of a section — `i %
+/// GRID_W` and `i % GRID_H` both reduce to `i` while `i` is under both — and a decoder that reads
+/// `y()` into `x` and `x()` into `y` round-trips **byte-identically** on those rows: the swap is
+/// invisible to both gates. One is the smallest offset that separates them and still lands inside
+/// a 4×3 grid for every row.
 const ROW_Y_OFFSET: u32 = 1;
 
 /// The start marker's tile — the one located row that is not part of a repeated section, so it
@@ -133,8 +142,8 @@ const REGROWTH_CURVE_SAMPLES: usize = 11;
 /// trips clean while reading every row wrong; one that is `None` on every row leaves the present
 /// form untested the same way (`build_destination_capacity` was `None` everywhere, so
 /// `decode_build_destination_capacity` was only ever handed the sentinel and a body returning
-/// `None` unconditionally passed). With [`ROWS`] = 2, seeding on the even rows puts each optional
-/// field on the wire both ways.
+/// `None` unconditionally passed). Seeding on the even rows puts each optional field on the wire
+/// both ways, for any [`ROWS`] above one.
 fn seeded_on(row: usize) -> bool {
     row.is_multiple_of(2)
 }
@@ -145,7 +154,7 @@ pub fn saturated_snapshot() -> Result<WorldSnapshot, Box<dyn Error>> {
 
     let mut value = serde_json::to_value(&seeded)?;
     assert_no_empty_arrays(&value, "")?;
-    saturate(&mut value, "");
+    saturate(&mut value, "", 0);
 
     let mut snapshot: WorldSnapshot = serde_json::from_value(value)?;
     apply_structural_fixups(&mut snapshot);
@@ -909,16 +918,20 @@ pub fn assert_no_empty_arrays(value: &serde_json::Value, path: &str) -> Result<(
     Ok(())
 }
 
-fn saturate(value: &mut serde_json::Value, path: &str) {
+/// `row` is the index of the nearest enclosing array element — the row a table belongs to, which is
+/// the axis [`flag_value`] spends to tell one flag from another. A table outside every array is row
+/// 0 and can therefore only distinguish two flags; none of the shipped ones carries more.
+fn saturate(value: &mut serde_json::Value, path: &str, row: usize) {
     match value {
         serde_json::Value::Array(items) => {
             for (i, item) in items.iter_mut().enumerate() {
-                saturate(item, &format!("{path}[{i}]"));
+                saturate(item, &format!("{path}[{i}]"), i);
             }
         }
         serde_json::Value::Object(fields) => {
             // The booleans of a table are numbered as they are walked (serde_json's map is
-            // ordered, so the numbering is stable) and alternated — see [`flag_value`].
+            // ordered, so the numbering is stable); each ordinal takes its own value sequence
+            // across the rows — see [`flag_value`].
             let mut flags = 0usize;
             for (key, field) in fields.iter_mut() {
                 let child = if path.is_empty() {
@@ -927,10 +940,10 @@ fn saturate(value: &mut serde_json::Value, path: &str) {
                     format!("{path}.{key}")
                 };
                 if let serde_json::Value::Bool(flag) = field {
-                    *flag = flag_value(path, flags);
+                    *flag = flag_value(flags, row);
                     flags += 1;
                 } else {
-                    saturate(field, &child);
+                    saturate(field, &child, row);
                 }
             }
         }
@@ -961,25 +974,42 @@ fn saturate(value: &mut serde_json::Value, path: &str) {
     }
 }
 
-/// ⛔ **NOT `true` EVERYWHERE.** The value of the `ordinal`-th boolean of the table at `path`:
-/// consecutive flags of one table **always disagree**, and the table's own path sets the phase, so
-/// the same field reads differently from one row to the next.
+/// ⛔ **NO TWO FLAGS OF ONE TABLE MAY READ THE SAME ACROSS THE ROWS.** The value of the
+/// `ordinal`-th boolean of a table standing in `row` of its section.
 ///
-/// Saturation used to set every boolean `true`, which made a bool↔bool swap inside a table
-/// invisible to both gates: `corralled` and `huntable` carried the same value, so a decoder
-/// reading one into the other round-tripped byte-identically. Alternating by ordinal is what makes
-/// a neighbouring pair legible; FlatBuffers omits a default-valued field, so the `false` half also
-/// puts every boolean's *absent* encoding on the wire.
+/// A bool↔bool swap in a decoder is only visible when the two flags **disagree somewhere**: read
+/// `huntable()` into `corralled` and re-encode, and if the two carry the same value on every row the
+/// envelope comes back byte-identical and both decode gates pass. So each ordinal is given its own
+/// *sequence* over the rows — the bits of its entry in [`FLAG_ROW_MASKS`] — and two flags of one
+/// table are then distinguishable by construction rather than by luck.
 ///
-/// ⚠ Two rows can only tell so many flags apart. A table's flags 0 and 2 (and 1 and 3) take the
-/// same value in **both** [`ROWS`], because with two rows there are only two patterns that carry
-/// both values; swapping *those* two would still round trip. The alternation covers the
-/// neighbouring pairs, which is what a mis-wired accessor most often is.
-fn flag_value(path: &str, ordinal: usize) -> bool {
-    (hash(path) as usize)
-        .wrapping_add(ordinal)
-        .is_multiple_of(2)
+/// Saturation used to set every boolean `true`, which made every such swap invisible. Alternating
+/// by ordinal against a path-derived phase fixed the neighbouring pairs and left flags 0 and 2 (and
+/// 1 and 3) reading alike in **both** rows, which is exactly the `corralled` / `huntable` pair it
+/// was introduced to catch.
+///
+/// Every mask is non-constant, so each flag is `true` on some row and `false` on another:
+/// FlatBuffers omits a default-valued field, so that puts both the present and the *absent*
+/// encoding of every boolean on the wire.
+fn flag_value(ordinal: usize, row: usize) -> bool {
+    let mask = FLAG_ROW_MASKS[ordinal % FLAG_ROW_MASKS.len()];
+    mask & (1 << (row % ROWS)) != 0
 }
+
+/// **One value sequence per flag ordinal**, as a bitmask over the [`ROWS`]: bit `r` is the value the
+/// flag takes in row `r`.
+///
+/// These are every mask over three rows except all-zero and all-one — distinct, so no two flags of a
+/// table read alike, and non-constant, so no flag's encoding goes untested ([`flag_value`]).
+///
+/// They are listed in **complementary pairs**, which buys two more properties: consecutive ordinals
+/// disagree on *every* row (a neighbouring pair is what a mis-wired accessor most often is), and no
+/// table can read one value in all of its flags on any single row, which is what
+/// `saturation_leaves_no_table_with_every_flag_alike` asks.
+///
+/// A table that grows past `FLAG_ROW_MASKS.len()` booleans wraps and two of its flags collide;
+/// `no_two_flags_of_a_table_read_alike` fails naming them, and the fix is another row ([`ROWS`]).
+const FLAG_ROW_MASKS: [u32; 6] = [0b001, 0b110, 0b010, 0b101, 0b011, 0b100];
 
 /// FNV-1a over the path. Any stable hash would do; this one keeps the fixture reproducible across
 /// machines and Rust versions (`DefaultHasher` guarantees neither).
@@ -1116,8 +1146,10 @@ mod tests {
 
     /// ⛔ **NO TABLE MAY CARRY ONE VALUE IN EVERY ONE OF ITS FLAGS.** The fixture used to set every
     /// boolean `true`, which made a bool↔bool swap inside a table invisible to both decode gates.
-    /// This walks the saturated snapshot and fails on any table whose booleans all agree, naming
-    /// it — the guard on [`flag_value`]'s alternation surviving a future field.
+    /// This walks the saturated snapshot and fails on any table whose booleans all agree on one
+    /// row, naming it — the guard on [`FLAG_ROW_MASKS`]'s complementary pairing surviving a future
+    /// field. The stronger claim, that no two of a table's flags agree on *every* row, is the next
+    /// test.
     #[test]
     fn saturation_leaves_no_table_with_every_flag_alike() {
         fn walk(value: &serde_json::Value, path: &str, alike: &mut Vec<String>) {
@@ -1162,6 +1194,102 @@ mod tests {
         );
     }
 
+    /// ⛔ **NO TWO FLAGS OF ONE TABLE MAY READ ALIKE ON EVERY ROW.** The guard the previous test
+    /// could not be: a table whose flags are not *all* alike can still carry two that agree
+    /// everywhere, and a decoder reading one into the other then re-encodes **byte-identically** —
+    /// which is precisely what `herd.corralled` ↔ `herd.huntable` did through the whole-fixture
+    /// round trip, `saturation_leaves_no_table_with_every_flag_alike`, and the Godot decode guard.
+    ///
+    /// It compares, per table *shape* (the path with its row indices stripped), the vector of
+    /// values each flag field takes over every instance of that shape. Two equal vectors are a
+    /// swap the fixture cannot see. The fix when this fails is a row ([`ROWS`]), not an exception.
+    #[test]
+    fn no_two_flags_of_a_table_read_alike() {
+        type Flags = std::collections::BTreeMap<String, Vec<bool>>;
+
+        fn walk(
+            value: &serde_json::Value,
+            path: &str,
+            out: &mut std::collections::BTreeMap<String, Flags>,
+        ) {
+            match value {
+                serde_json::Value::Array(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        walk(item, &format!("{path}[{i}]"), out);
+                    }
+                }
+                serde_json::Value::Object(fields) => {
+                    let shape = shape_of(path);
+                    for (key, field) in fields {
+                        let child = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        };
+                        match field {
+                            serde_json::Value::Bool(flag) => out
+                                .entry(shape.clone())
+                                .or_default()
+                                .entry(key.clone())
+                                .or_default()
+                                .push(*flag),
+                            _ => walk(field, &child, out),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// `populations[1].craft_offers[0]` → `populations[].craft_offers[]`: one shape, every
+        /// instance of it, so the vectors below are comparable row for row.
+        fn shape_of(path: &str) -> String {
+            let mut shape = String::new();
+            let mut inside_index = false;
+            for character in path.chars() {
+                match character {
+                    '[' => {
+                        inside_index = true;
+                        shape.push(character);
+                    }
+                    ']' => {
+                        inside_index = false;
+                        shape.push(character);
+                    }
+                    _ if inside_index => {}
+                    _ => shape.push(character),
+                }
+            }
+            shape
+        }
+
+        let snapshot = saturated_snapshot().expect("fixture builds");
+        let value = serde_json::to_value(&snapshot).expect("the fixture serialises");
+        let mut by_shape = std::collections::BTreeMap::new();
+        walk(&value, "", &mut by_shape);
+        assert!(
+            by_shape.values().any(|flags| flags.len() > 1),
+            "no table in the fixture carries two flags — this guard would pass vacuously"
+        );
+
+        let mut alike = Vec::new();
+        for (shape, flags) in &by_shape {
+            let named: Vec<(&String, &Vec<bool>)> = flags.iter().collect();
+            for (i, (left, left_values)) in named.iter().enumerate() {
+                for (right, right_values) in named.iter().skip(i + 1) {
+                    if left_values == right_values {
+                        alike.push(format!("{shape}: `{left}` and `{right}` = {left_values:?}"));
+                    }
+                }
+            }
+        }
+        assert!(
+            alike.is_empty(),
+            "these flag pairs read alike on every row, so a decoder that swaps them round trips \
+             byte-for-byte: {alike:#?}"
+        );
+    }
+
     /// The two saturation rules the whole scheme rests on: an enum's variant name must survive
     /// (only an *empty* string is free text), and integers must stay inside `u8` so a narrow field
     /// cannot fail to deserialize.
@@ -1173,7 +1301,7 @@ mod tests {
             "a_count": 0,
             "a_rate": 0.0,
         });
-        saturate(&mut value, "root");
+        saturate(&mut value, "root", 0);
 
         assert_eq!(value["free_text"], serde_json::json!("root.free_text"));
         assert_eq!(value["an_enum"], serde_json::json!("AlluvialPlain"));

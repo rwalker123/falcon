@@ -88,6 +88,14 @@ pub struct FoodFloors {
     pub dead_row_turns: u32,
     /// The share of the forecast a row must realize, per worker, not to count as dead.
     pub poor_yield_fraction: f32,
+    /// *Runway*: the share by which the band's best worked row must out-pay its worst, per worker,
+    /// before moving a crew between them is worth an order — `(high − low) / high`.
+    ///
+    /// ⛔ **NOT ZERO.** *Runway* scores highest exactly when the band is starving, and one order per
+    /// band then rejects the idle-hands proposal as `conflict`; with only "are these distinct rows"
+    /// between them, two rows paying the same shuffled workers back and forth every turn under the
+    /// alarm while the band's idle hands stood still.
+    pub runway_gain_fraction: f32,
 }
 
 /// Consumed by `Land`: its floors and reach.
@@ -265,6 +273,12 @@ impl AiProfiles {
             if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
                 return invalid(format!(
                     "profile `{id}`: food.poor_yield_fraction = {fraction}"
+                ));
+            }
+            let gain = profile.food.runway_gain_fraction;
+            if !gain.is_finite() || !(0.0..=1.0).contains(&gain) || gain <= 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: food.runway_gain_fraction = {gain} is not a positive share"
                 ));
             }
         }

@@ -6,7 +6,7 @@
       "behaviors": { "will_raid": false, "will_trade": true },
       "weights": { "food_security": 0.9, "land_claim": 0.3, "contact_seeking": 0.2 },
       "commitment": 0.6,
-      "food": { "runway_floor_turns": 6, "dead_row_turns": 4, "poor_yield_fraction": 0.25 },
+      "food": { "runway_floor_turns": 6, "dead_row_turns": 4, "poor_yield_fraction": 0.25, "runway_gain_fraction": 0.1 },
       "land": { "known_tiles_floor": 12, "split_size": 40, "horizon_tiles": 3, "scout_workers": 1 }
     },
     "rover": {
@@ -14,7 +14,7 @@
       "behaviors": { "will_raid": false, "will_trade": true },
       "weights": { "food_security": 0.4, "land_claim": 0.9, "contact_seeking": 0.5 },
       "commitment": 0.4,
-      "food": { "runway_floor_turns": 3, "dead_row_turns": 3, "poor_yield_fraction": 0.25 },
+      "food": { "runway_floor_turns": 3, "dead_row_turns": 3, "poor_yield_fraction": 0.25, "runway_gain_fraction": 0.1 },
       "land": { "known_tiles_floor": 30, "split_size": 25, "horizon_tiles": 5, "scout_workers": 2 }
     }
   },

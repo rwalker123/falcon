@@ -209,6 +209,12 @@ impl Brain for Composite {
 
     fn on_full_frame(&mut self, tick: u64) {
         self.memory.forget_after(tick);
+        // The orchestrator forgets with the plan: a stale `since_turn` is what would leave the seat
+        // on `Plan::pass_through` — no budget, no priority, no orders — for a whole cadence after a
+        // rebuild (`Orchestrator::forget_after`).
+        if let Some(orchestrator) = self.orchestrator.as_mut() {
+            orchestrator.forget_after(tick);
+        }
         if self
             .plan
             .as_ref()
@@ -450,18 +456,50 @@ mod tests {
         ));
     }
 
+    /// ⛔ **A REBUILT WORLD PLAYS ON ITS FIRST TICK.** Dropping the plan is half the job: the
+    /// orchestrator still held the old world's `since_turn`, so at the new epoch's tick 0 no
+    /// re-plan was due, `plan_for` fell back to `Plan::pass_through` — no budget, no priority —
+    /// and the seat proposed nothing at all until the old cadence would have come round.
     #[test]
-    fn a_full_frame_earlier_than_the_plan_drops_it() {
+    fn a_full_frame_earlier_than_the_plan_drops_it_and_the_band_acts_at_the_new_epoch() {
         let profiles = AiProfiles::builtin();
         let mut brain =
             UtilityBrain::build(FACTION, &profiles, "forager", DEFAULT_DIFFICULTY, &[]).unwrap();
         let mut sink = VecSink::default();
         brain.decide(&a_view(), &mut rng(), &mut sink);
         assert!(brain.plan.is_some());
-        brain.on_full_frame(a_view().tick() - 1);
+
+        // The rebuild: a full frame at tick 0 of a world the standing plan is later than.
+        let rebuilt_tick = 0;
+        brain.on_full_frame(rebuilt_tick);
         assert!(
             brain.plan.is_none(),
             "a rollback before the plan forgets it"
+        );
+
+        let mut rebuilt = a_view();
+        rebuilt.snapshot.header.tick = rebuilt_tick;
+        let mut sink = VecSink::default();
+        let commands = brain.decide(&rebuilt, &mut rng(), &mut sink);
+        let plan = sink
+            .0
+            .iter()
+            .find_map(|record| match record {
+                DecisionRecord::Plan(plan) => Some(plan),
+                _ => None,
+            })
+            .expect("the first tick of the new epoch re-plans");
+        assert_eq!(plan.since_tick, rebuilt_tick);
+        assert!(
+            plan.budgets.values().any(|share| *share > 0.0),
+            "a pass-through plan funds nobody: {:?}",
+            plan.budgets
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, CommandPayload::AssignLabor { .. })),
+            "the band puts its idle hands to work on the new world's first tick"
         );
     }
 }

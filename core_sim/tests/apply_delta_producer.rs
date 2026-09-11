@@ -19,8 +19,9 @@ use bevy::prelude::*;
 mod faction_support;
 
 use core_sim::{
-    recapture_snapshot_in_place, run_turn, CommandEventEntry, CommandEventKind, CommandEventLog,
-    FactionId, FactionInventory, FrameSink, SimulationTick, SnapshotAudiences, SnapshotHistory,
+    recapture_snapshot_in_place, run_turn, BandId, CommandEventEntry, CommandEventKind,
+    CommandEventLog, FactionId, FactionInventory, FrameSink, PopulationCohort, ResidentBand,
+    SimulationTick, SnapshotAudiences, SnapshotHistory,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use serde_json::Value;
@@ -42,6 +43,26 @@ const TURNS: usize = 14;
 const RECAPTURE_TURN: usize = 6;
 /// The feed window — narrow, so eviction happens inside the run rather than after it.
 const RETENTION_TURNS: u64 = 4;
+
+/// ⛔ **A ROW HAS TO LEAVE THE WORLD, OR `remove_keyed` IS PINNED BY NOTHING BUT ITS OWN AUTHOR.**
+/// The turns the run splits a band off `HOME` and then kills it. Every other section this file
+/// covers is *added to* or *changed*; without a despawn the producer never emits a `removed_*` list
+/// at all, so a producer that keyed a removal on one field while the merge read another — the exact
+/// drift this file exists to catch — could not show up here. The two turns are apart so the
+/// splinter is published as an ordinary row first: a row that arrives and leaves inside one delta
+/// tests nothing.
+const SPLIT_TURN: usize = 2;
+const DESPAWN_TURN: usize = 4;
+
+/// Workers the splinter leaves with. One, because this is about a band existing and then not.
+const SPLINTER_WORKERS: u32 = 1;
+
+/// Fission thresholds relaxed to the minimum, the `band_names.rs` idiom: the split is about having
+/// a second band, not about the founding economy this file does not test.
+const SETTLE: core_sim::SettleConfig = core_sim::SettleConfig {
+    min_founding_workers: 1,
+    parent_min_workers: 0,
+};
 
 /// Every frame the publisher handed the socket, with the seat it was addressed to.
 #[derive(Default)]
@@ -235,6 +256,9 @@ struct SeatClient {
     deltas_applied: usize,
     deltas_with_events: usize,
     deltas_with_removals: usize,
+    /// Which of the seven keyed sections have carried a removal — named, so the run says what it
+    /// covered rather than only how many times.
+    removed_sections: std::collections::BTreeSet<&'static str>,
     /// Publications where the raw (unsorted) JSON differed but the canonical form matched.
     order_only_differences: usize,
 }
@@ -257,13 +281,23 @@ impl SeatClient {
                         .as_mut()
                         .unwrap_or_else(|| panic!("seat {seat}'s first frame must be full"));
                     self.deltas_with_events += usize::from(delta.command_events.is_some());
-                    let removals = delta.removed_tiles.len()
-                        + delta.removed_populations.len()
-                        + delta.removed_power.len()
-                        + delta.removed_generations.len()
-                        + delta.removed_influencers.len()
-                        + delta.removed_culture_layers.len()
-                        + delta.removed_knowledge_ledger.len();
+                    let removals: usize = [
+                        ("tiles", delta.removed_tiles.len()),
+                        ("populations", delta.removed_populations.len()),
+                        ("power", delta.removed_power.len()),
+                        ("generations", delta.removed_generations.len()),
+                        ("influencers", delta.removed_influencers.len()),
+                        ("culture_layers", delta.removed_culture_layers.len()),
+                        ("knowledge_ledger", delta.removed_knowledge_ledger.len()),
+                    ]
+                    .into_iter()
+                    .map(|(section, rows)| {
+                        if rows > 0 {
+                            self.removed_sections.insert(section);
+                        }
+                        rows
+                    })
+                    .sum();
                     self.deltas_with_removals += usize::from(removals > 0);
                     held.apply_delta(&delta)
                         .unwrap_or_else(|err| panic!("seat {seat}'s delta applies: {err}"));
@@ -289,6 +323,27 @@ impl SeatClient {
         }
         self.order_only_differences += usize::from(!raw_matches);
     }
+}
+
+/// `faction`'s resident band entities, in world order.
+fn resident_bands(app: &mut App, faction: FactionId) -> Vec<Entity> {
+    let mut query = app
+        .world
+        .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>();
+    query
+        .iter(&app.world)
+        .filter(|(_, cohort)| cohort.faction == faction)
+        .map(|(entity, _)| entity)
+        .collect()
+}
+
+/// The entity carrying `band_id` — the durable handle, since a split reshuffles nothing else.
+fn entity_for_band(app: &mut App, band_id: u64) -> Option<Entity> {
+    let mut query = app.world.query::<(Entity, &BandId)>();
+    query
+        .iter(&app.world)
+        .find(|(_, id)| id.0 == band_id)
+        .map(|(entity, _)| entity)
 }
 
 fn push_one_event_per_seat(app: &mut App, turn: usize) {
@@ -348,8 +403,35 @@ fn the_applied_stream_equals_the_servers_capture_after_every_publication() {
         }
     };
 
+    // The band split off `HOME` at [`SPLIT_TURN`] and killed at [`DESPAWN_TURN`], by its durable id.
+    let mut splinter: Option<u64> = None;
+
     for turn in 0..TURNS {
         push_one_event_per_seat(&mut app, turn);
+        if turn == SPLIT_TURN {
+            let parent = *resident_bands(&mut app, HOME)
+                .first()
+                .expect("HOME opens with a resident band");
+            let before: std::collections::BTreeSet<Entity> =
+                resident_bands(&mut app, HOME).into_iter().collect();
+            core_sim::split_band_from_parent(&mut app.world, parent, SPLINTER_WORKERS, &SETTLE)
+                .expect("a worldgen band can spare one worker");
+            let new_band = resident_bands(&mut app, HOME)
+                .into_iter()
+                .find(|entity| !before.contains(entity))
+                .expect("the split put a second band in the world");
+            splinter = Some(
+                app.world
+                    .get::<BandId>(new_band)
+                    .expect("a band carries its durable id")
+                    .0,
+            );
+        }
+        if turn == DESPAWN_TURN {
+            let band_id = splinter.expect("the split ran first");
+            let doomed = entity_for_band(&mut app, band_id).expect("the splinter is still alive");
+            app.world.despawn(doomed);
+        }
         run_turn(&mut app);
         sync(&app, &format!("after turn {turn}"), &mut clients);
 
@@ -407,6 +489,20 @@ fn the_applied_stream_equals_the_servers_capture_after_every_publication() {
             client.deltas_with_events > 0,
             "seat {seat} was never sent a feed delta, so the append rule was not exercised"
         );
+        if *seat == HOME {
+            assert!(
+                client.deltas_with_removals > 0,
+                "seat {seat} was never sent a delta carrying a removal, so `remove_keyed` is \
+                 pinned only by hand-built deltas that construct the removal list with the very \
+                 key the merge reads — a producer/consumer key divergence could not surface"
+            );
+            assert!(
+                client.removed_sections.contains(&"populations"),
+                "seat {seat}'s removals never named `populations`, which is the section the \
+                 despawned band leaves: {:?}",
+                client.removed_sections
+            );
+        }
         let held = client.held.as_ref().expect("holds a snapshot");
         assert!(
             held.command_events.len() < TURNS,
@@ -420,10 +516,11 @@ fn the_applied_stream_equals_the_servers_capture_after_every_publication() {
             "seat {seat}'s feed carries another people's rows"
         );
         eprintln!(
-            "seat {seat}: {} deltas applied, {} carried feed rows, {} carried removals, {} publications differed only in keyed-row order",
+            "seat {seat}: {} deltas applied, {} carried feed rows, {} carried removals {:?}, {} publications differed only in keyed-row order",
             client.deltas_applied,
             client.deltas_with_events,
             client.deltas_with_removals,
+            client.removed_sections,
             client.order_only_differences
         );
     }

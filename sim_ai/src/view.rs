@@ -121,8 +121,13 @@ fn key_of_row(band_id: u64, row: &LaborAssignmentState) -> String {
 }
 
 /// The `worked_turns` a row the sim marks `hunt_useful_workers == 0` jumps to: dead at once,
-/// whatever the profile's `dead_row_turns`.
+/// whatever the profile's `dead_row_turns`. **It is not permanent** — the next turn the sim
+/// reports a useful crew on that row clears it back to [`WORKED_ONCE`] ([`SeatMemory::observe`]).
 pub const WORKED_DEAD_AT_ONCE: u32 = u32::MAX;
+
+/// The `worked_turns` of a row's first measured turn — and of the first turn after a
+/// [`WORKED_DEAD_AT_ONCE`] marking is cleared, since the record before it measured nothing.
+const WORKED_ONCE: u32 = 1;
 
 /// **The denominator of a yield-per-worker observation**: the workers whose work the sim counted.
 ///
@@ -142,7 +147,8 @@ fn useful_workers(row: &LaborAssignmentState) -> u32 {
 /// What a worked row has actually paid — the measurement a forecast is held against.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Realized {
-    /// Last turn's `actual_yield / workers` — **`None` when the row was not a measurement at all**,
+    /// Last turn's `actual_yield / useful_workers` — **`None` when the row was not a measurement
+    /// at all**,
     /// which is a row no worker was useful on ([`useful_workers`]). A zero-denominator observation
     /// is not evidence: folded in as a `0.0` it says "this source pays nothing", which is a claim
     /// the turn never tested.
@@ -190,14 +196,24 @@ impl SeatMemory {
         for band in view.own_bands(faction) {
             for row in band.labor_assignments.iter().filter(|row| row.workers > 0) {
                 let key = key_of_row(band.band_id, row);
-                let measured = useful_workers(row) > 0;
+                let useful = useful_workers(row);
                 let previous = self.realized.get(&key).map_or(0, |r| r.worked_turns);
-                let worked_turns = if !measured || previous == WORKED_DEAD_AT_ONCE {
-                    WORKED_DEAD_AT_ONCE
-                } else {
-                    previous + 1
+                // ⛔ **THE SIM'S VERDICT IS PER TURN, SO THE MARK IT LEAVES MUST BE TOO.** A turn
+                // the sim reports a useful crew is a turn the row is alive, whatever it was
+                // yesterday — a bare-handed band's failed hunt must not blacklist the herd for the
+                // rest of the run once the band has a kit. The count starts afresh, so the row is
+                // judged on the record it has since made.
+                let worked_turns = match (useful, previous) {
+                    (0, _) => WORKED_DEAD_AT_ONCE,
+                    (_, WORKED_DEAD_AT_ONCE) => WORKED_ONCE,
+                    (_, previous) => previous + 1,
                 };
-                let per_worker = measured.then(|| row.actual_yield / row.workers as f32);
+                // ⛔ **DIVIDED BY THE CREW THE SIM COUNTED, NOT THE CREW ASSIGNED.** On a hunt row
+                // `useful_workers` is the crew-take plateau (`hunt_useful_workers`), and
+                // `per_worker_yield` is a rate *up to* it: twelve hands on a plateau of two bring
+                // home what two bring home, so dividing the take by twelve reads as a sixth of the
+                // forecast and declares a perfectly good herd dead.
+                let per_worker = (useful > 0).then(|| row.actual_yield / useful as f32);
                 self.realized.insert(
                     key,
                     Realized {
@@ -796,5 +812,91 @@ mod tests {
             });
         memory.observe(&view, FACTION);
         assert_eq!(memory.realized_for_kind("hunt"), Some(0.2));
+    }
+
+    /// ⛔ **THE PLATEAU IS THE DENOMINATOR, NOT THE HEADCOUNT.** A hunt row's `per_worker_yield` is
+    /// a rate up to `hunt_useful_workers` — the crew-take plateau (`core_sim/src/fauna.rs`) — so an
+    /// over-staffed row takes what the plateau takes. Divided by the twelve hands assigned it reads
+    /// as a sixth of what the sim forecast, which is under every profile's `poor_yield_fraction`,
+    /// and the herd is declared dead and blacklisted. `Food::idle_hands` staffs rows without
+    /// consulting the plateau, so the brain manufactures exactly this row.
+    #[test]
+    fn a_hunt_row_is_measured_against_its_useful_crew_not_its_headcount() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        const ASSIGNED: u32 = 12;
+        const PLATEAU: u32 = 2;
+        const TAKE: f32 = 3.0;
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            labor_assignments: vec![LaborAssignmentState {
+                kind: "hunt".into(),
+                fauna_id: "herd_9".into(),
+                workers: ASSIGNED,
+                actual_yield: TAKE,
+                hunt_useful_workers: PLATEAU,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        memory.observe(&view, FACTION);
+        assert_eq!(
+            memory
+                .realized(&row_key(BAND, "hunt", 0, 0, "herd_9"))
+                .and_then(|realized| realized.per_worker),
+            Some(TAKE / PLATEAU as f32),
+            "the take divided by the crew the sim counted"
+        );
+        assert_eq!(
+            memory.realized_for_kind("hunt"),
+            Some(TAKE / PLATEAU as f32)
+        );
+    }
+
+    /// ⛔ **A DEAD ROW IS DEAD FOR THAT TURN, NOT FOR THE RUN.** `hunt_useful_workers` is a
+    /// per-turn verdict: a bare-handed band cannot work a defended herd, and the same band with a
+    /// kit can. Carrying the marking forward struck the herd off `reachable_sources` for the rest
+    /// of the run — the row-level twin of the web-level veto `realized_for_kind` already guards.
+    #[test]
+    fn a_row_the_sim_reports_a_useful_crew_on_again_is_no_longer_dead() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            labor_assignments: vec![LaborAssignmentState {
+                kind: "hunt".into(),
+                fauna_id: "herd_9".into(),
+                workers: 4,
+                actual_yield: 0.0,
+                hunt_useful_workers: 0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let herd = row_key(BAND, "hunt", 0, 0, "herd_9");
+        memory.observe(&view, FACTION);
+        assert_eq!(
+            memory.realized(&herd).map(|realized| realized.worked_turns),
+            Some(WORKED_DEAD_AT_ONCE)
+        );
+        // The band has a kit now, and the sim counts the crew.
+        let row = &mut view.snapshot.populations[0].labor_assignments[0];
+        row.hunt_useful_workers = 4;
+        row.actual_yield = 2.0;
+        memory.observe(&view, FACTION);
+        assert_eq!(
+            memory.realized(&herd),
+            Some(Realized {
+                per_worker: Some(0.5),
+                worked_turns: WORKED_ONCE
+            }),
+            "the marking is cleared and the record starts from this turn"
+        );
     }
 }

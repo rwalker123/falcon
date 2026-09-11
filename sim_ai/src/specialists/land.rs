@@ -5,19 +5,24 @@
 //!   band posts `land.scout_workers` scouts (`assign_labor … scout <n>`). **The `scout <x> <y>`
 //!   verb is retired server-side** (`command.retired=ignored`, `core_sim/src/bin/server.rs`);
 //!   scouting is the standing scout role, which posts vantage points around the band.
-//! - *better ground* — a discovered, unowned patch within the horizon that would **pay a worker
-//!   more** than the band's own ground does, while the runway is falling, proposes `move_band`
+//! - *better ground* — a discovered, unowned **gathering site** within the horizon that would **pay
+//!   a worker more** than the band's own ground does, while the runway is falling, proposes `move_band`
 //!   with an intent that **persists until arrival**: the memory holds the target and the same
 //!   intent is re-proposed each turn, which is what the commitment bonus rewards. The ranking is
 //!   `per_worker_yield` — the crew's take, the quantity `Food` ranks sources on — and **not**
 //!   `carrying_capacity`, which is the standing biomass the land holds; the two disagree, and a
 //!   band that followed the biomass sat on the worst rate in its own neighbourhood and starved.
+//!   **Ground `Food` cannot work is not ground worth moving to**: every patch this specialist reads
+//!   goes through `food::is_food_site` / `food::workable_patch_at`, the same eligibility `Food`
+//!   filters its sources on — otherwise the band walks onto a patch it is then refused every
+//!   assignment on, and that same patch, counted as "something better in view", suppresses the
+//!   `land_short` alarm that would have moved it.
 //! - *room* — under `Expand`, a band above `land.split_size` on ground the faction owns proposes
 //!   `split_band` with half its workers.
 
 use sim_runtime::{CommandPayload, ForagePatchState, PopulationCohortState};
 
-use super::food::{crew_take, patch_per_worker_yield};
+use super::food::{crew_take, is_food_site, patch_per_worker_yield, workable_patch_at};
 use super::{intent_key, Cost, Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_LAND};
 use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, AlarmKind, Plan, Stance};
@@ -88,6 +93,7 @@ impl Land {
                 let tile = Tile::new(patch.x, patch.y);
                 tile != here
                     && view.is_discovered(tile)
+                    && is_food_site(view, tile)
                     && !self.foreign_band_at(view, tile)
                     && grid.distance(here, tile) <= self.floors.horizon_tiles
             })
@@ -101,20 +107,21 @@ impl Land {
     }
 
     /// What a worker would take off the ground the band stands on; nothing when it stands on no
-    /// patch — bare ground pays a crew nothing whatever it carries.
+    /// **workable** patch — bare ground, and ground off a food module, pay a crew nothing whatever
+    /// they carry ([`workable_patch_at`]).
     fn own_per_worker_yield(
         view: &SeatView,
         memory: &SeatMemory,
         band: &PopulationCohortState,
     ) -> f32 {
-        view.patch_at(band_tile(band))
+        workable_patch_at(view, band_tile(band))
             .map_or(0.0, |patch| patch_per_worker_yield(memory, band, patch))
     }
 
     /// **What this band would harvest off the ground it stands on, per turn**: its whole working-age
     /// crew at that ground's per-worker rate, capped by what the stand hands over in a turn.
     fn harvest_here(view: &SeatView, memory: &SeatMemory, band: &PopulationCohortState) -> f32 {
-        view.patch_at(band_tile(band)).map_or(0.0, |patch| {
+        workable_patch_at(view, band_tile(band)).map_or(0.0, |patch| {
             crew_take(
                 band.working_age,
                 patch_per_worker_yield(memory, band, patch),
@@ -318,6 +325,22 @@ mod tests {
         view.own_bands(FACTION).next().unwrap()
     }
 
+    /// Put a food module on `tile`, so a crew sent there is not refused *"nobody gathers here"* —
+    /// the eligibility `Food` and `Land` both read ([`is_food_site`]).
+    fn make_a_gathering_site(view: &mut SeatView, tile: Tile) {
+        let site = sim_runtime::FoodModuleState {
+            x: tile.x,
+            y: tile.y,
+            ..view
+                .snapshot
+                .food_modules
+                .first()
+                .cloned()
+                .unwrap_or_default()
+        };
+        view.snapshot.food_modules.push(site);
+    }
+
     #[test]
     fn a_blind_band_posts_scouts_and_a_seeing_one_does_not() {
         let view = a_view();
@@ -485,6 +508,64 @@ mod tests {
         );
     }
 
+    /// ⛔ **GROUND `Food` CANNOT WORK IS NOT BETTER GROUND.** `assign_labor … forage` is refused
+    /// *"nobody gathers here"* off a food module, so a rich patch that carries none is ground the
+    /// band would stand on and be refused every assignment on. It fails twice over: *better ground*
+    /// walks the band there, and the same patch, counted as "something better in view", is what
+    /// suppresses the `land_short` alarm that would have moved it somewhere it could eat.
+    #[test]
+    fn a_rich_patch_that_is_no_gathering_site_neither_attracts_a_move_nor_suppresses_the_alarm() {
+        let no_site = Tile::new(4, 2);
+        let mut view = a_view();
+        // Only one patch in the world, one step away, paying far more than the bare ground here —
+        // and carrying no food module.
+        view.snapshot.forage_patches = vec![ForagePatchState {
+            x: no_site.x,
+            y: no_site.y,
+            owner: None,
+            per_worker_yield: 9.0,
+            carrying_capacity: 90.0,
+            biomass: 135.0,
+            provisions_per_biomass: 1.0,
+            ..Default::default()
+        }];
+        view.snapshot.food_modules.clear();
+        view.snapshot.populations[0].food_consumption = 4.0;
+
+        let specialist = land("forager");
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        memory.observe(&view, FACTION);
+        memory.remember_runways(&view, FACTION);
+        view.snapshot.populations[0].turns_of_food -= 1.0;
+        assert!(
+            specialist
+                .better_ground(&view, &memory, own_band(&view))
+                .is_none(),
+            "a falling runway, and still nowhere the band could gather"
+        );
+        assert_eq!(
+            specialist.alarm(&view, &memory).map(|alarm| alarm.kind),
+            Some(AlarmKind::LandShort),
+            "nothing workable in view is the alarm, not a reason to stay quiet"
+        );
+
+        // The same patch, now a gathering site: both answers flip.
+        make_a_gathering_site(&mut view, no_site);
+        let proposal = specialist
+            .better_ground(&view, &memory, own_band(&view))
+            .expect("a workable patch is better ground");
+        assert!(
+            matches!(
+                proposal.commands[0],
+                CommandPayload::MoveBand { target_x, target_y, .. }
+                    if Tile::new(target_x, target_y) == no_site
+            ),
+            "{:?}",
+            proposal.commands[0]
+        );
+        assert!(specialist.alarm(&view, &memory).is_none());
+    }
+
     /// ⛔ **The alarm compares a rate to a rate.** Against `carrying_capacity` — a standing biomass
     /// two orders of magnitude larger than a band's appetite — it could essentially never fire.
     #[test]
@@ -503,6 +584,7 @@ mod tests {
             provisions_per_biomass: 1.0,
             ..Default::default()
         }];
+        make_a_gathering_site(&mut view, HERE);
         let band = &mut view.snapshot.populations[0];
         band.working_age = 17;
         band.food_consumption = 4.0;
@@ -539,6 +621,7 @@ mod tests {
             provisions_per_biomass: 1.0,
             ..Default::default()
         });
+        make_a_gathering_site(&mut view, HERE);
         // One step away: less biomass standing, more of it reaching a worker.
         let runner_up_stand = Tile::new(4, 2);
         let best_rate = Tile::new(2, 3);

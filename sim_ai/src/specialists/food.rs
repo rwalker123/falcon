@@ -7,7 +7,9 @@
 //!   a discovered forage patch within `work_range`, or a huntable herd within `hunt_reach`, ranked
 //!   by the frame's own `per_worker_yield` forecast. The all-Pass control starves because nobody
 //!   is ever assigned; this is the consideration that has to beat it.
-//! - *runway* — under the alarm, the band's lowest-yielding worked row is emptied onto its highest.
+//! - *runway* — under the alarm, the band's lowest-yielding worked row is emptied onto its highest,
+//!   but only when the highest out-pays it by the profile's `food.runway_gain_fraction`: a move
+//!   between two rows that pay the same buys nothing and costs the band its one order for the turn.
 //! - *overuse* — a row whose `actual_yield` exceeds its `sustainable_yield` (the intensification
 //!   arc's overhunting signal, read off the frame), or a hunt row whose `hunt_useful_workers` is
 //!   `0` (*no crew is useful here*, the sim's own verdict), is emptied onto the next-best source.
@@ -64,6 +66,29 @@ pub(crate) fn patch_per_worker_yield(
         &SourceKey::Patch(Tile::new(patch.x, patch.y)),
         patch.per_worker_yield,
     )
+}
+
+/// **A gathering site**: the plant rung's `site_requirement` (`plant_rung_site_refusal`,
+/// `core_sim/src/bin/server.rs`) is the tile carrying a food module, and a patch row is published
+/// for ground that carries none — a crew sent there is refused *"nobody gathers here"*.
+///
+/// ⛔ **`Food` AND `Land` MUST ASK THIS THE SAME WAY.** `Food` filters its sources on it, so ground
+/// off a food module is ground the band cannot work; `Land` ranking a move on a patch that fails it
+/// walks the band onto ground it will then be refused every assignment on, and counts the same patch
+/// as *"something better in view"* so the `land_short` alarm never fires. One accessor, both
+/// callers — the divergence [`patch_per_worker_yield`] already closed for the rate.
+pub(crate) fn is_food_site(view: &SeatView, tile: Tile) -> bool {
+    view.snapshot
+        .food_modules
+        .iter()
+        .any(|site| site.x == tile.x && site.y == tile.y)
+}
+
+/// **The patch on `tile` a crew could actually be put to work on**: the published forage row, but
+/// only where [`is_food_site`] holds. Bare ground and ground off a food module read the same way —
+/// as nothing — because a crew takes nothing off either.
+pub(crate) fn workable_patch_at(view: &SeatView, tile: Tile) -> Option<&ForagePatchState> {
+    view.patch_at(tile).filter(|_| is_food_site(view, tile))
 }
 
 /// **What a crew of `hands` takes off a source in one turn**: `min(hands × rate, ceiling)`, the
@@ -217,17 +242,6 @@ impl Food {
         }
     }
 
-    /// **A gathering site**: the plant rung's `site_requirement` (`plant_rung_site_refusal`,
-    /// `core_sim/src/bin/server.rs`) is the tile carrying a food module, and a patch row is
-    /// published for ground that carries none — a crew sent there is refused *"nobody gathers
-    /// here"*.
-    fn is_food_site(view: &SeatView, tile: Tile) -> bool {
-        view.snapshot
-            .food_modules
-            .iter()
-            .any(|site| site.x == tile.x && site.y == tile.y)
-    }
-
     /// The sources within `band`'s reach that the seat has discovered and has not found dead.
     fn reachable_sources(
         &self,
@@ -245,7 +259,7 @@ impl Food {
             .filter(|patch| {
                 let tile = Tile::new(patch.x, patch.y);
                 view.is_discovered(tile)
-                    && Self::is_food_site(view, tile)
+                    && is_food_site(view, tile)
                     && grid.distance(here, tile) <= band.work_range
             })
             .map(|patch| Source {
@@ -412,7 +426,8 @@ impl Food {
     }
 
     /// *Runway*: below the floor, the lowest-yield worked row is emptied onto the highest — as
-    /// far as the budget reaches.
+    /// far as the budget reaches, and only when the highest out-pays the lowest by the profile's
+    /// `food.runway_gain_fraction`.
     pub fn runway(
         &self,
         view: &SeatView,
@@ -436,7 +451,13 @@ impl Food {
         let highest = worked
             .iter()
             .max_by(|a, b| yield_per_worker(a).total_cmp(&yield_per_worker(b)))?;
-        if std::ptr::eq(*lowest, *highest) {
+        // ⛔ **A SHUFFLE MUST BUY SOMETHING.** "Two distinct rows" is not "one is better": with two
+        // rows paying the same, `min_by` answers the first and `max_by` the last, and the band moved
+        // workers between identical rows every turn under the alarm. That proposal scores highest
+        // exactly when the band is starving, and one order per band then rejects `food:assign` as
+        // `conflict` — so the band shuffled instead of putting its idle hands to work.
+        let (low, high) = (yield_per_worker(lowest), yield_per_worker(highest));
+        if high <= 0.0 || (high - low) < self.floors.runway_gain_fraction * high {
             return None;
         }
         let (low_key, high_key) = (SourceKey::of_row(lowest)?, SourceKey::of_row(highest)?);
@@ -846,6 +867,76 @@ pub(crate) mod tests {
             .is_none());
     }
 
+    /// ⛔ **A SHUFFLE THAT MOVES NOBODY ANYWHERE BETTER IS NOT A PROPOSAL.** Two rows paying the
+    /// same per worker are distinct rows, which is all the guard used to ask, so *runway* proposed
+    /// a swap between them every turn under the alarm — at the highest score the specialist has —
+    /// and one order per band then rejected the idle-hands assignment as `conflict`. The band
+    /// shuffled while its idle workers stood still, for as long as it was starving.
+    #[test]
+    fn two_equally_paying_rows_under_the_alarm_propose_no_shuffle_and_leave_assign_free() {
+        let mut view = a_view();
+        let band = &mut view.snapshot.populations[0];
+        band.turns_of_food = 2.0;
+        band.idle_workers = 5;
+        band.labor_assignments = vec![
+            LaborAssignmentState {
+                kind: ROLE_FORAGE.into(),
+                target_x: NEAR_PATCH.x,
+                target_y: NEAR_PATCH.y,
+                workers: 4,
+                actual_yield: 4.0,
+                sustainable_yield: 8.0,
+                ..Default::default()
+            },
+            LaborAssignmentState {
+                kind: ROLE_HUNT.into(),
+                fauna_id: HERD_ID.into(),
+                workers: 6,
+                actual_yield: 6.0,
+                sustainable_yield: 8.0,
+                hunt_useful_workers: 6,
+                ..Default::default()
+            },
+        ];
+        let mut specialist = food();
+        assert_eq!(
+            specialist.alarm(&view).map(|alarm| alarm.kind),
+            Some(AlarmKind::FoodShort),
+            "the alarm is what makes the no-op shuffle expensive"
+        );
+        assert!(
+            specialist
+                .runway(&view, &plan_with_food_share(1.0), own_band(&view))
+                .is_none(),
+            "1.0 a worker on both rows: there is nowhere better to move them"
+        );
+        let proposals = specialist.propose(
+            &view,
+            &plan_with_food_share(1.0),
+            &SeatMemory::new(NO_MEMORY_DECAY),
+        );
+        let intents: Vec<&str> = proposals
+            .proposals
+            .iter()
+            .map(|proposal| proposal.intent.as_str())
+            .collect();
+        assert!(
+            !intents
+                .iter()
+                .any(|intent| intent.starts_with("food:runway")),
+            "{intents:?}"
+        );
+        assert!(
+            intents.contains(&"food:assign:7001"),
+            "the band's one order goes to its idle hands: {intents:?}"
+        );
+        // A row that really does pay more is still moved onto.
+        view.snapshot.populations[0].labor_assignments[1].actual_yield = 12.0;
+        assert!(specialist
+            .runway(&view, &plan_with_food_share(1.0), own_band(&view))
+            .is_some());
+    }
+
     #[test]
     fn ground_without_a_food_module_is_not_a_gathering_site() {
         let mut view = a_view();
@@ -922,6 +1013,50 @@ pub(crate) mod tests {
             .unwrap();
         assert!(
             matches!(&idle.commands[0], CommandPayload::AssignLabor { role, .. } if role == ROLE_FORAGE),
+            "{idle:?}"
+        );
+    }
+
+    /// ⛔ **AN OVER-STAFFED HUNT IS NOT A FAILING ONE.** `hunt_useful_workers` is the crew-take
+    /// plateau, so twelve hands on a plateau of two bring home what two bring home. Measured
+    /// against the twelve the band *assigned*, that reads as a sixth of the forecast — under the
+    /// forager's `poor_yield_fraction` — and the herd was declared dead and struck off
+    /// `reachable_sources`, on a row `idle_hands` had staffed that way itself.
+    #[test]
+    fn an_over_staffed_hunt_row_is_measured_on_its_plateau_and_is_not_dead() {
+        const ASSIGNED: u32 = 12;
+        const PLATEAU: u32 = 2;
+        let mut view = a_view();
+        view.snapshot.herds[0].biomass = 100.0;
+        // The forecast is 1.5 a worker; the plateau of two takes 3.0, which is exactly it.
+        view.snapshot.populations[0].labor_assignments = vec![LaborAssignmentState {
+            kind: ROLE_HUNT.into(),
+            fauna_id: HERD_ID.into(),
+            workers: ASSIGNED,
+            actual_yield: PLATEAU as f32 * 1.5,
+            sustainable_yield: 10.0,
+            hunt_useful_workers: PLATEAU,
+            ..Default::default()
+        }];
+        view.snapshot.populations[0].idle_workers = 5;
+        let specialist = food();
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        for _ in 0..specialist.floors.dead_row_turns + 1 {
+            memory.observe(&view, FACTION);
+        }
+        assert!(
+            specialist
+                .overuse(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
+                .is_empty(),
+            "the crew the sim counted realized the whole forecast"
+        );
+        // And it is still a source: with the stands out of reach, the idle hands go to it.
+        view.snapshot.forage_patches.clear();
+        let idle = specialist
+            .idle_hands(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
+            .expect("the herd is still a source");
+        assert!(
+            matches!(&idle.commands[0], CommandPayload::AssignLabor { role, fauna_id: Some(id), .. } if role == ROLE_HUNT && id == HERD_ID),
             "{idle:?}"
         );
     }

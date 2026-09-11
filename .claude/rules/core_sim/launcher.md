@@ -44,14 +44,20 @@ exactly the way single-player always has.
 ## The seat supervisor: the roster is the server's to announce
 
 The launcher cannot know at boot how many AI processes to start. The server decides the roster at
-**every world build** — boot, `new_game` from the client's menu (which picks the rival count), a load
-— and `retain_claimed_seats` drops the claims a rebuild orphans. So it announces the roster instead:
+**every world build** — `reset_map`, `new_game` from the client's menu (which picks the rival count),
+`load_game` — and `retain_claimed_seats` drops the claims a rebuild orphans. So it announces the
+roster instead:
 one `seats.roster` INFO event per build on the log stream it already publishes (`log_stream.rs`,
 `[u32 LE length][JSON]` on the `log` port), shaped
 `{"target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"[0,1,2]","world_epoch":3}}`
 — `factions` as a JSON array in a string, because `tracing` fields carry no arrays. The doc comment
 on `retain_claimed_seats` in `bin/server.rs` states the shape; `parse_roster_event` here is its
 contract twin, and a unit test pins that it parses that shape and nothing else.
+
+**A bare boot announces nothing.** The server starts with `world_active = false` and no world, and
+`retain_claimed_seats` runs only from the three build arms above — so the first `seats.roster` event
+of a session is the one the first map reset, new game or load emits. A launcher started against an
+idle server supervises zero rivals until then, which is the expected state and not a lost event.
 
 **Reconciliation is on the main thread; only the reading is on a thread.** `spawn_roster_watcher`
 dials the log port on a `seat-supervisor` thread, redials on a drop (never reporting a drop as an

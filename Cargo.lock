@@ -2839,7 +2839,11 @@ dependencies = [
 name = "launcher"
 version = "0.1.0"
 dependencies = [
+ "core_sim",
+ "crossbeam-channel",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
  "windows-sys 0.59.0",
 ]
 
