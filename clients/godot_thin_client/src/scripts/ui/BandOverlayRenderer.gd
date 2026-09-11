@@ -75,10 +75,23 @@ const HUNT_WORKED_COLOR := Color(0.92, 0.34, 0.30, 0.95)
 # **AND A THIRD COLOUR FOR THE THIRD WEB** (issue #650): a worked WORKING wears the same ring, link
 # and outline as a patch or a herd, in a hue that is in neither food web — quarried slate, one colour
 # for both branches, because a felled wood and a quarried rock are the same statement about the same
-# account. Desaturated on purpose: every other mark this pass draws is saturated (forage green, hunt
-# red, the azure scout border, the amber pending dashes), so slate is the one thing on the map it
-# cannot be mistaken for, and materials are the cool account beside two warm-blooded food webs.
-const EXTRACT_WORKED_COLOR := Color(0.68, 0.74, 0.80, 0.95)
+# account. The COOL HUE is what keeps it out of either food web's language — materials are the cool
+# account beside two warm-blooded webs — and it is the only cool mark this pass draws.
+#
+# ⛔ **BUT THE HUE ALONE WAS NOT ENOUGH, AND THE ARITHMETIC SAYS WHY.** It shipped at
+# `Color(0.68, 0.74, 0.80)`, a pale slate whose luminance is **0.732** against the khaki terrain of
+# `map_working_beside_herd` at **0.735** — three thousandths apart, i.e. NEAR-ISOLUMINANT with the
+# ground, carrying its whole reading on a +0.12 blue excess. Beside it the hunted herd's salmon sits
+# **0.274** from that terrain and the forage green 0.083, so both food webs differ from the ground in
+# VALUE as well as hue and the working's mark did not. Reported from play as reading paler than the
+# herd's, and visible in the parity frame: the deer's ring and tile outline read instantly, the log's
+# outline almost not at all.
+#
+# **So it keeps the hue and takes the VALUE the other two have** — 0.523, i.e. 0.212 from that
+# terrain, in the same league as the salmon, with the blue excess doubled to +0.24 on top. Darker
+# also separates the ring from the light 🪵 sprite inside it. `_max_blue_excess`, the harness probe
+# that exists because this mark is blended past its own ink, only gets a wider margin from this.
+const EXTRACT_WORKED_COLOR := Color(0.42, 0.54, 0.66, 0.95)
 # Ring radius as a factor of the hex radius. A secondary marker is drawn at SECONDARY_ICON_SIZE_FACTOR
 # (0.55) of the hex, so the ring sits just outside its glyph — and deliberately INSIDE the food-harvest
 # ring (MapView.FOOD_HARVEST_RING_FACTOR 0.42 measured from the same centre), which is a different
