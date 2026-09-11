@@ -5,15 +5,19 @@
 //!   band posts `land.scout_workers` scouts (`assign_labor … scout <n>`). **The `scout <x> <y>`
 //!   verb is retired server-side** (`command.retired=ignored`, `core_sim/src/bin/server.rs`);
 //!   scouting is the standing scout role, which posts vantage points around the band.
-//! - *better ground* — a discovered, unowned patch within the horizon with a higher
-//!   `carrying_capacity` than the band's own, while the runway is falling, proposes `move_band`
+//! - *better ground* — a discovered, unowned patch within the horizon that would **pay a worker
+//!   more** than the band's own ground does, while the runway is falling, proposes `move_band`
 //!   with an intent that **persists until arrival**: the memory holds the target and the same
-//!   intent is re-proposed each turn, which is what the commitment bonus rewards.
+//!   intent is re-proposed each turn, which is what the commitment bonus rewards. The ranking is
+//!   `per_worker_yield` — the crew's take, the quantity `Food` ranks sources on — and **not**
+//!   `carrying_capacity`, which is the standing biomass the land holds; the two disagree, and a
+//!   band that followed the biomass sat on the worst rate in its own neighbourhood and starved.
 //! - *room* — under `Expand`, a band above `land.split_size` on ground the faction owns proposes
 //!   `split_band` with half its workers.
 
 use sim_runtime::{CommandPayload, ForagePatchState, PopulationCohortState};
 
+use super::food::{crew_take, patch_per_worker_yield};
 use super::{intent_key, Cost, Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_LAND};
 use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, AlarmKind, Plan, Stance};
@@ -57,20 +61,29 @@ impl Land {
             .any(|cohort| cohort.faction != self.faction && band_tile(cohort) == tile)
     }
 
-    /// The best discovered, unowned, unoccupied patch within the horizon whose capacity beats
-    /// `above`.
+    /// The best discovered, unowned, unoccupied patch within the horizon, and what it would pay a
+    /// worker — the richest ground that beats a per-worker rate of `above`.
+    ///
+    /// ⛔ **Ground is ranked on what it pays a worker, never on its `carrying_capacity`.** The
+    /// capacity is the stand's standing biomass `K` — what the land can *hold* — and the rate is
+    /// what a crew *takes off it*; on the shipped bench seeds the tile carrying the most biomass in
+    /// a neighbourhood paid the worst rate in it, by more than 2×, so a band ranking on capacity sat
+    /// still and starved while three better tiles stood one step away. Capacity survives only as the
+    /// tiebreak below, where it says the true thing it can say: between two tiles that pay a worker
+    /// the same, the richer one sustains the bigger band.
     fn better_patch<'v>(
         &self,
         view: &'v SeatView,
+        memory: &SeatMemory,
         band: &PopulationCohortState,
         above: f32,
-    ) -> Option<&'v ForagePatchState> {
+    ) -> Option<(&'v ForagePatchState, f32)> {
         let grid = view.grid();
         let here = band_tile(band);
         view.snapshot
             .forage_patches
             .iter()
-            .filter(|patch| patch.owner.is_none() && patch.carrying_capacity > above)
+            .filter(|patch| patch.owner.is_none())
             .filter(|patch| {
                 let tile = Tile::new(patch.x, patch.y);
                 tile != here
@@ -78,13 +91,36 @@ impl Land {
                     && !self.foreign_band_at(view, tile)
                     && grid.distance(here, tile) <= self.floors.horizon_tiles
             })
-            .max_by(|a, b| a.carrying_capacity.total_cmp(&b.carrying_capacity))
+            .map(|patch| (patch, patch_per_worker_yield(memory, band, patch)))
+            .filter(|(_, per_worker)| *per_worker > above)
+            .max_by(|(a, a_rate), (b, b_rate)| {
+                a_rate
+                    .total_cmp(b_rate)
+                    .then_with(|| a.carrying_capacity.total_cmp(&b.carrying_capacity))
+            })
     }
 
-    /// The capacity of the ground the band stands on; nothing when it stands on no patch.
-    fn own_capacity(view: &SeatView, band: &PopulationCohortState) -> f32 {
+    /// What a worker would take off the ground the band stands on; nothing when it stands on no
+    /// patch — bare ground pays a crew nothing whatever it carries.
+    fn own_per_worker_yield(
+        view: &SeatView,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+    ) -> f32 {
         view.patch_at(band_tile(band))
-            .map_or(0.0, |patch| patch.carrying_capacity)
+            .map_or(0.0, |patch| patch_per_worker_yield(memory, band, patch))
+    }
+
+    /// **What this band would harvest off the ground it stands on, per turn**: its whole working-age
+    /// crew at that ground's per-worker rate, capped by what the stand hands over in a turn.
+    fn harvest_here(view: &SeatView, memory: &SeatMemory, band: &PopulationCohortState) -> f32 {
+        view.patch_at(band_tile(band)).map_or(0.0, |patch| {
+            crew_take(
+                band.working_age,
+                patch_per_worker_yield(memory, band, patch),
+                patch.biomass * patch.provisions_per_biomass,
+            )
+        })
     }
 
     fn scouts_posted(band: &PopulationCohortState) -> u32 {
@@ -145,19 +181,22 @@ impl Land {
         memory: &SeatMemory,
         band: &PopulationCohortState,
     ) -> Option<Proposal> {
-        let own = Self::own_capacity(view, band);
-        let target = match memory.move_target(band.band_id) {
+        let own = Self::own_per_worker_yield(view, memory, band);
+        let (target, target_rate) = match memory.move_target(band.band_id) {
             // Persist until arrival, while the ground is still worth it.
-            Some(target) => view
-                .patch_at(target)
-                .filter(|patch| patch.owner.is_none_or(|owner| owner == self.faction))
-                .filter(|patch| patch.carrying_capacity > own)
-                .filter(|_| !self.foreign_band_at(view, target))?,
+            Some(target) => {
+                let patch = view
+                    .patch_at(target)
+                    .filter(|patch| patch.owner.is_none_or(|owner| owner == self.faction))
+                    .filter(|_| !self.foreign_band_at(view, target))?;
+                let rate = patch_per_worker_yield(memory, band, patch);
+                (rate > own).then_some((patch, rate))?
+            }
             None => {
                 if !memory.runway_falling(band.band_id, band.turns_of_food) {
                     return None;
                 }
-                self.better_patch(view, band, own)?
+                self.better_patch(view, memory, band, own)?
             }
         };
         Some(Proposal {
@@ -168,7 +207,7 @@ impl Land {
                 target_y: target.y,
             }],
             intent: intent_key(SPECIALIST_LAND, INTENT_MOVE, band.band_id),
-            score: (target.carrying_capacity - own) / target.carrying_capacity * self.weight,
+            score: (target_rate - own) / target_rate * self.weight,
             cost: Cost {
                 workers: 0,
                 bands: vec![band.band_id],
@@ -215,10 +254,16 @@ impl Land {
     }
 
     /// The alarm: a band's ground cannot feed it and nothing better is in view.
-    pub fn alarm(&self, view: &SeatView) -> Option<Alarm> {
+    ///
+    /// ⛔ **A rate against a rate.** What the band harvests here is provisions *per turn* and
+    /// `food_consumption` is what it eats *per turn*; the stock this used to read —
+    /// `carrying_capacity`, the standing biomass — is neither, and being two orders of magnitude
+    /// larger than a band's appetite it meant the alarm could essentially never fire.
+    pub fn alarm(&self, view: &SeatView, memory: &SeatMemory) -> Option<Alarm> {
         let short = view.own_bands(self.faction).any(|band| {
-            let own = Self::own_capacity(view, band);
-            own < band.food_consumption && self.better_patch(view, band, own).is_none()
+            let own = Self::own_per_worker_yield(view, memory, band);
+            Self::harvest_here(view, memory, band) < band.food_consumption
+                && self.better_patch(view, memory, band, own).is_none()
         });
         short.then_some(Alarm {
             specialist: SPECIALIST_LAND,
@@ -236,7 +281,7 @@ impl Specialist for Land {
     fn propose(&mut self, view: &SeatView, plan: &Plan, memory: &SeatMemory) -> Proposals {
         let mut out = Proposals {
             proposals: Vec::new(),
-            alarm: self.alarm(view),
+            alarm: self.alarm(view, memory),
         };
         for band in view.own_bands(self.faction) {
             out.proposals.extend(self.blind(view, memory, band));
@@ -411,9 +456,10 @@ mod tests {
     #[test]
     fn the_alarm_is_ground_that_cannot_feed_the_band_with_nothing_better_in_view() {
         let mut view = a_view();
+        let memory = SeatMemory::new(NO_MEMORY_DECAY);
         view.snapshot.populations[0].food_consumption = 100.0;
         assert!(
-            land("forager").alarm(&view).is_none(),
+            land("forager").alarm(&view, &memory).is_none(),
             "the rich patch is better ground, so no alarm yet"
         );
         // A rival standing on the rich patch takes it off the table too.
@@ -425,15 +471,120 @@ mod tests {
             ..Default::default()
         });
         assert!(
-            land("forager").alarm(&view).is_none(),
-            "the near patch (cap 20) is still better than nothing"
+            land("forager").alarm(&view, &memory).is_none(),
+            "the near patch (1.0 a worker) still pays more than the bare ground here"
         );
         for patch in &mut view.snapshot.forage_patches {
             patch.owner = Some(FACTION + 1);
         }
         assert_eq!(
-            land("forager").alarm(&view).map(|alarm| alarm.kind),
+            land("forager")
+                .alarm(&view, &memory)
+                .map(|alarm| alarm.kind),
             Some(AlarmKind::LandShort)
+        );
+    }
+
+    /// ⛔ **The alarm compares a rate to a rate.** Against `carrying_capacity` — a standing biomass
+    /// two orders of magnitude larger than a band's appetite — it could essentially never fire.
+    #[test]
+    fn the_alarm_weighs_what_the_crew_harvests_per_turn_not_the_biomass_standing_here() {
+        let mut view = a_view();
+        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        // The band's own ground: a great deal of biomass standing, paying a worker almost nothing.
+        // Nothing else is on the table, so only this ground answers the question.
+        view.snapshot.forage_patches = vec![ForagePatchState {
+            x: HERE.x,
+            y: HERE.y,
+            owner: None,
+            per_worker_yield: 0.05,
+            carrying_capacity: 195.0,
+            biomass: 292.5,
+            provisions_per_biomass: 1.0,
+            ..Default::default()
+        }];
+        let band = &mut view.snapshot.populations[0];
+        band.working_age = 17;
+        band.food_consumption = 4.0;
+        assert_eq!(
+            land("forager")
+                .alarm(&view, &memory)
+                .map(|alarm| alarm.kind),
+            Some(AlarmKind::LandShort),
+            "17 hands × 0.05 = 0.85 a turn against 4.0 eaten a turn"
+        );
+        // The same 195 of standing biomass, now paying a worker enough to feed the band.
+        view.snapshot.forage_patches[0].per_worker_yield = 1.0;
+        assert!(
+            land("forager").alarm(&view, &memory).is_none(),
+            "17 hands × 1.0 covers the 4.0 eaten, and the biomass never moved"
+        );
+    }
+
+    /// ⛔ **Better ground is the ground that pays a worker more, not the ground carrying the most
+    /// biomass.** On the bench's seed 23 the band's own tile held the most `carrying_capacity` in
+    /// its neighbourhood and the worst `per_worker_yield` in it — so ranking on capacity found
+    /// nothing better than where it stood, and the band sat there and starved.
+    #[test]
+    fn better_ground_follows_the_per_worker_yield_and_not_the_carrying_capacity() {
+        let mut view = a_view();
+        // Here: the richest stand in reach, and the worst rate in it.
+        view.snapshot.forage_patches.push(ForagePatchState {
+            x: HERE.x,
+            y: HERE.y,
+            owner: None,
+            per_worker_yield: 0.25,
+            carrying_capacity: 195.0,
+            biomass: 292.5,
+            provisions_per_biomass: 1.0,
+            ..Default::default()
+        });
+        // One step away: less biomass standing, more of it reaching a worker.
+        let runner_up_stand = Tile::new(4, 2);
+        let best_rate = Tile::new(2, 3);
+        for patch in &mut view.snapshot.forage_patches {
+            let tile = Tile::new(patch.x, patch.y);
+            if tile == runner_up_stand {
+                patch.per_worker_yield = 0.55;
+                patch.carrying_capacity = 150.0;
+            } else if tile == best_rate {
+                patch.per_worker_yield = 0.56;
+                patch.carrying_capacity = 70.0;
+            }
+        }
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        memory.observe(&view, FACTION);
+        memory.remember_runways(&view, FACTION);
+        view.snapshot.populations[0].turns_of_food -= 1.0;
+        let proposal = land("forager")
+            .better_ground(&view, &memory, own_band(&view))
+            .expect("two tiles in reach pay a worker more than this one does");
+        assert!(
+            matches!(
+                proposal.commands[0],
+                CommandPayload::MoveBand { target_x, target_y, .. }
+                    if Tile::new(target_x, target_y) == best_rate
+            ),
+            "the best rate, not the most biomass: {:?}",
+            proposal.commands[0]
+        );
+        // The same ranking with the two best rates tied: the tiebreak is what the land holds.
+        for patch in &mut view.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == best_rate {
+                patch.per_worker_yield = 0.55;
+            }
+        }
+        let proposal = land("forager")
+            .better_ground(&view, &memory, own_band(&view))
+            .expect("still better ground");
+        assert!(
+            matches!(
+                proposal.commands[0],
+                CommandPayload::MoveBand { target_x, target_y, .. }
+                    if Tile::new(target_x, target_y) == runner_up_stand
+            ),
+            "tied on rate, the richer stand sustains the bigger band: {:?}",
+            proposal.commands[0]
         );
     }
 }

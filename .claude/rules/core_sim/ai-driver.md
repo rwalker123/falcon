@@ -185,6 +185,11 @@ the published per-worker rate alone.** Three facts of the frame forced this:
    the mean per web (`realized_for_kind`), and a source is ranked on its own realized rate, else the
    web's, else the forecast. A row realizing under `food.poor_yield_fraction` of its forecast for
    `food.dead_row_turns` consecutive turns is **dead**: relieved, and avoided while remembered.
+   ⛔ **The web's mean can weigh a source down but never veto it** — it is consulted only while it
+   is *positive*. A non-positive prior says nothing and the source falls back to its own forecast.
+   Without that guard a single `0.0` folded into `realized_by_kind["hunt"]` rated **every** hunt
+   source 0.0 forever; `best_source` filters on `expected() > 0`, so all of them dropped out and
+   `Food` proposed nothing at all from tick 4 to tick 30 of bench seed 23.
 3. **A patch row is not a gathering site.** `forage_patches` is published for every food-bearing
    tile, but `assign_labor forage` is refused *"nobody gathers here"* unless the tile carries a
    food module (`plant_rung_site_refusal` → `FoodSiteRegistry::is_site`), so a forage source must
@@ -192,19 +197,31 @@ the published per-worker rate alone.** Three facts of the frame forced this:
 
 ### `Land`
 
-Owns `patches_owned`; alarms `land_short` when a band's ground (`carrying_capacity` of the patch it
-stands on) is below its `food_consumption` and no better patch is in view.
+Owns `patches_owned`; alarms `land_short` when what the band's crew would **harvest per turn** on
+the ground it stands on (`harvest_here` = `crew_take(working_age, own rate, biomass ×
+provisions_per_biomass)`) is below its `food_consumption`, and no better patch is in view.
 
 - *blind* — fewer than `land.known_tiles_floor` known tiles within `land.horizon_tiles` of a band
   posts `land.scout_workers` scouts with `assign_labor … scout <n>`, once. `land:scout:<band>`.
   ⛔ **The `scout <x> <y>` verb is retired server-side** (`command.retired=ignored`,
   `core_sim/src/bin/server.rs`); the standing scout role posts vantage points around the band.
 - *better ground* — while the runway is falling, a discovered, unowned, **unoccupied** patch within
-  the horizon with a higher `carrying_capacity` than the band's own proposes `move_band`, and the
+  the horizon with a higher **per-worker yield** than the band's own proposes `move_band`, and the
   intent persists until arrival: the memory holds the target and re-proposes the same
   `land:move:<band>` each turn, which is what the commitment bonus rewards.
 - *room* — under `Expand`, a band above `land.split_size` standing on ground the faction owns
   proposes `split_band` with half its workers. `land:split:<band>`.
+
+⛔ **`Land` ranks ground by what it pays a worker, not by what is standing on it.**
+`carrying_capacity` is the land's biomass `K`; `per_worker_yield` is what the crew eats, and the two
+disagree badly — on bench seed 23 the band's own tile carried the neighbourhood's most biomass
+(195.0) at its **worst** rate (0.249/worker), beside a 150.0 tile paying 0.531 and a 70.0 tile
+paying 0.548. Ranked on capacity, *better ground* correctly found nothing better and the band
+starved where it stood: 17 → 5 workers, 19 hunger deaths, with `Land` silent for all 30 turns. So
+`better_patch` filters **and** maximises on `patch_per_worker_yield` — the same accessor `Food`
+rates a source with (`specialists/food.rs`), so the two specialists cannot drift apart — and
+`carrying_capacity` survives only as the tiebreak between equal rates. The alarm above is the same
+correction: it once compared a *stock* to a *rate* (`195.0 < 4.09`) and so could never fire.
 
 ⛔ **Contact hands a band over.** The sim's knowledge migration (`advance_population_migration`,
 `core_sim/src/systems/population.rs`) rewrites the faction of a band that is settled
@@ -224,6 +241,12 @@ since the last plan; per band the `land:move` target still being walked to (clea
 last turn's `turns_of_food`; per worked row (`<band>:<kind>:<x>,<y>` or `<band>:<kind>:<fauna_id>`)
 what it realized per worker and for how many consecutive turns, kept when the row is emptied so a
 dead source is judged on its record.
+
+⛔ **A row nobody was useful on is not a measurement.** `per_worker` is an `Option`, and the
+denominator is `useful_workers(row)` — `hunt_useful_workers` on a hunt row, `workers` otherwise. A
+row whose denominator is zero records **no** per-worker figure and never joins `realized_by_kind`:
+`hunt_useful_workers == 0` means the hunt did not happen, not that the herd yields nothing. Folding
+it in as a measured `0.0` is what poisoned the whole hunt web above.
 
 **Restated constants.** The visibility raster is fixed-point: `Active` = `Scalar::SCALE` (1.0),
 `Discovered` = `SCALE / 2`, `Unexplored` = 0 (`visibility_raster_from_ledger`,
@@ -377,11 +400,22 @@ note}]` list, `--write-baselines` marks every row it writes whose `population_wo
 - a row recorded *alive* whose run has no working population is a `seat_alive` violation in its own
   right, which is what still catches a regression into death.
 
-**A specialist that proposes nothing is a violation, not a silence.** `specialist.<name>.liveness`
-must read 1.0 for the roster the seat spec implies (`utility` → `DISABLEABLE_SPECIALISTS` minus its
-`~` ablations, `scripted` → `scripted`, `pass` → none); an **absent** key — the shape a specialist
-that never proposed leaves behind — is a violation, held against the run alone rather than the
-baseline. Without this an inert specialist reads as a passing check.
+**A specialist that is never once accepted is a violation, not a silence.** For the roster the seat
+spec implies (`utility` → `DISABLEABLE_SPECIALISTS` minus its `~` ablations, `scripted` →
+`scripted`, `pass` → none), `specialist.<name>.accepted` must reach `MIN_ACCEPTED` (1); an
+**absent** key — the shape a specialist that never proposed leaves behind — reads
+`NO_DECISIONS_ACCEPTED` and fails the same way. Held against the run alone, not the baseline.
+Without it an inert specialist read as a passing check: `Land` proposed **nothing** across 30 turns
+of bench seed 23 and `--check` was green.
+
+⛔ **The gate is "never wins", not `liveness`.** §8.2's bar is *"a specialist whose proposals never
+win is not being measured by the ablation, it is being ignored"* — and losing a single window to a
+higher-scoring sibling is ordinary arbitration, not being ignored. On seed 11 `Land` wins at ticks 9
+and 23 and loses five conflicts to `Food` in between (one band takes one order a turn), so its
+`liveness` is 0 while it is plainly alive. Gating on `liveness` would fail that seat and the only
+ways to clear it — rescoring `Land`, or splitting a band between specialists — are changing the
+brain to move a number. So `liveness` stays **reported** and ratchetable through `tolerance`, and
+never gates on its own.
 
 **`sim_ai/bench/baselines.json`** holds two entries on seeds `11, 23` for 30 turns
 (`BASELINE_SEEDS` / `BASELINE_TURNS` / `BASELINE_SEAT_SETS`; a unit test holds the file to them):

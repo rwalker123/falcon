@@ -22,14 +22,14 @@
 //! Every command is `assign_labor`, with the kit and floor left to the frame's defaults (`None`
 //! means the job's default on the wire) — a specialist names no number the sim already owns.
 
-use sim_runtime::{CommandPayload, LaborAssignmentState, PopulationCohortState};
+use sim_runtime::{CommandPayload, ForagePatchState, LaborAssignmentState, PopulationCohortState};
 use tracing::{debug, info};
 
 use super::{intent_key, Cost, Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_FOOD};
 use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, AlarmKind, Plan};
 use crate::profile::FoodFloors;
-use crate::view::{band_tile, row_key, SeatMemory, SeatView};
+use crate::view::{band_tile, row_key, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
 
 /// The `assign_labor` roles this specialist staffs — the `kind` vocabulary of
 /// `LaborAssignmentState` (`sim_runtime/src/command_text.rs`).
@@ -44,6 +44,34 @@ const REASON_IDLE_HANDS: &str = "idle hands";
 const REASON_RUNWAY: &str = "runway below floor";
 const REASON_OVERUSE: &str = "source overused";
 const REASON_DEAD_ROW: &str = "no useful crew";
+
+/// **What one worker would take off `patch` this turn** — the rate the band has realized on that
+/// ground, else the web's prior, else the frame's forecast ([`Food::rate`]).
+///
+/// ⛔ **This, not `carrying_capacity`, is what ground is worth to a crew.** The capacity is the
+/// stand's standing biomass `K`; the two disagree by more than 2× on the shipped bench seeds, and in
+/// the wrong direction — the richest stand in a neighbourhood can be the worst ground to work. Both
+/// `Food` (ranking sources) and `Land` (ranking ground to move onto) read this one quantity, so the
+/// two specialists cannot disagree about what a tile pays.
+pub(crate) fn patch_per_worker_yield(
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    patch: &ForagePatchState,
+) -> f32 {
+    Food::rate(
+        memory,
+        band,
+        &SourceKey::Patch(Tile::new(patch.x, patch.y)),
+        patch.per_worker_yield,
+    )
+}
+
+/// **What a crew of `hands` takes off a source in one turn**: `min(hands × rate, ceiling)`, the
+/// ceiling being the take at a zero escapement floor (`biomass × provisions_per_biomass`; see the
+/// module docs). A per-turn quantity on both sides, so it may be compared with a per-turn demand.
+pub(crate) fn crew_take(hands: u32, per_worker_yield: f32, ceiling: f32) -> f32 {
+    (hands as f32 * per_worker_yield).min(ceiling)
+}
 
 /// A source a band can be assigned to.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,8 +125,8 @@ impl SourceKey {
 #[derive(Debug, Clone, PartialEq)]
 struct Source {
     key: SourceKey,
-    /// The rate a crew is ranked on: what this band has **realized** on the source, if it has
-    /// worked it, else the frame's forecast.
+    /// The rate a crew is ranked on: what this band has **realized** on that source, if it has
+    /// worked it, else the web's prior, else the frame's forecast ([`Food::rate`]).
     per_worker_yield: f32,
     /// The take at a zero floor: `biomass × provisions_per_biomass`.
     ceiling: f32,
@@ -107,7 +135,7 @@ struct Source {
 impl Source {
     /// What a crew of `hands` takes: `min(hands × rate, ceiling)`.
     fn expected(&self, hands: u32) -> f32 {
-        (hands as f32 * self.per_worker_yield).min(self.ceiling)
+        crew_take(hands, self.per_worker_yield, self.ceiling)
     }
 }
 
@@ -127,8 +155,6 @@ impl Food {
         }
     }
 
-    /// Whether `band`'s row on `key` has paid nothing for `dead_row_turns` turns, or the sim has
-    /// said no crew is useful on it.
     /// Whether `band`'s row on `key` has realized less than `poor_yield_fraction` of `forecast`
     /// per worker for `dead_row_turns` turns — or the sim has said no crew is useful on it.
     fn is_dead(
@@ -141,15 +167,27 @@ impl Food {
         memory
             .realized(&key.row_key(band.band_id))
             .is_some_and(|realized| {
-                realized.worked_turns >= self.floors.dead_row_turns
-                    && realized.per_worker < self.floors.poor_yield_fraction * forecast
+                // The sim's own verdict, kept as `WORKED_DEAD_AT_ONCE`: no crew was useful on this
+                // row, so it carries no per-worker measurement to hold against the forecast.
+                realized.worked_turns == WORKED_DEAD_AT_ONCE
+                    || (realized.worked_turns >= self.floors.dead_row_turns
+                        && realized.per_worker.is_some_and(|per_worker| {
+                            per_worker < self.floors.poor_yield_fraction * forecast
+                        }))
             })
     }
 
-    /// The rate to rank `key` on: what the band realized there; else what the seat has realized
-    /// across that web (a hunt's published rate is not what a bare-handed crew takes, and a seat
-    /// that has measured one herd knows that about the next); else `forecast`.
-    fn rate(
+    /// The rate to rank `key` on: what the band realized **on that source**; else what the seat has
+    /// realized across that web (a hunt's published rate is not what a bare-handed crew takes, and a
+    /// seat that has measured one herd knows that about the next); else `forecast`.
+    ///
+    /// ⛔ **The web's prior may weigh a source down, never veto it.** `best_source` drops anything a
+    /// crew would take nothing from, so a prior of `0.0` would strike out every source of its kind —
+    /// one species' bad turn condemning the whole web, permanently, since the mean does not decay.
+    /// A prior that is not positive therefore says nothing, and the source falls back to its own
+    /// forecast. (A row nobody was useful on no longer reaches the prior at all: it is not folded in
+    /// as a measurement, [`SeatMemory::observe`].)
+    pub(crate) fn rate(
         memory: &SeatMemory,
         band: &PopulationCohortState,
         key: &SourceKey,
@@ -157,8 +195,12 @@ impl Food {
     ) -> f32 {
         memory
             .realized(&key.row_key(band.band_id))
-            .map(|realized| realized.per_worker)
-            .or_else(|| memory.realized_for_kind(key.role()))
+            .and_then(|realized| realized.per_worker)
+            .or_else(|| {
+                memory
+                    .realized_for_kind(key.role())
+                    .filter(|prior| *prior > 0.0)
+            })
             .unwrap_or(forecast)
     }
 
@@ -206,13 +248,10 @@ impl Food {
                     && Self::is_food_site(view, tile)
                     && grid.distance(here, tile) <= band.work_range
             })
-            .map(|patch| {
-                let key = SourceKey::Patch(Tile::new(patch.x, patch.y));
-                Source {
-                    per_worker_yield: Self::rate(memory, band, &key, patch.per_worker_yield),
-                    key,
-                    ceiling: patch.biomass * patch.provisions_per_biomass,
-                }
+            .map(|patch| Source {
+                key: SourceKey::Patch(Tile::new(patch.x, patch.y)),
+                per_worker_yield: patch_per_worker_yield(memory, band, patch),
+                ceiling: patch.biomass * patch.provisions_per_biomass,
             })
             .filter(|source| {
                 let forecast = Self::forecast_for(view, &source.key).unwrap_or_default();
@@ -925,6 +964,51 @@ pub(crate) mod tests {
                 )
                 .is_empty(),
             "a useful crew is left alone"
+        );
+    }
+
+    /// ⛔ **One failed hunt does not condemn every herd in reach.** A row the sim marks
+    /// `hunt_useful_workers == 0` is not a measurement, so it never reaches the web's mean; the
+    /// sibling herd the band has never worked is still rated off the frame's forecast, and is
+    /// still a source `best_source` can pick. Before this, the first such row rated every hunt in
+    /// the world `0.0` — and `expected() > 0` then dropped them all, for the rest of the run.
+    #[test]
+    fn a_hunt_nobody_was_useful_on_does_not_condemn_a_sibling_herd() {
+        let mut view = a_view();
+        // Only herds in reach, so the answer is about hunting and nothing else.
+        view.snapshot.forage_patches.clear();
+        view.snapshot.populations[0].labor_assignments = vec![LaborAssignmentState {
+            kind: ROLE_HUNT.into(),
+            fauna_id: HERD_ID.into(),
+            workers: 12,
+            actual_yield: 0.0,
+            sustainable_yield: 0.02,
+            hunt_useful_workers: 0,
+            ..Default::default()
+        }];
+        let sibling = "herd_10";
+        view.snapshot.herds.push(HerdTelemetryState {
+            id: sibling.to_owned(),
+            biomass: 100.0,
+            ..view.snapshot.herds[0].clone()
+        });
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        memory.observe(&view, FACTION);
+        let specialist = food();
+        let proposal = specialist
+            .idle_hands(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
+            .expect("the sibling herd is still a source");
+        assert!(
+            matches!(&proposal.commands[0], CommandPayload::AssignLabor { role, fauna_id: Some(id), .. } if role == ROLE_HUNT && id == sibling),
+            "{proposal:?}"
+        );
+        // And the row that failed is still relieved: it is the *row* the sim condemned.
+        let relieved =
+            specialist.overuse(&view, &plan_with_food_share(1.0), &memory, own_band(&view));
+        assert_eq!(relieved.len(), 1);
+        assert!(relieved[0].reason.starts_with(REASON_DEAD_ROW));
+        assert!(
+            matches!(&relieved[0].commands[1], CommandPayload::AssignLabor { fauna_id: Some(id), .. } if id == sibling)
         );
     }
 

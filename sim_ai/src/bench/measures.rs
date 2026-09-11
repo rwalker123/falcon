@@ -69,8 +69,11 @@ pub const M_TURNS_OBSERVED: &str = "link.turns_observed";
 pub const M_TURNS_LOST: &str = "link.turns_lost_to_timeout";
 pub const M_RECONNECTS: &str = "link.reconnects";
 
-/// `true` as a measure — a specialist accepted in every window, and the value the ratchet's
-/// liveness precondition holds one to.
+/// `true` as a measure — a specialist accepted in every window. **Reported, not a gate**: the
+/// ratchet's precondition asks a specialist for one accepted decision over the whole run, not one
+/// per window, because on a one-band seat a window lost to a higher-scoring sibling is ordinary
+/// arbitration (`ratchet::Report::specialist_ignored_violations`). It is ratchetable through a
+/// baseline `tolerance` like any other measure.
 pub const LIVE: f64 = 1.0;
 /// …and `false`: a window with nothing accepted in it.
 pub const NOT_LIVE: f64 = 0.0;

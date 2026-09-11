@@ -124,11 +124,29 @@ fn key_of_row(band_id: u64, row: &LaborAssignmentState) -> String {
 /// whatever the profile's `dead_row_turns`.
 pub const WORKED_DEAD_AT_ONCE: u32 = u32::MAX;
 
+/// **The denominator of a yield-per-worker observation**: the workers whose work the sim counted.
+///
+/// On a **hunt** row that is `hunt_useful_workers`, and `0` there is the sim saying *no crew is
+/// useful here* (`LaborAssignmentState::hunt_useful_workers`) — the hunt did not happen, so the
+/// row's `actual_yield` of `0.0` measures nothing about the quarry. Every other row is measured on
+/// the crew itself: `hunt_useful_workers` is `0` on a non-hunt row by construction, so it must
+/// never be read as one there, and [`SeatMemory::observe`] only folds rows that carry workers.
+fn useful_workers(row: &LaborAssignmentState) -> u32 {
+    if row.kind == crate::specialists::food::ROLE_HUNT {
+        row.hunt_useful_workers
+    } else {
+        row.workers
+    }
+}
+
 /// What a worked row has actually paid — the measurement a forecast is held against.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Realized {
-    /// Last turn's `actual_yield / workers`.
-    pub per_worker: f32,
+    /// Last turn's `actual_yield / workers` — **`None` when the row was not a measurement at all**,
+    /// which is a row no worker was useful on ([`useful_workers`]). A zero-denominator observation
+    /// is not evidence: folded in as a `0.0` it says "this source pays nothing", which is a claim
+    /// the turn never tested.
+    pub per_worker: Option<f32>,
     /// Consecutive turns the row has been worked; kept when the row is emptied, so the source it
     /// named is judged on its record rather than picked afresh the moment it is free.
     pub worked_turns: u32,
@@ -172,15 +190,14 @@ impl SeatMemory {
         for band in view.own_bands(faction) {
             for row in band.labor_assignments.iter().filter(|row| row.workers > 0) {
                 let key = key_of_row(band.band_id, row);
-                let useless_hunt =
-                    row.kind == crate::specialists::food::ROLE_HUNT && row.hunt_useful_workers == 0;
+                let measured = useful_workers(row) > 0;
                 let previous = self.realized.get(&key).map_or(0, |r| r.worked_turns);
-                let worked_turns = if useless_hunt || previous == WORKED_DEAD_AT_ONCE {
+                let worked_turns = if !measured || previous == WORKED_DEAD_AT_ONCE {
                     WORKED_DEAD_AT_ONCE
                 } else {
                     previous + 1
                 };
-                let per_worker = row.actual_yield / row.workers as f32;
+                let per_worker = measured.then(|| row.actual_yield / row.workers as f32);
                 self.realized.insert(
                     key,
                     Realized {
@@ -188,12 +205,16 @@ impl SeatMemory {
                         worked_turns,
                     },
                 );
-                let (sum, count) = self
-                    .realized_by_kind
-                    .entry(row.kind.clone())
-                    .or_insert((0.0, 0));
-                *sum += per_worker;
-                *count += 1;
+                // Only a measurement joins the web's mean: a row nobody was useful on would
+                // otherwise fold a `0.0` into every *other* source of its kind, for good.
+                if let Some(per_worker) = per_worker {
+                    let (sum, count) = self
+                        .realized_by_kind
+                        .entry(row.kind.clone())
+                        .or_insert((0.0, 0));
+                    *sum += per_worker;
+                    *count += 1;
+                }
             }
         }
         let grid = view.grid();
@@ -272,8 +293,10 @@ impl SeatMemory {
         self.realized.get(key).copied()
     }
 
-    /// The mean per-worker take this seat has realized across every row of `kind`, if it has
-    /// worked any — the prior for a source of that web it has not tried.
+    /// The mean per-worker take this seat has realized across every **measured** row of `kind`, if
+    /// it has worked any — a weak prior for a source of that web it has not tried, and never a
+    /// verdict on one: a source with its own observation, or absent one its own forecast, outranks
+    /// it (`Food::rate`).
     pub fn realized_for_kind(&self, kind: &str) -> Option<f32> {
         self.realized_by_kind
             .get(kind)
@@ -701,13 +724,22 @@ mod tests {
         assert_eq!(
             memory.realized(&patch),
             Some(Realized {
-                per_worker: 0.2,
+                per_worker: Some(0.2),
                 worked_turns: 2
             })
         );
         assert_eq!(
-            memory.realized(&herd).map(|r| r.worked_turns),
-            Some(WORKED_DEAD_AT_ONCE)
+            memory.realized(&herd),
+            Some(Realized {
+                // ⛔ Not `Some(0.0)`: no crew was useful, so the turn measured nothing.
+                per_worker: None,
+                worked_turns: WORKED_DEAD_AT_ONCE
+            })
+        );
+        assert_eq!(
+            memory.realized_for_kind("hunt"),
+            None,
+            "a row nobody was useful on is not folded into the web's mean"
         );
         view.snapshot.populations[0].labor_assignments.clear();
         memory.observe(&view, FACTION);
@@ -725,5 +757,44 @@ mod tests {
         memory.forget_after(9);
         assert_eq!(memory.realized(&herd), None);
         assert_eq!(memory.realized_for_kind("forage"), None);
+    }
+
+    /// ⛔ **A yield-per-worker observation with a zero denominator is not evidence.** A hunt the
+    /// sim marks `hunt_useful_workers == 0` did not happen; folding its `0.0` into the web's mean
+    /// once said "hunting pays nothing" about every other herd, for the rest of the run.
+    #[test]
+    fn a_useless_hunt_row_is_no_evidence_about_the_web_it_belongs_to() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            labor_assignments: vec![LaborAssignmentState {
+                kind: "hunt".into(),
+                fauna_id: "herd_9".into(),
+                workers: 12,
+                actual_yield: 0.0,
+                hunt_useful_workers: 0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.realized_for_kind("hunt"), None);
+        // A hunt a crew *was* useful on is a measurement, and the only one the mean holds.
+        view.snapshot.populations[0]
+            .labor_assignments
+            .push(LaborAssignmentState {
+                kind: "hunt".into(),
+                fauna_id: "herd_11".into(),
+                workers: 4,
+                actual_yield: 0.8,
+                hunt_useful_workers: 4,
+                ..Default::default()
+            });
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.realized_for_kind("hunt"), Some(0.2));
     }
 }

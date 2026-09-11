@@ -15,8 +15,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::measures::{
-    Measures, LIVE, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX, M_FOOD_STOCK,
-    M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX, M_LIVENESS,
+    Measures, LIVE, M_ACCEPTED, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX,
+    M_FOOD_STOCK, M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX,
     M_POPULATION_CHILDREN, M_POPULATION_ELDERS, M_POPULATION_WORKING, M_RECONNECTS,
     M_SPECIALIST_PREFIX, M_STANCE_SWITCHES, M_TURNS_LOST, M_VICTORY_PREFIX, NOT_LIVE,
 };
@@ -66,6 +66,13 @@ const NO_WORKING_POPULATION: f64 = 0.0;
 ///   dead row nobody marked (a zero that reads as a target), or a mark left on a row that lives.
 pub const M_SEAT_ALIVE: &str = "seat_alive";
 pub const M_DEGENERATE_MARKER: &str = "degenerate_marker";
+/// **What a specialist on the roster has to show over the whole run**: one accepted decision — it
+/// proposed, and it won at least once. Below this it is being ignored, §8.2's failure; at it or
+/// above, how often it wins is the arbiter's business and `liveness`' to measure.
+const MIN_ACCEPTED: f64 = 1.0;
+/// What an absent `specialist.<name>.accepted` reads as: a specialist the decision log never named
+/// proposed nothing, so nothing of it was accepted.
+const NO_DECISIONS_ACCEPTED: f64 = 0.0;
 /// The note [`Report::as_baselines`] writes on a row it marks degenerate.
 const DEGENERATE_NOTE: &str =
     "the seat had no working population left when this baseline was recorded: its outcome \
@@ -271,8 +278,8 @@ impl Report {
     ///    ratcheted set.
     ///
     /// Then the tolerances, and then the specialists the seat's brain is supposed to be running:
-    /// one that proposed nothing across the whole run reads as an absent key, and an absent key is
-    /// a failure here rather than a silence ([`Report::specialist_liveness_violations`]).
+    /// one that never proposed at all, or that proposed and was never once accepted, is a failure
+    /// here rather than a silence ([`Report::specialist_ignored_violations`]).
     pub fn check(&self, file: &BaselinesFile) -> Result<Vec<Violation>, RatchetError> {
         let baselines = file.find(&self.seeds, self.turns, &self.seats)?;
         let mut violations = Vec::new();
@@ -328,21 +335,32 @@ impl Report {
                         });
                     }
                 }
-                violations.extend(self.specialist_liveness_violations(seed, seat, actual_seat));
+                violations.extend(self.specialist_ignored_violations(seed, seat, actual_seat));
             }
         }
         Ok(violations)
     }
 
-    /// **A specialist that proposes nothing is a failure, not an absent key.** For every
-    /// specialist this seat's brain is supposed to be running (its roster minus the `~` ablations),
-    /// `specialist.<name>.liveness` must read [`LIVE`]: an absent key — the shape a specialist that
-    /// made **zero** proposals across the whole run takes, because the measures are built from the
-    /// names the decision log actually carries — reads as [`NOT_LIVE`] and fails here.
+    /// **A specialist on the roster must propose, and must win at least once** — §8.2's *"a
+    /// specialist whose proposals never win is not being measured by the ablation, it is being
+    /// ignored"*. For every specialist this seat's brain is supposed to be running (its roster
+    /// minus the `~` ablations), `specialist.<name>.accepted` must reach [`MIN_ACCEPTED`]. An
+    /// **absent** key — the shape a specialist that made zero proposals across the whole run takes,
+    /// because the measures are built from the names the decision log actually carries — reads as
+    /// [`NO_DECISIONS_ACCEPTED`] and fails here, which is the total inertness this precondition was
+    /// added for.
     ///
-    /// This is held against the run alone, not against the baseline: a baseline that recorded a
-    /// dead specialist is not a licence to keep it dead.
-    fn specialist_liveness_violations(
+    /// ⛔ **`liveness` is not the gate.** It is still measured, still written to the baselines, and
+    /// still ratchetable through `tolerance` if a per-seat bar is ever wanted — but an empty
+    /// *window* is not "being ignored": on a one-band seat every specialist's proposals compete for
+    /// the same band under one-order-per-band, so a turn lost to a higher-scoring sibling is
+    /// ordinary arbitration. Gating on it failed a seat whose `Land` won twice in thirty turns,
+    /// which is arbitration working, and the only way to clear that would have been to change the
+    /// brain to chase the check.
+    ///
+    /// This is held against the run alone, not against the baseline: a baseline that recorded an
+    /// ignored specialist is not a licence to keep it ignored.
+    fn specialist_ignored_violations(
         &self,
         seed: &str,
         seat: &str,
@@ -357,13 +375,17 @@ impl Report {
         expected_specialists(spec)
             .into_iter()
             .filter_map(|name| {
-                let measure = format!("{M_SPECIALIST_PREFIX}{name}.{M_LIVENESS}");
-                let value = actual.get(&measure).copied().flatten().unwrap_or(NOT_LIVE);
-                (value < LIVE).then(|| Violation {
+                let measure = format!("{M_SPECIALIST_PREFIX}{name}.{M_ACCEPTED}");
+                let value = actual
+                    .get(&measure)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(NO_DECISIONS_ACCEPTED);
+                (value < MIN_ACCEPTED).then(|| Violation {
                     seed: seed.to_owned(),
                     seat: seat.to_owned(),
                     measure,
-                    baseline: LIVE,
+                    baseline: MIN_ACCEPTED,
                     tolerance: BASELINE_TOLERANCE,
                     actual: value,
                 })
@@ -903,11 +925,14 @@ mod tests {
         );
     }
 
-    /// ⛔ **A SPECIALIST THAT PROPOSED NOTHING IS A FAILURE, NOT AN ABSENT KEY.** `Land` making
-    /// zero proposals across a whole run leaves no `specialist.land.*` measures at all, which is
-    /// exactly the silence the liveness measure exists to catch.
+    /// ⛔ **A SPECIALIST THAT NEVER WINS IS BEING IGNORED, AND AN ABSENT KEY IS THE WORST CASE OF
+    /// IT.** `Land` making zero proposals across a whole run leaves no `specialist.land.*` measures
+    /// at all — the silence this precondition exists to catch — and a `Land` that proposes every
+    /// turn and is never once accepted is the same failure with more logging.
     #[test]
-    fn a_specialist_that_proposed_nothing_fails_the_check() {
+    fn a_specialist_that_never_wins_fails_the_check_and_an_absent_key_is_the_worst_case() {
+        use super::super::measures::M_LIVENESS;
+        let accepted = |name: &str| format!("{M_SPECIALIST_PREFIX}{name}.{M_ACCEPTED}");
         let live = |name: &str| format!("{M_SPECIALIST_PREFIX}{name}.{M_LIVENESS}");
         let file = baselines_with(&[(M_POPULATION_WORKING, Some(12.0))], BASELINE_TOLERANCE);
         let mut baselines = file;
@@ -918,7 +943,7 @@ mod tests {
             UTILITY_SEAT_SPEC,
             &[
                 (M_POPULATION_WORKING, Some(12.0)),
-                (&live("food"), Some(NOT_LIVE)),
+                (&accepted("food"), Some(NO_DECISIONS_ACCEPTED)),
             ],
         );
         let violations = inert.check(&baselines).unwrap();
@@ -926,21 +951,41 @@ mod tests {
             .iter()
             .map(|violation| violation.measure.as_str())
             .collect();
-        assert!(named.contains(&live("food").as_str()), "zero reads as dead");
         assert!(
-            named.contains(&live("land").as_str()),
-            "an absent key reads as dead too: {named:?}"
+            named.contains(&accepted("food").as_str()),
+            "proposed and never won"
+        );
+        assert!(
+            named.contains(&accepted("land").as_str()),
+            "an absent key is a specialist that never proposed: {named:?}"
         );
 
-        let alive = report_of(
+        let winning = report_of(
             UTILITY_SEAT_SPEC,
             &[
                 (M_POPULATION_WORKING, Some(12.0)),
-                (&live("food"), Some(LIVE)),
-                (&live("land"), Some(LIVE)),
+                (&accepted("food"), Some(MIN_ACCEPTED)),
+                (&accepted("land"), Some(MIN_ACCEPTED)),
             ],
         );
-        assert!(alive.check(&baselines).unwrap().is_empty());
+        assert!(winning.check(&baselines).unwrap().is_empty());
+
+        // ⛔ An empty *window* is not being ignored: a specialist that won once and lost the rest
+        // of a window to a higher-scoring sibling is ordinary arbitration, and does not fail.
+        let quiet_window = report_of(
+            UTILITY_SEAT_SPEC,
+            &[
+                (M_POPULATION_WORKING, Some(12.0)),
+                (&accepted("food"), Some(9.0)),
+                (&live("food"), Some(LIVE)),
+                (&accepted("land"), Some(2.0)),
+                (&live("land"), Some(NOT_LIVE)),
+            ],
+        );
+        assert!(
+            quiet_window.check(&baselines).unwrap().is_empty(),
+            "liveness is measured, not gated"
+        );
     }
 
     #[test]
