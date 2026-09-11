@@ -2,10 +2,15 @@
 //!
 //! For each seed: write a scratch config from the shipped one with `map_seed` and
 //! `default_ai_faction_count` pinned and the port block moved to a free private base; start the
-//! built `server` on it; build the world with `new_game` from an unseated connection; spawn one
-//! `sim_ai` per requested seat with `--turns` and `--log-dir`; wait for them all; kill the server.
-//! Then read every seat's two logs into the measures of §8.2 (`measures.rs`), write
-//! `report.json`, and print a table (`ratchet.rs`).
+//! built `server` on it; ask it (`FactionCapacity`) whether the world seats the rivals requested;
+//! build the world with `new_game` from an unseated connection; spawn one `sim_ai` per requested
+//! seat with `--turns` and `--log-dir`; wait for them all; kill the server. Then read every seat's
+//! two measured logs into the measures of §8.2 (`measures.rs`), write `report.json`, and print a
+//! table (`ratchet.rs`).
+//!
+//! **The world is one a player can select** (§8.4): the `earthlike` preset at the New Game menu's
+//! smallest size, the shipped start profile, the shipped separation. A fixture world chosen for
+//! speed measures nothing a player will meet.
 //!
 //! **No host is needed.** Once every occupied seat has submitted, the server resolves the turn
 //! itself (`SeatTurnGate` → `TurnWait::Resolve`, `core_sim/src/seats.rs`), auto-submitting the
@@ -35,7 +40,8 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use sim_runtime::CommandPayload;
+use sim_runtime::commands::{FactionCapacityQuery, QueryPayload};
+use sim_runtime::{CommandPayload, QueryReply};
 use tracing::info;
 
 use crate::link::{Endpoints, Link, UnseatedConnection};
@@ -51,21 +57,28 @@ use ratchet::{BaselinesFile, CheckOutcome, Report, RunMeasures, REPORT_FILE};
 /// `BUILTIN_SIMULATION_CONFIG` (`core_sim/src/resources.rs`). A file include, not a crate link.
 const SHIPPED_CONFIG: &str = include_str!("../../../core_sim/src/data/simulation_config.json");
 
-/// The same small world the scenario tests drive (`core_sim/tests/ai_seat_scenario.rs`), so a
-/// bench turn is a fraction of a second and thirty of them are seconds.
-const MAP_WIDTH: u32 = 24;
-const MAP_HEIGHT: u32 = 16;
-const MAP_PRESET: &str = "earthlike";
-const START_PROFILE: &str = "late_forager_tribe";
-/// The shipped separation seats one faction on a map this small; shrunk so the rivals are seated.
-const START_SEPARATION: u32 = 6;
+/// **The smallest world the New Game menu offers** — `Tiny` in
+/// `clients/godot_thin_client/src/scripts/MapSizes.gd`, restated here because this crate cannot
+/// read a GDScript registry; the client's is the authority. The preset and start profile are the
+/// shipped config's (`map_preset_id`, `start_profile_id`), and the separation is left at the
+/// shipped value, so the world is exactly one a player opens from the menu.
+pub const MAP_WIDTH: u32 = 56;
+pub const MAP_HEIGHT: u32 = 36;
+pub const MAP_PRESET: &str = "earthlike";
+pub const START_PROFILE: &str = "late_forager_tribe";
 /// The seat the bench holds while the rivals claim theirs (`HudConst.PLAYER_FACTION_ID`).
 const HUMAN_SEAT: u32 = 0;
 
 /// The config keys the bench rewrites.
 const KEY_MAP_SEED: &str = "map_seed";
 const KEY_AI_FACTION_COUNT: &str = "default_ai_faction_count";
+/// The keys the bench reads back to hold the world to the shipped one (tests only).
+#[cfg(test)]
 const KEY_START_SEPARATION: &str = "faction_start_min_separation";
+#[cfg(test)]
+const KEY_MAP_PRESET: &str = "map_preset_id";
+#[cfg(test)]
+const KEY_START_PROFILE: &str = "start_profile_id";
 /// **The port block's four keys and their offsets.** Restated from `core_sim::apply_port_base`
 /// (`core_sim/src/resources.rs`) and `port_alloc.rs`: slot 0 is the reserved base, then command,
 /// snapshot_flat, log.
@@ -119,6 +132,7 @@ const SEAT_CLAIMED_MARKER: &str = "seat.claimed";
 const SEAT_CLAIMED_FACTION_FIELD: &str = "faction=";
 
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(60);
+const CAPACITY_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 const WORLD_BUILD_TIMEOUT: Duration = Duration::from_secs(60);
 const SEAT_CLAIM_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the seats get to finish: a fixed allowance for claiming and the first frame, plus
@@ -299,6 +313,15 @@ pub enum BenchError {
     },
     #[error("seed {seed}: the server never published its ports file\n{log}")]
     ServerNotReady { seed: u64, log: String },
+    #[error(
+        "seed {seed}: a {MAP_WIDTH}x{MAP_HEIGHT} {MAP_PRESET} world seats at most {max_rivals} \
+         rival(s) at the shipped separation, and {requested} were requested"
+    )]
+    WorldTooSmall {
+        seed: u64,
+        requested: u32,
+        max_rivals: u32,
+    },
     #[error("seed {seed}: the world could not be built: {detail}\n{log}")]
     WorldBuild {
         seed: u64,
@@ -502,15 +525,41 @@ fn run_seed(
     let endpoints = await_ports_file(&mut server, &ports_path, &server_log, seed)?;
     info!(seed, command = %endpoints.command, "server up");
 
-    // The world, from an unseated connection, then a question answered in order behind it.
+    // The world, from an unseated connection: first the capacity question, so a world that cannot
+    // seat the rivals fails by name rather than as a clamped roster and an `unknown_seat` wait;
+    // then `new_game`, then a question answered in order behind it.
     {
-        let mut builder = UnseatedConnection::connect(endpoints.command).map_err(|err| {
-            BenchError::WorldBuild {
-                seed,
-                detail: err.to_string(),
-                log: log_tail(&server_log),
+        let world_build = |err: String| BenchError::WorldBuild {
+            seed,
+            detail: err,
+            log: log_tail(&server_log),
+        };
+        let mut builder = UnseatedConnection::connect(endpoints.command)
+            .map_err(|err| world_build(err.to_string()))?;
+        let capacity = builder
+            .ask(
+                QueryPayload::FactionCapacity(FactionCapacityQuery {
+                    width: MAP_WIDTH,
+                    height: MAP_HEIGHT,
+                }),
+                CAPACITY_QUERY_TIMEOUT,
+            )
+            .map_err(|err| world_build(err.to_string()))?;
+        let max_rivals = match capacity {
+            QueryReply::FactionCapacity(reply) => reply.max_ai_faction_count,
+            other => {
+                return Err(world_build(format!(
+                    "the capacity question was answered with {other:?}"
+                )))
             }
-        })?;
+        };
+        if max_rivals < rivals {
+            return Err(BenchError::WorldTooSmall {
+                seed,
+                requested: rivals,
+                max_rivals,
+            });
+        }
         builder
             .send(CommandPayload::NewGame {
                 preset_id: MAP_PRESET.to_owned(),
@@ -521,11 +570,7 @@ fn run_seed(
                 ai_faction_count: Some(rivals),
             })
             .and_then(|()| builder.sync(WORLD_BUILD_TIMEOUT))
-            .map_err(|err| BenchError::WorldBuild {
-                seed,
-                detail: err.to_string(),
-                log: log_tail(&server_log),
-            })?;
+            .map_err(|err| world_build(err.to_string()))?;
     }
 
     // Hold the human seat until every rival has claimed (module docs).
@@ -575,8 +620,8 @@ fn run_seed(
     Ok(())
 }
 
-/// The shipped config with the seed, the rival count and the separation pinned and the port block
-/// moved to a free base.
+/// The shipped config with the seed and the rival count pinned and the port block moved to a
+/// free base. Nothing else moves: the separation is the shipped one, so the world is the menu's.
 fn write_config(
     base: &serde_json::Value,
     seed: u64,
@@ -586,7 +631,6 @@ fn write_config(
     let mut json = base.clone();
     json[KEY_MAP_SEED] = serde_json::Value::from(seed);
     json[KEY_AI_FACTION_COUNT] = serde_json::Value::from(u64::from(rivals));
-    json[KEY_START_SEPARATION] = serde_json::Value::from(u64::from(START_SEPARATION));
     let port_base = free_port_base()?;
     for (key, offset) in [
         (KEY_PORT_BASE_BIND, 0),
@@ -852,7 +896,12 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(json[KEY_MAP_SEED], 11);
         assert_eq!(json[KEY_AI_FACTION_COUNT], 2);
-        assert_eq!(json[KEY_START_SEPARATION], START_SEPARATION);
+        assert_eq!(
+            json[KEY_START_SEPARATION], base[KEY_START_SEPARATION],
+            "the separation is the shipped one, not a bench fixture's"
+        );
+        assert_eq!(json[KEY_MAP_PRESET], MAP_PRESET);
+        assert_eq!(json[KEY_START_PROFILE], START_PROFILE);
         let base_port: SocketAddr = json[KEY_PORT_BASE_BIND].as_str().unwrap().parse().unwrap();
         let command: SocketAddr = json[KEY_COMMAND_BIND].as_str().unwrap().parse().unwrap();
         assert!(

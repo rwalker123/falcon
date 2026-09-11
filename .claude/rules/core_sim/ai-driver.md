@@ -29,8 +29,10 @@ hold · reconnect · resync, plus the unseated world-builder connection), `view.
 (`AiProfile`, `Difficulty`, the file), `orchestrator/` (`Plan`, `ConstantStance`), `specialists/`
 (the trait, `Food`, `Land`, `Scripted`), `arbiter.rs` (the six steps), `brain.rs` (`Brain`,
 `PassBrain`, and the `Composite` the scripted and utility brains are configurations of),
-`instruments/` (`scoreboard.rs`, `decisions.rs`, the `Instruments` writer pair), `bench/` (`mod.rs`
-the harness, `measures.rs` the logs → measures, `ratchet.rs` report · compare · check · baselines).
+`instruments/` (`scoreboard.rs`, `decisions.rs`, `observations.rs`, the `Instruments` writer
+trio), `bench/` (`mod.rs` the harness, `measures.rs` the logs → measures, `ratchet.rs` report ·
+compare · check · baselines), `viewer/` (`mod.rs` the join and the page writer, `page.html` the
+template).
 
 ## The wire sequence (`link.rs`)
 
@@ -103,10 +105,10 @@ seed from the faction.
 `--brain pass|scripted|utility`; `--script <path>`; `--profile <id>` (default the file's first
 entry); `--difficulty <id>` (default `normal`); `--profiles <path>` (a file replacing the embedded
 one whole — missing or broken fails the process, never falls back); `--disable <specialist>`
-(repeatable, the ablations); `--seed <u64>`; `--turns <n>`; `--log-dir <path>` (opens the two
-instruments below; absent, the process plays unmeasured). A first word of `bench` selects the harness; `play`
-is accepted and stripped; anything else is the player, so the launcher's `sim_ai --ports-file …
---faction N` is unchanged.
+(repeatable, the ablations); `--seed <u64>`; `--turns <n>`; `--log-dir <path>` (opens the three
+instruments below; absent, the process plays unmeasured). A first word of `bench` selects the
+harness and `viewer` the run viewer; `play` is accepted and stripped; anything else is the player,
+so the launcher's `sim_ai --ports-file … --faction N` is unchanged.
 
 **The brain's sink.** `Brain::decide(&mut self, view, rng, sink: &mut dyn DecisionSink)` — the
 sink is a trait object from `instruments::decisions`, so a brain writes records without knowing
@@ -115,6 +117,13 @@ about files, and a brain with nothing to record (`PassBrain`) ignores it. The `r
 that overran its budget still gets one. `ScriptedBrain` records one accepted `Decision` per fired
 line (`specialist: "scripted"`, `intent: "script"`, both scores `SCRIPT_SCORE` = 1.0, `reason` the
 resolved command text), so a Scripted-vs-Pass comparison reads non-zero on the specialist row.
+
+**The brain's lens.** `Brain::lens(&self) -> BrainLens<'_>` is the read-only window the
+observation record is captured through — the plan in force, the alarms pending since it, the
+`SeatMemory`, and the profile's `land.horizon_tiles`. `Composite` answers all four; the default
+(`PassBrain`) answers the empty lens, so a Pass seat's observations carry `plan: null` and no
+`last_seen_tick`. The loop reads it **before** `decide`, so what the record shows is what the brain
+was handed, not what it did.
 
 ## The utility brain (`brain.rs`, `orchestrator/`, `specialists/`, `arbiter.rs`)
 
@@ -312,8 +321,9 @@ per seat (`docs/plan_ai_opponents.md` §7).
 
 ## The instruments (`instruments/`)
 
-Two JSON-lines files under `--log-dir`, one record per line, every write flushed so a killed process
-leaves the ticks it saw behind. The bench reads nothing else.
+Three JSON-lines files under `--log-dir`, one record per line, every write flushed so a killed
+process leaves the ticks it saw behind. The bench reads the first two and nothing else; the viewer
+reads all three.
 
 **`scoreboard.jsonl`** — one `ScoreRow` per **acted** tick, written before `decide` runs, off the
 `SeatView` (`plan_ai_driver.md` §8.1). `tick`, `faction`, `population_children/working/elders`
@@ -340,10 +350,40 @@ reads every death as zero. The cause vocabulary (`hunger` / `cold` / `heat` / `a
 
 **`decisions.jsonl`** — tagged by `kind`: `decision` (`tick`, `specialist`, `intent`, `score_raw`,
 `score_final`, `outcome: accepted | rejected` with `rejected_by: <arbiter step>` on a rejection,
-`reason`, `commands`), `plan` (`tick`, `stance`, `since_tick`, `budgets`, `priorities`), `alarm`
-(`tick`, `specialist`, `alarm`), `ready` (`tick`), and `link` (`tick`, `event:
-command_reconnect | stream_reopen`). Only `decision`, `ready` and `link` are written by the two
-shipped brains; `plan` and `alarm` are the orchestrator's (`plan_ai_driver.md` §3).
+`reason`, `commands`, `commands_text`), `plan` (`tick`, `stance`, `since_tick`, `budgets`,
+`priorities`), `alarm` (`tick`, `specialist`, `alarm`), `ready` (`tick`), and `link` (`tick`,
+`event: command_reconnect | stream_reopen`). Only `decision`, `ready` and `link` are written by the
+two shipped brains; `plan` and `alarm` are the orchestrator's (`plan_ai_driver.md` §3).
+
+`commands_text` is the proposal's commands, one line each, in the **text-command grammar**
+(`decisions::command_text`): `assign_labor 1 7001 forage 3 4 5`, `move_band 1 7001 4 9`,
+`split_band 1 7001 4`. `sim_runtime::command_text` has a parser and no printer, and
+`CommandPayload` is not serialisable, so the printer lives here for the verbs the specialists emit
+and a unit test parses each rendered line back through `parse_command_line`; any other verb falls
+back to its `Debug` form. `commands` (the count) is unchanged, so slice 3's measures are not moved.
+
+**`observations.jsonl`** — one `observation` record per acted tick (`plan_ai_driver.md` §8.4),
+written at the same point as the `ScoreRow`, **before** `decide`, off the same view and the brain's
+lens: `tick`, `faction`, `radius`, `grid` (`width`, `height`, `wrap_horizontal`), `plan`
+(`stance`, `since_tick`, `budgets`, `priorities`; `null` for Pass and Scripted), `alarms`
+(`specialist`, `alarm`, `since_tick` — the ones pending since that plan), `ledger` (`stock`,
+`income`, `consumption`, `runway_turns`, `working_age`, `idle_workers`), `bands` (own resident
+bands: `band_id`, `x`, `y`, `size`, `working_age`, `idle_workers`, `turns_of_food`, `food_income`,
+`food_consumption`, `work_range`, `hunt_reach`, `is_traveling`, `assignments` [`job`, `target:
+{x,y} | {herd_id} | null`, `workers`, `actual_yield`, `sustainable_yield`, `hunt_useful_workers`],
+`intent_in_force` — `land:move:<band>` while the memory holds a move target — and `move_target`),
+and `neighborhood`: every **discovered** tile within `radius` hex steps of any own band, sorted
+`(y, x)`, with `terrain` (the `tiles` row's variant name, `null` when the frame carries no row),
+`food_site` (`food::is_food_site`), `forage_biomass`, `carrying_capacity`, `per_worker_yield` (the
+frame's forecast), `rated_per_worker_yield` (`food::patch_per_worker_yield` for the nearest own
+band — the number `Food` and `Land` actually rank on), `owner`, `cultivated`, `field`, `herd`
+(`id`, `species`, `biomass`, `per_worker_yield`, `huntable`, `corralled`; the first herd on the
+tile), `last_seen_tick` (`SeatMemory::last_seen`, undecayed) and `nearest_own_band_distance`. A
+tile the seat has never discovered is **absent**, not null — the specialists filter on
+`is_discovered` before reading anything, and so does the record.
+
+`radius` is `observation_radius(horizon)` = `max(OBSERVATION_RADIUS_FLOOR (3), land.horizon_tiles)`
+— wide enough for a band's `work_range` and for everything `Land` looks at.
 
 ## The bench (`sim_ai bench`)
 
@@ -359,16 +399,32 @@ each `~` a specialist left off the roster, both `utility` only. `1=pass`, `2=scr
 `1=utility:forager`, `1=utility:rover@hard~land~food`.
 
 Per seed, under `<out>/<seed>/`: the scratch `simulation_config.json` (the shipped one with
-`map_seed`, `default_ai_faction_count` = the seat count, and `faction_start_min_separation` = 6
-pinned, and the four port keys rewritten to a probed free base from 46000 up — the same four-key
-rewrite as `core_sim::apply_port_base`, restated), `ports.json`, `server.log`, `saves/`, and one
-`seat_<f>/` per seat holding its two instruments and `sim_ai.log`. The server is started with
-`SIM_CONFIG_PATH` / `SIM_PORTS_FILE` / `SIM_SAVE_DIR` set and `SIM_PORT_BASE` removed, exactly as
-`core_sim/tests/query_seat_gate.rs` does; the world is a 24×16 `earthlike` / `late_forager_tribe`
-`new_game` sent from an **unseated** connection and synchronised by a `ListSaves` question behind
-it. Seats are this same executable, spawned with `--turns n --log-dir <out>/<seed>/seat_<f>`. The
-server is killed on drop, panic or early return included. One seed of 6 turns is ~3 s; 30 turns ~2 s
-more.
+`map_seed` and `default_ai_faction_count` = the seat count pinned, and the four port keys rewritten
+to a probed free base from 46000 up — the same four-key rewrite as `core_sim::apply_port_base`,
+restated; **nothing else moves**, the separation is the shipped `faction_start_min_separation`),
+`ports.json`, `server.log`, `saves/`, and one `seat_<f>/` per seat holding its three instruments
+and `sim_ai.log`. The server is started with `SIM_CONFIG_PATH` / `SIM_PORTS_FILE` / `SIM_SAVE_DIR`
+set and `SIM_PORT_BASE` removed, exactly as `core_sim/tests/query_seat_gate.rs` does. Seats are this
+same executable, spawned with `--turns n --log-dir <out>/<seed>/seat_<f>`. The server is killed on
+drop, panic or early return included.
+
+**The world is one a player can select** (`plan_ai_driver.md` §8.4): the `earthlike` preset at the
+New Game menu's smallest size, **Tiny = 56×36** (`MAP_WIDTH` / `MAP_HEIGHT`, restated from
+`clients/godot_thin_client/src/scripts/MapSizes.gd`, which is the authority), start profile
+`late_forager_tribe`, the shipped separation, seed pinned per run. Before `new_game` the harness
+asks the server `FactionCapacity { width, height }` on the same unseated connection
+(`UnseatedConnection::ask`) and fails the run with `WorldTooSmall` naming both numbers if
+`max_ai_faction_count` is below the seats requested — the alternative is a clamped roster and a
+rival waiting forever on `unknown_seat`. Then `new_game` is sent and synchronised by a `ListSaves`
+question behind it. A 30-turn seed on Tiny is ~3–3.6 s wall (both shipped seat sets, debug build).
+
+**The New Game recipe** — to open the world a bench seed played, from the client menu: preset
+*Earthlike*, size *Tiny*, seed = the bench seed (`11` or `23` for the shipped baselines), start
+profile *late_forager_tribe*, rivals = the number of `--seats` (2 for both shipped sets). The
+human holds seat 0 — the seat the bench only *holds* and never plays — and the rivals are seats 1
+and 2 in `--seats` order; the AI played seat 1 in both shipped sets (`1=utility:forager` or
+`1=pass`), seat 2 was Pass. The world is the same; what differs is that the menu's game has the
+human at seat 0 where the bench auto-submitted it.
 
 ⛔ **The bench holds the human seat until every rival has claimed.** The turn gate resolves the
 moment every *occupied* seat has submitted, so a rival that claimed and readied before its neighbour
@@ -458,10 +514,49 @@ brain to move a number. So `liveness` stays **reported** and ratchetable through
 never gates on its own.
 
 **`sim_ai/bench/baselines.json`** holds two entries on seeds `11, 23` for 30 turns
-(`BASELINE_SEEDS` / `BASELINE_TURNS` / `BASELINE_SEAT_SETS`; a unit test holds the file to them):
-the all-Pass control `1=pass 2=pass` — a Pass seat assigns nobody, so it starves: 22 hunger deaths
-and 2 working left by turn 30 on both seeds — and the utility forager `1=utility:forager 2=pass`.
-Regenerate an entry in the PR that moves it, with the numbers in the PR body.
+(`BASELINE_SEEDS` / `BASELINE_TURNS` / `BASELINE_SEAT_SETS`; a unit test holds the file to them),
+recorded on the Tiny `earthlike` world above: the all-Pass control `1=pass 2=pass` — a Pass seat
+assigns nobody, so it starves: 22 hunger deaths and 2 working left by turn 30 on both seeds — and
+the utility forager `1=utility:forager 2=pass` (seed 11: 6 working, 17 hunger deaths; seed 23: 3
+working, 21 hunger deaths). `Land` wins on both seeds on this world, so the file carries no
+`declined` entry. Regenerate an entry in the PR that moves it, with the numbers in the PR body.
+
+## The run viewer (`sim_ai viewer`, `viewer/`)
+
+`sim_ai viewer <run-dir> [--seed <s>] [--seat <f>] --out <page.html>` — `<run-dir>` is a bench
+`--out`; the defaults are the lowest seed directory under it and the lowest `seat_<f>` under that.
+It reads the seat's `scoreboard.jsonl`, `decisions.jsonl` and `observations.jsonl` and joins them
+**by tick** into one `RunModel { seed, faction, seat_dir, turns }`: a `Turn` per tick any log names,
+carrying `score` (the `ScoreRow`), `observation`, `decisions` (every proposal weighed that tick),
+`plan` (the one adopted **on** that tick), `alarms` (raised that tick), `ready` and `link_events`.
+A part no log wrote is `null` — a missing `observations.jsonl` is an empty one, and the page is
+still written; the two measured logs are required. A link event with no tick lands on the first
+turn.
+
+⛔ **The page is one file that fetches nothing.** The template (`viewer/page.html`, `include_str!`)
+holds all CSS and JS inline and takes the model by string replacement of one marker
+(`__RUN_MODEL_JSON__`) inside `<script id="run-model" type="application/json">`; the JSON has
+`<`, `>` and `&` escaped to `<` … so a reason string holding `</script>` cannot end the
+element early. `assert_self_contained` refuses to write a page containing `http://`, `https://` or
+`src=` (`EXTERNAL_RESOURCE_MARKERS`) — it is published where every external host is blocked and
+must open from a file with no network — and `core_sim/tests/ai_bench.rs` asserts the same on a
+real run's page. The SVG is built as markup inside `<svg>` elements rather than through
+`createElementNS`, so the page names no namespace URL either.
+
+**The page** (phone-first: one column under 700 px, two above; light/dark by
+`prefers-color-scheme`; the system font stack): a **turn scrubber** (range input, ◀ ▶ buttons, ←
+→ keys, the current tick) over four inline-SVG **sparklines** of the run — stock, income vs
+consumption, runway (the 999 sentinel drawn as a gap), hunger deaths per tick — with the current
+tick marked; the **local map**, the observation's neighbourhood as odd-r hexes unwrapped around the
+first own band, filled on a sequential ramp by `forage_biomass` (grey = no patch row), outlined by
+`owner` (own / rival / none), with glyphs for cultivated (□) and field (≡), a herd disc sized by
+biomass, band markers labelled `b<band_id> ·<size>` with a dashed ring at `work_range`, and a
+legend that says never-seen tiles are not drawn — tapping a hex lists its record; the **ledger**
+(the six numbers, then a row per band with its worked rows and the intent in force); **decisions**
+(the plan and alarms in force from the observation, the re-plan and alarms raised this tick, then
+accepted proposals and the rejected ones grouped by `rejected_by`, each with specialist, intent,
+reason, raw → final score and its `commands_text`); and the **score** panel, every `ScoreRow` field
+for the tick.
 
 ## The script format (`ScriptedBrain`)
 
@@ -506,18 +601,29 @@ Both drive the built `server` and the built `sim_ai` over the real sockets and s
 measure identical and every `--compare` delta zero or null; then `1=scripted 2=pass` with the
 scenario's split script, asserting `specialist.scripted.accepted > 0` and that at least one
 scoreboard measure of seat 1 differs from the same seat's under Pass — "acts instead of passing" as
-a number; then `1=utility:forager 2=pass`, asserting `specialist.food.accepted > 0`,
-`specialist.food.liveness` 1.0, `commands_failed_total` 0, and no `command.rejected` /
+a number; then `1=utility:forager 2=pass`, asserting `specialist.food.accepted > 0`, that the
+**seat** is live (below), `commands_failed_total` 0, and no `command.rejected` /
 `command.split.rejected` line in the server log — a proposal the server refuses is a bug in the
-specialist's command construction, and this is where it shows.
+specialist's command construction, and this is where it shows. Then `sim_ai viewer` on that run:
+the page exists, inlines exactly `UTILITY_TURNS` turns each carrying its observation, score row
+and `ready`, and contains none of the external-resource markers.
 
 ⛔ **The utility leg runs `UTILITY_TURNS`, not `TURNS`, and the test proves its own span first.**
-`liveness` cuts windows of `LIVENESS_WINDOW_TURNS` (10, restated here from `measures.rs`), so over a
-6-tick span there is exactly **one** window and `liveness == 1.0` is arithmetically the same claim as
-`accepted > 0` — which the line above it already makes. `UTILITY_TURNS` is `LIVENESS_WINDOW_TURNS +
-2`, and the test asserts `link.turns_observed > LIVENESS_WINDOW_TURNS` *before* it asserts liveness,
-so the assertion cannot silently decay back into a restatement. Seconds, not minutes; the 30-turn
-baselines are not generated by a test.
+Liveness cuts windows of `LIVENESS_WINDOW_TURNS` (10, restated here from `measures.rs`), so over a
+6-tick span there is exactly **one** window and "won in every window" is arithmetically the same
+claim as `accepted > 0` — which the line above it already makes. `UTILITY_TURNS` is
+`LIVENESS_WINDOW_TURNS + 2`, and the test asserts `link.turns_observed > LIVENESS_WINDOW_TURNS`
+*before* it asserts liveness, so the assertion cannot silently decay back into a restatement.
+Seconds, not minutes; the 30-turn baselines are not generated by a test.
+
+⛔ **The liveness the test gates on is the seat's, read off `decisions.jsonl`, not
+`specialist.food.liveness`.** A one-band seat takes one order a turn, so a window in which `Land`
+wins the band twice is a window `Food` lost to ordinary arbitration — on Tiny seed 11 that is the
+run's two-tick second window, and `specialist.food.liveness` reads 0 while the seat is plainly
+playing. Gating on it would fail a healthy seat, and the only ways to clear it change the brain
+(the same argument the ratchet's "never wins" gate rests on, above). So the test cuts the same
+windows over the scoreboard's tick span and requires an accepted decision from **some** specialist
+in each.
 
 `ai_seat_scenario.rs` is a built `server` and a built `sim_ai --brain scripted --faction 1 --turns
 3`, over the real sockets. The script's one order is `split_band {faction} {own_band:0} 4` — the

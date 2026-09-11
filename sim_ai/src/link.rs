@@ -381,19 +381,23 @@ impl UnseatedConnection {
     /// no faction, so an unseated connection is answered, and it is answered **in order** behind
     /// whatever was written before it.
     pub fn sync(&mut self, timeout: Duration) -> io::Result<()> {
+        self.ask(QueryPayload::ListSaves, timeout).map(|_| ())
+    }
+
+    /// Ask one question that names no faction (`ListSaves`, `FactionCapacity`) and block for its
+    /// answer. A faction-bearing question is refused from an unseated connection, and is never
+    /// this connection's to ask.
+    pub fn ask(&mut self, query: QueryPayload, timeout: Duration) -> io::Result<QueryReply> {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
-        self.send(CommandPayload::Query {
-            request_id,
-            query: QueryPayload::ListSaves,
-        })?;
+        self.send(CommandPayload::Query { request_id, query })?;
         self.socket.set_read_timeout(Some(timeout))?;
         loop {
             let bytes = read_frame(&mut self.socket, MAX_PROTO_FRAME)?;
             let envelope = QueryReplyEnvelope::decode(&bytes)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
             if envelope.request_id == request_id {
-                return Ok(());
+                return Ok(envelope.reply);
             }
         }
     }
