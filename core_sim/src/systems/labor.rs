@@ -6902,6 +6902,33 @@ pub fn advance_labor_allocation(
                         &extraction_cfg,
                         &ladder,
                     );
+                    // **THE OVERSTAFFING FIGURE — the PLANT WEB'S OWN INVERSION, not a second one**
+                    // ([`workers_needed_for_take`]). A working can now say *"only 4 of 5 bring
+                    // anything home"* exactly as a patch and a herd do, because the question is one
+                    // arithmetic: invert the take by the per-worker throughput the take actually ran
+                    // at. The deposit's throughput term is the rung's interpolated
+                    // `yield_per_worker_turn` — the very rate [`crate::extraction::deposit_take`]
+                    // caps the hands at — so a crew cutting a stand already down at its composed
+                    // floor reports the hands that carried the whole take and no more. A second
+                    // inversion here is how the deposit web would come to disagree with the plant
+                    // web about one number.
+                    //
+                    // ⛔ **`0` STILL MEANS UNKNOWN**, and the Forage arm's rule is kept byte for
+                    // byte: a take of nothing inverts to `0` and the client prints no note, so a
+                    // rehydrated save cannot render a figure the turn never computed. Nothing is
+                    // clamped up to one — the config validator requires a **positive, finite**
+                    // `yield_per_worker_turn` on every deposit rung, so the only way this arm
+                    // answers `0` is a crew that genuinely took nothing (no hands, an emptied
+                    // working, or a floor that leaves the whole stand standing).
+                    //
+                    // **This is a WORKER COUNT and no part of the food identity** — `actual` stays
+                    // `SourceYield::ZERO` on this arm, and the take keeps paying only into
+                    // `yields[idx].materials`.
+                    let per_worker_take =
+                        crate::extraction::deposit_payoff(working.standing(), &ladder)
+                            .yield_per_worker_turn;
+                    yields[idx].workers_needed =
+                        workers_needed_for_take(outcome.taken, per_worker_take, workers);
                     // **THE LESSON, on the rung the working STANDS on** — `deadfall` teaches
                     // woodcraft, `felling` conservationism, `gathering` quarrying. Credited once per
                     // source per turn and never per worker, the ladder's own rule.

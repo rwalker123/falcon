@@ -107,6 +107,19 @@ Population — once per BAND ROW on it (the `Extract` arm)
   `false` on any working at `NEVER_RENEWS`, which warns with its runway instead (§7's fork). The
   `Extract` arm wrote the field on no row at all for a whole arc, so a working the tile card marked
   as over-cut sat green and unsorted in the band's own source list.
+- **AND IT SAYS HOW MANY OF ITS CREW BROUGHT ANYTHING HOME**, through the *plant* web's own
+  inversion. `SourceYield::workers_needed` is
+  `systems::workers_needed_for_take(take, yield_per_worker_turn(position), workers)` — the very
+  function the Forage arm and both Hunt arms invert their take with, so the deposit web cannot come
+  to disagree with the plant web about one arithmetic. The throughput term is the rung's
+  interpolated `yield_per_worker_turn`, which is the rate the take's own labor cap is struck at, so
+  a crew cutting a stand already drawn down to its composed floor reports the hands that carried the
+  whole take and leaves the rest named as bringing nothing home. **`0` still means UNKNOWN** and the
+  client prints no note at it: `validate` requires a positive, finite `yield_per_worker_turn` on
+  every deposit rung, so the only `0` this arm can answer is a crew that genuinely took nothing, and
+  nothing is clamped up to one. The field is a **worker count** and no part of the food identity —
+  `actual` stays `SourceYield::ZERO` on this arm, and the take goes on paying only into
+  `SourceYield::materials`.
 - **These sources pay NO FOOD AND NO FODDER.** Not a zero-valued food term; no food term at all, and
   `seed_source_yield` returns rather than seeding a permanent `+0.00` line. What wood costs is **the
   food those hands did not bring home**: every hand on an `extract` row comes out of the same finite

@@ -10,8 +10,8 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, World};
 
 use core_sim::extraction::{
-    deposit_payoff, deposit_regrowth, deposit_standing, take_from_deposit, tile_deposit_capacity,
-    tile_deposit_regrowth, DepositRegistry, DepositSource,
+    deposit_effective_floor, deposit_payoff, deposit_regrowth, deposit_standing, take_from_deposit,
+    tile_deposit_capacity, tile_deposit_regrowth, DepositRegistry, DepositSource,
 };
 use core_sim::{
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, CommandEventLog,
@@ -963,6 +963,102 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
         core_sim::extraction::deposit_floor(capacity, &deposit_payoff(&standing, &ladder))
     };
     assert!(floor_at(RungKey::ExtractionQuarry) < floor_at(RungKey::ExtractionGathering));
+}
+
+// ---------------------------------------------------------------------------------------------
+// What the row says about its crew
+// ---------------------------------------------------------------------------------------------
+
+/// **THE STAND EVERY CREW BELOW CUTS** — drawn down to exactly two and a half hands' worth of wood
+/// above the floor its row works to. The half is the point: it is what makes the answer to *"how
+/// many of you brought anything home"* differ from both crew sizes below, so neither assertion can
+/// be satisfied by an arm that simply echoes a number it was handed.
+const HANDS_THE_STAND_HOLDS: f32 = 2.5;
+
+/// A crew the stand cannot keep busy — the reported case, five woodcutters on a stand that has
+/// work for three of them.
+const MORE_HANDS_THAN_THE_STAND_CAN_USE: u32 = 5;
+
+/// What that crew must report: `ceil(HANDS_THE_STAND_HOLDS)`, because the hand working the half
+/// turn still carried wood home.
+const HANDS_THAT_CARRIED_THE_TAKE: u32 = 3;
+
+/// A crew small enough that the **labor** is what binds the take, not the stand.
+const HANDS_THE_STAND_KEEPS_BUSY: u32 = 2;
+
+/// One labour pass with `crew` cutting the wood at (0, 0), returning the row's published
+/// `workers_needed`. The working is opened by hand at the free rung and drawn down to
+/// [`HANDS_THE_STAND_HOLDS`] above the floor this row's crew is sent with, because a fresh stand at
+/// capacity holds hundreds of turns' reach and no crew this size could ever be overstaffed on it.
+fn workers_needed_cutting_a_drawn_down_wood(crew: u32) -> u32 {
+    let (mut world, home) = world_of(WOODED);
+    let band = spawn_extractors(&mut world, home, WOOD, crew);
+    let tile = UVec2::new(0, 0);
+    {
+        let ladder = world.resource::<LadderConfigHandle>().get();
+        let config = world.resource::<ExtractionConfigHandle>().get();
+        let entity = world
+            .resource::<TileRegistry>()
+            .index(tile.x, tile.y)
+            .expect("the fixture tile is on the map");
+        let ground = world
+            .get::<Tile>(entity)
+            .expect("the fixture tile carries terrain");
+        let capacity = tile_deposit_capacity(&config, WOOD, ground);
+        let regrowth = tile_deposit_regrowth(&config, WOOD, ground);
+        let mut working = DepositSource::opening(tile, WOOD, capacity, RungBranch::Forestry);
+        // The free rung's own rate and the floor the row's dial composes with it, read off the
+        // config rather than written down, so a re-tuned ladder moves the fixture with it.
+        let payoff = deposit_payoff(working.standing(), &ladder);
+        let floor = deposit_effective_floor(capacity, regrowth, &payoff, A_FRESH_ASSIGNMENTS_FLOOR);
+        working.stock = floor + HANDS_THE_STAND_HOLDS * payoff.yield_per_worker_turn;
+        assert!(
+            working.stock <= capacity,
+            "fixture: the drawn-down stand must fit inside the ground's capacity, {} of {capacity}",
+            working.stock
+        );
+        world.resource_mut::<DepositRegistry>().insert(working);
+    }
+    run_turn(&mut world);
+    world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture band survives the turn")
+        .last_yields
+        .first()
+        .expect("the extract row keeps its telemetry")
+        .workers_needed
+}
+
+/// ⛔ **A WORKING ANSWERS THE OVERSTAFFING QUESTION THE OTHER TWO WEBS ALREADY ANSWER.**
+///
+/// `SourceYield::workers_needed` drives the client's *"only N of M bring anything home"* note. The
+/// Forage arm fills it and both Hunt arms fill it; the `Extract` arm left it at its
+/// `SourceYield::ZERO` default, so the note was **structurally silent** on wood and stone — a band
+/// could be told five gatherers were four too many on a patch and never on a stand.
+///
+/// **Both directions, on one stand, because either alone is weak.** A crew larger than the stand
+/// can use must report **fewer** hands than it holds; a crew the stand keeps busy must report the
+/// **whole** crew. An arm that reported `assigned` unconditionally — which is what
+/// `workers_needed_for_take`'s `clamp(1, assigned)` degenerates to when the take is always
+/// labor-bound — passes the second assertion on its own.
+#[test]
+fn a_working_says_how_many_of_its_crew_brought_anything_home() {
+    let overstaffed = workers_needed_cutting_a_drawn_down_wood(MORE_HANDS_THAN_THE_STAND_CAN_USE);
+    assert_eq!(
+        overstaffed, HANDS_THAT_CARRIED_THE_TAKE,
+        "a stand holding {HANDS_THE_STAND_HOLDS} hands' worth must name the hands that carried it"
+    );
+    assert!(
+        overstaffed < MORE_HANDS_THAN_THE_STAND_CAN_USE,
+        "and that is the whole readout: {overstaffed} of {MORE_HANDS_THAN_THE_STAND_CAN_USE} \
+         brought anything home"
+    );
+
+    let busy = workers_needed_cutting_a_drawn_down_wood(HANDS_THE_STAND_KEEPS_BUSY);
+    assert_eq!(
+        busy, HANDS_THE_STAND_KEEPS_BUSY,
+        "a crew the stand can keep busy is not overstaffed and must report every hand"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
