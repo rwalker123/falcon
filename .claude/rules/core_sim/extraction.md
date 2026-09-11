@@ -296,7 +296,8 @@ through — so `validate_deposit_verb`, the labor arm's gate and any future read
 `SiteRefusal::NoDeposit` is the new fault, and it supersedes the fertility and water readings for
 `NotGatheringSite`'s reason.
 
-`extraction:quarry` sets it at **100**, which sits in the gap the deposits table leaves between its
+`extraction:quarry` sets it at **100** — the extraction branch's half of the rule, `forestry:coppice`'s
+**70** below being the other — and it sits in the gap the deposits table leaves between its
 two populations: the smallest **finite** rock body is an ash plain at 120 and the largest
 **renewing** scatter is a periglacial 70. So the split is a **capacity reading** rather than a list
 of terrains anyone maintains, and the minerals arc's placed ore bodies fall on the right side for
@@ -320,6 +321,86 @@ free.
 **Neither free floor carries a `site_requirement`, and that is not an omission.** A floor of ~0
 admits every tile, which `validate_site_requirement` rejects outright as a placement rule that is
 none. What refuses a crew on bare ground is that the terrain holds no deposit at all.
+
+### `forestry:coppice` sets it at 70 — the forestry branch's own placement rule
+
+A coppice costs **150 work** and buys `regrowth_multiplier` **2.0**, so what it adds to a stand is
+**one more peak renewal a turn**, and it raises the take only 2.0 → 2.5. On the smallest stands that
+doubling is worth almost nothing, and the rung was offered anyway: all three forestry rungs shipped
+`site_requirement: null`.
+
+**70 is a reading of the wood table rather than a chosen number.** Peak renewal on the shipped curve
+is `capacity × regrowth_rate / 4` — `deposit_regrowth` is `r·S·(1 − S/K)`, which peaks at `S = K/2`,
+and that is where `felling`'s own comment gets a mixed woodland's **4.5** from (600 × 0.03 / 4).
+Ranked by what a coppice adds, the table splits either side of 70 with **a gap and no overlap**:
+
+| side | the rows | gain a turn |
+|---|---|---|
+| refused | AlpineMountain 50, PeatHeath 60, KarstCavernMouth 60 | +0.125, +0.18, **+0.30** |
+| admitted | AquiferCeiling 70 … MixedWoodland 600 | **+0.525** … +4.5 |
+
+The three excluded are the three lowest by capacity **and** the three lowest by gain. Under the line
+150 work buys under a third of a unit a turn — 500–1200 turns to repay — which is a rung with no
+meaning.
+
+⛔ **CAPACITY IS A PROXY HERE, AND THE WOOD TABLE'S IS A LOOSER ONE THAN THE STONE TABLE'S.** On
+stone, capacity and rate are correlated by construction (the rate-0 bodies are the large ones), so
+the quarry threshold ranks the rows exactly. On wood the two are independent, so capacity **mis-ranks**
+some rows by gain — `KarstHighland` at 120 gains +0.60 where `FreshwaterMarsh` at 90 gains +1.24.
+That mis-ranking does not reach the boundary and is not a defect to fix: the rule is the gap either
+side of 70. `the_coppice_threshold_splits_the_wood_table_with_no_overlap_in_what_it_buys` asserts it
+by walking the shipped table — `max(gain below) < min(gain at or above)` — and reads the gain off
+`deposit_regrowth` itself, so a change to the curve's shape re-measures the gap rather than
+mis-stating it. **It asserts the gap and never a list of terrain names**, which is the failure the
+quarry's own threshold test exists to answer.
+
+**The other two forestry rungs keep `site_requirement: null`.** `deadfall` is the free floor, and
+`felling` is the rung whose whole point is that you *can* ruin a wood. Only the management rung asks
+anything of the ground.
+
+## You learn a rung by practising where that rung could be built
+
+**A rung's lesson is credited only where the rung that lesson unlocks could be sited.** Picking loose
+stone off a 40-unit scatter teaches nothing about quarrying, because no quarry could ever stand on a
+40-unit scatter; picking it off a rock body teaches it.
+
+`LadderConfig::rung_unlocked_by_lesson` is the ladder lookup — the rung on the **same branch** whose
+`unlock_knowledge` names what this rung's `earns_knowledge` teaches — and the site question is
+resolved through **`forage::rung_site_refusal`**, the one seam `deposit_head_gate` and the `quarry`
+command's rejection go through. A second reader of `min_deposit_capacity` is exactly the drift that
+seam exists to prevent: the ground a rung can be built on and the ground its lesson is worth learning
+on are one reading, or they are two readings that will disagree.
+
+**The gate is composed by the DEPOSIT arm's `eligible`** (`systems::labor`'s `Extract` arm, through
+`ground_takes_the_rung_this_lesson_unlocks`), beside the crew and escapement-room terms it already
+composes there — only the caller has the tile in hand. `RungDef::knowledge_accrual` and
+`credit_rung_lesson` are untouched.
+
+**It is the identity wherever the lesson opens no rung, or opens one with `site_requirement: null`.**
+That is `forestry:deadfall` (`woodcraft` unlocks a `felling` that asks nothing of the ground), both
+branch tops, and every rung on the plant, animal and route webs — which the deposit arm never reaches
+anyway.
+
+> ### ⛔ IT REACHES BOTH BRANCHES, AND THAT IS ONE RULE RATHER THAN TWO CASES
+>
+> `felling` earns `conservationism`, `conservationism` unlocks `coppice`, and `coppice` now carries a
+> threshold — so **felling a stand under 70 teaches no conservationism**. The crew still fells, at
+> the same rate, on the same ground; what it stops doing is learning. It is the stone sentence one
+> branch over: *you learn to manage a wood on a wood worth managing.*
+>
+> `a_deposit_lesson_is_credited_only_where_the_rung_it_unlocks_could_stand` pins the stone pair **and**
+> the inertness arm (a 50-unit alpine stand still teaches `woodcraft`, at the same rate the admitted
+> stone arm earns — so the gate is the identity there rather than merely non-zero);
+> `felling_a_stand_too_small_to_coppice_teaches_no_conservationism` pins the forestry pair, and
+> `fauna_husbandry::the_deposit_lesson_site_rule_leaves_the_animal_web_alone` pins that the food webs
+> did not move. Without that last one a gate that refused *everything* would pass the pairs.
+
+⛔ **ON STONE, THE ESCAPEMENT DIAL NOW PACES NO LESSON AT ALL.** Every renewing row in the stone table
+is below the quarry's threshold by construction, and every row at or above it is at `NEVER_RENEWS`,
+where `deposit_lesson_floor` drops the dial. So `quarrying` is learnable only on rock bodies and only
+at `PRACTICE_AT_THE_PLAIN_RATE`. That is what moved
+`a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial`'s renewing arm onto
+`forestry:deadfall`: there is no stone ground left on which both readings are live.
 
 ## The floor rungs must be workable BARE-HANDED
 
@@ -634,7 +715,10 @@ Three lessons, on the ladder's own *practise rung N to unlock rung N+1* shape. D
 | `extraction:gathering` | `quarrying` (2016) | `quarry` — and the minerals arc's `mine` above it |
 
 **Conservationism is learned by being in a position to ruin a wood**, which is why `felling` teaches
-it: `felling` is the first rung on either branch at which over-cutting is possible.
+it: `felling` is the first rung on either branch at which over-cutting is possible. **And each lesson
+is credited only on ground that could carry the rung it gates** — see *"you learn a rung by
+practising where that rung could be built"*, which is why `woodcraft` is earned everywhere timber
+grows while `conservationism` and `quarrying` are not.
 
 **A deposit crew's lesson rides its own floor WHERE THE DIAL PARTICIPATES, through the seam both
 food webs go through.** `intensification::learn_multiplier` is `floor / MSY_BIOMASS_FRACTION` and
@@ -672,10 +756,13 @@ branch over, because the tile query and the deposits config are the caller's to 
 > off the player's own dial, unchanged.**
 >
 > `extraction::a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial` pins both
-> sides on **one rung**, `extraction:gathering`, because the stone table is two populations and this
-> is the one place both readings are live. It asserts the plain rate as a **value** — a rock crew
+> sides, the finite one on `extraction:gathering` and the renewing one on `forestry:deadfall` — see
+> *"you learn a rung by practising where that rung could be built"* for why no stone ground carries
+> the renewing reading any more. It asserts the plain rate as a **value** — a rock crew
 > earns exactly what a renewing crew at the fixed point earns — since equal-to-each-other alone would
-> pass against a lesson that had stopped being credited at all.
+> pass against a lesson that had stopped being credited at all, and it asserts that the two lessons
+> cost the same, since across two branches that equality would otherwise be a claim about
+> `lesson_costs`.
 
 The other *"this source has no dial"* reading is `systems::labor::credit_managed_rung_lesson`'s, and
 it belongs to **rung 3**, which is a claim about a take that draws nothing down rather than about a

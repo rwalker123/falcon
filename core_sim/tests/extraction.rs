@@ -449,14 +449,21 @@ const A_CLOSE_ENOUGH_RATIO: f32 = 1e-3;
 /// changed nothing about the take — and `extraction:gathering` is exactly where that bites, because
 /// picking loose stone off a mountain is a live teaching rung and a rock body is finite.
 ///
-/// **One rung, two grounds, and that is the whole design of the fixture.** Both arms stand on
-/// `extraction:gathering` earning `quarrying`, so nothing but the terrain's own rate differs: the
-/// shipped stone table is two populations, and this rung is the one place both readings are live.
+/// **TWO RUNGS, ONE ON EACH BRANCH, AND THE STONE TABLE IS WHY.** Both readings used to be live on
+/// `extraction:gathering` alone — a rock body and a stone scatter, one rung, nothing but the rate
+/// differing. That is no longer available: `gathering` earns `quarrying`, `quarrying` unlocks
+/// `extraction:quarry`, and a lesson is credited only where the rung it unlocks could be sited, so a
+/// scatter teaches nothing at all now. Every renewing row in the stone table is below the quarry's
+/// threshold by construction (`the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones`),
+/// so there is no stone ground left on which the dial paces a lesson. **The renewing arm moved to
+/// `forestry:deadfall`**, whose `woodcraft` unlocks a `felling` that asks nothing of the ground.
 ///
 /// **The plain rate is pinned as a VALUE, not merely as invariance.** A rock crew asked to leave
 /// nothing and one asked to leave almost everything must learn the same amount *and* that amount
 /// must be what a renewing crew at [`core_sim::PRACTICE_AT_THE_PLAIN_RATE`] earns — an
 /// equal-to-each-other assertion alone passes against a lesson that has stopped being credited.
+/// Across two lessons that comparison is only a statement about the multiplier while the two cost
+/// the same to learn, so the fixture asserts that rather than assuming it.
 #[test]
 fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial() {
     /// Long enough for the accrual to be a rate, short enough that no arm clamps at `1.0` and
@@ -466,16 +473,16 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
     const A_SHALLOW_FLOOR: f32 = 0.4;
     const A_DEEP_FLOOR: f32 = 0.8;
 
-    let practice_on = |terrain: TerrainType, floor: f32| {
+    let practice_on = |terrain: TerrainType, material: &str, lesson: u32, floor: f32| {
         let (mut world, home) = world_of(terrain);
-        let band = spawn_band_of(&mut world, home, STONE, 20, 6);
+        let band = spawn_band_of(&mut world, home, material, 20, 6);
         {
             let mut allocation = world
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band has an allocation");
             allocation.assignments[0].target = LaborTarget::Extract {
                 tile: UVec2::new(0, 0),
-                material: STONE.to_string(),
+                material: material.to_string(),
                 floor,
             };
         }
@@ -484,7 +491,7 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
         }
         world
             .resource::<DiscoveryProgressLedger>()
-            .get_progress(FACTION, core_sim::extraction::QUARRYING_DISCOVERY_ID)
+            .get_progress(FACTION, lesson)
             .to_f32()
     };
 
@@ -492,10 +499,10 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
     // condition `deposit_effective_floor` forks on. Without this the whole test could be two
     // readings of one population.
     let config = ExtractionConfig::builtin();
-    let rate_of = |terrain: TerrainType| {
+    let rate_of = |terrain: TerrainType, material: &str| {
         tile_deposit_regrowth(
             &config,
-            STONE,
+            material,
             &Tile {
                 position: UVec2::new(0, 0),
                 terrain,
@@ -504,17 +511,28 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
         )
     };
     assert_eq!(
-        rate_of(ROCK),
+        rate_of(ROCK, STONE),
         core_sim::NEVER_RENEWS,
         "fixture: the finite arm must stand on a rock body"
     );
     assert!(
-        rate_of(A_STONE_SCATTER) > core_sim::NEVER_RENEWS,
-        "fixture: the renewing arm must stand on a scatter that comes back"
+        rate_of(WOODED, WOOD) > core_sim::NEVER_RENEWS,
+        "fixture: the renewing arm must stand on a stand that comes back"
+    );
+    // **And the two lessons must cost the same**, or the cross-branch equality at the foot of this
+    // test would be a statement about `lesson_costs` rather than about the multiplier.
+    let knowledge = &LadderConfig::builtin().knowledge;
+    assert_eq!(
+        knowledge.lesson_cost("quarrying"),
+        knowledge.lesson_cost("woodcraft"),
+        "fixture: the two arms' lessons must be priced alike for their accruals to be comparable"
     );
 
-    let finite_shallow = practice_on(ROCK, A_SHALLOW_FLOOR);
-    let finite_deep = practice_on(ROCK, A_DEEP_FLOOR);
+    let quarrying = core_sim::extraction::QUARRYING_DISCOVERY_ID;
+    let woodcraft = core_sim::extraction::WOODCRAFT_DISCOVERY_ID;
+
+    let finite_shallow = practice_on(ROCK, STONE, quarrying, A_SHALLOW_FLOOR);
+    let finite_deep = practice_on(ROCK, STONE, quarrying, A_DEEP_FLOOR);
     assert!(
         finite_shallow > 0.0 && finite_deep < 1.0,
         "**LIVENESS**: the rock crews must still be learning and must not have finished, or the \
@@ -526,8 +544,8 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
         "a working whose dial does not participate must learn the same whatever the row carries"
     );
 
-    let renewing_shallow = practice_on(A_STONE_SCATTER, A_SHALLOW_FLOOR);
-    let renewing_deep = practice_on(A_STONE_SCATTER, A_DEEP_FLOOR);
+    let renewing_shallow = practice_on(WOODED, WOOD, woodcraft, A_SHALLOW_FLOOR);
+    let renewing_deep = practice_on(WOODED, WOOD, woodcraft, A_DEEP_FLOOR);
     let expected =
         core_sim::learn_multiplier(A_DEEP_FLOOR) / core_sim::learn_multiplier(A_SHALLOW_FLOOR);
     assert!(
@@ -539,8 +557,12 @@ fn a_finite_working_learns_at_the_plain_rate_and_a_renewing_one_rides_the_dial()
 
     // **And the plain rate is exactly the identity, not merely a constant.** The renewing arm at the
     // fixed point is what a rock crew earns, which is what makes this a bonus of neither sign.
-    let renewing_at_the_fixed_point =
-        practice_on(A_STONE_SCATTER, core_sim::PRACTICE_AT_THE_PLAIN_RATE);
+    let renewing_at_the_fixed_point = practice_on(
+        WOODED,
+        WOOD,
+        woodcraft,
+        core_sim::PRACTICE_AT_THE_PLAIN_RATE,
+    );
     assert!(
         (finite_shallow - renewing_at_the_fixed_point).abs() < A_CLOSE_ENOUGH_RATIO,
         "the plain rate is `learn_multiplier`'s fixed point, so a rock crew must earn exactly what \
@@ -1871,6 +1893,295 @@ fn putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding() {
 // The fixtures drive **whole turns** through `core_sim::build_test_app`, so the numbers under test
 // are the ones the real stage order produced — Logistics stamps the bill and renews the stock,
 // Population takes and pays, and the Snapshot stage publishes what they left.
+
+/// ⛔ **THE COPPICE THRESHOLD FALLS IN A GAP THE SHIPPED WOOD TABLE LEAVES**, exactly as the quarry's
+/// falls in the gap between the two stone populations — and it is asserted as a gap, never as a list
+/// of terrain names.
+///
+/// `forestry:coppice` costs 150 work and buys `regrowth_multiplier` 2.0, so what it adds to a stand
+/// is **one more peak renewal a turn**. On the smallest stands that is worth almost nothing: a rung
+/// offered where 150 work buys under a third of a unit a turn is a rung with no meaning, which is
+/// what `min_deposit_capacity` 70 refuses.
+///
+/// **The gain is read off the SHIPPED CURVE, not off a formula transcribed here** —
+/// [`deposit_regrowth`] evaluated at the most productive stock, at the ground's own rate and again at
+/// the rung's doubled one. That is what makes this survive the curve changing shape: if the logistic
+/// ever became something else the gain moves with it, and the gap is re-measured rather than
+/// silently mis-stated.
+///
+/// **The claim is `max(gain below the line) < min(gain at or above it)`.** A hand-copied list of
+/// terrain names would go stale in silence the first time the wood table is tuned, which is the
+/// failure the quarry's own threshold test exists to answer.
+#[test]
+fn the_coppice_threshold_splits_the_wood_table_with_no_overlap_in_what_it_buys() {
+    let config = ExtractionConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let coppice = ladder.rung(RungKey::ForestryCoppice);
+    let threshold = coppice
+        .site_requirement
+        .expect("the coppice rung states what the ground must hold")
+        .min_deposit_capacity;
+    let doubling = coppice
+        .extraction_payoff
+        .as_ref()
+        .expect("the coppice rung carries an extraction payoff")
+        .regrowth_multiplier;
+    let wood = config
+        .deposit(WOOD)
+        .expect("the shipped table carries wood");
+
+    // **What a coppice adds, per turn, at the stand's most productive stock** — the rung's doubled
+    // renewal less the ground's own. `MSY_BIOMASS_FRACTION × capacity` is where the curve peaks and
+    // is the reading `deposit_sustainable_take` takes beside it, so this is the same number a row
+    // publishes rather than a second arithmetic for it.
+    let coppice_gain = |capacity: f32, rate: f32| {
+        let peak = core_sim::MSY_BIOMASS_FRACTION * capacity;
+        let renewal =
+            |rate: f32| deposit_regrowth(peak, capacity, rate, config.seed_fraction) - peak;
+        renewal(rate * doubling) - renewal(rate)
+    };
+
+    let mut refused: Vec<(TerrainType, f32)> = Vec::new();
+    let mut admitted: Vec<(TerrainType, f32)> = Vec::new();
+    for (terrain, ground) in &wood.by_terrain {
+        let gain = coppice_gain(ground.capacity, ground.regrowth_rate);
+        if ground.capacity < threshold {
+            refused.push((*terrain, gain));
+        } else {
+            admitted.push((*terrain, gain));
+        }
+    }
+    assert!(
+        !refused.is_empty() && !admitted.is_empty(),
+        "**LIVENESS**: the threshold must actually cut the table in two, or the gap below is \
+         asserted against nothing"
+    );
+
+    let worst_admitted = admitted
+        .iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("the admitted side is not empty");
+    let best_refused = refused
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("the refused side is not empty");
+    assert!(
+        best_refused.1 < worst_admitted.1,
+        "the threshold of {threshold} must separate the wood table with NO OVERLAP in what a \
+         coppice buys: the best refused stand is {best:?} at +{best_gain} a turn and the worst \
+         admitted one is {worst:?} at +{worst_gain}",
+        best = best_refused.0,
+        best_gain = best_refused.1,
+        worst = worst_admitted.0,
+        worst_gain = worst_admitted.1,
+    );
+}
+
+/// ⛔ **YOU LEARN A RUNG BY PRACTISING WHERE THAT RUNG COULD BE BUILT** — picking loose stone off a
+/// scatter no quarry could ever stand on teaches no quarrying; picking it off a body of rock teaches
+/// it.
+///
+/// The gate is composed by the deposit arm and resolved through the one `forage::rung_site_refusal`
+/// seam the build gate and the `quarry` command's rejection go through, asked of the rung the lesson
+/// *unlocks* (`LadderConfig::rung_unlocked_by_lesson`). A second reader of `min_deposit_capacity`
+/// here is exactly the drift that seam exists to prevent.
+///
+/// **All three arms, because a one-sided test proves nothing.** A gate that never fires passes the
+/// credited arm, a gate that always fires passes the refused one, and a gate that refused
+/// *everything* would pass both. The third arm is the inertness claim: `forestry:deadfall` earns
+/// `woodcraft`, which unlocks `felling`, which asks nothing of the ground — so the very same 50-unit
+/// alpine stand that is too small for a coppice still teaches woodcraft, and at the *same rate* the
+/// ungated stone arm earns.
+#[test]
+fn a_deposit_lesson_is_credited_only_where_the_rung_it_unlocks_could_stand() {
+    /// Long enough for an accrual to be a rate, short enough that nothing clamps at `1.0`.
+    const A_SPELL_OF_PICKING: u32 = 5;
+
+    let practice_on = |terrain: TerrainType, material: &str, lesson: u32| -> (f32, f32) {
+        let (mut world, home) = world_of(terrain);
+        let band = spawn_band_of(&mut world, home, material, 20, 6);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments[0].target = LaborTarget::Extract {
+                tile: UVec2::new(0, 0),
+                material: material.to_string(),
+                floor: A_FRESH_ASSIGNMENTS_FLOOR,
+            };
+        }
+        for _ in 0..A_SPELL_OF_PICKING {
+            run_full_turn(&mut world);
+        }
+        let take = world
+            .resource::<DepositRegistry>()
+            .source(UVec2::new(0, 0), material)
+            .expect("the crew opened the working")
+            .last_take;
+        let learned = world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FACTION, lesson)
+            .to_f32();
+        (take, learned)
+    };
+
+    // **The fixture's own precondition**: the two stone grounds really do fall either side of the
+    // quarry's threshold, or the whole test is two readings of one population.
+    let config = ExtractionConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let threshold = ladder
+        .rung(RungKey::ExtractionQuarry)
+        .site_requirement
+        .expect("the quarry rung states what the ground must hold")
+        .min_deposit_capacity;
+    let capacity_of = |terrain: TerrainType, material: &str| {
+        tile_deposit_capacity(
+            &config,
+            material,
+            &Tile {
+                position: UVec2::new(0, 0),
+                terrain,
+                ..Default::default()
+            },
+        )
+    };
+    assert!(
+        capacity_of(ROCK, STONE) >= threshold && capacity_of(A_STONE_SCATTER, STONE) < threshold,
+        "fixture: the two arms must straddle the quarry threshold of {threshold} — rock holds {} \
+         and the scatter {}",
+        capacity_of(ROCK, STONE),
+        capacity_of(A_STONE_SCATTER, STONE),
+    );
+
+    let (_, on_a_body_of_rock) =
+        practice_on(ROCK, STONE, core_sim::extraction::QUARRYING_DISCOVERY_ID);
+    assert!(
+        on_a_body_of_rock > 0.0,
+        "picking stone off ground a quarry could stand on must teach quarrying: {on_a_body_of_rock}"
+    );
+
+    let (scatter_take, on_a_scatter) = practice_on(
+        A_STONE_SCATTER,
+        STONE,
+        core_sim::extraction::QUARRYING_DISCOVERY_ID,
+    );
+    assert!(
+        scatter_take > 0.0,
+        "**LIVENESS**: the scatter crew must genuinely be picking stone, or the zero below is a \
+         statement about a crew that did no work: {scatter_take}"
+    );
+    assert_eq!(
+        on_a_scatter, 0.0,
+        "a scatter no quarry could ever stand on teaches no quarrying, however hard it is worked \
+         — take {scatter_take}"
+    );
+
+    // **THE INERTNESS ARM.** `woodcraft` unlocks `felling`, which carries `site_requirement: null`,
+    // so there is no rung for the ground to refuse and the gate must be the identity — asserted on
+    // the smallest stand in the shipped table, which is the hardest place for that to be true.
+    let (deadfall_take, woodcraft) =
+        practice_on(ROCK, WOOD, core_sim::extraction::WOODCRAFT_DISCOVERY_ID);
+    assert!(
+        capacity_of(ROCK, WOOD) > 0.0 && deadfall_take > 0.0 && woodcraft > 0.0,
+        "a lesson that unlocks a rung with no site rule is credited exactly as it was — stand {}, \
+         take {deadfall_take}, learned {woodcraft}",
+        capacity_of(ROCK, WOOD),
+    );
+    assert!(
+        (woodcraft - on_a_body_of_rock).abs() < A_CLOSE_ENOUGH_RATIO,
+        "and credited at the SAME rate the admitted stone arm earns, so the gate is the identity \
+         rather than merely non-zero: {woodcraft} against {on_a_body_of_rock}"
+    );
+}
+
+/// ⛔ **THE SAME ONE-LINE RULE REACHES THE FORESTRY BRANCH, AND THAT IS INTENDED.** `felling` earns
+/// `conservationism`, `conservationism` unlocks `coppice`, and `coppice` asks something of the
+/// ground — so felling a stand too small to be worth coppicing teaches no conservationism.
+///
+/// It is the stone sentence one branch over: **you learn to manage a wood on a wood worth managing.**
+/// One rule with two consequences, rather than a quarry special case plus a forestry one.
+///
+/// **Both halves, on the same rung.** A 50-unit alpine stand is under the coppice threshold and a
+/// mixed woodland is well over it; the crews cut identically and only the ground differs, so the
+/// zero is the site rule and nothing else.
+#[test]
+fn felling_a_stand_too_small_to_coppice_teaches_no_conservationism() {
+    /// Long enough for an accrual to be a rate, short enough that nothing clamps at `1.0`.
+    const A_SPELL_OF_FELLING: u32 = 5;
+
+    let fell_on = |terrain: TerrainType| -> (f32, f32) {
+        let (mut world, home) = world_of(terrain);
+        seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        let band = spawn_band_of(&mut world, home, WOOD, 20, 6);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments[0].target = LaborTarget::Extract {
+                tile: UVec2::new(0, 0),
+                material: WOOD.to_string(),
+                floor: A_FRESH_ASSIGNMENTS_FLOOR,
+            };
+        }
+        for _ in 0..A_SPELL_OF_FELLING {
+            run_full_turn(&mut world);
+        }
+        let take = world
+            .resource::<DepositRegistry>()
+            .source(UVec2::new(0, 0), WOOD)
+            .expect("the working stands")
+            .last_take;
+        let learned = world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FACTION, core_sim::extraction::CONSERVATIONISM_DISCOVERY_ID)
+            .to_f32();
+        (take, learned)
+    };
+
+    // **The fixture's own precondition**, read off the shipped pair rather than transcribed.
+    let config = ExtractionConfig::builtin();
+    let ladder = LadderConfig::builtin();
+    let threshold = ladder
+        .rung(RungKey::ForestryCoppice)
+        .site_requirement
+        .expect("the coppice rung states what the ground must hold")
+        .min_deposit_capacity;
+    let wood_capacity = |terrain: TerrainType| {
+        tile_deposit_capacity(
+            &config,
+            WOOD,
+            &Tile {
+                position: UVec2::new(0, 0),
+                terrain,
+                ..Default::default()
+            },
+        )
+    };
+    assert!(
+        wood_capacity(WOODED) >= threshold && wood_capacity(ROCK) < threshold,
+        "fixture: the two stands must straddle the coppice threshold of {threshold} — the \
+         woodland holds {} and the alpine stand {}",
+        wood_capacity(WOODED),
+        wood_capacity(ROCK),
+    );
+
+    let (_, in_a_woodland) = fell_on(WOODED);
+    assert!(
+        in_a_woodland > 0.0,
+        "felling a wood worth managing must still teach conservationism: {in_a_woodland}"
+    );
+
+    let (alpine_take, on_an_alpine_stand) = fell_on(ROCK);
+    assert!(
+        alpine_take > 0.0,
+        "**LIVENESS**: the alpine crew must genuinely be cutting, or the zero below is a statement \
+         about a crew that did no work: {alpine_take}"
+    );
+    assert_eq!(
+        on_an_alpine_stand, 0.0,
+        "a stand no coppice could ever stand on teaches no conservationism — take {alpine_take}"
+    );
+}
 
 mod wire {
     use bevy::app::App;
@@ -3282,7 +3593,7 @@ mod wire {
         assert_eq!(quarry.requires_rung, "extraction:gathering", "{quarry:?}");
         assert_eq!(
             quarry.min_deposit_capacity, 100.0,
-            "the one placement rule on either branch, and the whole of *you cannot quarry just \
+            "the extraction branch's placement rule, and the whole of *you cannot quarry just \
              anywhere*: {quarry:?}"
         );
     }

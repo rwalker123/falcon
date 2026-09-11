@@ -1164,6 +1164,50 @@ fn deposit_head_gate(
     ])
 }
 
+/// **YOU LEARN A RUNG BY PRACTISING WHERE THAT RUNG COULD BE BUILT** — the deposit arm's own term in
+/// the `eligible` it hands [`RungDef::knowledge_accrual`], and [`deposit_head_gate`]'s site reading
+/// asked one rung *up* the ladder.
+///
+/// Picking loose stone off a 40-unit scatter teaches nothing about quarrying, because no quarry could
+/// ever stand on a 40-unit scatter; picking it off a rock body teaches it. The lesson is credited for
+/// the ground it is practised on, not for the verb.
+///
+/// **It is the SAME `forage::rung_site_refusal` seam** the build gate and the command's rejection
+/// resolve through, asked of [`LadderConfig::rung_unlocked_by_lesson`]'s answer. Reading
+/// `min_deposit_capacity` here directly would be a second site evaluator, which is precisely the
+/// drift that seam exists to prevent: the ground a rung can be built on and the ground its lesson is
+/// worth learning on are one reading, or they are two readings that will disagree.
+///
+/// **`true` whenever there is no rung for the ground to refuse** — a lesson that opens nothing on its
+/// branch, or one that opens a rung with `site_requirement: null`. That is every rung on the plant,
+/// animal and route webs and both free floors here, so this term is inert outside the two cases the
+/// shipped ladder actually states: `extraction:gathering` → `quarrying` → `extraction:quarry`, and
+/// `forestry:felling` → `conservationism` → `forestry:coppice`. **Both follow from the one sentence**
+/// — you learn to work rock on rock worth quarrying, and to manage a wood on a wood worth managing.
+fn ground_takes_the_rung_this_lesson_unlocks(
+    standing: &RungDef,
+    ladder: &LadderConfig,
+    ground: &Tile,
+    material: &str,
+    labor: &LaborConfig,
+    extraction: &crate::extraction_config::ExtractionConfig,
+) -> bool {
+    let Some(unlocked) = ladder.rung_unlocked_by_lesson(standing) else {
+        return true;
+    };
+    rung_site_refusal(
+        unlocked,
+        ground,
+        &labor.forage,
+        // **A deposit rung asks nothing about gathering or water** — `deposit_head_gate`'s reading
+        // verbatim, so the gate and the lesson judge the ground by the same terms.
+        true,
+        true,
+        crate::extraction::tile_deposit_capacity(extraction, material, ground),
+    )
+    .is_none()
+}
+
 /// **THE `route:*` GATE**, stated once — the terms of the road build arm's own `eligible`, in the
 /// order their refusals are published in.
 ///
@@ -6961,7 +7005,21 @@ pub fn advance_labor_allocation(
                             ),
                             *floor,
                         ),
-                        take_crew_present && source_is_workable(outcome.reachable_before),
+                        // **AND THE GROUND HAS TO BE ABLE TO CARRY WHAT THIS LESSON OPENS** — the
+                        // deposit web's third term, composed here because only the arm has the tile
+                        // in hand ([`ground_takes_the_rung_this_lesson_unlocks`]). Gathering on a
+                        // scatter no quarry could stand on teaches no quarrying, and felling a stand
+                        // no coppice could stand on teaches no conservationism.
+                        take_crew_present
+                            && source_is_workable(outcome.reachable_before)
+                            && ground_takes_the_rung_this_lesson_unlocks(
+                                ladder.rung(standing.held),
+                                &ladder,
+                                ground,
+                                material,
+                                &labor,
+                                &extraction_cfg,
+                            ),
                         &ladder.knowledge,
                         faction,
                         &mut discovery,
