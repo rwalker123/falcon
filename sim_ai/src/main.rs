@@ -9,14 +9,17 @@
 //! the same tick and is never acted on twice.
 //!
 //! The same binary is the bench harness: `sim_ai bench …` (`bench/`) starts a server and one
-//! player process per seat, and measures them from their logs; and the run viewer: `sim_ai viewer
-//! …` (`viewer/`) joins one seat's logs into a page. Without either first word the process plays —
-//! the launcher's invocation (`sim_ai --ports-file … --faction N`) is unchanged.
+//! player process per seat, and measures them from their logs; the run viewer: `sim_ai viewer …`
+//! (`viewer/`) joins one seat's logs into a page; and the record importer: `sim_ai import-record …`
+//! (`import_record`) turns a server's run record into such logs for any seat, the human's included.
+//! Without any of those first words the process plays — the launcher's invocation (`sim_ai
+//! --ports-file … --faction N`) is unchanged.
 
 mod arbiter;
 mod bench;
 mod brain;
 mod geometry;
+mod import_record;
 mod instruments;
 mod link;
 mod orchestrator;
@@ -67,6 +70,8 @@ const DERIVE_SEED_FROM_FACTION: u64 = 0;
 const BENCH_SUBCOMMAND: &str = "bench";
 /// The first argument that selects the run viewer (`viewer/`).
 const VIEWER_SUBCOMMAND: &str = "viewer";
+/// The first argument that turns a server record into a seat log directory (`import_record`).
+const IMPORT_RECORD_SUBCOMMAND: &str = "import-record";
 /// The player's own subcommand name, accepted so `sim_ai play …` reads as the pair of `bench`.
 const PLAY_SUBCOMMAND: &str = "play";
 
@@ -175,6 +180,11 @@ fn main() {
         Some(VIEWER_SUBCOMMAND) => {
             argv.remove(1);
             viewer::run(viewer::ViewerArgs::parse_from(argv)).map_err(|err| err.to_string())
+        }
+        Some(IMPORT_RECORD_SUBCOMMAND) => {
+            argv.remove(1);
+            import_record::run(import_record::ImportArgs::parse_from(argv))
+                .map_err(|err| err.to_string())
         }
         first => {
             if first == Some(PLAY_SUBCOMMAND) {

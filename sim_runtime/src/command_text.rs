@@ -1905,6 +1905,104 @@ fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParse
     }
 }
 
+/// **A command as one line of this grammar** — the inverse of [`parse_command_line`] for the verbs a
+/// player process emits (`assign_labor` with the forage / hunt / pool roles, `move_band`,
+/// `split_band`, `order`), so a line reads exactly as an operator would type it and parses back to
+/// the payload it was rendered from (a unit test holds every rendered verb to that). It is the one
+/// renderer both sides of the wire share: `sim_ai` writes it into `decisions.jsonl`
+/// (`commands_text`), and the server writes it into a run record's `commands.jsonl` for every
+/// command a seat sent. Any other verb falls back to its `Debug` form, which is readable and
+/// deliberately does not parse.
+pub fn render_command_line(payload: &CommandPayload) -> String {
+    match payload {
+        CommandPayload::AssignLabor {
+            faction_id,
+            band_id,
+            role,
+            workers,
+            target_x,
+            target_y,
+            fauna_id,
+            floor,
+            species,
+            kit_id,
+            take_species,
+            ..
+        } => {
+            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
+            let mut line = format!("assign_labor {faction_id} {band} {role}");
+            if let (Some(x), Some(y)) = (target_x, target_y) {
+                line.push_str(&format!(" {x} {y}"));
+            }
+            if let Some(herd) = fauna_id {
+                line.push_str(&format!(" {herd}"));
+            }
+            if let Some(floor) = floor {
+                line.push_str(&format!(" {floor}"));
+            }
+            if let Some(species) = species {
+                line.push_str(&format!(" {species}"));
+            }
+            if !take_species.is_empty() {
+                line.push_str(&format!(
+                    " {TAKE_SELECTION_PREFIX}{}",
+                    take_species
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(&TAKE_SELECTION_SEPARATOR.to_string())
+                ));
+            }
+            line.push_str(&format!(" {workers}"));
+            if let Some(kit) = kit_id {
+                line.push_str(&format!(" kit {kit}"));
+            }
+            line
+        }
+        CommandPayload::MoveBand {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+        } => {
+            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
+            format!("move_band {faction_id} {band} {target_x} {target_y}")
+        }
+        CommandPayload::SplitBand {
+            faction_id,
+            band_id,
+            workers,
+        } => {
+            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
+            format!("split_band {faction_id} {band} {workers}")
+        }
+        CommandPayload::Orders {
+            faction_id,
+            directive,
+        } => {
+            let directive = match directive {
+                OrdersDirective::Ready => ORDERS_READY_TOKEN,
+            };
+            format!("{ORDERS_VERB} {faction_id} {directive}")
+        }
+        other => format!("{other:?}"),
+    }
+}
+
+/// **A rendered line's verb**: its first token — the grammar verb for a rendered command, the
+/// variant name for one that fell back to `Debug` (`Resync`, `Turn { steps: 1 }`), so a record can
+/// be grouped by verb without re-parsing the line.
+pub fn command_line_verb(line: &str) -> &str {
+    line.split_whitespace().next().unwrap_or_default()
+}
+
+/// What a rendered line shows where the payload named no band — the grammar has no token for it,
+/// so the line is readable and deliberately does not parse.
+const NO_BAND: &str = "<no band>";
+/// The orders verb and its one directive, as [`parse_command_line`] reads them.
+pub const ORDERS_VERB: &str = "order";
+const ORDERS_READY_TOKEN: &str = "ready";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3487,5 +3585,88 @@ mod tests {
             parse_command_line("set_starting_loadout"),
             Err(CommandParseError::MissingArgument("faction_id"))
         ));
+    }
+
+    /// The rendered line is the grammar's: it parses back to the payload it was rendered from.
+    #[test]
+    fn a_rendered_command_line_parses_back_to_itself() {
+        let assign_with =
+            |role: &str,
+             x: Option<u32>,
+             fauna: Option<&str>,
+             floor: Option<f32>,
+             kit: Option<&str>| CommandPayload::AssignLabor {
+                faction_id: 1,
+                band_id: Some(7001),
+                role: role.to_owned(),
+                workers: 5,
+                target_x: x,
+                target_y: x.map(|x| x + 1),
+                fauna_id: fauna.map(str::to_owned),
+                policy: None,
+                species: None,
+                floor,
+                kit_id: kit.map(str::to_owned),
+                take_species: Vec::new(),
+            };
+        let assign = |role: &str, x: Option<u32>, fauna: Option<&str>| {
+            assign_with(role, x, fauna, None, None)
+        };
+        for payload in [
+            assign("forage", Some(3), None),
+            assign("hunt", None, Some("game_boar_05")),
+            assign("scout", None, None),
+            CommandPayload::MoveBand {
+                faction_id: 1,
+                band_id: Some(7001),
+                target_x: 4,
+                target_y: 9,
+            },
+            CommandPayload::SplitBand {
+                faction_id: 1,
+                band_id: Some(7001),
+                workers: 4,
+            },
+            CommandPayload::Orders {
+                faction_id: 1,
+                directive: OrdersDirective::Ready,
+            },
+        ] {
+            let line = render_command_line(&payload);
+            let back = parse_command_line(&line).unwrap_or_else(|err| panic!("`{line}`: {err}"));
+            assert_eq!(back, payload, "`{line}`");
+        }
+        assert_eq!(
+            render_command_line(&assign("forage", Some(3), None)),
+            "assign_labor 1 7001 forage 3 4 5"
+        );
+        let with_kit = assign_with(
+            "hunt",
+            None,
+            Some("game_boar_05"),
+            Some(0.5),
+            Some("stone_knife"),
+        );
+        let line = render_command_line(&with_kit);
+        assert_eq!(
+            line,
+            "assign_labor 1 7001 hunt game_boar_05 0.5 5 kit stone_knife"
+        );
+        assert_eq!(parse_command_line(&line).expect("parses"), with_kit);
+        assert_eq!(
+            render_command_line(&CommandPayload::Orders {
+                faction_id: 2,
+                directive: OrdersDirective::Ready,
+            }),
+            "order 2 ready"
+        );
+        assert_eq!(command_line_verb("order 2 ready"), ORDERS_VERB);
+        let fallback = render_command_line(&CommandPayload::Resync);
+        assert!(
+            fallback.contains("Resync"),
+            "an unrendered verb falls back to its debug form"
+        );
+        assert_eq!(command_line_verb(&fallback), "Resync");
+        assert_eq!(command_line_verb(""), "");
     }
 }

@@ -24,7 +24,10 @@ pub use commands::{
 };
 
 pub mod command_text;
-pub use command_text::{parse_command_line, CommandParseError, CommandVerbHelp, COMMAND_VERBS};
+pub use command_text::{
+    command_line_verb, parse_command_line, render_command_line, CommandParseError, CommandVerbHelp,
+    COMMAND_VERBS, ORDERS_VERB,
+};
 
 pub mod scripting;
 pub use scripting::{

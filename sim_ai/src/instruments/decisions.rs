@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use sim_runtime::CommandPayload;
+use sim_runtime::{render_command_line, CommandPayload};
 
 /// The file the records go to, under `--log-dir`.
 pub const DECISIONS_FILE: &str = "decisions.jsonl";
@@ -45,81 +45,13 @@ pub struct Decision {
     pub commands_text: Vec<String>,
 }
 
-/// **A command as a line of the text grammar** (`sim_runtime::command_text`), for the verbs the
-/// specialists emit — `assign_labor` (forage / hunt / the pool roles), `move_band`, `split_band` —
-/// so a line reads exactly as an operator would type it and parses back through
-/// `parse_command_line`. `sim_runtime` has a parser and no printer, and `CommandPayload` is not
-/// serialisable, so any other verb falls back to its `Debug` form.
+/// **A command as a line of the text grammar** — `sim_runtime::render_command_line`, the one
+/// renderer both sides of the wire share (the server's run record writes the same lines), so a
+/// `commands_text` line reads exactly as an operator would type it and parses back through
+/// `parse_command_line`.
 pub fn command_text(payload: &CommandPayload) -> String {
-    match payload {
-        CommandPayload::AssignLabor {
-            faction_id,
-            band_id,
-            role,
-            workers,
-            target_x,
-            target_y,
-            fauna_id,
-            floor,
-            species,
-            kit_id,
-            take_species,
-            ..
-        } => {
-            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
-            let mut line = format!("assign_labor {faction_id} {band} {role}");
-            if let (Some(x), Some(y)) = (target_x, target_y) {
-                line.push_str(&format!(" {x} {y}"));
-            }
-            if let Some(herd) = fauna_id {
-                line.push_str(&format!(" {herd}"));
-            }
-            if let Some(floor) = floor {
-                line.push_str(&format!(" {floor}"));
-            }
-            if let Some(species) = species {
-                line.push_str(&format!(" {species}"));
-            }
-            if !take_species.is_empty() {
-                line.push_str(&format!(
-                    " {TAKE_SELECTION_PREFIX}{}",
-                    take_species.join(TAKE_SELECTION_SEPARATOR)
-                ));
-            }
-            line.push_str(&format!(" {workers}"));
-            if let Some(kit) = kit_id {
-                line.push_str(&format!(" kit {kit}"));
-            }
-            line
-        }
-        CommandPayload::MoveBand {
-            faction_id,
-            band_id,
-            target_x,
-            target_y,
-        } => {
-            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
-            format!("move_band {faction_id} {band} {target_x} {target_y}")
-        }
-        CommandPayload::SplitBand {
-            faction_id,
-            band_id,
-            workers,
-        } => {
-            let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
-            format!("split_band {faction_id} {band} {workers}")
-        }
-        other => format!("{other:?}"),
-    }
+    render_command_line(payload)
 }
-
-/// What a command line shows where the payload named no band — the grammar has no token for it,
-/// so the line is readable and deliberately does not parse.
-const NO_BAND: &str = "<no band>";
-/// The take-selection token's prefix and separator, restated from `sim_runtime::command_text`
-/// (`TAKE_SELECTION_PREFIX`, private there): `take:<a>,<b>`.
-const TAKE_SELECTION_PREFIX: &str = "take:";
-const TAKE_SELECTION_SEPARATOR: &str = ",";
 
 /// A plan adopted by the orchestrator (§3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -262,73 +194,19 @@ mod tests {
         }
     }
 
-    /// The rendered line is the grammar's: it parses back to the payload it was rendered from.
+    /// The line is the shared renderer's (`sim_runtime::render_command_line`, tested there): it
+    /// parses back through the grammar.
     #[test]
     fn a_rendered_command_parses_back_to_itself() {
         use sim_runtime::parse_command_line;
-        let assign_with =
-            |role: &str,
-             x: Option<u32>,
-             fauna: Option<&str>,
-             floor: Option<f32>,
-             kit: Option<&str>| CommandPayload::AssignLabor {
-                faction_id: 1,
-                band_id: Some(7001),
-                role: role.to_owned(),
-                workers: 5,
-                target_x: x,
-                target_y: x.map(|x| x + 1),
-                fauna_id: fauna.map(str::to_owned),
-                policy: None,
-                species: None,
-                floor,
-                kit_id: kit.map(str::to_owned),
-                take_species: Vec::new(),
-            };
-        let assign = |role: &str, x: Option<u32>, fauna: Option<&str>| {
-            assign_with(role, x, fauna, None, None)
+        let payload = CommandPayload::SplitBand {
+            faction_id: 1,
+            band_id: Some(7001),
+            workers: 4,
         };
-        for payload in [
-            assign("forage", Some(3), None),
-            assign("hunt", None, Some("game_boar_05")),
-            assign("scout", None, None),
-            CommandPayload::MoveBand {
-                faction_id: 1,
-                band_id: Some(7001),
-                target_x: 4,
-                target_y: 9,
-            },
-            CommandPayload::SplitBand {
-                faction_id: 1,
-                band_id: Some(7001),
-                workers: 4,
-            },
-        ] {
-            let line = command_text(&payload);
-            let back = parse_command_line(&line).unwrap_or_else(|err| panic!("`{line}`: {err}"));
-            assert_eq!(back, payload, "`{line}`");
-        }
-        assert_eq!(
-            command_text(&assign("forage", Some(3), None)),
-            "assign_labor 1 7001 forage 3 4 5"
-        );
-        let with_kit = assign_with(
-            "hunt",
-            None,
-            Some("game_boar_05"),
-            Some(0.5),
-            Some("stone_knife"),
-        );
-        let line = command_text(&with_kit);
-        assert_eq!(
-            line,
-            "assign_labor 1 7001 hunt game_boar_05 0.5 5 kit stone_knife"
-        );
-        assert_eq!(parse_command_line(&line).expect("parses"), with_kit);
-        assert!(
-            command_text(&CommandPayload::Resync).contains("Resync"),
-            "an unrendered verb falls back to its debug form"
-        );
+        let line = command_text(&payload);
+        assert_eq!(line, "split_band 1 7001 4");
+        assert_eq!(parse_command_line(&line).expect("parses"), payload);
     }
 
     #[test]

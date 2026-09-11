@@ -169,6 +169,21 @@ pub fn decode_frame_flatbuffer(bytes: &[u8]) -> Result<FramePayload, DecodeError
     }
 }
 
+/// **The header alone**, of a frame of either kind, without decoding its sections: what a writer
+/// that files frames by `frame_seq` needs, at the cost of the root verification and one table
+/// read rather than a whole world.
+pub fn decode_frame_header(bytes: &[u8]) -> Result<SnapshotHeader, DecodeError> {
+    let envelope = fb::root_as_envelope(bytes)?;
+    let header = match envelope.payload_type() {
+        fb::SnapshotPayload::snapshot => {
+            required(envelope.payload_as_snapshot(), "WorldSnapshot")?.header()
+        }
+        fb::SnapshotPayload::delta => required(envelope.payload_as_delta(), "WorldDelta")?.header(),
+        other => return Err(DecodeError::UnknownPayload(other.0)),
+    };
+    Ok(decode_header(required(header, "SnapshotHeader")?))
+}
+
 /// [`decode_frame_flatbuffer`], requiring the payload to be a full snapshot.
 pub fn decode_snapshot_flatbuffer(bytes: &[u8]) -> Result<WorldSnapshot, DecodeError> {
     match decode_frame_flatbuffer(bytes)? {

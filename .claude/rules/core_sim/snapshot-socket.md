@@ -185,7 +185,10 @@ legitimate multi-second pause, so the timeout is sized to catch only a wedged pr
 `SnapshotServer::deliver` is called from the **publisher thread**, which must never block on the
 socket (`turn-profiling.md` — publication was moved off the turn thread precisely so this path
 belongs to nobody the simulation waits on). So the send is a `try_send` on a **bounded** channel, and
-a full queue **drops the frame** and counts it.
+a full queue **drops the frame** and counts it. When `SIM_RECORD_DIR` is set the publisher's sink
+is a `RecordingSink` (`core_sim/src/record.rs`) that delivers to this socket first and then queues
+the frame to the run record's own writer thread — another path off the publisher that never blocks
+it (`ai-driver.md` → "A played game becomes a viewable run").
 
 **Dropping a frame is recoverable, which is what makes drop-on-full admissible.** The client's decoder
 drops a delta whose `baseFrameSeq` names a frame it never applied and raises `resync_needed`

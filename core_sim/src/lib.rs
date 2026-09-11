@@ -66,6 +66,7 @@ pub mod port_alloc;
 mod power;
 mod provinces;
 mod recipes_config;
+pub mod record;
 mod resources;
 pub mod routes;
 pub mod save;

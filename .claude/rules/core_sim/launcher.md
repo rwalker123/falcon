@@ -88,6 +88,30 @@ defaults.
 `Layout::resolve` requires it the way it requires the server. The program itself is
 `.claude/rules/core_sim/ai-driver.md`.
 
+## The run directory: a played game can be viewed afterwards
+
+Every launcher session gets `<data_dir>/runs/<run_id>` (`RUNS_DIR`; the id is
+`run-<start unix seconds>-<pid>`, `mint_run_id`, so ids sort by time and two launchers started in
+the same second differ). The path is printed to the launcher's stderr (`report_info`) at start and
+again at exit, with the viewer command, because it is the one thing a player needs to open the game
+they just played. Under it:
+
+- `record/` — the **server's** record: the launcher sets `SIM_RECORD_DIR` (`ENV_RECORD_DIR`, twin
+  of `core_sim::record::RECORD_DIR_ENV`) on the server spawn, so every frame published to every
+  seat — the human's included — and every logged command is written there by the server's own
+  `run-recorder` thread. What is in it, and how `sim_ai import-record` reads it, is
+  `ai-driver.md` → "A played game becomes a viewable run".
+- `seat_<faction>/` — each rival's own instruments: `spawn_rival` passes `--log-dir` to every
+  `sim_ai` it starts (`Session::rival_log_dir`, `SEAT_LOG_DIR_PREFIX`). The human's client writes
+  none; its seat is imported from `record/` by the viewer.
+
+`sim_ai viewer <run directory> --seat <faction> --out <page.html>` opens either kind of seat.
+
+**Pruning.** `create_run_dir` makes this session's directory and then removes every `run-*`
+directory under `runs/` but the newest `KEPT_RUNS` (5), by name — a run holds every frame of every
+seat, and a machine that plays daily would otherwise fill up with games nobody will look at again.
+Only directories carrying `RUN_ID_PREFIX` are touched; removal is best-effort and never reported.
+
 ## The reaping guarantee, for N children
 
 This binary exists because a child outliving it holds the port block and the next launch then fails
@@ -131,6 +155,9 @@ The crate's tests are unit tests inside `main.rs`, because the launcher is a `[[
 - `reconcile_spawns_a_rival_per_roster_faction_and_reaps_the_departed` drives `reconcile` with a
   `sleep` stand-in program: a roster of `[0, 1, 2]` spawns children for 1 and 2 and none for the
   human; shrinking to `[0, 1]` reaps 2 (asserted via `ps`) and keeps 1; growing again respawns 2.
+- `a_run_id_carries_the_prefix_and_the_start_time` and
+  `creating_a_run_prunes_the_oldest_beyond_the_kept_count` pin the run id's shape and that a start
+  keeps exactly `KEPT_RUNS` runs, the new one included, leaving a non-run directory alone.
 - `every_child_is_reaped_when_the_session_drops` builds a `Session` over a server, two stand-in
   players and a stand-in rival and asserts, via `ps`, that none of them outlives the drop and that
   the handshake file is gone. Both are unix-gated for the `sleep` stand-in; the Windows half of the
