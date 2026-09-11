@@ -4948,6 +4948,76 @@ rather than the patch, jumping to a place but not to a thing. The land IS the pa
 rows and its Sow control live on the land card), and `SUBJECT_LAND` is the established third kind on
 the `(kind, id)` contract that the panel's own land row and the map's select-then-cycle already use.
 
+### A CREW BIGGER THAN ITS SOURCE CAN USE IS FLAGGED ON ALL THREE WEBS
+
+Reported from play — Ray: *"if I assign 5 woodcutters and only 4 are doing anything… we must fix that
+because we already do that for forage and hunters, we must have consistency."* The asymmetry was real:
+a forage or hunt row's `attention` bool carried the sim's `workers_needed` note (*only 2 of 5 bring
+anything home*) while `_work_source_models` skips the `extract` kind outright, so a working reached no
+flag anywhere on this panel.
+
+**The work board's `attention` gained one more term, and the existing three are untouched**:
+
+```gdscript
+"attention": warn or note != "" or pending or overstaffed != ""
+```
+
+`overstaffed` is `HudDepositVocab.overstaffed_clause(workers, useful)` over
+`SourceForecast.crew_is_wasted`, measured against the SAME `max_useful_workers` the row's `+` gate
+(`source_worker_cap_state`) is struck at — so the ceiling is resolved once per arm and spent twice.
+
+⛔ **AND IT IS A FALLBACK, NOT A SECOND VOICE.** `workers_needed` is published on all three webs now,
+and where it answers `source_yield_readout` already states the condition in FIGURES on the row's face,
+so the clause is gated off it:
+
+```gdscript
+var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+    else HudDepositVocab.overstaffed_clause(workers, useful)
+```
+
+`note` and `overstaffed` are therefore **mutually exclusive by construction** and the flag is raised
+by whichever one spoke — a row can never carry both, which would be one condition wearing two
+spellings. The client's ceiling answers exactly one state: `workers_needed == 0`, the rehydrated
+save's *unknown*. `labor-ui.md` → "The cap note and the waste hazard are two questions of one ceiling"
+holds why the sim's number is also the better one.
+
+**The clause also rides the row's TOOLTIP**, because a mark the player cannot read is not a fix: the
+`+` gate's own note is empty on a band with no idle hands, which is exactly the band that has to move
+one, so without the clause the flag would have no sentence anywhere on the row.
+
+**THE GROUNDWORK ROSTER ROW CARRIES IT AS A CLAUSE**, through `deposit_row_value`'s fourth argument.
+`_workings_roster_cutters` was already the crew; `_workings_roster_max_useful` is the ceiling beside
+it, `HudDepositVocab.max_useful_cutters` struck at `HudBandLaborState.floor_for_extract` — **this
+band's own floor, never `DepositState.floor`**, which is the deepest floor any band cutting the
+working named and would measure this crew against another band's order.
+
+⛔ **THE PAIRED NEGATIVE IS WHAT THE HARNESS CLAIM IS MADE OF.** `crew_is_wasted` is `workers >
+useful` STRICTLY — `workers == useful` is FULLY STAFFED, the good state — so
+`band_panel_preview._assert_a_crew_bigger_than_its_source_is_flagged` and
+`_assert_a_working_flags_the_crew_that_outgrew_it` each assert an over-crewed source BESIDE one crewed
+exactly to its ceiling. Without the second half both pass on a renderer that flags every crewed source
+in the game.
+
+⛔ **AND THE FIXTURES SHRINK THE GROUND UNDER A STANDING CREW rather than over-assigning.** Every web
+caps its stepper at this same ceiling, so the over-assignment cannot be made on a compose sheet at
+all; what a player really reaches is a patch drawn down or a stand cut back beneath the crew already
+on it. Each fixture's crew is the SHIPPED cap plus a named surplus (`CAP_DEMO_WASTED_EXTRA`,
+`WORKINGS_WASTED_HANDS`), so a re-dial of either `max_useful_*` moves the fixture with it instead of
+quietly making the claim vacuous — and the over-crewed rows deliberately publish no `workers_needed`,
+which is the *unknown* arm: with it published the board suppresses the clause entirely, so those
+fixtures would be asserting against a clause that was never emitted.
+
+⛔ **THE EXCLUSION ITSELF IS ASSERTED, on the same over-crewed row.**
+`_assert_the_wire_s_answer_silences_the_client_s` re-renders it with `workers_needed` published —
+struck deliberately BELOW the client's own ceiling, so the face's figures are ones only the wire could
+have produced — and asserts **both halves**: the `note` term carries the sim's figures verbatim
+(`SourceForecast.OVERSTAFF_NOTE_FORMAT`), and the row's tooltip carries no `⚠ overstaffed`. One half
+alone is not the claim: the suppression passes on a client that never emits the clause, and the note
+passes on today's doubling. The clause's own non-emptiness for those same arguments is asserted as a
+premise, which is what makes *suppressed* distinguishable from *never produced*, and the attention
+flag is asserted still raised so a suppression that also swallowed the bool cannot pass. The A fixture
+is restored afterwards, or every state downstream inherits a board it was not written against.
+
 ### THE KEEPING WARNING ARRIVES AT DECLARE TIME, NOT A TURN LATER (§4.7)
 
 Reported from play: queue a Tame, staff the builders, advance — and *only then* does a warning appear

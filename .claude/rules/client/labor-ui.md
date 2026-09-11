@@ -1714,6 +1714,68 @@ the *hold it after* pill's. That pill is also a BUTTON that sets the count, so t
 sentence away either. The cap still floors on the same number, so "idle" still means *above the hold
 crew* wherever it is computed.
 
+### THE CAP NOTE AND THE WASTE HAZARD ARE TWO QUESTIONS OF ONE CEILING
+
+`SourceForecast.crew_is_wasted(workers, useful)` — `workers > useful`, STRICTLY — is the second
+question asked of `max_useful_workers`, and it is asked BESIDE `source_worker_cap_state` rather than
+inside it. The two read the same number and answer differently:
+
+| | asks | answers where |
+|---|---|---|
+| `source_worker_cap_state`'s `note` | *the `+` is dead and you still have idle hands* | `workers >= useful` **and** `idle > 0` |
+| `crew_is_wasted` | *the crew already standing here is bigger than the ground can use* | `workers > useful`, whatever the band's idle count |
+
+**The note could not answer the second, and the gap was the whole defect.** Its `idle > 0` guard is
+correct for a tooltip explaining a dead button — a band with nobody idle needs no explanation for a
+`+` that could not have worked anyway — and it makes the note silent on exactly the band that has
+committed every hand, which is the band most in need of moving one. The note is also worded from the
+`+`'s point of view (*fully staffed … more would idle here*), so a source the crew has ALREADY
+outgrown reads as correctly crewed.
+
+**`workers == useful` IS FULLY STAFFED**, and the strictness is load-bearing rather than stylistic: a
+`>=` here puts a hazard on every correctly-crewed source in the game, which is what
+`band_panel_preview`'s and `map_preview`'s paired *crewed exactly to its ceiling* claims exist to
+refuse. Every negative sentinel these ceilings use is `-1` — `MAX_USEFUL_UNBOUNDED`,
+`HudDepositVocab.CUTTERS_UNCAPPED`, `CUTTERS_UNSTATED` — so `useful <= MAX_USEFUL_UNBOUNDED` answers
+`false` for all of them in one comparison: a source nobody can price makes no claim about waste.
+
+**IT IS UNREACHABLE FROM A COMPOSE SHEET, which is why it needed a hazard at all.** All three webs cap
+their stepper at this same ceiling (`_forecast_worker_cap` for the food webs,
+`HudDepositVocab.max_useful_cutters` for a working), so the over-assignment cannot be MADE where the
+crew is chosen. What reaches the player is the GROUND MOVING UNDER A STANDING CREW — a patch drawn
+down, a herd thinned, a seam worked out — and no stepper can gate that.
+
+**THE WORD IS `HudDepositVocab.OVERSTAFFED_WORD`, and it carries no `DEPOSIT_` prefix on purpose.**
+`going back` and `unopened` describe things only a working does; this is one condition on three webs,
+so the work board's row hover, the map source list's `ATTENTION_OVERSTAFFED` clause and the Groundwork
+roster's value cell all route through `HudDepositVocab.overstaffed_clause` — one spelling, or the
+player learns three marks for one state.
+
+**IT IS A FALLBACK, NOT A SECOND VOICE — THE WIRE'S ANSWER WINS WHERE IT HAS ONE.**
+`LaborAssignment.workersNeeded` is the sim's post-hoc overstaffing telemetry, published on **all three
+webs** (`systems::labor`'s `Extract` arm fills `SourceYield::workers_needed` beside its `overdraws`),
+and `source_yield_readout` already states it in FIGURES on the row's face through
+`OVERSTAFF_NOTE_FORMAT` — *only 2 of 5 bring anything home*. A `⚠ overstaffed` beside that is one
+condition wearing two spellings. So `_work_source_models` gates the clause:
+
+```gdscript
+var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+    else HudDepositVocab.overstaffed_clause(workers, useful)
+```
+
+The two terms of the row's `attention` bool are therefore **mutually exclusive by construction**, and
+the flag is raised by whichever one spoke.
+
+**PREFERRING THE SIM IS PREFERRING THE BETTER NUMBER, not merely the first one.** It inverts the take
+that actually ran; the client divides by the ceiling the stepper caps at. The two are free to differ,
+and only the sim's can quantify. The client's ceiling answers exactly one state — `workers_needed ==
+0`, the rehydrated save's *unknown* — which is the arm
+`band_panel_preview._assert_a_crew_bigger_than_its_source_is_flagged` stages; the published arm is the
+A/B beside it (`_assert_the_wire_s_answer_silences_the_client_s`), which asserts **both halves**: the
+face carries the sim's figures AND the hover carries no `⚠ overstaffed`. One half alone is not the
+claim — the suppression passes on a client that never emits the clause, the note passes on a row
+wearing both — so the clause's own non-emptiness is asserted as a premise.
+
 ### BARREN MEANS BARREN ON EVERY ACCOUNT — and the axis alias is what broke that
 
 `max_useful_workers` divides by the axis pair and returns `MAX_USEFUL_BARREN` (1) when the axis prices

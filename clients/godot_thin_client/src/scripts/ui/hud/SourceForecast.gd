@@ -6050,6 +6050,33 @@ static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: in
         note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
     return {"can_add": false, "note": note}
 
+## **IS THIS CREW BIGGER THAN ITS SOURCE CAN USE?** — hands standing on a job that has nothing left
+## for them, which is the one question every web asks and only two of them used to answer. It is the
+## ONE predicate behind the work board's attention flag, the map source list's `overstaffed` rank and
+## the workings roster's clause, so a forage patch, a herd and a seam cannot resolve one condition
+## three ways.
+##
+## ⛔ **THE TEST IS `workers > useful`, STRICTLY.** `workers == useful` is FULLY STAFFED — the good
+## state, and the one `source_worker_cap_state` already describes at the `+`. A `>=` here would put a
+## hazard on every correctly-crewed source in the game.
+##
+## ⛔ **IT IS NOT `source_worker_cap_state`'s `note`, AND THE TWO ANSWER DIFFERENT QUESTIONS.** That
+## note says *the `+` is dead and you still have idle hands*, so it is silent on an over-staffed
+## source whose band has nobody idle — the very case a hazard exists for. This is asked BESIDE it,
+## never instead of it.
+##
+## ⛔ **AND IT IS NOT REACHABLE FROM A COMPOSE SHEET.** All three webs cap their stepper at this same
+## ceiling, so over-assigning is refused where the crew is chosen; what this catches is the GROUND
+## MOVING UNDER A STANDING CREW — a seam worked down, a stand cut back, a herd thinned — which no
+## stepper can gate.
+##
+## `MAX_USEFUL_UNBOUNDED` (and every other negative sentinel this client's ceilings use, all of them
+## the same `-1`) answers FALSE: a source nobody can price makes no claim about waste.
+static func crew_is_wasted(workers: int, useful: int) -> bool:
+    if useful <= MAX_USEFUL_UNBOUNDED:
+        return false
+    return workers > useful
+
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
 ## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
 static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:

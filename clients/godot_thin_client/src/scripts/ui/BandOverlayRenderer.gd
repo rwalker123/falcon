@@ -967,24 +967,35 @@ func source_total_text() -> String:
 
 ## ---- the attention ladder ---------------------------------------------------------------------
 ##
-## Three classes, each a SHIPPED predicate, ranked high-first; `ATTENTION_NONE` is an ordinary row.
+## Four classes, each a SHIPPED predicate, ranked high-first; `ATTENTION_NONE` is an ordinary row.
 ## The sort puts them at the top of page 1, which is the whole point: **a row you would act on must
 ## never be the row that got cut.**
 ##
-## ⛔ **THERE IS NO "IDLE CREW" CLASS.** It was named in the design and has no shipped per-source
-## predicate: `idle_workers` is a BAND-level turn-orb row, and `HudDepositVocab.DEPOSIT_RUNWAY_IDLE`
-## describes a working with NO crew — which by construction never appears in this list, every row
-## having `workers > 0`. Do not invent one.
+## ⛔ **THERE IS STILL NO "NOBODY IS ON IT" CLASS, AND `ATTENTION_OVERSTAFFED` IS NOT IT.** A working
+## with NO crew (`HudDepositVocab.DEPOSIT_RUNWAY_IDLE`) by construction never appears in this list,
+## every row having `workers > 0`, and `idle_workers` is a BAND-level turn-orb row. The class below is
+## the opposite reading — a crew that IS here and is bigger than its source can use — which every web
+## can answer per source. **What the retired note said was that the design's idle-crew class had no
+## shipped predicate; this one has, and it is `SourceForecast.crew_is_wasted`.**
 const ATTENTION_NONE := 0
+## A crew bigger than its source can use, on ALL THREE WEBS — `SourceForecast.crew_is_wasted` against
+## `max_useful_workers` for a patch or a herd and `HudDepositVocab.max_useful_cutters` for a working.
+##
+## ⛔ **IT RANKS BELOW THE THREE ABOVE IT, WHICH IS WHY THEY EACH MOVED UP ONE.** Idle hands are a
+## WASTE — the work goes on, at the rate the ground allows — where the three above are each a LOSS: a
+## rung sliding back, a stock cut past its renewal, a build the pool is spending on and not
+## finishing. A player reading top-down should meet what they are losing before what they are merely
+## not gaining.
+const ATTENTION_OVERSTAFFED := 1
 ## Short of keepers — the rung is slipping back down. `DetailFormat.rung_is_at_risk` on a food source,
 ## `HudDepositVocab.is_at_risk` on a working; both wear the tile card's own words.
-const ATTENTION_UNDER_KEPT := 1
+const ATTENTION_UNDER_KEPT := 2
 ## Taking more than the source renews — the sim's own `overdraws` verdict. The RATE cell already
 ## carries the `⚠` and the WARN ink, so the row spells it once.
-const ATTENTION_OVER_CUT := 2
+const ATTENTION_OVER_CUT := 3
 ## A declared build that is unstaffed or going backwards (`SourceForecast.build_is_stalled`, read off
 ## the badge entry). The BUILD cell already carries the sentinel's own face.
-const ATTENTION_BUILD_STALLED := 3
+const ATTENTION_BUILD_STALLED := 4
 
 ## **ONE ROW PER STAFFED SOURCE, ACROSS ALL THREE WEBS** — the model behind the docked
 ## `BandSourceList`, and the anchors its leader lines run to.
@@ -1064,6 +1075,7 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# about `hide`, so the noun is the only thing naming that account.
 				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
 				_food_attention_text(patch, SourceForecast.SOURCE_KIND_FORAGE),
+				_food_overstaffed_text(entry, patch, SourceForecast.SOURCE_KIND_FORAGE),
 				food)
 		elif kind == LABOR_KIND_HUNT:
 			# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
@@ -1096,6 +1108,7 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				HUNT_WORKED_COLOR, entry, hunt_rate, 0.0, materials, zero_account,
 				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
 				_food_attention_text(herd, SourceForecast.SOURCE_KIND_HERD),
+				_food_overstaffed_text(entry, herd, SourceForecast.SOURCE_KIND_HERD),
 				hunt_rate)
 		elif kind == HudConst.LABOR_KIND_EXTRACT:
 			var material := String(entry.get("material", "")).strip_edges()
@@ -1130,7 +1143,16 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# finite seam is offered no dial, so `♻` over a quarry would claim a renewal the rock
 				# cannot make.
 				HudDepositVocab.floor_mark(deposit, _entry_floor(entry)),
+				# ⛔ **THE KEEPING QUESTION ALONE — the crew is deliberately NOT passed.** That
+				# composer ranks the two hazards for a ONE-LINE CELL; here the row's own ladder is
+				# what ranks them, so each class is handed the clause it is the class for and the
+				# waste arm arrives below as its own argument.
 				HudDepositVocab.hazard_clause(deposit),
+				# **AND THE WASTE QUESTION, AT THIS BAND'S OWN FLOOR** — `max_useful_cutters` is the
+				# same quotient the working's compose sheet caps its stepper at, so a `+` the sheet
+				# refused and a row that flags the hands already standing there are one ceiling.
+				HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
+					HudDepositVocab.max_useful_cutters(deposit, _entry_floor(entry))),
 				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is
 				# a structural zero here (see the sort key's own note on `_source_row`).
 				_entry_material_rate(entry, material))
@@ -1150,7 +1172,7 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary, color: Color,
 		entry: Dictionary, food: float, fodder: float, materials: Array, zero_account: String,
 		names_material: bool, floor_glyph: String, attention_text: String,
-		sort_yield: float) -> Dictionary:
+		overstaffed_text: String, sort_yield: float) -> Dictionary:
 	var badge := _badge_entry_for(key)
 	var overdraw := yield_label_overdraw(entry)
 	# Composed EXACTLY as the retired pill composed it, through the same function: the rate, then the
@@ -1174,6 +1196,12 @@ func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary,
 		attention_text = ""
 	elif attention_text != "":
 		attention = ATTENTION_UNDER_KEPT
+	elif overstaffed_text != "":
+		# **LAST, AND ONLY WHERE NOTHING IS BEING LOST.** A source that is ALSO slipping, over-cut or
+		# stalled already spends its one text cell on the louder fact — the clause is not joined to
+		# it, because two hazards on one row is how the column stops being readable at a glance.
+		attention = ATTENTION_OVERSTAFFED
+		attention_text = overstaffed_text
 	return {
 		"key": key,
 		"tile": tile,
@@ -1231,6 +1259,30 @@ func _food_attention_text(src: Dictionary, source_kind: String) -> String:
 	# — one spelling of "hazard mark, then what is happening to it".
 	return HudDepositVocab.DEPOSIT_HAZARD_CLAUSE_FORMAT % [
 		HudSelectionVocab.RUNG_HAZARD_GLYPH, DetailFormat.rung_under_kept_word(source_kind)]
+
+## **IS THIS FOOD CREW BIGGER THAN ITS SOURCE CAN USE** — `⚠ overstaffed`, the deposit arm's own
+## clause from the same producer, because it is the same condition. `""` where the crew fits and where
+## the source is not on the map at all (a herd that left the visible fauna set prices no ceiling, and
+## a row must never flag waste it cannot measure).
+##
+## **THE CEILING IS `max_useful_workers`, WHICH IS THE WORK BOARD'S AND THE STEPPER'S** — the row and
+## the panel are joined by a leader line on screen, so two readings of *how many hands this source can
+## use* would be a disagreement the player sees in one glance.
+##
+## ⛔ **THE HUNT ARM CARRIES THE SIM'S PUBLISHED PLATEAU ONTO THE FORECAST, exactly as the work board
+## does.** Without it `max_useful_workers` falls through to the closed form, which divides by a reach
+## carrying no attack and no defense, and a fight-bound quarry reads a ceiling the compose sheet's own
+## curve disagrees with. The forage arm deliberately does not — its `0` is a structural *does not
+## apply*, never *no crew is useful here*.
+func _food_overstaffed_text(entry: Dictionary, src: Dictionary, source_kind: String) -> String:
+	if src.is_empty():
+		return ""
+	var forecast := SourceForecast.forecast_inputs(src, source_kind,
+		HudComposeVocab.BARE_FORECAST_PREFIX, _entry_floor(entry))
+	if source_kind == SourceForecast.SOURCE_KIND_HERD:
+		forecast = SourceForecast.with_published_useful_crew(forecast, entry)
+	return HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
+		SourceForecast.max_useful_workers(forecast))
 
 ## The row order: attention descending, then realized yield descending, then the KEY ascending. The
 ## key tie-break is what makes it TOTAL — two calm rows at identical yields would otherwise be free

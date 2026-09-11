@@ -1147,6 +1147,40 @@ to the free floor, which no published field states; what the client can honestly
 working simply holds — billing — for ever. Approximating the rest here would be the client re-deriving
 a number the sim already owns, which is this file's standing prohibition.
 
+### `overstaffed` IS THE ONE WORD THREE WEBS SHARE, AND IT LIVES HERE
+
+`HudDepositVocab.OVERSTAFFED_WORD` is `overstaffed` and `overstaffed_clause(workers, useful)` composes
+`⚠ overstaffed` from it. **It carries no `DEPOSIT_` prefix, and the omission is the point**: `going
+back` and `unopened` describe things only a working does, where a crew standing on a job with nothing
+left for it is the same condition on a patch, a herd and a seam. The work board's row hover, the map
+source list's `ATTENTION_OVERSTAFFED` clause and the Groundwork roster's value cell all come through
+this one producer — two spellings would teach the player two marks for one state, the standing rule
+`GATE_SHORT_NO_CREW` follows one section down.
+
+The predicate is `SourceForecast.crew_is_wasted` (`workers > useful`, strictly) and nothing here
+re-derives it; what differs per web is only which ceiling is handed in — `max_useful_workers` for the
+food webs, `max_useful_cutters` for a working. `labor-ui.md` → "The cap note and the waste hazard are
+two questions of one ceiling" holds the predicate's own rules.
+
+⛔ **`hazard_clause` RANKS THE TWO, IT DOES NOT JOIN THEM.** Its signature is
+`hazard_clause(deposit, cutters = CUTTERS_UNSTATED, useful = CUTTERS_UNCAPPED)`: a working at risk
+states `⚠ going back` and a working merely over-crewed states `⚠ overstaffed`, and where both hold the
+LOSS is what the one-line cell spends itself on. A caller with no band in hand passes neither argument
+and reaches the keeping question alone — both sentinels are the same `-1` the shared predicate reads
+as *no claim*, so the defaults answer `""` for the waste arm without a branch of their own. The map's
+source list deliberately does NOT use that ranking: a list row has its own attention ladder, so it
+asks the two questions separately and lets the ladder order them (`overlay-channels.md`).
+
+**`deposit_row_value` / `deposit_value_color` therefore take a fourth argument**, `useful`, beside the
+`cutters` they already take, and for the identical reason: a `deposits` row publishes neither this
+band's crew nor this band's floor, so both arrive from the caller or not at all.
+
+⛔ **THE ROSTER ROW DOES NOT GATE ON `workers_needed`, and the work board does.** The sim publishes
+that field on all three webs now, and a work-board row's FACE states it in figures
+(`SourceForecast.OVERSTAFF_NOTE_FORMAT`) — so the board suppresses the clause wherever the wire
+answered, one condition getting one spelling. A roster value cell states no such figures; the clause
+is its only voice for the condition, so gating it here would delete the reading rather than de-dup it.
+
 ### ⛔ THE CLAUSE IS THE CREW GATE'S OWN WORD, AND `GATE_SHORT_NO_CREW` READS IT FROM THERE
 
 `HudDepositVocab.DEPOSIT_IDLE_WORD` is `no crew`, and the gate's short form is now

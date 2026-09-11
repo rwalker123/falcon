@@ -810,6 +810,45 @@ a frame, so a row anchor read back off layout would lag visibly under a pan; `Ba
 computes the geometry ARITHMETICALLY and `row_anchor()` reads that measurement — one function
 measures, two consumers read it, the `_name_pill_rects` rule from `map-markers.md`.
 
+### THE ATTENTION LADDER IS FOUR RUNGS, AND THE NEW ONE IS THE LOWEST
+
+`compute_source_rows` ranks every row it builds, and `_row_precedes` sorts on that rank first, so the
+rows a player would act on are the ones page 1 cannot cut. High to low:
+
+| rank | class | predicate | which cell states it |
+|---|---|---|---|
+| 4 | `ATTENTION_BUILD_STALLED` | `SourceForecast.build_is_stalled`, off the badge entry | the BUILD cell's own sentinel face |
+| 3 | `ATTENTION_OVER_CUT` | the sim's `overdraws` verdict | the RATE cell's `⚠` and WARN ink |
+| 2 | `ATTENTION_UNDER_KEPT` | `DetailFormat.rung_is_at_risk` on a food source, `HudDepositVocab.is_at_risk` on a working | `⚠ slipping` / `⚠ drifting` / `⚠ going back` |
+| 1 | `ATTENTION_OVERSTAFFED` | `SourceForecast.crew_is_wasted` against `max_useful_workers` (food) or `HudDepositVocab.max_useful_cutters` (a working) | `⚠ overstaffed` |
+| 0 | `ATTENTION_NONE` | — | — |
+
+**THE WASTE RANKS UNDER THE THREE LOSSES, and the three above it moved up one to make room.** A crew
+bigger than its source can use is a WASTE — the work goes on, at the rate the ground allows — where
+each rank above it is a LOSS: a rung sliding back, a stock cut past its renewal, a build the pool is
+spending on and not finishing. A player reading top-down meets what they are losing before what they
+are merely not gaining. `map_preview` asserts the resulting SEQUENCE (over-cut above overstaffed above
+the first calm row), not the flag, because the order is the feature.
+
+⛔ **AND THE CLAUSE IS UNGATED HERE, unlike on the work board.** `BandPanelController` suppresses it
+wherever the wire's `workers_needed` answers, because that row's FACE already states the same
+condition in figures and two spellings on one row is the defect. A source-list row states no such
+note — the rate cell is a rate — so the clause is this surface's ONLY voice for the condition, and
+gating it here would simply delete the reading. Same producer, same word; the gate belongs to the
+surface that has a second voice, not to the predicate.
+
+**ONE ROW STATES ONE CLAUSE.** The `attention_text` cell is single, so a source that is also slipping
+or over-cut spends it on the louder fact and the waste clause is dropped — never joined to it. The
+extract arm therefore hands `hazard_clause(deposit)` and `overstaffed_clause(crew, cap)` in as two
+separate arguments rather than asking the composer to rank them: `deposit_row_value` ranks them for a
+one-line ROSTER cell, and a list row's own ladder is what ranks them here.
+
+**THE PREVIOUS NOTE HERE SAID NOT TO INVENT AN IDLE-CREW CLASS, AND IT IS STILL TRUE OF WHAT IT MEANT.**
+A working with NO crew never appears in this list at all — every row has `workers > 0` — and
+`idle_workers` remains a BAND-level turn-orb row. `ATTENTION_OVERSTAFFED` is the opposite reading: a
+crew that IS here and is too big for the ground, which every web can answer per source. The design's
+idle-crew class had no shipped predicate; this one does.
+
 ### ⛔ A ROW'S `⚒N` AND ITS MARKER'S `⚒N` ARE ONE NUMBER, AND THE EXTRACTION ARM DID NOT FILL IT
 
 `_source_crew` is the per-source crew map the mark pass fills and `compute_source_rows` READS — the

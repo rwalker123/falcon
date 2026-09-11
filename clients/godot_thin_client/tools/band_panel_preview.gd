@@ -1193,6 +1193,7 @@ func _ready() -> void:
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_source_cap")
+	await _assert_a_crew_bigger_than_its_source_is_flagged()
 
 	# ARRIVAL SCHEDULE — the per-source tick strip + the merged Food-outlook chart. Seed a current turn
 	# so the strip's cell tooltips + the chart's "empty ~turn N" marker read as absolute turns.
@@ -14391,6 +14392,149 @@ func _assert_denial_quarry_eligibility() -> void:
 	_hud._compose.clear_party_quarry()
 	print("band_panel_preview: assert OK — denial takes the herd on the band's own tile, the hunt still refuses it, and both glows agree")
 
+## GUARD: **A CREW BIGGER THAN ITS SOURCE CAN USE IS FLAGGED ON THE WORK BOARD — and a crew that
+## FITS is not.** Ray, from play: *"if I assign 5 woodcutters and only 4 are doing anything… we must
+## fix that because we already do that for forage and hunters, we must have consistency."*
+##
+## ⛔ **THE PAIR IS THE CLAIM, NEVER THE FLAG ALONE.** `SourceForecast.crew_is_wasted` is `workers >
+## useful` STRICTLY, and `workers == useful` is FULLY STAFFED — the good state. Asserting only the
+## over-staffed row would pass on a renderer that put a hazard on every correctly-crewed source in the
+## game, which is precisely what a `>=` would do; the two AT-CAP rows below are what refuse that.
+##
+## ⛔ **AND THE OVER-STAFFED ROW CARRIES NO `workers_needed` — THIS IS THE *UNKNOWN* ARM.** That field
+## is the SIM's post-hoc overstaffing telemetry, published on ALL THREE webs now, and the board
+## prefers it wherever it is there: the two are MUTUALLY EXCLUSIVE, so a row carrying it wears the
+## sim's figures and NO `⚠ overstaffed` at all. A fixture that published it would therefore stage the
+## other arm entirely and every claim above would be about a clause that was never emitted. `0` is the
+## rehydrated save's *unknown*, which is the one state the client's own ceiling answers — and it is
+## what this half stages. **The published half is the A/B below**, on the same row.
+func _assert_a_crew_bigger_than_its_source_is_flagged() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var models: Array = _hud._bandpanel._work_source_models(band, 0)
+	var by_tile: Dictionary = {}
+	for model_variant in models:
+		var model: Dictionary = model_variant
+		by_tile[Vector2i(int(model.get("x", -1)), int(model.get("y", -1)))] = model
+	var wasted: Dictionary = by_tile.get(CAP_DEMO_WASTED_TILE, {})
+	var at_cap: Dictionary = by_tile.get(CAP_DEMO_AT_CAP_TILE, {})
+	_assert_band_panel("wasted crew — premise: both the over-staffed patch and the AT-CAP one are on the board",
+		not wasted.is_empty() and not at_cap.is_empty())
+	if wasted.is_empty() or at_cap.is_empty():
+		return
+	# **THE PREMISE THAT MAKES THE PAIR MEAN ANYTHING**, printed: the ceilings are the SHIPPED ones,
+	# and one crew is over its own while the other sits exactly on it.
+	var wasted_cap := _cap_demo_max_useful(CAP_DEMO_WASTED_TILE)
+	var at_cap_cap := _cap_demo_max_useful(CAP_DEMO_AT_CAP_TILE)
+	_assert_band_panel(("wasted crew — premise: one crew is OVER its ceiling and one sits exactly ON "
+			+ "its own (%d of %d useful, %d of %d useful)")
+			% [int(wasted.get("workers", 0)), wasted_cap,
+				int(at_cap.get("workers", 0)), at_cap_cap],
+		wasted_cap > 0 and at_cap_cap > 0
+		and int(wasted.get("workers", 0)) > wasted_cap
+		and int(at_cap.get("workers", 0)) == at_cap_cap)
+	# ⛔ **AND THE SIM SAYS NOTHING ABOUT EITHER**, or the flag below is the `note` term's and not this
+	# predicate's. `warn` and `pending` are checked with it, those being the other two terms.
+	_assert_band_panel("wasted crew — premise: neither row carries a sim note, an overdraw ⚠ or a pending edit",
+		String(wasted.get("note", "")) == "" and String(at_cap.get("note", "")) == ""
+		and not bool(wasted.get("warn", false)) and not bool(at_cap.get("warn", false))
+		and not bool(wasted.get("pending", false)) and not bool(at_cap.get("pending", false)))
+	_assert_band_panel(("wasted crew — the work board FLAGS the crew that outgrew its patch "
+			+ "(%d gatherers on ground that can use %d)")
+			% [int(wasted.get("workers", 0)), wasted_cap],
+		bool(wasted.get("attention", false)))
+	# **AND THE ROW SAYS WHY, IN THE ONE WORD ALL THREE WEBS USE.** A mark the player cannot read is
+	# not a fix: on a band with no idle hands the `+` gate's own note is empty, so without this clause
+	# the flag would have no sentence anywhere on the row explaining it.
+	_assert_band_panel("wasted crew — …and its hover names the state in the shared word (`%s`)"
+			% HudDepositVocab.OVERSTAFFED_WORD,
+		String(wasted.get("tooltip", "")).contains(HudDepositVocab.OVERSTAFFED_WORD))
+	# ⛔ **THE HALF THE STRICTNESS EXISTS FOR.** A fully staffed source is the GOOD state, and flagging
+	# it would mark every correctly-crewed source on every board in the game.
+	_assert_band_panel(("wasted crew — …while the FULLY STAFFED row is calm, its `+` dead and its "
+			+ "hover silent (%d of %d useful)")
+			% [int(at_cap.get("workers", 0)), at_cap_cap],
+		not bool(at_cap.get("attention", false))
+		and not String(at_cap.get("tooltip", "")).contains(HudDepositVocab.OVERSTAFFED_WORD))
+	# **AND THE HUNT ROW BESIDE IT, staffed at its herd's own ceiling** — the second web, so "fully
+	# staffed is calm" is a claim about the predicate rather than about one patch.
+	var hunted: Dictionary = {}
+	for model_variant in models:
+		var model: Dictionary = model_variant
+		if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT:
+			hunted = model
+			break
+	_assert_band_panel("wasted crew — …and so is the HUNT row staffed at its herd's own ceiling (%d hunters)"
+			% int(hunted.get("workers", 0)),
+		not hunted.is_empty() and not bool(hunted.get("attention", false)))
+	await _assert_the_wire_s_answer_silences_the_client_s()
+
+## GUARD: **WHERE THE WIRE ANSWERS, THE CLIENT'S CEILING READING IS SILENT — one condition, one
+## spelling.** The B half of `_assert_a_crew_bigger_than_its_source_is_flagged`, driven on the SAME
+## over-crewed row with `workers_needed` published, which is what a live server now sends on all three
+## webs.
+##
+## ⛔ **BOTH HALVES OR NEITHER.** Asserting only the SUPPRESSION passes on a client that never emits
+## the clause at all — which is the state before this whole arc — and asserting only the NOTE passes
+## on a row wearing both, which is the doubling the guard exists to forbid. So the face is asserted to
+## carry the sim's figures AND the hover to carry no `⚠ overstaffed`, with the clause's own
+## non-emptiness asserted as a premise so *suppressed* is distinguishable from *never produced*.
+##
+## **The A arm's fixture is restored afterwards**, or every state after this one would be handed a
+## board whose over-crewed row carries a wire note it was not written against.
+func _assert_the_wire_s_answer_silences_the_client_s() -> void:
+	_push_bands([_cap_demo_band_fixture_with_published_need()])
+	_hud._bandpanel.rerender()
+	# **RENDERED, BUT NOT SAVED.** The A arm's own `band_panel_source_cap` frame is this state's
+	# picture; the panel is on the BAND tab there, so a second PNG of the same tab would show nothing
+	# an eye could judge and the claim here is a MODEL one. The render still happens, because the
+	# models are read off a panel that really rebuilt against this fixture.
+	await _settle()
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var wasted: Dictionary = {}
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if Vector2i(int(model.get("x", -1)), int(model.get("y", -1))) == CAP_DEMO_WASTED_TILE:
+			wasted = model
+			break
+	if wasted.is_empty():
+		_fail("wire note — the over-crewed row is not on the board, so there is nothing to judge")
+		_push_bands([_cap_demo_band_fixture()])
+		_hud._bandpanel.rerender()
+		await _settle()
+		return
+	var crew := int(wasted.get("workers", 0))
+	var needed := _cap_demo_published_need()
+	var ceiling := _cap_demo_max_useful(CAP_DEMO_WASTED_TILE)
+	var clause := HudDepositVocab.overstaffed_clause(crew, ceiling)
+	# **THE PREMISE IS WHAT MAKES *SUPPRESSED* MEAN ANYTHING.** The wire really answers, it answers a
+	# figure the client could not have produced, the crew really is over it — and the clause these
+	# same arguments produce on the fallback path is really NON-EMPTY, so a hover without it is a
+	# suppression rather than a client that emits nothing.
+	_assert_band_panel(("wire note — premise: the wire answers %d of %d, which is NOT the client's "
+			+ "own ceiling of %d, and the clause it suppresses is real (`%s`)")
+			% [needed, crew, ceiling, clause],
+		needed > 0 and crew > needed and needed != ceiling and clause != "")
+	# HALF ONE: the row's FACE carries the sim's figures, through `source_yield_readout`'s own format.
+	_assert_band_panel("wire note — the row states the SIM's figures on its face (\"%s\")"
+			% String(wasted.get("note", "")),
+		String(wasted.get("note", ""))
+			== SourceForecast.OVERSTAFF_NOTE_FORMAT % [needed, crew])
+	# HALF TWO: …and the client's own clause is NOWHERE on the row. One condition, one spelling.
+	_assert_band_panel("wire note — …and the client's `%s` clause is suppressed, not doubled up beside it"
+			% HudDepositVocab.OVERSTAFFED_WORD,
+		not String(wasted.get("tooltip", "")).contains(clause))
+	# **AND THE FLAG STILL FLIES** — the exclusion moves which term raises it, never whether it is
+	# raised. Without this a suppression that also swallowed the attention bool would pass.
+	_assert_band_panel("wire note — …while the row still wants attention, raised by the note term instead",
+		bool(wasted.get("attention", false)))
+	_push_bands([_cap_demo_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## The patch this fixture staffs EXACTLY to its ceiling (`ceil(0.30 / 0.10)` = 3 against 3 gatherers)
+## — the control the over-staffed claim is only meaningful beside.
+const CAP_DEMO_AT_CAP_TILE := Vector2i(71, 18)
+
 ## An armed quarry pick for `mission`, in the shape `TargetingController.begin_pick_quarry` builds.
 func _pending_quarry_pick(mission: String) -> Dictionary:
 	return {
@@ -14435,7 +14579,47 @@ func _cap_demo_patch_fixtures() -> Array:
 		# wire carries now — a flat scalar here would leave the work rows' `+` uncapped.
 		_wire_patch_rows({"x": 71, "y": 18, "per_worker_yield": 0.10}, 0.30),
 		_wire_patch_rows({"x": 60, "y": 20, "per_worker_yield": 0.10}, 0.50),
+		# **THE PATCH DRAWN DOWN UNDER THE CREW ALREADY ON IT** — max-useful = ceil(0.20 / 0.10) = 2,
+		# with FOUR gatherers standing on it. See `CAP_DEMO_WASTED_TILE`.
+		_wire_patch_rows({"x": CAP_DEMO_WASTED_TILE.x, "y": CAP_DEMO_WASTED_TILE.y,
+			"per_worker_yield": 0.10}, CAP_DEMO_WASTED_CEILING),
 	]
+
+## ⛔ **THE PATCH WHOSE GROUND SHRANK UNDER A STANDING CREW, which is the ONLY way this state is
+## reached.** The compose sheet's stepper caps at exactly the ceiling
+## `SourceForecast.crew_is_wasted` measures against — the two AT-cap rows beside it are that gate,
+## asserted — so a player cannot over-assign a patch in the first place. What they CAN do is watch a
+## patch they already crewed get drawn down until the crew outgrows it, and that is what this stages.
+const CAP_DEMO_WASTED_TILE := Vector2i(62, 21)
+## Its take ceiling: `ceil(0.20 / 0.10)` = 2 useful hands, against the 0.30 and 0.50 rows beside it.
+const CAP_DEMO_WASTED_CEILING := 0.20
+## …and the hands beyond that ceiling. The crew is the SHIPPED cap plus this rather than a typed
+## number, so a re-dial of `max_useful_workers` moves the fixture with it instead of quietly making
+## the claim vacuous.
+const CAP_DEMO_WASTED_EXTRA := 2
+
+## **WHAT ONE OF THOSE PATCHES CAN ACTUALLY USE, asked of the shipped producer** — the same quotient
+## the compose stepper and the row's `+` gate are both struck at. The floor is the one the band's own
+## rows name, so the fixture and the board price the patch at one point on the dial.
+##
+## ⛔ **IT READS THE LIVE LOOKUP, NEVER THE RAW FIXTURE ROW.** A `forage_patches` row on the wire
+## carries the per-policy TABLES (`forage_policy_ceilings` / `forage_policy_per_worker`), and it is
+## `HudBandLaborState.forage_patch_lookup` that resolves them into the per-biomass terms
+## `forecast_inputs` composes from — so asking the raw row answers `MAX_USEFUL_UNBOUNDED` for every
+## patch in the game, which is a fixture silently staging no ceiling at all. **The patches must
+## therefore be pushed before this is called**, which is the order `_set_forage_patches` /
+## `_push_bands` already run in.
+func _cap_demo_max_useful(tile: Vector2i) -> int:
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(tile, {})
+	if patch.is_empty():
+		return SourceForecast.MAX_USEFUL_UNBOUNDED
+	return SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+		patch, SourceForecast.SOURCE_KIND_FORAGE,
+		HudComposeVocab.BARE_FORECAST_PREFIX, CAP_DEMO_FLOOR))
+
+## The floor every row of this fixture works at — the sim's own default, stated once so the fixture,
+## the band's rows and `_cap_demo_max_useful` cannot read the patch at three points on the dial.
+const CAP_DEMO_FLOOR := SourceForecast.DEFAULT_HARVEST_FLOOR
 
 ## The per-source-cap verify band: idle workers to spare (4), one Forage row AT its patch max-useful
 ## (3 at (71,18)), one Forage row BELOW its patch max-useful (1 of 5 at (60,20)), one Hunt row AT its
@@ -14450,9 +14634,51 @@ func _cap_demo_band_fixture() -> Dictionary:
 		{"kind": "forage", "workers": 3, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.30, "sustainable_yield": 0.30},
 		{"kind": "forage", "workers": 1, "floor": 0.5, "target_x": 60, "target_y": 20, "actual_yield": 0.10, "sustainable_yield": 0.10},
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 68, "target_y": 15, "actual_yield": 0.20, "sustainable_yield": 0.20},
+		# **THE CREW THAT OUTGREW ITS PATCH** — the shipped ceiling plus `CAP_DEMO_WASTED_EXTRA`.
+		# ⛔ **IT PUBLISHES NO `workers_needed`, DELIBERATELY — THIS IS THE *UNKNOWN* ARM.** That field
+		# is the sim's own post-hoc overstaffing telemetry, and the board prefers it wherever it is
+		# there: where it answers, the client's ceiling reading is SUPPRESSED and the row states the
+		# sim's figures instead. So a fixture carrying it would exercise the other arm entirely and
+		# this row would carry no `⚠ overstaffed` at all. `0` is the rehydrated save's *unknown*, which
+		# is the one state the client's own ceiling is the answer for — and the arm this state stages.
+		# **The published arm is staged beside it**, on the same row, by
+		# `_cap_demo_band_fixture_with_published_need`.
+		{"kind": "forage", "workers": _cap_demo_max_useful(CAP_DEMO_WASTED_TILE) + CAP_DEMO_WASTED_EXTRA,
+			"floor": CAP_DEMO_FLOOR,
+			"target_x": CAP_DEMO_WASTED_TILE.x, "target_y": CAP_DEMO_WASTED_TILE.y,
+			"actual_yield": CAP_DEMO_WASTED_CEILING, "sustainable_yield": CAP_DEMO_WASTED_CEILING},
 		{"kind": "scout", "workers": 1},
 	]
 	return band
+
+## **THE SAME BAND WITH THE WIRE'S OWN ANSWER ON THE OVER-CREWED ROW** — the B half of the exclusion,
+## and the arm a live server produces on all three webs now (`systems::labor`'s `Extract` arm fills
+## `SourceYield::workers_needed` beside its `overdraws`).
+##
+## ⛔ **THE PUBLISHED FIGURE IS DELIBERATELY NOT THE CLIENT'S CEILING.** The sim inverts the take that
+## actually ran and the client divides by the ceiling its stepper caps at, so the two are free to
+## differ — and staging them EQUAL would leave "the row's face carries the SIM's number" satisfied by
+## a face carrying the client's. One under the ceiling is a figure only the wire could have produced.
+func _cap_demo_band_fixture_with_published_need() -> Dictionary:
+	var band := _cap_demo_band_fixture()
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) != SourceForecast.LABOR_KIND_FORAGE:
+			continue
+		if Vector2i(int(row["target_x"]), int(row["target_y"])) != CAP_DEMO_WASTED_TILE:
+			continue
+		row["workers_needed"] = _cap_demo_published_need()
+	return band
+
+## What the wire says that crew really needed. Struck BELOW the client's own ceiling for the reason
+## above; the guard asserts it is still positive and still under the crew, because a `0` here is the
+## *unknown* sentinel and would silently stage the A arm twice.
+func _cap_demo_published_need() -> int:
+	return _cap_demo_max_useful(CAP_DEMO_WASTED_TILE) - CAP_DEMO_PUBLISHED_NEED_UNDER_CEILING
+
+## How far under the client's ceiling the sim's answer is staged — see above. One hand is enough to
+## make the two numbers distinguishable, which is the whole requirement.
+const CAP_DEMO_PUBLISHED_NEED_UNDER_CEILING := 1
 
 ## The MapView snapshot behind `band_panel_people_map_path` — the SAME `_band_fixture()` cohort the
 ## snapshot-path state uses, on a flat grid just big enough to hold its hex, so the marker MapView
@@ -17817,6 +18043,78 @@ func _workings_band_fixture(demand: float) -> Dictionary:
 			})
 	return band
 
+## ---- THE CREW THAT OUTGREW ITS GROUND, ON THE GROUNDWORK ROSTER --------------------------------
+##
+## ⛔ **THE GROUND IS SHRUNK UNDER A STANDING CREW, NEVER OVER-ASSIGNED.** The working's own compose
+## sheet caps its stepper at exactly `HudDepositVocab.max_useful_cutters` — the same quotient the
+## clause is measured against — so a player cannot put five cutters on ground that can use one. What
+## they CAN do is go on cutting a seam until it is worked down to nothing, and that is what this
+## stages: Ray's five woodcutters, reached the only way the game allows.
+
+## What one cutter moves in a turn on the cut-back pair (`DepositState.perWorkerBiomass`). The
+## baseline `_workings_row` states none, which is a working the client was never sent a rate for —
+## `CUTTERS_UNCAPPED` — so every OTHER state in this file is untouched by the clause.
+const WORKINGS_WORN_PER_WORKER := 2.2
+
+## …and what is left STANDING above this band's composed floor once the ground is worked down: about
+## one cutter's worth. Composed INTO the stock through `HudDepositVocab.composed_floor` rather than
+## typed as a stock, so a re-dial of the branch's floor moves the fixture with it instead of quietly
+## emptying the seam or leaving a room a hundred hands could work.
+const WORKINGS_WORN_ROOM := 2.0
+
+## The hands beyond what that ground can use. Added to the SHIPPED cap rather than typed as a crew,
+## for `CAP_DEMO_WASTED_EXTRA`'s reason.
+const WORKINGS_WASTED_HANDS := 2
+
+## One of the near hex's two workings, worked down to `WORKINGS_WORN_ROOM` above its floor.
+##
+## ⛔ **ITS TAKE IS AT ITS SUSTAINABLE RATE, unlike the baseline row's.** The standing fixture cuts the
+## wood HARDER than it grows, which is §7's over-cut warning — and a row wearing `⚠ overdrawing` AND
+## `⚠ overstaffed` would leave the clause under test sharing its line with another, so the claim could
+## not say which mark the renderer put there.
+func _worn_workings_row(material: String) -> Dictionary:
+	var renews := material == WORKINGS_WOOD
+	var row := _workings_row(ROSTER_NEAR_TILE, material, renews,
+		WORKINGS_WOOD_SUSTAINABLE if renews else WORKINGS_STONE_TAKE)
+	row["per_worker_biomass"] = WORKINGS_WORN_PER_WORKER
+	row["stock"] = HudDepositVocab.composed_floor(row, SourceForecast.DEFAULT_HARVEST_FLOOR) \
+		* float(row["capacity"]) + WORKINGS_WORN_ROOM
+	row["reachable"] = WORKINGS_WORN_ROOM
+	return row
+
+## **THE SHIPPED CEILING FOR ONE OF THEM**, asked of the producer the roster row itself asks. The
+## floor is the one an `extract` row with no dial resolves to (`HudBandLaborState.floor_for_extract`),
+## so the fixture and the row price the ground at one point on the dial.
+func _worn_workings_cap(material: String) -> int:
+	return HudDepositVocab.max_useful_cutters(_worn_workings_row(material),
+		SourceForecast.DEFAULT_HARVEST_FLOOR)
+
+## The wire's `deposits` section for that state — the cut-back pair on the near hex, the FAR working
+## untouched, and the roster's own three negatives unchanged, so nothing about MEMBERSHIP moves.
+func _worn_workings_rows() -> Array:
+	var rows: Array = _workings_rows()
+	for i in range(rows.size()):
+		var row: Dictionary = rows[i]
+		if Vector2i(int(row["tile_x"]), int(row["tile_y"])) == ROSTER_NEAR_TILE:
+			rows[i] = _worn_workings_row(String(row["material"]))
+	return rows
+
+## …and the band that works them: the WOOD crew past what its stand can use, the STONE crew sitting
+## exactly on its own ceiling. **The pair is the claim** — an over-staffed row asserted alone would
+## pass on a renderer that flagged every crewed working in the game.
+func _worn_workings_band_fixture() -> Dictionary:
+	var band := _workings_band_fixture(WORKINGS_DEMAND)
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) != HudConst.LABOR_KIND_EXTRACT:
+			continue
+		if Vector2i(int(row["target_x"]), int(row["target_y"])) != ROSTER_NEAR_TILE:
+			continue
+		var material := String(row["material"])
+		row["workers"] = _worn_workings_cap(material) \
+			+ (WORKINGS_WASTED_HANDS if material == WORKINGS_WOOD else 0)
+	return band
+
 ## The workings roster block and its rows, off the live panel.
 func _workings_block() -> Control:
 	return _find_meta_control(_panel, HudWorkVocab.WORKINGS_ROSTER_BLOCK_META)
@@ -17976,6 +18274,7 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	await _assert_the_row_opens_the_rung_track(rows)
 	await _assert_the_mark_needs_a_pressable_rung()
 	await _assert_a_working_can_be_put_down()
+	await _assert_a_working_flags_the_crew_that_outgrew_it()
 
 	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
 	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** The `deposits` rows are fog-filtered
@@ -18033,6 +18332,73 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 		_collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_STEPPER_META, []).is_empty())
 	_restore_workings_roster_fixture()
 	await _settle()
+
+## GUARD: **THE GROUNDWORK ROSTER FLAGS A CREW BIGGER THAN ITS WORKING CAN USE — and says so in the
+## SAME WORD the work board and the map's source list use.** Ray, from play: *"if I assign 5
+## woodcutters and only 4 are doing anything… we must fix that because we already do that for forage
+## and hunters, we must have consistency."* The forage and hunt halves of that claim are
+## `_assert_a_crew_bigger_than_its_source_is_flagged`; this is the third web.
+##
+## ⛔ **THE PAIR IS THE CLAIM.** `SourceForecast.crew_is_wasted` is `workers > useful` STRICTLY, so the
+## STONE row crewed exactly to its own ceiling must carry nothing — without that half this passes on a
+## renderer that marks every crewed working in the game.
+func _assert_a_working_flags_the_crew_that_outgrew_it() -> void:
+	_hud.update_deposits(_worn_workings_rows())
+	_push_bands([_worn_workings_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_overstaffed")
+	_assert_zone_content_fits()
+	var rows := _workings_rows_drawn()
+	if rows.size() < 2:
+		_fail("wasted cutters — the roster drew %d rows, so there is no pair to judge" % rows.size())
+		_restore_workings_roster_fixture()
+		await _settle()
+		return
+	# **THE PREMISE, PRINTED**: both halves of the pair price a real ceiling, one crew is over its own
+	# and the other sits exactly on it. A working the client was never sent a rate for answers
+	# `CUTTERS_UNCAPPED`, and both rows would then be silent for a reason that has nothing to do with
+	# the predicate.
+	var wood_cap := _worn_workings_cap(WORKINGS_WOOD)
+	var stone_cap := _worn_workings_cap(WORKINGS_STONE)
+	_assert_band_panel(("wasted cutters — premise: the cut-back pair PRICES a ceiling, one crew over "
+			+ "it and one exactly on it (%d of %d cutters on wood, %d of %d on stone)")
+			% [wood_cap + WORKINGS_WASTED_HANDS, wood_cap, stone_cap, stone_cap],
+		wood_cap != HudDepositVocab.CUTTERS_UNCAPPED and wood_cap > 0
+		and stone_cap != HudDepositVocab.CUTTERS_UNCAPPED and stone_cap > 0)
+	# The near hex's two rows sort STONE before WOOD (the roster's own material tie-break), which the
+	# standing state above asserts — so index 0 is the fully-crewed stone and index 1 the over-crewed
+	# wood. Both values are printed, so a sort that moved would be readable in the failure.
+	var stone_value := _workings_row_value(rows[0])
+	var wood_value := _workings_row_value(rows[1])
+	_assert_band_panel("wasted cutters — the over-crewed WORKING wears `%s` (\"%s\")"
+			% [HudDepositVocab.OVERSTAFFED_WORD, wood_value],
+		wood_value.contains(HudDepositVocab.OVERSTAFFED_WORD))
+	# ⛔ **AND IN THE ONE WORD, not a fourth spelling of it.** The clause is
+	# `HudDepositVocab.overstaffed_clause`'s output verbatim — the same producer the map's source list
+	# and the work board's hover go through — so a working, a patch and a herd cannot teach the player
+	# three marks for one condition.
+	_assert_band_panel("wasted cutters — …composed by the ONE shared producer, mark and all (`%s`)"
+			% HudDepositVocab.overstaffed_clause(wood_cap + WORKINGS_WASTED_HANDS, wood_cap),
+		wood_value.contains(HudDepositVocab.overstaffed_clause(
+			wood_cap + WORKINGS_WASTED_HANDS, wood_cap)))
+	# …and the row reads in the hazard AMBER, through the ink fork that keys on the mark rather than on
+	# a second reading of the working.
+	_assert_band_panel("wasted cutters — …and the row's ink is the hazard amber",
+		_workings_row_value_color(rows[1]) == HudStyle.WARN)
+	_assert_band_panel(("wasted cutters — …while the working crewed EXACTLY to its ceiling says "
+			+ "nothing about waste (%d of %d cutters, \"%s\")")
+			% [stone_cap, stone_cap, stone_value],
+		not stone_value.contains(HudDepositVocab.OVERSTAFFED_WORD))
+	_restore_workings_roster_fixture()
+	await _settle()
+
+## A roster row's value cell INK — the fork `HudDepositVocab.deposit_value_color` drives, read off the
+## drawn label rather than recomputed, so the claim is about what the row shows.
+func _workings_row_value_color(row: Control) -> Color:
+	for child in row.find_children("*", "Label", true, false):
+		return (child as Label).get_theme_color("font_color")
+	return Color.TRANSPARENT
 
 ## GUARD: **THE ROSTER BLOCK'S HEAD *IS* THE `quarrywork` POOL** (arc #583) — the title, the shortfall
 ## mark and a compact stepper on the pool cards' own metrics, driving the same command a fifth card in

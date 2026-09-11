@@ -565,6 +565,29 @@ const CUTTERS_UNSTATED := -1
 ## Lower-case: it lands mid-value, after the state clause.
 const DEPOSIT_UNDER_KEPT_WORD := "going back"
 
+## ⛔ **THE WORD FOR A CREW BIGGER THAN ITS SOURCE CAN USE, AND IT CARRIES NO `DEPOSIT_` PREFIX
+## BECAUSE IT IS NOT THIS BRANCH'S WORD.** `going back` and `unopened` describe things only a working
+## does; a crew standing on a job with nothing left for it is the SAME condition on a patch, a herd
+## and a seam, so the work board, the map's source list and this roster all spell it from here. Two
+## spellings would teach the player two marks for one condition, which is the whole reason the three
+## webs share a producer rather than each wording their own.
+##
+## Lower case, no sentence: it lands mid-value after the state clause, exactly as its neighbours do.
+const OVERSTAFFED_WORD := "overstaffed"
+
+## `⚠ overstaffed` — **THE ONE PRODUCER OF THAT CLAUSE, FOR ALL THREE WEBS.** `""` where the crew
+## fits, which is every correctly-staffed source and every source nobody can price a ceiling for.
+##
+## **THE PREDICATE IS `SourceForecast.crew_is_wasted` AND NOTHING HERE RE-DERIVES IT** — the food webs
+## measure against `max_useful_workers` and a working against `max_useful_cutters`, and the two
+## ceilings meet at this one test so a hunt row and a seam row cannot disagree about what *wasted*
+## means.
+static func overstaffed_clause(workers: int, useful: int) -> String:
+	if not SourceForecast.crew_is_wasted(workers, useful):
+		return ""
+	return DEPOSIT_HAZARD_CLAUSE_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, OVERSTAFFED_WORD]
+
 ## `Felling · 42% to coppice · nobody on it · ⚠ going back` — **THE WORKINGS ROSTER'S VALUE CELL,
 ## and the one composer behind it.** The tile card's own row is `deposit_land_value`; the two part on
 ## purpose and share their clauses as functions, so the rung's word and the hazard's cannot drift.
@@ -582,7 +605,7 @@ const DEPOSIT_UNDER_KEPT_WORD := "going back"
 ## spends two clauses saying one thing. The band's own reading is the one the player can act on from
 ## this roster, so it is the one that stays.
 static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [],
-		cutters: int = CUTTERS_UNSTATED) -> String:
+		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> String:
 	var clauses: Array[String] = [ladder_rung_name(ladder, rung_of(deposit))]
 	# ⛔ **UNTOUCHED GROUND STATES WHAT IT IS AND STOPS.** Every clause below this line describes
 	# something being DONE to a working — a rung rising, a seam being cut faster than it grows, a
@@ -601,7 +624,7 @@ static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [
 	var supply := supply_clause(deposit)
 	if supply != "" and not (idle and supply == DEPOSIT_RUNWAY_IDLE):
 		clauses.append(supply)
-	var hazard := hazard_clause(deposit)
+	var hazard := hazard_clause(deposit, cutters, useful)
 	if hazard != "":
 		clauses.append(hazard)
 	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
@@ -616,11 +639,21 @@ static func is_idle(cutters: int) -> bool:
 ## it after the runway; the tile card's material row states it after the rung. Composing it here is
 ## what stops the two rows wearing two different words for one working sliding back down its ladder.
 ## `""` where nothing is at risk, which is both free floors and every working whose bill is met.
-static func hazard_clause(deposit: Dictionary) -> String:
-	if not is_at_risk(deposit):
-		return ""
-	return DEPOSIT_HAZARD_CLAUSE_FORMAT % [
-		HudSelectionVocab.RUNG_HAZARD_GLYPH, DEPOSIT_UNDER_KEPT_WORD]
+##
+## **AND THE SECOND HAZARD, WHERE THE CALLER CAN STATE A CREW AND A CEILING** — a crew bigger than
+## the ground can use. The two are RANKED, never joined: a working going back is losing a rung it
+## paid for, where an over-staffed one is only wasting hands, so the LOSS is the clause a one-line
+## cell spends. A caller with no band in hand (the tile card) passes neither argument and reaches the
+## keeping question alone, which is the only one a bandless surface can ask.
+##
+## `CUTTERS_UNSTATED` / `CUTTERS_UNCAPPED` are both the same `-1` the shared predicate reads as *no
+## claim*, so the defaults answer `""` for the waste arm without a branch of their own.
+static func hazard_clause(deposit: Dictionary, cutters: int = CUTTERS_UNSTATED,
+		useful: int = CUTTERS_UNCAPPED) -> String:
+	if is_at_risk(deposit):
+		return DEPOSIT_HAZARD_CLAUSE_FORMAT % [
+			HudSelectionVocab.RUNG_HAZARD_GLYPH, DEPOSIT_UNDER_KEPT_WORD]
+	return overstaffed_clause(cutters, useful)
 
 ## ⛔ **§7's FORK, AND IT IS THE ONLY PLACE IT IS TAKEN.** A renewing working warns that you are
 ## over-cutting it; a finite one warns that it runs out. `""` on a renewing working cut inside its own
@@ -650,8 +683,8 @@ static func runway_clause(deposit: Dictionary) -> String:
 ## reading of the working — `HudRouteVocab.road_value_hex`'s shape, so a working at risk reads in the
 ## same amber a slipping patch does.
 static func deposit_value_color(deposit: Dictionary, ladder: Array[Dictionary] = [],
-		cutters: int = CUTTERS_UNSTATED) -> Color:
-	return HudStyle.WARN if deposit_row_value(deposit, ladder, cutters).contains(
+		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> Color:
+	return HudStyle.WARN if deposit_row_value(deposit, ladder, cutters, useful).contains(
 		HudSelectionVocab.RUNG_HAZARD_GLYPH) else HudStyle.INK_DIM
 
 # ---- THE FIGURES, AND WHERE THEY GO NOW --------------------------------------------------------

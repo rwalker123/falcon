@@ -6399,6 +6399,37 @@ const PAGED_EXTRA_SOURCES := [
 	{"tile": Vector2i(4, 7), "rate": 0.12, "overdraws": false},
 ]
 const PAGED_EXTRA_CREW := 2
+
+## ---- THE CREW THAT OUTGREW ITS GROUND ----------------------------------------------------------
+##
+## ⛔ **THE GROUND IS SHRUNK UNDER A STANDING CREW, NEVER OVER-ASSIGNED.** Every web's compose sheet
+## caps its stepper at exactly the ceiling `SourceForecast.crew_is_wasted` measures against, so an
+## over-assignment cannot be MADE on a sheet and a fixture staged that way would prove nothing about
+## the state a player actually reaches. What is staged instead is Ray's own case: a stand cut back
+## under the cutters already on it, which no stepper can gate.
+##
+## ⛔ **TWO HEXES CARRYING THE IDENTICAL GROUND, DIFFERING ONLY IN CREW.** That is what makes the
+## pair a control: one is staffed PAST what the stand can use and the other EXACTLY at it, so the only
+## thing the flag can be reading is the crew. Two different stands would leave *the ground is
+## different* as a second explanation for the two answers.
+const SOURCE_LIST_WORN_TILE := Vector2i(BAND_X, BAND_Y + 1)
+const SOURCE_LIST_FIT_TILE := Vector2i(BAND_X + 2, BAND_Y)
+
+## What one cutter moves in a turn on these two (`ForagePatchState.perWorkerBiomass`'s deposit twin).
+## The baseline `_working_deposit` states none — a working the client was never sent a rate for —
+## which is why every OTHER working in this harness is `CUTTERS_UNCAPPED` and unaffected by this pair.
+const SOURCE_LIST_WORN_PER_WORKER := 2.2
+
+## The stand after it was cut back: a `deadfall` wood working whose stock has come down to a hair over
+## its composed floor, so the room next turn is worth about one cutter. **A REAL WORKING, not a
+## sentinel** — the seam still pays, and the row still states a rate.
+const SOURCE_LIST_WORN_STOCK := 302.0
+const SOURCE_LIST_WORN_TAKE := 0.18
+
+## …and the hands beyond what that ground can use. The fixture's crew is the shipped cap PLUS this,
+## rather than a typed number, so a re-dial of `max_useful_cutters` moves the fixture with it and the
+## claim cannot quietly become vacuous.
+const SOURCE_LIST_WASTED_HANDS := 2
 ## How many ACCOUNTS the footer's total has to name before "it is not a sum across accounts" says
 ## anything at all — on a single-account band that claim passes vacuously.
 const MULTI_ACCOUNT_MIN := 2
@@ -6492,10 +6523,49 @@ func _snapshot_source_list() -> Dictionary:
 			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WOOD_TAKE},
 		],
 	})
+	# **AND THE WASTED-CREW PAIR** — one stand cut back under the crew standing on it, beside the SAME
+	# stand crewed at exactly what it can use. The pair is what tells *this crew is too big* apart from
+	# *this row is crewed*, and without the second half the claim would pass on a renderer that flagged
+	# every crewed source in the game.
+	assignments.append(_worn_working_assignment(SOURCE_LIST_WORN_TILE,
+		_worn_cap() + SOURCE_LIST_WASTED_HANDS))
+	assignments.append(_worn_working_assignment(SOURCE_LIST_FIT_TILE, _worn_cap()))
 	# The working the map draws is the one the SNAPSHOT carries, never one a labor row asserts — the
 	# `(tile, material)` join `compute_worked_workings` makes.
-	snap["deposits"] = [_working_deposit(SOURCE_LIST_WOOD_TILE, WORKING_MATERIAL_WOOD)]
+	snap["deposits"] = [_working_deposit(SOURCE_LIST_WOOD_TILE, WORKING_MATERIAL_WOOD),
+		_worn_working(SOURCE_LIST_WORN_TILE), _worn_working(SOURCE_LIST_FIT_TILE)]
 	return snap
+
+## **THE STAND CUT BACK TO A HAIR ABOVE ITS FLOOR** — `_working_deposit`'s wood row with its stock
+## drawn down and a per-cutter rate stated, which is what gives it a real ceiling at all. Both hexes
+## of the pair get this same ground; only their crews differ.
+func _worn_working(tile: Vector2i) -> Dictionary:
+	var deposit := _working_deposit(tile, WORKING_MATERIAL_WOOD)
+	deposit["per_worker_biomass"] = SOURCE_LIST_WORN_PER_WORKER
+	deposit["actual_take"] = SOURCE_LIST_WORN_TAKE
+	deposit["stock"] = SOURCE_LIST_WORN_STOCK
+	deposit["reachable"] = SOURCE_LIST_WORN_STOCK
+	return deposit
+
+## **THE SHIPPED CEILING FOR THAT GROUND, asked of the producer rather than typed here** — the same
+## quotient the working's own compose sheet caps its `+` at. Both crews below are sized from it, so
+## the overstaffed row is overstaffed BY CONSTRUCTION and the fully-staffed one sits exactly on it.
+func _worn_cap() -> int:
+	return HudDepositVocab.max_useful_cutters(
+		_worn_working(SOURCE_LIST_WORN_TILE), WORK_PEAK_FLOOR)
+
+## One `extract` row on one of that pair, at a stated crew.
+func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
+	return {
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": crew,
+		"target_x": tile.x, "target_y": tile.y,
+		"material": WORKING_MATERIAL_WOOD,
+		"floor": WORK_PEAK_FLOOR,
+		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
+			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WORN_TAKE},
+		],
+	}
 
 ## …and the same band with `PAGED_EXTRA_SOURCES` bolted on, so the list runs past one page. Each extra
 ## is a forage patch with its own food SITE, for `map_band_work`'s own load-bearing reason: a forage
@@ -6666,6 +6736,64 @@ func _source_list_states() -> void:
 	_assert_map("map_source_list — attention rows lead and the sort KEY never climbs within a group (%s)"
 			% " ".join(PackedStringArray(sequence)),
 		sort_holds)
+
+	# ---- A CREW BIGGER THAN ITS GROUND CAN USE (the third web joins the other two) ---------------
+	#
+	# ⛔ **THE PREMISE FIRST, because every claim under it is vacuous without one.** The pair is sized
+	# from the SHIPPED ceiling, so if `max_useful_cutters` ever answered `CUTTERS_UNCAPPED` for this
+	# ground — a fixture that lost its per-cutter rate, say — the overstaffed crew would be `1` and the
+	# fully-staffed one `-1`, and both rows would pass for the wrong reason.
+	var worn_cap := _worn_cap()
+	_assert_map("map_source_list — premise: the cut-back stand PRICES a ceiling (max %d cutters)"
+			% worn_cap,
+		worn_cap != HudDepositVocab.CUTTERS_UNCAPPED and worn_cap > 0)
+	var by_key := _rows_by_key(rows)
+	var worn_row: Dictionary = by_key.get(_map.secondary_working_key(
+		SOURCE_LIST_WORN_TILE.x, SOURCE_LIST_WORN_TILE.y, WORKING_MATERIAL_WOOD), {})
+	var fit_row: Dictionary = by_key.get(_map.secondary_working_key(
+		SOURCE_LIST_FIT_TILE.x, SOURCE_LIST_FIT_TILE.y, WORKING_MATERIAL_WOOD), {})
+	_assert_map("map_source_list — premise: both halves of the pair produced a row of their own",
+		not worn_row.is_empty() and not fit_row.is_empty())
+	_assert_map(("map_source_list — the crew that outgrew its ground is flagged OVERSTAFFED "
+			+ "(%d cutters on ground that can use %d → rank %d, `%s`)")
+			% [worn_cap + SOURCE_LIST_WASTED_HANDS, worn_cap,
+				int(worn_row.get("attention", BandOverlayRenderer.ATTENTION_NONE)),
+				String(worn_row.get("attention_text", ""))],
+		int(worn_row.get("attention", BandOverlayRenderer.ATTENTION_NONE))
+			== BandOverlayRenderer.ATTENTION_OVERSTAFFED
+		and String(worn_row.get("attention_text", "")).contains(
+			HudDepositVocab.OVERSTAFFED_WORD))
+	# ⛔ **AND THE FULLY-STAFFED TWIN CARRIES NOTHING — `workers == useful` IS THE GOOD STATE.** This
+	# is the half the predicate's strictness exists for: a `>=` would put a hazard on every correctly
+	# crewed source in the game, and the frame would look like a world in permanent trouble.
+	_assert_map(("map_source_list — …while the SAME ground crewed EXACTLY to its ceiling carries no "
+			+ "hazard at all (%d cutters on ground that can use %d → rank %d, `%s`)")
+			% [worn_cap, worn_cap,
+				int(fit_row.get("attention", BandOverlayRenderer.ATTENTION_NONE)),
+				String(fit_row.get("attention_text", ""))],
+		int(fit_row.get("attention", BandOverlayRenderer.ATTENTION_NONE))
+			== BandOverlayRenderer.ATTENTION_NONE
+		and String(fit_row.get("attention_text", "")) == "")
+	# **THE RANK IS THE FEATURE, so the SEQUENCE is asserted rather than the flag.** Idle hands are a
+	# WASTE where the classes above are each a LOSS, so this row must sit UNDER every one of them and
+	# OVER every calm row — which is a claim about where it lands in the list, not about its number.
+	var over_cut_at := -1
+	var overstaffed_at := -1
+	var first_calm_at := -1
+	for i in range(rows.size()):
+		var rank := int((rows[i] as Dictionary).get("attention",
+			BandOverlayRenderer.ATTENTION_NONE))
+		if rank == BandOverlayRenderer.ATTENTION_OVER_CUT and over_cut_at < 0:
+			over_cut_at = i
+		elif rank == BandOverlayRenderer.ATTENTION_OVERSTAFFED and overstaffed_at < 0:
+			overstaffed_at = i
+		elif rank == BandOverlayRenderer.ATTENTION_NONE and first_calm_at < 0:
+			first_calm_at = i
+	_assert_map(("map_source_list — …and it sorts BELOW the losses and ABOVE the calm rows "
+			+ "(over-cut at %d, overstaffed at %d, first calm at %d)")
+			% [over_cut_at, overstaffed_at, first_calm_at],
+		over_cut_at >= 0 and overstaffed_at >= 0 and first_calm_at >= 0
+		and over_cut_at < overstaffed_at and overstaffed_at < first_calm_at)
 
 	# **THE RATE A ROW STATES IS THE PILL'S OWN STRING**, driven with that row's OWN arguments — which
 	# is what pins the rate to one producer now that the on-tile pill is gone. The WOOD row is the one

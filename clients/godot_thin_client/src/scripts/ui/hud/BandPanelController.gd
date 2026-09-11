@@ -2775,10 +2775,14 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     # the `(tile, material)` pair — so *has this band taken its hands off it* is a question only the
     # roster can ask, and the composer answers `CUTTERS_UNSTATED` for every caller that cannot.
     var cutters := _workings_roster_cutters(band, model)
-    value.text = HudDepositVocab.deposit_row_value(deposit, ladder, cutters)
+    # **AND THE CEILING THAT CREW IS MEASURED AGAINST**, which is the second thing a `deposits` row
+    # cannot state: the cap is struck at THIS band's own floor, so the clause and the compose sheet's
+    # stepper are read off one number. See `_workings_roster_max_useful`.
+    var useful := _workings_roster_max_useful(band, model)
+    value.text = HudDepositVocab.deposit_row_value(deposit, ladder, cutters, useful)
     value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     value.add_theme_color_override("font_color",
-        HudDepositVocab.deposit_value_color(deposit, ladder, cutters))
+        HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful))
     value.clip_text = true
     value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # **THE FIGURES THE ONE-LINE CELL CANNOT CARRY RIDE ITS HOVER** — the take pair or the runway, the
@@ -2876,6 +2880,21 @@ func _build_workings_roster_abandon_button(band: Dictionary, deposit: Dictionary
 func _workings_roster_cutters(band: Dictionary, model: Dictionary) -> int:
     var tile: Vector2i = model["tile"]
     return _band_labor.effective_extract_workers(band, tile.x, tile.y, String(model["material"]))
+
+## ⛔ **THE MOST CUTTERS THIS GROUND CAN USE, AT THE FLOOR THIS BAND'S OWN ROW NAMED** — the other
+## half of the roster's waste question, and the reason it is asked here rather than inside the
+## composer: a working publishes no crew AND no band's floor, so both arguments come from the band's
+## `extract` row or not at all.
+##
+## **THE FLOOR IS `floor_for_extract`, NEVER `DepositState.floor`.** That wire field is the SOURCE's
+## reading — the deepest floor any band cutting this working named — so a cap struck at it would
+## measure this band's crew against another band's order. The compose sheet's own stepper is capped
+## at the identical quotient (`DrawerComposeController`'s `max_useful_cutters` call), which is what
+## makes *the `+` refused it* and *the row flags it* one ceiling rather than two.
+func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
+    var tile: Vector2i = model["tile"]
+    return HudDepositVocab.max_useful_cutters(model["deposit"] as Dictionary,
+        _band_labor.floor_for_extract(band, tile.x, tile.y, String(model["material"])))
 
 ## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
@@ -6535,6 +6554,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var icon_texture: Texture2D = null
         var label := ""
         var cap := {}
+        # **THE SOURCE'S OWN CEILING, HELD BESIDE THE `+` GATE THAT ALREADY READS IT.** The gate
+        # answers *may this `+` add another hand*; this is the number it answers against, kept because
+        # the row asks a SECOND question of it below — whether the crew already standing here is
+        # bigger than the ground can use. `MAX_USEFUL_UNBOUNDED` until an arm prices one.
+        var useful := SourceForecast.MAX_USEFUL_UNBOUNDED
         var live_herd := {}
         var patch := {}
         if kind == SourceForecast.LABOR_KIND_FORAGE:
@@ -6558,9 +6582,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # used to twice over — the take was dipped while a build ran, and the rung's own
             # `crew_needed` floored the count back up — because one crew did both jobs. The build has
             # its own crew now, so the take is the plain one and the count is the plain quotient.
-            cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
+            var forage_forecast := SourceForecast.forecast_inputs(
                 patch, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.BARE_FORECAST_PREFIX, floor), workers, idle)
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor)
+            useful = SourceForecast.max_useful_workers(forage_forecast)
+            cap = SourceForecast.source_worker_cap_state(forage_forecast, workers, idle)
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
@@ -6589,7 +6615,30 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # twins to read it. **The forage branch above deliberately does not**: its `0` is a
             # structural *does not apply*, never *no crew is useful here*.
             hunt_forecast = SourceForecast.with_published_useful_crew(hunt_forecast, m)
+            useful = SourceForecast.max_useful_workers(hunt_forecast)
             cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle)
+        # ⛔ **AND WHETHER THE CREW ALREADY HERE IS BIGGER THAN THE SOURCE CAN USE** — the third web's
+        # question, asked on all three now (`SourceForecast.crew_is_wasted`). It is a SECOND reading of
+        # the same ceiling the `+` gate above is struck at, and it is not that gate's `note`: the note
+        # explains a dead `+` to a band with idle hands, so an over-staffed source whose band has
+        # nobody idle states nothing at all — which is exactly the band that should be moving hands.
+        #
+        # **AND IT IS UNREACHABLE FROM THE COMPOSE SHEET.** Every web's stepper caps at this same
+        # ceiling, so the over-assignment cannot be made there; what lands here is the GROUND MOVING
+        # UNDER A STANDING CREW — a patch drawn down, a herd thinned — which no stepper can gate.
+        #
+        # ⛔ **BUT IT IS A FALLBACK, NOT A SECOND VOICE — THE WIRE'S ANSWER WINS WHERE IT HAS ONE.**
+        # `workers_needed` is the sim's own inversion of the take this crew actually ran, and it is
+        # published on ALL THREE webs now (the `Extract` arm fills it beside its `overdraws`). Where
+        # it is known, `SourceForecast.source_yield_readout` already states it in FIGURES on this
+        # row's face — *only 2 of 5 bring anything home* — and a `⚠ overstaffed` beside it is one
+        # condition wearing two spellings, which teaches the player two marks for one thing. So this
+        # client-side ceiling answers ONLY where the wire is silent: `workers_needed == 0`, the
+        # rehydrated save's *unknown*. The two also measure differently — the sim inverts the take
+        # that happened, this divides by the ceiling the stepper caps at — so preferring the sim is
+        # preferring the better number as well as the only one that can quantify.
+        var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+            else HudDepositVocab.overstaffed_clause(workers, useful)
         var note := String(yld.get("note", ""))
         # **THE NOTE'S SEVERITY IS MODEL STATE, NOT A RENDER-SITE CONSTANT** (§2.7). It was a
         # hard-coded `HudStyle.WARN` at both this board's inspector and the drawer's twin, which is
@@ -6946,12 +6995,23 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
+                # **THE HAZARD THE FLAG BELOW IS RAISED FOR, IN THE ONE WORD ALL THREE WEBS USE.** A
+                # row cannot carry a mark the player cannot read: on a band with no idle hands the
+                # cap note above is empty, so without this the attention flag would have no sentence
+                # anywhere on the row explaining what it is for.
+                overstaffed,
                 under_kept_hint,
                 ready_tooltip,
                 building_tooltip,
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
-            "attention": bool(yld.get("warn", false)) or note != "" or pending,
+            # **`note` AND `overstaffed` ARE ONE CONDITION WITH TWO SOURCES, AND THEY ARE MUTUALLY
+            # EXCLUSIVE BY CONSTRUCTION** (see where `overstaffed` is resolved). `note` is the sim's
+            # `workers_needed` telemetry in figures; `overstaffed` is this client's ceiling reading,
+            # emitted only where the wire is silent. So the flag below is raised by whichever one
+            # spoke, and the row can never carry both.
+            "attention": bool(yld.get("warn", false)) or note != "" or pending
+                or overstaffed != "",
         })
     return models
 
