@@ -42,11 +42,16 @@ things that actually matter here:
   chance of reading a stale handshake left by an earlier crashed run, and it means
   the client follows the server automatically when the default port block is busy
   and the server bumps.
-- **The server cannot be orphaned on Windows.** `run.bat`'s `taskkill` only ran on
+- **No child can be orphaned on Windows.** `run.bat`'s `taskkill` only ran on
   the clean exit path, so a client crash left `server.exe` alive holding the ports.
-  The launcher puts the server in a **Job Object** with
-  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so Windows reaps it even if the launcher
+  The launcher puts every process it starts — the server and one process per
+  locally-hosted seat — in a **Job Object** with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so Windows reaps them even if the launcher
   itself is killed.
+
+The supervision model itself (one process per seat, why the host's human is not a
+special case, and how the reaping guarantee is held for N children) is
+`.claude/rules/core_sim/launcher.md`.
 
 It also sets the server's working directory to the per-user data directory, because
 `export_map` writes `exports/…json` relative to CWD and a process launched from

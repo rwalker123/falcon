@@ -77,7 +77,7 @@ func _assemble_roster(tile_info: Dictionary) -> void:
 	var units_variant: Variant = tile_info.get("units", [])
 	if units_variant is Array:
 		for entry in units_variant:
-			if entry is Dictionary and (not unseen or _is_player_unit(entry as Dictionary)):
+			if entry is Dictionary and (not unseen or HudConst.is_player_unit(entry as Dictionary)):
 				_selection.roster_units().append(entry)
 	# Wildlife is never ours — an unseen hex lists no herds at all.
 	if not unseen:
@@ -349,7 +349,7 @@ func _subject_row_descriptors() -> Array:
 			"title": "Bands", "count": _selection.roster_units().size()})
 		for unit in _selection.roster_units():
 			var u: Dictionary = unit
-			rows.append({"key": ["band", int(u.get("entity", -1)), _is_player_unit(u)], "kind": "band", "data": u})
+			rows.append({"key": ["band", int(u.get("entity", -1)), HudConst.is_player_unit(u)], "kind": "band", "data": u})
 	if not _selection.roster_herds().is_empty():
 		rows.append({"key": ["header", "wildlife"], "kind": "header",
 			"title": "Wildlife", "count": _selection.roster_herds().size()})
@@ -553,7 +553,7 @@ func _roster_group_header(title: String, count: int) -> Label:
 ## player band, neutral for others), the name, the size, and an activity mark.
 func _build_band_row(unit: Dictionary) -> Button:
 	var entity_id := int(unit.get("entity", -1))
-	var is_player := _is_player_unit(unit)
+	var is_player := HudConst.is_player_unit(unit)
 	var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
 	# Neutral tint for a non-player band's vitality dot (we can't see their larder).
 	var dot_color := HudStyle.INK_FAINT
@@ -591,7 +591,7 @@ func _build_band_row(unit: Dictionary) -> Button:
 ## thing that does vary — art vs emoji — is a node-kind flip `_set_row_icon` swaps in place.
 func _update_band_row(button: Button, unit: Dictionary) -> void:
 	var entity_id := int(unit.get("entity", -1))
-	var is_player := _is_player_unit(unit)
+	var is_player := HudConst.is_player_unit(unit)
 	var selected := not _selection.unit().is_empty() and int(_selection.unit().get("entity", -1)) == entity_id
 	_apply_row_selection(button, selected)
 	var dot_color := HudStyle.INK_FAINT
@@ -1040,8 +1040,3 @@ func select_roster_occupant(kind: String, id: Variant) -> void:
 	else:
 		_selection.select_herd(find_roster_herd(String(id)).duplicate(true))
 	emit_signal("subject_changed")
-
-## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit / HudLayer._is_player_unit —
-## a trivial pure predicate kept local rather than threaded in as a Callable).
-func _is_player_unit(unit: Dictionary) -> bool:
-	return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID

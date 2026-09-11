@@ -60,15 +60,14 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
-        forage_forecast, patch_composition, rung_site_refusal, tile_is_fresh_watered, ForagePatch,
-        ForageRegistry, NO_FORAGE_SEASON,
+        forage_forecast_at_rate, patch_composition, rung_site_refusal, tile_is_fresh_watered,
+        ForagePatch, ForageRegistry, NO_FORAGE_SEASON,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
         GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
-        GreatDiscoveryTelemetry,
     },
     heightfield::ElevationField,
     influencers::InfluentialRoster,
@@ -908,6 +907,11 @@ mod tests {
     /// One animal, for the snapshot fixtures (slice 8). These tests assert what crosses the wire, not
     /// what a take pays, so the quantum is deliberately small enough never to bind.
     const SNAPSHOT_BODY_MASS: f32 = 1.0;
+
+    /// The audience these publication fixtures publish to. One seat, because what they assert —
+    /// which rows a delta carries — is a property of one client's stream; the per-seat split itself
+    /// is asserted in `core_sim/tests/seat_frames.rs`.
+    const PUBLISHING_SEAT: crate::orders::FactionId = crate::orders::FactionId(0);
 
     use super::*;
     // Used only by the fixtures below. They lived at file scope while
@@ -1905,7 +1909,7 @@ mod tests {
         let base_snapshot = snapshot_with_overlay(1, base_tile.clone(), base_overlay);
 
         let mut history = SnapshotHistory::default();
-        history.update(base_snapshot);
+        history.update(PUBLISHING_SEAT, base_snapshot);
 
         let updated_tile = TileState {
             terrain: TerrainType::MangroveSwamp,
@@ -1925,7 +1929,7 @@ mod tests {
         let updated_snapshot =
             snapshot_with_overlay(2, updated_tile.clone(), updated_overlay.clone());
 
-        history.update(updated_snapshot);
+        history.update(PUBLISHING_SEAT, updated_snapshot);
 
         let delta = history
             .last_delta()
@@ -1950,7 +1954,7 @@ mod tests {
         let mut history = SnapshotHistory::default();
 
         let baseline = snapshot_with_power_metrics(1, PowerTelemetryState::default());
-        history.update(baseline);
+        history.update(PUBLISHING_SEAT, baseline);
 
         let updated_metrics = PowerTelemetryState {
             total_supply: Scalar::from_f32(20.0).raw(),
@@ -1974,7 +1978,7 @@ mod tests {
             ],
         };
         let updated_snapshot = snapshot_with_power_metrics(2, updated_metrics.clone());
-        history.update(updated_snapshot);
+        history.update(PUBLISHING_SEAT, updated_snapshot);
 
         let delta = history
             .last_delta()
@@ -2008,7 +2012,7 @@ mod tests {
             Vec::new(),
             GreatDiscoveryTelemetryState::default(),
         );
-        history.update(baseline);
+        history.update(PUBLISHING_SEAT, baseline);
 
         let discovery = GreatDiscoveryState {
             id: 7,
@@ -2038,7 +2042,7 @@ mod tests {
             vec![progress.clone()],
             telemetry.clone(),
         );
-        history.update(updated);
+        history.update(PUBLISHING_SEAT, updated);
 
         let delta = history
             .last_delta()
@@ -2323,6 +2327,14 @@ mod tests {
             // Nothing is queued in this fixture, so no patch names a builders kit.
             &crate::snapshot::subsistence::BuildKitIds::default(),
             &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
+            // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
+            // must not stand between the assertion and the field it is about.
+            FactionId(0),
+            &crate::visibility::VisibilityLedger::default(),
+            false,
+            // One viewer, so no row is shared and the memo is off.
+            None,
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).
@@ -2379,6 +2391,14 @@ mod tests {
             &FloraQuoteCache::default(),
             &crate::snapshot::subsistence::BuildKitIds::default(),
             &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
+            // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
+            // must not stand between the assertion and the field it is about.
+            FactionId(0),
+            &crate::visibility::VisibilityLedger::default(),
+            false,
+            // One viewer, so no row is shared and the memo is off.
+            None,
         );
 
         let published: Vec<&str> = patches
@@ -2467,7 +2487,7 @@ mod tests {
         // Faction 5 has only unrelated discovery progress → no intensification row.
         ledger.add_progress(FactionId(5), 1, Scalar::one());
 
-        let rows = snapshot_intensification_knowledge(&ledger, &ladder);
+        let rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(2));
         assert_eq!(rows.len(), 1, "only factions on the ladders appear");
         let f2 = &rows[0];
         assert_eq!(f2.faction, 2);
@@ -2507,12 +2527,22 @@ mod tests {
             Scalar::from_f32(PARTIAL_FODDERING),
         );
 
-        let rows = snapshot_intensification_knowledge(&ledger, &ladder);
-        assert_eq!(rows.len(), 2, "both factions are on the ladder");
-        let penned = &rows[0];
+        // **Asked once per viewer, because the list is viewer-scoped** (`factions.md` → "Which
+        // frame sections are viewer-scoped"). The claim being pinned is the all-zero skip's, not the
+        // list's membership: each faction, asked about ITSELF, gets its row.
+        let penned_rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(7));
+        assert_eq!(penned_rows.len(), 1, "a faction reads its own row");
+        let penned = &penned_rows[0];
         assert_eq!(penned.faction, 7);
         assert!((track(penned, "foddering") - 1.0).abs() < 1e-6);
-        let fodder_only = &rows[1];
+
+        let fodder_rows = snapshot_intensification_knowledge(&ledger, &ladder, FactionId(9));
+        assert_eq!(
+            fodder_rows.len(),
+            1,
+            "Foddering alone is still something learned"
+        );
+        let fodder_only = &fodder_rows[0];
         assert_eq!(fodder_only.faction, 9);
         assert!((track(fodder_only, "foddering") - PARTIAL_FODDERING).abs() < 1e-6);
         assert_eq!(track(fodder_only, "penning"), 0.0);
@@ -2867,6 +2897,11 @@ mod tests {
                 &FloraQuoteCache::default(),
                 &crate::snapshot::subsistence::BuildKitIds::default(),
                 &crate::snapshot::subsistence::UpkeepKitIds::default(),
+                // Fog OFF — see the sibling fixtures above.
+                FactionId(0),
+                &crate::visibility::VisibilityLedger::default(),
+                false,
+                None,
             );
             let row = &rows[0];
             assert_eq!(

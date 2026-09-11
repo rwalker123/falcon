@@ -488,44 +488,47 @@ impl KnowledgeLedger {
         self.timeline_version = self.timeline_version.wrapping_add(1);
     }
 
+    /// **Over the WHOLE ledger** — the emit gate's input, which is a statement about the ledger
+    /// rather than about a viewer. The published counters are the same arithmetic over the viewer's
+    /// own entries; see [`Self::snapshot_payload`].
     pub fn metrics(&self) -> KnowledgeMetricsState {
-        let mut warnings = 0u32;
-        let mut criticals = 0u32;
-        let mut countermeasures_active = 0u32;
-        let mut common_knowledge = 0u32;
-
-        for entry in self.entries.values() {
-            if !entry.countermeasures.is_empty() {
-                countermeasures_active += 1;
-            }
-            if entry.flags.contains(KnowledgeLeakFlags::COMMON_KNOWLEDGE) {
-                common_knowledge += 1;
-            }
-            if entry.flags.contains(KnowledgeLeakFlags::CASCADE_PENDING)
-                || entry.progress_percent >= 90
-            {
-                criticals += 1;
-            } else if entry.progress_percent >= 70 {
-                warnings += 1;
-            }
-        }
-
-        KnowledgeMetricsState {
-            leak_warnings: warnings,
-            leak_criticals: criticals,
-            countermeasures_active,
-            common_knowledge_total: common_knowledge,
-        }
+        metrics_over(self.entries.values())
     }
 
-    pub fn snapshot_payload(&self) -> KnowledgeSnapshotPayload {
-        let mut ledger_states: Vec<_> = self.entries.values().map(to_contract_entry).collect();
+    /// **THE VIEWER'S OWN SECRETS, LEAKS AND PROBES — and nobody else's.**
+    ///
+    /// This whole ledger is the espionage arc's subject matter: which of a faction's discoveries are
+    /// leaking, how far, what countermeasures are up, and who has infiltrated whom. Publishing every
+    /// faction's rows hands a player, for free, the exact intelligence the arc exists to make them
+    /// spend agents on. There is nothing on the map to look at, so there is no visible tier — own or
+    /// absent (`factions.md` → "Which frame sections are viewer-scoped").
+    ///
+    /// - **Entries** filter on `owner_faction`: whose knowledge this is.
+    /// - **Timeline** filters on `source_faction`, which is *the faction the line is about from its
+    ///   own side* — the owner for a leak, the **infiltrator** for a probe — so the viewer reads its
+    ///   own leak history and its own probes. A line with **no** source faction is world-level and is
+    ///   kept.
+    /// - **Metrics** are recomputed over the *filtered* entries, so the leak counters describe the
+    ///   viewer's own exposure rather than the world's. [`Self::metrics`] itself is untouched: it
+    ///   feeds the emit gate, which is a statement about the ledger, not about a viewer.
+    pub fn snapshot_payload(&self, viewer: FactionId) -> KnowledgeSnapshotPayload {
+        let own: Vec<&KnowledgeLedgerEntry> = self
+            .entries
+            .values()
+            .filter(|entry| entry.owner_faction == viewer)
+            .collect();
+        let mut ledger_states: Vec<_> = own.iter().map(|entry| to_contract_entry(entry)).collect();
         ledger_states.sort_by_key(|state| (state.owner_faction, state.discovery_id));
 
-        let mut timeline_states: Vec<_> = self.timeline.iter().map(to_contract_timeline).collect();
+        let mut timeline_states: Vec<_> = self
+            .timeline
+            .iter()
+            .filter(|event| event.source_faction.map(|f| f == viewer).unwrap_or(true))
+            .map(to_contract_timeline)
+            .collect();
         timeline_states.sort_by_key(|state| (state.tick, state.kind as u8));
 
-        let metrics = self.metrics();
+        let metrics = metrics_over(own.into_iter());
 
         KnowledgeSnapshotPayload {
             entries: ledger_states,
@@ -605,6 +608,40 @@ fn to_contract_entry(entry: &KnowledgeLedgerEntry) -> KnowledgeLedgerEntryState 
             })
             .collect(),
         flags: entry.flags,
+    }
+}
+
+/// The leak counters over whatever set of entries the caller hands in — one arithmetic, so the
+/// emit gate's reading and the viewer's published reading cannot drift apart in their *meaning*
+/// while differing, correctly, in their scope.
+fn metrics_over<'a>(
+    entries: impl Iterator<Item = &'a KnowledgeLedgerEntry>,
+) -> KnowledgeMetricsState {
+    let mut warnings = 0u32;
+    let mut criticals = 0u32;
+    let mut countermeasures_active = 0u32;
+    let mut common_knowledge = 0u32;
+
+    for entry in entries {
+        if !entry.countermeasures.is_empty() {
+            countermeasures_active += 1;
+        }
+        if entry.flags.contains(KnowledgeLeakFlags::COMMON_KNOWLEDGE) {
+            common_knowledge += 1;
+        }
+        if entry.flags.contains(KnowledgeLeakFlags::CASCADE_PENDING) || entry.progress_percent >= 90
+        {
+            criticals += 1;
+        } else if entry.progress_percent >= 70 {
+            warnings += 1;
+        }
+    }
+
+    KnowledgeMetricsState {
+        leak_warnings: warnings,
+        leak_criticals: criticals,
+        countermeasures_active,
+        common_knowledge_total: common_knowledge,
     }
 }
 

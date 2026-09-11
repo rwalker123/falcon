@@ -617,7 +617,6 @@ const KEYBOARD_PAN_SPEED := 600.0
 # setting to a far higher UI_SCALE_MIN, so this is the guard for a hand-edited config file only —
 # without it a 0 would make the counter-scale infinite. See `_apply_ui_scale`.
 const MIN_UI_SCALE := 0.01
-const PLAYER_FACTION_ID := 0
 
 # --- Band status decorations (food-runway dot, activity glyph, supply links) ---
 # Sit relative to the band marker radius so they scale with zoom.
@@ -1055,14 +1054,69 @@ var mouse_pan_button: int = -1
 ## Mirror of `Main`'s pause overlay, pushed in by `set_modal_menu_open`. See `_keyboard_owner`.
 var _modal_menu_open: bool = false
 
-var faction_colors: Dictionary = {
-	"Aurora": Color(0.55, 0.85, 1.0, 1.0),
-	"Obsidian": Color(0.95, 0.62, 0.2, 1.0),
-	"Verdant": Color(0.4, 0.9, 0.55, 1.0),
-	0: Color(0.55, 0.85, 1.0, 1.0),
-	1: Color(0.95, 0.62, 0.2, 1.0),
-	2: Color(0.4, 0.9, 0.55, 1.0)
+## **THE THREE SEEDED PEOPLES, UNCHANGED.** Ids 0, 1 and 2 are literal because they are what every
+## game and every committed preview frame already shows; the generated hues below start after them
+## and never overwrite them.
+const SEEDED_FACTION_COLORS := [
+	Color(0.55, 0.85, 1.0, 1.0),   # 0 — the player's own, cyan
+	Color(0.95, 0.62, 0.2, 1.0),   # 1 — orange
+	Color(0.4, 0.9, 0.55, 1.0),    # 2 — green
+]
+
+## The three faction NAMES the snapshot used to carry in the same field an id rides in now. Kept
+## because the field is read raw (`unit.get("faction")`) and either spelling still resolves to the
+## same people's colour.
+const SEEDED_FACTION_NAMES := {
+	"Aurora": 0,
+	"Obsidian": 1,
+	"Verdant": 2,
 }
+
+## **HOW A FOURTH PEOPLE GETS A COLOUR.** The rival count the New Game screen offers runs to 6 on a
+## Standard map and 17 on a Huge one (`.claude/rules/client/new-game-setup.md`), so a hand-written
+## list would leave everyone past the third sharing one tint — which is what
+## `BAND_FACTION_FALLBACK_COLOR` looked like on the map before this existed. **Those numbers move**:
+## the ceiling is a packing count over a map's *land*, so a land-richer preset seats more, which is
+## why the generator has no upper bound and the harness pins headroom rather than today's figure.
+##
+## The hue turns by the GOLDEN ANGLE per id, which is the arrangement that keeps successive ids as
+## far apart on the wheel as they can be for any count: neighbours never land next to each other, and
+## the sequence never repeats a hue for any roster this game can produce.
+const FACTION_HUE_GOLDEN_ANGLE_TURNS := 0.381966  # (3 − √5) / 2, the golden angle as a fraction of a turn
+
+## Saturation and value for the generated hues — the MEAN of the three seeded colours' own, so a
+## fourth people reads as another member of this set rather than as a colour from a different palette.
+## (Seeded: S 0.45 / 0.79 / 0.56, V 1.00 / 0.95 / 0.90.)
+const FACTION_GENERATED_SATURATION := 0.6
+const FACTION_GENERATED_VALUE := 0.95
+
+## **THE ONE FACTION-COLOUR LOOKUP.** Every reader goes through it — a band token, a name pill, an
+## order path — so "which colour is this people" has a single answer for a roster of any size.
+##
+## `faction` is the RAW wire value: an id, one of the legacy names, or nothing at all. `fallback` is
+## what an ABSENT faction gets and is the caller's to choose (a band and a route disagree about it),
+## which is why it is a parameter rather than a constant read in here. A real id never reaches it.
+func faction_color(faction, fallback: Color) -> Color:
+	var index := -1
+	if faction is int:
+		index = faction
+	elif faction is float:
+		index = int(faction)
+	elif faction is String:
+		index = int(SEEDED_FACTION_NAMES.get(faction, -1))
+	if index < 0:
+		return fallback
+	if index < SEEDED_FACTION_COLORS.size():
+		return SEEDED_FACTION_COLORS[index]
+	# One golden-angle step per id PAST the seeded three, starting from the last seeded hue — so the
+	# generated run continues the set rather than restarting somewhere unrelated to it.
+	var steps := index - SEEDED_FACTION_COLORS.size() + 1
+	var hue: float = fposmod(
+		SEEDED_FACTION_COLORS[SEEDED_FACTION_COLORS.size() - 1].h
+			+ steps * FACTION_HUE_GOLDEN_ANGLE_TURNS,
+		1.0)
+	return Color.from_hsv(hue, FACTION_GENERATED_SATURATION, FACTION_GENERATED_VALUE, 1.0)
+
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
@@ -1797,7 +1851,7 @@ func _ingest_discovered_sites(snapshot: Dictionary) -> void:
 		if not (entry is Dictionary):
 			continue
 		var faction_entry: Dictionary = entry
-		if int(faction_entry.get("faction", -1)) != PLAYER_FACTION_ID:
+		if int(faction_entry.get("faction", HudConst.NO_FACTION_ID)) != HudConst.PLAYER_FACTION_ID:
 			continue
 		var faction_sites: Variant = faction_entry.get("sites", [])
 		if not (faction_sites is Array):
@@ -2411,7 +2465,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _draw_supply_links(radius: float, origin: Vector2) -> void:
 	var networks: Dictionary = {}  # supply_network_id -> Array[Vector2] of centers
 	for unit in units:
-		if not _is_player_unit(unit):
+		if not HudConst.is_player_unit(unit):
 			continue
 		var network_id: int = int(unit.get("supply_network_id", SUPPLY_NETWORK_SOLO))
 		if network_id == SUPPLY_NETWORK_SOLO:
@@ -3711,9 +3765,13 @@ func _units_on_tile(col: int, row: int) -> Array:
 ## chokepoint for herd-by-coordinate lookups: the Occupants roster, the herd-selection click, the
 ## hunt-target click resolution and the pre-launch trip forecast all read the herds through here (via
 ## `_tile_info_at` → `tile_info.herds`), so gating HERE makes "you can only hunt/forecast what you can
-## actually see" true by construction. The server still exports every herd unfiltered (a wire-level
-## leak, tracked separately), so this client gate is LOAD-BEARING, not cosmetic — do not bypass it by
-## reading `herds` by coordinate somewhere else.
+## actually see" true by construction.
+##
+## **THE SERVER FOG-FILTERS THE HERD LIST TOO NOW** (`snapshot/subsistence.rs`'s `herd_is_visible`),
+## so this is no longer the only thing standing between the player and an unseen herd. Keep it anyway:
+## it is the single chokepoint for herd-by-coordinate lookups, and every one of the four readers above
+## depends on it answering the same question the renderer does — do not bypass it by reading `herds`
+## by coordinate somewhere else.
 func _herds_on_tile(col: int, row: int) -> Array:
 	var matches: Array = []
 	if not _is_tile_visible(col, row):
@@ -5474,9 +5532,6 @@ func secondary_herd_key(herd_id: String) -> String:
 func secondary_working_key(x: int, y: int, material: String) -> String:
 	return _secondary_markers.working_key(x, y, material)
 
-func _is_player_unit(unit: Dictionary) -> bool:
-	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
-
 ## THE unit fog rule — one definition, used by every unit draw/lookup/hit-test:
 ##     hidden == tile not currently visible AND the unit is not ours.
 ##
@@ -5486,7 +5541,7 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## an Unexplored tile. A plain visibility gate would erase your own expedition from the map at exactly
 ## the moment you are using it. A unit with no position can't be fog-tested, so it stays visible.
 func _unit_hidden_by_fog(unit: Dictionary) -> bool:
-	if _is_player_unit(unit):
+	if HudConst.is_player_unit(unit):
 		return false
 	var pos: Array = Array(unit.get("pos", []))
 	if pos.size() != 2:

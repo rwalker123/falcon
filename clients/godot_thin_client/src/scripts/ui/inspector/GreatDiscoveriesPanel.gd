@@ -12,6 +12,10 @@ class_name GreatDiscoveriesInspectorPanel
 
 const Typography = preload("res://src/scripts/Typography.gd")
 
+## What the faction overview reads when the viewer's own progress ledger is empty. See its one call
+## site for why it names US rather than "no factions".
+const PROGRESS_NONE_FOR_VIEWER := "[i]Your people are not pursuing a Great Discovery.[/i]"
+
 @onready var _summary_label: Label = %GreatDiscoverySummaryLabel
 @onready var _summary_text: RichTextLabel = %GreatDiscoverySummaryText
 @onready var _definitions_list: ItemList = %GreatDiscoveryDefinitionsList
@@ -252,7 +256,12 @@ func _render() -> void:
 	var definition_filter := _selected_definition_id
 	var faction_overview := _summarize_progress_by_faction(definition_filter)
 	if faction_overview.is_empty():
-		summary_lines.append("[i]No factions are actively pursuing Great Discoveries.[/i]")
+		# **THIS IS A STATEMENT ABOUT US, NOT ABOUT THE WORLD.** `greatDiscoveryProgress` is
+		# viewer-scoped — it carries a `covert` flag and an ETA, so a rival's rows are simply absent
+		# (`.claude/rules/core_sim/factions.md` → "Which frame sections are viewer-scoped") — and the
+		# old wording, "No factions are actively pursuing Great Discoveries", read an empty section as
+		# a fact about every people on the map when all it can mean is that WE are pursuing none.
+		summary_lines.append(PROGRESS_NONE_FOR_VIEWER)
 	else:
 		for faction_line in faction_overview:
 			summary_lines.append(faction_line)

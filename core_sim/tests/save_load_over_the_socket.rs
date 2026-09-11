@@ -30,9 +30,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use core_sim::network::SEAT_TOKEN_BYTES;
 use core_sim::{apply_port_base, SimulationConfig};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-use sim_runtime::commands::SaveOpReply;
+use sim_runtime::commands::{SaveOpReply, SeatClaimReply};
 use sim_runtime::{CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelope};
 
 // =================================================================================================
@@ -59,6 +60,14 @@ const SAVE_SLOT: &str = "socket_round_trip";
 /// wrong request would be caught rather than accepted.
 const SAVE_REQUEST_ID: u64 = 1;
 const LOAD_REQUEST_ID: u64 = 2;
+const CLAIM_REQUEST_ID: u64 = 3;
+
+/// **The seat this harness sits in.** A frame is delivered to the seat it was captured for, so a
+/// stream connection that presents no token receives nothing at all — the harness has to be a
+/// *player*, not a listener (`.claude/rules/core_sim/snapshot-socket.md`). Faction 0 exists in the
+/// idle boot app's roster as well as in every generated world's, which is what lets the claim happen
+/// before the first `new_game`.
+const HARNESS_SEAT: u32 = 0;
 
 /// The epoch of the idle boot app, before any world exists (`server.rs` starts `world_epoch` at 0).
 const IDLE_WORLD_EPOCH: u32 = 0;
@@ -211,6 +220,10 @@ struct Harness {
     log_path: PathBuf,
     /// Where each command's own connection goes — see [`Harness::open_command_connection`].
     command_addr: SocketAddr,
+    /// **The seated command connection, held open for the run.** A seat belongs to a *connection*,
+    /// so the claim only holds while this socket does — the same standing link the Godot client
+    /// keeps. The orders below still go out one-connection-per-verb, as the client's do.
+    seat_link: TcpStream,
     frames: BufReader<TcpStream>,
 }
 
@@ -257,17 +270,52 @@ impl Harness {
 
         let ports = await_ports_file(&mut process, &ports_path, &log_path);
 
-        let snapshots =
+        // **Claim the seat first, then greet the stream with the token it answers with.** The order
+        // is the protocol's: the token is minted by the command socket's claim, and the stream
+        // socket is what presents it. Both happen before the first `new_game`, so no frame of the
+        // world under test can be published before this client is both registered and seated.
+        let mut seat_link =
+            TcpStream::connect(ports.command).expect("connect to the command socket for the claim");
+        seat_link
+            .set_read_timeout(Some(RESPONSE_TIMEOUT))
+            .expect("command socket read timeout");
+        let claim = claim_seat_on(&mut seat_link, &log_path);
+        assert!(
+            claim.ok,
+            "the harness could not claim seat {HARNESS_SEAT}: {}",
+            claim.error
+        );
+        // ⛔ **The token is a SECRET the grant minted, not the connection's id** (`core_sim::SeatToken`),
+        // so the harness cannot construct it — it must present back exactly what the reply carried,
+        // which is what makes the greeting below an end-to-end check of the claim → stream path. A
+        // zero would be the "you were given nothing" sentinel and would leave this client unseated,
+        // silently, for the whole run.
+        assert_ne!(
+            claim.seat_token,
+            sim_runtime::commands::NO_SEAT_TOKEN,
+            "a granted claim must hand back a real seat token"
+        );
+
+        let mut snapshots =
             TcpStream::connect(ports.snapshot_flat).expect("connect to the snapshot socket");
         snapshots
             .set_read_timeout(Some(RESPONSE_TIMEOUT))
             .expect("snapshot socket read timeout");
+        assert_eq!(
+            SEAT_TOKEN_BYTES,
+            std::mem::size_of::<u64>(),
+            "the greeting written here is the greeting the server reads"
+        );
+        snapshots
+            .write_all(&claim.seat_token.to_le_bytes())
+            .expect("present the seat token on the snapshot socket");
 
         Self {
             _process: process,
             _scratch: scratch,
             log_path,
             command_addr: ports.command,
+            seat_link,
             frames: BufReader::new(snapshots),
         }
     }
@@ -474,9 +522,78 @@ impl Harness {
     /// Only a resync (or a rollback) publishes a full frame mid-world — every turn and every
     /// post-command recapture publishes a delta — so the next full frame on the stream is this
     /// resync's answer.
+    ///
+    /// **It goes out on the SEATED link, not on a connection of its own.** A resync republishes one
+    /// seat's world to that seat's stream clients, so a connection holding no seat is asking about
+    /// nothing and is answered with nothing.
     fn resync_full_frame(&mut self, waiting_for: &str) -> FrameInfo {
-        self.send(CommandPayload::Resync, waiting_for);
+        let envelope = CommandEnvelope {
+            payload: CommandPayload::Resync,
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("the command encodes");
+        let mut framed = Vec::with_capacity(std::mem::size_of::<u32>() + bytes.len());
+        framed.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        framed.extend_from_slice(&bytes);
+        if let Err(err) = self.seat_link.write_all(&framed) {
+            self.fail(&format!(
+                "the seated link refused the resync for {waiting_for}: {err}"
+            ));
+        }
+        if let Err(err) = self.seat_link.flush() {
+            self.fail(&format!(
+                "the seated link refused a flush for {waiting_for}: {err}"
+            ));
+        }
         self.frame_matching(waiting_for, |frame| frame.full)
+    }
+}
+
+/// Claim [`HARNESS_SEAT`] on `link` and read the answer off it.
+///
+/// A free function rather than a `Harness` method because it runs *while the harness is being built*
+/// — the seated link has to exist before the stream socket can present its token.
+fn claim_seat_on(link: &mut TcpStream, log_path: &Path) -> SeatClaimReply {
+    let envelope = CommandEnvelope {
+        payload: CommandPayload::ClaimSeat {
+            request_id: CLAIM_REQUEST_ID,
+            faction_id: HARNESS_SEAT,
+        },
+        correlation_id: None,
+    };
+    let bytes = envelope.encode_to_vec().expect("the claim encodes");
+    let mut framed = Vec::with_capacity(std::mem::size_of::<u32>() + bytes.len());
+    framed.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    framed.extend_from_slice(&bytes);
+    link.write_all(&framed)
+        .expect("the claim reaches the server");
+    link.flush().expect("the claim flushes");
+
+    let mut len = [0u8; std::mem::size_of::<u32>()];
+    if let Err(err) = link.read_exact(&mut len) {
+        panic!(
+            "no answer to the seat claim (after {}s): {err}\n--- server log (last \
+             {LOG_TAIL_LINES} lines) ---\n{}",
+            RESPONSE_TIMEOUT.as_secs(),
+            log_tail(log_path)
+        );
+    }
+    let len = u32::from_le_bytes(len) as usize;
+    assert!(
+        len > 0 && len <= sim_runtime::MAX_PROTO_FRAME,
+        "the command socket announced a {len}-byte answer to the seat claim"
+    );
+    let mut payload = vec![0u8; len];
+    link.read_exact(&mut payload)
+        .expect("the claim's answer finishes arriving");
+    let envelope = QueryReplyEnvelope::decode(&payload).expect("the reply decodes");
+    assert_eq!(
+        envelope.request_id, CLAIM_REQUEST_ID,
+        "the reply answered a different request"
+    );
+    match envelope.reply {
+        QueryReply::SeatClaim(answer) => answer,
+        other => panic!("the seat claim was answered with {other:?} rather than a SeatClaimReply"),
     }
 }
 
@@ -487,6 +604,9 @@ fn new_game() -> CommandPayload {
         height: MAP_HEIGHT,
         seed: MAP_SEED,
         profile_id: START_PROFILE.to_string(),
+        // No count: this suite is about saving and loading, so it takes whatever roster the config
+        // default gives, exactly as a `new_game` typed without the argument does.
+        ai_faction_count: None,
     }
 }
 

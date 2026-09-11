@@ -11,12 +11,30 @@
 //! `127.0.0.1:0` so concurrent tests cannot collide on a port, and polls to a deadline rather than
 //! sleeping a fixed time — the only wall-clock assumption anywhere here is the timeout it injected.
 
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use core_sim::network::{start_snapshot_server_with_limits, SnapshotServer, SnapshotServerLimits};
+use core_sim::network::{
+    start_snapshot_server_with_limits, SnapshotServer, SnapshotServerLimits, SEAT_TOKEN_BYTES,
+};
+use core_sim::{FactionId, SeatToken};
+
+/// The seat every client in this file holds. **One seat, and every client on it**, because what
+/// these tests pin is what happens to a client that stops reading — which is the same whether the
+/// frame was addressed to one seat or four. Per-seat *addressing* is pinned in
+/// `core_sim/tests/seat_frames.rs`.
+const TEST_SEAT: FactionId = FactionId(0);
+/// The token that seat's claim handed out. A shipped one is minted at random (`core_sim::SeatToken`);
+/// these tests need a *fixed* one so several clients can greet with the same value, and any
+/// non-[`SeatToken::NONE`] value serves for what they pin.
+const TEST_TOKEN: SeatToken = SeatToken::from_wire(7);
+
+/// **What a guess looks like.** Before seat tokens were minted at random the greeting was the
+/// claiming connection's id, which the allocator hands out as `1, 2, 3, …` — so this is the *first*
+/// value an outsider would try, and it must resolve to no seat.
+const GUESSED_TOKEN: SeatToken = SeatToken::from_wire(1);
 
 /// How long a poll-until-true will wait before declaring the property broken. Generous because a
 /// loaded CI box scheduling three threads is not the failure under test.
@@ -92,11 +110,32 @@ fn wait_until_broadcaster_parks(server: &SnapshotServer, frames_broadcast: usize
 /// race, which the client heals by retrying). Waiting on `connected_clients` keeps that known race
 /// out of these assertions.
 fn connect_and_register(port: u16, server: &SnapshotServer, expected: usize) -> TcpStream {
-    let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to snapshot server");
+    server.set_seats(&[(TEST_SEAT, TEST_TOKEN)]);
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to snapshot server");
+    // The greeting: a frame is addressed to a seat, so a client that presents no token is
+    // deliberately delivered nothing at all and every assertion below would time out.
+    stream
+        .write_all(&TEST_TOKEN.wire().to_le_bytes())
+        .expect("present the seat token");
+    assert_eq!(
+        SEAT_TOKEN_BYTES,
+        std::mem::size_of::<u64>(),
+        "the greeting written here is the greeting the server reads"
+    );
     assert!(
         wait_until(|| server.connected_clients() == expected),
         "the server never registered the client: connected_clients()={} after {:?}, expected {}",
         server.connected_clients(),
+        POLL_DEADLINE,
+        expected
+    );
+    // Registration and seating are two steps — the socket is handed over in accept order and its
+    // token catches up — so a test that only waited for the first would race the delivery it is
+    // about to assert on.
+    assert!(
+        wait_until(|| server.seated_clients() == expected),
+        "the server never seated the client: seated_clients()={} after {:?}, expected {}",
+        server.seated_clients(),
         POLL_DEADLINE,
         expected
     );
@@ -145,7 +184,7 @@ fn a_client_that_reads_receives_every_frame() {
 
     let frames: Vec<Arc<Vec<u8>>> = (0u8..4).map(|i| frame(vec![i; 16 + i as usize])).collect();
     for f in &frames {
-        server.broadcast(f);
+        server.deliver(TEST_SEAT, f);
     }
 
     for (index, expected) in frames.iter().enumerate() {
@@ -194,7 +233,7 @@ fn a_stalled_client_does_not_block_a_new_connection() {
 
     let big = frame(vec![0xAB; STALL_FRAME_BYTES]);
     for _ in 0..STALL_FRAME_COUNT {
-        server.broadcast(&big);
+        server.deliver(TEST_SEAT, &big);
     }
 
     // (a) The connect itself must complete promptly. This is the weaker half of the headline
@@ -206,6 +245,9 @@ fn a_stalled_client_does_not_block_a_new_connection() {
     let mut fresh = TcpStream::connect(("127.0.0.1", port))
         .expect("a second client must be able to connect while the first is stalled");
     let connect_elapsed = started.elapsed();
+    fresh
+        .write_all(&TEST_TOKEN.wire().to_le_bytes())
+        .expect("present the seat token");
     assert!(
         connect_elapsed < PROMPT_CONNECT,
         "connecting took {connect_elapsed:?}; a stalled client must not delay the accept path \
@@ -219,7 +261,7 @@ fn a_stalled_client_does_not_block_a_new_connection() {
         .set_read_timeout(Some(POLL_DEADLINE))
         .expect("set read timeout");
     let after = frame((0u8..64).collect::<Vec<u8>>());
-    server.broadcast(&after);
+    server.deliver(TEST_SEAT, &after);
 
     let mut delivered = false;
     for _ in 0..=STALL_FRAME_COUNT {
@@ -297,6 +339,7 @@ fn the_accept_thread_keeps_running_while_a_write_is_blocked() {
             // frames off it and then stopped.
             frame_queue_capacity: STALL_FRAME_COUNT * 2,
             pending_client_capacity: PENDING_CLIENT_CAPACITY,
+            ..SnapshotServerLimits::default()
         },
     );
 
@@ -304,7 +347,7 @@ fn the_accept_thread_keeps_running_while_a_write_is_blocked() {
     let _stalled = connect_and_register(port, &server, 1);
     let big = frame(vec![0xEF; STALL_FRAME_BYTES]);
     for _ in 0..STALL_FRAME_COUNT {
-        server.broadcast(&big);
+        server.deliver(TEST_SEAT, &big);
     }
     assert!(
         wait_until_broadcaster_parks(&server, STALL_FRAME_COUNT),
@@ -385,7 +428,7 @@ fn a_stalled_client_cannot_grow_the_broadcast_queue_without_bound() {
     // Fill the client's socket buffers so the broadcast thread parks inside `write_all`.
     let big = frame(vec![0xCD; STALL_FRAME_BYTES]);
     for _ in 0..STALL_FRAME_COUNT {
-        server.broadcast(&big);
+        server.deliver(TEST_SEAT, &big);
     }
     assert!(
         wait_until(|| server.queued_frames() > 0),
@@ -396,7 +439,7 @@ fn a_stalled_client_cannot_grow_the_broadcast_queue_without_bound() {
     let small = frame(vec![0x01; 32]);
     let started = Instant::now();
     for _ in 0..FLOOD_FRAMES {
-        server.broadcast(&small);
+        server.deliver(TEST_SEAT, &small);
         assert!(
             server.queued_frames() <= QUEUE_CAPACITY,
             "queued_frames()={} exceeded the configured capacity of {QUEUE_CAPACITY}: the frame \
@@ -417,4 +460,101 @@ fn a_stalled_client_cannot_grow_the_broadcast_queue_without_bound() {
          {FLOOD_FRAMES} frames were pushed at a stalled client: drop-on-full must be counted and \
          logged, not silent"
     );
+}
+
+/// ⛔ **A CONNECTION THAT PRESENTS NO SEAT TOKEN — OR THE WRONG ONE — RECEIVES NOTHING, and the seat
+/// beside it still receives everything.**
+///
+/// Both are the same state by design: a token that names no live claim is as unseated as no token at
+/// all. The wrong token here is [`GUESSED_TOKEN`], the value a *sequential* token scheme would have
+/// handed the session's first claim, which is the guess a random token exists to defeat.
+///
+/// A frame is one viewer's world (PR #648), so there is no frame to give a connection that holds no
+/// seat: the Inspector, a `nc`, a tool, a client that has not claimed. Withholding is the only
+/// answer that cannot leak — falling back to a default faction would hand a watcher whichever
+/// people that turned out to be, in full.
+///
+/// **Both halves are asserted in one run**, because "the unseated client got nothing" passes just as
+/// well on a server that delivers nothing to anyone.
+#[test]
+fn an_unseated_client_receives_nothing_while_a_seated_one_receives_every_frame() {
+    // Short, because this test *waits out* the handshake for the unseated client: it presents the
+    // explicit "no seat" token rather than staying silent, so the wait is not on the clock at all —
+    // but a client that says nothing must reach the same state, and the timeout is what bounds it.
+    const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(200);
+    /// How long the unseated client is given to receive a frame it must never receive. Generous
+    /// against the seated client's delivery, which is the ordering this test rests on.
+    const SILENCE_WINDOW: Duration = Duration::from_millis(500);
+
+    let (listener, port) = bind_local();
+    let server = start_snapshot_server_with_limits(
+        listener,
+        SnapshotServerLimits {
+            write_timeout: Duration::from_millis(500),
+            handshake_timeout: HANDSHAKE_TIMEOUT,
+            ..SnapshotServerLimits::default()
+        },
+    );
+
+    // The seated client, and a second connection that explicitly holds no seat.
+    let mut seated = connect_and_register(port, &server, 1);
+    seated
+        .set_read_timeout(Some(POLL_DEADLINE))
+        .expect("set read timeout");
+    let mut unseated =
+        TcpStream::connect(("127.0.0.1", port)).expect("connect to snapshot server unseated");
+    unseated
+        .write_all(&SeatToken::NONE.wire().to_le_bytes())
+        .expect("present the explicit no-seat token");
+    unseated
+        .set_read_timeout(Some(SILENCE_WINDOW))
+        .expect("set read timeout");
+    // And a third that presents a **wrong** token: `1`, which is the id the connection allocator
+    // hands the first claim of a session, and therefore the first value a guess would try. A seat
+    // token is minted at random precisely so this cannot work.
+    let mut guessing =
+        TcpStream::connect(("127.0.0.1", port)).expect("connect to snapshot server guessing");
+    guessing
+        .write_all(&GUESSED_TOKEN.wire().to_le_bytes())
+        .expect("present a guessed seat token");
+    guessing
+        .set_read_timeout(Some(SILENCE_WINDOW))
+        .expect("set read timeout");
+    assert!(
+        wait_until(|| server.connected_clients() == 3),
+        "the server never registered all three clients: an unseated connection is registered and \
+         silent, not refused"
+    );
+    // Two tokens were *presented*; only one of them names a seat. `seated_clients` counts the
+    // greeting, not the entitlement — the token is resolved against the live claims at delivery, so
+    // the guesser is a registered client whose token matches no seat and who is written nothing.
+    assert!(
+        wait_until(|| server.seated_clients() == 2),
+        "seated_clients()={} with two tokens presented",
+        server.seated_clients()
+    );
+
+    let addressed = frame((0u8..32).collect::<Vec<u8>>());
+    server.deliver(TEST_SEAT, &addressed);
+
+    // The seat's own client gets it whole.
+    assert_eq!(
+        read_frame(&mut seated),
+        *addressed.as_ref(),
+        "the seat's client must receive the frame addressed to its seat"
+    );
+
+    // And neither the unseated one nor the guesser gets anything at all — not a truncated frame, not
+    // a length prefix.
+    for (who, socket) in [("unseated", &mut unseated), ("guessing", &mut guessing)] {
+        let mut probe = [0u8; 1];
+        match socket.read(&mut probe) {
+            Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Ok(n) => panic!(
+                "the {who} client received {n} byte(s) of a frame addressed to seat {TEST_SEAT:?}: \
+                 a connection holding no seat has no view and must be sent nothing"
+            ),
+            Err(err) => panic!("the {who} client's read failed unexpectedly: {err}"),
+        }
+    }
 }

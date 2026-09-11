@@ -2082,7 +2082,6 @@ mod tests {
     use crate::metrics::SimulationMetrics;
     use crate::orders::FactionRegistry;
     use crate::resources::SimulationTick;
-    use crate::start_profile::{FactionControl, FactionSpec};
     use bevy::app::App;
     use bevy::ecs::event::Events;
     use bevy::ecs::world::Mut;
@@ -2108,15 +2107,12 @@ mod tests {
         app.insert_resource(SimulationMetrics::default());
         app.insert_resource(knowledge_config_handle);
         app.insert_resource(knowledge_ledger);
-        // Ids are positional in the registry, so the harness declares one spec per faction the
-        // test names and lets `new` number them.
-        let specs: Vec<FactionSpec> = factions
-            .iter()
-            .map(|_| FactionSpec {
-                control: FactionControl::Human,
-            })
-            .collect();
-        app.insert_resource(FactionRegistry::new(&specs));
+        // Ids are positional and a roster is one human plus N AI, so the harness asks for a roster
+        // as long as the id list the test named. Espionage reads the roster, never the control, so
+        // which of them the sim drives does not enter these cases.
+        app.insert_resource(FactionRegistry::with_ai_factions(
+            factions.len().saturating_sub(1) as u32,
+        ));
         let budget_config = catalog.config().counter_intel_budget().clone();
         app.insert_resource(catalog);
         app.insert_resource(roster);

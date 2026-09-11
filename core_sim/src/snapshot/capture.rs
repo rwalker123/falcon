@@ -1,13 +1,17 @@
 use super::*;
 
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 #[derive(SystemParam)]
 pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
     readiness: Res<'w, GreatDiscoveryReadiness>,
-    telemetry: Res<'w, GreatDiscoveryTelemetry>,
     registry: Res<'w, GreatDiscoveryRegistry>,
+    // **`GreatDiscoveryTelemetry` is deliberately NOT here.** Its two counters are world-level
+    // server metrics (`SimulationMetrics.great_discovery_candidates` / `_active`); the frame's
+    // counters are derived per viewer from the ledger and the readiness map instead, so the numbers
+    // agree with the lists they sit above. See `snapshot_telemetry`.
     #[system_param(ignore)]
     _marker: std::marker::PhantomData<&'s ()>,
 }
@@ -77,7 +81,11 @@ pub struct SnapshotContext<'w> {
     /// Tile coords → tile entity, so a road's path can be priced through the same
     /// `TerrainDefinition::infrastructure_cost` sum the bill and the decay read.
     pub tile_registry: Res<'w, crate::resources::TileRegistry>,
+    /// The single viewer a world with **no claimed seat** captures for — see
+    /// [`SnapshotAudiences::capture_list`].
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
+    /// The seats this world publishes a frame to, one capture pass each.
+    pub audiences: Res<'w, SnapshotAudiences>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
@@ -137,7 +145,7 @@ pub struct StoredSnapshot {
 
 impl StoredSnapshot {
     /// **A ring entry stores no encoded bytes at all on a steady-state turn.** The flat socket is
-    /// the only socket ([`crate::network::SnapshotServer::broadcast`]), and what it broadcasts per
+    /// the only socket ([`crate::network::SnapshotServer::deliver`]), and what it delivers per
     /// turn — the flat delta — is built by `publish` for immediate sending rather than retained:
     /// 256 ring entries holding a delta nobody re-reads cost ~24% of an 80×52 turn for nothing. The
     /// on-demand feed paths (`update_axis_bias` / `update_influencers` / `update_corruption`) build
@@ -169,7 +177,8 @@ impl StoredSnapshot {
     /// **This is a read of stored bytes, not a publication, so no broadcast path may use it.** The
     /// header here carries the sequence number this entry was published under, which goes stale the
     /// moment anything else publishes. Rollback and `Command::Resync` — the two paths that used to
-    /// call it — go through [`SnapshotHistory::publish_full_frame`], which claims a live one. The
+    /// call it — go through [`SnapshotHistory::publish_full_frame_for`] (or its `_for_all` twin,
+    /// which a rollback uses to rewind every seat), which claims a live one. The
     /// remaining callers are integration tests asserting on encoded content rather than on sequence.
     pub fn encode_flat(&self) -> Arc<Vec<u8>> {
         match self.encoded_snapshot_flat.as_ref() {
@@ -187,29 +196,28 @@ pub(crate) enum Publication {
     Recapture,
 }
 
-/// Everything publication owns: the diff baselines, the rollback ring, and the publication
-/// sequence.
+/// **ONE SEAT'S publication state**: its diff baselines, its rollback ring, its publication
+/// sequence and its event cursor.
+///
+/// **One of these per audience, never one per world.** Every field here is a statement about *what
+/// this client currently holds* — `Whole`'s `held` flag, `Indexed`'s per-row guard, the `frame_seq`
+/// a delta chain names as its `base_frame_seq`, and the `command_events` cursor. Two seats sharing
+/// one set would each take the other's frames as their own baseline: gaps in a delta chain that
+/// never converges, and an event feed that skips whatever the other seat was sent
+/// (`.claude/rules/core_sim/event-feed.md`).
 ///
 /// **This is not a Bevy resource and the turn thread never touches it.** It lives behind the mutex
 /// inside [`crate::snapshot::SnapshotHistory`], which is the ECS-facing handle, and is mutated
 /// almost exclusively by the publisher thread (#393). The exceptions are the rare, human-paced
 /// paths — rollback, `Resync`, the auxiliary feed deltas — which the handle runs inline *after*
 /// draining the publisher's queue, so they can never interleave with a frame in flight.
-pub(crate) struct PublishState {
+pub(crate) struct SeatPublishState {
     capacity: usize,
     pub last_snapshot: Option<Arc<WorldSnapshot>>,
     pub last_delta: Option<Arc<WorldDelta>>,
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
     /// The flat DELTA broadcast on the client's socket every turn after the first.
     pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
-    /// Where a published frame goes. `None` until the server attaches its socket, which is the
-    /// normal state in tests and for the idle boot app — publication still happens, it simply has
-    /// no audience.
-    pub sink: Option<Arc<dyn FrameSink>>,
-    /// The last published frame's own phase breakdown, drained from the publisher thread's
-    /// accumulator (`turn_profile::publish_take`) and parked here because a thread-local cannot be
-    /// read from the side that wants it. Empty until the first frame.
-    pub last_publish_profile: Vec<crate::turn_profile::PhaseTiming>,
     /// `frameSeq` of the last frame published for this world. Fresh per world, because a rebuild
     /// constructs a brand-new `App` and therefore a brand-new history — which is also what makes
     /// "first publication" simply mean `frame_seq == 0`.
@@ -355,7 +363,7 @@ fn in_diff_pool<R: Send>(work: impl FnOnce() -> R + Send) -> R {
 
 // ---------------------------------------------------------------------------------------------
 // The snapshot's SECTIONS: one group of collections per subsystem, each diffed as a unit and
-// spawned as one task by `PublishState::publish`. A section is a `*Parts` output struct, an
+// spawned as one task by `SeatPublishState::publish`. A section is a `*Parts` output struct, an
 // optional `*Baselines` borrow bundle, and a `diff_*` function between them.
 //
 // The partition is SEMANTIC, not cost-balanced. A cost-balanced one has to be re-measured every
@@ -456,7 +464,7 @@ struct RasterParts {
     visibility: Option<ScalarRasterState>,
 }
 
-/// The baselines the raster section owns, borrowed disjointly out of [`PublishState`].
+/// The baselines the raster section owns, borrowed disjointly out of [`SeatPublishState`].
 struct RasterBaselines<'a> {
     terrain: &'a mut Whole<TerrainOverlayState>,
     moisture: &'a mut Whole<FloatRasterState>,
@@ -834,7 +842,7 @@ fn diff_people(
     }
 }
 
-impl PublishState {
+impl SeatPublishState {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
@@ -842,8 +850,6 @@ impl PublishState {
             last_delta: None,
             encoded_snapshot_flat: None,
             encoded_delta_flat: None,
-            sink: None,
-            last_publish_profile: Vec::new(),
             frame_seq: 0,
             tiles: Indexed::default(),
             populations: Indexed::default(),
@@ -917,10 +923,6 @@ impl PublishState {
         }
     }
 
-    pub(crate) fn capacity(&self) -> usize {
-        self.capacity
-    }
-
     pub(crate) fn set_capacity(&mut self, capacity: usize) {
         self.capacity = capacity.max(1);
         self.prune();
@@ -957,6 +959,10 @@ impl PublishState {
     /// order is idempotent, and missing an intermediate one is harmless. It also means the next
     /// turn's delta still carries everything the command changed.
     ///
+    /// ⛔ **The one exception is a seat's FIRST publication, which is a baseline whatever the
+    /// kind** — there is no baseline to hold and therefore nothing cumulative to lose. Stated at
+    /// the top of the body, with why a held baseline made a fresh seat's stream unrecoverable.
+    ///
     /// It used to re-encode a FULL flat snapshot instead — per world-mutating command, so a player
     /// assigning labor to three sources and moving a band paid four full encodes, which is the
     /// cost that arc removed from the turn path re-entering by the side door.
@@ -976,19 +982,36 @@ impl PublishState {
         // `SnapshotHeader::hash`). Retired in #393 rather than merely moved off the turn thread,
         // because moving dead work still pays for it.
 
+        // ⛔ **A SEAT'S FIRST PUBLICATION IS ITS BASELINE, WHATEVER THE [`Publication`] KIND.**
+        //
+        // `frame_seq == 0` means this client holds nothing, so there is no baseline to hold and
+        // nothing cumulative to preserve — the two properties the recapture path's `Baseline::Hold`
+        // exists to protect. What a held baseline would give a fresh seat instead is a delta naming
+        // `base_frame_seq == 0`, a frame the client cannot apply: it drops it, asks for a resync, and
+        // `publish_full_frame_for` answers `resync.no_world` because the recapture pushed no ring
+        // entry either. That is a live game reporting itself gone, and it is reachable in normal play
+        // — a command-link reconnect drops the seat's state (`sync_seat_delivery`) and the next
+        // world-mutating command recaptures onto the fresh one.
+        //
+        // Stated here, once, rather than at each path that can create a state, so the property holds
+        // by construction instead of by every creation path remembering to force a turn first.
+        let first_publication = self.frame_seq == 0;
+
         // The baselines are mutated IN PLACE by the fan-out below, so the recapture path states its
         // intent up front rather than by declining to store a returned map: a mid-tick recapture
         // holds the baseline where the last resolved turn left it, which is what makes its deltas
         // cumulative.
         let write = match kind {
             Publication::Turn => Baseline::Advance,
+            // A first publication advances for the reason above; every later recapture holds.
+            Publication::Recapture if first_publication => Baseline::Advance,
             Publication::Recapture => Baseline::Hold,
         };
 
         // Destructure the baselines into disjoint `&mut` borrows, one bundle per section. This is
         // what lets the sections run concurrently without a lock: each borrow names different fields
         // of the same struct, so the compiler proves the disjointness the partition claims.
-        let PublishState {
+        let SeatPublishState {
             tiles: tiles_baseline,
             culture_layers: culture_layers_baseline,
             culture_tensions: culture_tensions_baseline,
@@ -1285,7 +1308,11 @@ impl PublishState {
         // out as a full snapshot — a first-turn delta is not equivalent to one, because a field
         // that happens to equal its default compares unchanged and is never sent.
         let (frame_seq, base_frame_seq) = self.next_publication();
-        let first_publication = base_frame_seq == 0;
+        debug_assert_eq!(
+            first_publication,
+            base_frame_seq == 0,
+            "`first_publication` is read before the sequence is claimed and must mean the same thing after"
+        );
         let mut snapshot = snapshot;
         snapshot.header.frame_seq = frame_seq;
         let mut delta = delta;
@@ -1300,7 +1327,7 @@ impl PublishState {
             Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()))
         };
 
-        if kind == Publication::Recapture {
+        if kind == Publication::Recapture && !first_publication {
             // Re-baseline the ring's CURRENT entry so a rollback to this tick restores the
             // post-command world, then stop: no baseline commit, no new ring entry.
             self.last_snapshot = Some(snapshot_arc);
@@ -2003,6 +2030,228 @@ impl PublishState {
     }
 }
 
+/// **Publication for the whole world: the sink, the last frame's profile, and ONE
+/// [`SeatPublishState`] per audience.**
+///
+/// The split is the seat model on the publication side (`docs/plan_multiplayer_seats.md` §4.3). What
+/// lives here is what is true of the *world* whatever the seat count — where a frame goes, and what
+/// the last one cost. What lives in a [`SeatPublishState`] is what is true of *one client's stream*.
+///
+/// **A seat's state is created by its first publication and dropped when the seat is released**
+/// ([`Self::drop_audience`]). Both directions matter: a fresh state has `frame_seq == 0`, which is
+/// what makes a joining seat's first frame a full baseline rather than a delta against rows it never
+/// received; and a stale one left behind by a disconnect would baseline the *next* occupant of that
+/// seat against a world it has not been sent.
+pub(crate) struct PublishState {
+    /// The ring depth every seat's history is built with. Held here because it is one world-level
+    /// setting, applied to each seat.
+    capacity: usize,
+    /// Where a published frame goes. `None` until the server attaches its socket, which is the
+    /// normal state in tests and for the idle boot app — publication still happens, it simply has
+    /// no audience.
+    pub sink: Option<Arc<dyn FrameSink>>,
+    /// The last published frame's own phase breakdown, drained from the publisher thread's
+    /// accumulator (`turn_profile::publish_take`) and parked here because a thread-local cannot be
+    /// read from the side that wants it. Empty until the first frame.
+    ///
+    /// **World-level, and it describes the last frame published for ANY seat** — the publisher is
+    /// one thread behind one FIFO, so "the last frame" is unambiguous even with several seats, and
+    /// the profile of one seat's frame is the profile of the work a seat costs.
+    pub last_publish_profile: Vec<crate::turn_profile::PhaseTiming>,
+    /// One publication state per audience, ordered by seat so "the primary audience" is a stable
+    /// answer rather than whichever seat happened to publish first.
+    seats: BTreeMap<FactionId, SeatPublishState>,
+}
+
+impl PublishState {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity,
+            sink: None,
+            last_publish_profile: Vec::new(),
+            seats: BTreeMap::new(),
+        }
+    }
+
+    /// The seat's publication state, created empty on first use — see the struct doc for why a
+    /// fresh one is the right answer for a seat that has just joined.
+    fn seat_mut(&mut self, seat: FactionId) -> &mut SeatPublishState {
+        let capacity = self.capacity;
+        self.seats
+            .entry(seat)
+            .or_insert_with(|| SeatPublishState::with_capacity(capacity))
+    }
+
+    fn seat(&self, seat: FactionId) -> Option<&SeatPublishState> {
+        self.seats.get(&seat)
+    }
+
+    /// **The audience every seat-blind accessor answers for**: the lowest-numbered seat that has
+    /// published. With one client — single player, every test, the idle boot app — there is exactly
+    /// one, which is what keeps those accessors meaning what they always meant.
+    pub(crate) fn primary_audience(&self) -> Option<FactionId> {
+        self.seats.keys().copied().next()
+    }
+
+    fn primary(&self) -> Option<&SeatPublishState> {
+        self.seats.values().next()
+    }
+
+    /// The seats this world has published to, in seat order.
+    pub(crate) fn audiences(&self) -> Vec<FactionId> {
+        self.seats.keys().copied().collect()
+    }
+
+    /// **Forget a seat's publication state**, so the next connection to claim it is baselined on a
+    /// full frame rather than on rows the previous occupant received.
+    pub(crate) fn drop_audience(&mut self, seat: FactionId) {
+        self.seats.remove(&seat);
+    }
+
+    /// **The audiences are whatever the last capture published for.** Anything else is state for a
+    /// seat nothing is captured for any more, and keeping it would answer `latest_entry` with a view
+    /// no client is being sent.
+    ///
+    /// It is what makes a **seatless** world single-viewer in fact and not just by convention: with
+    /// no claim, the capture list is the one `ViewerFaction`, so moving that resource — which
+    /// `export_map` and the redaction tests do — replaces the audience rather than adding one
+    /// beside it.
+    pub(crate) fn retain_audiences(&mut self, audiences: &[FactionId]) {
+        self.seats.retain(|seat, _| audiences.contains(seat));
+    }
+
+    pub(crate) fn publish(
+        &mut self,
+        seat: FactionId,
+        snapshot: WorldSnapshot,
+        kind: Publication,
+    ) -> Option<Arc<Vec<u8>>> {
+        self.seat_mut(seat).publish(snapshot, kind)
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub(crate) fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity.max(1);
+        for seat in self.seats.values_mut() {
+            seat.set_capacity(capacity);
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.primary().map(|seat| seat.len()).unwrap_or(0)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.primary().map(|seat| seat.is_empty()).unwrap_or(true)
+    }
+
+    pub(crate) fn latest_entry(&self) -> Option<StoredSnapshot> {
+        self.primary().and_then(|seat| seat.latest_entry())
+    }
+
+    pub(crate) fn latest_entry_for(&self, seat: FactionId) -> Option<StoredSnapshot> {
+        self.seat(seat).and_then(|seat| seat.latest_entry())
+    }
+
+    pub(crate) fn entry(&self, tick: u64) -> Option<StoredSnapshot> {
+        self.primary().and_then(|seat| seat.entry(tick))
+    }
+
+    pub(crate) fn last_snapshot(&self) -> Option<Arc<WorldSnapshot>> {
+        self.primary().and_then(|seat| seat.last_snapshot.clone())
+    }
+
+    pub(crate) fn last_delta(&self) -> Option<Arc<WorldDelta>> {
+        self.primary().and_then(|seat| seat.last_delta.clone())
+    }
+
+    pub(crate) fn encoded_snapshot_flat(&self) -> Option<Arc<Vec<u8>>> {
+        self.primary()
+            .and_then(|seat| seat.encoded_snapshot_flat.clone())
+    }
+
+    pub(crate) fn encoded_delta_flat(&self) -> Option<Arc<Vec<u8>>> {
+        self.primary()
+            .and_then(|seat| seat.encoded_delta_flat.clone())
+    }
+
+    /// Rewind ONE seat's baselines to a frame it published. The seat-addressed half of
+    /// [`Self::reset_all_to_latest_entry`], for a caller that has the entry in hand.
+    pub(crate) fn reset_to_entry_for(&mut self, seat: FactionId, entry: &StoredSnapshot) {
+        self.seat_mut(seat).reset_to_entry(entry);
+    }
+
+    /// **Rewind EVERY seat's baselines to its own latest frame** — the rollback path.
+    ///
+    /// Each seat rewinds to *its* entry and never to another's: an entry is one viewer's world, so
+    /// re-baselining seat B on seat A's frame would hand B the rows A is entitled to and withhold
+    /// the ones B is. The sequence is deliberately **not** rewound (see
+    /// [`SeatPublishState::publish_full_frame`]).
+    pub(crate) fn reset_all_to_latest_entry(&mut self) {
+        for seat in self.seats.values_mut() {
+            let Some(entry) = seat.latest_entry() else {
+                continue;
+            };
+            seat.reset_to_entry(&entry);
+        }
+    }
+
+    /// Publish one seat's latest frame whole, on a fresh sequence number — the `Resync` answer, for
+    /// **the asking seat**.
+    pub(crate) fn publish_full_frame_for(&mut self, seat: FactionId) -> Option<Arc<Vec<u8>>> {
+        let state = self.seats.get_mut(&seat)?;
+        let entry = state.latest_entry()?;
+        Some(state.publish_full_frame(&entry))
+    }
+
+    /// [`Self::publish_full_frame_for`] every audience — what a rollback owes, since it moved the
+    /// world under all of them at once.
+    pub(crate) fn publish_full_frame_for_all(&mut self) -> Vec<(FactionId, Arc<Vec<u8>>)> {
+        let audiences = self.audiences();
+        audiences
+            .into_iter()
+            .filter_map(|seat| self.publish_full_frame_for(seat).map(|frame| (seat, frame)))
+            .collect()
+    }
+
+    pub(crate) fn update_axis_bias(
+        &mut self,
+        bias: AxisBiasState,
+    ) -> Vec<(FactionId, Arc<Vec<u8>>)> {
+        self.per_seat(|seat| seat.update_axis_bias(bias.clone()))
+    }
+
+    pub(crate) fn update_influencers(
+        &mut self,
+        states: Vec<InfluentialIndividualState>,
+    ) -> Vec<(FactionId, Arc<Vec<u8>>)> {
+        self.per_seat(|seat| seat.update_influencers(states.clone()))
+    }
+
+    pub(crate) fn update_corruption(
+        &mut self,
+        ledger: CorruptionLedger,
+    ) -> Vec<(FactionId, Arc<Vec<u8>>)> {
+        self.per_seat(|seat| seat.update_corruption(ledger.clone()))
+    }
+
+    /// Run one auxiliary-feed delta per audience, keeping the seat each frame belongs to beside it.
+    /// Each seat diffs against its **own** baseline, so a section unchanged for one seat and changed
+    /// for another publishes for exactly the seats it moved for.
+    fn per_seat(
+        &mut self,
+        mut build: impl FnMut(&mut SeatPublishState) -> Option<Arc<Vec<u8>>>,
+    ) -> Vec<(FactionId, Arc<Vec<u8>>)> {
+        self.seats
+            .iter_mut()
+            .filter_map(|(seat, state)| build(state).map(|frame| (*seat, frame)))
+            .collect()
+    }
+}
+
 /// **The kit roster for the wire** — one row per `equipment.json` kit, carrying the tiers that kit
 /// grants a party whose components are all **fresh** (`BandEquipment::start_stocked`).
 ///
@@ -2273,6 +2522,7 @@ pub fn capture_snapshot(
         extraction,
         tile_registry,
         viewer_faction,
+        audiences,
         demographics,
         wellbeing,
         labor,
@@ -2452,952 +2702,1094 @@ pub fn capture_snapshot(
         .collect();
     drop(tile_index_scope);
 
-    // The per-cohort readout: two walks of the population query (the coord index, then the states),
-    // each of which derives travel/scout/expedition figures rather than copying them. Per cohort,
-    // and the expedition-delivery forecast inside it is a forward sim per in-flight party.
-    let populations_scope = crate::turn_profile::scope("snapshot.build.populations");
-    let demographics_config = demographics.get();
-    let wellbeing_config = wellbeing.get();
-    let settlement_stage_config = settlement_stage.get();
-    // Global labor config today (identical for every band); the work-range ring is surfaced
-    // per-band so the client reads it off the selected band (future-proof if bands diverge).
-    let band_work_range = labor_config.band_work_range;
-    // Effective hunt reach (= `band_work_range + hunt_leash_tiles`, the leash a Hunt lapses past),
-    // echoed per-band so the client offers a local hunt vs a hunting expedition by herd distance.
-    let hunt_reach = labor_config.hunt_reach();
-    // Expedition levers echoed per-cohort — same idiom as `band_work_range`: global config today,
-    // surfaced per-band so the client reads them off the selected band. Populated for EVERY cohort
-    // (the outfit UI lives on the resident-band panel, not on the expedition).
-    let expedition_cfg = expedition.get();
-    let fauna_config = fauna.get();
-    // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
-    // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
-    // `person` profile and `labor_config`'s kitted haul rate. What varies per band is only its
-    // `BandEquipment` wear, which `population_state` resolves against these.
-    let equipment_config = equipment.get();
-    let combat_config = combat.get();
-    // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
-    // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree. Through the one
-    // named constructor rather than a fourth copy of the multiply (`CombatConfig::expedition_tuning`).
-    let expedition_combat_tuning = combat_config.expedition_tuning();
-    let kit_levers = crate::snapshot::population::BandKitLevers {
-        config: &equipment_config,
-        person_intrinsic: creatures.get().person(),
-        baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
-        baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
-        equipped_vantage_range: labor_config.scout.vantage_range as f32,
-        // The detached party's *equipped* observation radius, beside the posted vantage's — the
-        // second axis the one wayfinding item lifts.
-        equipped_expedition_sight_range: expedition_cfg.observe_sight_range as f32,
-    };
-    // **The crafting readout's config half, resolved ONCE for the capture.** `craftOffers` is
-    // bands × recipes, and everything that is a function of the recipe alone — its group, its bench
-    // material, the tool that bounds it, the material's own word — is a constant across that
-    // product. Hoisting it is what keeps the per-band pass to the band's own three questions.
-    let materials_config = materials.get();
-    let recipes_config = recipes.get();
-    let craft_offer_plans =
-        crate::snapshot::crafting::plan_craft_offers(&recipes_config, &equipment_config);
-    let knowledge_threshold = ladder_config.knowledge.completion_threshold;
-    // **Per FACTION, not per band** — every band of a faction knows the same crafts, so a per-band
-    // resolution would be one discovery-ledger walk per band for one answer.
-    let known_crafts_by_faction: std::collections::HashMap<
-        crate::orders::FactionId,
-        std::collections::BTreeMap<String, bool>,
-    > = populations
-        .iter()
-        .map(|(_, cohort, _, _, _, _, _, _, _)| cohort.faction)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .map(|faction| {
-            (
-                faction,
-                crate::snapshot::crafting::known_crafts(
-                    &materials_config,
-                    &discovery_progress,
+    // ⛔ **ONE FRAME PER SEAT, AND EVERYTHING ABOVE THIS LINE IS SHARED BETWEEN THEM.**
+    //
+    // A published frame is one viewer's world (`factions.md` → "Which frame sections are
+    // viewer-scoped"), so a second seat needs a second frame and not a second copy of the first.
+    // What it does **not** need is a second sweep of the map: the tile states, the flora-quote memo,
+    // the patch subset and the coord index above are pure functions of ground and config, so they
+    // are built once and read by every pass below.
+    //
+    // **The split is where the measurement put it, not where the section table suggests.** The
+    // sections below are ~73% of `snapshot.build` at 80×52 and `forage_patches` alone is ~52%, so
+    // hoisting more of the world-level work would buy a fraction of what sharing the *patch rows*
+    // does — which is why `WildRowMemo` exists one loop down rather than a world/viewer split of the
+    // whole capture. See `.claude/rules/core_sim/turn-profiling.md` → "One frame per seat".
+    //
+    // The frames are collected and handed off **after** the loop so `snapshot.build` measures
+    // building: a handoff can block on the publisher's bounded queue, and a block folded into the
+    // build label would read as capture getting slower with the seat count.
+    let mut captures: Vec<(FactionId, WorldSnapshot)> = Vec::new();
+    let capture_list = audiences.capture_list(viewer_faction.0);
+    // ⛔ **THE LAST PASS TAKES THE SHARED SECTIONS; THE ONES BEFORE IT COPY THEM.** A frame owns its
+    // rows (the wire type is an owned `Vec`), so a shared section has to be copied into all but one
+    // of them — and which one gets the original is free to choose. Choosing the last makes the
+    // **single-audience** capture move `tile_states` into its frame exactly as it did before seats
+    // existed, so the shipped single-player turn pays nothing at all for the loop around it.
+    let mut passes_left = capture_list.len();
+    // **The rows a patch publishes to every viewer alike**, derived by the first pass and cloned by
+    // the rest — and, inside it, the two kit indices over EVERY faction's bands that decide which
+    // rows those are. `None` with a single audience, which is what keeps a single-player turn paying
+    // for none of it (see [`crate::snapshot::subsistence::WildRowMemo`]).
+    // **The rows a patch publishes to every viewer alike**, derived by the first pass and cloned by
+    // the rest — and, inside it, the two kit indices over EVERY faction's bands that decide which
+    // rows those are. `None` with a single audience, which is what keeps a single-player turn paying
+    // for none of it (see [`crate::snapshot::subsistence::WildRowMemo`]).
+    let mut wild_rows = (capture_list.len() > 1).then(|| {
+        let equipment_config = equipment.get();
+        crate::snapshot::subsistence::WildRowMemo::new(
+            crate::snapshot::subsistence::resolve_build_kit_ids(
+                populations
+                    .iter()
+                    .filter_map(|(_, _, allocation, ..)| allocation),
+                &forage_registry,
+                &herd_registry,
+                &equipment_config,
+            ),
+            crate::snapshot::subsistence::resolve_upkeep_kits(
+                populations
+                    .iter()
+                    .filter_map(|(_, _, allocation, ..)| allocation),
+                &forage_registry,
+                &herd_registry,
+                &deposits,
+                &equipment_config,
+            ),
+        )
+    });
+    for viewer in capture_list.iter().copied() {
+        passes_left -= 1;
+        // The per-cohort readout: two walks of the population query (the coord index, then the states),
+        // each of which derives travel/scout/expedition figures rather than copying them. Per cohort,
+        // and the expedition-delivery forecast inside it is a forward sim per in-flight party.
+        let populations_scope = crate::turn_profile::scope("snapshot.build.populations");
+        let demographics_config = demographics.get();
+        let wellbeing_config = wellbeing.get();
+        let settlement_stage_config = settlement_stage.get();
+        // Global labor config today (identical for every band); the work-range ring is surfaced
+        // per-band so the client reads it off the selected band (future-proof if bands diverge).
+        let band_work_range = labor_config.band_work_range;
+        // Effective hunt reach (= `band_work_range + hunt_leash_tiles`, the leash a Hunt lapses past),
+        // echoed per-band so the client offers a local hunt vs a hunting expedition by herd distance.
+        let hunt_reach = labor_config.hunt_reach();
+        // Expedition levers echoed per-cohort — same idiom as `band_work_range`: global config today,
+        // surfaced per-band so the client reads them off the selected band. Populated for EVERY cohort
+        // (the outfit UI lives on the resident-band panel, not on the expedition).
+        let expedition_cfg = expedition.get();
+        let fauna_config = fauna.get();
+        // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
+        // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
+        // `person` profile and `labor_config`'s kitted haul rate. What varies per band is only its
+        // `BandEquipment` wear, which `population_state` resolves against these.
+        let equipment_config = equipment.get();
+        let combat_config = combat.get();
+        // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
+        // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree. Through the one
+        // named constructor rather than a fourth copy of the multiply (`CombatConfig::expedition_tuning`).
+        let expedition_combat_tuning = combat_config.expedition_tuning();
+        let kit_levers = crate::snapshot::population::BandKitLevers {
+            config: &equipment_config,
+            person_intrinsic: creatures.get().person(),
+            baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+            baseline_gather_rate: labor_config.forage.per_worker_biomass_capacity,
+            equipped_vantage_range: labor_config.scout.vantage_range as f32,
+            // The detached party's *equipped* observation radius, beside the posted vantage's — the
+            // second axis the one wayfinding item lifts.
+            equipped_expedition_sight_range: expedition_cfg.observe_sight_range as f32,
+        };
+        // **The crafting readout's config half, resolved ONCE for the capture.** `craftOffers` is
+        // bands × recipes, and everything that is a function of the recipe alone — its group, its bench
+        // material, the tool that bounds it, the material's own word — is a constant across that
+        // product. Hoisting it is what keeps the per-band pass to the band's own three questions.
+        let materials_config = materials.get();
+        let recipes_config = recipes.get();
+        let craft_offer_plans =
+            crate::snapshot::crafting::plan_craft_offers(&recipes_config, &equipment_config);
+        let knowledge_threshold = ladder_config.knowledge.completion_threshold;
+        // **Per FACTION, not per band** — every band of a faction knows the same crafts, so a per-band
+        // resolution would be one discovery-ledger walk per band for one answer.
+        let known_crafts_by_faction: std::collections::HashMap<
+            crate::orders::FactionId,
+            std::collections::BTreeMap<String, bool>,
+        > = populations
+            .iter()
+            .map(|(_, cohort, _, _, _, _, _, _, _)| cohort.faction)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|faction| {
+                (
                     faction,
-                    knowledge_threshold,
+                    crate::snapshot::crafting::known_crafts(
+                        &materials_config,
+                        &discovery_progress,
+                        faction,
+                        knowledge_threshold,
+                    ),
+                )
+            })
+            .collect();
+        // **A faction with no ledger row knows nothing**, which is the opening state of every campaign:
+        // none of the three crafts ships known. An empty map is that answer, and it is a `static` rather
+        // than a per-band allocation because the fallback is taken on the first turn of every game.
+        static NO_CRAFTS_KNOWN: std::sync::LazyLock<std::collections::BTreeMap<String, bool>> =
+            std::sync::LazyLock::new(std::collections::BTreeMap::new);
+        let expedition_levers = ExpeditionLevers {
+            hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
+            // **The config, not a resolved number.** Shipment carry has two rules resolved off it —
+            // the per-worker echo the outfit UI multiplies, and a live party's own cap — and the row
+            // builder runs both, so a term that scales with the party rather than with a worker cannot
+            // slip past one of them.
+            trade: &expedition_cfg.trade,
+            trade_material_carry_weight: expedition_cfg.trade.material_carry_weight,
+            trade_fodder_carry_weight: expedition_cfg.trade.fodder_carry_weight,
+            // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
+            // outfitting lever is quoted for a party that leaves kitted, and `labor_config`'s key is the
+            // sledless baseline now.
+            hunt_per_worker_provisions: hunt_per_worker_provisions(
+                equipment_config.equipped_reference(
+                    crate::equipment_config::EquipmentStat::HuntCarry,
+                    labor_config.hunt.per_worker_biomass_capacity,
+                ),
+                &fauna_config,
+            ),
+            hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
+            hunt_forecast_horizon_turns: expedition_cfg.hunt.forecast_horizon_turns,
+            band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
+            settle_min_founding_workers: expedition_cfg.settle.min_founding_workers,
+            settle_parent_min_workers: expedition_cfg.settle.parent_min_workers,
+        };
+        // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
+        // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
+        let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
+            .iter()
+            .filter_map(|(entity, cohort, _, _, _, _, _, _, _)| {
+                tile_positions
+                    .get(&cohort.current_tile.to_bits())
+                    .copied()
+                    .map(|p| (entity, p))
+            })
+            .collect();
+        // **EVERY OPEN OUTFITTING WINDOW**, resolved once — a take's cap is a fact about its PARENT's
+        // ledger, so this is a lookup rather than a per-band walk. Empty on every turn after the windows
+        // shut, which is almost every frame.
+        let loadout_windows = starting_loadout
+            .as_deref()
+            .map(|windows| {
+                crate::snapshot::population::band_loadout_windows(
+                    windows,
+                    &equipment_config,
+                    populations.iter().filter_map(
+                        |(_, cohort, _, _, _, band_id, _, equipment, _)| {
+                            band_id.map(|band| (*band, equipment, &cohort.stores))
+                        },
+                    ),
+                )
+            })
+            .unwrap_or_default();
+        // ⛔ **WIRE-LEVEL FOG FOR PEOPLE — the SAME seam the herd list uses.**
+        //
+        // `HerdSnapshotInputs::herd_is_visible` asks `VisibilityLedger::is_visible(viewer, x, y)` and
+        // short-circuits on `fog_enabled`; this asks the identical question, so there is one notion of
+        // *"the viewer can see this"* rather than a second one free to drift from it. `Active`, not
+        // `Discovered`, for the herd list's reason: ground you saw two hundred turns ago says nothing
+        // about where a band is camped today, and a band wanders.
+        //
+        // **Fails CLOSED.** A band whose tile does not resolve to a position, and an absent faction map
+        // (before the first `calculate_visibility`, or the turn after a rollback clears the ledger),
+        // both read as not-visible — matching `visibility_raster_from_ledger`, which emits an
+        // all-unexplored raster in the same state.
+        let foreign_band_is_visible = |position: Option<UVec2>| -> bool {
+            if !config.fog_enabled {
+                return true;
+            }
+            position.is_some_and(|pos| visibility_ledger.is_visible(viewer, pos.x, pos.y))
+        };
+        let mut population_states: Vec<PopulationCohortState> = populations
+            .iter()
+            .filter_map(
+                |(
+                    entity,
+                    cohort,
+                    allocation,
+                    travel,
+                    expedition,
+                    band_id,
+                    band_name,
+                    equipment,
+                    bench,
+                )| {
+                    let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
+                    // ⛔ **THE THREE TIERS — resolved FIRST, so nothing below it is even computed for a
+                    // band the viewer is not entitled to.** See
+                    // [`crate::snapshot::population::redacted_population_state`].
+                    //
+                    //   1. **your own band** — the full row, unchanged;
+                    //   2. **a foreign band standing where you can see** — a redacted row, because the
+                    //      client colours foreign markers by faction and draws them, so the row has to
+                    //      exist;
+                    //   3. **a foreign band anywhere else** — no row at all.
+                    //
+                    // **`fog_enabled` moves the line between 2 and 3 and NEVER between 1 and 2.** Fog
+                    // decides what you can *see*; it is not an entitlement switch, so turning it off
+                    // reveals where the rival's camps are and still says nothing about their insides.
+                    if cohort.faction != viewer {
+                        if !foreign_band_is_visible(current_pos) {
+                            return None;
+                        }
+                        return Some(crate::snapshot::population::redacted_population_state(
+                            entity,
+                            band_id,
+                            band_name,
+                            cohort,
+                            current_pos,
+                        ));
+                    }
+                    // A band is "traveling" while a `move_band` order is still en route to its target.
+                    let is_traveling = travel
+                        .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
+                        .unwrap_or(false);
+                    // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
+                    let travel_target = travel.map(|t| t.target);
+                    // Local scout: scouts are now forward observers posting vantage points out from the
+                    // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
+                    // with no scouts), using the same helper the visibility pass applies, so the field
+                    // stays coherent for the client.
+                    let scout_workers = allocation
+                        .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+                        .unwrap_or(0);
+                    let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
+                    // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
+                    // normal band). Reuses the raid forward-sim seeded with the party's current haul.
+                    let expedition_delivery = expedition.and_then(|exp| {
+                        let party_pos = current_pos?;
+                        let home_pos = cohort_positions.get(&exp.home_band).copied();
+                        // **This party's own fighting tier** — the kit it was SENT OUT WITH masked over
+                        // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
+                        // so the ETA projects the take the party can actually make: bare-handed if it
+                        // left bare-handed, and stepped down once its spears are gone.
+                        let party_wear = equipment.cloned().unwrap_or_else(|| {
+                            BandEquipment::start_stocked_for(
+                                &equipment_config,
+                                available_workers(cohort.working) as f32,
+                            )
+                        });
+                        // **The party's TARGET, so a mass-bounded weapon is judged against the animal it
+                        // was actually sent after.** A party whose mission names no herd (a scout) has no
+                        // quarry, and its ETA is a travel figure rather than a take — the unbounded
+                        // reading is the honest one there.
+                        let expedition_quarry_mass = match &exp.mission {
+                            crate::components::ExpeditionMission::Hunt { fauna_id, .. }
+                            | crate::components::ExpeditionMission::Deny { fauna_id, .. } => {
+                                herd_registry.find(fauna_id).map(|herd| herd.body_mass)
+                            }
+                            _ => None,
+                        };
+                        // **How the party's own gear divides it** — the same seam
+                        // `advance_expeditions` resolves the live turn through, so the ETA projects the
+                        // crews the party actually fields rather than a uniformly-armed one.
+                        let coverage = equipment_config.coverage(
+                            &exp.kit,
+                            available_workers(cohort.working) as f32,
+                            &party_wear,
+                        );
+                        let party = crate::fauna::PartyResolution {
+                            equipment: &equipment_config,
+                            coverage: &coverage,
+                            wear: &party_wear,
+                            intrinsic: kit_levers.person_intrinsic,
+                            tuning: expedition_combat_tuning,
+                            hunt_injury_damage_per_animal: combat_config
+                                .hunt_injury_damage_per_animal,
+                        }
+                        .party_against(match expedition_quarry_mass {
+                            Some(mass) => crate::equipment_config::Quarry::Mass(mass),
+                            None => crate::equipment_config::Quarry::Any,
+                        });
+                        // And the same kit's haul tier — the ETA has to project what THIS party can drag
+                        // home, not what a kitted one could.
+                        let party_haul = coverage.weighted_rate(|kit| {
+                            equipment_config.hunt_per_worker_biomass_capacity(
+                                kit_levers.baseline_haul_rate,
+                                kit,
+                                &party_wear,
+                            )
+                        });
+                        crate::systems::expedition_delivery(
+                            exp,
+                            cohort.stores.get(FOOD).to_f32(),
+                            available_workers(cohort.working),
+                            party_pos,
+                            home_pos,
+                            &herd_registry,
+                            &fauna_config,
+                            &labor_config,
+                            &expedition_cfg,
+                            &party,
+                            party_haul,
+                            config.grid_size.x,
+                            config.map_topology.wrap_horizontal,
+                        )
+                    });
+                    Some(population_state(PopulationStateInputs {
+                        entity,
+                        band_id,
+                        band_name,
+                        cohort,
+                        allocation,
+                        expedition,
+                        current_position: current_pos,
+                        is_traveling,
+                        demographics: &demographics_config,
+                        wellbeing: &wellbeing_config,
+                        supply_membership: &supply_membership,
+                        work_range: band_work_range,
+                        raid_radius: fauna_config.predators.raid_radius,
+                        scout_vantage_distance,
+                        expedition_levers: &expedition_levers,
+                        settlement_stage_config: &settlement_stage_config,
+                        travel_target,
+                        hunt_reach,
+                        expedition_delivery,
+                        equipment,
+                        kit_levers: &kit_levers,
+                        // The take model's roster and the fight's dials, for each hunt row's
+                        // `hunt_useful_workers`.
+                        hunt_crew_levers: &crate::snapshot::population::HuntCrewLevers {
+                            fauna: &fauna_config,
+                            combat: &combat_config,
+                            // The bare carry rate a **corralled** row's collection curve is resolved
+                            // against; a stalked row's kill curve never reads it.
+                            baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+                        },
+                        bench,
+                        // **This band's outfitting window**, or `None` when it has nothing to outfit.
+                        loadout_window: band_id
+                            .and_then(|band| loadout_windows.get(&band.0))
+                            .cloned(),
+                        // **This band's faction decides which crafts are known**, so the memo is keyed
+                        // per faction and resolved lazily — one entry per faction that owns a band,
+                        // not one per band.
+                        craft_inputs: &crate::snapshot::crafting::BandCraftInputs {
+                            materials: &materials_config,
+                            equipment: &equipment_config,
+                            plans: &craft_offer_plans,
+                            known_crafts: known_crafts_by_faction
+                                .get(&cohort.faction)
+                                .unwrap_or(&NO_CRAFTS_KNOWN),
+                            recipes: &recipes_config,
+                            // **The ladder's reference job**, resolved once per capture — an equipment
+                            // life gauge quotes a build's wear in *gardens' worth*, not in bare work
+                            // units, and the garden is the `plant:tended` rung's own `work_cost`.
+                            reference_build_cost: ladder_config.reference_build_cost(),
+                        },
+                        build_sources: &crate::snapshot::population::BuildSourceInputs {
+                            forage: &forage_registry,
+                            herds: &herd_registry,
+                        },
+                    }))
+                },
+            )
+            .collect();
+        population_states.sort_unstable_by_key(|state| state.entity);
+        drop(populations_scope);
+
+        // Power nodes plus the grid-wide metrics aggregate. Per power node.
+        let power_scope = crate::turn_profile::scope("snapshot.build.power");
+        let mut power_states: Vec<PowerNodeState> = power_nodes
+            .iter()
+            .map(|(entity, node)| power_state(entity, node))
+            .collect();
+        power_states.sort_unstable_by_key(|state| state.entity);
+
+        let power_metrics = power_metrics_from_grid(&power_grid);
+        drop(power_scope);
+        // The culture layer/tension lists, copied off `CultureManager`. Per culture layer, and the
+        // local layers are one-per-owned-tile, so this one tracks the map.
+        let culture_scope = crate::turn_profile::scope("snapshot.build.culture");
+        let mut culture_layer_states: Vec<CultureLayerState> = Vec::new();
+        if let Some(global_layer) = culture.global_layer() {
+            culture_layer_states.push(culture_layer_state(global_layer));
+        }
+        for layer in culture.regional_layers() {
+            culture_layer_states.push(culture_layer_state(layer));
+        }
+        for layer in culture.local_layers() {
+            culture_layer_states.push(culture_layer_state(layer));
+        }
+        culture_layer_states.sort_unstable_by_key(|state| state.id);
+
+        let mut culture_tension_states: Vec<CultureTensionState> = culture
+            .active_tensions()
+            .into_iter()
+            .map(culture_tension_state)
+            .collect();
+        culture_tension_states.sort_unstable_by(|a, b| {
+            (a.layer_id, a.kind as u8, a.timer).cmp(&(b.layer_id, b.kind as u8, b.timer))
+        });
+
+        drop(culture_scope);
+
+        // Ledger-shaped readouts that walk a resource, not the world: the knowledge ledger's three
+        // payload vectors, the generation registry, and the influential roster. Per ledger entry.
+        let ledgers_scope = crate::turn_profile::scope("snapshot.build.ledgers");
+        let KnowledgeSnapshotPayload {
+            entries: knowledge_ledger_states,
+            timeline: knowledge_timeline_states,
+            metrics: knowledge_metrics_state,
+        } = knowledge_ledger.snapshot_payload(viewer);
+
+        let mut generation_states: Vec<GenerationState> =
+            registry.profiles().iter().map(generation_state).collect();
+        generation_states.sort_unstable_by_key(|state| state.id);
+
+        let mut influencer_states: Vec<InfluentialIndividualState> = roster.states();
+        influencer_states.sort_unstable_by_key(|state| state.id);
+        drop(ledgers_scope);
+
+        // The discovery ladder's four readouts plus its telemetry. Per catalogued discovery — a content
+        // count, so it grows when the catalog does, never with the map.
+        let discovery_scope = crate::turn_profile::scope("snapshot.build.discovery");
+        let discovery_states = discovery_progress_entries(&discovery_progress, viewer);
+        let great_discovery_definition_states = snapshot_definitions(&gds.registry);
+        let great_discovery_states = snapshot_discoveries(&gds.ledger, viewer);
+        let great_discovery_progress_states = snapshot_progress(&gds.readiness, viewer);
+        let great_discovery_telemetry_state =
+            snapshot_telemetry(&gds.ledger, &gds.readiness, viewer);
+        drop(discovery_scope);
+
+        // The contiguous full-grid raster block: terrain, sentiment, corruption, culture,
+        // military, visibility. The moisture/elevation overlays are built further down (they need
+        // state assembled in between), so they re-enter this same label there — hence `rasters` reports
+        // two calls per capture.
+        let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
+        let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
+        let sentiment_raster =
+            sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
+        let corruption_raster = corruption_raster_from_simulation(CorruptionRasterInputs {
+            tiles: &tile_states,
+            populations: &population_states,
+            power_nodes: &power_states,
+            corruption_signals: CorruptionSignals {
+                ledger: corruption_ledgers.ledger(),
+                telemetry: &corruption_telemetry,
+            },
+            grid_size: config.grid_size,
+            overlays: overlays_config.as_ref(),
+        });
+        let culture_raster = culture_raster_from_layers(
+            &tile_states,
+            culture.as_ref(),
+            config.grid_size,
+            overlays_config.as_ref(),
+        );
+        let military_raster = military_raster_from_state(
+            &tile_states,
+            &population_states,
+            &power_states,
+            config.grid_size,
+            overlays_config.as_ref(),
+        );
+        let visibility_raster = visibility_raster_from_ledger(
+            &visibility_ledger,
+            viewer,
+            config.grid_size,
+            config.fog_enabled,
+        );
+        drop(raster_scope);
+
+        // The four sentiment axes and their itemised driver lists — a derived attribution built by
+        // walking the policy/incident/influencer sources and formatting a label per non-zero
+        // contribution. Per (influencer + corruption exposure) × 4 axes, so it tracks roster size.
+        let sentiment_scope = crate::turn_profile::scope("snapshot.build.sentiment");
+        let policy_axes = axis_bias.policy_values();
+        let incident_axes = axis_bias.incident_values();
+        let influencer_axes = roster.sentiment_totals();
+        let combined_axes = axis_bias.combined();
+
+        let policy_raw = policy_axes.map(Scalar::raw);
+        let incident_raw = incident_axes.map(Scalar::raw);
+        let influencer_raw = influencer_axes.map(Scalar::raw);
+        let combined_raw = combined_axes.map(Scalar::raw);
+
+        let mut axis_drivers: [Vec<SentimentDriverState>; 4] = std::array::from_fn(|_| Vec::new());
+
+        for idx in 0..4 {
+            let value = policy_raw[idx];
+            if value != 0 {
+                axis_drivers[idx].push(SentimentDriverState {
+                    category: SentimentDriverCategory::Policy,
+                    label: format!("Policy Lever ({})", AXIS_NAMES[idx]),
+                    value,
+                    weight: Scalar::one().raw(),
+                });
+            }
+        }
+
+        let mut incident_driver_totals = [0i64; 4];
+        for record in corruption_telemetry.exposures_this_turn.iter() {
+            if record.trust_delta == 0 {
+                continue;
+            }
+            let idx = 1usize;
+            incident_driver_totals[idx] += record.trust_delta;
+            axis_drivers[idx].push(SentimentDriverState {
+                category: SentimentDriverCategory::Incident,
+                label: format!(
+                    "Corruption Exposure #{} ({:?})",
+                    record.incident_id, record.subsystem
+                ),
+                value: record.trust_delta,
+                weight: Scalar::one().raw(),
+            });
+        }
+
+        for idx in 0..4 {
+            let remainder = incident_raw[idx] - incident_driver_totals[idx];
+            if remainder != 0 {
+                axis_drivers[idx].push(SentimentDriverState {
+                    category: SentimentDriverCategory::Incident,
+                    label: format!("Incident Carryover ({})", AXIS_NAMES[idx]),
+                    value: remainder,
+                    weight: Scalar::one().raw(),
+                });
+            }
+        }
+
+        for state in &influencer_states {
+            let contributions = [
+                state.sentiment_knowledge,
+                state.sentiment_trust,
+                state.sentiment_equity,
+                state.sentiment_agency,
+            ];
+            let label_base = influencer_label(state);
+            let weight = influencer_driver_weight(state);
+            for (idx, value) in contributions.iter().enumerate() {
+                if *value == 0 {
+                    continue;
+                }
+                axis_drivers[idx].push(SentimentDriverState {
+                    category: SentimentDriverCategory::Influencer,
+                    label: format!("{} · {}", label_base, AXIS_NAMES[idx]),
+                    value: *value,
+                    weight,
+                });
+            }
+        }
+
+        let mut drivers_iter = axis_drivers.into_iter();
+        let knowledge_drivers = drivers_iter.next().unwrap_or_default();
+        let trust_drivers = drivers_iter.next().unwrap_or_default();
+        let equity_drivers = drivers_iter.next().unwrap_or_default();
+        let agency_drivers = drivers_iter.next().unwrap_or_default();
+
+        let sentiment_state = SentimentTelemetryState {
+            knowledge: SentimentAxisTelemetry {
+                policy: policy_raw[0],
+                incidents: incident_raw[0],
+                influencers: influencer_raw[0],
+                total: combined_raw[0],
+                drivers: knowledge_drivers,
+            },
+            trust: SentimentAxisTelemetry {
+                policy: policy_raw[1],
+                incidents: incident_raw[1],
+                influencers: influencer_raw[1],
+                total: combined_raw[1],
+                drivers: trust_drivers,
+            },
+            equity: SentimentAxisTelemetry {
+                policy: policy_raw[2],
+                incidents: incident_raw[2],
+                influencers: influencer_raw[2],
+                total: combined_raw[2],
+                drivers: equity_drivers,
+            },
+            agency: SentimentAxisTelemetry {
+                policy: policy_raw[3],
+                incidents: incident_raw[3],
+                influencers: influencer_raw[3],
+                total: combined_raw[3],
+                drivers: agency_drivers,
+            },
+        };
+
+        let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
+        drop(sentiment_scope);
+
+        // The crisis heatmap + annotations, cloned wholesale out of the overlay resource. A full-map
+        // `Vec` copy, so it belongs with the rasters in shape even though it is not built here.
+        let crisis_scope = crate::turn_profile::scope("snapshot.build.crisis");
+        let crisis_telemetry_state = crisis_telemetry_state_from_metrics(&metrics.crisis);
+        let crisis_overlay_state = CrisisOverlayState {
+            heatmap: crisis_overlay.raster.clone(),
+            annotations: crisis_overlay.annotations.clone(),
+        };
+        drop(crisis_scope);
+
+        // Counts, build id and campaign label. O(1).
+        let header_scope = crate::turn_profile::scope("snapshot.build.header");
+        let mut header = SnapshotHeader::new(
+            tick.0,
+            tile_states.len(),
+            population_states.len(),
+            power_states.len(),
+            influencer_states.len(),
+        );
+        header.wrap_horizontal = config.map_topology.wrap_horizontal;
+        header.server_build = crate::BUILD_ID.to_string();
+        header.world_epoch = world_epoch.0;
+
+        if let Some(label_res) = campaign_label.as_ref() {
+            let label = label_res.as_ref();
+            header.campaign_label = Some(label.to_snapshot());
+        }
+
+        // **The VIEWER's start.** `StartMarkerState` is a single `{x, y}` on the wire and stays one: a
+        // frame is captured for one viewer, so the marker it carries is that viewer's own opening
+        // ground. A world with one faction publishes exactly what it always has.
+        let start_marker_state = start_location
+            .position_for(viewer)
+            .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
+        drop(header_scope);
+
+        // Second entry into `snapshot.build.rasters` (see the block above) — the two remaining
+        // full-grid overlays, which could not be built with the others.
+        let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
+        let moisture_overlay_state = moisture_overlay_from_resource(
+            moisture.as_ref().map(|res| res.as_ref()),
+            config.grid_size,
+        );
+
+        let elevation_overlay_state =
+            elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
+        drop(raster_scope);
+        // The remaining readouts, each a resource → wire-state conversion. Split into `herds`,
+        // `forage_patches` and `readouts` because the first two are the ones with a world-sized
+        // denominator (herds; forage patches ≈ food-bearing tiles) while the rest are per-faction or
+        // per-content-item.
+        let readouts_scope = crate::turn_profile::scope("snapshot.build.readouts");
+        // The climate-band cut points ride the snapshot beside the other worldgen overlays
+        // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
+        // told. A per-map constant read straight off the active `ClimateConfig`.
+        let climate_bands_state = ClimateBandsState {
+            polar_max_temp: config.climate.polar_max_temp,
+            boreal_max_temp: config.climate.boreal_max_temp,
+            temperate_max_temp: config.climate.temperate_max_temp,
+        };
+        // The cold/heat mortality model the population system actually kills from (issue #614), read
+        // straight off the live configs so the client states the survivable range the SIM enforces
+        // rather than inferring one from the climate bands above — which are a different, unrelated set
+        // of thresholds. Mirrors the cold block of `systems::population`.
+        let temperature_survivability_state = TemperatureSurvivabilityState {
+            cold_onset_temp: demographics_config.cold.onset_temp,
+            cold_mortality_scale: demographics_config.cold.mortality_scale,
+            cold_max_mortality: demographics_config.cold.max_mortality,
+            heat_onset_temp: demographics_config.heat.onset_temp,
+            heat_mortality_scale: demographics_config.heat.mortality_scale,
+            heat_max_mortality: demographics_config.heat.max_mortality,
+        };
+        let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
+            .into_iter()
+            .map(|entry| entry.to_schema())
+            .collect();
+        // The client's DISPLAY herd list, fog-filtered for the viewer faction — the same ledger and the
+        // same faction `visibility_raster` below is rendered from, so the two can never disagree about
+        // whether a herd is on visible ground. The unfiltered sim record is the `HerdRegistry` itself,
+        // which the checkpoint carries; the snapshot is the view only.
+        //
+        // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
+        // against the viewer's fog before it is emitted.
+        let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
+        // **The kit each herd's tables are priced at, resolved once PER SPECIES × SOURCE AXIS.** The
+        // default is a pure function of quarry × roster × *is this herd penned*
+        // (`fauna::herd_default_hunt_kit`), so resolving it per herd would re-score the same roster for
+        // every herd of the same animal; each map is keyed by the display name the herd's own `species`
+        // string carries. **Two maps rather than one**, because the axis is a property of the herd and
+        // the species is a property of the roster: the range map answers every wild/pastoral herd and
+        // the pen map answers a corralled one, so a lookup is still one probe.
+        // A fresh ledger to price every kit against — a herd row describes the KIT, not any band's wear
+        // on it, and the default itself is resolved at the fresh tier for the same reason.
+        let quoted_wear = BandEquipment::start_stocked(&equipment_config);
+        let quote_species = |species: &crate::fauna_config::SpeciesDef, corralled: bool| {
+            let kit = crate::fauna::herd_default_hunt_kit(
+                &equipment_config,
+                kit_levers.person_intrinsic,
+                species,
+                corralled,
+            );
+            (
+                species.display_name.clone(),
+                quoted_party_for(
+                    &equipment_config,
+                    &combat_config,
+                    &kit,
+                    &quoted_wear,
+                    // **BOUNDED, against this species** — one party per herd is still one party,
+                    // but it now knows what it is hunting, so a mass-bounded weapon is priced only
+                    // where it can actually hold the animal. This is what a per-herd resolution
+                    // buys that the single unbounded party could not express.
+                    equipment_config.hunter_profile_against(
+                        kit_levers.person_intrinsic,
+                        &kit,
+                        &quoted_wear,
+                        species.body_mass,
+                    ),
                 ),
             )
-        })
-        .collect();
-    // **A faction with no ledger row knows nothing**, which is the opening state of every campaign:
-    // none of the three crafts ships known. An empty map is that answer, and it is a `static` rather
-    // than a per-band allocation because the fallback is taken on the first turn of every game.
-    static NO_CRAFTS_KNOWN: std::sync::LazyLock<std::collections::BTreeMap<String, bool>> =
-        std::sync::LazyLock::new(std::collections::BTreeMap::new);
-    let expedition_levers = ExpeditionLevers {
-        hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
-        // **The config, not a resolved number.** Shipment carry has two rules resolved off it —
-        // the per-worker echo the outfit UI multiplies, and a live party's own cap — and the row
-        // builder runs both, so a term that scales with the party rather than with a worker cannot
-        // slip past one of them.
-        trade: &expedition_cfg.trade,
-        trade_material_carry_weight: expedition_cfg.trade.material_carry_weight,
-        trade_fodder_carry_weight: expedition_cfg.trade.fodder_carry_weight,
-        // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
-        // outfitting lever is quoted for a party that leaves kitted, and `labor_config`'s key is the
-        // sledless baseline now.
-        hunt_per_worker_provisions: hunt_per_worker_provisions(
-            equipment_config.equipped_reference(
+        };
+        let quoted_parties: HashMap<String, QuotedParty> = fauna_config
+            .species
+            .values()
+            .map(|species| quote_species(species, HERD_ON_THE_RANGE))
+            .collect();
+        let penned_parties: HashMap<String, QuotedParty> = fauna_config
+            .species
+            .values()
+            .map(|species| quote_species(species, HERD_IN_A_PEN))
+            .collect();
+        // **The fallback for a herd whose species the roster cannot resolve** — the hunt job's default,
+        // resolved UNBOUNDED because there is no quarry to test a bound against. `EquipmentConfig::
+        // validate` rejects a mass-bounded attack in that kit for exactly this reason, so the unbounded
+        // resolution here cannot quote a weapon against animals it could not touch.
+        let fallback_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
+        let quoted_fallback = quoted_party_for(
+            &equipment_config,
+            &combat_config,
+            &fallback_kit,
+            &quoted_wear,
+            equipment_config.hunter_profile_unbounded(
+                kit_levers.person_intrinsic,
+                &fallback_kit,
+                &quoted_wear,
+            ),
+        );
+        // **THE LIVE BUILDERS KIT PER QUEUED SOURCE**, resolved once for both source tables
+        // (`docs/plan_standing_upkeep.md` §4.7a ②). It is read off the bands' **queues**, not off the
+        // patch/herd scratch beside it: a `build_kit` command is answered by a recapture in the same
+        // dispatch, so a turn-written field would show the pick a whole turn late.
+        //
+        // ⛔ **THE VIEWER'S OWN BANDS, AND THAT IS WHAT MAKES BOTH INDICES A BOUNDARY.** They key purely
+        // by tile and herd id, so an unfiltered walk resolved *every* faction's queue onto the shared
+        // source tables — a rival mid-build on ground the viewer has never walked published
+        // `isField: false, fieldProgress: 0` beside their kit id, their finish date and their queue
+        // position. The improvement standing on a tile follows the **ground** and is legible where the
+        // viewer has explored; who is raising it, with what, and where it sits in their line is the
+        // **builder's** internal state, the same category as the larder and bench a foreign band's row
+        // already withholds. Their membership is also what the two source tables gate the stamped
+        // scratch on, so this filter is the single seam behind both readings
+        // (`factions.md` → "The improvement follows the ground; the BUILDER'S state follows the
+        // builder").
+        let build_kit_ids = crate::snapshot::subsistence::resolve_build_kit_ids(
+            populations
+                .iter()
+                .filter(|(_, cohort, ..)| cohort.faction == viewer)
+                .filter_map(|(_, _, allocation, ..)| allocation),
+            &forage_registry,
+            &herd_registry,
+            &equipment_config,
+        );
+        // **THE LIVE KEEPING KIT PER WORKED SOURCE**, on the same rule one account over
+        // (`docs/plan_standing_upkeep.md` §2.7): the keeping kit is a property of the band's **row**, so
+        // it is read off the rows rather than off the patch/herd scratch, and an `upkeep_kit` command is
+        // answered by a recapture in the same dispatch. **Filtered to the viewer's bands** on the rule
+        // above — which is also what `UpkeepKitIds::patch`'s own contract has always claimed ("`("",
+        // false)` when no band **of the faction** works it").
+        let upkeep_kit_ids = crate::snapshot::subsistence::resolve_upkeep_kits(
+            populations
+                .iter()
+                .filter(|(_, cohort, ..)| cohort.faction == viewer)
+                .filter_map(|(_, _, allocation, ..)| allocation),
+            &forage_registry,
+            &herd_registry,
+            &deposits,
+            &equipment_config,
+        );
+        let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
+            telemetry: &herds,
+            registry: &herd_registry,
+            fauna: &fauna_config,
+            ladder: &ladder_config,
+            // **The EQUIPPED reference haul rate, off the item table's default tier** — a herd row has
+            // no band to resolve a sled tier against, and `labor_config`'s key is the sledless baseline
+            // since the carries moved onto their tiers.
+            equipped_haul_rate: equipment_config.equipped_reference(
                 crate::equipment_config::EquipmentStat::HuntCarry,
                 labor_config.hunt.per_worker_biomass_capacity,
             ),
-            &fauna_config,
-        ),
-        hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
-        hunt_forecast_horizon_turns: expedition_cfg.hunt.forecast_horizon_turns,
-        band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
-        settle_min_founding_workers: expedition_cfg.settle.min_founding_workers,
-        settle_parent_min_workers: expedition_cfg.settle.parent_min_workers,
-    };
-    // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
-    // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
-    let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
-        .iter()
-        .filter_map(|(entity, cohort, _, _, _, _, _, _, _)| {
-            tile_positions
-                .get(&cohort.current_tile.to_bits())
-                .copied()
-                .map(|p| (entity, p))
-        })
-        .collect();
-    // **EVERY OPEN OUTFITTING WINDOW**, resolved once — a take's cap is a fact about its PARENT's
-    // ledger, so this is a lookup rather than a per-band walk. Empty on every turn after the windows
-    // shut, which is almost every frame.
-    let loadout_windows = starting_loadout
-        .as_deref()
-        .map(|windows| {
-            crate::snapshot::population::band_loadout_windows(
-                windows,
-                &equipment_config,
-                populations
-                    .iter()
-                    .filter_map(|(_, cohort, _, _, _, band_id, _, equipment, _)| {
-                        band_id.map(|band| (*band, equipment, &cohort.stores))
-                    }),
-            )
-        })
-        .unwrap_or_default();
-    let mut population_states: Vec<PopulationCohortState> = populations
-        .iter()
-        .map(
-            |(
-                entity,
-                cohort,
-                allocation,
-                travel,
-                expedition,
-                band_id,
-                band_name,
-                equipment,
-                bench,
-            )| {
-                let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
-                // A band is "traveling" while a `move_band` order is still en route to its target.
-                let is_traveling = travel
-                    .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
-                    .unwrap_or(false);
-                // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
-                let travel_target = travel.map(|t| t.target);
-                // Local scout: scouts are now forward observers posting vantage points out from the
-                // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
-                // with no scouts), using the same helper the visibility pass applies, so the field
-                // stays coherent for the client.
-                let scout_workers = allocation
-                    .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-                    .unwrap_or(0);
-                let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
-                // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
-                // normal band). Reuses the raid forward-sim seeded with the party's current haul.
-                let expedition_delivery = expedition.and_then(|exp| {
-                    let party_pos = current_pos?;
-                    let home_pos = cohort_positions.get(&exp.home_band).copied();
-                    // **This party's own fighting tier** — the kit it was SENT OUT WITH masked over
-                    // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
-                    // so the ETA projects the take the party can actually make: bare-handed if it
-                    // left bare-handed, and stepped down once its spears are gone.
-                    let party_wear = equipment.cloned().unwrap_or_else(|| {
-                        BandEquipment::start_stocked_for(
-                            &equipment_config,
-                            available_workers(cohort.working) as f32,
-                        )
-                    });
-                    // **The party's TARGET, so a mass-bounded weapon is judged against the animal it
-                    // was actually sent after.** A party whose mission names no herd (a scout) has no
-                    // quarry, and its ETA is a travel figure rather than a take — the unbounded
-                    // reading is the honest one there.
-                    let expedition_quarry_mass = match &exp.mission {
-                        crate::components::ExpeditionMission::Hunt { fauna_id, .. }
-                        | crate::components::ExpeditionMission::Deny { fauna_id, .. } => {
-                            herd_registry.find(fauna_id).map(|herd| herd.body_mass)
-                        }
-                        _ => None,
-                    };
-                    // **How the party's own gear divides it** — the same seam
-                    // `advance_expeditions` resolves the live turn through, so the ETA projects the
-                    // crews the party actually fields rather than a uniformly-armed one.
-                    let coverage = equipment_config.coverage(
-                        &exp.kit,
-                        available_workers(cohort.working) as f32,
-                        &party_wear,
-                    );
-                    let party = crate::fauna::PartyResolution {
-                        equipment: &equipment_config,
-                        coverage: &coverage,
-                        wear: &party_wear,
-                        intrinsic: kit_levers.person_intrinsic,
-                        tuning: expedition_combat_tuning,
-                        hunt_injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
-                    }
-                    .party_against(match expedition_quarry_mass {
-                        Some(mass) => crate::equipment_config::Quarry::Mass(mass),
-                        None => crate::equipment_config::Quarry::Any,
-                    });
-                    // And the same kit's haul tier — the ETA has to project what THIS party can drag
-                    // home, not what a kitted one could.
-                    let party_haul = coverage.weighted_rate(|kit| {
-                        equipment_config.hunt_per_worker_biomass_capacity(
-                            kit_levers.baseline_haul_rate,
-                            kit,
-                            &party_wear,
-                        )
-                    });
-                    crate::systems::expedition_delivery(
-                        exp,
-                        cohort.stores.get(FOOD).to_f32(),
-                        available_workers(cohort.working),
-                        party_pos,
-                        home_pos,
-                        &herd_registry,
-                        &fauna_config,
-                        &labor_config,
-                        &expedition_cfg,
-                        &party,
-                        party_haul,
-                        config.grid_size.x,
-                        config.map_topology.wrap_horizontal,
-                    )
-                });
-                population_state(PopulationStateInputs {
-                    entity,
-                    band_id,
-                    band_name,
-                    cohort,
-                    allocation,
-                    expedition,
-                    current_position: current_pos,
-                    is_traveling,
-                    demographics: &demographics_config,
-                    wellbeing: &wellbeing_config,
-                    supply_membership: &supply_membership,
-                    work_range: band_work_range,
-                    raid_radius: fauna_config.predators.raid_radius,
-                    scout_vantage_distance,
-                    expedition_levers: &expedition_levers,
-                    settlement_stage_config: &settlement_stage_config,
-                    travel_target,
-                    hunt_reach,
-                    expedition_delivery,
-                    equipment,
-                    kit_levers: &kit_levers,
-                    // The take model's roster and the fight's dials, for each hunt row's
-                    // `hunt_useful_workers`.
-                    hunt_crew_levers: &crate::snapshot::population::HuntCrewLevers {
-                        fauna: &fauna_config,
-                        combat: &combat_config,
-                        // The bare carry rate a **corralled** row's collection curve is resolved
-                        // against; a stalked row's kill curve never reads it.
-                        baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
-                    },
-                    bench,
-                    // **This band's outfitting window**, or `None` when it has nothing to outfit.
-                    loadout_window: band_id
-                        .and_then(|band| loadout_windows.get(&band.0))
-                        .cloned(),
-                    // **This band's faction decides which crafts are known**, so the memo is keyed
-                    // per faction and resolved lazily — one entry per faction that owns a band,
-                    // not one per band.
-                    craft_inputs: &crate::snapshot::crafting::BandCraftInputs {
-                        materials: &materials_config,
-                        equipment: &equipment_config,
-                        plans: &craft_offer_plans,
-                        known_crafts: known_crafts_by_faction
-                            .get(&cohort.faction)
-                            .unwrap_or(&NO_CRAFTS_KNOWN),
-                        recipes: &recipes_config,
-                        // **The ladder's reference job**, resolved once per capture — an equipment
-                        // life gauge quotes a build's wear in *gardens' worth*, not in bare work
-                        // units, and the garden is the `plant:tended` rung's own `work_cost`.
-                        reference_build_cost: ladder_config.reference_build_cost(),
-                    },
-                    build_sources: &crate::snapshot::population::BuildSourceInputs {
-                        forage: &forage_registry,
-                        herds: &herd_registry,
-                    },
-                })
-            },
-        )
-        .collect();
-    population_states.sort_unstable_by_key(|state| state.entity);
-    drop(populations_scope);
-
-    // Power nodes plus the grid-wide metrics aggregate. Per power node.
-    let power_scope = crate::turn_profile::scope("snapshot.build.power");
-    let mut power_states: Vec<PowerNodeState> = power_nodes
-        .iter()
-        .map(|(entity, node)| power_state(entity, node))
-        .collect();
-    power_states.sort_unstable_by_key(|state| state.entity);
-
-    let power_metrics = power_metrics_from_grid(&power_grid);
-    drop(power_scope);
-
-    // Ledger-shaped readouts that walk a resource, not the world: the knowledge ledger's three
-    // payload vectors, the generation registry, and the influential roster. Per ledger entry.
-    let ledgers_scope = crate::turn_profile::scope("snapshot.build.ledgers");
-    let KnowledgeSnapshotPayload {
-        entries: knowledge_ledger_states,
-        timeline: knowledge_timeline_states,
-        metrics: knowledge_metrics_state,
-    } = knowledge_ledger.snapshot_payload();
-
-    let mut generation_states: Vec<GenerationState> =
-        registry.profiles().iter().map(generation_state).collect();
-    generation_states.sort_unstable_by_key(|state| state.id);
-
-    let mut influencer_states: Vec<InfluentialIndividualState> = roster.states();
-    influencer_states.sort_unstable_by_key(|state| state.id);
-    drop(ledgers_scope);
-
-    // The culture layer/tension lists, copied off `CultureManager`. Per culture layer, and the
-    // local layers are one-per-owned-tile, so this one tracks the map.
-    let culture_scope = crate::turn_profile::scope("snapshot.build.culture");
-    let mut culture_layer_states: Vec<CultureLayerState> = Vec::new();
-    if let Some(global_layer) = culture.global_layer() {
-        culture_layer_states.push(culture_layer_state(global_layer));
-    }
-    for layer in culture.regional_layers() {
-        culture_layer_states.push(culture_layer_state(layer));
-    }
-    for layer in culture.local_layers() {
-        culture_layer_states.push(culture_layer_state(layer));
-    }
-    culture_layer_states.sort_unstable_by_key(|state| state.id);
-
-    let mut culture_tension_states: Vec<CultureTensionState> = culture
-        .active_tensions()
-        .into_iter()
-        .map(culture_tension_state)
-        .collect();
-    culture_tension_states.sort_unstable_by(|a, b| {
-        (a.layer_id, a.kind as u8, a.timer).cmp(&(b.layer_id, b.kind as u8, b.timer))
-    });
-
-    drop(culture_scope);
-
-    // The discovery ladder's four readouts plus its telemetry. Per catalogued discovery — a content
-    // count, so it grows when the catalog does, never with the map.
-    let discovery_scope = crate::turn_profile::scope("snapshot.build.discovery");
-    let discovery_states = discovery_progress_entries(&discovery_progress);
-    let great_discovery_definition_states = snapshot_definitions(&gds.registry);
-    let great_discovery_states = snapshot_discoveries(&gds.ledger);
-    let great_discovery_progress_states = snapshot_progress(&gds.readiness);
-    let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
-    drop(discovery_scope);
-
-    // The contiguous full-grid raster block: terrain, sentiment, corruption, culture,
-    // military, visibility. The moisture/elevation overlays are built further down (they need
-    // state assembled in between), so they re-enter this same label there — hence `rasters` reports
-    // two calls per capture.
-    let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
-    let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
-    let sentiment_raster =
-        sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
-    let corruption_raster = corruption_raster_from_simulation(CorruptionRasterInputs {
-        tiles: &tile_states,
-        populations: &population_states,
-        power_nodes: &power_states,
-        corruption_signals: CorruptionSignals {
-            ledger: corruption_ledgers.ledger(),
-            telemetry: &corruption_telemetry,
-        },
-        grid_size: config.grid_size,
-        overlays: overlays_config.as_ref(),
-    });
-    let culture_raster = culture_raster_from_layers(
-        &tile_states,
-        culture.as_ref(),
-        config.grid_size,
-        overlays_config.as_ref(),
-    );
-    let military_raster = military_raster_from_state(
-        &tile_states,
-        &population_states,
-        &power_states,
-        config.grid_size,
-        overlays_config.as_ref(),
-    );
-    let visibility_raster = visibility_raster_from_ledger(
-        &visibility_ledger,
-        viewer_faction.0,
-        config.grid_size,
-        config.fog_enabled,
-    );
-    drop(raster_scope);
-
-    // The four sentiment axes and their itemised driver lists — a derived attribution built by
-    // walking the policy/incident/influencer sources and formatting a label per non-zero
-    // contribution. Per (influencer + corruption exposure) × 4 axes, so it tracks roster size.
-    let sentiment_scope = crate::turn_profile::scope("snapshot.build.sentiment");
-    let policy_axes = axis_bias.policy_values();
-    let incident_axes = axis_bias.incident_values();
-    let influencer_axes = roster.sentiment_totals();
-    let combined_axes = axis_bias.combined();
-
-    let policy_raw = policy_axes.map(Scalar::raw);
-    let incident_raw = incident_axes.map(Scalar::raw);
-    let influencer_raw = influencer_axes.map(Scalar::raw);
-    let combined_raw = combined_axes.map(Scalar::raw);
-
-    let mut axis_drivers: [Vec<SentimentDriverState>; 4] = std::array::from_fn(|_| Vec::new());
-
-    for idx in 0..4 {
-        let value = policy_raw[idx];
-        if value != 0 {
-            axis_drivers[idx].push(SentimentDriverState {
-                category: SentimentDriverCategory::Policy,
-                label: format!("Policy Lever ({})", AXIS_NAMES[idx]),
-                value,
-                weight: Scalar::one().raw(),
-            });
-        }
-    }
-
-    let mut incident_driver_totals = [0i64; 4];
-    for record in corruption_telemetry.exposures_this_turn.iter() {
-        if record.trust_delta == 0 {
-            continue;
-        }
-        let idx = 1usize;
-        incident_driver_totals[idx] += record.trust_delta;
-        axis_drivers[idx].push(SentimentDriverState {
-            category: SentimentDriverCategory::Incident,
-            label: format!(
-                "Corruption Exposure #{} ({:?})",
-                record.incident_id, record.subsystem
-            ),
-            value: record.trust_delta,
-            weight: Scalar::one().raw(),
+            grid_size: config.grid_size,
+            wrap_horizontal: config.map_topology.wrap_horizontal,
+            // **The graze layer the destination-capacity quote is struck over** — the same registry the
+            // live `K` is summed from, so the two are one seam at two standings.
+            graze: &graze_registry,
+            visibility: &visibility_ledger,
+            viewer,
+            fog_enabled: config.fog_enabled,
+            // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
+            // and has no band to ask, but it can ask the *animal*, so each species' row is quoted at
+            // the kit its compose sheet opens on and **publishes which**. A fresh kit
+            // (`BandEquipment::start_stocked`), because the row describes the kit rather than
+            // any band's wear on it.
+            //
+            // **This prices the per-worker YIELD row only.** The two pre-launch estimate tables that
+            // used to be quoted here are gone — `crate::forecast_query` answers them per band, per kit,
+            // per exact party and floor, on demand — and with them went the sled tier only they read
+            // and `range_sigmas` (the denial readout's band width).
+            parties: &quoted_parties,
+            penned_parties: &penned_parties,
+            fallback_party: &quoted_fallback,
+            build_kits: &build_kit_ids,
+            upkeep_kits: &upkeep_kit_ids,
         });
-    }
-
-    for idx in 0..4 {
-        let remainder = incident_raw[idx] - incident_driver_totals[idx];
-        if remainder != 0 {
-            axis_drivers[idx].push(SentimentDriverState {
-                category: SentimentDriverCategory::Incident,
-                label: format!("Incident Carryover ({})", AXIS_NAMES[idx]),
-                value: remainder,
-                weight: Scalar::one().raw(),
-            });
-        }
-    }
-
-    for state in &influencer_states {
-        let contributions = [
-            state.sentiment_knowledge,
-            state.sentiment_trust,
-            state.sentiment_equity,
-            state.sentiment_agency,
-        ];
-        let label_base = influencer_label(state);
-        let weight = influencer_driver_weight(state);
-        for (idx, value) in contributions.iter().enumerate() {
-            if *value == 0 {
-                continue;
-            }
-            axis_drivers[idx].push(SentimentDriverState {
-                category: SentimentDriverCategory::Influencer,
-                label: format!("{} · {}", label_base, AXIS_NAMES[idx]),
-                value: *value,
-                weight,
-            });
-        }
-    }
-
-    let mut drivers_iter = axis_drivers.into_iter();
-    let knowledge_drivers = drivers_iter.next().unwrap_or_default();
-    let trust_drivers = drivers_iter.next().unwrap_or_default();
-    let equity_drivers = drivers_iter.next().unwrap_or_default();
-    let agency_drivers = drivers_iter.next().unwrap_or_default();
-
-    let sentiment_state = SentimentTelemetryState {
-        knowledge: SentimentAxisTelemetry {
-            policy: policy_raw[0],
-            incidents: incident_raw[0],
-            influencers: influencer_raw[0],
-            total: combined_raw[0],
-            drivers: knowledge_drivers,
-        },
-        trust: SentimentAxisTelemetry {
-            policy: policy_raw[1],
-            incidents: incident_raw[1],
-            influencers: influencer_raw[1],
-            total: combined_raw[1],
-            drivers: trust_drivers,
-        },
-        equity: SentimentAxisTelemetry {
-            policy: policy_raw[2],
-            incidents: incident_raw[2],
-            influencers: influencer_raw[2],
-            total: combined_raw[2],
-            drivers: equity_drivers,
-        },
-        agency: SentimentAxisTelemetry {
-            policy: policy_raw[3],
-            incidents: incident_raw[3],
-            influencers: influencer_raw[3],
-            total: combined_raw[3],
-            drivers: agency_drivers,
-        },
-    };
-
-    let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
-    drop(sentiment_scope);
-
-    // The crisis heatmap + annotations, cloned wholesale out of the overlay resource. A full-map
-    // `Vec` copy, so it belongs with the rasters in shape even though it is not built here.
-    let crisis_scope = crate::turn_profile::scope("snapshot.build.crisis");
-    let crisis_telemetry_state = crisis_telemetry_state_from_metrics(&metrics.crisis);
-    let crisis_overlay_state = CrisisOverlayState {
-        heatmap: crisis_overlay.raster.clone(),
-        annotations: crisis_overlay.annotations.clone(),
-    };
-    drop(crisis_scope);
-
-    // Counts, build id and campaign label. O(1).
-    let header_scope = crate::turn_profile::scope("snapshot.build.header");
-    let mut header = SnapshotHeader::new(
-        tick.0,
-        tile_states.len(),
-        population_states.len(),
-        power_states.len(),
-        influencer_states.len(),
-    );
-    header.wrap_horizontal = config.map_topology.wrap_horizontal;
-    header.server_build = crate::BUILD_ID.to_string();
-    header.world_epoch = world_epoch.0;
-
-    if let Some(label_res) = campaign_label.as_ref() {
-        let label = label_res.as_ref();
-        header.campaign_label = Some(label.to_snapshot());
-    }
-
-    let start_marker_state = start_location
-        .position()
-        .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
-    drop(header_scope);
-
-    // Second entry into `snapshot.build.rasters` (see the block above) — the two remaining
-    // full-grid overlays, which could not be built with the others.
-    let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
-    let moisture_overlay_state =
-        moisture_overlay_from_resource(moisture.as_ref().map(|res| res.as_ref()), config.grid_size);
-
-    let elevation_overlay_state =
-        elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
-    drop(raster_scope);
-    // The remaining readouts, each a resource → wire-state conversion. Split into `herds`,
-    // `forage_patches` and `readouts` because the first two are the ones with a world-sized
-    // denominator (herds; forage patches ≈ food-bearing tiles) while the rest are per-faction or
-    // per-content-item.
-    let readouts_scope = crate::turn_profile::scope("snapshot.build.readouts");
-    // The climate-band cut points ride the snapshot beside the other worldgen overlays
-    // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
-    // told. A per-map constant read straight off the active `ClimateConfig`.
-    let climate_bands_state = ClimateBandsState {
-        polar_max_temp: config.climate.polar_max_temp,
-        boreal_max_temp: config.climate.boreal_max_temp,
-        temperate_max_temp: config.climate.temperate_max_temp,
-    };
-    // The cold/heat mortality model the population system actually kills from (issue #614), read
-    // straight off the live configs so the client states the survivable range the SIM enforces
-    // rather than inferring one from the climate bands above — which are a different, unrelated set
-    // of thresholds. Mirrors the cold block of `systems::population`.
-    let temperature_survivability_state = TemperatureSurvivabilityState {
-        cold_onset_temp: demographics_config.cold.onset_temp,
-        cold_mortality_scale: demographics_config.cold.mortality_scale,
-        cold_max_mortality: demographics_config.cold.max_mortality,
-        heat_onset_temp: demographics_config.heat.onset_temp,
-        heat_mortality_scale: demographics_config.heat.mortality_scale,
-        heat_max_mortality: demographics_config.heat.max_mortality,
-    };
-    let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
-        .into_iter()
-        .map(|entry| entry.to_schema())
-        .collect();
-    // The client's DISPLAY herd list, fog-filtered for the viewer faction — the same ledger and the
-    // same faction `visibility_raster` below is rendered from, so the two can never disagree about
-    // whether a herd is on visible ground. The unfiltered sim record is the `HerdRegistry` itself,
-    // which the checkpoint carries; the snapshot is the view only.
-    //
-    // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
-    // against the viewer's fog before it is emitted.
-    let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
-    // **The kit each herd's tables are priced at, resolved once PER SPECIES × SOURCE AXIS.** The
-    // default is a pure function of quarry × roster × *is this herd penned*
-    // (`fauna::herd_default_hunt_kit`), so resolving it per herd would re-score the same roster for
-    // every herd of the same animal; each map is keyed by the display name the herd's own `species`
-    // string carries. **Two maps rather than one**, because the axis is a property of the herd and
-    // the species is a property of the roster: the range map answers every wild/pastoral herd and
-    // the pen map answers a corralled one, so a lookup is still one probe.
-    // A fresh ledger to price every kit against — a herd row describes the KIT, not any band's wear
-    // on it, and the default itself is resolved at the fresh tier for the same reason.
-    let quoted_wear = BandEquipment::start_stocked(&equipment_config);
-    let quote_species = |species: &crate::fauna_config::SpeciesDef, corralled: bool| {
-        let kit = crate::fauna::herd_default_hunt_kit(
-            &equipment_config,
-            kit_levers.person_intrinsic,
-            species,
-            corralled,
+        drop(herds_scope);
+        let faction_inventory_state = snapshot_faction_inventory(&faction_inventory, viewer);
+        let sedentarization_state = snapshot_sedentarization(&sedentarization, viewer);
+        let discovered_sites_state =
+            snapshot_discovered_sites(&discovered_sites, &sites_config, viewer);
+        // **Faction is a property of the ENDPOINT** — resolved here, once, so the connection ledger
+        // itself never carries one. An edge whose observer band is gone resolves to nothing and is
+        // filtered out rather than published against a guessed faction.
+        let band_factions: HashMap<BandId, FactionId> = populations
+            .iter()
+            .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                band_id.map(|band| (*band, cohort.faction))
+            })
+            .collect();
+        let connections_state =
+            crate::snapshot::connections::connection_states(&connections, &band_factions, viewer);
+        // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
+        // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
+        let route_states = crate::snapshot::routes::route_states(
+            &roads,
+            &visibility_ledger,
+            viewer,
+            config.fog_enabled,
+            &ladder_config,
+            &build_kit_ids,
+            |pos| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .map(|(_, tile, _)| tile.terrain)
+            },
         );
-        (
-            species.display_name.clone(),
-            quoted_party_for(
-                &equipment_config,
-                &combat_config,
-                &kit,
-                &quoted_wear,
-                // **BOUNDED, against this species** — one party per herd is still one party,
-                // but it now knows what it is hunting, so a mass-bounded weapon is priced only
-                // where it can actually hold the animal. This is what a per-herd resolution
-                // buys that the single unbounded party could not express.
-                equipment_config.hunter_profile_against(
-                    kit_levers.person_intrinsic,
-                    &kit,
-                    &quoted_wear,
-                    species.body_mass,
+        // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
+        // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
+        // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
+        // anybody has opened a working on it.
+        let deposit_states = crate::snapshot::deposits::deposit_states(
+            &deposits,
+            &visibility_ledger,
+            viewer,
+            config.fog_enabled,
+            &ladder_config,
+            &extraction_config,
+            &build_kit_ids,
+            &upkeep_kit_ids,
+            deposit_tiles.iter().copied(),
+        );
+        let demographics_state = snapshot_demographics(&population_states);
+        // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's
+        // quotes for that patch, so this one is both map-sized and derivation-heavy.
+        let forage_patches_scope = crate::turn_profile::scope("snapshot.build.forage_patches");
+        let forage_patches_state = snapshot_forage_patches(
+            &forage_registry,
+            &labor_config.forage,
+            // The gather twin of the herd row's haul rate above — the basket's equipped tier, because a
+            // patch has no band either.
+            equipment_config.equipped_reference(
+                crate::equipment_config::EquipmentStat::ForageCarry,
+                labor_config.forage.per_worker_biomass_capacity,
+            ),
+            &flora_config,
+            &ladder_config,
+            &seasonal_weights,
+            &sow_site_refusals,
+            &tile_capacities,
+            &flora_quotes,
+            &build_kit_ids,
+            &upkeep_kit_ids,
+            viewer,
+            &visibility_ledger,
+            config.fog_enabled,
+            wild_rows.as_mut(),
+        );
+        drop(forage_patches_scope);
+        let intensification_knowledge_state =
+            snapshot_intensification_knowledge(&discovery_progress, &ladder_config, viewer);
+        let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
+        // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
+        // A per-world constant like the roster above, so it diffs out after the first frame.
+        let route_rung_state = snapshot_route_rungs(&ladder_config);
+        // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become, on the
+        // same per-world seam as the route catalog above, so it likewise diffs out after the first frame.
+        let deposit_rung_state = snapshot_deposit_rungs(&ladder_config);
+        let command_events_state = command_events_to_state(&command_events, viewer);
+        // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
+        let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer);
+        let stance_axes_state = snapshot_stance_axes(&beat_ledger, viewer);
+        let voice_medium_state = snapshot_voice_medium(&beat_ledger, viewer);
+        let victory_snapshot_state = victory_snapshot_from_resource(&victory, viewer);
+        let capability_bits = capability_flags.bits();
+        drop(readouts_scope);
+
+        // The struct literal itself. Every field the publisher compares whole-section is `.clone()`d
+        // into it, so this is a second full copy of the rasters, the herd list, the forage patches and
+        // the crisis heatmap — proportional to the assembled snapshot's own byte size.
+        let assemble_scope = crate::turn_profile::scope("snapshot.build.assemble");
+        // **THE KIT ROSTER, once per world** — the picker's list plus the tiers each kit grants, so the
+        // client renders real numbers without a second copy of the TOE table. A per-world constant, so
+        // it diffs out on every frame after the first.
+        let kit_states = kit_roster_states(&equipment_config, &labor_config, &kit_levers);
+        let equipment_config_json = serialize_equipment_config(&equipment_config);
+        // **The three per-world catalogues plus the learned one.** The first three are `Whole` baselines
+        // like the kit roster and diff out on every frame after the first; `craft_knowledge` genuinely
+        // moves, because a craft is learned by making things.
+        let material_catalogue =
+            crate::snapshot::crafting::material_catalogue(&materials_config, &equipment_config);
+        let characteristic_band_catalogue =
+            crate::snapshot::crafting::characteristic_band_catalogue(&materials_config);
+        let recipe_catalogue =
+            crate::snapshot::crafting::recipe_catalogue(&recipes_config, &equipment_config);
+        let craft_knowledge_states = crate::snapshot::crafting::craft_knowledge_states(
+            &materials_config,
+            &discovery_progress,
+            knowledge_threshold,
+            viewer,
+        );
+        // **The opening loadout picker's row.** A world with no chosen campaign publishes the default —
+        // a shut window with no budget — which is exactly what such a world has.
+        let opening_loadout_state = match (starting_loadout.as_deref(), active_profile.as_deref()) {
+            (Some(window), Some(profile)) => crate::snapshot::campaign::snapshot_opening_loadout(
+                window,
+                profile.profile(),
+                &recipes_config,
+                &crate::snapshot::crafting::known_crafts(
+                    &materials_config,
+                    &discovery_progress,
+                    viewer,
+                    knowledge_threshold,
                 ),
             ),
-        )
-    };
-    let quoted_parties: HashMap<String, QuotedParty> = fauna_config
-        .species
-        .values()
-        .map(|species| quote_species(species, HERD_ON_THE_RANGE))
-        .collect();
-    let penned_parties: HashMap<String, QuotedParty> = fauna_config
-        .species
-        .values()
-        .map(|species| quote_species(species, HERD_IN_A_PEN))
-        .collect();
-    // **The fallback for a herd whose species the roster cannot resolve** — the hunt job's default,
-    // resolved UNBOUNDED because there is no quarry to test a bound against. `EquipmentConfig::
-    // validate` rejects a mass-bounded attack in that kit for exactly this reason, so the unbounded
-    // resolution here cannot quote a weapon against animals it could not touch.
-    let fallback_kit = equipment_config.default_kit(crate::equipment_config::KitJob::Hunt);
-    let quoted_fallback = quoted_party_for(
-        &equipment_config,
-        &combat_config,
-        &fallback_kit,
-        &quoted_wear,
-        equipment_config.hunter_profile_unbounded(
-            kit_levers.person_intrinsic,
-            &fallback_kit,
-            &quoted_wear,
-        ),
-    );
-    // **THE LIVE BUILDERS KIT PER QUEUED SOURCE**, resolved once for both source tables
-    // (`docs/plan_standing_upkeep.md` §4.7a ②). It is read off the bands' **queues**, not off the
-    // patch/herd scratch beside it: a `build_kit` command is answered by a recapture in the same
-    // dispatch, so a turn-written field would show the pick a whole turn late.
-    let build_kit_ids = crate::snapshot::subsistence::resolve_build_kit_ids(
-        populations
-            .iter()
-            .filter_map(|(_, _, allocation, ..)| allocation),
-        &forage_registry,
-        &herd_registry,
-        &equipment_config,
-    );
-    // **THE LIVE KEEPING KIT PER WORKED SOURCE**, on the same rule one account over
-    // (`docs/plan_standing_upkeep.md` §2.7): the keeping kit is a property of the band's **row**, so
-    // it is read off the rows rather than off the patch/herd scratch, and an `upkeep_kit` command is
-    // answered by a recapture in the same dispatch.
-    let upkeep_kit_ids = crate::snapshot::subsistence::resolve_upkeep_kits(
-        populations
-            .iter()
-            .filter_map(|(_, _, allocation, ..)| allocation),
-        &forage_registry,
-        &herd_registry,
-        &deposits,
-        &equipment_config,
-    );
-    let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
-        telemetry: &herds,
-        registry: &herd_registry,
-        fauna: &fauna_config,
-        ladder: &ladder_config,
-        // **The EQUIPPED reference haul rate, off the item table's default tier** — a herd row has
-        // no band to resolve a sled tier against, and `labor_config`'s key is the sledless baseline
-        // since the carries moved onto their tiers.
-        equipped_haul_rate: equipment_config.equipped_reference(
-            crate::equipment_config::EquipmentStat::HuntCarry,
-            labor_config.hunt.per_worker_biomass_capacity,
-        ),
-        grid_size: config.grid_size,
-        wrap_horizontal: config.map_topology.wrap_horizontal,
-        // **The graze layer the destination-capacity quote is struck over** — the same registry the
-        // live `K` is summed from, so the two are one seam at two standings.
-        graze: &graze_registry,
-        visibility: &visibility_ledger,
-        viewer: viewer_faction.0,
-        fog_enabled: config.fog_enabled,
-        // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
-        // and has no band to ask, but it can ask the *animal*, so each species' row is quoted at
-        // the kit its compose sheet opens on and **publishes which**. A fresh kit
-        // (`BandEquipment::start_stocked`), because the row describes the kit rather than
-        // any band's wear on it.
-        //
-        // **This prices the per-worker YIELD row only.** The two pre-launch estimate tables that
-        // used to be quoted here are gone — `crate::forecast_query` answers them per band, per kit,
-        // per exact party and floor, on demand — and with them went the sled tier only they read
-        // and `range_sigmas` (the denial readout's band width).
-        parties: &quoted_parties,
-        penned_parties: &penned_parties,
-        fallback_party: &quoted_fallback,
-        build_kits: &build_kit_ids,
-        upkeep_kits: &upkeep_kit_ids,
-    });
-    drop(herds_scope);
-    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
-    let sedentarization_state = snapshot_sedentarization(&sedentarization);
-    let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
-    // **Faction is a property of the ENDPOINT** — resolved here, once, so the connection ledger
-    // itself never carries one. An edge whose observer band is gone resolves to nothing and is
-    // filtered out rather than published against a guessed faction.
-    let band_factions: HashMap<BandId, FactionId> = populations
-        .iter()
-        .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
-            band_id.map(|band| (*band, cohort.faction))
-        })
-        .collect();
-    let connections_state = crate::snapshot::connections::connection_states(
-        &connections,
-        &band_factions,
-        viewer_faction.0,
-    );
-    // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
-    // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
-    let route_states = crate::snapshot::routes::route_states(
-        &roads,
-        &visibility_ledger,
-        viewer_faction.0,
-        config.fog_enabled,
-        &ladder_config,
-        &build_kit_ids,
-        |pos| {
-            tile_registry
-                .index(pos.x, pos.y)
-                .and_then(|entity| tiles.get(entity).ok())
-                .map(|(_, tile, _)| tile.terrain)
-        },
-    );
-    // **THE DEPOSITS THE VIEWER HAS EXPLORED** — the road list's `Discovered` gate, because a
-    // quarry does not wander off either, over the deposit-bearing ground sweep 1 picked out. See
-    // `snapshot::deposits::deposit_states`: a row is about the LAND, so it stands whether or not
-    // anybody has opened a working on it.
-    let deposit_states = crate::snapshot::deposits::deposit_states(
-        &deposits,
-        &visibility_ledger,
-        viewer_faction.0,
-        config.fog_enabled,
-        &ladder_config,
-        &extraction_config,
-        &build_kit_ids,
-        &upkeep_kit_ids,
-        deposit_tiles.into_iter(),
-    );
-    let demographics_state = snapshot_demographics(&population_states);
-    // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's
-    // quotes for that patch, so this one is both map-sized and derivation-heavy.
-    let forage_patches_scope = crate::turn_profile::scope("snapshot.build.forage_patches");
-    let forage_patches_state = snapshot_forage_patches(
-        &forage_registry,
-        &labor_config.forage,
-        // The gather twin of the herd row's haul rate above — the basket's equipped tier, because a
-        // patch has no band either.
-        equipment_config.equipped_reference(
-            crate::equipment_config::EquipmentStat::ForageCarry,
-            labor_config.forage.per_worker_biomass_capacity,
-        ),
-        &flora_config,
-        &ladder_config,
-        &seasonal_weights,
-        &sow_site_refusals,
-        &tile_capacities,
-        &flora_quotes,
-        &build_kit_ids,
-        &upkeep_kit_ids,
-    );
-    drop(forage_patches_scope);
-    let intensification_knowledge_state =
-        snapshot_intensification_knowledge(&discovery_progress, &ladder_config);
-    let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
-    // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
-    // A per-world constant like the roster above, so it diffs out after the first frame.
-    let route_rung_state = snapshot_route_rungs(&ladder_config);
-    // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become, on the
-    // same per-world seam as the route catalog above, so it likewise diffs out after the first frame.
-    let deposit_rung_state = snapshot_deposit_rungs(&ladder_config);
-    let command_events_state = command_events_to_state(&command_events);
-    // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
-    let pending_forks_state = snapshot_pending_forks(&beat_ledger);
-    let stance_axes_state = snapshot_stance_axes(&beat_ledger);
-    let voice_medium_state = snapshot_voice_medium(&beat_ledger);
-    let victory_snapshot_state = victory_snapshot_from_resource(&victory);
-    let capability_bits = capability_flags.bits();
-    drop(readouts_scope);
-
-    // The struct literal itself. Every field the publisher compares whole-section is `.clone()`d
-    // into it, so this is a second full copy of the rasters, the herd list, the forage patches and
-    // the crisis heatmap — proportional to the assembled snapshot's own byte size.
-    let assemble_scope = crate::turn_profile::scope("snapshot.build.assemble");
-    // **THE KIT ROSTER, once per world** — the picker's list plus the tiers each kit grants, so the
-    // client renders real numbers without a second copy of the TOE table. A per-world constant, so
-    // it diffs out on every frame after the first.
-    let kit_states = kit_roster_states(&equipment_config, &labor_config, &kit_levers);
-    let equipment_config_json = serialize_equipment_config(&equipment_config);
-    // **The three per-world catalogues plus the learned one.** The first three are `Whole` baselines
-    // like the kit roster and diff out on every frame after the first; `craft_knowledge` genuinely
-    // moves, because a craft is learned by making things.
-    let material_catalogue =
-        crate::snapshot::crafting::material_catalogue(&materials_config, &equipment_config);
-    let characteristic_band_catalogue =
-        crate::snapshot::crafting::characteristic_band_catalogue(&materials_config);
-    let recipe_catalogue =
-        crate::snapshot::crafting::recipe_catalogue(&recipes_config, &equipment_config);
-    let craft_knowledge_states = crate::snapshot::crafting::craft_knowledge_states(
-        &materials_config,
-        &discovery_progress,
-        knowledge_threshold,
-    );
-    // **The opening loadout picker's row.** A world with no chosen campaign publishes the default —
-    // a shut window with no budget — which is exactly what such a world has.
-    let opening_loadout_state = match (starting_loadout.as_deref(), active_profile.as_deref()) {
-        (Some(window), Some(profile)) => crate::snapshot::campaign::snapshot_opening_loadout(
-            window,
-            profile.profile(),
-            &recipes_config,
-            &crate::snapshot::crafting::known_crafts(
-                &materials_config,
-                &discovery_progress,
-                viewer_faction.0,
-                knowledge_threshold,
-            ),
-        ),
-        _ => OpeningLoadoutState::default(),
-    };
-    let assembled = WorldSnapshot {
-        header,
-        kits: kit_states,
-        materials: material_catalogue,
-        characteristic_bands: characteristic_band_catalogue,
-        recipes: recipe_catalogue,
-        craft_knowledge: craft_knowledge_states,
-        equipment_config_json,
-        default_hunt_kit_id: equipment_config
-            .default_kit_id(crate::equipment_config::KitJob::Hunt)
-            .to_string(),
-        default_forage_kit_id: equipment_config
-            .default_kit_id(crate::equipment_config::KitJob::Forage)
-            .to_string(),
-        default_scout_kit_id: equipment_config
-            .default_kit_id(crate::equipment_config::KitJob::Scout)
-            .to_string(),
-        default_warrior_kit_id: equipment_config
-            .default_kit_id(crate::equipment_config::KitJob::Warrior)
-            .to_string(),
-        // **The ranging party's default** — the launch verbs' answer when the player names no kit,
-        // published beside the four role defaults for the same reason they are: the client's launch
-        // sheet has to open on the kit the sim will actually resolve.
-        default_expedition_kit_id: equipment_config
-            .default_kit_id(crate::equipment_config::KitJob::Expedition)
-            .to_string(),
-        tiles: tile_states,
-        populations: population_states,
-        power: power_states,
-        power_metrics: power_metrics.clone(),
-        terrain: terrain_overlay.clone(),
-        sentiment_raster: sentiment_raster.clone(),
-        corruption_raster: corruption_raster.clone(),
-        culture_raster: culture_raster.clone(),
-        military_raster: military_raster.clone(),
-        visibility_raster: visibility_raster.clone(),
-        fog_enabled: config.fog_enabled,
-        moisture_raster: moisture_overlay_state.clone(),
-        elevation_overlay: elevation_overlay_state.clone(),
-        climate_bands: climate_bands_state,
-        temperature_survivability: temperature_survivability_state,
-        start_marker: start_marker_state.clone(),
-        victory: victory_snapshot_state.clone(),
-        herds: herd_states.clone(),
-        food_modules: food_module_states.clone(),
-        campaign_profiles: campaign_profiles_state,
-        faction_inventory: faction_inventory_state.clone(),
-        sedentarization: sedentarization_state.clone(),
-        discovered_sites: discovered_sites_state.clone(),
-        connections: connections_state.clone(),
-        routes: route_states.clone(),
-        demographics: demographics_state.clone(),
-        forage_patches: forage_patches_state.clone(),
-        deposits: deposit_states.clone(),
-        intensification_knowledge: intensification_knowledge_state.clone(),
-        ladder_knowledge: ladder_knowledge_state.clone(),
-        route_rungs: route_rung_state.clone(),
-        deposit_rungs: deposit_rung_state.clone(),
-        command_events: command_events_state.clone(),
-        command_events_retention_turns: command_events.retention_turns() as u32,
-        pending_forks: pending_forks_state.clone(),
-        stance_axes: stance_axes_state.clone(),
-        voice_medium: voice_medium_state.clone(),
-        opening_loadout: opening_loadout_state.clone(),
-        capability_flags: capability_bits,
-        axis_bias: axis_bias_state,
-        sentiment: sentiment_state,
-        generations: generation_states,
-        corruption: corruption_ledgers.ledger().clone(),
-        influencers: influencer_states,
-        culture_layers: culture_layer_states,
-        culture_tensions: culture_tension_states,
-        discovery_progress: discovery_states,
-        great_discovery_definitions: great_discovery_definition_states.clone(),
-        great_discoveries: great_discovery_states,
-        great_discovery_progress: great_discovery_progress_states,
-        great_discovery_telemetry: great_discovery_telemetry_state,
-        knowledge_ledger: knowledge_ledger_states,
-        knowledge_timeline: knowledge_timeline_states,
-        knowledge_metrics: knowledge_metrics_state,
-        crisis_telemetry: crisis_telemetry_state.clone(),
-        crisis_overlay: crisis_overlay_state.clone(),
-    };
-    drop(assemble_scope);
+            _ => OpeningLoadoutState::default(),
+        };
+        let assembled = WorldSnapshot {
+            header,
+            kits: kit_states,
+            materials: material_catalogue,
+            characteristic_bands: characteristic_band_catalogue,
+            recipes: recipe_catalogue,
+            craft_knowledge: craft_knowledge_states,
+            equipment_config_json,
+            default_hunt_kit_id: equipment_config
+                .default_kit_id(crate::equipment_config::KitJob::Hunt)
+                .to_string(),
+            default_forage_kit_id: equipment_config
+                .default_kit_id(crate::equipment_config::KitJob::Forage)
+                .to_string(),
+            default_scout_kit_id: equipment_config
+                .default_kit_id(crate::equipment_config::KitJob::Scout)
+                .to_string(),
+            default_warrior_kit_id: equipment_config
+                .default_kit_id(crate::equipment_config::KitJob::Warrior)
+                .to_string(),
+            // **The ranging party's default** — the launch verbs' answer when the player names no kit,
+            // published beside the four role defaults for the same reason they are: the client's launch
+            // sheet has to open on the kit the sim will actually resolve.
+            default_expedition_kit_id: equipment_config
+                .default_kit_id(crate::equipment_config::KitJob::Expedition)
+                .to_string(),
+            // See `passes_left` — the last audience takes the shared tile rows rather than copying
+            // them, which is what keeps a one-seat capture identical to the pre-seat one.
+            tiles: if passes_left == 0 {
+                std::mem::take(&mut tile_states)
+            } else {
+                tile_states.clone()
+            },
+            populations: population_states,
+            power: power_states,
+            power_metrics: power_metrics.clone(),
+            terrain: terrain_overlay.clone(),
+            sentiment_raster: sentiment_raster.clone(),
+            corruption_raster: corruption_raster.clone(),
+            culture_raster: culture_raster.clone(),
+            military_raster: military_raster.clone(),
+            visibility_raster: visibility_raster.clone(),
+            fog_enabled: config.fog_enabled,
+            moisture_raster: moisture_overlay_state.clone(),
+            elevation_overlay: elevation_overlay_state.clone(),
+            climate_bands: climate_bands_state,
+            temperature_survivability: temperature_survivability_state,
+            start_marker: start_marker_state.clone(),
+            victory: victory_snapshot_state.clone(),
+            herds: herd_states.clone(),
+            food_modules: food_module_states.clone(),
+            campaign_profiles: campaign_profiles_state,
+            faction_inventory: faction_inventory_state.clone(),
+            sedentarization: sedentarization_state.clone(),
+            discovered_sites: discovered_sites_state.clone(),
+            connections: connections_state.clone(),
+            routes: route_states.clone(),
+            demographics: demographics_state.clone(),
+            forage_patches: forage_patches_state.clone(),
+            deposits: deposit_states.clone(),
+            intensification_knowledge: intensification_knowledge_state.clone(),
+            ladder_knowledge: ladder_knowledge_state.clone(),
+            route_rungs: route_rung_state.clone(),
+            deposit_rungs: deposit_rung_state.clone(),
+            command_events: command_events_state.clone(),
+            command_events_retention_turns: command_events.retention_turns() as u32,
+            pending_forks: pending_forks_state.clone(),
+            stance_axes: stance_axes_state.clone(),
+            voice_medium: voice_medium_state.clone(),
+            opening_loadout: opening_loadout_state.clone(),
+            capability_flags: capability_bits,
+            axis_bias: axis_bias_state,
+            sentiment: sentiment_state,
+            generations: generation_states,
+            corruption: corruption_ledgers.ledger().clone(),
+            influencers: influencer_states,
+            culture_layers: culture_layer_states,
+            culture_tensions: culture_tension_states,
+            discovery_progress: discovery_states,
+            great_discovery_definitions: great_discovery_definition_states.clone(),
+            great_discoveries: great_discovery_states,
+            great_discovery_progress: great_discovery_progress_states,
+            great_discovery_telemetry: great_discovery_telemetry_state,
+            knowledge_ledger: knowledge_ledger_states,
+            knowledge_timeline: knowledge_timeline_states,
+            knowledge_metrics: knowledge_metrics_state,
+            crisis_telemetry: crisis_telemetry_state.clone(),
+            crisis_overlay: crisis_overlay_state.clone(),
+        };
+        drop(assemble_scope);
+        captures.push((viewer, assembled));
+    }
     drop(build_scope);
 
-    // **The turn thread's last act on this snapshot.** Hashing, diffing, encoding and the socket
+    // **The turn thread's last act on these snapshots.** Hashing, diffing, encoding and the socket
     // write are all pure functions of the world just assembled and of publication's own state, so
     // they run on the publisher thread (#393) and turn latency stops depending on them. What is
-    // left here is a move onto a bounded channel.
+    // left here is a move onto a bounded channel, once per seat.
     //
     // Turn path: record a fresh ring entry (`update`). Post-command re-capture path
     // (`SnapshotCaptureMode::refresh_in_place`): refresh the latest broadcast + back ring entry in
     // place so a mid-turn command's world mutation reaches the client now, without pushing a ring
     // entry / advancing the turn.
+    //
+    // **The order is the audience order and it is FIFO from here on** — one publisher behind one
+    // queue — so each seat's own frames stay in the order they were built, which is the property a
+    // delta chain rests on (`snapshot::publish`).
     let _handoff_scope = crate::turn_profile::scope("snapshot.handoff");
-    if capture_mode.refresh_in_place {
-        history.refresh_latest(assembled);
-    } else {
-        history.update(assembled);
+    // Queued ahead of the frames and applied in the same FIFO order, so it costs no round trip to
+    // the publisher: publication keeps state for exactly the seats this capture built a frame for.
+    history.retain_audiences(capture_list.clone());
+    for (viewer, assembled) in captures {
+        if capture_mode.refresh_in_place {
+            history.refresh_latest(viewer, assembled);
+        } else {
+            history.update(viewer, assembled);
+        }
     }
 }
 
@@ -3416,6 +3808,44 @@ pub fn capture_snapshot(
 /// [`crate::sim_state::SimState`]s alone — one depth knob, one history of worlds. It is set once at
 /// construction (`build_headless_app`) rather than re-asserted every turn.
 pub(crate) const PUBLICATION_RING_DEPTH: usize = 1;
+
+/// **WHO THIS WORLD PUBLISHES TO — one seat per frame, one frame per seat.**
+///
+/// The server rewrites it from [`crate::seats::SeatRegistry`] whenever a seat is claimed or
+/// released; nothing else may. It is **session state, not world state** — who is sitting in a seat
+/// is a fact about this process's sockets — so it is a plain resource that no checkpoint carries
+/// (`docs/plan_multiplayer_seats.md` §4.5).
+#[derive(bevy::prelude::Resource, Debug, Clone, Default)]
+pub struct SnapshotAudiences {
+    seats: Vec<FactionId>,
+}
+
+impl SnapshotAudiences {
+    /// Replace the audience list. Order is the caller's; the capture publishes in it.
+    pub fn set(&mut self, seats: Vec<FactionId>) {
+        self.seats = seats;
+    }
+
+    pub fn seats(&self) -> &[FactionId] {
+        &self.seats
+    }
+
+    /// **The seats one capture builds a frame for.**
+    ///
+    /// An **empty** list means the single [`crate::visibility::ViewerFaction`], and that is the
+    /// shipped single-player path as much as it is the test path: a world nobody has claimed a seat
+    /// in still publishes — the idle boot app, every library test, a server before its first claim —
+    /// and it publishes exactly the one view it always did. It is *not* a fallback to faction 0's
+    /// private world for a *connected but unseated* client: an unseated stream connection is
+    /// delivered nothing at all (`.claude/rules/core_sim/snapshot-socket.md`).
+    fn capture_list(&self, viewer: FactionId) -> Vec<FactionId> {
+        if self.seats.is_empty() {
+            vec![viewer]
+        } else {
+            self.seats.clone()
+        }
+    }
+}
 
 /// Selects how [`capture_snapshot`] writes its result: the normal turn path records a fresh ring
 /// entry (`false`); the post-command re-capture path refreshes the latest broadcast snapshot in
@@ -3437,13 +3867,17 @@ pub struct SnapshotCaptureMode {
 /// | [`recapture_snapshot_in_place`] | **refreshed, never pushed** | held | delta |
 /// | this | pushed | held | full |
 ///
+/// The recapture row describes a seat that already holds a frame; a seat's *first* publication is a
+/// baseline whatever the [`Publication`] kind (see `SeatPublishState::publish`).
+///
 /// It exists because a world can arrive **already resolved** — a save loaded into a fresh app. Such
-/// a world must not run a turn (it would age the population it just restored) and must not merely
-/// recapture: a recapture refreshes `history.back_mut()`, and on a freshly built app the ring is
-/// empty, so there is nothing to refresh. The entry is never pushed, `latest_entry()` stays `None`,
-/// `Resync` answers `resync.no_world` forever, and the client's first frame for the new epoch is a
-/// **delta** rather than the baseline its world-handoff gate waits for. That is not a hypothetical:
-/// it is what a loaded game did.
+/// a world must not run a turn (it would age the population it just restored), and a recapture is the
+/// wrong statement of intent for it: a recapture *holds* the baseline and refreshes
+/// `history.back_mut()`, so on a freshly built app the only thing standing between it and an unusable
+/// frame is the first-publication rule. Before that rule existed the ring stayed empty,
+/// `latest_entry()` stayed `None`, `Resync` answered `resync.no_world` forever, and the client's first
+/// frame for the new epoch was a **delta** rather than the baseline its world-handoff gate waits for.
+/// That was not a hypothetical: it is what a loaded game did.
 ///
 /// `capture_snapshot` reads `SimulationTick` through a `Res` and never writes it — the advance lives
 /// in `advance_tick`, a different system in the same stage — which is what makes "full capture

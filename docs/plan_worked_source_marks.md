@@ -62,7 +62,7 @@ Under each ringed marker sits **one badge** carrying the two remaining facts:
 
 > **The border carries READINESS, not ownership.** An earlier cut of this plan gave it the owning
 > band's faction colour, with ink-dim for a source two factions share. That is dropped, and the
-> reason is worth recording: the mark pass filters on `MapView._is_player_unit`, so **only the
+> reason is worth recording: the mark pass filters on `HudConst.is_player_unit`, so **only the
 > player's own work is ever marked** — a faction colour would be a constant, carrying no information,
 > while spending the one channel the badge has on its most useful signal. If foreign work is ever
 > surfaced, ownership needs a channel of its own rather than this one back.

@@ -7,8 +7,8 @@ use std::sync::mpsc::Sender;
 use std::sync::{mpsc, OnceLock};
 use std::thread;
 
+use crate::bridge::command_link;
 use crate::bridge::query;
-use crate::runtime::transmit_proto_command;
 
 #[derive(GodotClass)]
 #[class(base = RefCounted, init)]
@@ -127,6 +127,80 @@ impl CommandBridge {
         dict
     }
 
+    /// **CLAIM THE SEAT THAT DRIVES `faction_id`** — the first thing this client says on its command
+    /// connection, and the thing that makes every later faction-bearing command from it legal.
+    ///
+    /// The server takes the faction a command acts on from the seat the *connection* claimed, not from
+    /// the `faction_id` on the wire (`.claude/rules/core_sim/factions.md` → "Seats"), so a client that
+    /// has claimed nothing can send only world verbs — every band order is refused with
+    /// `not_this_connections_seat`. Returns `{ok, error}` for the DISPATCH only; the answer arrives
+    /// later through [`Self::poll_query_replies`] under `request_id`, `kind: "seat_claim"`, because a
+    /// claim is a command that is answered on the socket that made it.
+    ///
+    /// **Called once per RUN.** The claim is re-asserted by the link itself on every reconnect, so
+    /// GDScript must not re-ask within a run — a second claim on a live connection is refused
+    /// (`already_seated`) by design. A new run asks again, after [`Self::release_seat`] ended the
+    /// previous one's connection.
+    #[func]
+    pub fn claim_seat(
+        &self,
+        host: GString,
+        proto_port: i64,
+        faction_id: i64,
+        request_id: i64,
+    ) -> VarDictionary {
+        let mut dict = VarDictionary::new();
+        if proto_port <= 0 || proto_port > u16::MAX as i64 {
+            let _ = dict.insert("ok", false);
+            let _ = dict.insert("error", format!("invalid port {proto_port}"));
+            return dict;
+        }
+        if faction_id < 0 || faction_id > i64::from(u32::MAX) {
+            let _ = dict.insert("ok", false);
+            let _ = dict.insert("error", format!("invalid faction {faction_id}"));
+            return dict;
+        }
+        match command_link::claim_seat(
+            &host.to_string(),
+            proto_port as u16,
+            faction_id as u32,
+            request_id as u64,
+        ) {
+            Ok(()) => {
+                let _ = dict.insert("ok", true);
+            }
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", err);
+            }
+        }
+        dict
+    }
+
+    /// **RELEASE THE SEAT THIS CONNECTION HOLDS, because the run that claimed it has ended.**
+    ///
+    /// It closes the command socket, and that is the whole mechanism: the server frees a seat when
+    /// the connection holding it closes, so nothing else tells it the run is over. The next run
+    /// claims on a new connection. Returns `{ok, error}` for the DISPATCH only — a release has no
+    /// answer to wait for, since the socket it would have arrived on is the one being closed.
+    ///
+    /// The link is process-global and outlives the `Main` scene, so without this call the next run's
+    /// claim is refused `already_seated` and its snapshot stream, addressed per seat, sends nothing.
+    #[func]
+    pub fn release_seat(&self) -> VarDictionary {
+        let mut dict = VarDictionary::new();
+        match command_link::release_seat() {
+            Ok(()) => {
+                let _ = dict.insert("ok", true);
+            }
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", err);
+            }
+        }
+        dict
+    }
+
     /// Drain every forecast answer that has landed since the last call. **Call it once a frame** —
     /// this is the ONE hop from the query worker onto the main thread, and Godot's scene tree may
     /// not be touched from any other.
@@ -136,9 +210,16 @@ impl CommandBridge {
     }
 }
 
+/// **The worker only decides WHEN a command is written; `command_link::dispatch` decides WHERE.**
+///
+/// It exists so a send never blocks Godot's main thread on a socket, and it is deliberately not the
+/// place the seated/throwaway routing lives — `bridge/command_link.rs` is, because the script host's
+/// own command path (`runtime::dispatch_proto_command`) has to make the identical choice and two
+/// copies of that rule would drift silently: a misrouted faction-bearing command is refused at
+/// runtime with no compile error.
 fn prototype_command_worker(receiver: mpsc::Receiver<CommandRequest>) {
     for request in receiver {
-        let result = match transmit_proto_command(&request.host, request.port, &request.envelope) {
+        let result = match command_link::dispatch(&request.host, request.port, &request.envelope) {
             Ok(_) => CommandResult {
                 ok: true,
                 error: None,

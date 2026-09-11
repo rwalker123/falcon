@@ -492,8 +492,12 @@ func _bench_recipes(bands: Array) -> Array:
 			running.append(recipe_id)
 	return running
 
-## The player's own craft tracks. The wire carries every faction's, exactly as the sedentarization and
-## intensification vectors do.
+## The player's own craft tracks. **The wire now carries the VIEWER's alone** — `craftKnowledge` joined
+## the viewer-scoped sections when a published frame became one viewer's view
+## (`.claude/rules/core_sim/factions.md` → "Which frame sections are viewer-scoped"), exactly as the
+## sedentarization and intensification vectors did. This filter is therefore defence in depth rather
+## than the boundary: it is kept because a rail quoting another people's Tanning is a disclosure the
+## client should refuse on its own account, not only because the server declines to send it.
 func _player_craft_knowledge() -> Array:
 	var tracks: Array = []
 	for track_variant in _craft_knowledge:

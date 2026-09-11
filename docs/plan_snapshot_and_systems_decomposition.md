@@ -327,7 +327,9 @@ Six ambiguous leaves were measured rather than assumed and moved because their o
 were inside it (`_in_range_disk`, `_draw_dashed_line`, `_draw_dashed_hex`,
 `_labor_assignments_of_marker`, `_format_yield_signed`, `_entry_realized_yield`); the shared
 primitives and `_is_player_unit` / `_draw_reticle` / the axial converters stayed, reached
-through `_view`.
+through `_view`. (`_is_player_unit` has since left MapView altogether: the six identical
+private copies across the HUD collapsed into the `HudConst.is_player_unit` static, which a
+`class_name` makes reachable with no `_view` hop at all.)
 
 Verified by PNG byte-diff: **56 frames compared, 0 differing** — and this time with no
 excluded frames, because PR #310 made `map_preview` deterministic (canvas pinned +

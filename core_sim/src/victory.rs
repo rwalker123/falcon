@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -10,8 +11,17 @@ use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
-    crisis::CrisisMetricKind, metrics::SimulationMetrics, orders::FactionId, SimulationTick,
+    crisis::CrisisMetricKind,
+    metrics::SimulationMetrics,
+    orders::{FactionId, FactionRegistry},
+    SimulationTick,
 };
+
+/// **The smallest threshold a mode may be scored against.** A configured `0.0` would make every
+/// mode achieved on the turn it appears (progress `>= 0` always), and dividing a normalized score by
+/// it would be a division by zero — so a mode that asks for nothing is scored as asking for
+/// *almost* nothing instead of being unwinnable-by-being-instantly-won.
+const MIN_THRESHOLD: f32 = 0.0001;
 
 pub const BUILTIN_VICTORY_CONFIG: &str = include_str!("data/victory_config.json");
 
@@ -100,9 +110,22 @@ impl VictoryConfig {
     }
 }
 
+/// **Where each faction stands, and who has won.**
+///
+/// # ⛔ PROGRESS IS PER FACTION
+///
+/// A victory threshold is a claim about **one people** — "control a dominant share of population",
+/// "keep your people alive" — so there is one row set per registered faction, evaluated against that
+/// faction's own metrics. It used to be a single list scored from the world's totals, which on a
+/// map with rivals meant their people counted toward your hegemony and their misery dragged your
+/// morale score, and the winner was recorded as `FactionId(0)` whoever actually crossed the line.
+///
+/// The published frame carries **the viewer's rows only** (`snapshot/campaign.rs`); the winner is
+/// public, because a winner is public by definition.
 #[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct VictoryState {
-    pub modes: Vec<VictoryModeState>,
+    /// Per faction, in id order (`BTreeMap`, so a checkpoint encodes byte-reproducibly).
+    pub modes: BTreeMap<FactionId, Vec<VictoryModeState>>,
     pub winner: Option<VictoryResult>,
     pub continue_after_win: bool,
 }
@@ -116,10 +139,19 @@ impl Default for VictoryState {
 impl VictoryState {
     pub fn new(continue_after_win: bool) -> Self {
         Self {
-            modes: Vec::new(),
+            modes: BTreeMap::new(),
             winner: None,
             continue_after_win,
         }
+    }
+
+    /// One faction's mode rows — empty for a faction the last evaluation did not cover, which is
+    /// every faction before the first turn resolves.
+    pub fn modes_for(&self, faction: FactionId) -> &[VictoryModeState] {
+        self.modes
+            .get(&faction)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 }
 
@@ -150,7 +182,7 @@ impl VictoryModeState {
             id: def.id.clone(),
             kind: def.kind.clone(),
             progress: 0.0,
-            threshold: def.threshold.max(0.0001),
+            threshold: def.threshold.max(MIN_THRESHOLD),
             achieved: false,
         }
     }
@@ -223,9 +255,17 @@ fn read_victory_config_from_str(data: &str) -> Result<VictoryConfig, VictoryConf
     })
 }
 
+/// **Score every registered faction against its own metrics, and record who crossed a line.**
+///
+/// ⛔ **The walk order is load-bearing and therefore explicit.** Factions in **registry id order**,
+/// modes in **config order**, and the first achiever met takes the win — so two peoples crossing on
+/// the same tick break to the **lower id**, and a replay of the same world always names the same
+/// winner. `FactionRegistry::factions()` is id-ordered by construction; the loop states the
+/// dependency rather than inheriting it silently.
 pub fn victory_tick(
     config: Res<VictoryConfigHandle>,
     metrics: Res<SimulationMetrics>,
+    registry: Res<FactionRegistry>,
     mut state: ResMut<VictoryState>,
     tick: Res<SimulationTick>,
 ) {
@@ -234,61 +274,87 @@ pub fn victory_tick(
     if state.winner.is_some() && !state.continue_after_win {
         return;
     }
-    let mut next_modes = Vec::with_capacity(cfg.modes.len());
+    let mut next_modes: BTreeMap<FactionId, Vec<VictoryModeState>> = BTreeMap::new();
 
-    for def in cfg.modes.iter().filter(|mode| mode.enabled) {
-        let (mut entry, existed) = match state.modes.iter().find(|mode| mode.id == def.id) {
-            Some(mode) => (mode.clone(), true),
-            None => (VictoryModeState::from_definition(def), false),
-        };
+    for &faction in registry.factions() {
+        let mut faction_modes = Vec::with_capacity(cfg.modes.len());
+        for def in cfg.modes.iter().filter(|mode| mode.enabled) {
+            let (mut entry, existed) = match state
+                .modes_for(faction)
+                .iter()
+                .find(|mode| mode.id == def.id)
+            {
+                Some(mode) => (mode.clone(), true),
+                None => (VictoryModeState::from_definition(def), false),
+            };
 
-        entry.threshold = def.threshold.max(0.0001);
+            entry.threshold = def.threshold.max(MIN_THRESHOLD);
 
-        let evaluated = evaluate_mode_progress(&entry, def, &metrics, !existed);
-        entry.progress = evaluated.clamp(0.0, entry.threshold);
-        entry.achieved = entry.progress >= entry.threshold;
+            let evaluated = evaluate_mode_progress(&entry, def, &metrics, faction, !existed);
+            entry.progress = evaluated.clamp(0.0, entry.threshold);
+            entry.achieved = entry.progress >= entry.threshold;
 
-        if entry.achieved && state.winner.is_none() {
-            state.winner = Some(VictoryResult {
-                mode: entry.id.clone(),
-                faction: FactionId(0),
-                tick: tick.0,
-            });
-            tracing::info!(
-                target: "shadow_scale::victory",
-                mode = %entry.id.0,
-                kind = %entry.kind.as_str(),
-                tick = tick.0,
-                "victory.mode.achieved"
-            );
-            tracing::info!(
-                target: "shadow_scale::campaign",
-                mode = %entry.id.0,
-                kind = %entry.kind.as_str(),
-                tick = tick.0,
-                "campaign.victory"
-            );
-            tracing::info!(
-                target: "shadow_scale::analytics",
-                event = "victory",
-                mode = %entry.id.0,
-                kind = %entry.kind.as_str(),
-                tick = tick.0,
-                faction = 0,
-                "analytics.victory"
-            );
+            if entry.achieved && state.winner.is_none() {
+                state.winner = Some(VictoryResult {
+                    mode: entry.id.clone(),
+                    faction,
+                    tick: tick.0,
+                });
+                tracing::info!(
+                    target: "shadow_scale::victory",
+                    mode = %entry.id.0,
+                    kind = %entry.kind.as_str(),
+                    tick = tick.0,
+                    faction = faction.0,
+                    "victory.mode.achieved"
+                );
+                tracing::info!(
+                    target: "shadow_scale::campaign",
+                    mode = %entry.id.0,
+                    kind = %entry.kind.as_str(),
+                    tick = tick.0,
+                    faction = faction.0,
+                    "campaign.victory"
+                );
+                tracing::info!(
+                    target: "shadow_scale::analytics",
+                    event = "victory",
+                    mode = %entry.id.0,
+                    kind = %entry.kind.as_str(),
+                    tick = tick.0,
+                    faction = faction.0,
+                    "analytics.victory"
+                );
+            }
+
+            faction_modes.push(entry);
         }
-
-        next_modes.push(entry);
+        next_modes.insert(faction, faction_modes);
     }
 
     state.modes = next_modes;
 }
 
+/// **One faction's score for one mode.**
+///
+/// # Which inputs are scoped to the faction, and which are honestly world-level
+///
+/// | Term | Scope | Why |
+/// |---|---|---|
+/// | population, morale | **faction** | how many people *you* have and how they feel — the whole subject of a hegemony or survival claim |
+/// | great discoveries | **faction** | a rival's breakthrough is not your ascension; counted off the same ledger the world total counts |
+/// | grid stress, surplus margin | **world** | `PowerGridState` is one grid for the map and carries no faction; there is no per-faction figure to scope to |
+/// | the crisis gauges (`GridStressPct`, `R0`) | **world** | a crisis is an event on the map, and `ActiveCrisisLedger` is not keyed by faction |
+/// | the turn number | **world** | it is the clock |
+///
+/// **A world-level input is still measured PER FACTION**: two peoples can live through the same
+/// plague, and the achiever is whoever meets the bar while doing so. What changed is never the
+/// input's scope, only whose threshold it is scored against.
 fn evaluate_mode_progress(
     entry: &VictoryModeState,
     def: &VictoryModeDefinition,
     metrics: &SimulationMetrics,
+    faction: FactionId,
     fresh: bool,
 ) -> f32 {
     const HEGEMONY_POP_TARGET: f32 = 5_000.0;
@@ -296,11 +362,12 @@ fn evaluate_mode_progress(
     const RAMP_LEN: f32 = 12.0;
     let normalized_turn = (metrics.turn as f32).max(1.0);
     let smoothing = if fresh { 0.0 } else { 0.65 };
+    let own = metrics.for_faction(faction);
 
     let candidate = match def.kind {
         VictoryModeKind::Hegemony => {
-            let pop_score = (metrics.population_total as f32 / HEGEMONY_POP_TARGET).clamp(0.0, 1.5);
-            let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
+            let pop_score = (own.population_total as f32 / HEGEMONY_POP_TARGET).clamp(0.0, 1.5);
+            let morale = own.population_morale_avg.clamp(0.0, 1.0);
             let grid_relief = (1.0 - metrics.grid_stress_avg).clamp(0.0, 1.0);
             // The production term used to average `logistics_flow_avg` with the power surplus.
             // The logistics metric counted the tile-pair mass network, which was demolished with
@@ -310,10 +377,10 @@ fn evaluate_mode_progress(
             0.45 * pop_score + 0.25 * morale + 0.2 * grid_relief + 0.1 * surplus
         }
         VictoryModeKind::Ascension => {
-            let discovery_score = (metrics.great_discoveries_total as f32
+            let discovery_score = (metrics.great_discoveries_for(faction) as f32
                 / ASCENSION_DISCOVERY_TARGET)
                 .clamp(0.0, 1.5);
-            let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
+            let morale = own.population_morale_avg.clamp(0.0, 1.0);
             0.65 * discovery_score + 0.35 * morale
         }
         // Both of the two modes below were scored mostly on `trade_openness_avg`, which averaged
@@ -324,7 +391,7 @@ fn evaluate_mode_progress(
         // real economy again when the contact/logistics substrate lands one.
         VictoryModeKind::Economic => (metrics.grid_surplus_margin + 0.5).clamp(0.0, 1.25),
         VictoryModeKind::Diplomatic => {
-            let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
+            let morale = own.population_morale_avg.clamp(0.0, 1.0);
             let turn_bonus = (normalized_turn / RAMP_LEN).clamp(0.0, 1.0);
             0.6 * morale + 0.4 * turn_bonus
         }
@@ -334,7 +401,7 @@ fn evaluate_mode_progress(
                 .gauge(CrisisMetricKind::GridStressPct)
                 .map(|g| (1.0 - g.raw).clamp(0.0, 1.0))
                 .unwrap_or(1.0);
-            let morale = metrics.population_morale_avg.clamp(0.0, 1.0);
+            let morale = own.population_morale_avg.clamp(0.0, 1.0);
             0.7 * grid_relief + 0.3 * morale
         }
         VictoryModeKind::Survival => {
@@ -360,9 +427,13 @@ fn evaluate_mode_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::FactionMetrics;
     use bevy::prelude::World;
     use bevy_ecs::system::RunSystemOnce;
     use std::sync::Arc;
+
+    const HOME: FactionId = FactionId(0);
+    const RIVAL: FactionId = FactionId(1);
 
     fn hegemony_definition() -> VictoryModeDefinition {
         VictoryModeDefinition {
@@ -382,38 +453,95 @@ mod tests {
         }))
     }
 
-    #[test]
-    fn victory_tick_sets_winner_for_hegemony() {
-        let mut world = World::default();
-        world.insert_resource(config_with_mode(hegemony_definition(), true));
-        world.insert_resource(SimulationMetrics {
-            population_total: 10_000,
-            population_morale_avg: 0.9,
+    /// Metrics carrying both halves the way `collect_metrics` writes them: a per-faction row each,
+    /// and the world totals as their true aggregate.
+    ///
+    /// **The world totals are populated on purpose.** Zeroing them would make a mode that still read
+    /// the world figure score everyone at nothing — and *pass* the "a rival's people are not yours"
+    /// assertion for the wrong reason. Aggregating them is what makes that test fail when the
+    /// per-faction read is sabotaged back to the world one.
+    fn metrics_for(rows: &[(FactionId, u64, f32)]) -> SimulationMetrics {
+        let population_total = rows.iter().map(|&(_, size, _)| size).sum();
+        let population_morale_avg = if rows.is_empty() {
+            0.0
+        } else {
+            rows.iter().map(|&(_, _, morale)| morale).sum::<f32>() / rows.len() as f32
+        };
+        SimulationMetrics {
+            population_by_faction: rows
+                .iter()
+                .map(|&(faction, population_total, population_morale_avg)| {
+                    (
+                        faction,
+                        FactionMetrics {
+                            population_total,
+                            population_morale_avg,
+                        },
+                    )
+                })
+                .collect(),
+            population_total,
+            population_morale_avg,
             grid_stress_avg: 0.1,
             grid_surplus_margin: 0.4,
             ..Default::default()
-        });
-        world.insert_resource(VictoryState::new(true));
-        world.insert_resource(SimulationTick(12));
+        }
+    }
+
+    fn world_with(
+        registry: FactionRegistry,
+        metrics: SimulationMetrics,
+        config: VictoryConfigHandle,
+        continue_after: bool,
+        tick: u64,
+    ) -> World {
+        let mut world = World::default();
+        world.insert_resource(config);
+        world.insert_resource(metrics);
+        world.insert_resource(registry);
+        world.insert_resource(VictoryState::new(continue_after));
+        world.insert_resource(SimulationTick(tick));
+        world
+    }
+
+    fn progress_of(world: &World, faction: FactionId) -> f32 {
+        world
+            .resource::<VictoryState>()
+            .modes_for(faction)
+            .first()
+            .expect("the faction was evaluated")
+            .progress
+    }
+
+    #[test]
+    fn victory_tick_sets_winner_for_hegemony() {
+        let mut world = world_with(
+            FactionRegistry::default(),
+            metrics_for(&[(HOME, 10_000, 0.9)]),
+            config_with_mode(hegemony_definition(), true),
+            true,
+            12,
+        );
         world.run_system_once(victory_tick);
         let state = world.resource::<VictoryState>();
         assert!(state.winner.is_some());
         assert_eq!(state.winner.as_ref().unwrap().mode.0, "test_heg");
+        assert_eq!(
+            state.winner.as_ref().unwrap().faction,
+            HOME,
+            "the only faction on the map is the one that won"
+        );
     }
 
     #[test]
     fn victory_tick_halts_when_continue_disabled() {
-        let mut world = World::default();
-        world.insert_resource(config_with_mode(hegemony_definition(), false));
-        world.insert_resource(SimulationMetrics {
-            population_total: 10_000,
-            population_morale_avg: 0.9,
-            grid_stress_avg: 0.05,
-            grid_surplus_margin: 0.5,
-            ..Default::default()
-        });
-        world.insert_resource(VictoryState::new(false));
-        world.insert_resource(SimulationTick(8));
+        let mut world = world_with(
+            FactionRegistry::default(),
+            metrics_for(&[(HOME, 10_000, 0.9)]),
+            config_with_mode(hegemony_definition(), false),
+            false,
+            8,
+        );
         world.run_system_once(victory_tick);
         {
             let state = world.resource::<VictoryState>();
@@ -421,16 +549,181 @@ mod tests {
             assert_eq!(state.winner.as_ref().unwrap().tick, 8);
         }
         // Push metrics to zero and advance tick; with continue disabled nothing should change.
-        {
-            let mut metrics = world.resource_mut::<SimulationMetrics>();
-            metrics.population_total = 0;
-            metrics.population_morale_avg = 0.1;
-            metrics.grid_stress_avg = 0.9;
-            metrics.grid_surplus_margin = -0.5;
-        }
+        world.insert_resource(metrics_for(&[(HOME, 0, 0.1)]));
         world.insert_resource(SimulationTick(99));
         world.run_system_once(victory_tick);
         let state = world.resource::<VictoryState>();
         assert_eq!(state.winner.as_ref().unwrap().tick, 8);
+    }
+
+    /// ⛔ **A RIVAL'S PEOPLE ARE NOT YOURS.** The home faction's score is identical whether or not a
+    /// vastly larger rival stands on the same map — the defect this arc fixed was `population_total`
+    /// summed over every cohort, which made a rival's growth advance your hegemony.
+    ///
+    /// Sabotage: score hegemony off `metrics.population_total` again and the two-faction arm's home
+    /// progress jumps, because the world sum is a hundred times the home figure.
+    #[test]
+    fn a_rivals_population_does_not_move_your_progress() {
+        let alone = {
+            let mut world = world_with(
+                FactionRegistry::with_ai_factions(0),
+                metrics_for(&[(HOME, 1_000, 0.5)]),
+                config_with_mode(hegemony_definition(), true),
+                true,
+                4,
+            );
+            world.run_system_once(victory_tick);
+            progress_of(&world, HOME)
+        };
+
+        let mut world = world_with(
+            FactionRegistry::with_ai_factions(1),
+            metrics_for(&[(HOME, 1_000, 0.5), (RIVAL, 100_000, 0.9)]),
+            config_with_mode(hegemony_definition(), true),
+            true,
+            4,
+        );
+        world.run_system_once(victory_tick);
+
+        assert_eq!(
+            progress_of(&world, HOME),
+            alone,
+            "a neighbour with a hundred times your people must not move your own progress"
+        );
+        assert!(
+            progress_of(&world, RIVAL) > progress_of(&world, HOME),
+            "and the rival's own row is the one that carries their people: {:?}",
+            world.resource::<VictoryState>().modes
+        );
+    }
+
+    /// **The winner is whoever crossed the line, and a rival crossing it is reported as the rival.**
+    /// Before this, `faction` was hard-coded `FactionId(0)`, so a rival's win was recorded as the
+    /// player's — a wrong end screen rather than a missing one.
+    #[test]
+    fn a_rival_that_meets_the_bar_is_recorded_as_the_winner() {
+        let mut world = world_with(
+            FactionRegistry::with_ai_factions(1),
+            // The home faction is nowhere near the bar; the rival is far past it.
+            metrics_for(&[(HOME, 10, 0.1), (RIVAL, 100_000, 0.95)]),
+            config_with_mode(hegemony_definition(), true),
+            true,
+            21,
+        );
+        world.run_system_once(victory_tick);
+
+        let state = world.resource::<VictoryState>();
+        let winner = state.winner.as_ref().expect("somebody won");
+        assert_eq!(winner.faction, RIVAL, "the achiever is the winner");
+        assert_eq!(winner.tick, 21);
+        assert!(
+            !state.modes_for(HOME)[0].achieved,
+            "and the player, who achieved nothing, is not recorded as having won"
+        );
+    }
+
+    /// **Ties break by the lowest id**, and the order is the registry's. Both factions cross on the
+    /// same tick with identical metrics, so only the walk order can decide — which is exactly the
+    /// determinism the replay suites depend on.
+    #[test]
+    fn two_factions_crossing_on_one_tick_break_to_the_lowest_id() {
+        let mut world = world_with(
+            FactionRegistry::with_ai_factions(1),
+            metrics_for(&[(HOME, 10_000, 0.9), (RIVAL, 10_000, 0.9)]),
+            config_with_mode(hegemony_definition(), true),
+            true,
+            5,
+        );
+        world.run_system_once(victory_tick);
+        let state = world.resource::<VictoryState>();
+        assert!(state.modes_for(HOME)[0].achieved && state.modes_for(RIVAL)[0].achieved);
+        assert_eq!(state.winner.as_ref().unwrap().faction, HOME);
+    }
+
+    /// **A single-faction world scores exactly what it always scored.** The weights are pinned as a
+    /// number rather than re-derived, so a change to the formula — or to which figures feed it —
+    /// fails here instead of quietly re-balancing every campaign.
+    ///
+    /// `0.45·(1000/5000) + 0.25·0.50 + 0.20·(1−0.50) + 0.10·(0.00+0.50) = 0.365`.
+    #[test]
+    fn a_one_faction_world_scores_exactly_what_it_always_did() {
+        let mut metrics = metrics_for(&[(HOME, 1_000, 0.5)]);
+        metrics.grid_stress_avg = 0.5;
+        metrics.grid_surplus_margin = 0.0;
+        let mut world = world_with(
+            FactionRegistry::default(),
+            metrics,
+            config_with_mode(hegemony_definition(), true),
+            true,
+            1,
+        );
+        world.run_system_once(victory_tick);
+        let progress = progress_of(&world, HOME);
+        assert!(
+            (progress - 0.365).abs() < 1e-5,
+            "the shipped hegemony weights scored 0.365 for these inputs, got {progress}"
+        );
+    }
+
+    /// A world-level input is still measured per faction: two peoples living through the same grid
+    /// stress are each scored against their own threshold, and the shared term reaches both rows.
+    #[test]
+    fn a_world_level_input_reaches_every_factions_row() {
+        let easy = {
+            let mut metrics = metrics_for(&[(HOME, 1_000, 0.5), (RIVAL, 1_000, 0.5)]);
+            metrics.grid_stress_avg = 0.0;
+            let mut world = world_with(
+                FactionRegistry::with_ai_factions(1),
+                metrics,
+                config_with_mode(hegemony_definition(), true),
+                true,
+                3,
+            );
+            world.run_system_once(victory_tick);
+            (progress_of(&world, HOME), progress_of(&world, RIVAL))
+        };
+        let mut metrics = metrics_for(&[(HOME, 1_000, 0.5), (RIVAL, 1_000, 0.5)]);
+        metrics.grid_stress_avg = 1.0;
+        let mut world = world_with(
+            FactionRegistry::with_ai_factions(1),
+            metrics,
+            config_with_mode(hegemony_definition(), true),
+            true,
+            3,
+        );
+        world.run_system_once(victory_tick);
+        assert!(progress_of(&world, HOME) < easy.0);
+        assert!(progress_of(&world, RIVAL) < easy.1);
+        assert_eq!(
+            progress_of(&world, HOME),
+            progress_of(&world, RIVAL),
+            "with identical people, a shared crisis leaves the two rows identical"
+        );
+    }
+
+    /// A faction with no cohorts left has no progress rather than no row — the answer
+    /// `for_faction`'s zeros give, and the one a survival mode has to be able to state.
+    #[test]
+    fn a_faction_with_nobody_left_scores_its_population_at_nothing() {
+        let mut world = world_with(
+            FactionRegistry::with_ai_factions(1),
+            // Morale is zero on BOTH sides, so population is the only term that can separate the
+            // two rows — otherwise this would pass on the morale difference alone.
+            metrics_for(&[(HOME, 5_000, 0.0)]),
+            config_with_mode(hegemony_definition(), true),
+            true,
+            9,
+        );
+        world.run_system_once(victory_tick);
+        let state = world.resource::<VictoryState>();
+        assert_eq!(
+            state.modes_for(RIVAL).len(),
+            1,
+            "a wiped-out faction is still evaluated, so its row exists"
+        );
+        assert!(
+            progress_of(&world, RIVAL) < progress_of(&world, HOME),
+            "and it scores its missing people as nothing"
+        );
     }
 }

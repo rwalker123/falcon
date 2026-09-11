@@ -10,6 +10,10 @@ extends Node
 ## then read ui_preview_out/menu_landing.png and menu_pause.png.
 
 const MENU_SHELL := preload("res://src/ui/MenuShell.tscn")
+## **`Main`'s WIRE BUILDER, called rather than restated.** `new_game_line` is a static function, so
+## the rule that decides whether the player's count reaches the socket is reachable here without
+## standing a client up — the same preload the other harnesses take for `Main`'s constants.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## The SHIPPED predicate both polled-input sites ask. Asserted directly rather than restated here —
 ## a harness that re-spelled the expression would keep passing after the real one drifted.
 const TextEntryFocus := preload("res://src/scripts/TextEntryFocus.gd")
@@ -28,6 +32,52 @@ const OPTIONS_PANE_ID := "options"
 # Nav ids of the two saves panes, driven through the same `_activate_item` the nav rail calls.
 const LOAD_PANE_ID := "load"
 const SAVE_PANE_ID := "save"
+# …and of the setup pane, whose rival-peoples control is fed from the capacity seam below.
+const NEW_GAME_PANE_ID := "new_game"
+# The setup pane's primary action, matched on rather than retyped at each assertion: the frames below
+# claim things about whether it is OFFERED, and a typo would silently assert nothing.
+const BEGIN_BUTTON_LABEL := "Begin the trail"
+
+# ---- faction-capacity fixtures --------------------------------------------------------------------
+# The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`: a hex-packing count
+# over the map's LAND, at the shipped `faction_start_min_separation`), and the offer is derived from
+# it. These are the numbers a real server answers for the shipped grids:
+#
+#     grid          Tiny  Small  Standard  Large  Huge
+#     ceiling          3      4         6     11    17
+#     pre-selects      2      3         4      6     9
+#
+# **They are fixtures for the ROW's states, not a restatement of the rule** — the client never
+# computes this, which is the whole reason the query exists. They are written down anyway because
+# this harness ANSWERS THE QUERY ITSELF: a drifted fixture stays perfectly green while rendering a
+# state no player can reach, which is worth less than no frame at all. Both numbers have moved once
+# already; re-derive them from `faction_start_capacity` rather than trusting this block.
+## **EVERY ANSWER IS FOR A GRID, so the pairs are per grid.** Answering a Tiny map with Standard's
+## ceiling is the same drift as a stale constant and one step harder to see, because the numbers are
+## individually right.
+const CAPACITY_MAX_SMALLEST := 3
+const CAPACITY_DEFAULT_SMALLEST := 2
+const CAPACITY_MAX_STANDARD := 6
+const CAPACITY_DEFAULT_STANDARD := 4
+# What the player drags the slider to, for the frame that shows a CHOSEN count. Well below the
+# Standard offer of 4 and nowhere near the ceiling of 6, so the grabber sits visibly left of where the
+# answer put it — a one-step nudge would read as a rounding artefact rather than as a decision. It is
+# also the one value that exercises the readout's singular form ("1 rival", not "1 rivals").
+const CAPACITY_PICKED := 1
+# A genuine 0 ceiling — a grid with no room for a second start — which the row must render as "you
+# will be alone" rather than as a failure. **No offered map size produces it**: the smallest, Tiny,
+# still seats 3 rivals. So it is answered here rather than reached — a heavier separation or a preset
+# with very little land is what would make it real, and the row has to be right when it does.
+const CAPACITY_MAX_ALONE := 0
+# The roomiest offered grid, for the re-ask frames: the pick made against it has to survive the
+# switch to a smaller map, clamped rather than reset.
+const CAPACITY_MAX_ROOMIEST := 17
+const CAPACITY_DEFAULT_ROOMIEST := 9
+# The two map sizes the frames switch between, named from the shared registry rather than typed as
+# ids: switching size is what re-asks the ceiling, and `MapSizes` is the one list of them.
+const SIZE_KEY_SMALLEST := "tiny"
+const SIZE_KEY_ROOMIEST := "huge"
+const SIZE_KEY_STANDARD := "standard"
 
 # ---- save-channel fixtures ------------------------------------------------------------------------
 # The `SaveSlots` seam is fed through its REAL `deliver` path with dicts shaped exactly as
@@ -81,6 +131,15 @@ const PENDING_THEME := "kiln"
 ## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
 ## the status and the output agree — a harness that printed an error and still exited 0 was
 ## indistinguishable from a green one to anything but a human reading stdout.
+## The world parameters the wire assertion builds a line from. Any values would do — the claim is
+## about the trailing count — so they are the dev default's, which is a line a developer will
+## recognise if one is ever printed by a failure.
+const WIRE_PRESET := "earthlike"
+const WIRE_WIDTH := 80
+const WIRE_HEIGHT := 52
+const WIRE_SEED := 0
+const WIRE_PROFILE := "late_forager_tribe"
+
 const EXIT_OK := 0
 const EXIT_FAILED := 1
 
@@ -92,6 +151,8 @@ var _failures := 0
 ## the fake sender captured, and it is what the canned replies correlate against — so the seam's real
 ## in-flight bookkeeping is exercised rather than bypassed.
 var _save_seam: SaveSlots
+## The New Game pane's capacity seam, driven the same way and off the same fake sender.
+var _capacity_seam: FactionCapacity
 var _last_request_id := 0
 var _drift_notice: ConfigDriftNotice
 
@@ -195,8 +256,504 @@ func _ready() -> void:
 	await _save("menu_options_theme_pending_landing")
 
 	await _run_saves_states()
+	await _run_new_game_states()
 
 	_finish()
+
+
+## **THE NEW GAME PANE'S RIVAL COUNT, over the same fake transport.** The seam is real and so is
+## every state below; the only thing standing in for a server is `_send`, which records the request id
+## and answers nothing until this harness says so. That is what makes the two states no healthy stack
+## can reach — a capacity ask that never answers, and a grid with no room for a second people —
+## renderable at all.
+func _run_new_game_states() -> void:
+	_bg.color = HudStyle.GROUND
+	_shell.mode = MenuShell.LANDING
+	_capacity_seam = FactionCapacity.new()
+	_capacity_seam.set_sender(_send)
+	_shell.set_faction_capacity(_capacity_seam)
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	await _settle()
+
+	# --- the ask in flight: no slider, and a caption saying so -----------------------------------
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: opening the setup pane put no capacity ask in flight (%s)" % _capacity_seam.state)
+	_assert_no_rival_slider("pending")
+	await _save("menu_new_game_rivals_pending")
+
+	# --- answered: the slider, opened on the server's default ------------------------------------
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	if _shell._rival_count != CAPACITY_DEFAULT_STANDARD:
+		_fail("rivals: an answered ask left the control on %d, not the server's default %d"
+			% [_shell._rival_count, CAPACITY_DEFAULT_STANDARD])
+	await _save("menu_new_game_rivals")
+
+	# --- the player picks some. The count is what "Begin the trail" would carry. ------------------
+	_drag_rival_slider(CAPACITY_PICKED)
+	await _settle()
+	if _shell._resolved_rival_count() != CAPACITY_PICKED:
+		_fail("rivals: a picked %d resolved to %d on the wire"
+			% [CAPACITY_PICKED, _shell._resolved_rival_count()])
+	await _save("menu_new_game_rivals_picked")
+
+	# --- A GRID WITH NO ROOM. Not a failure, and not rendered as one: no slider, and a caption that
+	# says the player will be alone. The pick made above is clamped away by the new ceiling, and the
+	# re-ask is driven by a real size click.
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: changing the map size did not re-ask the ceiling (%s)" % _capacity_seam.state)
+	_answer_capacity(0, CAPACITY_MAX_ALONE)
+	await _settle()
+	_assert_no_rival_slider("ceiling 0")
+	if _shell._resolved_rival_count() != 0:
+		_fail("rivals: a 0 ceiling left %d on the wire instead of an explicit none"
+			% _shell._resolved_rival_count())
+	await _save("menu_new_game_rivals_alone")
+
+	# --- A SERVER ANSWERED AND STILL GAVE NO COUNT, and the screen starts a game anyway. The argument
+	# is omitted entirely (`NO_COUNT`), which the server answers with its unattended roster — no
+	# rivals — rather than with a number this screen guessed. The caption is what tells the player
+	# that. **The token matters here**: it is a refusal a SERVER sent (`wrong_answerer`), which is a
+	# different fact from nothing answering at all — that state is `_run_server_unreachable_states`
+	# below, and collapsing the two is the defect this pair pins.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+	_fail_capacity(FactionCapacity.ERROR_WRONG_ANSWERER)
+	await _settle()
+	_assert_no_rival_slider("failed")
+	if _shell._resolved_rival_count() != FactionCapacity.NO_COUNT:
+		_fail("rivals: a failed ask put %d on the wire instead of omitting the argument"
+			% _shell._resolved_rival_count())
+	_assert_says_none("a server answered without a count")
+	_assert_begin_is_offered("a server answered without a count")
+	await _save("menu_new_game_rivals_unavailable")
+
+	await _assert_the_shown_count_is_the_count_sent()
+	await _run_rivals_reask_states()
+	await _assert_row_height_is_stable()
+	await _assert_an_answer_survives_leaving_the_pane()
+	_assert_capacity_ids_are_disjoint_from_the_save_seam()
+	await _run_server_unreachable_states()
+	await _run_landing_notice_state()
+
+
+## **NOTHING IS LISTENING — the state the New Game screen used to blame on the rival count.** With no
+## server the ask cannot be answered at all, so no world can be built: the caption names the server and
+## "Begin the trail" is DISABLED. Three claims a frame cannot make, in the order the states arrive:
+##
+##   * a merely PENDING ask disables nothing (the normal case for a moment at every startup);
+##   * the retry the shell runs on its own clock does not FLICKER the state it is retrying;
+##   * a server that comes back unlocks the screen — the caption, the slider and the button all return.
+##
+## Driven through the shipped paths throughout: a real map-size click puts the ask in flight, and the
+## retry goes through `MenuShell._on_capacity_retry_timeout`, which is what the shell's `Timer` calls.
+func _run_server_unreachable_states() -> void:
+	_bg.color = HudStyle.GROUND
+	_shell.mode = MenuShell.LANDING
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	await _settle()
+
+	# --- an ask in flight over an answered row: still startable. The ⛔ case — a button that blinked
+	# disabled on every open would be worse than the bug being fixed.
+	_pick_map_size(SIZE_KEY_STANDARD)
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: the size click did not put an ask in flight (%s)" % _capacity_seam.state)
+	await _settle()
+	_assert_begin_is_offered("an ask merely in flight")
+
+	# --- …and nothing answers it. The cause on the caption, the run withheld.
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	await _settle()
+	_assert_no_rival_slider("no server")
+	_assert_says_none("no server")
+	_assert_begin_is_withheld("no server")
+	_assert_notice_reads("no server", MenuShell.NOTICE_NO_SERVER)
+	if _shell._capacity_retry.is_stopped():
+		_fail("rivals: an unreachable server left no clock re-asking, so the screen cannot recover")
+	await _save("menu_new_game_rivals_no_server")
+
+	# --- THE RETRY IS NOT A STATE CHANGE. It leaves the seam PENDING, and rendering that as "asking…"
+	# would put a caption back under the row and unlock the button every `RIVALS_RETRY_SECONDS`. No
+	# PNG: the claim is about the frame NOT changing, which is what a second identical picture cannot
+	# show.
+	_shell._on_capacity_retry_timeout()
+	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
+		_fail("rivals: the retry clock put no fresh ask in flight (%s)" % _capacity_seam.state)
+	await _settle()
+	_assert_says_none("a retry of an unreachable server")
+	_assert_begin_is_withheld("a retry of an unreachable server")
+	_assert_notice_reads("a retry of an unreachable server", MenuShell.NOTICE_NO_SERVER)
+
+	# --- THE SERVER CAME BACK. The unreachable state must not outlive the problem.
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	if _shell._rival_caption.text != MenuShell.RIVALS_CAPTION_CEILING_FORMAT % CAPACITY_MAX_STANDARD:
+		_fail("rivals: an answer after an unreachable server left the caption reading %s"
+			% _shell._rival_caption.text)
+	_assert_begin_is_offered("the server came back")
+	_assert_notice_reads("the server came back", "")
+	if _find_slider(_shell._rivals_box) == null:
+		_fail("rivals: an answer after an unreachable server offered no slider")
+	if not _shell._capacity_retry.is_stopped():
+		_fail("rivals: the re-ask clock is still running against a server that answered")
+	await _save("menu_new_game_rivals_recovered")
+	await _assert_a_bounced_sessions_notice_is_retracted_too()
+
+
+## **THE LINE A FAILED RUN LEFT BEHIND GOES WITH THE SAME EVIDENCE.** `Main` hands the landing screen
+## the shell's own `NOTICE_NO_SERVER` after an unanswered seat claim, so a server that comes up while
+## the player is still on this screen must clear THAT copy as well — a stale "cannot connect" over a
+## working New Game pane is the defect the retry clock exists to prevent. No PNG: the claim is that a
+## box is gone, and the `_recovered` still already shows an empty rail.
+func _assert_a_bounced_sessions_notice_is_retracted_too() -> void:
+	_shell.set_notice(MenuShell.NOTICE_NO_SERVER)
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	await _settle()
+	_assert_notice_reads("a bounced session, still unreachable", MenuShell.NOTICE_NO_SERVER)
+	if _count_notice_boxes(_shell) != 1:
+		_fail("landing notice: the shell says the same thing in %d boxes at once"
+			% _count_notice_boxes(_shell))
+	_capacity_seam.retry()
+	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	await _settle()
+	_assert_notice_reads("a bounced session, after the server answered", "")
+
+
+## **THE OTHER SCREEN THIS PAIR OF DEFECTS OWNS: a run that could not start at all.** `Main` bounces
+## back here when the seat claim goes unanswered, and the reason is shown ON THE RAIL beside New Game
+## and Load Game rather than centred alone on a black loading overlay with nothing to press. The
+## sentence is the shell's own `NOTICE_NO_SERVER`, which is exactly what `Main` hands back for an
+## unanswered claim — one constant, so the frame renders what a player reads and the two paths cannot
+## stack into two boxes.
+##
+## Rendered last, and with the capacity ask still failed, because that is the true shape of the session
+## it reports: nothing is listening, so the notice and the withheld Begin are on screen together.
+func _run_landing_notice_state() -> void:
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	# A real size click is what re-asks, and nothing answers it — the same shipped pair the state above
+	# uses, rather than poking the seam.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+	_fail_capacity(FactionCapacity.ERROR_TRANSPORT)
+	_shell.set_notice(MenuShell.NOTICE_NO_SERVER)
+	await _settle()
+	if not _shell._notice_panel.visible:
+		_fail("landing notice: a session's failure was handed in and nothing showed it")
+	await _save("menu_landing_seat_refused")
+
+
+## **AN ANSWER CAN LAND ON A PANE THAT IS GONE**, and it must not take the shell with it. No PNG: the
+## failure is an error on a freed node, which either aborts the run or prints and leaves a frame that
+## looks entirely normal. The pane is left with an ask in flight, swapped away, given a frame for the
+## `queue_free`s to land, and only then answered.
+func _assert_an_answer_survives_leaving_the_pane() -> void:
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	_shell._activate_item(OPTIONS_PANE_ID)
+	await _settle()
+	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	await _settle()
+	if _capacity_seam.state != FactionCapacity.STATE_READY:
+		_fail("rivals: an answer delivered after a pane change left the seam in %s" % _capacity_seam.state)
+	# …and the pane still builds afterwards, so the shell is not merely quiet but intact.
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	await _settle()
+	if _find_slider(_shell._rivals_box) == null:
+		_fail("rivals: reopening the pane after an off-pane answer offered no slider")
+
+
+## **THE COUNT ON SCREEN IS THE COUNT ON THE WIRE — including the one nobody touched.**
+##
+## The row opens on the server's map-scaled offer (4 rivals on a Standard grid), and a player who
+## never drags the slider still SENDS that number: `_on_capacity_changed` seeds the pick from the
+## answer and nothing downstream re-derives it. Since an absent count no longer means "the server's
+## configured default" but its UNATTENDED roster — **zero rivals** — a break in that chain is the
+## difference between the world the screen promised and an empty one, and it would look completely
+## normal in every frame. No PNG for the same reason.
+##
+## The chain is walked at both ends: the shell's own `new_game_requested`, which is what
+## `LandingScreen` stashes, and `Main.new_game_line`, which is what actually reaches the socket.
+func _assert_the_shown_count_is_the_count_sent() -> void:
+	# **THE STATE A SCREEN NOBODY HAS TOUCHED IS IN**, staged explicitly: the frames above dragged the
+	# slider, and a pick is deliberately kept across pane changes and re-asks, so it would otherwise be
+	# inherited here and this assertion would be about a player who DID choose. These two fields are
+	# the whole of "untouched" — the pick, and the flag that says an answer may seat it.
+	_shell._rival_picked = false
+	_shell._rival_count = FactionCapacity.NO_COUNT
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	var slider := _find_slider(_shell._rivals_box)
+	if slider == null:
+		_fail("shown-is-sent: the answered row offered no control to read")
+		return
+	if int(slider.value) != CAPACITY_DEFAULT_STANDARD:
+		_fail("shown-is-sent: the row opened on %d, not the server's offer of %d"
+			% [int(slider.value), CAPACITY_DEFAULT_STANDARD])
+
+	# THE SHELL'S OUTPUT. Driven through the handler the Begin button is connected to — the button
+	# itself sits below this harness window's fold, and a click that lands on nothing would assert
+	# nothing.
+	var emitted: Array = []
+	var sink := func(_preset: String, _w: int, _h: int, _seed: int, _profile: String, count: int) -> void:
+		emitted.append(count)
+	_shell.new_game_requested.connect(sink)
+	_shell._on_begin_pressed()
+	_shell.new_game_requested.disconnect(sink)
+	if emitted.size() != 1:
+		_fail("shown-is-sent: Begin emitted %d requests, not one" % emitted.size())
+	elif int(emitted[0]) != CAPACITY_DEFAULT_STANDARD:
+		_fail("shown-is-sent: the row showed %d and the request carried %d"
+			% [CAPACITY_DEFAULT_STANDARD, int(emitted[0])])
+
+	# THE WIRE. `Main` appends the count only when there is one, and that rule is the last place the
+	# player's pick can be dropped.
+	var line: String = MAIN_SCRIPT.new_game_line(
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, CAPACITY_DEFAULT_STANDARD)
+	if not line.ends_with(" %d" % CAPACITY_DEFAULT_STANDARD):
+		_fail("shown-is-sent: the new_game line does not carry the count (%s)" % line)
+	# …and the absent case still carries NOTHING, which is a different request from a trailing 0.
+	var omitted: String = MAIN_SCRIPT.new_game_line(
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, FactionCapacity.NO_COUNT)
+	if omitted != "new_game %s %d %d %d %s" % [WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE]:
+		_fail("shown-is-sent: an unanswered ask put something on the line (%s)" % omitted)
+	# Left as it was found: untouched, so the next state stages its own starting point.
+	_shell._rival_picked = false
+
+
+## **THE MAP-SIZE CLICK, WHICH IS THE ONE THE PLAYER MAKES REPEATEDLY.** A re-ask must not take the
+## control away and put it back: the row was destroyed and redrawn on every click, and because the
+## pending caption is a different height from the slider row, every row below it jumped — a visible
+## flash, reported from a playtest.
+##
+## The two frames are the ask IN FLIGHT over a previous answer and the new answer landed, so the
+## before/after is readable rather than inferred. **The identity check is what a frame cannot show**:
+## a torn-down-and-rebuilt row renders identically to a preserved one, so the slider's instance id is
+## carried across the click, and its RECT is compared too — the flash was layout, not just identity.
+func _run_rivals_reask_states() -> void:
+	# Start from a genuinely answered row, with a pick on it. The incoming size is the roomiest (the
+	# failed state left it there), and `_on_size_input` ignores a click on the size already selected,
+	# so this walk moves standard -> roomiest.
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	await _settle()
+	_drag_rival_slider(CAPACITY_PICKED)
+	await _settle()
+	var before := _find_slider(_shell._rivals_box)
+	if before == null:
+		_fail("rivals re-ask: no slider to preserve before the size click")
+		return
+	var before_id := before.get_instance_id()
+	var before_rect := before.get_global_rect()
+	var before_height := _shell._rivals_box.size.y
+	# The summary reads the same resolved count the wire would carry, so it flickers with it.
+	var before_summary := _shell._rivals_summary_text()
+
+	# THE CLICK. The ask is now in flight and the answer has not landed.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+	await _settle()
+	var during := _find_slider(_shell._rivals_box)
+	if during == null:
+		_fail("rivals re-ask: the control vanished while the new ceiling was in flight")
+	elif during.get_instance_id() != before_id:
+		_fail("rivals re-ask: the control was rebuilt (%d -> %d) rather than left alone"
+			% [before_id, during.get_instance_id()])
+	elif during.get_global_rect() != before_rect:
+		_fail("rivals re-ask: the control moved during the ask (%s -> %s)"
+			% [str(before_rect), str(during.get_global_rect())])
+	if _shell._rivals_box.size.y != before_height:
+		_fail("rivals re-ask: the row changed height during the ask (%f -> %f)"
+			% [before_height, _shell._rivals_box.size.y])
+	if _shell._rivals_summary_text() != before_summary:
+		_fail("rivals re-ask: the summary flipped to %s during the ask (was %s)"
+			% [_shell._rivals_summary_text(), before_summary])
+	if _shell._resolved_rival_count() != CAPACITY_PICKED:
+		_fail("rivals re-ask: the pick became %d while the new ceiling was in flight"
+			% _shell._resolved_rival_count())
+	await _save("menu_new_game_rivals_reask")
+
+	# …and the answer lands, updating the SAME nodes: new ceiling, pick clamped to it. The ROOMIEST
+	# grid's own pair — the click above asked about that map, so this is the answer it would get.
+	_answer_capacity(CAPACITY_DEFAULT_ROOMIEST, CAPACITY_MAX_ROOMIEST)
+	await _settle()
+	var after := _find_slider(_shell._rivals_box)
+	if after == null:
+		_fail("rivals re-ask: the answer left no control at all")
+	elif after.get_instance_id() != before_id:
+		_fail("rivals re-ask: the answer replaced the control instead of updating it")
+	elif int(after.max_value) != CAPACITY_MAX_ROOMIEST:
+		_fail("rivals re-ask: the control kept the old ceiling %d, not the answered %d"
+			% [int(after.max_value), CAPACITY_MAX_ROOMIEST])
+	await _save("menu_new_game_rivals_reasked")
+
+
+## **THE ROW HOLDS ITS HEIGHT WHATEVER STATE IT IS IN**, so the seed field and the actions row below
+## it do not move as answers land. No PNG of its own: it is a comparison BETWEEN states, which is
+## exactly what a still cannot carry.
+func _assert_row_height_is_stable() -> void:
+	# Incoming size is the roomiest; each step names a different one so every click really re-asks,
+	# and each is answered with ITS OWN grid's numbers.
+	_pick_map_size(SIZE_KEY_SMALLEST)
+	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	await _settle()
+	var with_slider := _shell._rivals_box.size.y
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(0, CAPACITY_MAX_ALONE)
+	await _settle()
+	var without_slider := _shell._rivals_box.size.y
+	if with_slider != without_slider:
+		_fail("rivals: the row is %f tall with a slider and %f without, so everything below it jumps"
+			% [with_slider, without_slider])
+
+
+## No slider means no range was invented. Checked rather than eyeballed: a control that quietly
+## appeared with a 0..0 range would look like a deliberate layout in the frame.
+func _assert_no_rival_slider(state_name: String) -> void:
+	if _find_slider(_shell._rivals_box) != null:
+		_fail("rivals (%s): a slider is offered with no ceiling to offer it against" % state_name)
+
+
+## **ONLY AN UNREACHABLE SERVER BLOCKS THE RUN.** Every other unanswered state still owes the player a
+## game they can start — a count is simply omitted — so this asserts the button is both THERE and live.
+func _assert_begin_is_offered(state_name: String) -> void:
+	var begin := _find_button(_shell, BEGIN_BUTTON_LABEL)
+	if begin == null:
+		_fail("rivals (%s): there is no way to begin the run at all" % state_name)
+	elif begin.disabled:
+		_fail("rivals (%s): the run is blocked by a state that can still start one" % state_name)
+
+
+## …and its twin: with nothing listening, the button must be present and LOCKED. Present, because a
+## vanished action is a layout the player cannot ask about; locked, because pressing it swapped to a
+## `Main` that sat on a black loading screen forever.
+func _assert_begin_is_withheld(state_name: String) -> void:
+	var begin := _find_button(_shell, BEGIN_BUTTON_LABEL)
+	if begin == null:
+		_fail("rivals (%s): the primary action vanished instead of locking" % state_name)
+	elif not begin.disabled:
+		_fail("rivals (%s): a run that cannot work is still offered" % state_name)
+
+
+## **THE ONE PLACE THIS SCREEN EXPLAINS ITSELF.** A greyed-out "Begin the trail" with nothing saying
+## why is the state this notice exists to prevent, and `""` is the assertion that it CLEARS — which is
+## the half that pins a stale "cannot connect" cannot outlive the server coming back.
+func _assert_notice_reads(state_name: String, expected: String) -> void:
+	var panel := _shell._notice_panel
+	if panel == null or not is_instance_valid(panel):
+		_fail("notice (%s): the rail has no notice box at all" % state_name)
+		return
+	if expected.is_empty():
+		if panel.visible:
+			_fail("notice (%s): a notice is still on screen reading %s"
+				% [state_name, _shell._notice_label.text])
+		return
+	if not panel.visible:
+		_fail("notice (%s): nothing on screen says why" % state_name)
+	elif _shell._notice_label.text != expected:
+		_fail("notice (%s): the rail reads %s" % [state_name, _shell._notice_label.text])
+
+
+## How many VISIBLE boxes carry the notice sentence. One is the contract: the shell's own unreachable
+## state and a bounced session's handed-in line are the same fact, and a player must not read it twice.
+func _count_notice_boxes(node: Node) -> int:
+	var found := 0
+	if node is Label and (node as Label).text == MenuShell.NOTICE_NO_SERVER and (node as Label).is_visible_in_tree():
+		found += 1
+	for child in node.get_children():
+		found += _count_notice_boxes(child)
+	return found
+
+
+## **AN UNANSWERED ASK STATES ITS COUNT AND EXPLAINS NOTHING.** Two claims in one, because they are one
+## decision: the readout reads `None` — the count the world will actually be built with — and the
+## caption is EMPTY, no sentence about servers or capacity queries. Asserted rather than eyeballed
+## because a paragraph creeping back under this row looks like a deliberate caption in a frame.
+func _assert_says_none(state_name: String) -> void:
+	if _shell._rival_readout == null or not is_instance_valid(_shell._rival_readout):
+		_fail("rivals (%s): the row shows no count at all" % state_name)
+	elif _shell._rival_readout.text != MenuShell.RIVALS_READOUT_NONE:
+		_fail("rivals (%s): the readout reads %s, not the count that will be used"
+			% [state_name, _shell._rival_readout.text])
+	if _shell._rival_caption == null or not is_instance_valid(_shell._rival_caption):
+		_fail("rivals (%s): the caption node is gone, so the row's height is not held" % state_name)
+	elif _shell._rival_caption.text != "":
+		_fail("rivals (%s): an unanswered ask explains itself on screen: %s"
+			% [state_name, _shell._rival_caption.text])
+
+
+## The capacity seam's ids must not be read by the save seam, which shares its drain. Both are built
+## in one `_ready` on the landing screen, so the microsecond clock alone cannot separate them — the
+## shared allocator's tie-break count is what does, and this is what fails if it goes away.
+func _assert_capacity_ids_are_disjoint_from_the_save_seam() -> void:
+	var saves := SaveSlots.new()
+	saves.set_sender(_send)
+	saves.refresh()
+	var save_id := _last_request_id
+	var capacity := FactionCapacity.new()
+	capacity.set_sender(_send)
+	var grid: Dictionary = MapSizes.option_for(MapSizes.DEFAULT_KEY)
+	capacity.request(int(grid["width"]), int(grid["height"]))
+	if _last_request_id == save_id:
+		_fail("rivals: the capacity seam spent id %d, which the save seam still has in flight" % save_id)
+	# …and the capacity ANSWER must reach nothing on the save seam, which is the consequence.
+	saves.deliver([{
+		"request_id": _last_request_id,
+		"ok": true,
+		"kind": FactionCapacity.KIND_CAPACITY,
+		"default_ai_faction_count": CAPACITY_DEFAULT_STANDARD,
+		"max_ai_faction_count": CAPACITY_MAX_STANDARD,
+	}])
+	if saves.list_state != SaveSlots.LIST_PENDING:
+		_fail("rivals: a capacity answer moved the save seam's list to %s" % saves.list_state)
+
+
+## Answer the ask the seam has in flight, in the bridge's own reply shape.
+func _answer_capacity(default_count: int, max_count: int) -> void:
+	_capacity_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": true,
+		"kind": FactionCapacity.KIND_CAPACITY,
+		"default_ai_faction_count": default_count,
+		"max_ai_faction_count": max_count,
+	}])
+
+
+func _fail_capacity(token: String) -> void:
+	_capacity_seam.deliver([{
+		"request_id": _last_request_id,
+		"ok": false,
+		"error": token,
+	}])
+
+
+## Click a map size, through the shipped `_on_size_input`. **That is what re-asks**: the ceiling is
+## about the grid being made, so a new size is a new question — and it is also how a pick made on a
+## roomier map meets a smaller one's ceiling.
+func _pick_map_size(key: String) -> void:
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	_shell._on_size_input(click, key)
+
+
+## Move the slider through its own `value_changed`, so the pick goes down the shipped path.
+func _drag_rival_slider(count: int) -> void:
+	var slider := _find_slider(_shell._rivals_box)
+	if slider == null:
+		_fail("rivals: no slider to drag")
+		return
+	slider.value = count
+
+
+func _find_slider(node: Node) -> HSlider:
+	if node == null or not is_instance_valid(node):
+		return null
+	if node is HSlider:
+		return node as HSlider
+	for child in node.get_children():
+		var found := _find_slider(child)
+		if found != null:
+			return found
+	return null
 
 
 ## **THE LOAD / SAVE PANES, over a fake transport.** The seam is real, its decode and routing are
@@ -609,12 +1166,19 @@ func _assert_confirm_names_the_slot() -> void:
 
 
 func _find_button_containing(node: Node, needle: String) -> bool:
+	return _find_button(node, needle) != null
+
+
+## The same walk, handing the BUTTON back: the rival-count states assert on its `disabled` flag, not
+## merely on its existence. One traversal, so the two questions cannot drift apart.
+func _find_button(node: Node, needle: String) -> Button:
 	if node is Button and (node as Button).text.contains(needle):
-		return true
+		return node as Button
 	for child in node.get_children():
-		if _find_button_containing(child, needle):
-			return true
-	return false
+		var found := _find_button(child, needle)
+		if found != null:
+			return found
+	return null
 
 
 ## The button is BUILT hidden and shown only while the pick differs from what is on screen, so a

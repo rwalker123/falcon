@@ -71,6 +71,25 @@ unsendable to every new client. `FIRST_COMMAND_EVENT_SEQ` is therefore `1`, and 
 `next_seq` is monotonic **across eviction**: the cursor is a statement about what the client has
 seen, not an index into the ring, so a reissued number would silently suppress a real event.
 
+> ### ⛔ THE CURSOR IS PER SEAT, BECAUSE IT IS A FACT ABOUT ONE CLIENT
+>
+> *"What the client has seen"* is the whole definition, so a world publishing to N seats keeps N
+> cursors — one per `SeatPublishState`, beside that seat's baselines and its own `frame_seq`
+> (`factions.md` → "One frame per seat").
+>
+> **Sharing one would lose rows with no error anywhere.** `diff_appended` ships `seq > cursor` and
+> advances the cursor to the highest it *shipped*, so whichever seat's frame was built first would
+> take the new rows and the other seat's frame would carry none of them — and because the feed is
+> already filtered to the viewer, those rows would then appear in **no** frame at all. The symptom is
+> an event feed quietly missing the turns the other player's frame happened to cover: no gap, no
+> resync, nothing to notice.
+>
+> It is also why the cursor could not be made world-level *"since the rows are filtered anyway"*: the
+> filter is what removes the evidence. `seat_frames::each_seat_is_sent_every_event_of_its_own_and_none_of_the_others`
+> pins it by pushing one row per faction per turn and asserting each seat received every one of its
+> own — with the log's window widened for the run, so a row that merely aged out cannot be mistaken
+> for a row a shared cursor swallowed.
+
 ## `diff_appended` — the third diff shape
 
 Beside `diff_whole` / `diff_indexed` in `snapshot/mod.rs`, and the only one whose baseline is a

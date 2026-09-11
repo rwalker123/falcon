@@ -71,6 +71,7 @@ pub mod routes;
 pub mod save;
 pub mod save_store;
 mod scalar;
+pub mod seats;
 mod sedentarization;
 mod sedentarization_config;
 mod settlement_stage_config;
@@ -259,7 +260,7 @@ pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRe
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
     GreatDiscoveryEffectEvent, GreatDiscoveryEffectKind, GreatDiscoveryFlag, GreatDiscoveryId,
-    GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
+    GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRecord, GreatDiscoveryRegistry,
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
@@ -351,7 +352,7 @@ pub use snapshot_overlays_config::{
 };
 pub use start_profile::{
     resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, FactionControl,
-    FactionSpec, InventoryEntry, OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags,
+    InventoryEntry, OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartProfileKnowledgeTagsMetadata, StartProfileLookup,
     StartProfileOverrides, StartProfiles, StartProfilesHandle, StartProfilesMetadata,
     StartingUnitSpec,
@@ -372,7 +373,7 @@ pub use turn_pipeline_config::{
 };
 pub use victory::{
     load_victory_config_from_env, VictoryConfigHandle, VictoryModeId, VictoryModeKind,
-    VictoryModeState, VictoryState,
+    VictoryModeState, VictoryResult, VictoryState,
 };
 pub use visibility::{
     FactionVisibilityMap, TileVisibility, ViewerFaction, VisibilityLedger, VisibilitySource,
@@ -390,7 +391,7 @@ pub use wellbeing_config::{
 
 pub use biome_palette::{BiomePalette, PALETTE_SEED_SALT};
 pub use climate::{climate_band_for_temperature, ClimateBand};
-pub use metrics::SimulationMetrics;
+pub use metrics::{FactionMetrics, SimulationMetrics};
 pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
 };
@@ -410,9 +411,13 @@ pub use resources::{
     TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
+pub use seats::{
+    ConnectionId, ConnectionIdAllocator, SeatClaimRefusal, SeatClaimant, SeatRegistry, SeatToken,
+    SeatTurnGate, SeatTurnLimits, TurnWait,
+};
 pub use snapshot::{
     command_events_to_state, publish_baseline_snapshot, recapture_snapshot_in_place, FrameSink,
-    SnapshotHistory, StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
+    SnapshotAudiences, SnapshotHistory, StoredSnapshot, NOT_FOOD_LIMITED_TURNS,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
@@ -421,14 +426,21 @@ pub use systems::{
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
     output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_extraction,
-    settle_bands_roadwork, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
-    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
-    HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand, SplitRefusal,
-    SplitRefusals, TradeDiffusionEvent,
+    settle_bands_roadwork, simulate_population, simulate_power, source_has_a_meter_at_risk,
+    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
+    HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand,
+    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
     reconcile_coastal_shelf, reconcile_food_modules,
+};
+/// **The map's say in how many peoples it seats** — the ceiling, the offered default, and the clamp
+/// every path that takes an AI count runs through. Exported because the boot path, the `new_game`
+/// handler and the capacity query all ask the same function.
+pub use systems::{
+    faction_start_capacity, faction_start_land_fraction, granted_ai_faction_count,
+    max_faction_starts, unattended_ai_faction_count, FactionStartCapacity,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
@@ -518,13 +530,20 @@ pub fn build_headless_app() -> App {
     let active_profile_resource = ActiveStartProfile::new(active_profile.clone());
     let profile_lookup = StartProfileLookup::new(active_profile.id.clone());
 
-    // **Who plays this world comes from the start profile**, and the turn queue awaits exactly the
-    // roster the registry was seeded with. Validated first so a broken roster stops the boot here,
-    // rather than producing a world with no player in it.
-    active_profile
-        .overrides
-        .validate_factions(&active_profile.id);
-    let faction_registry = orders::FactionRegistry::new(&active_profile.overrides.factions);
+    // **Who plays this world is a COUNT OF RIVALS, not a profile declaration**: one human — the
+    // player — plus however many AI factions were asked for. A world built here was asked by
+    // nobody: it is the UNATTENDED roster, so an absent `default_ai_faction_count` means no rivals
+    // rather than the map-scaled count a New Game screen is offered (`unattended_ai_faction_count`
+    // vs `faction_start_capacity`). A `new_game` re-seeds this from the count the player picked.
+    // The count is clamped to what the grid can seat before the registry is built, so no path can
+    // register a faction worldgen has nowhere to put; the turn queue then awaits exactly the roster
+    // the registry was seeded with.
+    let faction_registry = orders::FactionRegistry::with_ai_factions(granted_ai_faction_count(
+        unattended_ai_faction_count(config.default_ai_faction_count),
+        config.grid_size,
+        config.faction_start_min_separation,
+        faction_start_land_fraction(&map_presets, &config.map_preset_id),
+    ));
     let turn_queue = orders::TurnQueue::new(faction_registry.factions().to_vec());
     // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
     // `capture_snapshot` no longer has to re-assert every turn.
@@ -825,6 +844,10 @@ pub fn build_headless_app() -> App {
         .init_resource::<starting_loadout::StartingLoadout>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
+        // **Who the world publishes a frame to.** Empty at boot: a world with no claimed seat
+        // publishes the single `ViewerFaction` view, which is every test and every single-player
+        // session before its client claims. The server rewrites it from `SeatRegistry`.
+        .insert_resource(snapshot::SnapshotAudiences::default())
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)
         .insert_resource(espionage_roster)

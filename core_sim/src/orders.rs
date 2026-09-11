@@ -4,7 +4,7 @@ use std::fmt;
 
 use bevy::prelude::Resource;
 
-use crate::start_profile::{default_factions, FactionControl, FactionSpec};
+use crate::start_profile::FactionControl;
 
 /// Identifier for a faction participating in the turn loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -16,16 +16,16 @@ impl fmt::Display for FactionId {
     }
 }
 
-/// **Registry of factions recognised by the simulation server**, seeded from the active start
-/// profile's `factions` list (see [`crate::start_profile::FactionSpec`]).
+/// **Registry of factions recognised by the simulation server**, seeded from the AI-faction count
+/// the new game was asked for (see [`FactionRegistry::with_ai_factions`]).
 ///
 /// # ⛔ INVARIANT: `control` is keyed by exactly the ids in `factions`
 ///
 /// Every reader that walks `factions` and then asks how a faction is driven would otherwise have to
-/// handle "registered but uncontrolled", a state with no meaning. [`FactionRegistry::new`] is the
-/// only constructor that can produce a non-default registry, and it derives **both** fields from one
-/// list, so the two cannot be written apart. Ids are **positional** — `FactionId(i)` for index `i` —
-/// which is why a profile cannot mint a duplicate id or leave a gap.
+/// handle "registered but uncontrolled", a state with no meaning. [`FactionRegistry::with_ai_factions`]
+/// is the only constructor there is, and it derives **both** fields from one count, so the two
+/// cannot be written apart. Ids are **positional** — `FactionId(i)` for index `i` — which is why
+/// nothing can mint a duplicate id or leave a gap.
 ///
 /// **Both fields are private, and that is what enforces the invariant.** While they were `pub` the
 /// `debug_assert!` in `new` guarded only the constructor, and three test worlds pushed a second id
@@ -39,31 +39,49 @@ pub struct FactionRegistry {
     control: BTreeMap<FactionId, FactionControl>,
 }
 
-/// One human faction — the shipped world, and what a test harness or any other non-profile
-/// construction path gets. Shares [`crate::start_profile::default_factions`] with the profile
-/// layer's default so the two statements of "the default world" cannot drift.
+/// One human faction and no rivals — the world a test harness, a save-less build or any other
+/// path that never asked for AI factions gets. It is exactly `with_ai_factions(0)`, so "the default
+/// world" has one statement rather than two.
 impl Default for FactionRegistry {
     fn default() -> Self {
-        Self::new(&default_factions())
+        Self::with_ai_factions(0)
     }
 }
 
 impl FactionRegistry {
-    /// Derives ids and control from one declaration order: entry `i` becomes `FactionId(i)`.
-    pub fn new(factions: &[FactionSpec]) -> Self {
-        let control: BTreeMap<FactionId, FactionControl> = factions
-            .iter()
-            .enumerate()
-            .map(|(index, spec)| (FactionId(index as u32), spec.control))
+    /// **The roster a new game asks for: the player, then `ai_factions` rivals.**
+    ///
+    /// `FactionId(0)` is always the human the player commands, and ids `1..=ai_factions` are the
+    /// sim's. The count is *rivals*, not roster size, so the caller never has to remember an
+    /// off-by-one: pick 2 and the world has three peoples in it.
+    ///
+    /// The shape is structural rather than validated — there is always exactly one human and there
+    /// is always a faction 0 for worldgen to place — which is what retired the "non-empty" and "at
+    /// least one human" checks the start profile's authored roster needed.
+    pub fn with_ai_factions(ai_factions: u32) -> Self {
+        let control: BTreeMap<FactionId, FactionControl> = (0..=ai_factions)
+            .map(|index| {
+                // Id 0 is the player's own; every id after it is the sim's.
+                let control = if index == 0 {
+                    FactionControl::Human
+                } else {
+                    FactionControl::Ai
+                };
+                (FactionId(index), control)
+            })
             .collect();
-        let factions: Vec<FactionId> = (0..factions.len())
-            .map(|index| FactionId(index as u32))
-            .collect();
+        let factions: Vec<FactionId> = (0..=ai_factions).map(FactionId).collect();
         debug_assert!(
             factions.len() == control.len() && factions.iter().all(|id| control.contains_key(id)),
             "faction registry control map must be keyed by exactly the registered factions"
         );
         Self { factions, control }
+    }
+
+    /// How many of the registered factions the sim drives — the count
+    /// [`Self::with_ai_factions`] was built from, read back.
+    pub fn ai_faction_count(&self) -> u32 {
+        self.factions.len().saturating_sub(1) as u32
     }
 
     /// Every registered faction, in id order — the roster the turn queue awaits and every fan-out
@@ -215,10 +233,6 @@ impl TurnQueue {
 mod tests {
     use super::*;
 
-    fn spec(control: FactionControl) -> FactionSpec {
-        FactionSpec { control }
-    }
-
     /// The registry a test harness, a save-less world and any other non-profile path gets.
     #[test]
     fn the_default_registry_is_one_human_faction() {
@@ -231,12 +245,11 @@ mod tests {
         assert!(!registry.is_ai(FactionId(0)));
     }
 
-    /// **Ids are positional**: entry `i` of the declaration is `FactionId(i)`, and the control map
-    /// is keyed by exactly those ids.
+    /// **The picked count is AI factions, and the roster is one longer than it**: the human at id
+    /// 0, then the rivals. Ids are positional and the control map is keyed by exactly those ids.
     #[test]
-    fn a_declared_roster_seeds_positional_ids_and_their_control() {
-        let registry =
-            FactionRegistry::new(&[spec(FactionControl::Human), spec(FactionControl::Ai)]);
+    fn a_requested_ai_count_seeds_one_human_and_that_many_rivals() {
+        let registry = FactionRegistry::with_ai_factions(1);
         assert_eq!(registry.factions(), [FactionId(0), FactionId(1)]);
         assert_eq!(
             registry.control_of(FactionId(0)),
@@ -247,12 +260,45 @@ mod tests {
         assert!(registry.is_ai(FactionId(1)));
         let control_keys: Vec<FactionId> = registry.control.keys().copied().collect();
         assert_eq!(control_keys, registry.factions());
+        assert_eq!(registry.ai_faction_count(), 1);
+    }
+
+    /// Pick 2 and three peoples play the world — the off-by-one the count's name exists to keep out
+    /// of every caller's head. Sabotaged by an `..ai_factions` range: it would answer two.
+    #[test]
+    fn two_ai_factions_make_a_three_faction_world() {
+        let registry = FactionRegistry::with_ai_factions(2);
+        assert_eq!(
+            registry.factions(),
+            [FactionId(0), FactionId(1), FactionId(2)]
+        );
+        assert_eq!(
+            registry.control_of(FactionId(0)),
+            Some(FactionControl::Human)
+        );
+        assert!(registry.is_ai(FactionId(1)));
+        assert!(registry.is_ai(FactionId(2)));
+        assert_eq!(registry.ai_faction_count(), 2);
+    }
+
+    /// Zero rivals is the single-faction world, and it is the same object `default()` builds — the
+    /// property the whole "0 changes nothing" claim rests on.
+    #[test]
+    fn zero_ai_factions_is_the_default_world() {
+        let picked = FactionRegistry::with_ai_factions(0);
+        let default = FactionRegistry::default();
+        assert_eq!(picked.factions(), default.factions());
+        assert_eq!(
+            picked.control_of(FactionId(0)),
+            default.control_of(FactionId(0))
+        );
+        assert_eq!(picked.ai_faction_count(), 0);
     }
 
     /// An id nobody declared is not registered, is not the sim's to drive, and has no control.
     #[test]
     fn an_unregistered_faction_has_no_control_and_is_not_ai() {
-        let registry = FactionRegistry::new(&[spec(FactionControl::Human)]);
+        let registry = FactionRegistry::with_ai_factions(0);
         assert!(registry.contains(FactionId(0)));
         assert!(!registry.contains(FactionId(7)));
         assert_eq!(registry.control_of(FactionId(7)), None);
@@ -263,8 +309,7 @@ mod tests {
     /// without anything else being told about it.
     #[test]
     fn the_turn_queue_awaits_every_seeded_faction() {
-        let registry =
-            FactionRegistry::new(&[spec(FactionControl::Human), spec(FactionControl::Ai)]);
+        let registry = FactionRegistry::with_ai_factions(1);
         let mut queue = TurnQueue::new(registry.factions().to_vec());
         let mut awaiting = queue.awaiting();
         awaiting.sort();

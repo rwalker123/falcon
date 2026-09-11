@@ -110,6 +110,39 @@ pub struct SimulationConfig {
     pub temperature_morale_tolerance: Scalar,
     pub population_cluster_stride: u32,
     pub population_cap: u32,
+    /// **How far apart worldgen tries to put two factions' start tiles, in tiles.**
+    ///
+    /// Measured the way the curated food-site pass measures spacing — Euclidean distance on tile
+    /// coordinates, compared squared — so the file has one notion of "far enough apart".
+    ///
+    /// It is a *target*, not a guarantee: on a map with no land pair that far apart, worldgen takes
+    /// the best remaining tile and warns rather than failing to place a faction (see
+    /// `systems::worldgen`). Validated `> 0` at parse, because a separation of zero would let two
+    /// peoples open the campaign on the same hex.
+    pub faction_start_min_separation: u32,
+    /// **The pin on how many AI factions a world gets when nobody picked a number, or `None` for
+    /// "derive it from the map".**
+    ///
+    /// `None` is not `Some(0)` — the same distinction the optional `new_game` wire field draws, and
+    /// on the wire it is a JSON `null`, which is what ships:
+    ///
+    /// - **`None` (shipped)** — the New Game screen pre-selects
+    ///   `systems::worldgen::faction_start_capacity`'s share of what the chosen grid can seat, and
+    ///   an **unattended** boot (`build_headless_app`, a `new_game` carrying no count) opens with
+    ///   no rivals at all (`systems::worldgen::unattended_ai_faction_count`). The two are
+    ///   deliberately different numbers: one is an offer to a player, the other is what a process
+    ///   nobody is watching starts with, and there is no AI to drive a rival yet.
+    /// - **`Some(n)`** — pins **both** to `n`. The escape hatch a headless run, a test or a
+    ///   designer uses to boot with rivals without touching the UI.
+    ///
+    /// **It counts rivals, not the roster** — 0 is the single-faction world, 2 is a world of three
+    /// peoples.
+    ///
+    /// Clamped, never refused: a count above what the grid can hold at
+    /// [`Self::faction_start_min_separation`] is granted down to the ceiling with a warning, the
+    /// same answer the `new_game` command gets, because the grid a world is finally built on is not
+    /// the grid this file was parsed against.
+    pub default_ai_faction_count: Option<u32>,
     pub power_adjust_rate: Scalar,
     pub max_power_generation: Scalar,
     pub max_power_efficiency: Scalar,
@@ -155,6 +188,17 @@ pub struct SimulationConfig {
     /// one turn cost five. Turns are human-paced and a save is a cadence thing, so the honest shape
     /// is "how often", decided here rather than assumed in the hook.
     pub autosave_interval_turns: u64,
+    /// **How long an open turn waits for an OCCUPIED seat that has gone silent**, in seconds, before
+    /// the server submits `end_turn` on its behalf and resolves.
+    ///
+    /// Waiting is the default and this is the only thing that ends a wait early: one mechanism for a
+    /// wedged AI process and for a human who walked away (`docs/plan_multiplayer_seats.md` §4.2). It
+    /// is a **live-loop scheduling** lever and never a rule inside the resolve, which is also the
+    /// replay path and must not consult a clock.
+    ///
+    /// A *vacant* seat is not waited for at all, so this value has no effect on a single-human game:
+    /// see `.claude/rules/core_sim/factions.md` → "Waiting is the default".
+    pub seat_turn_timeout_seconds: f32,
 }
 
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
@@ -243,6 +287,19 @@ pub enum SimulationConfigError {
          sim and the event dock silently running different windows"
     )]
     ZeroCommandEventsRetentionTurns,
+    #[error(
+        "`seat_turn_timeout_seconds` must be a positive, finite number of seconds: it is how long an \
+         open turn waits for an occupied seat that has gone silent, and 0 would auto-submit for a \
+         live player the instant anyone else was ready - which is not a short wait, it is no waiting \
+         at all"
+    )]
+    NonPositiveSeatTurnTimeout,
+    #[error(
+        "`faction_start_min_separation` must be at least 1: it is the distance worldgen holds \
+         between two factions' start tiles, and 0 would let two peoples open the campaign standing \
+         on the same hex — which is not a cramped map, it is no placement at all"
+    )]
+    ZeroFactionStartMinSeparation,
 }
 
 impl ConfigLoadError for SimulationConfigError {
@@ -284,6 +341,11 @@ struct SimulationConfigData {
     temperature_morale_tolerance: f32,
     population_cluster_stride: u32,
     population_cap: u32,
+    #[serde(default = "default_faction_start_min_separation")]
+    faction_start_min_separation: u32,
+    /// Absent **and** explicit `null` both mean "derive it" — see the resource field's doc.
+    #[serde(default)]
+    default_ai_faction_count: Option<u32>,
     power_adjust_rate: f32,
     max_power_generation: f32,
     max_power_efficiency: f32,
@@ -314,6 +376,8 @@ struct SimulationConfigData {
     command_events_retention_turns: u64,
     #[serde(default = "default_autosave_interval_turns")]
     autosave_interval_turns: u64,
+    #[serde(default = "default_seat_turn_timeout_seconds")]
+    seat_turn_timeout_seconds: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -457,6 +521,12 @@ impl SimulationConfigData {
         if self.command_events_retention_turns == 0 {
             return Err(SimulationConfigError::ZeroCommandEventsRetentionTurns);
         }
+        if self.faction_start_min_separation == 0 {
+            return Err(SimulationConfigError::ZeroFactionStartMinSeparation);
+        }
+        if !self.seat_turn_timeout_seconds.is_finite() || self.seat_turn_timeout_seconds <= 0.0 {
+            return Err(SimulationConfigError::NonPositiveSeatTurnTimeout);
+        }
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_topology: MapTopology {
@@ -479,6 +549,8 @@ impl SimulationConfigData {
             temperature_morale_tolerance: scalar_from_f32(self.temperature_morale_tolerance),
             population_cluster_stride: self.population_cluster_stride,
             population_cap: self.population_cap,
+            faction_start_min_separation: self.faction_start_min_separation,
+            default_ai_faction_count: self.default_ai_faction_count,
             power_adjust_rate: scalar_from_f32(self.power_adjust_rate),
             max_power_generation: scalar_from_f32(self.max_power_generation),
             max_power_efficiency: scalar_from_f32(self.max_power_efficiency),
@@ -503,12 +575,23 @@ impl SimulationConfigData {
             fog_enabled: self.fog_enabled,
             command_events_retention_turns: self.command_events_retention_turns,
             autosave_interval_turns: self.autosave_interval_turns,
+            seat_turn_timeout_seconds: self.seat_turn_timeout_seconds,
         })
     }
 }
 
 fn default_fog_enabled() -> bool {
     true
+}
+
+/// 20 tiles — a quarter of the shipped map's width (`grid_size.x = 80`).
+///
+/// Far enough that two peoples do not open the campaign sharing one food shed and have to travel to
+/// meet each other, close enough that the greedy placement can still satisfy it on a map whose land
+/// is a fraction of the grid. The single source of the number, so an untouched config and an absent
+/// key cannot disagree.
+fn default_faction_start_min_separation() -> u32 {
+    20
 }
 
 /// 20 turns of world events: long enough that a player returning from a few quick turns can read
@@ -524,6 +607,14 @@ fn default_command_events_retention_turns() -> u64 {
 /// absorbs, rather than every turn paying it.
 fn default_autosave_interval_turns() -> u64 {
     10
+}
+
+/// **Two minutes.** The wait is a wedge-breaker, not a chess clock: a turn in a strategy game is
+/// legitimately minutes of a human's thinking, so a snug value would end turns players were still
+/// taking — and the cost of being generous is only that a genuinely dead process holds the others up
+/// once, for this long, before the world moves on without it.
+fn default_seat_turn_timeout_seconds() -> f32 {
+    120.0
 }
 
 fn default_map_preset_id() -> String {
@@ -858,22 +949,60 @@ impl Default for CapabilityFlags {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default, Serialize, Deserialize)]
+/// **Where each faction's campaign began** — one tile per faction, filed under the faction it
+/// belongs to.
+///
+/// Per-faction rather than global because worldgen places every registered faction, at its own
+/// start (`systems::worldgen`): a single marker would name one people's ground and leave the rest
+/// homeless, and [`Self::relocate`] would let a rival's new settlement move your marker.
+///
+/// **`BTreeMap`, not `HashMap`** — this is checkpointed state (`WorldStatics`), so the iteration
+/// order has to be an order and not an accident.
+///
+/// `Default` is the **empty** map, which is what a hand-rolled test `World` inserts as scaffolding:
+/// no faction has a start until worldgen picks one.
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StartLocation {
-    position: Option<UVec2>,
+    positions: BTreeMap<FactionId, UVec2>,
 }
 
 impl StartLocation {
-    pub fn new(position: Option<UVec2>) -> Self {
-        Self { position }
+    pub fn new(positions: BTreeMap<FactionId, UVec2>) -> Self {
+        Self { positions }
     }
 
-    pub fn position(&self) -> Option<UVec2> {
-        self.position
+    /// Where `faction` started, or `None` if this world never placed it.
+    pub fn position_for(&self, faction: FactionId) -> Option<UVec2> {
+        self.positions.get(&faction).copied()
     }
 
-    pub fn relocate(&mut self, position: UVec2) {
-        self.position = Some(position);
+    /// **The map's anchor start — the lowest-id faction's.**
+    ///
+    /// For readers that are asking about *the world* rather than about a people, and so have no
+    /// faction to ask with: where the first people were put is a property of the terrain that
+    /// scored best, and a one-faction world's anchor is its only start. Used by the migratory-herd
+    /// anchor (`fauna::spawn_initial_herds`) and by the worldgen suites that assert on the map.
+    pub fn anchor_position(&self) -> Option<UVec2> {
+        self.positions.values().next().copied()
+    }
+
+    /// Move `faction`'s marker — and only that faction's. A settlement founded by one people says
+    /// nothing about where another people began.
+    pub fn relocate(&mut self, faction: FactionId, position: UVec2) {
+        self.positions.insert(faction, position);
+    }
+
+    /// Every placed start, in faction-id order.
+    pub fn iter(&self) -> impl Iterator<Item = (FactionId, UVec2)> + '_ {
+        self.positions.iter().map(|(faction, pos)| (*faction, *pos))
+    }
+
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
     }
 }
 

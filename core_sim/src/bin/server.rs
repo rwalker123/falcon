@@ -11,7 +11,7 @@ use bevy::{
     math::UVec2,
     prelude::{Entity, With},
 };
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
@@ -42,32 +42,35 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, hunt_trip_forecast, install_config_override, party_owes_a_report,
-    publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
-    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
-    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
-    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
-    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig,
-    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    WorldEpoch, FODDER, FOOD,
+    fold_party_into_band, granted_ai_faction_count, hunt_trip_forecast, install_config_override,
+    party_owes_a_report, publish_baseline_snapshot, recapture_snapshot_in_place, run_turn,
+    scalar_from_f32, shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId,
+    BandIdAllocator, BandName, CommandEventEntry, CommandEventKind, CommandEventLog,
+    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
+    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
+    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
+    TradeExpeditionConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
+};
+use core_sim::{
+    ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
 };
 use sim_runtime::{
     commands::{
         query_error, save_error, ConfigOverrideKind,
-        EspionageGeneratorUpdate as CommandGeneratorUpdate, QueryPayload, QueryReply,
-        QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, AUTOSAVE_SLOT, BENCH_CREW_UNSPECIFIED,
-        MAX_PROTO_FRAME,
+        EspionageGeneratorUpdate as CommandGeneratorUpdate, FactionCapacityReply, QueryPayload,
+        QueryReply, QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, SeatClaimReply,
+        AUTOSAVE_SLOT, BENCH_CREW_UNSPECIFIED, MAX_PROTO_FRAME,
     },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags, TradeCargoItem,
@@ -280,10 +283,48 @@ fn main() {
         "Shadow-Scale headless server ready (idle — send new_game to generate a world)"
     );
 
-    while let Ok(command) = command_rx.recv() {
+    // **Who is driving each faction, and how long the open turn will wait for them.** Session
+    // state: a save is a world with N seats and who sat in them is a fact about this process's
+    // sockets (`docs/plan_multiplayer_seats.md` §4.5), so both live here beside `world_active` and
+    // `command_log` rather than as resources a checkpoint could pick up.
+    let mut seats = SeatRegistry::default();
+    let mut turn_gate = SeatTurnGate::default();
+
+    loop {
         let flat_server: &SnapshotServer = &snapshot_flat_server;
+        let (connection, command) = match wait_for_command(&command_rx, &turn_gate) {
+            LoopWake::Delivered(connection, command) => (connection, command),
+            LoopWake::TurnDeadline => {
+                // The open turn's wait ran out. `settle_open_turn` re-reads the queue rather than
+                // trusting the wake, so a deadline that raced the last submission still resolves the
+                // ordinary way.
+                settle_open_turn_and_publish(
+                    &mut app,
+                    &mut command_log,
+                    &seats,
+                    &mut turn_gate,
+                    world_active,
+                );
+                continue;
+            }
+            LoopWake::Closed => break,
+        };
         match command {
             Command::Turn(turns) => {
+                // **HOST-ONLY** (`is_host_verb`): `Turn` resolves the world for *everyone*, so it is
+                // the host's "resolve now" and never a seat's submission — a seat submits `Orders` and
+                // the loop resolves when the seats are ready. Letting a player send this would let any
+                // one of them end a turn the others were still taking.
+                if !seats.may_issue_host_verb(connection) {
+                    warn!(
+                        target: "shadow_scale::command",
+                        command = "turn",
+                        %connection,
+                        claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+                        "command.rejected=host_only"
+                    );
+                    continue;
+                }
                 if !world_active {
                     warn!(
                         target: "shadow_scale::server",
@@ -292,13 +333,7 @@ fn main() {
                     continue;
                 }
                 for _ in 0..turns {
-                    resolve_turn_with_auto_orders(&mut app);
-                    if let Some(log) = command_log.as_mut() {
-                        log.push(LogEntry::Turn);
-                    }
-                    // After the turn is logged, so a crash between the two leaves an autosave whose
-                    // world is one the log can still reproduce.
-                    maybe_autosave(&app);
+                    resolve_and_log_turn(&mut app, &mut command_log);
                 }
             }
             Command::ResetMap { width, height } => {
@@ -343,6 +378,23 @@ fn main() {
                 if should_randomize_seed {
                     new_config.map_seed = 0;
                 }
+                // **A resize keeps the peoples it had**, re-clamped to the grid it is moving to:
+                // `rebuild_world_from_config` starts from `build_headless_app`, whose registry was
+                // seeded against the CONFIG FILE's grid, so without this a shrink could register
+                // more factions than the new map seats — and a grow would silently drop the rivals
+                // this world was actually playing with back to the file's default.
+                let carried_ai_factions =
+                    app.world.resource::<FactionRegistry>().ai_faction_count();
+                let reset_land_fraction = core_sim::faction_start_land_fraction(
+                    &app.world.resource::<core_sim::MapPresetsHandle>().get(),
+                    &new_config.map_preset_id,
+                );
+                let granted_ai_factions = granted_ai_faction_count(
+                    carried_ai_factions,
+                    new_config.grid_size,
+                    new_config.faction_start_min_separation,
+                    reset_land_fraction,
+                );
 
                 retire_publisher(&mut app);
                 app = rebuild_world_from_config(
@@ -352,11 +404,13 @@ fn main() {
                     &watch_paths,
                     &snapshot_flat_server,
                     &mut world_epoch,
-                    |_| {},
+                    move |new_app| seed_faction_roster(new_app, granted_ai_factions),
                 );
                 world_active = true;
                 // A new world: nothing before this point is reachable.
                 command_log = Some(CommandLog::new(&app));
+                retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 info!(
                     target: "shadow_scale::server",
                     width,
@@ -371,6 +425,7 @@ fn main() {
                 height,
                 seed,
                 profile_id,
+                ai_faction_count,
             } => {
                 handle_new_game(
                     &mut app,
@@ -381,8 +436,11 @@ fn main() {
                     height,
                     seed,
                     profile_id,
+                    ai_faction_count,
                     &snapshot_flat_server,
                 );
+                retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
             }
             // **A QUERY IS ANSWERED, NOT APPLIED — and that is why it is matched here rather than
             // falling into the arm below.** Two things below it must not happen to a query:
@@ -401,7 +459,14 @@ fn main() {
                 query,
                 reply,
             } => {
-                let answer = answer_query(world_active, &mut app.world, &query);
+                // **The seat gate, on the channel a question comes back on.** Three of the five
+                // questions are answered out of one faction's private state, so the connection that
+                // asks must be the one sitting at that seat — and a mismatch is answered with a
+                // refusal rather than dropped, because the client is holding a sheet open for it.
+                let answer = match query_seat_refusal(&seats, connection, &query) {
+                    Some(token) => QueryReply::Error(token.to_string()),
+                    None => answer_query(world_active, &mut app.world, &query),
+                };
                 // A send failure means the asking connection is gone. Nothing to recover: the
                 // question died with it.
                 if reply
@@ -453,47 +518,492 @@ fn main() {
                     &snapshot_flat_server,
                 );
                 answer_save_op(&reply, request_id, answer);
+                retain_claimed_seats(&app, &mut seats);
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 // `handle_load_game` publishes the restored world itself, and it is NOT replayable:
                 // it replaces the world, so there is nothing before it to replay from. It re-bases
                 // the log rather than being logged, exactly as `new_game` and `reset_map` do.
                 continue;
             }
+            // **A CLAIM IS ANSWERED, NOT APPLIED** — matched here ahead of the catch-all arm for the
+            // two reasons a `Query` is: it belongs in no replay log (it mutates no world), and the
+            // seat registry it writes is the loop's own session state rather than anything in the
+            // world. It also `continue`s past the re-capture: nothing about the world changed.
+            Command::ClaimSeat {
+                request_id,
+                faction,
+                reply,
+            } => {
+                let answer = answer_seat_claim(&app, &mut seats, connection, faction);
+                // Before the reply, so the token the client is about to present is already bound to
+                // its seat by the time the client's stream socket can offer it.
+                sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
+                if reply
+                    .send(QueryReplyEnvelope {
+                        request_id,
+                        reply: QueryReply::SeatClaim(answer),
+                    })
+                    .is_err()
+                {
+                    warn!(
+                        target: "shadow_scale::server",
+                        request_id,
+                        "seat.claim.reply_dropped=asking connection closed"
+                    );
+                }
+                continue;
+            }
+            Command::ReleaseSeat => {
+                release_seat_and_settle(
+                    &mut app,
+                    &mut seats,
+                    connection,
+                    &snapshot_flat_server,
+                    &mut command_log,
+                    &mut turn_gate,
+                    world_active,
+                );
+                continue;
+            }
             other => {
-                // Logged BEFORE it runs, and on the same uniform seam every command already passes
-                // through: a new command variant is logged whether or not anyone remembers it
-                // exists. `Rollback` is excluded because it is not part of the timeline — it moves
-                // through it, and logging it would make a rollback replay itself.
-                // A config reload is not replayable — a `SimState` carries no config by design, so
-                // replaying across one would run turns under whatever tuning is live rather than
-                // that tick's. It re-bases the origin instead of being logged.
-                let rebases_origin = matches!(other, Command::ReloadConfig { .. });
-                if let Some(log) = command_log.as_mut() {
-                    log_dispatched_command(log, &other);
-                }
-                if let Command::Rollback { tick } = other {
-                    if let Some(log) = command_log.as_mut() {
-                        handle_rollback(&mut app, tick, flat_server, log);
-                    }
-                } else {
-                    apply_command(&mut app, other, flat_server);
-                    if rebases_origin {
-                        if let Some(log) = command_log.as_mut() {
-                            log.rebase(&app, "config_reload");
-                        }
-                    }
-                }
+                dispatch_connection_command(
+                    &mut app,
+                    connection,
+                    other,
+                    &seats,
+                    &mut command_log,
+                    flat_server,
+                );
             }
         }
 
-        // Re-capture + broadcast the fresh world (incl. the feed) so an immediate, synchronous
-        // command mutation (expedition launch, move_band, assign_labor, …) reaches the client now,
-        // not only at the next turn (replaces the feed-only splice that reused last turn's world).
-        // Gated on `world_active`: on the idle (pre-`new_game`) world there is no `ElevationField`,
-        // so recapture would panic in the Snapshot stage.
-        if world_active {
-            recapture_and_broadcast(&mut app);
+        // Resolve the open turn if the seats are ready for it, then re-capture + broadcast the fresh
+        // world (incl. the feed) so an immediate, synchronous command mutation (expedition launch,
+        // move_band, assign_labor, …) reaches the client now, not only at the next turn (replaces the
+        // feed-only splice that reused last turn's world). Both halves are gated on `world_active`:
+        // on the idle (pre-`new_game`) world there is no `ElevationField`, so either would panic in
+        // the Snapshot stage.
+        settle_open_turn_and_publish(
+            &mut app,
+            &mut command_log,
+            &seats,
+            &mut turn_gate,
+            world_active,
+        );
+    }
+}
+
+/// Why the command loop woke up.
+enum LoopWake {
+    /// A command arrived, from this connection.
+    Delivered(ConnectionId, Command),
+    /// The open turn's wait ran out before anything arrived.
+    TurnDeadline,
+    /// Every sender is gone.
+    Closed,
+}
+
+/// Block until a command arrives, or until the open turn's wait runs out.
+///
+/// **With nothing waiting there is no deadline and this is the same blocking `recv` the loop always
+/// did** — which is what keeps an idle server idle, and what makes a session with no seat claimed
+/// pace exactly as it did before seats existed.
+fn wait_for_command(commands: &Receiver<CommandDelivery>, turn_gate: &SeatTurnGate) -> LoopWake {
+    let received = match turn_gate.deadline() {
+        Some(deadline) => commands.recv_deadline(deadline),
+        None => commands.recv().map_err(|_| RecvTimeoutError::Disconnected),
+    };
+    match received {
+        Ok((connection, command)) => LoopWake::Delivered(connection, command),
+        Err(RecvTimeoutError::Timeout) => LoopWake::TurnDeadline,
+        Err(RecvTimeoutError::Disconnected) => LoopWake::Closed,
+    }
+}
+
+/// **One connection's world-mutating command: the seat gate, then the timeline.**
+///
+/// ⛔ **The gate is HERE, ahead of `log_dispatched_command`, and deliberately not inside
+/// `apply_command`.** The loop logs a command before it applies it, and `apply_command` is *also* the
+/// replay path — so a refusal raised inside it would leave the refused command sitting in the log,
+/// where a replay (which has no connections and no seats) would apply it. A command that was refused
+/// never happened, so it never enters the timeline. `commanding_faction` is still the only place a
+/// command's faction is read; this only asks the [`SeatRegistry`] about the answer.
+///
+/// Everything that carries a faction reaches this arm — the arms matched ahead of it in the loop are
+/// all world, save, query and seat verbs — so one gate here covers the whole faction-bearing surface.
+fn dispatch_connection_command(
+    app: &mut bevy::prelude::App,
+    connection: ConnectionId,
+    command: Command,
+    seats: &SeatRegistry,
+    command_log: &mut Option<CommandLog>,
+    flat_server: &SnapshotServer,
+) {
+    if !seat_authorizes(seats, connection, &command) {
+        return;
+    }
+    // Logged BEFORE it runs, and on the same uniform seam every command already passes through: a new
+    // command variant is logged whether or not anyone remembers it exists. `Rollback` is excluded
+    // because it is not part of the timeline — it moves through it, and logging it would make a
+    // rollback replay itself. A config reload is not replayable — a `SimState` carries no config by
+    // design, so replaying across one would run turns under whatever tuning is live rather than that
+    // tick's. It re-bases the origin instead of being logged.
+    let rebases_origin = matches!(command, Command::ReloadConfig { .. });
+    if let Some(log) = command_log.as_mut() {
+        log_dispatched_command(log, &command);
+    }
+    if let Command::Resync = command {
+        handle_resync(app, seats.seat_of(connection), connection, flat_server);
+    } else if let Command::Rollback { tick } = command {
+        if let Some(log) = command_log.as_mut() {
+            handle_rollback(app, tick, flat_server, log, seats);
+        }
+    } else {
+        apply_command(app, command);
+        if rebases_origin {
+            if let Some(log) = command_log.as_mut() {
+                log.rebase(app, "config_reload");
+            }
         }
     }
+}
+
+/// **May this connection issue this command?** The seat gate — and the only reader of a *connection's*
+/// authority anywhere.
+///
+/// Three rules, all classified by the one exhaustive [`commanding_faction`] match:
+///
+/// - a **faction-bearing** command is allowed only from the connection holding that faction's seat. A
+///   wire `faction_id` that disagrees is **refused and logged, never rewritten** to the claimed seat:
+///   silently correcting it would hide the client bug that sent it (plan §4.1 — *"an error, not a
+///   hint"*).
+/// - a connection that has **claimed no seat** therefore may send only what `commanding_faction`
+///   answers `None` for: the world verbs.
+/// - the **host verbs** ([`is_host_verb`]) go the other way — they move the world for everyone, so a
+///   *seated* connection may not send them.
+/// - the **solo verbs** ([`solo_only_verb`]) are refused once a second seat is occupied — the one
+///   rule keyed on how many players there are rather than on who sent it.
+fn seat_authorizes(seats: &SeatRegistry, connection: ConnectionId, command: &Command) -> bool {
+    if let Some((faction, label)) = commanding_faction(command) {
+        if !seats.commands_faction(connection, faction) {
+            warn!(
+                target: "shadow_scale::command",
+                command = label,
+                faction = %faction.0,
+                %connection,
+                claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+                "command.rejected=not_this_connections_seat"
+            );
+            return false;
+        }
+        return true;
+    }
+    if is_host_verb(command) && !seats.may_issue_host_verb(connection) {
+        warn!(
+            target: "shadow_scale::command",
+            %connection,
+            claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+            "command.rejected=host_only"
+        );
+        return false;
+    }
+    if let Some(label) = solo_only_verb(command) {
+        if seats.is_shared() {
+            warn!(
+                target: "shadow_scale::command",
+                command = label,
+                %connection,
+                claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+                occupied_seats = seats.occupied_seats().len(),
+                "command.rejected=another_player_is_seated"
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// **The verbs that are a convenience with one player and a DISCLOSURE with two**, and what to call
+/// the refusal in the log.
+///
+/// `SetFogEnabled` is the whole set. Fog off is a single-player and dev convenience — the `F` key and
+/// the Options toggle — but `fog_enabled` is read by the *capture*, not by a renderer:
+/// `snapshot_forage_patches`' `improvement_is_legible` short-circuits on `!fog_enabled`, so with it
+/// off **every** seat's frame publishes every rival patch's owner, its cultivation and field progress,
+/// its rung yields and its true carrying capacity, foreign bands stop being redacted and
+/// `herd_is_visible` stops filtering. `.claude/rules/core_sim/factions.md` states that `fog_enabled`
+/// must never become a disclosure switch, and with a second player seated that is exactly what it is.
+///
+/// ⛔ **This is deliberately NOT expressed as a host verb.** "Host" means *holds no seat*
+/// ([`SeatRegistry::may_issue_host_verb`]), and any process may connect and simply decline to claim
+/// one — so host-gating this would move the hole rather than close it. The rule that actually holds is
+/// about the *world*: with one occupant there is nobody to disclose to, and with two there is.
+///
+/// It is not only a grief vector. The client pushes its local `ClientSettings.fog_of_war_enabled`
+/// preference and re-checks it on every snapshot, so two players with opposite preferences would flip
+/// the world's fog against each other indefinitely, one command per frame each.
+fn solo_only_verb(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::SetFogEnabled { .. } => Some("set_fog"),
+        _ => None,
+    }
+}
+
+/// **May this connection ask this question?** The query channel's half of the seat gate — `None` to
+/// answer it, or the [`query_error`] token to refuse it with.
+///
+/// The same rule [`seat_authorizes`] applies to a command, applied to the faction a question *reads*
+/// ([`querying_faction`]): a forecast is answered out of one faction's private state, so only the
+/// connection sitting at that seat may have it. There is no point scoping a frame per seat if the
+/// query channel answers anything.
+///
+/// ⛔ **A refusal is DELIVERED, not dropped.** A refused command returns silently — the client learns
+/// from the world not changing — but a question's client is holding a sheet open waiting for its
+/// answer, and a dropped query is a sheet that spins forever. So this returns a token the caller puts
+/// on [`QueryReplyEnvelope`] like any other refusal, and the client renders it exactly as it renders
+/// `unknown_herd`.
+fn query_seat_refusal(
+    seats: &SeatRegistry,
+    connection: ConnectionId,
+    query: &QueryPayload,
+) -> Option<&'static str> {
+    let (faction, label) = querying_faction(query)?;
+    if seats.commands_faction(connection, faction) {
+        return None;
+    }
+    warn!(
+        target: "shadow_scale::command",
+        query = label,
+        faction = %faction.0,
+        %connection,
+        claimed_seat = ?seats.seat_of(connection).map(|seat| seat.0),
+        "query.refused=not_this_connections_seat"
+    );
+    Some(query_error::NOT_YOUR_SEAT)
+}
+
+/// **The verbs that move the world for EVERYONE, and are therefore not a seat's to send.**
+///
+/// `Rollback` rewinds it — a debug tool with one player and a grief vector with several
+/// (`docs/plan_multiplayer_seats.md` §4.4) — and `Turn` resolves it, which is the host's verb rather
+/// than anyone's submission.
+fn is_host_verb(command: &Command) -> bool {
+    matches!(command, Command::Rollback { .. } | Command::Turn(_))
+}
+
+/// **Resolve one turn and put it in the timeline** — the ONE place the live path does both, so the
+/// host's `Turn` and a seat-driven resolution cannot come to log differently.
+///
+/// The autosave lands after the log entry, so a crash between the two leaves an autosave whose world
+/// the log can still reproduce.
+fn resolve_and_log_turn(app: &mut bevy::prelude::App, command_log: &mut Option<CommandLog>) {
+    resolve_turn_with_auto_orders(app);
+    if let Some(log) = command_log.as_mut() {
+        log.push(LogEntry::Turn);
+    }
+    maybe_autosave(app);
+}
+
+/// [`settle_open_turn`] and then the post-command re-capture, both gated on there being a world.
+fn settle_open_turn_and_publish(
+    app: &mut bevy::prelude::App,
+    command_log: &mut Option<CommandLog>,
+    seats: &SeatRegistry,
+    turn_gate: &mut SeatTurnGate,
+    world_active: bool,
+) {
+    if !world_active {
+        // No world is no turn to settle — and a gate left armed would spin the loop on a deadline
+        // nothing can answer. Unreachable today (`world_active` never goes back to false once a world
+        // is built) and cheap to make impossible.
+        turn_gate.disarm();
+        return;
+    }
+    settle_open_turn(app, command_log, seats, turn_gate);
+    recapture_and_broadcast(app);
+}
+
+/// **The live loop's turn-waiting decision**, run after every command and on every deadline wake.
+///
+/// ⛔ **The timeout is a live-path SCHEDULING decision and never a rule inside the resolve.**
+/// [`resolve_turn_with_auto_orders`] keeps its unconditional force-submit because a `LogEntry::Turn`
+/// re-enters it on replay: a real seat's submission is a logged `Command::Orders`, so a replay finds
+/// that faction already submitted and the force-submit catches exactly the seats *this* run
+/// auto-submitted — the vacant ones and the ones that timed out. Replay is correct by construction
+/// rather than by reproducing a timer, and nothing on the replay path consults a clock.
+///
+/// The two rules behind [`SeatTurnGate::assess`] are stated there. The short form: a **vacant** seat
+/// never holds the turn, and the turn is only in flight at all once an **occupied** seat has
+/// submitted — which is why a session with no seat claimed resolves turns only when the host asks.
+fn settle_open_turn(
+    app: &mut bevy::prelude::App,
+    command_log: &mut Option<CommandLog>,
+    seats: &SeatRegistry,
+    turn_gate: &mut SeatTurnGate,
+) {
+    // Read from the LIVE config, so a hot reload of `seat_turn_timeout_seconds` moves the wait.
+    let limits = SeatTurnLimits {
+        submission_timeout: Duration::from_secs_f32(
+            app.world
+                .resource::<SimulationConfig>()
+                .seat_turn_timeout_seconds,
+        ),
+    };
+    let awaiting = app.world.resource::<TurnQueue>().awaiting();
+    let was_waiting = turn_gate.deadline().is_some();
+    match turn_gate.assess(&awaiting, seats, Instant::now(), limits) {
+        TurnWait::Idle => {}
+        TurnWait::Wait { silent_seats, .. } => {
+            // Once per turn, on the transition into waiting: a stalled game must say what it is
+            // stalled on, and repeating it per command would bury the log.
+            if !was_waiting {
+                info!(
+                    target: "shadow_scale::server",
+                    seats = ?silent_seats.iter().map(|seat| seat.0).collect::<Vec<_>>(),
+                    timeout_seconds = limits.submission_timeout.as_secs_f32(),
+                    "turn.waiting_on_seats"
+                );
+            }
+        }
+        TurnWait::Resolve => resolve_and_log_turn(app, command_log),
+        TurnWait::ResolveOnTimeout { silent_seats } => {
+            for faction in &silent_seats {
+                warn!(
+                    target: "shadow_scale::server",
+                    %faction,
+                    timeout_seconds = limits.submission_timeout.as_secs_f32(),
+                    "turn.seat_timed_out=resolving without it"
+                );
+            }
+            resolve_and_log_turn(app, command_log);
+        }
+    }
+}
+
+/// **Seat a connection, or say why not** — the decision half of the loop's `ClaimSeat` arm, which
+/// is this plus putting the answer on the asking connection's reply channel.
+///
+/// The seat is validated against the **world's own roster**, so a claim can only ever name a faction
+/// this world has. A grant mints a fresh [`core_sim::SeatToken`] and the reply carries it: the claim is what
+/// ties a seat's command socket to its stream socket, and the token is what the stream socket
+/// presents. ⛔ **The log line names the connection and the faction and never the token** — the
+/// identity is what a human debugging a session wants, and the token is a secret (`seats.rs`).
+fn answer_seat_claim(
+    app: &bevy::prelude::App,
+    seats: &mut SeatRegistry,
+    connection: ConnectionId,
+    faction: FactionId,
+) -> SeatClaimReply {
+    let roster = app.world.resource::<FactionRegistry>().factions().to_vec();
+    match seats.claim(faction, connection, &roster) {
+        Ok(token) => {
+            info!(
+                target: "shadow_scale::server",
+                %connection,
+                %faction,
+                "seat.claimed"
+            );
+            SeatClaimReply::granted(faction.0, token.wire())
+        }
+        Err(refusal) => {
+            warn!(
+                target: "shadow_scale::server",
+                %connection,
+                %faction,
+                reason = refusal.token(),
+                "seat.claim_refused"
+            );
+            SeatClaimReply::refused(faction.0, refusal.token())
+        }
+    }
+}
+
+/// **Drop the seat claims a world rebuild left stranded.** `new_game`, `reset_map` and a load each
+/// replace the roster, and a claim on a faction the new world does not have would hold that seat id
+/// unclaimable while gating nothing — the membership check refuses such a command anyway.
+fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
+    let roster = app.world.resource::<FactionRegistry>().factions().to_vec();
+    for (seat, connection) in seats.retain_seats(&roster) {
+        warn!(
+            target: "shadow_scale::server",
+            faction = %seat,
+            %connection,
+            "seat.dropped=the new roster does not hold this seat"
+        );
+    }
+}
+
+/// **Publish the seat roster to the two places delivery depends on**, in one call so they cannot
+/// disagree:
+///
+/// - the capture's [`SnapshotAudiences`] — *which* frames are built, one per occupied seat;
+/// - the stream socket's token table — *where* each of them goes.
+///
+/// Called wherever [`SeatRegistry`] changes: a claim, a release, and the roster sweep a world
+/// rebuild does. **A released seat's publication state is dropped with it** — a stale baseline would
+/// leave the next connection to claim that seat holding rows it was never sent, so the next occupant
+/// is baselined on a full frame.
+fn sync_seat_delivery(
+    app: &mut bevy::prelude::App,
+    seats: &SeatRegistry,
+    flat_server: &SnapshotServer,
+) {
+    // The stream socket is addressed by **token**, not by connection id: that is the only value a
+    // stream socket ever presents, and it is what a claim minted for exactly this purpose.
+    flat_server.set_seats(&seats.delivery_tokens());
+    let occupied: Vec<FactionId> = seats.occupied_seats();
+    let vacated: Vec<FactionId> = app
+        .world
+        .resource::<SnapshotHistory>()
+        .audiences()
+        .into_iter()
+        .filter(|seat| !occupied.contains(seat))
+        .collect();
+    for seat in vacated {
+        app.world
+            .resource_mut::<SnapshotHistory>()
+            .drop_audience(seat);
+    }
+    // An emptied list is "back to the single `ViewerFaction` view" — what an unattended server and
+    // every test publish — and never "publish nothing".
+    app.world.resource_mut::<SnapshotAudiences>().set(occupied);
+}
+
+/// **Free the seat a closing connection held, AND re-assess the open turn** — the loop's
+/// `ReleaseSeat` arm, whole, so the second half cannot be dropped from it.
+///
+/// ⛔ **The re-assessment is the point.** [`SeatTurnGate`] is consulted only by
+/// [`settle_open_turn`] or on a deadline wake, and a vacated seat is exactly the input that changes
+/// its answer: with one seat submitted and another silent the gate is armed on the silent one, so its
+/// disconnect left the turn resolving `seat_turn_timeout_seconds` later even though `assess` would now
+/// answer `TurnWait::Resolve` — **a vacant seat never holds the turn** (`seats.rs`). The arm used to
+/// `continue` past the settle at the foot of the loop, which is how the remaining players came to wait
+/// out a full timeout for somebody who had already gone.
+///
+/// It settles through [`settle_open_turn_and_publish`] rather than the bare settle, so the seats that
+/// remain are published the world the departure left, exactly as every other command's arm is.
+///
+/// A connection that held no seat is a no-op: nothing changed, so there is nothing to re-assess.
+fn release_seat_and_settle(
+    app: &mut bevy::prelude::App,
+    seats: &mut SeatRegistry,
+    connection: ConnectionId,
+    flat_server: &SnapshotServer,
+    command_log: &mut Option<CommandLog>,
+    turn_gate: &mut SeatTurnGate,
+    world_active: bool,
+) {
+    let Some(seat) = seats.release(connection) else {
+        return;
+    };
+    info!(
+        target: "shadow_scale::server",
+        %connection,
+        faction = %seat,
+        "seat.released=connection closed"
+    );
+    sync_seat_delivery(app, seats, flat_server);
+    settle_open_turn_and_publish(app, command_log, seats, turn_gate, world_active);
 }
 
 /// **HOW THE FOUR QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
@@ -876,6 +1386,9 @@ enum Command {
         height: u32,
         seed: u64,
         profile_id: String,
+        /// **How many AI factions the player picked, not counting their own.** `None` means
+        /// *"nobody picked"* — the unattended roster, which is not the same as `Some(0)`.
+        ai_faction_count: Option<u32>,
     },
     /// **One band's outfitting loadout** — the one source of a faction's gear and material. Field
     /// 69. See `handle_set_starting_loadout`; it fails **closed and whole**.
@@ -923,10 +1436,35 @@ enum Command {
         slot: String,
         reply: Sender<QueryReplyEnvelope>,
     },
+    /// **A connection says which faction seat it drives** — the handshake the whole seat model rests
+    /// on (`docs/plan_multiplayer_seats.md` §4.1). Proto field 71.
+    ///
+    /// Answered, not applied, for the same two reasons as [`Self::Query`]: it changes no world, so
+    /// replaying it could reproduce nothing, and it carries the asking **connection's** reply channel.
+    /// The claim's subject is the connection, so the `faction` on it is deliberately **not** a
+    /// commanding faction — gating it on the seat it is asking for could never be satisfied.
+    ClaimSeat {
+        request_id: u64,
+        faction: FactionId,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    /// **The seat of a closed connection goes back.** Not a wire payload at all: the connection's own
+    /// read loop sends it as that loop ends, carrying its own id, so no client can release another's
+    /// seat and none can forge one.
+    ReleaseSeat,
 }
 
+/// **What the command channel carries: WHO sent it, and what they sent.**
+///
+/// It used to carry a bare `Command`, so by the time the loop saw one, which connection had sent it
+/// was gone and the faction acted on was whatever the client had written on the wire
+/// (`docs/plan_multiplayer_seats.md` §4.1). The connection id is what the seat gate compares against
+/// [`SeatRegistry`]; the server's own senders — the config watchers, the in-process
+/// [`CommandSenderResource`] — speak as [`ConnectionId::INTERNAL`], which holds no seat.
+type CommandDelivery = (ConnectionId, Command);
+
 #[derive(Resource, Clone)]
-struct CommandSenderResource(Sender<Command>);
+struct CommandSenderResource(Sender<CommandDelivery>);
 
 #[derive(Resource, Default)]
 struct ConfigWatcherRegistry {
@@ -939,7 +1477,7 @@ struct ConfigWatcherRegistry {
 }
 
 impl ConfigWatcherRegistry {
-    fn restart_simulation(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+    fn restart_simulation(&mut self, path: Option<PathBuf>, sender: Sender<CommandDelivery>) {
         if let Some(existing) = self.simulation.take() {
             existing.stop();
         }
@@ -971,7 +1509,7 @@ impl ConfigWatcherRegistry {
         }
     }
 
-    fn restart_turn_pipeline(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+    fn restart_turn_pipeline(&mut self, path: Option<PathBuf>, sender: Sender<CommandDelivery>) {
         if let Some(existing) = self.turn_pipeline.take() {
             existing.stop();
         }
@@ -1003,7 +1541,11 @@ impl ConfigWatcherRegistry {
         }
     }
 
-    fn restart_snapshot_overlays(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+    fn restart_snapshot_overlays(
+        &mut self,
+        path: Option<PathBuf>,
+        sender: Sender<CommandDelivery>,
+    ) {
         if let Some(existing) = self.snapshot_overlays.take() {
             existing.stop();
         }
@@ -1035,7 +1577,11 @@ impl ConfigWatcherRegistry {
         }
     }
 
-    fn restart_crisis_archetypes(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+    fn restart_crisis_archetypes(
+        &mut self,
+        path: Option<PathBuf>,
+        sender: Sender<CommandDelivery>,
+    ) {
         if let Some(existing) = self.crisis_archetypes.take() {
             existing.stop();
         }
@@ -1067,7 +1613,7 @@ impl ConfigWatcherRegistry {
         }
     }
 
-    fn restart_crisis_modifiers(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+    fn restart_crisis_modifiers(&mut self, path: Option<PathBuf>, sender: Sender<CommandDelivery>) {
         if let Some(existing) = self.crisis_modifiers.take() {
             existing.stop();
         }
@@ -1099,7 +1645,7 @@ impl ConfigWatcherRegistry {
         }
     }
 
-    fn restart_crisis_telemetry(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+    fn restart_crisis_telemetry(&mut self, path: Option<PathBuf>, sender: Sender<CommandDelivery>) {
         if let Some(existing) = self.crisis_telemetry.take() {
             existing.stop();
         }
@@ -1158,17 +1704,28 @@ impl Drop for FileWatcherHandle {
 /// Starts the command listener on an already-bound listener. Binding happens
 /// up front in `port_alloc::allocate`, so this can no longer panic on a port
 /// conflict.
-fn spawn_command_listener(listener: TcpListener) -> (Receiver<Command>, Sender<Command>) {
+fn spawn_command_listener(
+    listener: TcpListener,
+) -> (Receiver<CommandDelivery>, Sender<CommandDelivery>) {
     if let Err(err) = listener.set_nonblocking(true) {
         warn!("Failed to set nonblocking on command listener: {}", err);
     }
 
-    let (sender, receiver) = unbounded::<Command>();
+    let (sender, receiver) = unbounded::<CommandDelivery>();
     let sender_for_thread = sender.clone();
+    // **Connection identity is minted HERE, at accept**, because this is the only place that knows a
+    // socket is new. Nothing about the client decides its id: a claim then ties that id to a seat.
+    let connection_ids = ConnectionIdAllocator::new();
     thread::spawn(move || loop {
         match listener.accept() {
             Ok((stream, addr)) => {
-                info!("Command client connected: {}", addr);
+                let connection = connection_ids.mint();
+                info!(
+                    target: "shadow_scale::server",
+                    %connection,
+                    client = %addr,
+                    "command.client.connected"
+                );
                 // **Put the accepted socket back into blocking mode, because on BSD/macOS it
                 // inherited the listener's non-blocking flag.** `handle_proto_client` blocks in
                 // `read_exact` waiting for the next frame; on a non-blocking socket that returns
@@ -1185,7 +1742,7 @@ fn spawn_command_listener(listener: TcpListener) -> (Receiver<Command>, Sender<C
                     );
                 }
                 let sender = sender_for_thread.clone();
-                thread::spawn(move || handle_proto_client(stream, sender));
+                thread::spawn(move || handle_proto_client(stream, connection, sender));
             }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(std::time::Duration::from_millis(50));
@@ -1220,7 +1777,11 @@ fn spawn_command_listener(listener: TcpListener) -> (Receiver<Command>, Sender<C
 /// **Both threads end together.** The writer exits when the read loop drops its sender (the client
 /// disconnected) or when a write fails; the reader exits on EOF or a framing violation. Neither can
 /// leave the other spinning on a dead socket.
-fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
+fn handle_proto_client(
+    stream: TcpStream,
+    connection: ConnectionId,
+    sender: Sender<CommandDelivery>,
+) {
     // The write half. A failure to clone is not fatal to the *command* direction — orders still
     // work; only queries go unanswered — so it degrades to a read-only connection rather than
     // dropping a client that may never ask a question.
@@ -1272,7 +1833,7 @@ fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
         match ProtoCommandEnvelope::decode(&payload) {
             Ok(envelope) => {
                 if let Some(cmd) = command_from_payload(envelope.payload, &reply_tx) {
-                    if sender.send(cmd).is_err() {
+                    if sender.send((connection, cmd)).is_err() {
                         break;
                     }
                 }
@@ -1282,6 +1843,11 @@ fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
             }
         }
     }
+
+    // **The seat this connection held goes back on the way out.** Sent rather than done here because
+    // the registry belongs to the main loop; it is not a wire payload, so no client can forge it, and
+    // it carries this loop's own connection id like every other delivery.
+    let _ = sender.send((connection, Command::ReleaseSeat));
 }
 
 /// **The idle-boot gate on a query.**
@@ -1306,6 +1872,28 @@ fn answer_query(
     if matches!(query, QueryPayload::ListSaves) {
         let dir = core_sim::save_store::save_dir();
         return QueryReply::ListSaves(core_sim::save_store::list_slots(&dir));
+    }
+    // **The rival control's bounds are answered before the world gate too**, and for the same
+    // reason: the New Game screen asks it, and on that screen there is no world. It is asked about
+    // the grid the player is CONFIGURING, not the one this process is running, so it takes the
+    // dimensions from the query and only the levers from the live config. Answering it here is what
+    // keeps the ceiling rule in the sim instead of restated in GDScript.
+    if let QueryPayload::FactionCapacity(ask) = query {
+        // **The land discount comes from the SERVER's preset, not the player's.** The ask carries a
+        // width and a height and no preset id, so this is the one input the answer cannot take from
+        // the question — see `faction_start_land_fraction`, where that limitation is recorded.
+        let presets = world.resource::<core_sim::MapPresetsHandle>().get();
+        let config = world.resource::<SimulationConfig>();
+        let capacity = core_sim::faction_start_capacity(
+            UVec2::new(ask.width, ask.height),
+            config.faction_start_min_separation,
+            core_sim::faction_start_land_fraction(&presets, &config.map_preset_id),
+            config.default_ai_faction_count,
+        );
+        return QueryReply::FactionCapacity(FactionCapacityReply {
+            default_ai_faction_count: capacity.default_ai_factions,
+            max_ai_faction_count: capacity.max_ai_factions,
+        });
     }
     if !world_active {
         return QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string());
@@ -1367,7 +1955,7 @@ fn write_query_replies(mut stream: TcpStream, replies: Receiver<QueryReplyEnvelo
 
 fn start_file_watcher(
     path: PathBuf,
-    sender: Sender<Command>,
+    sender: Sender<CommandDelivery>,
     kind: ReloadConfigKind,
 ) -> notify::Result<FileWatcherHandle> {
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -1418,7 +2006,7 @@ fn watch_config(
     mut watcher: RecommendedWatcher,
     event_rx: mpsc::Receiver<notify::Result<notify::Event>>,
     stop_rx: mpsc::Receiver<()>,
-    sender: Sender<Command>,
+    sender: Sender<CommandDelivery>,
     kind: ReloadConfigKind,
 ) {
     let debounce = Duration::from_millis(250);
@@ -1435,7 +2023,10 @@ fn watch_config(
                     if last_emit.elapsed() >= debounce =>
                 {
                     if sender
-                        .send(Command::ReloadConfig { kind, path: None })
+                        .send((
+                            ConnectionId::INTERNAL,
+                            Command::ReloadConfig { kind, path: None },
+                        ))
                         .is_err()
                     {
                         break;
@@ -1656,7 +2247,7 @@ fn retire_publisher(app: &mut bevy::prelude::App) {
 fn restore_watch_paths(
     app: &mut bevy::prelude::App,
     watch_paths: &WatchPaths,
-    command_sender: &Sender<Command>,
+    command_sender: &Sender<CommandDelivery>,
 ) {
     {
         let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
@@ -1705,7 +2296,7 @@ fn restore_watch_paths(
 fn rebuild_world_from_config(
     config: SimulationConfig,
     seed_random: bool,
-    command_sender: Sender<Command>,
+    command_sender: Sender<CommandDelivery>,
     watch_paths: &WatchPaths,
     snapshot_server_flat: &Arc<SnapshotServer>,
     world_epoch: &mut u32,
@@ -1755,6 +2346,25 @@ fn rebuild_world_from_config(
     new_app
 }
 
+/// **What an AI-faction count on the wire resolves to before the grid clamps it.**
+///
+/// `None` is *not* `Some(0)`: absent means **nobody picked** — a direct scene launch, a CLI
+/// `new_game`, a test — and 0 means a player who chose to play alone. The two arrive on the same
+/// wire field precisely so a client can leave the choice to the sim, and collapsing them here would
+/// make the unattended roster unreachable from every caller that does.
+///
+/// ⛔ **An absent pick resolves to [`core_sim::unattended_ai_faction_count`], NOT to the count the
+/// New Game screen pre-selects.** The screen's number is derived from the map and can be several
+/// rivals; this path is what a `cargo run` server and a scripted launch get, and it stays at zero
+/// rivals until something drives them. `simulation_config.json`'s `default_ai_faction_count` pins it
+/// when a headless run wants otherwise.
+///
+/// `config` is the config the NEW world will run on — `load_simulation_config_for_new_world`'s, not
+/// the outgoing world's — because the pin is a tuning value and tuning is re-read at world start.
+fn requested_ai_faction_count(picked: Option<u32>, config: &SimulationConfig) -> u32 {
+    picked.unwrap_or_else(|| core_sim::unattended_ai_faction_count(config.default_ai_faction_count))
+}
+
 /// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
 /// dimensions and the start profile, then rebuilds the world through the shared
 /// [`rebuild_world_from_config`] path and flips `world_active` so turns are accepted.
@@ -1768,6 +2378,7 @@ fn handle_new_game(
     height: u32,
     seed: u64,
     profile_id: String,
+    ai_faction_count: Option<u32>,
     snapshot_server_flat: &Arc<SnapshotServer>,
 ) {
     if width == 0 || height == 0 {
@@ -1794,19 +2405,6 @@ fn handle_new_game(
         );
         return;
     }
-    // The roster is checked BEFORE the outgoing world is torn down, for the same reason the id is:
-    // `apply_start_profile` runs inside the rebuild, where refusing would leave the player in a
-    // half-built world. Same refusal as an id we cannot resolve — warn, return, nothing changes.
-    if let Some(reason) = profile.overrides.faction_roster_error() {
-        warn!(
-            target: "shadow_scale::server",
-            requested = %profile_id,
-            %reason,
-            "new_game.rejected=unusable_roster"
-        );
-        return;
-    }
-
     let command_sender = {
         let res = app.world.resource::<CommandSenderResource>();
         res.0.clone()
@@ -1829,6 +2427,25 @@ fn handle_new_game(
     // mechanism ResetMap uses (map_seed 0 + seed_random true).
     new_config.map_seed = seed;
 
+    // **The player's pick, clamped by the grid they picked it for.** Over the ceiling is granted
+    // down with a warning naming both numbers rather than refused: a cramped map is a smaller game,
+    // not a dead one, and `worldgen.start_separation_relaxed` is the second net beneath it.
+    //
+    // This is the one caller that knows the preset the world will actually be generated from — the
+    // capacity *query* does not (see `faction_start_land_fraction`) — so the clamp here is the
+    // authoritative one even where the offered ceiling was computed against a different preset.
+    let new_game_land_fraction = core_sim::faction_start_land_fraction(
+        &app.world.resource::<core_sim::MapPresetsHandle>().get(),
+        &new_config.map_preset_id,
+    );
+    let requested_ai_factions = requested_ai_faction_count(ai_faction_count, &new_config);
+    let granted_ai_factions = granted_ai_faction_count(
+        requested_ai_factions,
+        new_config.grid_size,
+        new_config.faction_start_min_separation,
+        new_game_land_fraction,
+    );
+
     info!(
         target: "shadow_scale::server",
         preset = %preset_id,
@@ -1836,6 +2453,8 @@ fn handle_new_game(
         height,
         seed,
         profile = %profile.id,
+        requested_ai_factions,
+        granted_ai_factions,
         "new_game.begin"
     );
 
@@ -1848,11 +2467,11 @@ fn handle_new_game(
         snapshot_server_flat,
         world_epoch,
         move |new_app| {
-            let applied = apply_start_profile(new_app, &profile);
-            debug_assert!(
-                applied,
-                "the roster was checked before the rebuild, so it cannot be refused inside it"
-            );
+            apply_start_profile(new_app, &profile);
+            // **The roster is seeded here, not by the profile**: `build_headless_app` seeded it from
+            // the config file's own count and grid, and this world is neither. See
+            // `seed_faction_roster` for the five resources that ride on it.
+            seed_faction_roster(new_app, granted_ai_factions);
         },
     );
     *world_active = true;
@@ -2176,31 +2795,16 @@ fn write_autosave(app: &bevy::prelude::App) {
     }
 }
 
-/// Apply a resolved start profile to the app's campaign resources (config overrides,
-/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`) **and to the roster those resources
-/// describe** — `FactionRegistry`, then the `TurnQueue` built from it. Shared by
-/// `handle_set_start_profile` and the `new_game` rebuild — it does NOT regenerate the world; the
+/// Apply a resolved start profile to the app's campaign resources — config overrides,
+/// `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`. Shared by
+/// `handle_set_start_profile` and the `new_game` rebuild; it does NOT regenerate the world, and the
 /// caller runs Startup afterward.
 ///
-/// ⛔ **The roster has to be re-seeded here, because `build_headless_app` seeded it from the BOOT
-/// profile.** `rebuild_world_from_config` builds the replacement app first and applies the chosen
-/// profile second, so without this a `new_game` onto a two-faction profile produced a one-faction
-/// world — the chosen roster reached `SimulationConfig` and nothing else.
-///
-/// Returns `false` when the profile's roster is unusable, in which case **nothing is written**: a
-/// mid-session profile is a player's pick, so this refuses it the way both callers already refuse a
-/// profile id they cannot resolve, rather than taking the server down the way boot does.
-#[must_use]
-fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> bool {
-    if let Some(reason) = profile.overrides.faction_roster_error() {
-        warn!(
-            target: "shadow_scale::campaign",
-            profile = %profile.id,
-            %reason,
-            "start_profile.rejected=unusable_roster"
-        );
-        return false;
-    }
+/// ⛔ **It does not touch the roster, because a profile no longer declares one.** Who plays a world
+/// is the AI count the new game was asked for ([`seed_faction_roster`]), so swapping the profile
+/// mid-session restocks the opening and leaves the peoples alone — there is nothing about the
+/// roster in the new profile to disagree with the registry the world is already running.
+fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
     {
         let mut config = app.world.resource_mut::<SimulationConfig>();
         config.start_profile_id = profile.id.clone();
@@ -2218,21 +2822,37 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> 
         let mut label = app.world.resource_mut::<CampaignLabel>();
         *label = CampaignLabel::from_profile(profile);
     }
-    let registry = FactionRegistry::new(&profile.overrides.factions);
+}
+
+/// **Seat one human and `ai_faction_count` rivals in a world about to be generated**, and re-seed
+/// everything the boot path derives from that roster.
+///
+/// Called inside `rebuild_world_from_config`'s `configure` hook, i.e. after the replacement app is
+/// built and before Startup: `build_headless_app` seeded the registry from the CONFIG FILE's count,
+/// clamped against the config file's grid, and a `new_game` is neither of those things. Without this
+/// the count the player picked reached `SimulationConfig` and nothing that resolves a turn ever
+/// heard about it.
+///
+/// The count is expected to be **already clamped** by
+/// [`core_sim::granted_ai_faction_count`] — the clamp is the caller's, because only the caller knows
+/// which grid the world is being built on.
+///
+/// ⛔ **EVERY resource `build_headless_app` seeds from the roster is re-seeded here.** The list is
+/// `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets` and
+/// `FactionSecurityPolicies` — the five constructions taken from `faction_registry.factions()` in
+/// `lib.rs`, and re-seeding only some of them is the same defect one resource further along. They
+/// are built through the boot path's own constructors so a fresh faction's starting state has one
+/// definition rather than two.
+///
+/// **`EspionageRoster` is deliberately not among them**: `initialise_espionage_roster` is a
+/// `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
+/// this — so re-seeding it here would be a second, earlier copy of a job the schedule already does
+/// against the same roster.
+fn seed_faction_roster(app: &mut bevy::prelude::App, ai_faction_count: u32) {
+    let registry = FactionRegistry::with_ai_factions(ai_faction_count);
     let factions = registry.factions().to_vec();
     app.world.insert_resource(registry);
     app.world.insert_resource(TurnQueue::new(factions.clone()));
-    // ⛔ **EVERY resource `build_headless_app` seeds from the boot roster is re-seeded here.** The
-    // list is `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets` and
-    // `FactionSecurityPolicies` — the five constructions taken from `faction_registry.factions()`
-    // in `lib.rs`, and re-seeding only some of them is the same defect one resource further along.
-    // They are built through the boot path's own constructors so a fresh faction's starting state
-    // has one definition rather than two.
-    //
-    // **`EspionageRoster` is deliberately not among them**: `initialise_espionage_roster` is a
-    // `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
-    // this — so re-seeding it here would be a second, earlier copy of a job the schedule already
-    // does against the same roster.
     let budget_config = app
         .world
         .resource::<EspionageCatalog>()
@@ -2245,18 +2865,13 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) -> 
         &factions,
         SecurityPolicy::Standard,
     ));
-    true
 }
 
 fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
     let handle = app.world.resource::<StartProfilesHandle>().clone();
     let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
 
-    if !apply_start_profile(app, &profile) {
-        // The campaign the player was on is untouched — `apply_start_profile` writes nothing when it
-        // refuses, and the warning it logged names the rule that was broken.
-        return;
-    }
+    apply_start_profile(app, &profile);
 
     info!(
         target: "shadow_scale::campaign",
@@ -2383,7 +2998,9 @@ fn handle_found_settlement(
         );
         return;
     };
-    start_location.relocate(target);
+    // **Only the founding faction's marker moves.** The marker is per-faction, so a settlement one
+    // people founds says nothing about where another people began.
+    start_location.relocate(faction, target);
 
     push_command_event(
         app,
@@ -9784,18 +10401,28 @@ fn command_from_payload(
         }
         ProtoCommandPayload::ClearConfigOverrides => Some(Command::ClearConfigOverrides),
         ProtoCommandPayload::Resync => Some(Command::Resync),
+        ProtoCommandPayload::ClaimSeat {
+            request_id,
+            faction_id,
+        } => Some(Command::ClaimSeat {
+            request_id,
+            faction: FactionId(faction_id),
+            reply: reply.clone(),
+        }),
         ProtoCommandPayload::NewGame {
             preset_id,
             width,
             height,
             seed,
             profile_id,
+            ai_faction_count,
         } => Some(Command::NewGame {
             preset_id,
             width,
             height,
             seed,
             profile_id,
+            ai_faction_count,
         }),
         // The one payload that carries a way BACK. `reply` is this connection's writer channel, so
         // the answer reaches the client that asked even if it is computed several commands later.
@@ -10358,6 +10985,14 @@ fn is_replayable(command: &Command) -> bool {
             | Command::SaveGame { .. }
             | Command::LoadGame { .. }
             | Command::DeleteSave { .. }
+            // The seat verbs. Both are about a *connection*, and a replay has none: a claim mutates
+            // no world, and a release is the server's own bookkeeping about a socket that closed.
+            | Command::ClaimSeat { .. }
+            | Command::ReleaseSeat
+            // A resync is about a connection too — it re-publishes one seat's world to the client
+            // that asked. It mutates nothing, and a replay has neither the connection nor anyone to
+            // answer; logging it would make a rollback re-publish a frame for a socket that is gone.
+            | Command::Resync
     )
 }
 
@@ -10369,10 +11004,13 @@ fn is_replayable(command: &Command) -> bool {
 /// somebody's order or the server's own business; a wildcard would silently answer "nobody's" and
 /// take the new verb out of the membership gate below.
 ///
-/// A faction named *inside* a payload is not a commanding faction and is not returned here:
-/// espionage verbs legitimately name another faction as owner or target
-/// ([`Command::QueueEspionageMission`]), and a shipment's destination is cross-faction by
-/// construction ([`resolve_shipment`]).
+/// A faction named *inside* a payload is still a commanding faction when it is the faction the verb
+/// **acts as**: [`Command::QueueEspionageMission`] carries `QueueMissionParams::owner`, and
+/// `handle_queue_espionage_mission` queues the mission out of *that* faction's roster and budgets — so
+/// the envelope being empty makes it no less that faction's order. What genuinely names another
+/// faction and stays free is a **target**: `QueueMissionParams::target_owner` is who the mission is
+/// aimed at, and a shipment's destination is cross-faction by construction
+/// ([`resolve_shipment`]).
 fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
     match command {
         Command::Orders { faction, .. } => Some((*faction, "orders")),
@@ -10418,11 +11056,18 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
         Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
         Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
+        // The faction the mission is **run by**, out of whose roster and budget it is queued. Its
+        // `target_owner` sibling is who it is aimed at and is deliberately not read here.
+        Command::QueueEspionageMission { params } => {
+            Some((params.owner, "queue_espionage_mission"))
+        }
         Command::Turn(_)
         | Command::ResetMap { .. }
         | Command::Rollback { .. }
+        // The two espionage CATALOG verbs. Neither names a faction anywhere in its payload: they
+        // edit `EspionageCatalog` — the agent-generator templates and the queue defaults — which is
+        // tuning for the whole world, the same shape as `SetCrisisAutoSeed` and `ReloadConfig`.
         | Command::UpdateEspionageGenerators { .. }
-        | Command::QueueEspionageMission { .. }
         | Command::UpdateEspionageQueueDefaults { .. }
         | Command::ReloadConfig { .. }
         | Command::SetCrisisAutoSeed { .. }
@@ -10436,11 +11081,57 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         | Command::Query { .. }
         | Command::SaveGame { .. }
         | Command::LoadGame { .. }
-        | Command::DeleteSave { .. } => None,
+        | Command::DeleteSave { .. }
+        // ⛔ **A seat claim names a faction and is still nobody's order.** The connection does not
+        // hold the seat yet, so returning it here would send the claim through the seat gate that
+        // the claim itself is what satisfies — refusing every first claim ever made. `ReleaseSeat`
+        // is the server's own bookkeeping and names no faction at all.
+        | Command::ClaimSeat { .. }
+        | Command::ReleaseSeat => None,
     }
 }
 
-fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &SnapshotServer) {
+/// **The faction a QUESTION reads, and what to call it in the log** — `None` for the questions that
+/// read no faction's state at all.
+///
+/// ⛔ **A query is not an order, which is why this is its own classifier.** `Command::Query` is in
+/// [`commanding_faction`]'s `None` set deliberately (the same precedent [`Command::ClaimSeat`] sets
+/// beside it): the order path logs to the replay timeline, files command failures into a faction's
+/// feed and runs the membership check in `apply_command`, and a question belongs in none of them. So
+/// the seat gate reads the *question's* faction here and refuses on the query channel's own reply.
+///
+/// ⛔ **Deliberately exhaustive, with no `_` arm** — the property that makes [`commanding_faction`]
+/// trustworthy, for the same reason: a sixth question is a compile error until it states whether it
+/// names a faction. The failure a wildcard would allow is invisible in a single-seat game — a
+/// faction-bearing question asked from another seat's connection compiles, runs and answers, and
+/// only leaks once a second player exists.
+///
+/// The client mirrors this match in `bridge/query.rs`'s `names_a_faction`, which decides the *same*
+/// split from the other end: the three that name a faction go out on the seated command link, and
+/// the two that do not keep a connection of their own because `LandingScreen` asks them before any
+/// seat exists.
+fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
+    match query {
+        // Each carries a client-supplied `faction_id` and is answered out of that faction's private
+        // state: a named band's live equipment wear, its idle workers, its take curve.
+        QueryPayload::HuntTripForecast(ask) => {
+            Some((FactionId(ask.faction_id), "hunt_trip_forecast"))
+        }
+        QueryPayload::DenialRaidForecast(ask) => {
+            Some((FactionId(ask.faction_id), "denial_raid_forecast"))
+        }
+        QueryPayload::HuntCrewTake(ask) => Some((FactionId(ask.faction_id), "hunt_crew_take")),
+        // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
+        // faction's state, and both are asked from the landing screen — before a world, and
+        // therefore before any seat — so a gate applied to them would close the load menu.
+        QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => None,
+    }
+}
+
+/// **Apply one command to the world. It touches no socket** — the two commands that publish a
+/// frame of their own (`Resync`, `Rollback`) are answered by the dispatcher, which knows which
+/// connection asked, and this is also the replay path, which has no connections at all.
+fn apply_command(app: &mut bevy::prelude::App, command: Command) {
     // **Membership is checked ONCE, here, where a command enters the world with a faction on it.**
     // Without it a command from an unregistered faction still reaches its handler and is refused
     // downstream by `no_such_band` / `wrong_faction` — which reads as a legitimate faction that
@@ -10503,6 +11194,21 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 "save.dispatch.unreachable=a save verb reached apply_command"
             );
         }
+        // Unreachable for the same reason, and loud on the same argument: the dispatcher answers a
+        // claim and books a release, and neither is a world change to apply.
+        Command::ClaimSeat { request_id, .. } => {
+            warn!(
+                target: "shadow_scale::server",
+                request_id,
+                "seat.claim.misrouted=a seat claim reached apply_command"
+            );
+        }
+        Command::ReleaseSeat => {
+            warn!(
+                target: "shadow_scale::server",
+                "seat.release.misrouted=a seat release reached apply_command"
+            );
+        }
         Command::Query { request_id, .. } => {
             warn!(
                 target: "shadow_scale::server",
@@ -10510,37 +11216,15 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
                 "query.misrouted=a query reached apply_command; it is answered by the dispatcher"
             );
         }
-        // Republish the world as a FULL frame. The client asks for this when it cannot apply a
-        // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
-        // rather than another delta — a delta is what it just failed to use.
-        //
-        // Client-INITIATED, which is what makes this safe against the world-handoff rule: the
-        // server never volunteers a frame to a connecting client (it might belong to a world
-        // that client did not ask for), but answering a request cannot surprise anyone, and the
-        // `worldEpoch` on the frame still lets the client reject a world it did not want.
-        //
-        // It republishes through `publish_full_frame` rather than encoding the ring entry as
-        // stored, because the answer must carry a LIVE sequence number: resync is the recovery
-        // path, so a stale number here reopens the sequence gap the client asked us to close.
+        // **A resync is answered by the dispatcher, which knows WHO asked.** A full frame is one
+        // seat's world and is delivered to that seat's stream clients, so the answer needs the
+        // asking connection — which `apply_command` does not have, and which a replay does not have
+        // at all. See `handle_resync`.
         Command::Resync => {
-            let mut history = app.world.resource_mut::<SnapshotHistory>();
-            match history.latest_entry() {
-                Some(entry) => {
-                    let bytes = history.publish_full_frame(&entry);
-                    flat_server.broadcast(&bytes);
-                    info!(
-                        target: "shadow_scale::server",
-                        tick = entry.tick,
-                        bytes = bytes.len(),
-                        "resync.published"
-                    );
-                }
-                None => {
-                    // No world yet (the server boots idle). Nothing to republish; the client's
-                    // `new_game` retry is what recovers this case.
-                    info!(target: "shadow_scale::server", "resync.no_world");
-                }
-            }
+            warn!(
+                target: "shadow_scale::server",
+                "resync.misrouted=a resync reached apply_command; it is answered by the dispatcher"
+            );
         }
         Command::Orders { faction, orders } => {
             handle_order_submission(app, faction, orders);
@@ -10981,15 +11665,21 @@ fn handle_order_submission(
             remaining,
             "orders.accepted"
         ),
-        Ok(SubmitOutcome::ReadyToResolve) => {
-            info!(
-                target: "shadow_scale::server",
-                %faction,
-                order_count,
-                "orders.ready_to_resolve"
-            );
-            resolve_ready_turn(app);
-        }
+        // ⛔ **A submission does NOT resolve the turn here.** It used to, and that put a turn's
+        // resolution inside `apply_command` — which is also the replay path, so the resolve carried no
+        // `LogEntry::Turn` and `CommandLog::prefix_len_for` (which counts those to find "the world at
+        // tick N") could not see that turn at all: a rollback to it reported the tick out of reach.
+        // Worse under seats, where the vacant and timed-out submissions are deliberately unlogged, so
+        // a replay would not even reach ready and would resolve fewer turns than the original.
+        //
+        // The live loop owns the decision now (`settle_open_turn`), which is also the one place a
+        // resolved turn is logged.
+        Ok(SubmitOutcome::ReadyToResolve) => info!(
+            target: "shadow_scale::server",
+            %faction,
+            order_count,
+            "orders.ready_to_resolve"
+        ),
         Err(SubmitError::UnknownFaction(f)) => warn!(
             target: "shadow_scale::server",
             %f,
@@ -11372,6 +12062,60 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
     }
 }
 
+/// **Answer `Command::Resync` for the asking connection's seat.**
+///
+/// The client asks for this when it cannot apply a delta (`docs/plan_delta_streaming.md` §3.3), so
+/// the answer must be a complete world rather than another delta — a delta is what it just failed to
+/// use.
+///
+/// Client-INITIATED, which is what makes it safe against the world-handoff rule: the server never
+/// volunteers a frame to a connecting client (it might belong to a world that client did not ask
+/// for), but answering a request cannot surprise anyone, and the `worldEpoch` on the frame still
+/// lets the client reject a world it did not want.
+///
+/// It republishes through `publish_full_frame_for` rather than encoding the ring entry as stored,
+/// because the answer must carry a **live** sequence number: resync is the *recovery* path, so a
+/// stale number here reopens the very sequence gap the client asked us to close.
+///
+/// **An unseated connection is answered with nothing, and that is not a refusal to be softened.** A
+/// full frame is published *for a seat* and delivered to that seat's stream clients, so a resync from
+/// a connection holding no seat has no world to name and no destination to reach; answering it from
+/// some default seat would publish one faction's private world to a tool.
+fn handle_resync(
+    app: &mut bevy::prelude::App,
+    seat: Option<FactionId>,
+    connection: ConnectionId,
+    flat_server: &SnapshotServer,
+) {
+    let Some(seat) = seat else {
+        info!(
+            target: "shadow_scale::server",
+            %connection,
+            "resync.unseated=this connection holds no seat, so there is no view to republish"
+        );
+        return;
+    };
+    let mut history = app.world.resource_mut::<SnapshotHistory>();
+    let tick = history.latest_entry_for(seat).map(|entry| entry.tick);
+    match (history.publish_full_frame_for(seat), tick) {
+        (Some(bytes), Some(tick)) => {
+            flat_server.deliver(seat, &bytes);
+            info!(
+                target: "shadow_scale::server",
+                tick,
+                faction = %seat,
+                bytes = bytes.len(),
+                "resync.published"
+            );
+        }
+        _ => {
+            // No world yet (the server boots idle), or this seat has never been published to.
+            // Nothing to republish; the client's `new_game` retry is what recovers the first case.
+            info!(target: "shadow_scale::server", faction = %seat, "resync.no_world");
+        }
+    }
+}
+
 /// Roll the world back to `tick`.
 ///
 /// The world is rebuilt from [`CommandLog`]'s origin `SimState` replayed forward — the save state,
@@ -11384,6 +12128,7 @@ fn handle_rollback(
     tick: u64,
     snapshot_server_flat: &SnapshotServer,
     log: &mut CommandLog,
+    seats: &SeatRegistry,
 ) {
     let Some(prefix) = log.prefix_len_for(tick) else {
         warn!(
@@ -11412,7 +12157,7 @@ fn handle_rollback(
             LogEntry::Turn => resolve_turn_with_auto_orders(app),
             // The log stores the command it was given. Commands address bands by `BandId`, which
             // a world rebuild does not renumber, so there is nothing to translate on the way out.
-            LogEntry::Command(command) => apply_command(app, command, snapshot_server_flat),
+            LogEntry::Command(command) => apply_command(app, command),
         }
     }
     app.world.resource_mut::<Replaying>().0 = false;
@@ -11428,22 +12173,32 @@ fn handle_rollback(
         "rollback.replayed_from_origin"
     );
 
-    // The client's frame is derived from the world just rebuilt, not fetched from an archive.
+    // Every seat's frame is derived from the world just rebuilt, not fetched from an archive — one
+    // recapture builds them all, one per audience.
     recapture_snapshot_in_place(&mut app.world);
-    let entry: Option<StoredSnapshot> = app.world.resource::<SnapshotHistory>().latest_entry();
-    let Some(entry) = entry else {
+    if app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .is_none()
+    {
         warn!(
             target: "shadow_scale::server",
             tick,
             "rollback.failed=recapture_produced_no_frame"
         );
         return;
-    };
+    }
 
-    let flat_frame = {
+    // ⛔ **A ROLLBACK REWINDS EVERY SEAT'S BASELINES, NOT ONE.** The world moved under all of them
+    // at once, and each rewinds to *its own* recaptured frame: an entry is one viewer's world, so
+    // re-baselining a seat on another's would hand it rows it is not entitled to and withhold the
+    // ones it is. The publication **sequence** is deliberately not rewound — see
+    // `SeatPublishState::publish_full_frame`.
+    let flat_frames = {
         let mut history = app.world.resource_mut::<SnapshotHistory>();
-        history.reset_to_entry(&entry);
-        history.publish_full_frame(&entry)
+        history.reset_all_to_latest_entry();
+        history.publish_full_frame_for_all()
     };
 
     warn!(
@@ -11452,7 +12207,22 @@ fn handle_rollback(
         "rollback.completed -- clients should reconnect to receive fresh state"
     );
 
-    snapshot_server_flat.broadcast(&flat_frame);
+    // **The rolled-back seats are answered, not left to notice.** A rollback rewinds the world under
+    // every occupied seat at once, and an occupant's own memory and plans are then ahead of the world
+    // it sees (`docs/plan_multiplayer_seats.md` §4.4) — which is exactly what `Command::Resync`
+    // answers. The full frame published here IS that answer, now addressed to each seat's own stream
+    // clients rather than broadcast to everyone.
+    for (seat, frame) in &flat_frames {
+        snapshot_server_flat.deliver(*seat, frame);
+        warn!(
+            target: "shadow_scale::server",
+            tick,
+            faction = %seat,
+            claimant = ?seats.claimant_of(*seat).map(|connection| connection.0),
+            bytes = frame.len(),
+            "rollback.resync_delivered"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -11660,7 +12430,7 @@ mod tests {
     ) -> bevy::prelude::App {
         let mut app = build_test_app();
         // The real server inserts this before any world exists; `build_test_app` does not.
-        app.insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        app.insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         handle_new_game(
             &mut app,
             world_active,
@@ -11670,6 +12440,7 @@ mod tests {
             16,
             7,
             "late_forager_tribe".to_string(),
+            None,
             flat,
         );
         assert!(*world_active, "the fixture world must build");
@@ -11814,7 +12585,7 @@ mod tests {
 
         // The player turns fog off, through the command that owns the preference, and the process
         // lands on a bumped block — the two states the file cannot reproduce.
-        apply_command(&mut app, Command::SetFogEnabled { enabled: false }, &flat);
+        apply_command(&mut app, Command::SetFogEnabled { enabled: false });
         {
             let mut config = app.world.resource_mut::<SimulationConfig>();
             let bumped = config.port_base_bind.port() + port_alloc::PORT_BLOCK_STRIDE;
@@ -11941,7 +12712,12 @@ mod tests {
             .header
             .frame_seq;
 
-        apply_command(&mut app, Command::Resync, &flat);
+        let seat = app
+            .world
+            .resource::<SnapshotHistory>()
+            .primary_audience()
+            .expect("the loaded world published to a seat");
+        handle_resync(&mut app, Some(seat), ConnectionId::INTERNAL, &flat);
 
         let history = app.world.resource::<SnapshotHistory>();
         let after = history
@@ -11994,7 +12770,12 @@ mod tests {
             .expect("published")
             .header
             .frame_seq;
-        apply_command(&mut app, Command::Resync, &flat);
+        let seat = app
+            .world
+            .resource::<SnapshotHistory>()
+            .primary_audience()
+            .expect("the generated world published to a seat");
+        handle_resync(&mut app, Some(seat), ConnectionId::INTERNAL, &flat);
         assert!(
             app.world
                 .resource::<SnapshotHistory>()
@@ -12343,7 +13124,7 @@ mod tests {
     fn new_game_builds_a_world_and_rejects_bad_input() {
         let mut app = build_test_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         // Idle boot: Startup never ran, so the worldgen-inserted `TileRegistry` does not exist yet.
         assert!(
             app.world.get_resource::<TileRegistry>().is_none(),
@@ -12364,6 +13145,7 @@ mod tests {
             32,
             7,
             "no_such_profile".to_string(),
+            None,
             &flat,
         );
         assert!(!world_active, "an unknown profile must not build a world");
@@ -12386,6 +13168,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
+            None,
             &flat,
         );
         assert!(!world_active, "zero width must be rejected");
@@ -12405,6 +13188,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
+            None,
             &flat,
         );
         assert!(world_active, "a valid new_game activates the world");
@@ -12442,6 +13226,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
+            None,
             &flat,
         );
         assert_eq!(world_epoch, 2, "the next world build increments the epoch");
@@ -12457,15 +13242,15 @@ mod tests {
         );
     }
 
-    /// A `start_profiles.json` holding one profile, whose roster is whatever `factions` names.
+    /// A `start_profiles.json` holding exactly one profile under `id`.
     ///
-    /// The two roster tests below drive real profiles rather than hand-built structs because the
-    /// path under test starts at `resolve_active_profile`: a profile the *handle* does not carry is
-    /// a different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able
-    /// to tell the two apart.
-    fn profiles_declaring(id: &str, factions: &str) -> StartProfilesHandle {
+    /// The roster tests below drive a real profile rather than a hand-built struct because the path
+    /// under test starts at `resolve_active_profile`: a profile the *handle* does not carry is a
+    /// different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able to
+    /// tell that apart from a roster that came out wrong.
+    fn profiles_named(id: &str) -> StartProfilesHandle {
         let json = format!(
-            "{{\"profiles\": [{{\"id\": \"{id}\", \"factions\": {factions}, \
+            "{{\"profiles\": [{{\"id\": \"{id}\", \
              \"opening_loadout\": {{\"material_points\": 1, \"pickable_materials\": \
              [\"bone\"]}}}}]}}"
         );
@@ -12474,22 +13259,30 @@ mod tests {
         ))
     }
 
-    /// ⛔ **`new_game <profile>` SEEDS THE ROSTER THAT PROFILE NAMES**, not the boot profile's.
+    /// The land share this app's capacity answers are discounted by — its own preset's, exactly as
+    /// `answer_query` and `handle_new_game` resolve it. Asked through the same function rather than
+    /// written as a number, so a preset edit moves the fixture and the code together.
+    fn capacity_land_fraction(app: &bevy::prelude::App) -> f32 {
+        let presets = app.world.resource::<core_sim::MapPresetsHandle>().get();
+        core_sim::faction_start_land_fraction(
+            &presets,
+            &app.world.resource::<SimulationConfig>().map_preset_id,
+        )
+    }
+
+    /// ⛔ **`new_game` SEEDS THE ROSTER THE PLAYER PICKED**, not the boot config's.
     ///
     /// `rebuild_world_from_config` builds the replacement app first — `build_headless_app` seeds
-    /// `FactionRegistry` and `TurnQueue` from whatever `simulation_config.json` points at — and
-    /// applies the chosen profile second. Before `apply_start_profile` re-seeded them, a profile
-    /// declaring two factions produced a one-faction world: the chosen roster reached
-    /// `SimulationConfig` and nothing that resolves a turn ever heard about it.
+    /// `FactionRegistry` and `TurnQueue` from `simulation_config.json`'s own
+    /// `default_ai_faction_count`, against that file's grid — and configures it second. Without
+    /// `seed_faction_roster`, a picked count reached `SimulationConfig` and nothing that resolves a
+    /// turn ever heard about it.
     #[test]
-    fn new_game_onto_a_two_faction_profile_seeds_that_roster_and_its_queue() {
+    fn new_game_with_one_rival_seeds_two_factions_and_awaits_both() {
         let mut app = build_test_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
-        app.world.insert_resource(profiles_declaring(
-            "two_sided",
-            "[{\"control\": \"human\"}, {\"control\": \"ai\"}]",
-        ));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("two_sided"));
         assert_eq!(
             app.world.resource::<FactionRegistry>().factions(),
             [FactionId(0)],
@@ -12508,15 +13301,20 @@ mod tests {
             32,
             7,
             "two_sided".to_string(),
+            Some(1),
             &flat,
         );
 
-        assert!(world_active, "the profile is usable, so the world is built");
+        assert!(world_active, "the world is built");
         let registry = app.world.resource::<FactionRegistry>();
         assert_eq!(
             registry.factions(),
             [FactionId(0), FactionId(1)],
-            "the chosen profile's roster is the world's roster"
+            "one rival means two peoples — the human at 0 and the AI at 1"
+        );
+        assert!(
+            registry.is_ai(FactionId(1)),
+            "and the rival is the sim's to drive, not a second human"
         );
         assert!(
             registry.contains(FactionId(1)),
@@ -12527,7 +13325,7 @@ mod tests {
         assert_eq!(
             awaiting,
             vec![FactionId(0), FactionId(1)],
-            "the queue awaits every faction the chosen profile declared"
+            "the queue awaits every faction the picked count seated"
         );
 
         // **And every other resource the boot path seeds from the roster.** A registry entry with no
@@ -12558,17 +13356,14 @@ mod tests {
         );
     }
 
-    /// **A runtime profile with an unusable roster is REFUSED, never a panic.** It gets the same
-    /// refusal as a profile id we cannot resolve — warn, return, and the world the player was on is
-    /// untouched. `validate_factions`' panic is right at boot, where there is no earlier world to
-    /// decline back to, and wrong on a command a player issued.
+    /// **Picking 0 is the world that shipped.** The control arm for the test above: without it,
+    /// "one rival seats two" would also pass on a build that seated `requested + 1` rivals.
     #[test]
-    fn new_game_onto_a_profile_with_no_human_faction_is_refused_without_building() {
+    fn new_game_with_no_rivals_seeds_the_single_faction_world() {
         let mut app = build_test_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
-        app.world
-            .insert_resource(profiles_declaring("all_ai", "[{\"control\": \"ai\"}]"));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("alone"));
 
         let flat = loopback_snapshot_server();
         let mut world_active = false;
@@ -12581,23 +13376,199 @@ mod tests {
             48,
             32,
             7,
-            "all_ai".to_string(),
+            "alone".to_string(),
+            Some(0),
             &flat,
         );
 
-        assert!(!world_active, "a world nobody plays must not be built");
-        assert!(
-            app.world.get_resource::<TileRegistry>().is_none(),
-            "no world after a refused new_game"
-        );
-        assert_eq!(
-            world_epoch, 0,
-            "a refused new_game does not advance the epoch"
-        );
+        assert!(world_active, "the world is built");
         assert_eq!(
             app.world.resource::<FactionRegistry>().factions(),
             [FactionId(0)],
-            "and the roster the server had is the roster it still has"
+            "0 rivals is one people, and that people is the player"
+        );
+        assert_eq!(
+            app.world.resource::<TurnQueue>().awaiting(),
+            vec![FactionId(0)],
+            "and the queue awaits nobody else"
+        );
+    }
+
+    /// ⛔ **A COUNT THE MAP CANNOT SEAT IS CLAMPED, NOT REFUSED.** The world still starts; the
+    /// player simply gets the rivals the ground holds, and the warning names both numbers.
+    ///
+    /// A 60x40 grid at the shipped 20-tile separation and the earthlike preset's land target seats
+    /// a handful of starts, and this asks for far more than that. Refusing here would leave a
+    /// player who moved a slider with no game at all.
+    #[test]
+    fn new_game_clamps_a_rival_count_the_grid_cannot_seat() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("crowded"));
+        let separation = app
+            .world
+            .resource::<SimulationConfig>()
+            .faction_start_min_separation;
+        let land = capacity_land_fraction(&app);
+        let grid = UVec2::new(60, 40);
+        let ceiling = core_sim::max_faction_starts(grid, separation, land) - 1;
+        assert!(
+            (1..9).contains(&ceiling),
+            "fixture: the grid must seat SOME rivals but fewer than the count asked for, or the \
+             clamp is untested (it seats {ceiling})"
+        );
+
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            "earthlike".to_string(),
+            grid.x,
+            grid.y,
+            7,
+            "crowded".to_string(),
+            Some(9),
+            &flat,
+        );
+
+        assert!(
+            world_active,
+            "an over-large ask is granted down, never refused — the player still gets a game"
+        );
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().ai_faction_count(),
+            ceiling,
+            "the roster holds exactly what the grid seats"
+        );
+        let mut awaiting = app.world.resource::<TurnQueue>().awaiting();
+        awaiting.sort();
+        assert_eq!(
+            awaiting.len() as u32,
+            ceiling + 1,
+            "and the queue awaits the clamped roster, not the requested one"
+        );
+    }
+
+    /// **An absent count is the UNATTENDED roster, and it is not `Some(0)`.** The wire
+    /// distinguishes them, and only this says the server honours the distinction.
+    ///
+    /// ⛔ Absent resolves to **no rivals**, not to the map-scaled count the New Game screen
+    /// pre-selects. A scripted launch and a `cargo run` server are not a player looking at a
+    /// screen, and there is still no AI to drive a rival — sabotaged by routing this through
+    /// `faction_start_capacity`, which the first case catches.
+    ///
+    /// Asserted on the resolution rule rather than through `handle_new_game`, because the count a
+    /// rebuild defaults to comes from the config FILE (`load_simulation_config_for_new_world` re-reads
+    /// it, carrying only fog and the binds), and steering a file would mean a process-global env var
+    /// a parallel test would race on.
+    #[test]
+    fn an_absent_rival_count_resolves_to_the_unattended_roster() {
+        let app = build_test_app();
+        let mut config = app.world.resource::<SimulationConfig>().clone();
+        assert_eq!(
+            config.default_ai_faction_count, None,
+            "fixture: the shipped config derives rather than pinning"
+        );
+        assert_eq!(
+            requested_ai_faction_count(None, &config),
+            0,
+            "nobody picked, and nothing pins it: the world that has always shipped"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(2), &config),
+            2,
+            "a pick is honoured"
+        );
+
+        config.default_ai_faction_count = Some(3);
+        assert_eq!(
+            requested_ai_faction_count(None, &config),
+            3,
+            "absent takes the config pin when there is one"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(0), &config),
+            0,
+            "and an explicit 0 is a player who chose to play alone, not an absent field"
+        );
+        assert_eq!(
+            requested_ai_faction_count(Some(1), &config),
+            1,
+            "a pick overrides the pin"
+        );
+    }
+
+    /// **The New Game screen's two numbers come from the sim, and are answerable with no world.**
+    ///
+    /// Asked before `world_active` for the reason the slot list is: a player configures a game
+    /// before there is one. It answers about the grid IN THE ASK, not the one the server holds —
+    /// sabotaged by answering from `SimulationConfig::grid_size`, which the differing sizes below
+    /// would catch.
+    #[test]
+    fn the_faction_capacity_query_is_answered_idle_for_the_asked_grid() {
+        let mut app = build_test_app();
+        let separation = app
+            .world
+            .resource::<SimulationConfig>()
+            .faction_start_min_separation;
+        let land = capacity_land_fraction(&app);
+
+        let roomy = UVec2::new(80, 52);
+        let cramped = UVec2::new(20, 20);
+        assert_ne!(
+            app.world.resource::<SimulationConfig>().grid_size,
+            cramped,
+            "fixture: the asked grid must differ from the server's, or the ask is unread"
+        );
+
+        let answer = answer_query(
+            false,
+            &mut app.world,
+            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
+                width: roomy.x,
+                height: roomy.y,
+            }),
+        );
+        let QueryReply::FactionCapacity(roomy_reply) = answer else {
+            panic!("the capacity query is answered even with no world: {answer:?}");
+        };
+        assert_eq!(
+            roomy_reply.max_ai_faction_count,
+            core_sim::max_faction_starts(roomy, separation, land) - 1,
+            "the ceiling is the sim's own rule, not a second copy of it"
+        );
+        assert!(
+            roomy_reply.default_ai_faction_count > 0,
+            "and with nothing pinned the screen pre-selects a world with neighbours, unlike the \
+             unattended roster the same server would boot with"
+        );
+
+        let answer = answer_query(
+            false,
+            &mut app.world,
+            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
+                width: cramped.x,
+                height: cramped.y,
+            }),
+        );
+        let QueryReply::FactionCapacity(cramped_reply) = answer else {
+            panic!("the capacity query is answered even with no world: {answer:?}");
+        };
+        assert_eq!(
+            cramped_reply.max_ai_faction_count, 0,
+            "a grid that seats one start offers no rivals at all"
+        );
+        assert!(
+            cramped_reply.max_ai_faction_count < roomy_reply.max_ai_faction_count,
+            "and the answer follows the grid in the ask"
+        );
+        assert!(
+            cramped_reply.default_ai_faction_count <= cramped_reply.max_ai_faction_count,
+            "the offered default is always grantable"
         );
     }
 
@@ -14324,7 +15295,7 @@ mod tests {
     fn recalling_an_expedition_by_band_id_actually_recalls_it() {
         let mut app = build_test_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
 
         // A detached party is a band and carries a `BandId` like any other — both real expedition
@@ -14428,7 +15399,7 @@ mod tests {
     fn a_party_recalled_in_camp_folds_back_without_waiting_a_turn() {
         let mut app = build_world_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
         let (band, party, working_before) = launch_a_hunting_party(&mut app, faction);
         let party_band_id = *app
@@ -14469,7 +15440,7 @@ mod tests {
 
         let mut app = build_world_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
         let (band, party, working_before) = launch_a_hunting_party(&mut app, faction);
 
@@ -14538,15 +15509,16 @@ mod tests {
         use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
         recapture_snapshot_in_place(&mut app.world);
-        let entry = app
+        let seat = app
             .world
             .resource::<SnapshotHistory>()
-            .latest_entry()
+            .primary_audience()
             .expect("a snapshot was captured");
         let bytes = app
             .world
             .resource_mut::<SnapshotHistory>()
-            .publish_full_frame(&entry);
+            .publish_full_frame_for(seat)
+            .expect("the seat has a frame to republish");
         let envelope =
             fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
         assert_eq!(
@@ -14628,7 +15600,7 @@ mod tests {
     fn a_party_cancelled_in_the_tick_it_launched_is_published_as_removed() {
         let mut app = build_world_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
         // Resolve a turn first, so the baseline the recaptures below hold is a committed one.
         resolve_turn_with_auto_orders(&mut app);
@@ -14679,7 +15651,7 @@ mod tests {
 
         let mut app = build_world_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
         let (_band, party, _working_before) = launch_a_hunting_party(&mut app, faction);
 
@@ -14739,7 +15711,7 @@ mod tests {
     fn a_denial_party_is_recalled_by_the_band_id_its_snapshot_row_published() {
         let mut app = build_world_app();
         app.world
-            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
         let herd_id = app
             .world
@@ -14830,12 +15802,18 @@ mod tests {
                 take_species: Vec::new(),
             };
             log_dispatched_command(&mut log, &command);
-            apply_command(&mut app, command, &loopback_snapshot_server());
+            apply_command(&mut app, command);
             resolve_turn_with_auto_orders(&mut app);
             log.push(LogEntry::Turn);
         }
 
-        handle_rollback(&mut app, early_tick, &loopback_snapshot_server(), &mut log);
+        handle_rollback(
+            &mut app,
+            early_tick,
+            &loopback_snapshot_server(),
+            &mut log,
+            &SeatRegistry::default(),
+        );
 
         assert_eq!(
             app.world.resource::<SimulationTick>().0,
@@ -14896,7 +15874,7 @@ mod tests {
             take_species: Vec::new(),
         };
         log_dispatched_command(&mut log, &command);
-        apply_command(&mut app, command, &loopback_snapshot_server());
+        apply_command(&mut app, command);
 
         resolve_turn_with_auto_orders(&mut app);
         log.push(LogEntry::Turn);
@@ -14910,7 +15888,13 @@ mod tests {
             log.push(LogEntry::Turn);
         }
 
-        handle_rollback(&mut app, target_tick, &loopback_snapshot_server(), &mut log);
+        handle_rollback(
+            &mut app,
+            target_tick,
+            &loopback_snapshot_server(),
+            &mut log,
+            &SeatRegistry::default(),
+        );
         let actual = normalize_for_compare(&app);
 
         assert_eq!(
@@ -18602,11 +19586,11 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
         let addr = listener.local_addr().expect("the bound address");
-        let (command_tx, command_rx) = unbounded::<Command>();
+        let (command_tx, command_rx) = unbounded::<CommandDelivery>();
 
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().expect("the test client connects");
-            handle_proto_client(stream, command_tx);
+            handle_proto_client(stream, TEST_CONNECTION, command_tx);
         });
 
         let mut client = TcpStream::connect(addr).expect("connect to the listener");
@@ -18618,7 +19602,7 @@ mod tests {
         );
 
         // The loop's side: the decoded command carries the request id AND a way back.
-        let command = command_rx
+        let (connection, command) = command_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the query reaches the command channel");
         let Command::Query {
@@ -18629,6 +19613,10 @@ mod tests {
         else {
             panic!("a query envelope must decode to Command::Query");
         };
+        assert_eq!(
+            connection, TEST_CONNECTION,
+            "and it carries WHICH connection asked"
+        );
         assert_eq!(request_id, REQUEST_ID);
         assert!(
             matches!(query, QueryPayload::HuntTripForecast(_)),
@@ -18670,10 +19658,10 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
         let addr = listener.local_addr().expect("the bound address");
-        let (command_tx, command_rx) = unbounded::<Command>();
+        let (command_tx, command_rx) = unbounded::<CommandDelivery>();
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().expect("the test client connects");
-            handle_proto_client(stream, command_tx);
+            handle_proto_client(stream, TEST_CONNECTION, command_tx);
         });
 
         let mut client = TcpStream::connect(addr).expect("connect to the listener");
@@ -18686,7 +19674,7 @@ mod tests {
 
         let mut pending = Vec::new();
         for _ in 0..2 {
-            let command = command_rx
+            let (_, command) = command_rx
                 .recv_timeout(Duration::from_secs(5))
                 .expect("both queries arrive");
             let Command::Query {
@@ -20399,7 +21387,6 @@ mod tests {
             "the fixture world is the shipped single-faction one"
         );
 
-        let snapshot_server = loopback_snapshot_server();
         let grade = |faction: FactionId| Command::Grade {
             faction,
             band_id: ROAD_BAND_ID,
@@ -20407,7 +21394,7 @@ mod tests {
             target_y: COORD.y,
         };
 
-        apply_command(&mut app, grade(stranger), &snapshot_server);
+        apply_command(&mut app, grade(stranger));
         assert_eq!(
             keeper_of(&app, COORD),
             None,
@@ -20423,7 +21410,7 @@ mod tests {
 
         // The same command from the registered faction lands, so the refusal above is membership
         // and not a fixture that could never have worked.
-        apply_command(&mut app, grade(faction), &snapshot_server);
+        apply_command(&mut app, grade(faction));
         assert_eq!(
             keeper_of(&app, COORD),
             Some(BandId(ROAD_BAND_ID)),
@@ -21156,7 +22143,7 @@ mod tests {
         let (reply_tx, _reply_rx) = unbounded();
         let command = command_from_payload(decoded.payload, &reply_tx)
             .unwrap_or_else(|| panic!("`{line}` parsed and encoded but reached no Command"));
-        apply_command(app, command, &loopback_snapshot_server());
+        apply_command(app, command);
     }
 
     /// **The canonical line a player types to declare `improvement`.** Exhaustive on purpose: a new
@@ -21586,6 +22573,1148 @@ mod tests {
         assert!(
             declared_workings(&bare, band).is_empty(),
             "and no working is declared on ground that holds no timber"
+        );
+    }
+
+    // =============================================================================================
+    // SEATS — a connection claims the faction it drives, and the turn waits for the ones that are
+    // occupied. See `.claude/rules/core_sim/factions.md` → "Seats".
+    // =============================================================================================
+
+    /// The connection id the socket tests hand `handle_proto_client`, so an assertion can say the
+    /// delivery carried the connection that sent it rather than merely *a* connection.
+    const TEST_CONNECTION: ConnectionId = ConnectionId(7);
+
+    /// The human faction every world has, and the rival the two-seat fixture adds — the same two
+    /// `core_sim/tests/faction_support/mod.rs` names.
+    const HOME: FactionId = FactionId(0);
+    const RIVAL: FactionId = FactionId(1);
+    /// One rival: two peoples on one map.
+    const ONE_RIVAL: u32 = 1;
+
+    /// The connection sitting at [`HOME`], the one sitting at [`RIVAL`], and one sitting nowhere.
+    const HOME_CLIENT: ConnectionId = ConnectionId(11);
+    const RIVAL_CLIENT: ConnectionId = ConnectionId(12);
+    const UNSEATED_CLIENT: ConnectionId = ConnectionId(13);
+
+    /// The grid a `faction_capacity` question asks about in the seat-gate case. Any grid does: the
+    /// case is about whether that question passes the gate, never about the ceiling it answers.
+    const QUERY_GATE_GRID: UVec2 = UVec2::new(24, 16);
+
+    /// **A wait short enough to run out inside a test.** Injected through the live config, which is
+    /// where `settle_open_turn` reads it, so the test exercises the shipped lever rather than a
+    /// parallel one.
+    const TEST_TIMEOUT_SECONDS: f32 = 0.05;
+
+    /// Long enough that no test's own scheduling can trip it.
+    const SLEEP_PAST_TIMEOUT: Duration = Duration::from_millis(150);
+
+    /// `autosave_interval_turns == 0` is autosave off — see [`two_seat_world`].
+    const NO_AUTOSAVE: u64 = 0;
+
+    /// The loop's `world_active` flag, for the fixtures that have generated a world. The idle boot
+    /// app is the only `false`, and nothing in the seat cases runs on it.
+    const WORLD_IS_ACTIVE: bool = true;
+
+    /// **Two seats on one world** — [`build_world_app`]'s world with a rival in the roster, so the
+    /// turn queue awaits two factions.
+    ///
+    /// The shared two-faction fixture is `core_sim/tests/faction_support/mod.rs`
+    /// (`world_with(ONE_RIVAL, …)`), which lives under `core_sim/tests/` and is therefore compiled
+    /// into the integration suites and invisible from a `bin` target. So this installs the same roster
+    /// the same way: registry **and** `TurnQueue` together, before the first `update()`, because
+    /// worldgen reads the roster at `Startup` and a registry re-seeded without the queue is the
+    /// roster-drift defect `factions.md` is about.
+    fn two_seat_world() -> bevy::prelude::App {
+        let mut app = build_test_app();
+        app.world.resource_mut::<SimulationConfig>().map_seed = SOW_TEST_MAP_SEED;
+        // **No autosave.** The slot is a process-global file and these cases run on cargo's thread
+        // pool, so a fixture that wrote one would have tests overwriting each other's backups for a
+        // reason no test here is about.
+        app.world
+            .resource_mut::<SimulationConfig>()
+            .autosave_interval_turns = NO_AUTOSAVE;
+        let registry = FactionRegistry::with_ai_factions(ONE_RIVAL);
+        app.world
+            .insert_resource(TurnQueue::new(registry.factions().to_vec()));
+        app.world.insert_resource(registry);
+        app.update();
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().factions(),
+            &[HOME, RIVAL],
+            "the fixture must seat two peoples, or nothing below is about seats"
+        );
+        app
+    }
+
+    /// The roster a claim is validated against in a two-seat world.
+    const TWO_SEAT_ROSTER: [FactionId; 2] = [HOME, RIVAL];
+
+    /// Shorten the shipped wait so a timeout case does not sit for two minutes.
+    fn shorten_the_wait(app: &mut bevy::prelude::App) {
+        app.world
+            .resource_mut::<SimulationConfig>()
+            .seat_turn_timeout_seconds = TEST_TIMEOUT_SECONDS;
+    }
+
+    fn end_turn_for(faction: FactionId) -> Command {
+        Command::Orders {
+            faction,
+            orders: FactionOrders::end_turn(),
+        }
+    }
+
+    fn tick_of(app: &bevy::prelude::App) -> u64 {
+        app.world.resource::<SimulationTick>().0
+    }
+
+    fn logged_turns(log: &Option<CommandLog>) -> usize {
+        log.as_ref()
+            .expect("the fixture keeps a log")
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry, LogEntry::Turn))
+            .count()
+    }
+
+    fn logged_orders(log: &Option<CommandLog>) -> Vec<FactionId> {
+        log.as_ref()
+            .expect("the fixture keeps a log")
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                LogEntry::Command(Command::Orders { faction, .. }) => Some(*faction),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// ⛔ **A COMMAND WHOSE WIRE FACTION IS NOT THE SENDER'S SEAT NEVER HAPPENS.**
+    ///
+    /// Two halves, because either alone would pass on a broken gate:
+    ///
+    /// - the world is untouched — the refusal is a refusal, not a rewrite of the faction to the seat
+    ///   the connection actually holds (`plan §4.1`: an error, not a hint). A silent correction would
+    ///   apply *something* and hide the client bug that sent it;
+    /// - **and the command is not in the log.** That is the half that decides where the gate lives:
+    ///   the dispatcher logs before it applies, and a replay has no connections and no seats, so a
+    ///   refused command left in the timeline would be *applied* by the rollback that replayed it.
+    #[test]
+    fn a_command_whose_faction_is_not_the_senders_seat_is_refused_and_never_logged() {
+        const COORD: UVec2 = UVec2::new(1, 1);
+
+        let (mut app, faction, _band) = road_world(COORD);
+        seat_unkept_road(&mut app, COORD, core_sim::RungKey::RouteTrail);
+        grant_roadbuilding(&mut app, faction);
+        let mut log = Some(CommandLog::new(&app));
+
+        // The intruder is seated — at the *other* seat — so what stands between it and the handler is
+        // the seat gate and nothing else: its command names a real faction, a real band, and it knows
+        // how to build a road.
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the intruder takes the rival seat");
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and the home client takes its own");
+
+        let grade = || Command::Grade {
+            faction,
+            band_id: ROAD_BAND_ID,
+            target_x: COORD.x,
+            target_y: COORD.y,
+        };
+
+        for stranger in [RIVAL_CLIENT, UNSEATED_CLIENT] {
+            dispatch_connection_command(
+                &mut app,
+                stranger,
+                grade(),
+                &seats,
+                &mut log,
+                &loopback_snapshot_server(),
+            );
+            assert_eq!(
+                keeper_of(&app, COORD),
+                None,
+                "connection {stranger} does not hold faction {faction}'s seat, so its command must \
+                 not reach the road handler"
+            );
+            assert!(
+                log.as_ref().expect("the log").entries.is_empty(),
+                "a refused command must not enter the timeline: a replay has no seats and would \
+                 apply it"
+            );
+        }
+
+        // The seat's own client sends the identical command and it lands, so the refusals above are
+        // the gate and not a fixture that could never have worked.
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            grade(),
+            &seats,
+            &mut log,
+            &loopback_snapshot_server(),
+        );
+        assert_eq!(
+            keeper_of(&app, COORD),
+            Some(BandId(ROAD_BAND_ID)),
+            "the claimant of the seat takes the road on"
+        );
+        assert_eq!(
+            log.as_ref().expect("the log").entries.len(),
+            1,
+            "and that one is in the timeline"
+        );
+    }
+
+    /// ⛔ **THE HOST VERBS ARE NOT A SEAT'S TO SEND.** `Rollback` rewinds the world for everybody — a
+    /// debug tool with one player and a grief vector with several (`plan §4.4`) — and `Turn` resolves
+    /// it for everybody, which is the host's "resolve now" rather than anyone's submission.
+    ///
+    /// The observable half is on `Rollback`, because a refused rewind is visible as a tick that did
+    /// not move. `Turn`'s refusal is asserted through the same predicate the loop's `Turn` arm calls.
+    #[test]
+    fn a_seated_connection_may_not_rewind_or_resolve_the_world() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let origin_tick = tick_of(&app);
+        for _ in 0..3 {
+            resolve_and_log_turn(&mut app, &mut log);
+        }
+        let reached = tick_of(&app);
+        assert!(reached > origin_tick, "the fixture must run some turns");
+
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the claim");
+
+        let rollback = Command::Rollback { tick: origin_tick };
+        assert!(
+            !seat_authorizes(&seats, HOME_CLIENT, &rollback),
+            "a player may not rewind the world other players are in"
+        );
+        assert!(
+            !seat_authorizes(&seats, HOME_CLIENT, &Command::Turn(1)),
+            "nor end a turn the others are still taking"
+        );
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            rollback,
+            &seats,
+            &mut log,
+            &loopback_snapshot_server(),
+        );
+        assert_eq!(
+            tick_of(&app),
+            reached,
+            "the refused rollback must leave the world where it was"
+        );
+
+        // The operator channel — the Inspector, the CLI, the server's own voice — holds no seat, and
+        // is what the host verbs are for.
+        assert!(seat_authorizes(&seats, UNSEATED_CLIENT, &Command::Turn(1)));
+        assert!(seat_authorizes(
+            &seats,
+            ConnectionId::INTERNAL,
+            &Command::Rollback { tick: origin_tick }
+        ));
+        dispatch_connection_command(
+            &mut app,
+            UNSEATED_CLIENT,
+            Command::Rollback { tick: origin_tick },
+            &seats,
+            &mut log,
+            &loopback_snapshot_server(),
+        );
+        assert_eq!(
+            tick_of(&app),
+            origin_tick,
+            "and from the host it rewinds the world"
+        );
+    }
+
+    /// The three questions that name a faction, built for `faction` — one shape each, so the gate is
+    /// asserted over the whole faction-bearing surface rather than over the one query that happened
+    /// to be handy. The values never reach a world: the gate decides before anything is computed.
+    fn faction_bearing_queries(faction: FactionId) -> Vec<(&'static str, QueryPayload)> {
+        let herd_id = "game_seat_gate".to_string();
+        let kit_id = "big_game".to_string();
+        vec![
+            (
+                "hunt_trip_forecast",
+                QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    herd_id: herd_id.clone(),
+                    kit_id: kit_id.clone(),
+                    party_workers: 3,
+                    floor: 0.25,
+                    preset_floors: vec![0.0, 0.5],
+                    max_party_workers: 0,
+                }),
+            ),
+            (
+                "denial_raid_forecast",
+                QueryPayload::DenialRaidForecast(sim_runtime::commands::DenialRaidForecastQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    herd_id: herd_id.clone(),
+                    kit_id: kit_id.clone(),
+                    party_workers: 3,
+                    max_party_workers: 0,
+                }),
+            ),
+            (
+                "hunt_crew_take",
+                QueryPayload::HuntCrewTake(sim_runtime::commands::HuntCrewTakeQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    herd_id,
+                    kit_id,
+                    floor: 0.25,
+                    max_workers: 4,
+                }),
+            ),
+        ]
+    }
+
+    /// ⛔ **A QUESTION IS GATED BY THE SEAT THE ASKER SITS AT, AND THE FACTION-FREE ONES ARE NOT
+    /// GATED AT ALL.**
+    ///
+    /// Three arms, because each one alone is satisfiable by a gate that is wrong in the other
+    /// direction: a gate that refuses everything passes the mismatch arm, a gate that refuses
+    /// nothing passes the own-seat arm, and either of them can still break the load menu — whose
+    /// `ListSaves` is asked from a connection holding no seat, before a world exists.
+    ///
+    /// The refusal is a **token**, not a drop: a refused command returns silently, but a client
+    /// holding a forecast sheet open is waiting for an answer, and a dropped query is a sheet that
+    /// waits forever.
+    #[test]
+    fn a_question_is_answered_only_for_the_seat_that_asked_it() {
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival's client");
+
+        for (label, query) in faction_bearing_queries(HOME) {
+            assert_eq!(
+                query_seat_refusal(&seats, HOME_CLIENT, &query),
+                None,
+                "{label} about faction {HOME:?} is the home seat's own question and must be \
+                 answered exactly as it was before seats existed"
+            );
+            assert_eq!(
+                query_seat_refusal(&seats, RIVAL_CLIENT, &query),
+                Some(query_error::NOT_YOUR_SEAT),
+                "{label} let the rival's client read faction {HOME:?}'s private state — the \
+                 disclosure the per-seat frame closes, one channel over"
+            );
+            assert_eq!(
+                query_seat_refusal(&seats, UNSEATED_CLIENT, &query),
+                Some(query_error::NOT_YOUR_SEAT),
+                "{label} was answered for a connection holding no seat at all"
+            );
+        }
+
+        // And the faction comes off the QUESTION rather than being assumed: the same connection is
+        // refused the home seat's questions and answered its own.
+        for (label, query) in faction_bearing_queries(RIVAL) {
+            assert_eq!(
+                query_seat_refusal(&seats, RIVAL_CLIENT, &query),
+                None,
+                "{label} about faction {RIVAL:?} is the rival client's own question"
+            );
+        }
+
+        // ⛔ **The load menu's guard.** Both of these are asked from `LandingScreen` before `Main`
+        // exists — no world, and therefore no seat — and are answered ahead of the `world_active`
+        // gate. A gate that reached them would make the load menu unopenable.
+        for query in [
+            QueryPayload::ListSaves,
+            QueryPayload::FactionCapacity(sim_runtime::commands::FactionCapacityQuery {
+                width: QUERY_GATE_GRID.x,
+                height: QUERY_GATE_GRID.y,
+            }),
+        ] {
+            for asker in [UNSEATED_CLIENT, HOME_CLIENT, ConnectionId::INTERNAL] {
+                assert_eq!(
+                    query_seat_refusal(&seats, asker, &query),
+                    None,
+                    "{query:?} names no faction, so connection {asker} must be answered whether or \
+                     not it holds a seat"
+                );
+            }
+        }
+    }
+
+    /// ⛔ **A TURN WAITS FOR AN OCCUPIED SEAT, AND RESOLVES THE MOMENT THE LAST ONE SUBMITS.**
+    ///
+    /// Both halves in one test because either alone is satisfiable by a bug: a gate that never
+    /// resolves passes the first, and one that resolves on the first submission passes the second.
+    #[test]
+    fn a_turn_waits_for_every_occupied_seat_and_then_resolves() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("home sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival");
+
+        let opening_tick = tick_of(&app);
+        let flat = loopback_snapshot_server();
+
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            end_turn_for(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        assert_eq!(
+            tick_of(&app),
+            opening_tick,
+            "the rival seat is occupied and has not answered, so the turn must not resolve"
+        );
+        assert!(
+            turn_gate.deadline().is_some(),
+            "and the wait must be on a clock, or a silent seat would hold the game forever"
+        );
+
+        dispatch_connection_command(
+            &mut app,
+            RIVAL_CLIENT,
+            end_turn_for(RIVAL),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        assert_eq!(
+            tick_of(&app),
+            opening_tick + 1,
+            "with every occupied seat in, the turn resolves"
+        );
+        assert_eq!(
+            turn_gate.deadline(),
+            None,
+            "and nothing is still being waited on"
+        );
+        assert_eq!(
+            logged_turns(&log),
+            1,
+            "the resolved turn is in the timeline"
+        );
+        assert_eq!(
+            logged_orders(&log),
+            vec![HOME, RIVAL],
+            "both real submissions are logged, which is what makes the replay reproduce them"
+        );
+    }
+
+    /// ⛔ **A SEAT THAT GOES SILENT IS AUTO-SUBMITTED WHEN THE WAIT RUNS OUT** — one mechanism for a
+    /// wedged AI process and for a human who walked away (`plan §4.2`).
+    ///
+    /// **The auto-submission is deliberately NOT logged**, and the `logged_orders` assertion is what
+    /// pins that: a `LogEntry::Turn` re-enters `resolve_turn_with_auto_orders`, whose unconditional
+    /// force-submit reproduces exactly the seats this run submitted for. Logging a synthetic `Orders`
+    /// as well would be a second copy of the same fact, free to disagree with it.
+    #[test]
+    fn an_occupied_seat_that_goes_silent_is_auto_submitted_when_the_wait_runs_out() {
+        let mut app = two_seat_world();
+        shorten_the_wait(&mut app);
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("home sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival");
+
+        let opening_tick = tick_of(&app);
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            end_turn_for(HOME),
+            &seats,
+            &mut log,
+            &loopback_snapshot_server(),
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        assert_eq!(tick_of(&app), opening_tick, "the wait starts, not the turn");
+
+        // The rival never answers. Nothing else arrives either, which is the case the loop's
+        // `recv_deadline` wake exists for.
+        std::thread::sleep(SLEEP_PAST_TIMEOUT);
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+
+        assert_eq!(
+            tick_of(&app),
+            opening_tick + 1,
+            "past the wait the turn resolves without the silent seat"
+        );
+        assert_eq!(logged_turns(&log), 1);
+        assert_eq!(
+            logged_orders(&log),
+            vec![HOME],
+            "only the real submission is logged; the auto-submission rides the Turn entry"
+        );
+    }
+
+    /// ⛔ **A VACANT SEAT IS NEVER WAITED FOR: TODAY'S PACING, UNCHANGED.**
+    ///
+    /// This is the acceptance criterion that protects the shipped experience. A single-human game with
+    /// N rival seats nobody is sitting in must resolve the instant the human submits — no deadline, no
+    /// wait, and no second round trip.
+    #[test]
+    fn a_vacant_rival_seat_resolves_the_turn_immediately() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down; nobody sits at the rival");
+
+        let opening_tick = tick_of(&app);
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            end_turn_for(HOME),
+            &seats,
+            &mut log,
+            &loopback_snapshot_server(),
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+
+        assert_eq!(
+            tick_of(&app),
+            opening_tick + 1,
+            "a vacant seat is auto-submitted rather than waited for"
+        );
+        assert_eq!(
+            turn_gate.deadline(),
+            None,
+            "so no wait was ever armed — the shipped timeout is not on this path at all"
+        );
+        assert_eq!(logged_turns(&log), 1);
+    }
+
+    /// ⛔ **WITH NO SEAT CLAIMED THE SERVER RESOLVES NOTHING BY ITSELF.**
+    ///
+    /// The shipped single-player session, exactly: the Godot client claims no seat, so every seat is
+    /// vacant, and the world advances only because the host asked for a turn. Without this rule a
+    /// connected client that never sent orders would find the server marching the world forward
+    /// underneath it every `seat_turn_timeout_seconds`.
+    #[test]
+    fn with_no_seat_claimed_only_the_host_verb_advances_the_world() {
+        let mut app = two_seat_world();
+        shorten_the_wait(&mut app);
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let seats = SeatRegistry::default();
+
+        let opening_tick = tick_of(&app);
+        for _ in 0..3 {
+            settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+            std::thread::sleep(SLEEP_PAST_TIMEOUT);
+        }
+        assert_eq!(
+            tick_of(&app),
+            opening_tick,
+            "no seat is occupied, so no turn is in flight and nothing may resolve one"
+        );
+        assert_eq!(turn_gate.deadline(), None, "and no wake is ever scheduled");
+        assert_eq!(logged_turns(&log), 0);
+
+        // What does advance it: the host's verb, on the same seam the loop's `Turn` arm uses.
+        resolve_and_log_turn(&mut app, &mut log);
+        assert_eq!(tick_of(&app), opening_tick + 1);
+        assert_eq!(logged_turns(&log), 1);
+    }
+
+    /// ⛔ **A TIMELINE CONTAINING A TIMED-OUT SEAT REPLAYS TO THE SAME WORLD.**
+    ///
+    /// The whole reason the timeout is a *scheduling* decision in the live loop and not a rule inside
+    /// `resolve_turn_with_auto_orders`. The log holds the real submissions and a `LogEntry::Turn` per
+    /// resolved turn; on replay the unconditional force-submit catches exactly the seats the original
+    /// run auto-submitted, so **no clock is reproduced and none has to be**.
+    ///
+    /// The timeline mixes the two paths deliberately — a turn both seats submitted, then a turn one
+    /// seat sat out — because a replay that only ever saw one of them could not distinguish "the
+    /// force-submit reproduced the auto-submission" from "there was nothing to reproduce".
+    #[test]
+    fn a_timeline_with_a_timed_out_seat_replays_to_the_same_world() {
+        let mut app = two_seat_world();
+        shorten_the_wait(&mut app);
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("home sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival");
+        let flat = loopback_snapshot_server();
+
+        // Turn one: both seats answer.
+        for (connection, faction) in [(HOME_CLIENT, HOME), (RIVAL_CLIENT, RIVAL)] {
+            dispatch_connection_command(
+                &mut app,
+                connection,
+                end_turn_for(faction),
+                &seats,
+                &mut log,
+                &flat,
+            );
+            settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        }
+
+        // Turn two: the rival goes silent and the wait runs out.
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            end_turn_for(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        std::thread::sleep(SLEEP_PAST_TIMEOUT);
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+
+        assert_eq!(
+            logged_turns(&log),
+            2,
+            "two turns resolved, by the two paths"
+        );
+        assert_eq!(
+            logged_orders(&log),
+            vec![HOME, RIVAL, HOME],
+            "and only the real submissions are in the log"
+        );
+
+        recapture_snapshot_in_place(&mut app.world);
+        let target_tick = tick_of(&app);
+        let expected = normalize_for_compare(&app);
+
+        // Diverge, so the rollback has something to undo.
+        for _ in 0..2 {
+            resolve_and_log_turn(&mut app, &mut log);
+        }
+        assert!(tick_of(&app) > target_tick);
+
+        handle_rollback(
+            &mut app,
+            target_tick,
+            &flat,
+            log.as_mut().expect("the log"),
+            &seats,
+        );
+
+        assert_eq!(
+            tick_of(&app),
+            target_tick,
+            "the replay must land on the tick the timeline reached — a turn resolved by a timeout is \
+             a `LogEntry::Turn` like any other, or the tick count would drift"
+        );
+        assert_eq!(
+            sim_runtime::hash_snapshot(&expected),
+            sim_runtime::hash_snapshot(&normalize_for_compare(&app)),
+            "and on the same world: the force-submit reproduced the auto-submission the timeout made"
+        );
+    }
+
+    /// ⛔ **A CLAIM IS ANSWERED ON THE ASKING SOCKET, AND THE SECOND CLAIM ON A SEAT IS REFUSED
+    /// THERE TOO.**
+    ///
+    /// Driven over a real `TcpStream` through the real `handle_proto_client`, and asserted on the
+    /// **decoded reply frames** rather than on the registry: the answer is the one thing about a claim
+    /// a client cannot infer from a snapshot, and a connection that believes it holds a seat it does
+    /// not would spend the session sending orders that are refused.
+    ///
+    /// The answer rides [`QueryReplyEnvelope`] — the command socket's one way back, the same envelope
+    /// a save's answer uses — so there is **no new port and no second socket** to get wrong.
+    ///
+    /// The tail asserts the other end of occupancy: when a connection's read loop ends it delivers
+    /// `ReleaseSeat`, so a client that crashed can reconnect and claim again. Without it the first
+    /// crash would wedge that seat for the rest of the session.
+    #[test]
+    fn a_seat_claim_is_granted_or_refused_on_the_asking_socket() {
+        const FIRST_REQUEST: u64 = 71;
+        const SECOND_REQUEST: u64 = 72;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+        let addr = listener.local_addr().expect("the bound address");
+        let (command_tx, command_rx) = unbounded::<CommandDelivery>();
+
+        // Two connections on one listener, each with its own minted id — the accept loop's own
+        // arrangement, because *which connection asked* is the whole subject of this test.
+        let allocator = ConnectionIdAllocator::new();
+        let (first_id, second_id) = (allocator.mint(), allocator.mint());
+        let server = thread::spawn(move || {
+            for connection in [first_id, second_id] {
+                let (stream, _) = listener.accept().expect("the test client connects");
+                let sender = command_tx.clone();
+                thread::spawn(move || handle_proto_client(stream, connection, sender));
+            }
+        });
+
+        let mut first_client = TcpStream::connect(addr).expect("the first client connects");
+        let mut second_client = TcpStream::connect(addr).expect("the second client connects");
+
+        let app = two_seat_world();
+        let mut seats = SeatRegistry::default();
+
+        let claim_envelope = |request_id: u64| ProtoCommandEnvelope {
+            payload: ProtoCommandPayload::ClaimSeat {
+                request_id,
+                faction_id: HOME.0,
+            },
+            correlation_id: None,
+        };
+
+        // Both clients ask for the SAME seat, in order.
+        let mut answer_the_claim = |client: &mut TcpStream,
+                                    expected_connection: ConnectionId,
+                                    request_id: u64|
+         -> SeatClaimReply {
+            write_frame(
+                client,
+                &claim_envelope(request_id)
+                    .encode_to_vec()
+                    .expect("the claim envelope encodes"),
+            );
+            let (connection, command) = command_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the claim reaches the command channel");
+            assert_eq!(
+                connection, expected_connection,
+                "the delivery carries the connection that asked"
+            );
+            let Command::ClaimSeat {
+                request_id: echoed,
+                faction,
+                reply,
+            } = command
+            else {
+                panic!("a claim envelope must decode to Command::ClaimSeat");
+            };
+            assert_eq!(echoed, request_id);
+            assert_eq!(faction, HOME, "the seat asked for survives the wire");
+
+            let answer = answer_seat_claim(&app, &mut seats, connection, faction);
+            reply
+                .send(QueryReplyEnvelope {
+                    request_id: echoed,
+                    reply: QueryReply::SeatClaim(answer),
+                })
+                .expect("the writer thread is listening");
+
+            let frame = QueryReplyEnvelope::decode(&read_frame(client))
+                .expect("the reply frame decodes off the socket");
+            assert_eq!(
+                frame.request_id, request_id,
+                "the answer is correlated to the claim that asked for it"
+            );
+            match frame.reply {
+                QueryReply::SeatClaim(reply) => reply,
+                other => panic!("a claim is answered with a seat claim reply, not {other:?}"),
+            }
+        };
+
+        let granted = answer_the_claim(&mut first_client, first_id, FIRST_REQUEST);
+        assert!(granted.ok, "the first claim on a free seat is granted");
+        assert_eq!(granted.faction_id, HOME.0);
+        // ⛔ **The token is a minted secret, NOT the connection id.** It must never be the sentinel,
+        // which every downstream reader takes for "you were given nothing", and the tail below
+        // asserts it is the value the delivery table resolves to this seat.
+        assert_ne!(
+            granted.seat_token,
+            sim_runtime::commands::NO_SEAT_TOKEN,
+            "a granted claim hands back a real token"
+        );
+        assert_ne!(
+            granted.seat_token, first_id.0,
+            "and it is not the claiming connection's id, which is a sequential counter anyone can \
+             guess"
+        );
+
+        let refused = answer_the_claim(&mut second_client, second_id, SECOND_REQUEST);
+        assert!(!refused.ok, "the seat is taken");
+        assert_eq!(
+            refused.error,
+            sim_runtime::commands::seat_error::SEAT_OCCUPIED,
+            "and the refusal says why in a token the client can match on"
+        );
+        assert_eq!(
+            refused.seat_token,
+            sim_runtime::commands::NO_SEAT_TOKEN,
+            "a refusal hands back no token"
+        );
+        assert_eq!(
+            seats.claimant_of(HOME),
+            Some(first_id),
+            "the sitting connection keeps the seat"
+        );
+        assert_eq!(
+            seats.token_of(HOME).map(|token| token.wire()),
+            Some(granted.seat_token),
+            "and the token the grant handed back is the one the delivery table resolves to this \
+             seat — the refused claim minted nothing"
+        );
+
+        // The first client goes away: its read loop delivers the release, and the seat frees.
+        drop(first_client);
+        let (released_connection, command) = command_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a closing connection delivers its release");
+        assert!(matches!(command, Command::ReleaseSeat));
+        assert_eq!(released_connection, first_id);
+        assert_eq!(seats.release(released_connection), Some(HOME));
+        assert_eq!(
+            seats.claimant_of(HOME),
+            None,
+            "so the next claimant can have it"
+        );
+
+        drop(second_client);
+        server.join().expect("the accept loop exits cleanly");
+    }
+
+    /// ⛔ **FOG OFF IS A CONVENIENCE WITH ONE PLAYER AND A DISCLOSURE WITH TWO.**
+    ///
+    /// `fog_enabled` is read by the **capture**, not by a renderer: with it false
+    /// `improvement_is_legible` short-circuits and every seat's frame publishes every rival patch's
+    /// owner, its progress and its true carrying capacity, and the foreign-band redaction stops.
+    /// `factions.md` says it must never become a disclosure switch, so a seated second player is what
+    /// closes it — refused for **everyone**, the host included, because with two players in the world
+    /// the operator channel turning fog off discloses just as much.
+    ///
+    /// The single-seat half is the regression that matters: the `F` key and the Options toggle are
+    /// shipped behaviour and must be untouched.
+    #[test]
+    fn fog_off_is_refused_once_a_second_seat_is_occupied() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let flat = loopback_snapshot_server();
+        let fog_of =
+            |app: &bevy::prelude::App| app.world.resource::<SimulationConfig>().fog_enabled;
+
+        assert!(fog_of(&app), "a world boots with fog on");
+
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down alone");
+
+        // One player: exactly as it shipped.
+        for (sender, enabled) in [(HOME_CLIENT, false), (UNSEATED_CLIENT, true)] {
+            dispatch_connection_command(
+                &mut app,
+                sender,
+                Command::SetFogEnabled { enabled },
+                &seats,
+                &mut log,
+                &flat,
+            );
+            assert_eq!(
+                fog_of(&app),
+                enabled,
+                "with one seat occupied, connection {sender} must toggle fog exactly as the F key \
+                 and the Options switch always have"
+            );
+        }
+
+        // A second player sits down, and the switch closes — for the seated connections and for the
+        // host alike.
+        let logged_before_the_refusals = log.as_ref().expect("the log").entries.len();
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the second player sits down");
+        for sender in [
+            HOME_CLIENT,
+            RIVAL_CLIENT,
+            UNSEATED_CLIENT,
+            ConnectionId::INTERNAL,
+        ] {
+            assert!(
+                !seat_authorizes(&seats, sender, &Command::SetFogEnabled { enabled: false }),
+                "connection {sender} was allowed to turn fog off with another player seated"
+            );
+            dispatch_connection_command(
+                &mut app,
+                sender,
+                Command::SetFogEnabled { enabled: false },
+                &seats,
+                &mut log,
+                &flat,
+            );
+            assert!(
+                fog_of(&app),
+                "connection {sender} turned every seat's redaction off for everyone"
+            );
+        }
+        assert_eq!(
+            log.as_ref().expect("the log").entries.len(),
+            logged_before_the_refusals,
+            "and a refused fog toggle never enters the timeline — a replay has no seats and would \
+             apply it"
+        );
+
+        // The rule is about the WORLD, not about who sent it: the second player leaves and the
+        // switch opens again.
+        assert_eq!(seats.release(RIVAL_CLIENT), Some(RIVAL));
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            Command::SetFogEnabled { enabled: false },
+            &seats,
+            &mut log,
+            &flat,
+        );
+        assert!(
+            !fog_of(&app),
+            "back to one player, fog is a convenience again"
+        );
+    }
+
+    /// The tick a queued mission names. Any value does: the gate decides before the mission is
+    /// looked up.
+    const MISSION_TICK: u64 = 3;
+    /// The agent the queued mission names, for the same reason.
+    const MISSION_AGENT: u32 = 1;
+    /// The discovery it is aimed at, likewise.
+    const MISSION_DISCOVERY: u32 = 1;
+    /// The budget adjustment the counter-intel verb carries. Any non-zero value does, for the same
+    /// reason: the gate decides before the budget is touched.
+    const BUDGET_NUDGE: f32 = 1.0;
+    /// A mission id that need not exist — the refusal under test happens before the catalog is read,
+    /// and the accepted half is observed in the timeline rather than in the roster.
+    const MISSION_ID: &str = "seat_gate_probe";
+
+    /// A mission **run by** `owner` and aimed at the other seat.
+    fn queue_mission_run_by(owner: FactionId) -> Command {
+        let target = if owner == HOME { RIVAL } else { HOME };
+        Command::QueueEspionageMission {
+            params: QueueMissionParams {
+                mission_id: EspionageMissionId::new(MISSION_ID),
+                owner,
+                target_owner: target,
+                discovery_id: MISSION_DISCOVERY,
+                agent: EspionageAgentHandle(MISSION_AGENT),
+                target_tier: None,
+                scheduled_tick: MISSION_TICK,
+            },
+        }
+    }
+
+    /// **Every espionage and counter-intel verb, with the faction it ACTS AS** — the sweep as a
+    /// table, so the family is answered in one place rather than verb by verb.
+    ///
+    /// The two catalog verbs name no faction anywhere in their payload: they edit `EspionageCatalog`
+    /// (the agent-generator templates, the queue defaults), which is world tuning of the same shape
+    /// as `SetCrisisAutoSeed`.
+    fn espionage_family(owner: FactionId) -> Vec<(&'static str, Command, Option<FactionId>)> {
+        vec![
+            (
+                "queue_espionage_mission",
+                queue_mission_run_by(owner),
+                Some(owner),
+            ),
+            (
+                "update_counter_intel_policy",
+                Command::UpdateCounterIntelPolicy {
+                    faction: owner,
+                    policy: SecurityPolicy::Standard,
+                },
+                Some(owner),
+            ),
+            (
+                "adjust_counter_intel_budget",
+                Command::AdjustCounterIntelBudget {
+                    faction: owner,
+                    reserve: None,
+                    delta: Some(scalar_from_f32(BUDGET_NUDGE)),
+                },
+                Some(owner),
+            ),
+            (
+                "update_espionage_generators",
+                Command::UpdateEspionageGenerators {
+                    updates: Vec::new(),
+                },
+                None,
+            ),
+            (
+                "update_espionage_queue_defaults",
+                Command::UpdateEspionageQueueDefaults {
+                    scheduled_tick_offset: Some(MISSION_TICK),
+                    target_tier: None,
+                },
+                None,
+            ),
+        ]
+    }
+
+    /// ⛔ **A MISSION IS QUEUED BY THE SEAT THAT RUNS IT, AND `owner` IS THAT SEAT.**
+    ///
+    /// `QueueMissionParams::owner` is the faction the mission is *run by* —
+    /// `handle_queue_espionage_mission` takes its agents out of that faction's roster and spends that
+    /// faction's budget — so a connection sending one with somebody else's `owner` is acting as
+    /// another faction. It was harmless while `commanding_faction` only fed a membership check; this
+    /// arc reuses it as the authorization classifier, which is what gave that `None` arm a
+    /// consequence.
+    ///
+    /// The `target_owner` half is asserted too: who a mission is *aimed at* is cross-faction by
+    /// construction, and a gate that read the target would refuse every real mission there is.
+    #[test]
+    fn an_espionage_mission_may_only_be_queued_by_the_seat_that_runs_it() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let flat = loopback_snapshot_server();
+
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("the human sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival's client");
+
+        // The sweep: the whole family classified in one place.
+        for (label, command, acting) in espionage_family(HOME) {
+            assert_eq!(
+                commanding_faction(&command).map(|(faction, _)| faction),
+                acting,
+                "{label} names the wrong acting faction"
+            );
+        }
+
+        // The refusal, observed in the TIMELINE: a queue verb is replayable, so an authorized one is
+        // logged and a refused one must not be — a replay has no seats and would apply it.
+        dispatch_connection_command(
+            &mut app,
+            RIVAL_CLIENT,
+            queue_mission_run_by(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        assert!(
+            log.as_ref().expect("the log").entries.is_empty(),
+            "the rival's client queued a mission out of the HOME faction's roster and budget"
+        );
+
+        // And the seat's own client sends the identical command, so the refusal above is the gate
+        // and not a fixture that could never have worked.
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            queue_mission_run_by(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        assert_eq!(
+            log.as_ref().expect("the log").entries.len(),
+            1,
+            "a mission run by the sender's own seat is its order to give, whatever faction it names \
+             as the TARGET"
+        );
+    }
+
+    /// ⛔ **A DISCONNECT RESOLVES THE TURN THE DEPARTING SEAT WAS HOLDING.**
+    ///
+    /// The gate is re-assessed only by [`settle_open_turn`] or on a deadline wake, so the loop's
+    /// release arm has to reach one — [`release_seat_and_settle`] *is* that arm, and this drives it.
+    /// With the release skipping the settle, the remaining player waited out the whole
+    /// `seat_turn_timeout_seconds` for a seat that was already vacant, which contradicts the arc's
+    /// own rule that a vacant seat never holds the turn.
+    ///
+    /// **There is no sleep in this test, and that is the assertion**: the shipped timeout is a
+    /// two-minute wait, so a turn that resolves here resolved on the vacancy and not on a clock.
+    #[test]
+    fn a_disconnect_resolves_the_turn_the_departing_seat_was_holding() {
+        let mut app = two_seat_world();
+        let mut log = Some(CommandLog::new(&app));
+        let mut turn_gate = SeatTurnGate::default();
+        let flat = loopback_snapshot_server();
+        let mut seats = SeatRegistry::default();
+        seats
+            .claim(HOME, HOME_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("home sits down");
+        seats
+            .claim(RIVAL, RIVAL_CLIENT, &TWO_SEAT_ROSTER)
+            .expect("and so does the rival");
+
+        let opening_tick = tick_of(&app);
+        dispatch_connection_command(
+            &mut app,
+            HOME_CLIENT,
+            end_turn_for(HOME),
+            &seats,
+            &mut log,
+            &flat,
+        );
+        settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
+        assert_eq!(
+            tick_of(&app),
+            opening_tick,
+            "the rival is occupied and silent, so the turn waits"
+        );
+        assert!(
+            turn_gate.deadline().is_some(),
+            "and the wait is armed on it — which is the state the disconnect has to clear"
+        );
+
+        // The rival's process dies: its read loop delivers `ReleaseSeat`.
+        release_seat_and_settle(
+            &mut app,
+            &mut seats,
+            RIVAL_CLIENT,
+            &flat,
+            &mut log,
+            &mut turn_gate,
+            WORLD_IS_ACTIVE,
+        );
+
+        assert_eq!(
+            tick_of(&app),
+            opening_tick + 1,
+            "the seat holding the turn is vacant now, so the turn resolves — the remaining players \
+             must not wait out a timeout for somebody who has gone"
+        );
+        assert_eq!(
+            turn_gate.deadline(),
+            None,
+            "and nothing is still being waited on"
+        );
+        assert_eq!(
+            logged_turns(&log),
+            1,
+            "the resolved turn is in the timeline"
+        );
+        assert_eq!(
+            logged_orders(&log),
+            vec![HOME],
+            "only the real submission is logged; the vacant seat's rides the Turn entry"
         );
     }
 }

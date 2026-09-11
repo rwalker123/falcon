@@ -3,6 +3,8 @@ paths:
   - "core_sim/src/{demographics_config,generations,supply,supply_network_config}.rs"
   - "core_sim/src/{sedentarization,sedentarization_config,settlement_stage_config}.rs"
   - "core_sim/src/{wellbeing_config,victory,provinces,start_profile}.rs"
+  - "core_sim/src/metrics.rs"
+  - "core_sim/src/data/victory_config.json"
   - "core_sim/src/starting_loadout.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/tests/starting_loadout.rs"
@@ -36,9 +38,18 @@ paths:
   broadcast (Bevy's `Startup` schedule only fires on the first `app.update()`, so simply not calling
   `run_turn` leaves the world ungenerated; `ElevationField` stays uninserted, so the Snapshot stage
   must never run on the empty world — see the `world_active` guard). A world is generated **on
-  demand** by `new_game <preset_id> <width> <height> <seed> <profile_id>` (proto field **43**; `seed
-  == 0` randomizes, mirroring `map_size`/ResetMap; an unknown `profile_id` is rejected without
-  building, an unknown `preset_id` falls through to the worldgen default). `new_game` and `map_size`
+  demand** by `new_game <preset_id> <width> <height> <seed> <profile_id> [ai_factions]` (proto field
+  **43**; `seed == 0` randomizes, mirroring `map_size`/ResetMap; an unknown `profile_id` is rejected
+  without building, an unknown `preset_id` falls through to the worldgen default). The trailing
+  **`ai_factions`** is the player's New Game pick — **rivals, not roster size** — and is the one
+  optional argument. **Absent means the UNATTENDED roster** (`unattended_ai_faction_count`): no
+  rivals, unless `simulation_config.json` pins `default_ai_faction_count` to a number. It ships
+  `null`, so on the shipped config an absent count and an explicit `0` build the same world — they
+  remain different *requests*, and a pinned config value is what separates them. The New Game
+  screen's pre-selected count is a different question entirely (`faction_start_capacity`, derived
+  from the map), which is why the client sends its pick explicitly rather than omitting the
+  argument — see `.claude/rules/client/new-game-setup.md`. A count above what the grid seats is clamped with a warning,
+  never refused (`.claude/rules/core_sim/factions.md` → "The map decides the ceiling"). `new_game` and `map_size`
   (ResetMap) share one world-build helper (`rebuild_world_from_config`). A `turn` sent **before** a
   world exists is rejected with a warning. See `server-dev`'s boot flow in `bin/server.rs`.
 - **Data**: `StartProfile` records with `starting_units`, `starting_knowledge_tags`, `inventory`
@@ -873,6 +884,48 @@ Extension seams are present and empty — future factors/consequences slot in wi
 
 ### Victory Engine
 `VictoryState` with per-mode progress meters. Modes: Hegemony, Ascension, Economic, Diplomatic, Stewardship, Survival. `victory_tick` runs after end-of-turn accounting.
+
+#### Victory is evaluated PER FACTION
+
+`VictoryState.modes` is a `BTreeMap<FactionId, Vec<VictoryModeState>>`, and `victory_tick` walks the
+`FactionRegistry` scoring each people against **its own** metrics. Before that it was a single list
+scored from the world's totals with the winner hard-coded `FactionId(0)`, which on a map with rivals
+meant three wrong answers at once: their people counted toward your hegemony, their misery dragged
+your morale score, and whoever actually crossed the line the win was recorded as the player's.
+
+**The walk order is load-bearing and is therefore stated rather than inherited.** Factions in
+**registry id order**, modes in **config order**, first achiever takes the win — so two peoples
+crossing on the same tick break to the **lower id**, and a replay of one world always names one
+winner. `FactionRegistry::factions()` is id-ordered by construction; the loop says so.
+
+##### Which inputs are scoped, and which are honestly world-level
+
+| Term | Scope | Why |
+|---|---|---|
+| population, morale | **faction** | `SimulationMetrics.population_by_faction`, accumulated in the **same cohort pass** as the world totals (`collect_metrics`), so the two can never describe different sets of bands |
+| great discoveries | **faction** | `great_discoveries_by_faction`, counted off the same ledger `great_discoveries_total` counts — a rival's breakthrough is not your ascension. Its own field rather than one on `FactionMetrics`, because it has its own owner: `export_great_discovery_metrics` is the only system that can see the ledger, and it runs a stage *before* `collect_metrics` rebuilds the cohort map |
+| grid stress, surplus margin | **world** | `PowerGridState` is one grid for the map and carries no faction; there is no per-faction figure to scope to |
+| the crisis gauges (`GridStressPct`, `R0`) | **world** | a crisis is an event on the map, and `ActiveCrisisLedger` is not keyed by faction |
+| the turn number | **world** | it is the clock |
+
+⛔ **A world-level input is still measured PER FACTION.** Two peoples can live through the same
+plague, and the achiever is whoever meets the bar while doing so. What changed is never an input's
+scope — only whose threshold it is scored against.
+
+##### Consequence to expect: a multi-faction game is harder to win at the same threshold
+
+Thresholds now measure **one** people where they used to measure the combined map, so on a
+two-faction world every score is roughly halved against an unchanged bar. **That is the correct
+reading, not a regression** — "control a dominant share of population" was never a claim about
+everybody's population added together — but it means `victory_config.json`'s thresholds were
+calibrated against the old, larger number. Retune there if wins arrive too late; do not read it as a
+tuning bug.
+
+The world figures (`population_total`, `population_morale_avg`, `great_discoveries_total`) **stay
+where they are**: several readers legitimately want *"how many people are alive on this map"*, and a
+world metric read by the sim is not a client disclosure. What changed is which of the two victory
+reads. The published `victory.modes[]` are the **viewer's** rows and `victory.winner` stays public —
+see `.claude/rules/core_sim/factions.md` → "Which frame sections are viewer-scoped".
 
 ---
 

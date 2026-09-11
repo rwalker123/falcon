@@ -513,7 +513,7 @@ fn gathering_marker_census() {
         let start = on
             .world
             .resource::<core_sim::StartLocation>()
-            .position()
+            .anchor_position()
             .expect("worldgen picks a start tile");
         let to_axial = |p: UVec2| {
             let q = p.x as i32 - ((p.y as i32 - (p.y as i32 & 1)) / 2);

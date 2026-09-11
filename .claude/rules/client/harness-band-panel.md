@@ -2632,3 +2632,44 @@ a declaring `⌃` is not one of the three controls roads.md forbids on a row.
 
 **A clean run is 170 frames / 1161 `PASS` / 511 `assert OK`, exit 0 — MEASURED on this tree.**
 
+## `band_foreign_beside_own` — the two band tiers in ONE frame (`chapters/band_expedition.gd`)
+
+**One frame and seven `PASS`, appended LAST in the chapter's `run()`** — after the dock is released
+and the reference band handed back, so no frame before it moves. `EXPECTED_CHECKPOINTS` 115 → **127**,
+RE-MEASURED by raising the const to an impossible number and reading `reached 127` back: the declared
+115 was already six under the chapter's real count, so a delta applied to it would have set a floor
+the chapter could fall through.
+
+**`_foreign_band_fixture` IS THE CHANGE, and the state it used to stage is one no server can send.**
+It published a `⛺` and a `Nomadic band` tooltip; a foreign band's row is an allow-list of six fields
+now (`band-readouts.md` → "A FOREIGN BAND'S ROW IS SIX FIELDS"), so the stage went, `activity` went,
+and `name` / `band_id` came in. `band_foreign` therefore reads differently in the same frame it
+always had — the shape of a fixture that stopped describing the wire.
+
+**THE PAIR IS THE CLAIM.** `band_foreign` renders a LONE rival and is green whether the client draws
+one honestly or has stopped drawing bands at all; the new state puts an owned band on the same visible
+hex, so the roster carries the redacted row's neutral dot, empty mark column and silent activity slot
+beside a full one. Seven claims, and three of them exist only to stop the other four passing
+vacuously:
+
+| claim | why it is there |
+|---|---|
+| the roster lists BOTH bands | the precondition — a drawer saying nothing about a rival is also what a roster that dropped the rival produces |
+| the drawer states its `Position` | the one row a redacted cohort can honestly fill |
+| no `Food` row, no `Morale` row | their producers read fields a rival's row leaves at DEFAULT; a zeroed `Food 0 (∞)` in healthy green is the client claiming a larder it cannot see |
+| the allocation host is NOT visible | no band order is reachable on somebody else's people |
+| our own band on that hex still reads Food and Morale, and still offers `Move` | the PAIRED POSITIVE — without it every absence above passes on a drawer that has stopped producing rows at all, the one failure that looks exactly like the fix working |
+
+⛔ **THE ORDERS CLAIM ASKS THE HOST'S VISIBILITY, NOT THE BUTTON'S ABSENCE FROM THE TREE.**
+`_render_occupant_drawer` HIDES `%AllocationPanel` for a foreign band rather than emptying it, so the
+previous state's `Move` button is still parented under it and a `find_button_by_text` walk finds one
+on every frame in the chapter — measured, the first cut of this state failed on exactly that.
+
+> ### ⛔ A UNIT HOLDING A TILE THAT HOLDS THAT UNIT IS A CYCLE, and it reads as a state that did not change
+>
+> `Hud.show_unit_selection` takes a `duplicate(true)` of the cohort, so a fixture whose `tile_info.units`
+> contains the selected band itself makes Godot print `Max recursion reached`, ABORT the copy and render
+> the PREVIOUS selection — a perfectly ordinary frame, one state stale. It cost a run. The rows in the
+> tile's `units` list are stripped of their own `tile_info` (`_roster_row`), which is the shape
+> `MapView` already has: `tile_info` is stamped onto the payload handed out, never onto the rows inside
+> it.

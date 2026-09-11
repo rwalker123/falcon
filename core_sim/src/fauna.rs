@@ -1037,6 +1037,35 @@ impl Herd {
         (self.ladder_position / whole_ladder).clamp(RUNG_UNSTARTED, WHOLE_RUNG)
     }
 
+    /// **⛔ CLEAR THE PER-TURN BUILD SCRATCH — the ONE definition of what that scratch IS**, the
+    /// animal twin of [`crate::forage::ForagePatch::clear_build_estimate`]; see it for the rule and
+    /// for why the snapshot's foreign-builder redaction spends the same seam the decay pass does.
+    pub(crate) fn clear_build_estimate(&mut self) {
+        self.build_turns_remaining = None;
+        self.build_work_from_gear = NO_BUILD_GEAR;
+        self.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
+        self.build_blocked_reason = crate::intensification::BuildGate::Open;
+        self.build_destination = None;
+        self.build_legs = Vec::new();
+    }
+
+    /// The plant twin's rule — see [`crate::forage::ForagePatch::has_build_estimate`].
+    pub(crate) fn has_build_estimate(&self) -> bool {
+        self.build_turns_remaining.is_some()
+            || self.build_work_from_gear != NO_BUILD_GEAR
+            || self.build_queue_position != crate::intensification::NOT_IN_ANY_BUILD_QUEUE
+            || self.build_blocked_reason != crate::intensification::BuildGate::Open
+            || self.build_destination.is_some()
+            || !self.build_legs.is_empty()
+    }
+
+    /// The plant twin's rule — see [`crate::forage::ForagePatch::without_build_estimate`].
+    pub(crate) fn without_build_estimate(&self) -> Self {
+        let mut withheld = self.clone();
+        withheld.clear_build_estimate();
+        withheld
+    }
+
     /// A fully-tamed (managed livestock) group: yields provisions each turn and is
     /// immune to the overhunting collapse.
     ///
@@ -2029,8 +2058,11 @@ pub fn spawn_initial_herds(
     let width = config.grid_size.x.max(4);
     let height = config.grid_size.y.max(4);
     let wrap = config.map_topology.wrap_horizontal;
+    // **The migratory anchor is a property of the MAP, not of a people.** Long-range herds range
+    // across the whole world, so their anchor asks where the best ground turned out to be — the
+    // lowest-id faction's start, which in a one-faction world is the only one there is.
     let base = start_location
-        .position()
+        .anchor_position()
         .unwrap_or(UVec2::new(width / 2, height / 2));
 
     let mut herds = Vec::new();
@@ -4044,12 +4076,11 @@ pub fn advance_husbandry(
         // **And the turns estimate with it**, on the same one-turn cycle: a build the keeper walked
         // away from must stop publishing a finish date, and the labor arm re-stamps it this turn if a
         // crew is still on it (Logistics runs before Population).
-        herd.build_turns_remaining = None;
-        herd.build_work_from_gear = NO_BUILD_GEAR;
-        herd.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
-        herd.build_blocked_reason = crate::intensification::BuildGate::Open;
-        herd.build_destination = None;
-        herd.build_legs = Vec::new();
+        //
+        // **Through [`Herd::clear_build_estimate`]**, the one definition of what that scratch is —
+        // shared with the snapshot's foreign-builder redaction, so the two cannot come to hold
+        // different ideas of which fields the labor arm stamps.
+        herd.clear_build_estimate();
         // **HOW WELL THE HERD WAS KEPT LAST TURN** — the same Population→Logistics lag
         // `pen_fed_fraction` runs on. Everything downstream of the staffing is resolved into locals
         // **here, before the field is cleared**, so the whole turn judges one reading: what went

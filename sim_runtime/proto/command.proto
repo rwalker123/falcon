@@ -326,6 +326,41 @@ message QuarryCommand {
   string material = 4;
 }
 
+// ---------------------------------------------------------------------------------------------
+// SEATS - a connection says WHICH FACTION IT DRIVES, and the server thereafter takes the faction
+// from the seat rather than from the wire (docs/plan_multiplayer_seats.md 4.1).
+//
+// Every accepted command socket is minted an opaque connection id. A claim ties that connection to
+// one faction seat: after it, a faction-bearing command whose `faction_id` is not the claimed seat's
+// is REFUSED and logged, never rewritten to the claimed seat - a silent correction would hide the
+// client bug that sent it. A second claim on an occupied seat is refused, and a connection that has
+// claimed no seat may send only the commands that name no faction.
+//
+// Claiming is NOT authentication. It has no credentials and no reconnection token; a seat may be
+// claimed once, and it frees when its connection closes.
+message ClaimSeatCommand {
+  // Correlates the reply, exactly as QueryCommand.request_id does. The client owns the numbering.
+  uint64 request_id = 1;
+  // The seat wanted - a faction id in this world's roster (FactionRegistry). Unknown is refused.
+  uint32 faction_id = 2;
+}
+
+// The answer to a ClaimSeatCommand, carried on QueryReplyEnvelope because that is the command
+// socket's ONE way back (the same reason SaveOpReply rides it).
+message ClaimSeatReply {
+  bool ok = 1;
+  // Echoed so a client can assert the answer is about the seat it asked for.
+  uint32 faction_id = 2;
+  // A machine-readable snake_case token when `ok` is false ("unknown_seat", "seat_occupied",
+  // "already_seated"); the client owns the prose.
+  string error = 3;
+  // **A per-claim bearer secret: the token this seat's STREAM socket must present** to be sent this
+  // seat's frames, written as its first eight bytes little-endian. A random u64, NOT the connection's
+  // id - a stream that presents it receives that seat's private world, so treat it as a secret: hold
+  // it, present it, and keep it out of anything you log. 0 on a refusal.
+  uint64 seat_token = 4;
+}
+
 // The Telling (fork tier): answer a pending narrative fork. `beat_id` names the fork the faction
 // has on the table and `choice_id` one of that beat's authored choices; the choice's writes land in
 // the BeatLedger (declared stance offsets, flags), the beat is marked fired, and its echo line joins
@@ -726,6 +761,17 @@ message NewGameCommand {
   uint32 height = 3;
   uint64 seed = 4;
   string profile_id = 5;
+  // HOW MANY AI FACTIONS THE PLAYER PICKED, NOT COUNTING THEIR OWN. 2 means a world of three
+  // peoples: the human at FactionId(0) and rivals at 1 and 2. 0 is the single-faction world.
+  //
+  // OPTIONAL, and absent is NOT the same as 0: absent means "nobody picked" — a dev typing
+  // `new_game` without the argument, a scripted launch — and resolves to the UNATTENDED roster,
+  // which is no rivals unless simulation_config.json's `default_ai_faction_count` pins some. An
+  // explicit 0 is a player who chose to play alone. Absent is NOT the count `faction_capacity`
+  // pre-selects: that number scales with the map, so a client showing it must send it explicitly.
+  // A count above what the grid can seat at `faction_start_min_separation` is CLAMPED with a
+  // warning naming both numbers — the new game is never refused over it.
+  optional uint32 ai_faction_count = 6;
 }
 
 // Which boot config a staged tuning override applies to. Deliberately a SHORT list: these are the
@@ -952,6 +998,12 @@ message SaveOpReply {
 //
 // A query is answered from the LIVE world: this band's own equipment wear, this kit, this party
 // size, this floor.
+//
+// ⛔ THE THREE FORECAST QUESTIONS CARRY A `faction_id` AND ARE SEAT-GATED. Each is answered out of
+// that faction's private state, so it must be asked on the connection holding that faction's seat
+// (`ClaimSeatCommand`); anyone else is answered "not_your_seat". `list_saves` and `faction_capacity`
+// name no faction and are deliberately NOT gated — they are asked from the landing screen before a
+// world, and therefore before any seat, exists.
 message QueryCommand {
   // Correlates the reply. The client owns the numbering; the server only echoes it.
   uint64 request_id = 1;
@@ -961,7 +1013,36 @@ message QueryCommand {
     HuntCrewTakeQuery hunt_crew_take = 4;
     // 4 is held by `hunt_crew_take`, so the slot listing takes 5 (append-only; never renumber).
     ListSavesQuery list_saves = 5;
+    // 5 is held by `list_saves`, so the faction capacity takes 6.
+    FactionCapacityQuery faction_capacity = 6;
   }
+}
+
+// "If I start a game on a grid this size, how many AI factions may I ask for, and how many do I get
+// if I say nothing?"
+//
+// Asked from the NEW GAME SCREEN, where there is no world yet — so it is answered before the
+// `world_active` gate, from the live `SimulationConfig`, exactly as `list_saves` is answered from
+// disk. It takes the grid the player is CONFIGURING rather than the one the server is running,
+// because the ceiling is a property of the map about to be built.
+//
+// It exists so the rule ("how many starts fit at `faction_start_min_separation`, minus one for the
+// player") has one implementation, in the sim. A client that computed its own spinner bounds would
+// be a second copy of it, free to disagree with the clamp the server actually applies.
+message FactionCapacityQuery {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message FactionCapacityReply {
+  // The count a rival control PRE-SELECTS, already clamped to `max_ai_faction_count`, so the number
+  // a client opens on is always grantable. Derived from what this grid seats unless
+  // simulation_config.json's `default_ai_faction_count` pins one. NOT what `new_game` uses when
+  // `ai_faction_count` is absent — that is the unattended roster — so a client showing this number
+  // must send it explicitly.
+  uint32 default_ai_faction_count = 1;
+  // The most rivals this grid seats. 0 means the grid holds one start, so the player plays alone.
+  uint32 max_ai_faction_count = 2;
 }
 
 // "What does a raid of `party_workers` from `band_id`, carrying `kit_id`, take off `herd_id` if it
@@ -1062,12 +1143,17 @@ message QueryReplyEnvelope {
     // are questions.
     ListSavesReply list_saves = 6;
     SaveOpReply save_op = 7;
+    // 7 is held by `save_op`, so the faction capacity answer takes 8.
+    FactionCapacityReply faction_capacity = 8;
+    // 8 is held by `faction_capacity`, so the seat claim's answer takes 9. A claim is a COMMAND
+    // rather than a question; it rides this envelope for the same reason `save_op` does.
+    ClaimSeatReply seat_claim = 9;
   }
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token
 // ("no_active_world", "unknown_herd", "unknown_band", "unknown_kit", "kit_wrong_job",
-// "invalid_floor", "invalid_party") — the client owns the prose.
+// "invalid_floor", "invalid_party", "not_your_seat") — the client owns the prose.
 message QueryError {
   string reason = 1;
 }
@@ -1395,14 +1481,16 @@ message CommandEnvelope {
     // renumber). It was authored against 69 on a branch cut before the loadout picker landed and
     // was moved on the merge: a tag is the wire, so two messages can never share one.
     SetHerdOutputCommand set_herd_output = 70;
-    // 70 is held by `set_herd_output`, so the two deposit branches' three tile verbs take 71-73
+    // 70 is held by `set_herd_output`, so the seat claim takes 71 (append-only; never renumber).
+    ClaimSeatCommand claim_seat = 71;
+    // 71 is held by `claim_seat`, so the two deposit branches' three tile verbs take 72-74
     // (append-only; never renumber).
-    FellCommand fell = 71;
-    CoppiceCommand coppice = 72;
-    QuarryCommand quarry = 73;
-    // 73 is held by `quarry`, so the working's own walk-away takes 74 (append-only; never renumber).
+    FellCommand fell = 72;
+    CoppiceCommand coppice = 73;
+    QuarryCommand quarry = 74;
+    // 74 is held by `quarry`, so the working's own walk-away takes 75 (append-only; never renumber).
     // It is not a field on `abandon` for the reason its message states: a deposit verb names a tile
     // AND a material, and `abandon` already puts down every holding on its tile.
-    AbandonWorkingCommand abandon_working = 74;
+    AbandonWorkingCommand abandon_working = 75;
   }
 }

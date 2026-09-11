@@ -57,6 +57,27 @@ var _reservations: Dictionary = {}
 # The save channel (list / save / load / delete). Owned here for the same reason `ForecastQuery`
 # is: the seam holds no socket, and the pause menu that drives it must not reach the network.
 var save_slots: SaveSlots = null
+# **THE SEAT.** Claimed once, at boot, on the long-lived command connection — the server takes the
+# faction every command acts on from the seat that CONNECTION holds, so without a grant nothing the
+# player clicks reaches the world (`.claude/rules/client/command-transport.md`). Owned here because
+# `Main` is where the command client is built and where a refusal has to be reported.
+var seat_claim: SeatClaim = null
+# Whether a seat refusal has been put in front of the player. Held so the RECOVERY can be reported
+# too: the link re-claims on reconnect, and a standing "orders will not be obeyed" alert that has
+# since become false is worse than the alert never appearing.
+var _seat_refusal_reported: bool = false
+## **HAS THIS SESSION ALREADY BOUNCED BACK TO THE LANDING SCREEN?** One scene change per `Main`, and the
+## latch is what makes that literal: `change_scene_to_file` is deferred to the end of the frame, so a
+## second refusal arriving in the same frame (the native link re-claims on every reconnect) would ask
+## for the swap twice. See `_return_to_landing`.
+var _seat_bounce_taken: bool = false
+# Where the snapshot stream will be opened, resolved at _ready but DIALLED only once the seat claim
+# is answered — the socket's first bytes are the token that grant carries.
+var _stream_host: String = ""
+var _stream_port: int = 0
+# The token the currently open snapshot stream greeted with, so a re-grant carrying a DIFFERENT one
+# is recognised as "this socket is now stale" rather than ignored. `NO_SEAT_TOKEN` = no stream open.
+var _stream_seat_token: int = SnapshotStream.NO_SEAT_TOKEN
 # The slot this run is being LOADED from ("" = this run generates a world instead). Set from the
 # GameLaunch handoff in _build_world_request; it is what makes _try_send_world_request send
 # `load_game` rather than `new_game`, through the same retry and the same reveal gate.
@@ -77,6 +98,14 @@ var _new_game_elapsed: float = 0.0
 var _new_game_answer_accum: float = 0.0
 ## Seconds since a `resync` was sent with no full snapshot applied yet; negative means none pending.
 var _resync_pending_accum: float = -1.0
+## How many `resync` asks have gone out since the last full snapshot landed. Reset by the answer, so
+## it counts CONSECUTIVE unanswered asks and never the session's total.
+var _resync_unanswered_attempts: int = 0
+## The client has stopped asking: `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks went unanswered, which on a
+## reachable server means it holds no world for this seat (see `_abandon_resync`). Latched so the
+## conclusion is reported once and nothing re-arms the clock; a full frame — the world coming back —
+## is the only thing that clears it.
+var _resync_abandoned: bool = false
 
 # Dev-default world when Main.tscn is launched directly (no landing screen handoff): so a bare
 # `godot res://src/Main.tscn` still generates a playable map now that the server boots idle.
@@ -86,7 +115,21 @@ const DEV_DEFAULT_NEW_GAME := {
     "height": 52,
     "seed": 0,
     "profile_id": "late_forager_tribe",
+    # No rival count: a direct `Main.tscn` launch never saw the New Game screen, so it has no pick to
+    # forward and the argument is omitted. **The server resolves an absent field to its UNATTENDED
+    # roster — no rivals** (`worldgen::unattended_ai_faction_count`), unless `simulation_config.json`
+    # pins `default_ai_faction_count`. That is still a different REQUEST from an explicit 0, which
+    # names the count whatever the config says; it simply lands on the same world by default.
+    "ai_faction_count": FactionCapacity.NO_COUNT,
 }
+## How the boot line reports the rival count it asked for. The absent-field case keeps a phrase of
+## its own because it is a distinct REQUEST from asking for none — it names no count, and the server
+## answers it with its unattended roster (no rivals, unless its config pins some).
+const RIVALS_MESSAGE_DEFAULT := "no count sent (the server's unattended roster)"
+const RIVALS_MESSAGE_NONE := "no rivals"
+const RIVALS_MESSAGE_ONE := "1 rival"
+const RIVALS_MESSAGE_FORMAT := "%d rivals"
+
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
 
@@ -137,10 +180,27 @@ const WORKBENCH_COMMAND_MESSAGE := "Workbench: %s sent."
 ## Label the Workbench's status lines wear on the event dock's System channel.
 const WORKBENCH_LOG_LABEL := "Workbench"
 const LOADING_OVERLAY_TEXT = "Generating world…"
+## What the System channel says when a refused or lost seat comes back — the retraction of
+## `SeatClaim.REFUSED_HEADLINE`, and the reason that headline is safe to raise on a transient fault.
+const SEAT_RECOVERED_MESSAGE = "Your people's seat is held again — orders are being obeyed."
+## Why a `resync` went out that the player did not cause: the snapshot socket was replaced because the
+## seat came back under a new token, and the new socket has no baseline to apply deltas onto.
+const STREAM_REOPEN_RESYNC_MESSAGE := "resync requested (snapshot stream re-opened for a new seat token)"
+## **WHAT THE PLAYER IS TOLD WHEN THE WORLD STOPS ARRIVING** — the report `_abandon_resync` makes,
+## once. It says the world is GONE rather than that the client is still trying, because after a
+## server restart it genuinely is: the process holding it exited, and the fresh one boots idle.
+const RESYNC_ABANDONED_HEADLINE := "The server is no longer running this world."
+## `%s` is the silence that was measured, in seconds, so the sentence carries its own evidence. The
+## second half is the only thing left to do about it, and both places it can be done from are one
+## keypress away — the pause menu this raises loads a save, and Abandon returns to the landing screen
+## that owns New Game.
+const RESYNC_ABANDONED_DETAIL_FORMAT := "Asked for a fresh copy of the world for %s seconds with no answer, so nothing more is coming and the map on screen is the last frame. Load a save or start a new game to play on."
+## The retraction, on the same channel — a full frame after we said the world was gone means it is
+## back, and a standing alert that has become false is the fault `SEAT_RECOVERED_MESSAGE` exists for.
+const RESYNC_RECOVERED_MESSAGE := "The world is arriving again — the server is streaming this seat."
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
-const PLAYER_FACTION_ID = 0
 # --- THE SHIPMENT MANIFEST'S SPELLING (arc #527, see `format_send_trade_expedition`) --------------
 # **THE COMMAND LINE AND THE FEED NOTE SPELL AN AMOUNT DIFFERENTLY, because they are read by
 # different readers.** The note is prose for a person and rounds to one decimal; the LINE is an order
@@ -201,6 +261,22 @@ const NEW_GAME_ANSWER_TIMEOUT := 30.0
 ## redundant `resync` costs the server one full encode. Much shorter than the new_game timeout
 ## because nothing has to be generated — the server already holds the world and only re-encodes it.
 const RESYNC_ANSWER_TIMEOUT := 2.0
+## **HOW MANY UNANSWERED `resync` ASKS BEFORE THE CLIENT STOPS ASKING.**
+##
+## The retry above used to be unbounded, which is right for a slow answer and wrong for an ABSENT
+## one: a developer who restarts the server mid-session leaves the client talking to a process that
+## boots idle, and an idle server answers `resync` by logging `resync.no_world` and sending nothing.
+## Retrying that cannot help — nothing changes until somebody starts or loads a game — so the ask
+## repeated every two seconds forever, writing a System-channel line each time.
+##
+## **IT IS A COUNT BECAUSE THE ANSWER IS NOT SPELLED ON THE WIRE.** `resync` is a fire-and-forget
+## command; the server's `resync.no_world` is a log line on its side and reaches nothing here, so the
+## only evidence available to the client is silence. This budget is what turns silence into a
+## conclusion, and it is deliberately far past any legitimate delay: the answer is a re-encode of a
+## world the server already holds, so the only thing that can hold one up is the command loop being
+## busy inside a turn, and 6 x 2s is well past the heaviest single thing that loop does (a full
+## worldgen for the largest offered map, ~4.4s in the debug build — see NEW_GAME_ANSWER_TIMEOUT).
+const RESYNC_UNANSWERED_ATTEMPT_BUDGET := 6
 ## The config-drift notice sits above the HUD and the Inspector but BELOW the pause menu: it is a
 ## thing to read about the world, not a modal that should outrank ESC.
 const DRIFT_NOTICE_LAYER := 150
@@ -248,16 +324,15 @@ func _ready() -> void:
         _reveal_baseline_epoch = int(launch_node.get("last_world_epoch"))
     _world_revealed = false
     _show_loading_overlay()
-    var stream_host: String = _determine_stream_host()
-    var stream_port: int = _determine_stream_port()
-    print("[Endpoints] stream=%s:%d" % [stream_host, stream_port])
-    var err: Error = snapshot_loader.enable_stream(stream_host, stream_port)
-    if err != OK:
-        # Stay in the loading state — there is no mock fallback. The map reveals only once a live
-        # snapshot for the new world arrives (the stream retries via poll/status in _process).
-        push_warning("Godot client: unable to connect to snapshot stream (error %d); holding loading screen." % err)
-    # The client ALWAYS streams; even on a failed initial connect we hold the loading overlay
-    # rather than degrade to a demo playback.
+    _stream_host = _determine_stream_host()
+    _stream_port = _determine_stream_port()
+    print("[Endpoints] stream=%s:%d" % [_stream_host, _stream_port])
+    # **THE STREAM IS NOT OPENED HERE.** It cannot be: the socket's first bytes are the seat token,
+    # which only exists once the claim below has been ANSWERED, and the server sends nothing to a
+    # connection that greets with no token. So the stream is opened from `_on_seat_seated`; see
+    # `_open_snapshot_stream`.
+    # The client ALWAYS streams; even before the socket exists we hold the loading overlay rather
+    # than degrade to a demo playback.
     streaming_mode = true
     set_process(true)
     var command_host: String = _determine_command_host()
@@ -275,6 +350,17 @@ func _ready() -> void:
         inspector.call("set_command_client", command_client, command_err == OK)
     if inspector != null and inspector.has_method("set_hud_layer"):
         inspector.call("set_hud_layer", hud)
+    # **THE SEAT IS CLAIMED BEFORE THE WORLD IS ASKED FOR**, and that order matters in one direction
+    # only: `new_game` names no faction, so it is legal from an unseated connection, but every command
+    # the player can issue afterwards is not. Claiming first means the grant is in flight before the
+    # first band exists rather than after the player has already clicked something. Faction 0 is always
+    # in the roster (`FactionRegistry::with_ai_factions`), so a world rebuild — `new_game`, a load —
+    # keeps this claim rather than dropping it.
+    seat_claim = SeatClaim.new()
+    seat_claim.set_sender(Callable(self, "_claim_seat"))
+    seat_claim.seated.connect(_on_seat_seated)
+    seat_claim.refused.connect(_on_seat_refused)
+    seat_claim.request(HudConst.PLAYER_FACTION_ID)
     # The save channel rides the same command client. Built BEFORE the world request, because the
     # world request may itself be a `load_game` that goes out through this seam.
     save_slots = SaveSlots.new()
@@ -434,6 +520,23 @@ func _ready() -> void:
     _connect_event_dock()
     _connect_pause_menu()
 
+## **THE SEAT BELONGS TO THE RUN, SO ENDING THE RUN GIVES IT BACK.** The native command link is
+## process-global and outlives this scene, so nothing about being freed closes the socket the server
+## reads the seat from: without this call the next run claims on a still-seated connection, is refused
+## `already_seated`, and — the half that is not in the message — is left unseated, which means the
+## snapshot stream it opens is addressed to nobody and it receives no frames at all.
+##
+## **`_exit_tree`, NOT the Abandon handler**, because every way a run ends frees `Main`: Abandon, the
+## pause menu's "Load — discards this run", Options → "Apply now", `_return_to_landing`, and quitting.
+## Hooking the one button would leave the other four stranding the seat.
+##
+## The next run's claim can race the server's reap of this socket and come back `seat_occupied`. That
+## is the one refusal the link already retries (`SEAT_CLAIM_ATTEMPTS` × `SEAT_CLAIM_RETRY_BACKOFF`),
+## so it needs nothing here.
+func _exit_tree() -> void:
+    if command_client != null:
+        command_client.release_seat()
+
 ## The ESC pause overlay ($PauseLayer): hidden until ESC opens it. Resume hides it, Abandon
 ## returns to the landing screen, Exit quits. New Game is deliberately absent in pause mode —
 ## Abandon routes back to the landing screen, which owns the New Game flow.
@@ -517,8 +620,8 @@ func _on_pause_load(slot: String) -> void:
     get_tree().reload_current_scene()
 
 ## **DECIDE WHICH WORLD THIS RUN IS, AND HOW TO ASK FOR IT.** Either a `load_game <slot>` (the
-## `GameLaunch.pending_load_slot` handoff) or a `new_game <preset> <w> <h> <seed> <profile>` built
-## from `pending_new_game`, or the dev default when the scene was launched directly.
+## `GameLaunch.pending_load_slot` handoff) or a `new_game <preset> <w> <h> <seed> <profile>
+## [rivals]` built from `pending_new_game`, or the dev default when the scene was launched directly.
 ##
 ## Clears whichever handoff it consumed so a later scene reload starts fresh, and records what it
 ## RESOLVED to — `GameLaunch.active_new_game` / `active_load_slot`. The handoff slots are empty from
@@ -554,9 +657,18 @@ func _build_world_request() -> void:
     # default). 0 stays "derive from the run clock".
     var seed_value := maxi(0, int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"])))
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
+    # **HOW MANY RIVAL PEOPLES, OR NO ANSWER AT ALL.** The count is the command's one OPTIONAL
+    # argument, and omitting it is not the same request as sending 0: absent names no count and the
+    # server answers it with its UNATTENDED roster — no rivals, unless `simulation_config.json` pins
+    # `default_ai_faction_count` — while 0 is a player who chose to be alone whatever that config
+    # says. So a `FactionCapacity.NO_COUNT` (the New Game screen never got a ceiling to offer a
+    # choice from, or the scene was launched directly) appends nothing rather than guessing.
+    var rivals := int(params.get("ai_faction_count", FactionCapacity.NO_COUNT))
+    if rivals < 0:
+        rivals = FactionCapacity.NO_COUNT
     _new_game_command = {
-        "line": "new_game %s %d %d %d %s" % [preset, width, height, seed_value, profile],
-        "message": "New game: %s (%dx%d) seed %d." % [preset, width, height, seed_value],
+        "line": new_game_line(preset, width, height, seed_value, profile, rivals),
+        "message": "New game: %s (%dx%d) seed %d, %s." % [preset, width, height, seed_value, _rivals_message(rivals)],
     }
     # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
     # got — including when the fallback is what supplied them.
@@ -567,7 +679,27 @@ func _build_world_request() -> void:
             "height": height,
             "seed": seed_value,
             "profile_id": profile,
+            "ai_faction_count": rivals,
         })
+
+## **THE `new_game` LINE, INCLUDING WHETHER IT CARRIES A COUNT AT ALL.** Static and pure, so the one
+## rule that decides between "2 rivals" and "none" is reachable from a harness without standing a
+## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends.
+static func new_game_line(preset: String, width: int, height: int, seed_value: int,
+        profile: String, rivals: int) -> String:
+    var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
+    return "new_game %s %d %d %d %s%s" % [preset, width, height, seed_value, profile, rivals_suffix]
+
+## The boot line's words for a rival count — the four cases the count actually has, since "1 rivals"
+## and "0 rivals" both misreport what was asked for.
+func _rivals_message(count: int) -> String:
+    if count == FactionCapacity.NO_COUNT:
+        return RIVALS_MESSAGE_DEFAULT
+    if count == 0:
+        return RIVALS_MESSAGE_NONE
+    if count == 1:
+        return RIVALS_MESSAGE_ONE
+    return RIVALS_MESSAGE_FORMAT % count
 
 ## Send the pending world request. A `new_game` goes through the SAME transport MapPanel uses for
 ## map_size (inspector.send_runtime_command → command socket); a `load_game` goes through the save
@@ -578,6 +710,13 @@ func _build_world_request() -> void:
 ## timeout re-sends the very same request, and clearing it here would leave nothing to re-send.
 func _try_send_world_request() -> void:
     if _new_game_sent or _new_game_command.is_empty():
+        return
+    # **THE STREAM GOES FIRST.** The world request's answer IS the new world's first full snapshot, and
+    # a socket the snapshot server holds as unseated misses it — the race phase 2 below exists to
+    # recover from. Since the stream now waits on the seat claim anyway, holding the request until the
+    # token has been presented removes the race instead of recovering from it; the retry keeps this
+    # from being a deadlock if the claim is slow.
+    if not _snapshot_stream_ready():
         return
     if _pending_load_slot != "":
         # A load is not a text command: it carries a request id and is ANSWERED on the query channel
@@ -594,6 +733,11 @@ func _try_send_world_request() -> void:
     var result: Variant = inspector.call("send_runtime_command", _new_game_command["line"], _new_game_command["message"])
     if result is bool and result:
         _new_game_sent = true
+
+## Is the snapshot socket up AND greeted — i.e. does the snapshot server hold this connection as
+## seated? The world request and its retry both wait on this; see `_try_send_world_request`.
+func _snapshot_stream_ready() -> bool:
+    return snapshot_loader != null and snapshot_loader.stream_presented_seat_token()
 
 ## Retry the new_game request until it is ANSWERED, not merely SENT. Two phases, in order:
 ##
@@ -624,6 +768,12 @@ func _tick_new_game_retry(delta: float) -> void:
         push_warning("new_game went unanswered for %.0fs (no world arrived); re-sending." % NEW_GAME_ANSWER_TIMEOUT)
         _new_game_sent = false
         _new_game_elapsed = 0.0
+        return
+    if not _snapshot_stream_ready():
+        # Waiting for the stream to greet is not a rejection, so phase 1's bounded burst must not tick
+        # down while it waits. The retry clock still runs, so the send goes out on the first tick after
+        # the token lands rather than up to NEW_GAME_RETRY_INTERVAL later.
+        _new_game_retry_accum += delta
         return
     _new_game_elapsed += delta
     _new_game_retry_accum += delta
@@ -716,6 +866,10 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if not is_delta:
         # A full frame is the answer a pending `resync` was waiting for, whoever caused it.
         _resync_pending_accum = -1.0
+        _resync_unanswered_attempts = 0
+        if _resync_abandoned:
+            _resync_abandoned = false
+            _note_system_event(RESYNC_RECOVERED_MESSAGE, "", false, HudEventVocab.KIND_SYSTEM)
     if not is_delta and snapshot.has("world_epoch"):
         var snapshot_epoch := int(snapshot["world_epoch"])
         if snapshot_epoch != _world_epoch_applied:
@@ -1068,7 +1222,7 @@ static func format_cancel_order(band: Dictionary, scope: String) -> Dictionary:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(band.get("faction", PLAYER_FACTION_ID))
+    var faction := int(band.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "cancel_order %d %d %s" % [faction, band_id, scope],
         "message": "Clear labor assignments (%s) for band." % scope,
@@ -1145,7 +1299,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var kind := String(payload.get("kind", "")).strip_edges().to_lower()
     var workers: int = max(0, int(payload.get("workers", 0)))
     match kind:
@@ -1259,7 +1413,7 @@ static func format_move_band(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
@@ -1280,7 +1434,7 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
@@ -1306,7 +1460,7 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
@@ -1343,7 +1497,7 @@ static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
@@ -1388,7 +1542,7 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     var destination_band_id := int(payload.get("destination_band_id", HudConst.NO_BAND_ID))
     if destination_band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     if party_workers <= 0:
         return {}
@@ -1501,7 +1655,7 @@ static func format_recall_expedition(payload: Dictionary) -> Dictionary:
     var expedition_band_id := int(payload.get("expedition_band_id", HudConst.NO_BAND_ID))
     if expedition_band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "recall_expedition %d %d" % [faction, expedition_band_id],
         "message": "Recall expedition.",
@@ -1518,7 +1672,7 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
     var workers := int(payload.get("workers", 0))
     if workers <= 0:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "split_band %d %d %d" % [faction, band_id, workers],
         "message": "Form a new band.",
@@ -1534,7 +1688,7 @@ static func format_split_band(payload: Dictionary) -> Dictionary:
 ## the build queue of every band keeping the pen, and that band's `builders` pool raises it when it
 ## reaches the head.
 static func format_extend_pen(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
@@ -1593,7 +1747,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
     var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
     if improvement == "":
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     if improvement in IMPROVEMENT_HERD_TARGETED:
         var herd_id := String(payload.get("herd_id", "")).strip_edges()
         if herd_id == "":
@@ -1653,7 +1807,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
 ## source with a live meter down, and it has its own builder one block up (`format_abandon`) reached
 ## from the road ladder's own control.
 static func format_unqueue(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
         return {
@@ -1692,7 +1846,7 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
 ## **`abandon_improvement` IS A DIFFERENT, RETIRED VERB** — see its epitaph further down: it cleared an
 ## assignment's STORED improvement, which no longer exists, and the server refuses that form outright.
 static func format_abandon(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
         return {
@@ -1759,7 +1913,7 @@ static func format_abandon_working(payload: Dictionary) -> Dictionary:
 ## The two source shapes are told apart the way `format_unqueue` tells them apart, which is the way
 ## the sim's own parser does: a non-empty herd id is the herd form, else two integer tokens are a tile.
 static func format_build_kit(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var kit_face := String(payload.get("kit_id", "")).strip_edges()
     var token := _kit_token(payload)
     var message_kit := kit_face if token != "" else BUILD_KIT_DERIVED_NOTE
@@ -1804,7 +1958,7 @@ const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 ## The two source shapes are told apart exactly as `format_build_kit` tells them apart, which is how
 ## the sim's own parser does it: a non-empty herd id is the herd form, else two integers are a tile.
 static func format_upkeep_kit(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var kit_face := String(payload.get("kit_id", "")).strip_edges()
     var token := _kit_token(payload)
     var message_kit := kit_face if token != "" else UPKEEP_KIT_DERIVED_NOTE
@@ -1853,7 +2007,7 @@ static func format_build_order(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var position: int = max(0, int(payload.get("position", 0)))
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
@@ -1893,7 +2047,7 @@ static func format_work_priority(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var level := String(payload.get("level", "")).strip_edges().to_lower()
     if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
         return {}
@@ -1933,7 +2087,7 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
     var recipe_id := String(payload.get("recipe_id", "")).strip_edges()
     if recipe_id == "":
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "set_bench %d %d recipe %s" % [faction, band_id, recipe_id],
         "message": "Put %s on the bench." % recipe_id,
@@ -1959,7 +2113,7 @@ static func format_set_bench(payload: Dictionary) -> Dictionary:
 ## this returns a line for an empty allocation rather than the `{}` that means "nothing to send",
 ## which is the one place this formatter deliberately departs from its neighbours above.
 static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     var parts: Array[String] = ["set_starting_loadout %d %d" % [faction, band_id]]
     var kits := 0
@@ -2001,7 +2155,7 @@ static func format_clear_bench(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "clear_bench %d %d" % [faction, band_id],
         "message": "Cleared the bench.",
@@ -2014,7 +2168,7 @@ static func format_bench_crew(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var workers: int = max(0, int(payload.get("workers", 0)))
     return {
         "line": "bench_crew %d %d workers %d" % [faction, band_id, workers],
@@ -2039,7 +2193,7 @@ static func format_bench_priority(payload: Dictionary) -> Dictionary:
     var level := String(payload.get("level", "")).strip_edges().to_lower()
     if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     # The FEED reads the level the way the picker's own face spells it, so the echo and the button the
     # player pressed carry one word between them — `format_work_priority`'s rule, one verb over.
     var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
@@ -2077,7 +2231,7 @@ static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
     var mode := String(payload.get("mode", "")).strip_edges().to_lower()
     if mode == "":
         return {}
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
         "line": "upkeep_mode %d %d %s" % [faction, band_id, mode],
         "message": HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGES.get(mode,
@@ -2267,11 +2421,24 @@ func _on_hud_recall_expedition(payload: Dictionary) -> void:
 func _on_hud_split_band(payload: Dictionary) -> void:
     _send_formatted_command(format_split_band(payload))
 
-func _on_hud_next_turn(steps: int) -> void:
-    var clamped_steps: int = max(1, steps)
-    var line := "turn %d" % clamped_steps
-    var suffix := "s" if clamped_steps != 1 else ""
-    _send_runtime_command(line, "Advance %d turn%s." % [clamped_steps, suffix])
+## **END TURN SUBMITS THIS SEAT'S ORDERS; IT DOES NOT RESOLVE THE WORLD.**
+##
+## It used to send `turn 1` — *"resolve the world now"* — which under seats is the **host's** verb and
+## is refused from a seated connection (`SeatRegistry::may_issue_host_verb`): with two players either
+## one could end a turn the other was still taking. `order <faction> ready` says only *"I am done"*,
+## and the server resolves once every occupied seat has said it, or when
+## `seat_turn_timeout_seconds` runs out (`.claude/rules/core_sim/factions.md` → "Waiting is the
+## default"). With one player and vacant rivals that is the same instant, so single-player pacing is
+## unchanged: vacant seats never hold the turn.
+##
+## `steps` is unused because a seat cannot submit a BATCH — "I am done" is not a number. The turn orb
+## is the only emitter and it always asks for one; advancing several at once stays the Inspector's
+## host verb (`Inspector._send_turn`, which keeps `turn N`).
+func _on_hud_next_turn(_steps: int) -> void:
+    _send_runtime_command(
+        "order %d ready" % HudConst.PLAYER_FACTION_ID,
+        "Turn submitted."
+    )
 
 ## The Inspector's dev toolbar / autoplay advanced a turn. That path is deliberately NOT gated on
 ## a pending narrative fork (docs/plan_the_telling.md §1a) — but it must not be SILENT: note the
@@ -2289,7 +2456,7 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
     var choice_id := String(payload.get("choice_id", "")).strip_edges()
     if beat_id == "" or choice_id == "":
         return
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     _send_runtime_command(
         "answer_fork %d %s %s" % [faction, beat_id, choice_id],
         "Answered the question."
@@ -3086,19 +3253,167 @@ func _send_query(request_id: int, ask: Dictionary) -> bool:
         return false
     return command_client.send_query(request_id, ask)
 
+## Put the seat claim on the command connection. Injected into `SeatClaim` as its sender; `true` means
+## the ask reached the bridge, never that the seat was granted.
+func _claim_seat(faction_id: int, request_id: int) -> bool:
+    if command_client == null:
+        return false
+    return command_client.claim_seat(faction_id, request_id)
+
+
+## The seat is ours: every faction-bearing command this client sends will now be obeyed. Nothing is
+## shown — a working game is the expected state and does not deserve a notification — but it IS logged,
+## because a grant that never arrives is otherwise indistinguishable from one that did.
+## **…and it is what the snapshot stream needs.** Frames are addressed per seat, so opening the stream
+## is part of being seated, not a separate boot step: see `_open_snapshot_stream`.
+func _on_seat_seated(faction_id: int, seat_token: int) -> void:
+    print("[Seat] faction %d seated on the command connection (token %s)." % [faction_id, SnapshotStream.SEAT_TOKEN_LOG_REDACTION])
+    _open_snapshot_stream(seat_token)
+    if not _seat_refusal_reported:
+        return
+    # The link reconnected and got the seat back. The alert that said otherwise is now false, so the
+    # same channel that raised it retracts it — and the overlay, if the player is still on it, goes
+    # back to saying what is actually happening.
+    _seat_refusal_reported = false
+    _note_system_event(SEAT_RECOVERED_MESSAGE, "", false, HudEventVocab.KIND_SYSTEM)
+    if loading_overlay != null and loading_overlay.visible:
+        _set_loading_overlay_text(LOADING_OVERLAY_TEXT)
+
+
+## **OPEN (OR RE-OPEN) THE SNAPSHOT STREAM FOR THE SEAT WE NOW HOLD.**
+##
+## The stream's first bytes are `seat_token`, and the server delivers a frame only to the connections
+## whose token resolves to the seat that frame was captured for — so this cannot run before the claim
+## is answered, and a stream holding a **stale** token is a live socket that receives nothing at all.
+##
+## **A re-grant with a new token therefore replaces the socket.** The seat belongs to the command
+## CONNECTION, so when the seated link reconnects it re-claims and the server mints a new id: the old
+## token now names a connection the server has forgotten, and every later frame would be addressed
+## past us. Tearing the stream down and greeting again with the new token is the only repair; the same
+## call is idempotent when the token has not changed, so a repeated grant costs nothing.
+##
+## The baseline is then re-asked for, because the socket that comes back has missed whatever was
+## published while it was down — `resync` is exactly the "republish a full world" verb `_tick_resync`
+## already owns, including its unanswered-retry clock. Pre-reveal there is nothing to resync onto and
+## the world request's own retry covers it, so it is only sent once a world has been shown.
+func _open_snapshot_stream(seat_token: int) -> void:
+    if snapshot_loader == null:
+        return
+    if seat_token == _stream_seat_token and snapshot_loader.is_streaming():
+        return
+    var replacing := _stream_seat_token != SnapshotStream.NO_SEAT_TOKEN
+    if replacing:
+        print("[Seat] snapshot stream token changed (a fresh seat token was granted); reconnecting the stream.")
+        snapshot_loader.disable_stream()
+    _stream_seat_token = seat_token
+    var err: Error = snapshot_loader.enable_stream(_stream_host, _stream_port, seat_token)
+    if err != OK:
+        # Stay in the loading state — there is no mock fallback. Nothing retries a refused connect,
+        # so this is terminal for the session, and saying so is the whole of the handling.
+        _stream_seat_token = SnapshotStream.NO_SEAT_TOKEN
+        push_warning("Godot client: unable to connect to snapshot stream (error %d); holding loading screen." % err)
+        return
+    if replacing and _world_revealed:
+        _request_stream_baseline()
+
+
+## Ask the server to republish a full world onto a stream socket that has just been replaced.
+##
+## Piggybacks on the `resync` bookkeeping rather than adding a second one: arming
+## `_resync_pending_accum` is what makes `_tick_resync` chase the answer, and an already-outstanding
+## resync needs no second ask. **A session that has already concluded the server holds no world asks
+## nothing** — the stream re-opening is not new evidence about the world (see `_abandon_resync`).
+func _request_stream_baseline() -> void:
+    if _resync_pending_accum >= 0.0 or _resync_abandoned:
+        return
+    _ask_for_resync(STREAM_REOPEN_RESYNC_MESSAGE)
+
+
+## **THE SEAT IS NOT OURS, AND THIS IS THE ONE PLACE THE PLAYER LEARNS IT.**
+##
+## Two surfaces, because the answer can land on either side of the world reveal:
+##   * the **event dock's System channel**, as an ALERT — the client's standing surface for a fault the
+##     player did not cause (the same channel a dropped command socket and a `resync` report on), and
+##     the only one still there once the game is running;
+##   * the **loading overlay**, while it is still up, re-worded exactly as a refused load re-words it.
+##     "Generating world…" is a lie when the world that appears will not take your orders, and the
+##     overlay is what the player is looking at.
+##
+## Deliberately NOT a modal: the client cannot fix this and neither can the player, and a dialog would
+## only take away the one thing left — reading the map of a game they cannot command.
+func _on_seat_refused(faction_id: int, error: String) -> void:
+    var reason := SeatClaim.error_prose(error)
+    push_warning("seat claim for faction %d refused: %s" % [faction_id, error])
+    _seat_refusal_reported = true
+    # **BEFORE THE REVEAL THERE IS NO RUN TO STAY IN.** The two surfaces below are the right ones for a
+    # seat lost mid-game; pre-reveal they amount to one sentence centred on a black rectangle with
+    # nothing to press, so the player goes back to the screen that owns starting a run instead.
+    if not _world_revealed:
+        # **THE UNREACHABLE CASE BORROWS THE SHELL'S OWN SENTENCE** (`MenuShell.NOTICE_NO_SERVER`),
+        # because the landing screen raises that same line for itself whenever its capacity ask cannot
+        # reach a server: one constant is what makes the player see ONE box rather than two saying the
+        # same thing, and it is what lets a server coming up clear both at once. The other refusals are
+        # not "could not connect" — a seat held by another player, a server running a different game —
+        # so each keeps its own one-sentence prose.
+        _return_to_landing(MenuShell.NOTICE_NO_SERVER
+            if error == SeatClaim.ERROR_TRANSPORT else reason)
+        return
+    _note_system_event(SeatClaim.REFUSED_HEADLINE, reason, true, HudEventVocab.KIND_SYSTEM)
+    if loading_overlay != null and loading_overlay.visible:
+        _set_loading_overlay_text(reason)
+
+
+## **GO BACK TO THE LANDING SCREEN, CARRYING THE REASON.** For a fault that lands BEFORE a world exists,
+## which today is exactly one thing: a seat claim refused or unanswered — the failure that leaves a
+## session unable to send a single order.
+##
+## **DELIBERATELY NOT THE TREATMENT `_abandon_resync` GETS**, and the two differ on both axes that
+## matter. There, a world is on screen and the detection is INFERRED from silence, so the response has
+## to be undoable: a pause menu opened over the last frame, dismissible with ESC. Here the failure is
+## stated on the wire and there is no world at all — nothing is being taken away by leaving, and there
+## is nothing to dismiss the menu back onto. One mechanism would have to be wrong at one end.
+##
+## **WHY THIS CANNOT BOUNCE THE PLAYER IN A LOOP** — three independent reasons, the first sufficient:
+##   * the landing screen CLAIMS NO SEAT. It opens a command client for `list_saves` and
+##     `faction_capacity` and nothing else, so arriving there cannot reproduce the failure; only a
+##     player pressing New Game or Load Game comes back to `Main`.
+##   * with nothing listening, neither press is offered: `MenuShell` disables "Begin the trail" while
+##     the capacity ask reports an unreachable server, and the saves list reports the same failure in
+##     place of rows (`.claude/rules/client/new-game-setup.md`).
+##   * `_seat_bounce_taken` allows one swap per `Main`, and the run's armed parameters are cleared on
+##     the way out — the same clearing `_on_pause_abandon` performs — so nothing left behind re-launches
+##     anything.
+func _return_to_landing(notice: String) -> void:
+    if _seat_bounce_taken:
+        return
+    _seat_bounce_taken = true
+    var launch: Node = get_node_or_null("/root/GameLaunch")
+    if launch != null:
+        launch.set("pending_landing_notice", notice)
+        # The run is over before it began, so its parameters stop being anybody's answer — otherwise a
+        # theme apply on the landing screen would rebuild the world this session failed to start.
+        launch.set("active_new_game", null)
+        launch.set("active_load_slot", "")
+        launch.set("pending_new_game", null)
+        launch.set("pending_load_slot", "")
+    get_tree().change_scene_to_file("res://src/ui/LandingScreen.tscn")
+
+
 ## Drain the forecast answers that landed this frame into the HUD's seam, and let it retire any
 ## superseded answer whose stale window has closed. **This is the only path an answer takes** — a
 ## query deliberately triggers no re-capture server-side, so no snapshot will ever carry one.
 ## **DRAINED ONCE, DELIVERED TO BOTH SEAMS.** `poll_query_replies` is destructive — it empties the
 ## native queue — so two drains would race, each swallowing answers meant for the other. The two
 ## seams tell their own replies apart by `request_id`, and their id spaces are disjoint by
-## construction (`SaveSlots.REQUEST_ID_BASE`), so handing each the whole batch is correct.
+## construction (`QueryRequestIds`), so handing each the whole batch is correct.
 func _pump_forecast_queries() -> void:
     if command_client == null:
         return
     var replies: Array = command_client.poll_query_replies()
     if save_slots != null:
         save_slots.deliver(replies)
+    if seat_claim != null:
+        seat_claim.deliver(replies)
     if hud == null or not hud.has_method("forecast_query"):
         return
     var query: ForecastQuery = hud.call("forecast_query")
@@ -3170,33 +3485,78 @@ func _process(delta: float) -> void:
                 else:
                     _try_reveal_world(streamed)
 
-## Ask the server to republish a full world when the decoder dropped a delta it could not apply,
-## and keep asking until one lands.
+## Ask the server to republish a full world when the decoder dropped a delta it could not apply, and
+## keep asking until one lands — or until `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks have gone unanswered,
+## at which point there is no world to land and `_abandon_resync` says so and stops.
 ##
 ## The drop itself is correct and deliberate — merging a delta onto the wrong baseline produces a
 ## world that is silently wrong rather than visibly broken (`docs/plan_delta_streaming.md` §3.3).
 ## But dropping alone leaves the client frozen, so the request is the other half of that contract.
 ##
-## **BOTH SENDS STATE `KIND_SYSTEM` RATHER THAN TAKING THE ECHO DEFAULT.** A resync is not a receipt
+## **EVERY SEND STATES `KIND_SYSTEM` RATHER THAN TAKING THE ECHO DEFAULT.** A resync is not a receipt
 ## for anything the player did — the client sent it because a frame could not be applied — so it is a
 ## fault report, and the System channel is where a fault report belongs.
 func _tick_resync(delta: float) -> void:
     if snapshot_loader == null:
         return
     if snapshot_loader.resync_needed:
+        # Cleared whatever we do with it: a request that is not going to be made must not leave a
+        # flag standing that the next frame would read as a fresh drop.
         snapshot_loader.resync_needed = false
-        if _resync_pending_accum < 0.0:
-            _send_runtime_command("resync", "resync requested (unapplicable delta)",
-                HudEventVocab.KIND_SYSTEM)
-            _resync_pending_accum = 0.0
+        if _resync_pending_accum < 0.0 and not _resync_abandoned:
+            _ask_for_resync("resync requested (unapplicable delta)")
         return
     if _resync_pending_accum < 0.0:
         return
     _resync_pending_accum += delta
-    if _resync_pending_accum >= RESYNC_ANSWER_TIMEOUT:
-        _resync_pending_accum = 0.0
-        _send_runtime_command("resync", "resync retry (still no baseline)",
-            HudEventVocab.KIND_SYSTEM)
+    if _resync_pending_accum < RESYNC_ANSWER_TIMEOUT:
+        return
+    if _resync_unanswered_attempts >= RESYNC_UNANSWERED_ATTEMPT_BUDGET:
+        _abandon_resync()
+        return
+    _resync_pending_accum = 0.0
+    _ask_for_resync("resync retry (still no baseline)")
+
+
+## Put one `resync` on the wire and start the clock on its answer. **The only place that ask is
+## made**, so the attempt count cannot drift from the number of asks that actually went out.
+func _ask_for_resync(message: String) -> void:
+    _send_runtime_command("resync", message, HudEventVocab.KIND_SYSTEM)
+    _resync_pending_accum = 0.0
+    _resync_unanswered_attempts += 1
+
+
+## **STOP ASKING: THE SERVER HOLDS NO WORLD FOR THIS SEAT, AND THAT IS AN ANSWER RATHER THAN A FAILED
+## ATTEMPT.**
+##
+## `RESYNC_UNANSWERED_ATTEMPT_BUDGET` asks have gone unanswered on a link that is up — the command
+## socket reconnected and the seat was re-granted, or nothing would have re-opened the stream. The one
+## thing that produces that is a server with no active world: it boots idle after a restart, and it
+## answers `resync` by logging `resync.no_world` and publishing nothing. Nothing will change until a
+## human starts or loads a game, so retrying is not patience, it is a spin.
+##
+## **THE PLAYER IS LEFT WHERE THEY CAN ACT, AND THE RUN IS NOT TAKEN AWAY FROM THEM.** The report goes
+## to the event dock's System channel as an ALERT — the standing surface for a fault the player did not
+## cause, the same one a refused seat and a dropped command socket use — and the pause menu is opened
+## on top of it, because that menu is the only surface holding both moves that resolve this: `Load —
+## discards this run`, and `Abandon`, which returns to the landing screen that owns New Game.
+##
+## **Deliberately NOT a scene change to the landing screen.** The detection is inferred from silence
+## rather than read off the wire (see `RESYNC_UNANSWERED_ATTEMPT_BUDGET`), so it can in principle fire
+## on a server that was merely wedged for the length of that budget — and being wrong must not cost the
+## player a run in progress. An opened menu is dismissible with ESC and leaves the last frame
+## on screen behind it; a `change_scene_to_file` is not undoable. If the world does come back, the full
+## frame that carries it clears this latch and retracts the alert.
+func _abandon_resync() -> void:
+    _resync_abandoned = true
+    _resync_pending_accum = -1.0
+    var silence := RESYNC_ANSWER_TIMEOUT * float(RESYNC_UNANSWERED_ATTEMPT_BUDGET)
+    _resync_unanswered_attempts = 0
+    push_warning("resync went unanswered %d times over %.0fs; the server holds no world for this seat, so the client has stopped asking." % [
+        RESYNC_UNANSWERED_ATTEMPT_BUDGET, silence])
+    _note_system_event(RESYNC_ABANDONED_HEADLINE,
+        RESYNC_ABANDONED_DETAIL_FORMAT % ("%.0f" % silence), true, HudEventVocab.KIND_SYSTEM)
+    _show_pause_menu()
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
 ## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).

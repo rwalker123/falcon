@@ -1,10 +1,17 @@
 use super::*;
 
+/// **The viewer's own research, and nobody else's** — see `factions.md` → "Which frame sections are
+/// viewer-scoped". A rival's raw per-discovery progress is exactly what the espionage arc exists to
+/// make you work for.
 pub(crate) fn discovery_progress_entries(
     ledger: &DiscoveryProgressLedger,
+    viewer: FactionId,
 ) -> Vec<DiscoveryProgressEntry> {
     let mut entries: Vec<DiscoveryProgressEntry> = Vec::new();
     for (faction_id, discoveries) in ledger.progress.iter() {
+        if *faction_id != viewer {
+            continue;
+        }
         for (discovery_id, progress) in discoveries.iter() {
             let raw = progress.raw();
             if raw <= 0 {
@@ -25,14 +32,20 @@ pub(crate) fn discovery_progress_entries(
 /// `glyph` is resolved from the sites catalog (missing entries fall back to the raw `site_id` so a
 /// pruned catalog never drops a discovery). Records are emitted in a stable `(y, x, site_id)` order
 /// so the snapshot is deterministic.
+/// **What the VIEWER has found.** The row is not a fact about the ground — the site sits on a tile
+/// either way — it is a fact about whose scouts have been there, so publishing another faction's
+/// records hands the viewer a free map of the rival's exploration. Own or absent; there is nothing
+/// here to redact down to (`factions.md` → "Which frame sections are viewer-scoped").
 pub(crate) fn snapshot_discovered_sites(
     discovered: &DiscoveredSites,
     sites_config: &SitesConfigHandle,
+    viewer: FactionId,
 ) -> Vec<SchemaDiscoveredSitesState> {
     let cfg = sites_config.get();
     discovered
         .iter_sorted()
         .into_iter()
+        .filter(|(faction, _)| *faction == viewer)
         .map(|(faction, records)| {
             let mut sites: Vec<SchemaDiscoveredSiteState> = records
                 .iter()

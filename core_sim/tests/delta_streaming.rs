@@ -5,7 +5,7 @@
 //! field that simply did not change. Nothing in normal play surfaces any of them, which is why they
 //! are pinned rather than left to review.
 
-use core_sim::{Scalar, SnapshotHistory};
+use core_sim::{FactionId, Scalar, SnapshotHistory};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_runtime::{
     CampaignProfileState, CommandEventState, ConnectionState, CultureLayerScope,
@@ -24,6 +24,11 @@ const GUARD_SEEN_TILE: (u32, u32) = (4, 11);
 /// The turn the reconstruction guard's sections change on — partway through the run, so a delta
 /// that carries nothing is distinguishable from a baseline that was right all along.
 const GUARD_MUTATION_TICK: u64 = 3;
+
+/// **The seat every fixture here publishes to.** These tests are about ONE client's stream — its
+/// baseline, its sequence chain, its event cursor — so they drive one audience; that those are
+/// per-seat rather than shared is `core_sim/tests/seat_frames.rs`'s claim.
+const SEAT: FactionId = FactionId(0);
 
 /// One retained feed row, at the sequence the log would have stamped on it (**one-based** — a
 /// fresh client cursor is `0`, so a zeroth event could never be delivered).
@@ -127,7 +132,7 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
         ..Default::default()
     };
     world.header.tick = 0;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     // The baseline the client would have applied.
     let mut reconstructed = history
@@ -172,7 +177,7 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
             let seq = next.command_events.len() as u64 + 1;
             next.command_events.push(command_event(seq, tick));
         }
-        history.update(next);
+        history.update(SEAT, next);
         let delta = history.last_delta().expect("a delta per turn").clone();
         apply(&mut reconstructed, &delta);
         reconstructed.header = delta.header.clone();
@@ -234,15 +239,15 @@ fn a_recapture_delta_carries_every_event_since_the_turn_baseline() {
         ..Default::default()
     };
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     // Two world-mutating commands land inside the same tick, each triggering a recapture.
     world.command_events.push(command_event(1, 1));
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     let first = history.last_delta().expect("first recapture").clone();
 
     world.command_events.push(command_event(2, 1));
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     let second = history.last_delta().expect("second recapture").clone();
 
     let seqs = |delta: &WorldDelta| -> Vec<u64> {
@@ -263,7 +268,7 @@ fn a_recapture_delta_carries_every_event_since_the_turn_baseline() {
     // And the turn AFTER the recaptures still owes both, because no recapture advanced the cursor.
     world.header.tick = 2;
     world.command_events.push(command_event(3, 2));
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     let turn = history.last_delta().expect("turn delta").clone();
     assert_eq!(
         seqs(&turn),
@@ -288,7 +293,7 @@ fn a_dropped_delta_is_detectable_and_the_resync_answer_re_backfills_every_event(
         ..Default::default()
     };
     world.header.tick = 0;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     let mut client = history
         .last_snapshot()
@@ -302,7 +307,7 @@ fn a_dropped_delta_is_detectable_and_the_resync_answer_re_backfills_every_event(
         world.header.tick = tick;
         let seq = world.command_events.len() as u64 + 1;
         world.command_events.push(command_event(seq, tick));
-        history.update(world.clone());
+        history.update(SEAT, world.clone());
         deltas.push(history.last_delta().expect("a delta per turn").clone());
     }
 
@@ -366,7 +371,7 @@ fn each_publication_claims_the_next_sequence_and_names_its_base() {
     let mut expected_base = 0u64;
     for tick in 0..4u64 {
         world.header.tick = tick;
-        history.update(world.clone());
+        history.update(SEAT, world.clone());
         let delta = history.last_delta().expect("delta").clone();
         assert_eq!(
             delta.header.base_frame_seq, expected_base,
@@ -392,14 +397,14 @@ fn a_recapture_advances_the_sequence_without_pushing_a_ring_entry() {
         ..Default::default()
     };
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     let after_turn = history.len();
     let turn_seq = history.last_delta().expect("turn delta").header.frame_seq;
 
     // A command mutated the world mid-tick.
     world.header.population_count = 42;
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
 
     let recapture_seq = history
         .last_delta()
@@ -440,7 +445,7 @@ fn a_recaptured_entry_encodes_the_world_it_was_refreshed_with() {
     world.header.tick = 1;
     // A DISTINCT value in each world, so neither read can accidentally equal the other's.
     world.header.population_count = 7;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     let published = history
         .latest_entry()
@@ -453,7 +458,7 @@ fn a_recaptured_entry_encodes_the_world_it_was_refreshed_with() {
 
     // A command mutated the world mid-tick.
     world.header.population_count = 42;
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
 
     let recaptured = history
         .latest_entry()
@@ -496,14 +501,14 @@ fn a_later_recapture_delta_supersedes_an_earlier_one() {
         ..Default::default()
     };
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     world.header.population_count = 7;
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     let first = history.last_delta().expect("first").clone();
 
     world.header.power_count = 9;
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     let second = history.last_delta().expect("second").clone();
 
     assert_eq!(
@@ -555,13 +560,15 @@ fn a_rollback_frame_is_the_base_the_next_delta_names() {
     for tick in 0..3u64 {
         world.header.tick = tick;
         world.header.population_count = tick as u32;
-        history.update(world.clone());
+        history.update(SEAT, world.clone());
     }
 
     let entry = history.entry(1).expect("a ring entry per tick");
     let stamped_when_originally_published = entry.snapshot.header.frame_seq;
-    history.reset_to_entry(&entry);
-    let broadcast = history.publish_full_frame(&entry);
+    history.reset_to_entry_for(SEAT, &entry);
+    let broadcast = history
+        .publish_full_frame_for(SEAT)
+        .expect("the seat holds the rewound entry");
     let broadcast_seq = frame_seq_on_the_wire(&broadcast);
 
     assert!(
@@ -575,7 +582,7 @@ fn a_rollback_frame_is_the_base_the_next_delta_names() {
     // The next turn after the rollback.
     world.header.tick = 2;
     world.header.population_count = 99;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     let delta = history.last_delta().expect("a delta per turn");
     assert_eq!(
         delta.header.base_frame_seq, broadcast_seq,
@@ -606,15 +613,17 @@ fn a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture() {
     };
     world.header.tick = 0;
     // The world's first publication — the only one whose ring entry caches encoded flat bytes.
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     // A world-mutating command lands mid-tick: a publication, but not a new ring entry.
     world.header.population_count = 42;
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
 
     let entry = history.latest_entry().expect("a world has been published");
     let stored_on_the_entry = entry.snapshot.header.frame_seq;
-    let resync = history.publish_full_frame(&entry);
+    let resync = history
+        .publish_full_frame_for(SEAT)
+        .expect("the seat holds a published entry");
     let resync_seq = frame_seq_on_the_wire(&resync);
 
     assert!(
@@ -626,7 +635,7 @@ fn a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture() {
     // The next turn after the resync.
     world.header.tick = 1;
     world.header.population_count = 99;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     let delta = history.last_delta().expect("a delta per turn");
     assert_eq!(
         delta.header.base_frame_seq, resync_seq,
@@ -664,12 +673,12 @@ fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty()
         ..Default::default()
     };
     world.header.tick = 0;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     // A turn where nothing about tensions moved.
     world.header.tick = 1;
     world.header.population_count = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -683,7 +692,7 @@ fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty()
     // The last tension resolves.
     world.header.tick = 2;
     world.culture_tensions.clear();
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -731,12 +740,12 @@ fn a_turn_that_changes_nothing_publishes_a_delta_that_carries_nothing() {
         ..Default::default()
     };
     world.header.tick = 0;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     // The world's first publication is a baseline and legitimately carries everything; the turn
     // after it is the steady state under test.
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     let delta = history.last_delta().expect("a delta per turn");
     assert!(
@@ -794,12 +803,12 @@ fn a_visibility_raster_toggled_off_and_back_within_a_tick_is_restated() {
         ..Default::default()
     };
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     // `set_fog off`: a mid-tick recapture reveals the whole map.
     world.fog_enabled = false;
     world.visibility_raster = visibility_raster(ACTIVE);
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -812,7 +821,7 @@ fn a_visibility_raster_toggled_off_and_back_within_a_tick_is_restated() {
     // `set_fog on`, still with no turn between: back to exactly the turn baseline.
     world.fog_enabled = true;
     world.visibility_raster = visibility_raster(UNEXPLORED);
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     let delta = history.last_delta().expect("a delta per recapture");
     assert_eq!(
         delta.visibility_raster,
@@ -837,10 +846,10 @@ fn a_tension_roster_changed_and_reverted_within_a_tick_is_restated() {
         ..Default::default()
     };
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     world.culture_tensions.clear();
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -851,7 +860,7 @@ fn a_tension_roster_changed_and_reverted_within_a_tick_is_restated() {
     );
 
     world.culture_tensions = vec![guard_tension()];
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -880,14 +889,14 @@ fn a_turn_restates_a_section_a_recapture_moved_and_gave_back() {
         ..Default::default()
     };
     world.header.tick = 1;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
 
     let baseline_profiles = world.campaign_profiles.clone();
     world.campaign_profiles = vec![CampaignProfileState {
         id: Some("mid-tick".to_string()),
         ..Default::default()
     }];
-    history.refresh_latest(world.clone());
+    history.refresh_latest(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -900,7 +909,7 @@ fn a_turn_restates_a_section_a_recapture_moved_and_gave_back() {
     // The turn resolves with the roster back where the last turn left it.
     world.header.tick = 2;
     world.campaign_profiles = baseline_profiles.clone();
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()
@@ -912,7 +921,7 @@ fn a_turn_restates_a_section_a_recapture_moved_and_gave_back() {
 
     // …and the turn after that is quiet again, because the restatement cleared the flag.
     world.header.tick = 3;
-    history.update(world.clone());
+    history.update(SEAT, world.clone());
     assert_eq!(
         history
             .last_delta()

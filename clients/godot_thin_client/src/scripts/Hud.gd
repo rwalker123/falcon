@@ -1158,10 +1158,10 @@ func _on_zoom_fit_pressed() -> void:
 ##
 ## `{}` when the player has no band at all.
 func _resolve_assign_band() -> Dictionary:
-    if not _selection.unit().is_empty() and _is_player_unit(_selection.unit()):
+    if not _selection.unit().is_empty() and HudConst.is_player_unit(_selection.unit()):
         return _selection.unit()
     var panel := _band_labor.panel_band()
-    if not panel.is_empty() and _is_player_unit(panel):
+    if not panel.is_empty() and HudConst.is_player_unit(panel):
         var live := _band_labor.player_band_by_entity(int(panel.get("entity", -1)))
         if not live.is_empty():
             return live
@@ -2033,8 +2033,15 @@ func reapply_selection(kind: String, data: Dictionary) -> void:
             _selection.select_tile(data.duplicate(true) if data is Dictionary else {})
             _render_selection_panel(_selection.tile_info(), {}, {})
         _:
-            # Selected occupant vanished (e.g. the band expired). Drop to its last tile
-            # if known, else hide the card. Intentionally does not touch pending state.
+            # The selected occupant is no longer in the frame. Drop to its last tile if known, else
+            # hide the card. Intentionally does not touch pending state.
+            #
+            # ⛔ **ABSENCE MEANS OUT OF SIGHT, NOT DEATH.** A foreign band's row is published only
+            # while it stands where the viewer can see (`.claude/rules/core_sim/factions.md` → the
+            # three tiers), so a rival walking behind a ridge leaves the frame and comes back when it
+            # returns — the same way a fog-gated herd does. That is why this arm quietly falls back to
+            # the tile rather than announcing anything: a "band lost" note here would report a
+            # stranger's death every time one walked out of view.
             _selection.select_land()
             if _selection.tile_info().is_empty():
                 _hide_selection_card()
@@ -2166,10 +2173,6 @@ func show_band_work_tab(band_id: int) -> void:
 ## band handles arrives, which is exactly the join `show_band_work_tab` exists to make.
 func show_band_work_tab_for_entity(band_entity: int) -> void:
     _bandpanel.show_work_tab(band_entity)
-
-## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
-func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).

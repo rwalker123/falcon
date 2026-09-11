@@ -37,6 +37,9 @@
   "temperature_morale_tolerance": 9.0,
   "population_cluster_stride": 8,
   "population_cap": 25000,
+  "faction_start_min_separation": 20,
+  "_comment_default_ai_faction_count": "null means DERIVE: the New Game screen pre-selects a share of what the chosen grid can seat, and an unattended boot opens with no rivals. A number PINS both (and is what a headless run or a test sets). null is not 0.",
+  "default_ai_faction_count": null,
   "power_adjust_rate": 0.02,
   "max_power_generation": 25.0,
   "max_power_efficiency": 1.75,
@@ -60,5 +63,7 @@
   "crisis_auto_seed": false,
   "fog_enabled": true,
   "command_events_retention_turns": 20,
-  "autosave_interval_turns": 10
+  "autosave_interval_turns": 10,
+  "_comment_seat_turn_timeout_seconds": "How long an OPEN TURN waits for an OCCUPIED seat that has gone silent before the server submits end_turn for it. A VACANT seat is never waited for, so this has no effect on a single-human game. A wedge-breaker, not a chess clock: minutes, because a turn is minutes of thinking.",
+  "seat_turn_timeout_seconds": 120.0
 }

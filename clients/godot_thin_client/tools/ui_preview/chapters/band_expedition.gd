@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 115
+const EXPECTED_CHECKPOINTS := 127
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -28,6 +28,29 @@ var h
 # The pen-keeping band's entity id — its own, so its Food disclosure key (`food:<entity>`) doesn't
 # collide with the reference band's.
 const PEN_KEEPER_BAND_ENTITY := 906
+
+# ---- THE RIVAL PEOPLE ----------------------------------------------------------------------------
+# Worldgen places every registered faction now, so a foreign band is a thing a live frame carries.
+# `FactionRegistry` ids are POSITIONAL, so the first faction that is not the viewer's is id 1 —
+# derived off `HudConst.PLAYER_FACTION_ID` rather than typed, the `chapters/turn_orb.gd` idiom.
+const FOREIGN_FACTION_ID := HudConst.PLAYER_FACTION_ID + 1
+
+# The rival band's own handles, deliberately DIFFERENT numbers: `entity` is the delta's row key and
+# `band_id` the durable handle a command would name, and a fixture that made them equal could not
+# tell a surface reading the wrong one apart from one reading the right one.
+const FOREIGN_BAND_ENTITY := 977
+
+const FOREIGN_BAND_ID := FOREIGN_BAND_ENTITY + BandFx.FIXTURE_BAND_ID_OFFSET
+
+# The Position row's KEY, which is what `Readout.detail_excerpt` seeks — `detail_bbcode` splits a
+# `Key: value` line into two colour spans, so the rendered source never carries the row contiguously
+# and only the key is a stable needle.
+const FOREIGN_POSITION_DETAIL_KEY := "Position"
+
+# …and the coordinates that row must carry, spelled out rather than composed from the fixture's `pos`
+# through the producer's own format: an expectation re-derived through the code under test can only
+# agree with itself.
+const FOREIGN_POSITION_VALUE := "(71, 18)"
 
 ## What `_pen_keeper_band_fixture`'s ledger must come out at, written down rather than recomputed:
 ## income 5.88 (forage 0.48 + the pen's 5.40) − the people's 1.15, and NOTHING for the animals. The
@@ -120,22 +143,29 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 			return found
 	return null
 
-## A NON-player band (faction 1): what a rival's cohort actually looks like on the wire — an identity,
-## a size, a position, and nothing of ours to read (no morale/output/labor/flow fields). Backs the
-## `band_foreign` state, which exists to prove the drawer doesn't collapse to an empty card now that
-## the identity rows moved into the roster row.
+## A NON-player band (faction 1) — **THE REDACTED ROW, AND IT IS AN ALLOW-LIST**
+## (`.claude/rules/core_sim/factions.md` → "What a foreign band publishes"). A foreign band standing
+## where the viewer can see publishes exactly six fields — `entity`, `band_id`, `faction`, `name`,
+## `current_x`/`current_y`, `size` — and every other field of `PopulationCohortState` at its type
+## DEFAULT. `id` and `pos` ride beside them because they are `MapView._rebuild_unit_markers`' own two
+## stamps (the resolved tile, and `HudFormat.band_name`'s answer), which every HUD surface reads.
+##
+## ⛔ **IT CARRIES NO `settlement_stage_*` AND NO `activity`, and that is the fixture's whole point.**
+## It stated a `⛺` and a `Nomadic band` tooltip until the wire was redacted, which staged a row no
+## server can send — and a stage a rival's camp cannot publish is exactly the field Rule 1 is about:
+## the client must render it as UNKNOWN rather than draw a settlement we have not surveyed. Adding a
+## field back here re-stages that unreachable row; the sim's allow-list is the list.
 func _foreign_band_fixture() -> Dictionary:
 	return {
 		"id": "Ashen Kin",
+		"name": "Ashen Kin",
+		"band_id": FOREIGN_BAND_ID,
 		"size": 96,
-		"entity": 977,
-		"faction": 1,
+		"entity": FOREIGN_BAND_ENTITY,
+		"faction": FOREIGN_FACTION_ID,
 		"pos": [71, 18],
 		"current_x": 71,
 		"current_y": 18,
-		"activity": "forage",
-		"settlement_stage_icon": "⛺",
-		"settlement_stage_label": "Nomadic band",
 		"tile_info": {
 			"x": 71, "y": 18,
 			"terrain_label": "Prairie Steppe",
@@ -429,10 +459,12 @@ func run(harness) -> void:
 	await h._save("band")
 
 	# State 1-foreign — a NON-player band selected. The drawer is the same `unit_summary_lines` host,
-	# but almost none of it applies: morale/output/breakdowns are player-only (someone else's band is
-	# not ours to read), there is no allocation panel, and the identity rows (name, size) now live in
-	# the roster row above. So the check this state exists for: does the drawer collapse to an empty
-	# card once `Unit`/`Size` are gone? (It keeps the bare larder Food line + Position.)
+	# but almost none of it applies: food/fodder/upkeep/morale/growth and every breakdown are
+	# player-only (someone else's band is not ours to read), there is no allocation panel, and the
+	# identity rows (name, size) now live in the roster row above. So the check this state exists for:
+	# does the drawer collapse to an empty card once `Unit`/`Size` are gone? It keeps **Position and
+	# nothing else** — which is now the honest answer rather than a presentation choice, the wire
+	# having stopped sending a rival's larder at all.
 	h._hud.show_unit_selection(_foreign_band_fixture())
 	await h._settle()
 	await h._save("band_foreign")
@@ -1962,6 +1994,109 @@ func _expedition_kit_states() -> void:
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud.clear_selection()
 	await h._settle()
+
+	await _render_foreign_beside_own_state()
+
+## State 1-foreign-beside-own — **THE TWO TIERS IN ONE FRAME**, which is the only way to judge either.
+## A rival band standing on the same visible hex as one of the player's own: the roster draws both
+## rows and the drawer is opened on the RIVAL, so what the frame carries is the CONTRAST — the owned
+## row's vitality dot, stage mark and activity mark beside the redacted row's neutral dot, empty mark
+## column and silence, over a drawer that states a Position and nothing else.
+##
+## ⛔ **A ONE-BAND FRAME CANNOT MAKE THIS CLAIM.** `band_foreign` above renders a lone rival and is
+## green whether the client draws a rival honestly or has simply stopped drawing bands at all; the
+## owned row beside it is what says the surfaces still work. That is why the two states are a PAIR and
+## why this one is appended rather than replacing it.
+##
+## It runs LAST, after the chapter has released the Band/City dock, so the drawer takes its own
+## fallback path — with a panel injected a selected PLAYER band becomes the panel's subject, and this
+## frame is about what the ROSTER says, which is the same either way.
+func _render_foreign_beside_own_state() -> void:
+	var own := BandFx.band_fixture()
+	var rival := _foreign_band_fixture()
+	# The hex both stand on. The roster is assembled from `tile_info.units`
+	# (`SelectionCardController._assemble_roster`), so this dict IS the frame's subject list — and the
+	# state flag has to read VISIBLE, or the fog rule correctly drops the rival before it is drawn.
+	#
+	# ⛔ **THE ROSTER ROWS CARRY NO `tile_info` OF THEIR OWN, AND THAT IS NOT TIDINESS.**
+	# `Hud.show_unit_selection` takes a `duplicate(true)` of the selected cohort, so a unit holding a
+	# tile that holds that same unit is a CYCLE — Godot answers `Max recursion reached`, aborts the
+	# copy and renders the previous selection, which looks exactly like the state failing to change.
+	# It cost a run. `MapView` has the same shape and never builds one: `tile_info` is stamped onto
+	# the payload it hands out, never onto the rows inside it.
+	var tile: Dictionary = (rival["tile_info"] as Dictionary).duplicate(true)
+	tile["units"] = [_roster_row(own), _roster_row(rival)]
+	tile["unit_count"] = 2
+	rival["tile_info"] = tile
+	h._hud.show_unit_selection(rival)
+	await h._settle()
+	await h._save("band_foreign_beside_own")
+
+	# The roster really carries BOTH — the precondition every claim below rests on, since a drawer
+	# saying nothing about a rival is also what a roster that dropped the rival produces.
+	h._assert_hud("a rival band is listed beside one of ours on the shared hex (%d bands)"
+		% h._hud._selection.roster_units().size(),
+		h._hud._selection.roster_units().size() == 2)
+
+	# **THE DRAWER STATES WHERE THEY ARE AND NOTHING ELSE.** Position is the one row a redacted cohort
+	# can honestly fill; Food and Morale are asserted ABSENT because their producers now read fields a
+	# rival's row leaves at DEFAULT, and a zeroed `Food 0 (∞)` in healthy green is the client claiming
+	# to have counted a larder it cannot see.
+	var drawer: String = h._hud.occupant_detail.text
+	var position_row := Readout.detail_excerpt(drawer, FOREIGN_POSITION_DETAIL_KEY)
+	h._assert_hud("the rival's drawer states its Position — \"%s\"" % position_row,
+		position_row.contains(FOREIGN_POSITION_VALUE))
+	h._assert_hud("…and no Food row, the wire carrying no larder for it",
+		Readout.detail_excerpt(drawer, HudDisclosureVocab.DETAIL_ROW_FOOD)
+			== Readout.DETAIL_EXCERPT_ABSENT)
+	h._assert_hud("…and no Morale row either",
+		Readout.detail_excerpt(drawer, HudDisclosureVocab.DETAIL_ROW_MORALE)
+			== Readout.DETAIL_EXCERPT_ABSENT)
+
+	# …and nothing of OURS is offered on it. `Move` is the drawer's one band order, and the allocation
+	# host is what carries it — a card that merely rendered no ROWS would satisfy every claim above
+	# while still handing the player a button that names somebody else's people.
+	#
+	# ⛔ **THE CLAIM IS THE HOST'S VISIBILITY, NOT THE BUTTON'S ABSENCE FROM THE TREE.**
+	# `_render_occupant_drawer` hides the host for a foreign band rather than emptying it, so the
+	# PREVIOUS state's Move button is still parented under it and a `find_button_by_text` walk finds
+	# one on every frame in the chapter. Asking the node whether it is drawn is the honest question,
+	# and the paired positive below is what stops it passing on a host that never shows at all.
+	h._assert_hud("no band orders are offered on a band that is not ours",
+		not h._hud.allocation_panel.visible)
+
+	# The PAIRED POSITIVE, on the very same roster: selecting OUR band on that hex brings the whole
+	# vitals block AND its orders back. Without it every absence above passes on a drawer that has
+	# stopped producing rows at all — the one failure that would look exactly like this fix working.
+	h._hud.show_unit_selection(_own_band_on_shared_tile(own, tile))
+	await h._settle()
+	var own_drawer: String = h._hud.occupant_detail.text
+	h._assert_hud("our own band on that hex still reads its Food and Morale rows",
+		Readout.detail_excerpt(own_drawer, HudDisclosureVocab.DETAIL_ROW_FOOD)
+			!= Readout.DETAIL_EXCERPT_ABSENT
+		and Readout.detail_excerpt(own_drawer, HudDisclosureVocab.DETAIL_ROW_MORALE)
+			!= Readout.DETAIL_EXCERPT_ABSENT)
+	h._assert_hud("…and its own Move order is offered, so the host really does show for OUR bands",
+		h._hud.allocation_panel.visible
+		and Q.find_button_by_text(h._hud.allocation_panel,
+			HudSelectionVocab.MOVE_BAND_BUTTON_TEXT) != null)
+
+	h._hud.clear_selection()
+	await h._settle()
+
+## One entry of the shared hex's `units` list: the cohort as the wire publishes it, with the harness's
+## own `tile_info` stripped. See the cycle callout in `_render_foreign_beside_own_state`.
+func _roster_row(band: Dictionary) -> Dictionary:
+	var row := band.duplicate(true)
+	row.erase("tile_info")
+	return row
+
+## The player's own band re-selected on that same hex — its cohort with the SHARED tile hung off it,
+## which is what makes the second render a claim about the same roster rather than about a fresh one.
+func _own_band_on_shared_tile(band: Dictionary, tile: Dictionary) -> Dictionary:
+	var subject := band.duplicate(true)
+	subject["tile_info"] = tile
+	return subject
 
 ## The gear line's SIGHT clause at a given radius, composed from the vocabulary's own format and its
 ## own rounding — so a copy edit or a decimals change moves the expectation with the line instead of

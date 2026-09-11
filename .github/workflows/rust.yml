@@ -8,6 +8,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # ⛔ CI LINKS ~150 TEST BINARIES, AND `[profile.dev]` ASKS FOR FULL DEBUGINFO.
+  # `debuginfo=2` is the dominant term in both the on-disk size of those binaries and
+  # the memory `ld` needs to produce them, and the runner has neither to spare — the
+  # symptom is `error: linking with 'cc' failed` partway through the Build step, with
+  # every compile having succeeded. `line-tables-only` keeps backtraces pointing at
+  # real file:line, which is all CI reads them for; a developer's local build is
+  # untouched, because this is an override of the profile, not an edit to it.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   # The hub CLAUDE.md files are generated: their "THIS IS A HUB FILE" banner and
@@ -26,9 +34,15 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Free disk space
+      # The android SDK and CodeQL are by far the largest removable trees on the runner
+      # image (~9 GB and ~5 GB); the three that were here before free ~2 GB between them,
+      # which is why headroom ran out as the workspace grew rather than at any one commit.
       run: |
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/share/swift
         sudo rm -rf /usr/local/share/boost
         df -h
     - name: Install system dependencies
@@ -68,6 +82,12 @@ jobs:
     # this line — see xtask/src/doc_guard.rs.
     - name: rustdoc link guard
       run: cargo run --package xtask -- doc-guard
+    # Headroom is reported HERE, not only after the cleanup step: the cache restore and
+    # the clippy run between them are what actually consume it, so a `df -h` at cleanup
+    # time says nothing about what Build starts with. When Build dies at the linker this
+    # is the line that says whether disk was the reason.
+    - name: Disk headroom before Build
+      run: df -h
     - name: Build
       run: cargo build --workspace --all-targets --locked --verbose --jobs 2
     - name: Run tests
@@ -80,9 +100,15 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Free disk space
+      # The android SDK and CodeQL are by far the largest removable trees on the runner
+      # image (~9 GB and ~5 GB); the three that were here before free ~2 GB between them,
+      # which is why headroom ran out as the workspace grew rather than at any one commit.
       run: |
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/share/swift
         sudo rm -rf /usr/local/share/boost
         df -h
     - name: Install system dependencies
@@ -125,6 +151,8 @@ jobs:
     # this line — see xtask/src/doc_guard.rs.
     - name: rustdoc link guard
       run: cargo run --package xtask -- doc-guard
+    - name: Disk headroom before Build
+      run: df -h
     - name: Build
       run: cargo build --workspace --all-targets --locked --verbose
     - name: Run tests

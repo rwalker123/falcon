@@ -703,11 +703,6 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 func _herd_label_for_id(herd_id: String) -> String:
     return _herd_label_for_id_fn.call(herd_id)
 
-## Player-faction check for a band (a trivial private copy of HudLayer's, the SelectionCardController
-## precedent — a one-line predicate is not worth a Callable).
-func _is_player_unit(unit: Dictionary) -> bool:
-    return int(unit.get("faction", HudConst.PLAYER_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
-
 # ---- The inbound seam: is a panel even injected? ------------------------------------------------
 
 ## Is the dockable panel present? The two non-moving HudLayer readers
@@ -786,7 +781,7 @@ func show_work_tab(band_entity: int) -> void:
 ## breakdown), or one whose sources carry no projected schedule. The block is its own section rather
 ## than a summary line because BBCode cannot host a drawn chart.
 func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxContainer:
-    if not (_is_player_unit(band) and DetailFormat.band_has_food_flow(band)):
+    if not (HudConst.is_player_unit(band) and DetailFormat.band_has_food_flow(band)):
         return null
     var arrivals := DetailFormat.merged_arrival_schedule(band)
     if arrivals.is_empty():
@@ -7862,8 +7857,14 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
             _close_party_compose()
             _on_split_band_pressed(band, workers))
     sheet.add_child(confirm)
-    sheet.add_child(HudWidgets.alloc_hint_label(
-        blocked if blocked != "" else HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
+    # **THE FOOTER IS THE AFTER-NOTE, ALWAYS, AND THE REFUSAL RIDES THE BUTTON'S TOOLTIP.** One label
+    # whose TEXT swapped between the two changed the sheet's height the moment the stepper crossed a
+    # floor, and the sheet is bottom-anchored: it answers a height change by jumping upward under the
+    # cursor that is still on the stepper. The note describes what the verb does, which is true
+    # whether or not this composition is legal, so drawing it unconditionally makes the footer a
+    # fixed block. The reason is not lost — `confirm.tooltip_text` above carries BOTH floors' refusal
+    # sentences on the disabled button, which is the control the reason is about.
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
 
 ## One `key   value` line on the split sheet — the `FactionRollup._stat_row` shape, kept local
 ## because the parties zone has no shared detail-row widget and one sheet does not justify minting a

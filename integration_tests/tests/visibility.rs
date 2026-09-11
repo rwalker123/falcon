@@ -2,27 +2,19 @@ mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_test_app, FactionControl, FactionId, FactionRegistry, FactionSpec, PopulationCohort,
-    Settlement, SnapshotHistory, StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger,
-    VisibilityState,
+    build_test_app, FactionId, FactionRegistry, PopulationCohort, Settlement, SnapshotHistory,
+    StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
 /// **Seat a real two-faction roster**: faction 0 the player's, faction 1 AI-driven.
 ///
-/// `FactionRegistry::new` is the only way to say this. These fixtures used to assign the id vector
-/// directly, which left the default one-entry control map behind — so `FactionId(1)` was in
-/// `factions` while `contains(FactionId(1))` was false, and the server's membership gate would have
-/// dropped its commands. The registry's fields are private now, and this is the shape that replaced
-/// it.
+/// `FactionRegistry::with_ai_factions` is the only way to say this. These fixtures used to assign
+/// the id vector directly, which left the default one-entry control map behind — so `FactionId(1)`
+/// was in `factions` while `contains(FactionId(1))` was false, and the server's membership gate
+/// would have dropped its commands. The registry's fields are private now, and this is the shape
+/// that replaced it.
 fn seat_two_factions(app: &mut bevy::prelude::App) {
-    let registry = FactionRegistry::new(&[
-        FactionSpec {
-            control: FactionControl::Human,
-        },
-        FactionSpec {
-            control: FactionControl::Ai,
-        },
-    ]);
+    let registry = FactionRegistry::with_ai_factions(1);
     assert!(
         registry.contains(FactionId(1)),
         "the second faction is registered, not merely listed"

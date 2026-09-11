@@ -324,7 +324,7 @@ func compute_worked_workings() -> Dictionary:
 		if not (unit_variant is Dictionary):
 			continue
 		var band: Dictionary = unit_variant
-		if not _view._is_player_unit(band):
+		if not HudConst.is_player_unit(band):
 			continue
 		# A DETACHED PARTY CUTS NOTHING — it carries no `labor_assignments` of its own, its one
 		# source being the quarry the mark pass reads off the cohort.
@@ -420,7 +420,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		if not (unit_variant is Dictionary):
 			continue
 		var band: Dictionary = unit_variant
-		if not _view._is_player_unit(band):
+		if not HudConst.is_player_unit(band):
 			continue
 		var pos: Array = Array(band.get("pos", []))
 		if pos.size() != 2:
@@ -1401,7 +1401,7 @@ func _selected_player_band() -> Dictionary:
 	if _view.selected_unit_id < 0:
 		return {}
 	for unit in _view.units:
-		if int(unit.get("entity", -1)) == _view.selected_unit_id and _view._is_player_unit(unit):
+		if int(unit.get("entity", -1)) == _view.selected_unit_id and HudConst.is_player_unit(unit):
 			return unit
 	return {}
 

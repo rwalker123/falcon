@@ -230,7 +230,7 @@ static func worked_sources(view: Object) -> Dictionary:
 		if not (unit_variant is Dictionary):
 			continue
 		var band: Dictionary = unit_variant
-		if not view._is_player_unit(band):
+		if not HudConst.is_player_unit(band):
 			continue
 		# A DETACHED PARTY'S QUARRY IS A WORKED SOURCE and rides the cohort rather than an assignment
 		# row (`expedition_target_herd`) — the same branch the worked-mark pass makes, and for the same
@@ -335,7 +335,7 @@ static func _not_another_faction_s(kind: String, source: Dictionary) -> bool:
 		return true
 	if not bool(source.get(SOURCE_HAS_OWNER_KEY, false)):
 		return true
-	return int(source.get(SOURCE_OWNER_KEY, -1)) == MapView.PLAYER_FACTION_ID
+	return int(source.get(SOURCE_OWNER_KEY, HudConst.NO_FACTION_ID)) == HudConst.PLAYER_FACTION_ID
 
 
 ## Record a band's claim on a source. **A DECLARED VERB OUTRANKS AN EMPTY ONE**: two bands can work
@@ -368,7 +368,7 @@ static func _anchor_tile(view: Object) -> Vector2i:
 		if not (unit_variant is Dictionary):
 			continue
 		var band: Dictionary = unit_variant
-		if not view._is_player_unit(band):
+		if not HudConst.is_player_unit(band):
 			continue
 		var pos: Array = Array(band.get("pos", []))
 		if pos.size() != 2:

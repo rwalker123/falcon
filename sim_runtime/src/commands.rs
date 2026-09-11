@@ -577,6 +577,18 @@ pub enum CommandPayload {
         height: u32,
         seed: u64,
         profile_id: String,
+        /// **How many AI factions the player asked for, NOT counting their own.** 2 builds a world
+        /// of three peoples; 0 is the single-faction world.
+        ///
+        /// `None` is not `Some(0)`: it means *"nobody picked"* — the text grammar's optional
+        /// argument, a direct scene launch, any caller that does not care — and resolves
+        /// server-side to the **unattended** roster, which is no rivals unless
+        /// `simulation_config.json`'s `default_ai_faction_count` pins some. That is deliberately
+        /// **not** the [`FactionCapacityReply::default_ai_faction_count`] a New Game screen
+        /// pre-selects: that number scales with the map, and a process nobody is watching should
+        /// not gain peoples from it. A count above what the grid seats is clamped server-side with
+        /// a warning, never a refusal.
+        ai_faction_count: Option<u32>,
     },
     /// Stage a config-tuning override, applied at the **next** `new_game`. Proto field 47.
     ///
@@ -641,6 +653,20 @@ pub enum CommandPayload {
         kits: Vec<StartingKitAllocation>,
         materials: Vec<StartingMaterialAllocation>,
     },
+    /// **A connection says which faction seat it drives.** Proto field 71, and the one payload here
+    /// that is about the *connection* rather than about the world.
+    ///
+    /// After it, the server takes the faction of every command from the **seat** and refuses one
+    /// whose wire `faction_id` disagrees — an error, never a hint. A connection that has claimed no
+    /// seat may send only the payloads that name no faction at all.
+    ///
+    /// Answered with a [`QueryReply::SeatClaim`], because a client that cannot tell whether it holds
+    /// the seat cannot know whether its orders will be obeyed. Not replayable and never logged: a
+    /// claim mutates no world.
+    ClaimSeat {
+        request_id: u64,
+        faction_id: u32,
+    },
 }
 
 /// One line of the kit half of an opening loadout: `count` of an `equipment.json` roster kit. Every
@@ -673,6 +699,36 @@ pub enum QueryPayload {
     /// *"What is on disk?"* Answered from each save's **header alone** — the format keeps the header
     /// in its own uncompressed document so a listing never inflates or decodes a world.
     ListSaves,
+    /// *"On a grid this size, how many AI factions may I ask for?"* Asked from the New Game screen,
+    /// where there is no world yet, and answered from the live config before the world gate — the
+    /// same shape [`Self::ListSaves`] takes and for the same reason.
+    FactionCapacity(FactionCapacityQuery),
+}
+
+/// The grid the player is **configuring**, not the one the server is running: the ceiling is a
+/// property of the map about to be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FactionCapacityQuery {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// **What the New Game screen draws its rival control from.** Both numbers come from one function in
+/// the sim (`core_sim::faction_start_capacity`) so a client never restates the rule; a second copy
+/// in GDScript would be free to disagree with the clamp the server actually applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FactionCapacityReply {
+    /// **The count the control PRE-SELECTS**, already clamped — so the value it opens on is always
+    /// one the server will grant. Derived from what this grid seats unless
+    /// `simulation_config.json`'s `default_ai_faction_count` pins a number.
+    ///
+    /// ⛔ **Not what an absent `ai_faction_count` resolves to.** That is the unattended roster (no
+    /// rivals, absent a config pin); this is an offer to a player looking at a screen. A client
+    /// that pre-selects this value must therefore **send it explicitly** — omitting the field
+    /// requests a different world.
+    pub default_ai_faction_count: u32,
+    /// The most rivals this grid seats. 0 means the player plays alone on it.
+    pub max_ai_faction_count: u32,
 }
 
 /// *"What does this party, off this band, carrying this kit, take off this herd at this floor?"*
@@ -755,9 +811,65 @@ pub enum QueryReply {
     Error(String),
     /// The slot list, newest first.
     ListSaves(Vec<SaveSlotInfo>),
+    /// The rival control's bounds for a requested grid.
+    FactionCapacity(FactionCapacityReply),
     /// The answer to a save, load or delete. Those are commands rather than queries; they ride this
     /// envelope because it is the socket's one way back, not because they are questions.
     SaveOp(SaveOpReply),
+    /// The answer to a seat claim — a command too, riding here for the same reason.
+    SeatClaim(SeatClaimReply),
+}
+
+/// **Whether this connection now drives that faction.**
+///
+/// A refusal carries a [`seat_error`] token and changes nothing: the connection keeps whatever seat
+/// it already held (which for `ALREADY_SEATED` is the point of the refusal).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SeatClaimReply {
+    pub ok: bool,
+    /// Echoed, so a client can assert the answer is about the seat it asked for.
+    pub faction_id: u32,
+    /// A machine-readable snake_case token when `ok` is false ([`seat_error`]); the client owns the
+    /// prose.
+    pub error: String,
+    /// **The secret this grant minted, and the token its STREAM socket must present** to be sent
+    /// this seat's frames. [`NO_SEAT_TOKEN`] on a refusal.
+    ///
+    /// The stream socket writes it as its first eight bytes, little-endian, and frames for that seat
+    /// go to the connections holding it — see `.claude/rules/core_sim/snapshot-socket.md`. A client
+    /// therefore claims first and connects its stream second.
+    ///
+    /// ⛔ **It is a random `u64` and not the connection's id** (`core_sim::SeatToken`): a stream that
+    /// presents it receives that seat's private world, so it must resist guessing, while a connection
+    /// id is a sequential counter that appears in log lines. A client should treat it as a secret —
+    /// hold it, present it, and keep it out of anything it prints.
+    pub seat_token: u64,
+}
+
+/// **What a refused claim carries instead of a token.** The proto default, and therefore the one
+/// value a client can safely read as *"you were given nothing"*.
+pub const NO_SEAT_TOKEN: u64 = 0;
+
+impl SeatClaimReply {
+    /// The seat is this connection's.
+    pub fn granted(faction_id: u32, seat_token: u64) -> Self {
+        Self {
+            ok: true,
+            faction_id,
+            error: String::new(),
+            seat_token,
+        }
+    }
+
+    /// It is not, and `error` is one of [`seat_error`]'s tokens.
+    pub fn refused(faction_id: u32, error: &str) -> Self {
+        Self {
+            ok: false,
+            faction_id,
+            error: error.to_string(),
+            seat_token: NO_SEAT_TOKEN,
+        }
+    }
 }
 
 /// One row of the save-slot list. Every field comes out of the save's header.
@@ -835,6 +947,21 @@ pub mod save_error {
     pub const UNREADABLE: &str = "unreadable";
 }
 
+/// **The refusal tokens a [`SeatClaimReply::error`] can carry.** Named constants for the same
+/// reason [`save_error`] and [`query_error`] are: the client's match arms and the server's answers
+/// cannot drift apart.
+pub mod seat_error {
+    /// The requested faction id is in no seat of this world's roster — including on an idle server,
+    /// whose roster is whatever `FactionRegistry` was seeded with before a world exists.
+    pub const UNKNOWN_SEAT: &str = "unknown_seat";
+    /// Another live connection already holds that seat. First claim wins; this is not a takeover
+    /// mechanism, and there is no credential that would make one safe.
+    pub const SEAT_OCCUPIED: &str = "seat_occupied";
+    /// This connection already holds a seat. One seat per connection, so a second claim — even for
+    /// the seat it already holds — is refused rather than silently moving it.
+    pub const ALREADY_SEATED: &str = "already_seated";
+}
+
 /// **The refusal tokens a [`QueryReply::Error`] can carry.** Named constants rather than literals at
 /// the raising sites, so the client's match arms and the server's answers cannot drift apart.
 pub mod query_error {
@@ -863,6 +990,14 @@ pub mod query_error {
     /// from a world. It exists so a mis-routed query says so instead of returning a plausible empty
     /// answer.
     pub const WRONG_ANSWERER: &str = "wrong_answerer";
+    /// **The question named a faction this connection does not sit at.** Three of the questions are
+    /// answered out of one faction's private state — a named band's live equipment wear, its idle
+    /// workers, its take curve — so the seat gate that decides a *command*'s faction decides a
+    /// question's too, and a mismatch is refused rather than answered.
+    ///
+    /// Also what an **unseated** connection is told when it asks one of the three: holding no seat
+    /// is holding nobody's private state.
+    pub const NOT_YOUR_SEAT: &str = "not_your_seat";
 }
 
 /// **The FOOD commodity key a shipment's food line names** — the same string `core_sim`'s
@@ -1866,12 +2001,14 @@ impl CommandEnvelope {
                 height,
                 seed,
                 profile_id,
+                ai_faction_count,
             } => pb::command_envelope::Command::NewGame(pb::NewGameCommand {
                 preset_id: preset_id.clone(),
                 width: *width,
                 height: *height,
                 seed: *seed,
                 profile_id: profile_id.clone(),
+                ai_faction_count: *ai_faction_count,
             }),
             CommandPayload::SetConfigOverride { kind, patch_json } => {
                 pb::command_envelope::Command::SetConfigOverride(pb::SetConfigOverrideCommand {
@@ -1966,9 +2103,22 @@ impl CommandEnvelope {
                         QueryPayload::ListSaves => {
                             pb::query_command::Query::ListSaves(pb::ListSavesQuery {})
                         }
+                        QueryPayload::FactionCapacity(ask) => {
+                            pb::query_command::Query::FactionCapacity(pb::FactionCapacityQuery {
+                                width: ask.width,
+                                height: ask.height,
+                            })
+                        }
                     }),
                 })
             }
+            CommandPayload::ClaimSeat {
+                request_id,
+                faction_id,
+            } => pb::command_envelope::Command::ClaimSeat(pb::ClaimSeatCommand {
+                request_id: *request_id,
+                faction_id: *faction_id,
+            }),
         });
 
         pb::CommandEnvelope {
@@ -2292,6 +2442,10 @@ impl CommandEnvelope {
                 herd_id: cmd.herd_id,
                 fraction: cmd.fraction,
             },
+            pb::command_envelope::Command::ClaimSeat(cmd) => CommandPayload::ClaimSeat {
+                request_id: cmd.request_id,
+                faction_id: cmd.faction_id,
+            },
             pb::command_envelope::Command::AnswerFork(cmd) => CommandPayload::AnswerFork {
                 faction_id: cmd.faction_id,
                 beat_id: cmd.beat_id,
@@ -2391,6 +2545,7 @@ impl CommandEnvelope {
                 height: cmd.height,
                 seed: cmd.seed,
                 profile_id: cmd.profile_id,
+                ai_faction_count: cmd.ai_faction_count,
             },
             pb::command_envelope::Command::SetConfigOverride(cmd) => {
                 CommandPayload::SetConfigOverride {
@@ -2428,6 +2583,12 @@ impl CommandEnvelope {
                         })
                     }
                     pb::query_command::Query::ListSaves(_) => QueryPayload::ListSaves,
+                    pb::query_command::Query::FactionCapacity(ask) => {
+                        QueryPayload::FactionCapacity(FactionCapacityQuery {
+                            width: ask.width,
+                            height: ask.height,
+                        })
+                    }
                     pb::query_command::Query::HuntCrewTake(ask) => {
                         QueryPayload::HuntCrewTake(HuntCrewTakeQuery {
                             faction_id: ask.faction_id,
@@ -2596,6 +2757,20 @@ impl QueryReplyEnvelope {
             QueryReply::SaveOp(reply) => {
                 pb::query_reply_envelope::Reply::SaveOp(save_op_reply_to_proto(reply))
             }
+            QueryReply::SeatClaim(reply) => {
+                pb::query_reply_envelope::Reply::SeatClaim(pb::ClaimSeatReply {
+                    ok: reply.ok,
+                    faction_id: reply.faction_id,
+                    error: reply.error.clone(),
+                    seat_token: reply.seat_token,
+                })
+            }
+            QueryReply::FactionCapacity(reply) => {
+                pb::query_reply_envelope::Reply::FactionCapacity(pb::FactionCapacityReply {
+                    default_ai_faction_count: reply.default_ai_faction_count,
+                    max_ai_faction_count: reply.max_ai_faction_count,
+                })
+            }
             QueryReply::Error(reason) => pb::query_reply_envelope::Reply::Error(pb::QueryError {
                 reason: reason.clone(),
             }),
@@ -2658,6 +2833,20 @@ impl QueryReplyEnvelope {
             ),
             pb::query_reply_envelope::Reply::SaveOp(reply) => {
                 QueryReply::SaveOp(save_op_reply_from_proto(reply))
+            }
+            pb::query_reply_envelope::Reply::SeatClaim(reply) => {
+                QueryReply::SeatClaim(SeatClaimReply {
+                    ok: reply.ok,
+                    faction_id: reply.faction_id,
+                    error: reply.error,
+                    seat_token: reply.seat_token,
+                })
+            }
+            pb::query_reply_envelope::Reply::FactionCapacity(reply) => {
+                QueryReply::FactionCapacity(FactionCapacityReply {
+                    default_ai_faction_count: reply.default_ai_faction_count,
+                    max_ai_faction_count: reply.max_ai_faction_count,
+                })
             }
             pb::query_reply_envelope::Reply::Error(error) => QueryReply::Error(error.reason),
         };
@@ -2976,6 +3165,54 @@ mod tests {
             assert_eq!(
                 CommandEnvelope::decode(&bytes).expect("decode").payload,
                 payload
+            );
+        }
+    }
+
+    /// **A seat claim and its answer both survive the wire.**
+    ///
+    /// Asserted on the encoded frame in both directions because the claim is the ONE handshake that
+    /// decides which faction a connection may command: a `faction_id` that did not survive would
+    /// seat the connection somewhere else, and a refusal token that did not survive would read as a
+    /// claim that succeeded.
+    #[test]
+    fn a_seat_claim_and_its_answer_round_trip_through_the_wire() {
+        let payload = CommandPayload::ClaimSeat {
+            request_id: 71,
+            faction_id: 1,
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            payload
+        );
+
+        for reply in [
+            QueryReply::SeatClaim(SeatClaimReply {
+                ok: true,
+                faction_id: 1,
+                error: String::new(),
+                seat_token: 4,
+            }),
+            QueryReply::SeatClaim(SeatClaimReply {
+                ok: false,
+                faction_id: 1,
+                error: seat_error::SEAT_OCCUPIED.to_string(),
+                seat_token: 0,
+            }),
+        ] {
+            let answer = QueryReplyEnvelope {
+                request_id: 71,
+                reply,
+            };
+            let bytes = answer.encode_to_vec().expect("the reply encodes");
+            assert_eq!(
+                QueryReplyEnvelope::decode(&bytes).expect("the reply decodes"),
+                answer
             );
         }
     }

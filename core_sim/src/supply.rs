@@ -43,7 +43,7 @@ use crate::{
         BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, TransferLink,
         FODDER, FOOD,
     },
-    connections::{ConnectionKey, ConnectionLedger, NO_TIE},
+    connections::ConnectionLedger,
     grid_utils::hex_distance_wrapped,
     materials_config::BandKey,
     orders::FactionId,
@@ -136,13 +136,7 @@ impl Node {
 /// **A parked tie does not pool.** `strength == NO_TIE` is the keystone's *"at zero nothing
 /// flows"*: the edge still exists — we know such a people exist — and it carries nothing.
 fn tie_is_live(ledger: &ConnectionLedger, a: BandId, b: BandId) -> bool {
-    [ConnectionKey::new(a, b), ConnectionKey::new(b, a)]
-        .iter()
-        .any(|key| {
-            ledger
-                .get(key)
-                .is_some_and(|connection| connection.strength > NO_TIE)
-        })
+    ledger.tie_is_live(a, b)
 }
 
 /// **The pooling policy — free per-capita equalization is a same-faction affordance.**

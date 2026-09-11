@@ -463,12 +463,12 @@ const TERRAIN_HIGHLIGHT_TARGET_ID := 11   # prairie_steppe — BIOME_BAND_IDS[1]
 const TERRAIN_HIGHLIGHT_OFF := -1         # MapView's "no highlight" sentinel
 
 # State "routes". Order paths, drawn as per-faction polylines. Faction lookup is by the raw `faction`
-# value, so the three routes cover MapView.faction_colors' INT key, its STRING key, and an unknown
-# faction (the amber default). Multi-hop with turns, because a straight two-point line would not
+# value, so the three routes cover `MapView.faction_color`'s ID form, its legacy NAME form, and an
+# unknown faction (the amber default). Multi-hop with turns, because a straight two-point line would not
 # exercise the segment loop.
 const ROUTE_PLAYER_FACTION := 0             # int key → the player cyan
 const ROUTE_RIVAL_FACTION := "Obsidian"     # string key → orange
-const ROUTE_UNKNOWN_FACTION := "Wayfarers"  # absent from faction_colors → the default amber
+const ROUTE_UNKNOWN_FACTION := "Wayfarers"  # no such people → the caller's fallback, the amber
 const ROUTE_PLAYER_PATH := [[1, 2], [3, 3], [5, 3], [7, 4], [9, 4], [11, 5]]
 const ROUTE_RIVAL_PATH := [[2, 10], [4, 9], [6, 9], [8, 8], [10, 8]]
 const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, and inside the cover-fit crop
@@ -1895,8 +1895,8 @@ func _ready() -> void:
 
 	# State "routes" — order paths, drawn as per-faction polylines from the snapshot's `orders`. Three
 	# multi-hop routes that turn (a straight two-point line would never exercise the segment loop),
-	# colored through MapView.faction_colors' INT key, its STRING key, and an unknown faction (the
-	# amber default) — plus a one-waypoint order the draw must bail on.
+	# colored through `MapView.faction_color`'s ID form, its legacy NAME form, and an unknown faction
+	# (the amber default) — plus a one-waypoint order the draw must bail on.
 	_map.set_fow_enabled(false)
 	_map.enable_terrain_textures(false)
 	_map._map_cache_enabled = false
@@ -1995,8 +1995,84 @@ func _ready() -> void:
 	await _ready_for_improvement_state()
 	await _worked_working_states()
 	await _source_list_states()
+	await _faction_palette_state()
 
 	_finish()
+
+## **STATE "faction palette" — EVERY PEOPLE IN ONE FRAME.** The New Game screen offers up to 6
+## rivals on a Standard map and 17 on a Huge one, and the colours past the seeded three are generated
+## rather than listed (`MapView.faction_color`). A dozen name pills side by side is the only way to
+## judge the thing that matters about them: not that the values differ, but that a player can TELL
+## them apart. Ownership is carried by the pill's border, so the pills are what this frame is of.
+func _faction_palette_state() -> void:
+	_map.set_fow_enabled(false)
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_faction_palette())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	_assert_map("premise: the palette row is above the pill gate (radius %.1f >= %.1f)"
+			% [_map.last_hex_radius, MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.BAND_NAME_PILL_MIN_RADIUS)
+	_assert_map("every people in the palette frame places a pill — none of them crowd each other",
+		_map.band_label_tiles().size() == PALETTE_FACTION_COUNT)
+	await _save("map_faction_palette")
+	_assert_seeded_faction_colors_are_unchanged()
+	_assert_generated_faction_colors_are_distinct()
+
+
+## **IDS 0, 1 AND 2 ARE FROZEN.** Every game in progress and every committed preview frame is drawn
+## in them, so the generated run must start AFTER them and never redefine one.
+func _assert_seeded_faction_colors_are_unchanged() -> void:
+	var seeded := [
+		Color(0.55, 0.85, 1.0, 1.0),
+		Color(0.95, 0.62, 0.2, 1.0),
+		Color(0.4, 0.9, 0.55, 1.0),
+	]
+	for index in seeded.size():
+		_assert_map("faction %d keeps its own colour (%s)" % [index, str(seeded[index])],
+			_map.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[index])
+	# …and the legacy NAME spelling still resolves to the same people.
+	_assert_map("the legacy name Obsidian still resolves to faction 1's colour",
+		_map.faction_color("Obsidian", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[1])
+	# A people that is not there is still the caller's fallback — the one thing that must NOT be a
+	# generated colour.
+	_assert_map("an absent faction is still the caller's fallback",
+		_map.faction_color("", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
+			== MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
+
+
+## **NO PEOPLE THE SLIDER CAN OFFER SHARES A COLOUR, and the neighbours are far apart.** The whole
+## roster is walked, not the dozen the frame shows: the ceiling is 17 rivals on a Huge map, and the
+## failure this replaced was every people past the third rendering in ONE fallback tint.
+func _assert_generated_faction_colors_are_distinct() -> void:
+	var seen: Array[Color] = []
+	for index in PALETTE_MAX_FACTION_ID + 1:
+		var color: Color = _map.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
+		if color == MAP_VIEW.BAND_FACTION_FALLBACK_COLOR:
+			_assert_map("faction %d has a colour of its own, not the unknown-faction tint" % index, false)
+		if seen.has(color):
+			_assert_map("faction %d repeats a colour already in use" % index, false)
+		seen.append(color)
+	_assert_map("every faction id the New Game screen can offer has its own colour",
+		seen.size() == PALETTE_MAX_FACTION_ID + 1)
+	# Neighbours are what a player compares, so they are held to a real distance rather than to
+	# inequality — a golden-angle rotation puts successive ids most of the wheel apart.
+	for index in PALETTE_MAX_FACTION_ID:
+		var gap := _hue_gap(seen[index].h, seen[index + 1].h)
+		if gap < PALETTE_MIN_NEIGHBOUR_HUE_GAP:
+			_assert_map("factions %d and %d are only %.3f of the wheel apart" % [index, index + 1, gap],
+				false)
+
+
+## The distance between two hues the short way round the wheel.
+func _hue_gap(a: float, b: float) -> float:
+	var raw: float = fposmod(a - b, 1.0)
+	return minf(raw, 1.0 - raw)
+
 
 ## Click a CANVAS point through the REAL input path — `Viewport.push_input`, so the GUI pass decides
 ## which control is on top exactly as it does for a player. Driving the button's own `pressed` signal
@@ -2638,7 +2714,7 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 	worked.append(READY_BARREN_LADDER)
 	# LIT — tended and sowable, with a Field meter nobody declared. See the constant.
 	patches.append(_ready_patch(READY_MID_FIELD, true, true, true, 0.0,
-		MapView.PLAYER_FACTION_ID, READY_MID_FIELD_PROGRESS))
+		HudConst.PLAYER_FACTION_ID, READY_MID_FIELD_PROGRESS))
 	worked.append(READY_MID_FIELD)
 	# DARK — wild, half-cultivated, and nobody is on it: neither half of the candidate union admits it.
 	patches.append(_ready_patch(READY_HALF_BUILT, false, true, false, READY_HALF_BUILT_PROGRESS))
@@ -2700,7 +2776,7 @@ func _snapshot_ready_for_improvement() -> Dictionary:
 ## the player because that is what every owned source in this state is; the one foreign patch says so
 ## explicitly.
 func _ready_patch(tile: Vector2i, tended: bool, can_cultivate: bool, can_sow: bool,
-		progress: float = 0.0, owner: int = MapView.PLAYER_FACTION_ID,
+		progress: float = 0.0, owner: int = HudConst.PLAYER_FACTION_ID,
 		field_progress: float = 0.0) -> Dictionary:
 	return _stamp_patch_owner({
 		"x": tile.x, "y": tile.y,
@@ -4170,7 +4246,7 @@ func _snapshot_work_ready() -> Dictionary:
 	# badges want; the point of routing them through the derivation anyway is that a row whose meters
 	# are edited can never keep an owner they no longer justify.
 	for patch_variant in snap["forage_patches"]:
-		_stamp_patch_owner(patch_variant, MapView.PLAYER_FACTION_ID)
+		_stamp_patch_owner(patch_variant, HudConst.PLAYER_FACTION_ID)
 	for entry_variant in snap["populations"][0]["labor_assignments"]:
 		var entry: Dictionary = entry_variant
 		if String(entry.get("kind", "")) == "forage" \
@@ -4456,6 +4532,41 @@ const NAME_PILL_STACK_X := 7
 const NAME_PILL_STACK_Y := 8
 const NAME_PILL_STACK_COUNT := 4                  # > BAND_STACK_MAX_CARDS, so the `×4` folds on
 const NAME_PILL_ENTITY_BASE := 9500
+
+## The palette frame's roster: a dozen peoples spread far enough apart that every pill survives the
+## label cull, each named for the id it is drawn from so the frame says which colour belongs to whom.
+const PALETTE_ROWS := [1, 4, 7, 10]
+const PALETTE_COLS := [2, 7, 12]
+const PALETTE_FACTION_COUNT := 12          # PALETTE_ROWS.size() * PALETTE_COLS.size()
+const PALETTE_ENTITY_BASE := 9700
+const PALETTE_NAME_FORMAT := "People %d"
+## How far past the shipped roster the palette is asserted. The roomiest offered grid seats 17 rivals
+## plus the player (ids 0..17), and a preset with more land than the shipped ones would seat more —
+## the ceiling is a hex-packing count over a map's LAND, not a fixed number — so the walk runs well
+## past it rather than pinning to a figure that moves with a preset. Asserted over, not rendered:
+## thirty pills would not fit in a frame, and the claim is about the palette, not the layout.
+const PALETTE_MAX_FACTION_ID := 31
+## Successive ids must be at least this far apart on the hue wheel. A golden-angle rotation puts them
+## ~0.29 of a turn apart; this is the floor that catches a rotation replaced by something denser.
+const PALETTE_MIN_NEIGHBOUR_HUE_GAP := 0.15
+
+
+func _snapshot_faction_palette() -> Dictionary:
+	var bands: Array = []
+	var index := 0
+	for row in PALETTE_ROWS:
+		for col in PALETTE_COLS:
+			var band := _band_at(PALETTE_ENTITY_BASE + index, col, row, STAGE_NOMADIC, index)
+			band["name"] = PALETTE_NAME_FORMAT % index
+			bands.append(band)
+			index += 1
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": bands,
+		"herds": [],
+	}
+
 
 func _snapshot_band_names() -> Dictionary:
 	var bands: Array = []
@@ -5455,7 +5566,7 @@ func _snapshot_overlay_channels() -> Dictionary:
 	}
 
 ## An order in the shape `display_snapshot` reads into `routes`: a faction (looked up in
-## MapView.faction_colors) and a path of [col, row] waypoints.
+## `MapView.faction_color`) and a path of [col, row] waypoints.
 func _route_order(faction: Variant, path: Array) -> Dictionary:
 	return {"faction": faction, "path": path}
 
