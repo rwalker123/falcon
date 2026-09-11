@@ -5,10 +5,19 @@
 //! Recording is on only while [`RECORD_DIR_ENV`] names a directory. Under it:
 //!
 //! ```text
-//! <record>/run.json                          the world: preset, size, seed, profile, roster
-//! <record>/commands.jsonl                    one line per command the timeline logged
-//! <record>/seat_<f>/frames/<frame_seq>.bin   every frame published to seat f, as sent
+//! <record>/run.json                                        the world: preset, size, seed, profile, roster
+//! <record>/commands.jsonl                                  one line per command the timeline logged
+//! <record>/seat_<f>/frames/<world_epoch>/<frame_seq>.bin   every frame published to seat f, as sent
 //! ```
+//!
+//! ⛔ **A frame is filed under its world, because `frame_seq` restarts at every build.** One
+//! `SIM_RECORD_DIR` covers a whole launcher session and a session builds several worlds routinely —
+//! a Load rebuilds server-side exactly as a New Game does, and a theme change re-arms New Game — but
+//! a seat's publication counter is fresh per world (`SeatPublishState`, `snapshot/capture.rs`) and
+//! is dropped when the seat is released. Flat filenames therefore had world 2 overwrite world 1
+//! file for file, and the importer replayed the splice as one run because both chains count from
+//! the same origin. The epoch directory is what keeps two worlds apart; the reader picks one of them
+//! (`sim_ai import-record`).
 //!
 //! A frame is the FlatBuffers envelope exactly as the stream socket writes it (without the socket's
 //! `u32` length prefix), so `decode_frame_flatbuffer` reads it back; the file is named by the
@@ -150,9 +159,11 @@ impl RunRecorder {
         }
     }
 
-    /// The path a frame is filed under.
-    pub fn frame_path(dir: &Path, seat: FactionId, frame_seq: u64) -> PathBuf {
-        seat_frames_dir(dir, seat).join(format!("{frame_seq}.{FRAME_FILE_EXTENSION}"))
+    /// The path a frame is filed under — under its **world**, because `frame_seq` restarts at
+    /// every build (the module doc).
+    pub fn frame_path(dir: &Path, seat: FactionId, world_epoch: u32, frame_seq: u64) -> PathBuf {
+        seat_epoch_frames_dir(dir, seat, world_epoch)
+            .join(format!("{frame_seq}.{FRAME_FILE_EXTENSION}"))
     }
 }
 
@@ -160,6 +171,11 @@ impl RunRecorder {
 pub fn seat_frames_dir(dir: &Path, seat: FactionId) -> PathBuf {
     dir.join(format!("{SEAT_DIR_PREFIX}{}", seat.0))
         .join(FRAMES_DIR)
+}
+
+/// `<record>/seat_<f>/frames/<world_epoch>` — one world's chain for that seat.
+pub fn seat_epoch_frames_dir(dir: &Path, seat: FactionId, world_epoch: u32) -> PathBuf {
+    seat_frames_dir(dir, seat).join(world_epoch.to_string())
 }
 
 /// The writer thread's state: the record directory and the command log, opened on first use.
@@ -208,10 +224,10 @@ impl Writer {
 
     fn write_frame(&self, seat: FactionId, frame: &[u8]) -> io::Result<()> {
         let header = decode_frame_header(frame).map_err(io::Error::other)?;
-        let dir = seat_frames_dir(&self.dir, seat);
+        let dir = seat_epoch_frames_dir(&self.dir, seat, header.world_epoch);
         fs::create_dir_all(&dir)?;
         fs::write(
-            RunRecorder::frame_path(&self.dir, seat, header.frame_seq),
+            RunRecorder::frame_path(&self.dir, seat, header.world_epoch, header.frame_seq),
             frame,
         )
     }
@@ -268,6 +284,8 @@ mod tests {
     const SEAT: FactionId = FactionId(1);
     const FULL_SEQ: u64 = 3;
     const A_TICK: u64 = 4;
+    const EPOCH: u32 = 1;
+    const NEXT_EPOCH: u32 = EPOCH + 1;
 
     fn scratch(case: &str) -> PathBuf {
         let dir =
@@ -277,9 +295,16 @@ mod tests {
     }
 
     fn a_full_frame() -> Arc<Vec<u8>> {
+        a_full_frame_of(EPOCH)
+    }
+
+    /// The same frame, published by the world `world_epoch` — a rebuild restarts `frame_seq`, so
+    /// two worlds mint the very same one.
+    fn a_full_frame_of(world_epoch: u32) -> Arc<Vec<u8>> {
         let mut snapshot = WorldSnapshot::default();
         snapshot.header.frame_seq = FULL_SEQ;
         snapshot.header.tick = A_TICK;
+        snapshot.header.world_epoch = world_epoch;
         Arc::new(encode_snapshot_flatbuffer(&snapshot))
     }
 
@@ -288,6 +313,7 @@ mod tests {
         delta.header.base_frame_seq = FULL_SEQ;
         delta.header.frame_seq = FULL_SEQ + 1;
         delta.header.tick = A_TICK + 1;
+        delta.header.world_epoch = EPOCH;
         Arc::new(encode_delta_flatbuffer(&delta))
     }
 
@@ -301,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn frames_are_filed_by_seat_and_frame_seq_exactly_as_sent() {
+    fn frames_are_filed_by_seat_world_and_frame_seq_exactly_as_sent() {
         let dir = scratch("frames");
         let recorder = RunRecorder::open(&dir).expect("opens");
         let full = a_full_frame();
@@ -310,12 +336,12 @@ mod tests {
         recorder.record_frame(SEAT, &delta);
         recorder.flush();
         let on_disk =
-            fs::read(RunRecorder::frame_path(&dir, SEAT, FULL_SEQ)).expect("the full frame");
+            fs::read(RunRecorder::frame_path(&dir, SEAT, EPOCH, FULL_SEQ)).expect("the full frame");
         assert_eq!(on_disk, *full, "the bytes are the envelope, untouched");
         let on_disk =
-            fs::read(RunRecorder::frame_path(&dir, SEAT, FULL_SEQ + 1)).expect("the delta");
+            fs::read(RunRecorder::frame_path(&dir, SEAT, EPOCH, FULL_SEQ + 1)).expect("the delta");
         assert_eq!(on_disk, *delta);
-        assert!(!RunRecorder::frame_path(&dir, FactionId(2), FULL_SEQ).exists());
+        assert!(!RunRecorder::frame_path(&dir, FactionId(2), EPOCH, FULL_SEQ).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -332,7 +358,7 @@ mod tests {
         sink.publish_frame(SEAT, &full);
         recorder.flush();
         assert_eq!(*socket.0.lock().unwrap(), vec![(SEAT, full.len())]);
-        assert!(RunRecorder::frame_path(&dir, SEAT, FULL_SEQ).is_file());
+        assert!(RunRecorder::frame_path(&dir, SEAT, EPOCH, FULL_SEQ).is_file());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -380,6 +406,29 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// ⛔ **One record directory, two worlds — and the second must not overwrite the first.** A
+    /// rebuild (a Load, or a New Game after a theme change) mints a fresh `frame_seq` from the same
+    /// origin, so without the epoch directory these two frames are one filename.
+    #[test]
+    fn a_rebuilt_worlds_frames_do_not_overwrite_the_worlds_before_it() {
+        let dir = scratch("epochs");
+        let recorder = RunRecorder::open(&dir).expect("opens");
+        let first = a_full_frame_of(EPOCH);
+        let second = a_full_frame_of(NEXT_EPOCH);
+        recorder.record_frame(SEAT, &first);
+        recorder.record_frame(SEAT, &second);
+        recorder.flush();
+        assert_eq!(
+            fs::read(RunRecorder::frame_path(&dir, SEAT, EPOCH, FULL_SEQ)).expect("world 1"),
+            *first
+        );
+        assert_eq!(
+            fs::read(RunRecorder::frame_path(&dir, SEAT, NEXT_EPOCH, FULL_SEQ)).expect("world 2"),
+            *second
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// A frame that is not a frame is dropped with a warning, and the recorder goes on.
     #[test]
     fn a_frame_that_cannot_be_decoded_is_dropped_not_fatal() {
@@ -388,7 +437,7 @@ mod tests {
         recorder.record_frame(SEAT, &Arc::new(vec![1, 2, 3]));
         recorder.record_frame(SEAT, &a_full_frame());
         recorder.flush();
-        assert!(RunRecorder::frame_path(&dir, SEAT, FULL_SEQ).is_file());
+        assert!(RunRecorder::frame_path(&dir, SEAT, EPOCH, FULL_SEQ).is_file());
         let _ = fs::remove_dir_all(&dir);
     }
 }

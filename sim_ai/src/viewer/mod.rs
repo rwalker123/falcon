@@ -716,19 +716,22 @@ mod tests {
     #[test]
     fn a_launcher_run_dir_imports_a_recorded_seat_that_has_no_logs() {
         use crate::import_record::{
-            seat_frames_dir, CommandRecord, RunInfo, COMMANDS_FILE, FRAME_FILE_EXTENSION, RUN_FILE,
+            seat_epoch_frames_dir, CommandRecord, RunInfo, COMMANDS_FILE, FRAME_FILE_EXTENSION,
+            RUN_FILE,
         };
         use sim_runtime::encode_snapshot_flatbuffer;
         const HUMAN: u32 = 0;
         const TICK: u64 = 2;
+        const EPOCH: u32 = 1;
         let dir = std::env::temp_dir().join(format!("sim_ai_viewer_run_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let record = dir.join(RECORD_DIR);
-        let frames = seat_frames_dir(&record, HUMAN);
+        let frames = seat_epoch_frames_dir(&record, HUMAN, EPOCH);
         fs::create_dir_all(&frames).unwrap();
         let mut snapshot = sim_runtime::WorldSnapshot::default();
         snapshot.header.tick = TICK;
         snapshot.header.frame_seq = 1;
+        snapshot.header.world_epoch = EPOCH;
         fs::write(
             frames.join(format!("1.{FRAME_FILE_EXTENSION}")),
             encode_snapshot_flatbuffer(&snapshot),

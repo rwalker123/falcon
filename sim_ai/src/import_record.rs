@@ -3,7 +3,8 @@
 //!
 //! `sim_ai import-record <record-dir> --seat <f> --out <log-dir>` reads what the server wrote under
 //! `SIM_RECORD_DIR` (`core_sim/src/record.rs`; the layout is restated in the constants below):
-//! `seat_<f>/frames/<frame_seq>.bin`, every frame published to that seat exactly as sent, and
+//! `seat_<f>/frames/<world_epoch>/<frame_seq>.bin`, every frame published to that seat exactly as
+//! sent, and
 //! `commands.jsonl`, one line per command the timeline logged. It replays the frames through the
 //! same `decode_frame_flatbuffer` + `apply_delta` chain a live seat uses, and for each tick writes
 //! the `ScoreRow` and `Observation` a `sim_ai` process would have written off that view — with no
@@ -16,6 +17,13 @@
 //! have several frames; the view written for it is the one after the last of them, i.e. the
 //! world with that tick's commands applied. (A live `sim_ai` observes the *first* frame of a
 //! tick, before its own commands: the two pages differ by exactly the seat's own orders.)
+//!
+//! ⛔ **One record directory holds several worlds, and an import reads exactly one of them.** A
+//! launcher session builds a new world on every New Game and every Load, and a seat's `frame_seq`
+//! restarts with it — so the record files each world's frames under its own `world_epoch`
+//! (`core_sim/src/record.rs`). The importer takes the **latest** epoch present, which is the world
+//! `run.json` describes, and says on stderr when it passed over earlier ones rather than replaying
+//! two worlds' chains spliced into one run.
 //!
 //! The output is a seat log directory the existing `viewer` consumes unchanged.
 
@@ -38,8 +46,9 @@ use crate::instruments::Instruments;
 use crate::view::SeatView;
 
 /// **The record layout**, restated from `core_sim::record` (the writer is the authority; this crate
-/// cannot link it): the per-seat directory prefix, the frames directory under it, a frame file's
-/// extension (its stem is the `frame_seq`), the command log and the world description.
+/// cannot link it): the per-seat directory prefix, the frames directory under it (whose
+/// subdirectories are `world_epoch`s), a frame file's extension (its stem is the `frame_seq`), the
+/// command log and the world description.
 pub const SEAT_DIR_PREFIX: &str = "seat_";
 pub const FRAMES_DIR: &str = "frames";
 pub const FRAME_FILE_EXTENSION: &str = "bin";
@@ -93,7 +102,7 @@ pub struct ImportArgs {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
-    #[error("no frames for seat {seat} under {0}: {SEAT_DIR_PREFIX}{seat}/{FRAMES_DIR} is missing or empty", seat = .1)]
+    #[error("no frames for seat {seat} under {0}: {SEAT_DIR_PREFIX}{seat}/{FRAMES_DIR}/<world_epoch> is missing or empty", seat = .1)]
     NoFrames(PathBuf, u32),
     #[error("io at {path}: {source}")]
     Io {
@@ -147,6 +156,31 @@ pub fn seat_frames_dir(record_dir: &Path, seat: u32) -> PathBuf {
         .join(FRAMES_DIR)
 }
 
+/// `<record>/seat_<f>/frames/<world_epoch>` — one world's chain for that seat.
+pub fn seat_epoch_frames_dir(record_dir: &Path, seat: u32, world_epoch: u32) -> PathBuf {
+    seat_frames_dir(record_dir, seat).join(world_epoch.to_string())
+}
+
+/// Every world the record holds frames of for this seat, ascending. A directory whose name is not
+/// a number is not one of ours and is ignored.
+pub fn recorded_epochs(record_dir: &Path, seat: u32) -> Vec<u32> {
+    let Ok(entries) = fs::read_dir(seat_frames_dir(record_dir, seat)) else {
+        return Vec::new();
+    };
+    let mut epochs: Vec<u32> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            entry
+                .path()
+                .is_dir()
+                .then(|| entry.file_name().to_str()?.parse().ok())
+                .flatten()
+        })
+        .collect();
+    epochs.sort_unstable();
+    epochs
+}
+
 /// Every seat the record holds frames for, ascending.
 pub fn recorded_seats(record_dir: &Path) -> Vec<u32> {
     let Ok(entries) = fs::read_dir(record_dir) else {
@@ -170,9 +204,24 @@ pub fn read_run_info(record_dir: &Path) -> Option<RunInfo> {
     serde_json::from_str(&text).ok()
 }
 
-/// The seat's frame files in `frame_seq` order.
+/// The seat's frame files in `frame_seq` order, from **one** world: the latest epoch the record
+/// holds for it (the module doc). Earlier worlds are named on stderr and left alone — their
+/// `frame_seq`s count from the same origin, so replaying them together would splice two worlds
+/// into one run.
 fn frame_files(record_dir: &Path, seat: u32) -> Result<Vec<(u64, PathBuf)>, ImportError> {
-    let dir = seat_frames_dir(record_dir, seat);
+    let epochs = recorded_epochs(record_dir, seat);
+    let Some((&world_epoch, earlier)) = epochs.split_last() else {
+        return Err(ImportError::NoFrames(record_dir.to_path_buf(), seat));
+    };
+    if !earlier.is_empty() {
+        warn!(
+            seat,
+            world_epoch,
+            skipped = ?earlier,
+            "the record holds more than one world for this seat; importing the latest only"
+        );
+    }
+    let dir = seat_epoch_frames_dir(record_dir, seat, world_epoch);
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(_) => return Err(ImportError::NoFrames(record_dir.to_path_buf(), seat)),
@@ -329,6 +378,8 @@ mod tests {
     const OTHER_SEAT: u32 = 2;
     const FULL_SEQ: u64 = 10;
     const FIRST_TICK: u64 = 4;
+    const EPOCH: u32 = 1;
+    const NEXT_EPOCH: u32 = EPOCH + 1;
 
     fn scratch(case: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("sim_ai_import_{case}_{}", std::process::id()));
@@ -338,7 +389,11 @@ mod tests {
     }
 
     fn write_frame(record: &Path, seat: u32, seq: u64, bytes: &[u8]) {
-        let dir = seat_frames_dir(record, seat);
+        write_frame_of(record, seat, EPOCH, seq, bytes);
+    }
+
+    fn write_frame_of(record: &Path, seat: u32, world_epoch: u32, seq: u64, bytes: &[u8]) {
+        let dir = seat_epoch_frames_dir(record, seat, world_epoch);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(format!("{seq}.{FRAME_FILE_EXTENSION}")), bytes).unwrap();
     }
@@ -491,6 +546,42 @@ mod tests {
         let summary = import(&record, SEAT, &dir.join("seat_1")).expect("imports");
         assert_eq!(summary.frames_dropped, 1);
         assert_eq!(summary.ticks, 1, "three frames of one tick are one row");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ⛔ **Two worlds in one record are not one run.** Both chains start at the same `frame_seq`,
+    /// so the importer must read one epoch — the latest, which is the world `run.json` describes —
+    /// rather than every `.bin` under the seat.
+    #[test]
+    fn only_the_latest_worlds_frames_are_replayed() {
+        let dir = scratch("epochs");
+        let record = dir.join("record");
+        write_frame_of(&record, SEAT, EPOCH, FULL_SEQ, &full_frame(FIRST_TICK));
+        write_frame_of(
+            &record,
+            SEAT,
+            EPOCH,
+            FULL_SEQ + 1,
+            &delta_frame(FULL_SEQ, FIRST_TICK + 1),
+        );
+        let mut rebuilt = WorldSnapshot::default();
+        rebuilt.header.frame_seq = FULL_SEQ;
+        rebuilt.header.tick = FIRST_TICK;
+        rebuilt.header.world_epoch = NEXT_EPOCH;
+        write_frame_of(
+            &record,
+            SEAT,
+            NEXT_EPOCH,
+            FULL_SEQ,
+            &encode_snapshot_flatbuffer(&rebuilt),
+        );
+        assert_eq!(recorded_epochs(&record, SEAT), vec![EPOCH, NEXT_EPOCH]);
+        let summary = import(&record, SEAT, &dir.join("seat_1")).expect("imports");
+        assert_eq!(
+            summary.ticks, 1,
+            "the second world's one frame is the whole run"
+        );
+        assert_eq!(summary.frames_dropped, 0);
         let _ = fs::remove_dir_all(&dir);
     }
 

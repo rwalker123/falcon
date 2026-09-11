@@ -1615,19 +1615,6 @@ mod tests {
         );
     }
 
-    /// How long a stand-in child would live if nothing killed it. Long enough
-    /// that one observed alive after the drop could only have survived the
-    /// reap, and long enough that a *missed* kill hangs the test on `wait`
-    /// rather than passing by luck.
-    #[cfg(unix)]
-    const CHILD_LIFETIME_SECS: &str = "600";
-
-    /// A child that stays alive until something kills it.
-    ///
-    /// Every stream is detached: a child that survived a broken reap would
-    /// otherwise hold the test harness's captured output pipe open for its whole
-    /// lifetime, turning a clean assertion failure into a ten-minute hang.
-    #[cfg(unix)]
     /// One line per seat, each a complete command a player can paste: the resolved `sim_ai`,
     /// the run directory, the seat, and the page beside that seat's directory.
     #[test]
@@ -1694,6 +1681,19 @@ mod tests {
         let _ = fs::remove_dir_all(&runs);
     }
 
+    /// How long a stand-in child would live if nothing killed it. Long enough
+    /// that one observed alive after the drop could only have survived the
+    /// reap, and long enough that a *missed* kill hangs the test on `wait`
+    /// rather than passing by luck.
+    #[cfg(unix)]
+    const CHILD_LIFETIME_SECS: &str = "600";
+
+    /// A child that stays alive until something kills it.
+    ///
+    /// Every stream is detached: a child that survived a broken reap would
+    /// otherwise hold the test harness's captured output pipe open for its whole
+    /// lifetime, turning a clean assertion failure into a ten-minute hang.
+    #[cfg(unix)]
     fn spawn_sleeper() -> Child {
         Command::new("sleep")
             .arg(CHILD_LIFETIME_SECS)

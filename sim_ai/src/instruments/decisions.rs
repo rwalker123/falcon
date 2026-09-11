@@ -42,6 +42,11 @@ pub struct Decision {
     /// How many commands the proposal carried (0 for a rejected one that emitted nothing).
     pub commands: usize,
     /// The same commands, one readable line each ([`command_text`]) — what the viewer shows.
+    ///
+    /// `default` (the empty list) so a log written before this field existed still deserializes:
+    /// `bench::measures::read_jsonl` collects into a `Result`, so one unreadable line
+    /// would fail the whole run rather than that record.
+    #[serde(default)]
     pub commands_text: Vec<String>,
 }
 
@@ -191,6 +196,24 @@ mod tests {
             assert!(!line.contains('\n'), "one line: {line}");
             let back: DecisionRecord = serde_json::from_str(&line).expect("parses");
             assert_eq!(back, record);
+        }
+    }
+
+    /// ⛔ **A log written before `commands_text` existed still reads.** `read_jsonl` collects into
+    /// a `Result`, so one line that will not deserialize fails the whole viewer page rather than
+    /// that record.
+    #[test]
+    fn a_decision_line_without_commands_text_parses_with_none() {
+        let line = r#"{"kind":"decision","tick":7,"specialist":"food","intent":"food:assign:2",
+            "score_raw":0.5,"score_final":0.75,"outcome":"accepted","reason":"idle hands",
+            "commands":1}"#;
+        let record: DecisionRecord = serde_json::from_str(line).expect("parses without the field");
+        match record {
+            DecisionRecord::Decision(decision) => {
+                assert!(decision.commands_text.is_empty());
+                assert_eq!(decision.commands, 1);
+            }
+            other => panic!("expected a decision, got {other:?}"),
         }
     }
 

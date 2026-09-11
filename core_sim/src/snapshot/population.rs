@@ -143,7 +143,7 @@ pub(crate) fn labor_assignment_to_state(
             state.target_x = tile.x;
             state.target_y = tile.y;
         }
-        // The six band-wide roles carry no source and no floor: their whole content is the head
+        // The seven band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
         | LaborTarget::Warrior

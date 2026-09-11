@@ -636,9 +636,21 @@ the launcher sets it, below). Under it:
 <record>/commands.jsonl                    CommandRecord per line: tick, faction (the seat the sending
                                            connection held; null unseated), connection (the opaque
                                            id, never the token), verb, command
-<record>/seat_<f>/frames/<frame_seq>.bin   every frame published to seat f, the FlatBuffers envelope
-                                           exactly as the socket writes it, without its u32 length
+<record>/seat_<f>/frames/<world_epoch>/<frame_seq>.bin
+                                           every frame published to seat f, the FlatBuffers envelope
+                                           exactly as the socket writes it, without its u32 length,
+                                           under the world that published it
 ```
+
+⛔ **A frame is filed under its world, and an import reads exactly one world.** One `SIM_RECORD_DIR`
+covers a whole launcher session, but `SeatPublishState.frame_seq` is fresh per world (a rebuild is a
+brand-new `App`) and is dropped when the seat is released — and a session rebuilds routinely, since
+`load_game` bumps the epoch exactly as `new_game` does and `new_game` is re-armed after a theme
+change. Flat filenames therefore had world 2's `1.bin, 2.bin, …` overwrite world 1's file for file,
+and `import-record` replayed the splice as one run without a word, because both chains base off the
+same origin. The epoch directory keeps them apart; `frame_files` takes the **latest** epoch present —
+the world the per-build `run.json` describes — and `warn!`s on stderr naming the earlier ones it
+passed over. A rival's disconnect/reclaim mid-world stays within its own epoch and chains as before.
 
 `run.json` is written from `retain_claimed_seats` — the `seats.roster` moment. A command line is
 written from `dispatch_connection_command`, **beside `log_dispatched_command` and under its
@@ -662,10 +674,10 @@ that fails is a `warn!` (`record.frame.failed` / `record.command.failed` / `reco
 and the job is dropped. The writer names a frame by decoding only its header
 (`sim_runtime::decode_frame_header`), never the world.
 
-**`sim_ai import-record <record-dir> --seat <f> --out <log-dir>`** reads `seat_<f>/frames/*.bin`
-in `frame_seq` order through the same `decode_frame_flatbuffer` + `apply_delta` chain a live seat
-uses (a delta before a full frame, or off a broken chain, is dropped with a warning and the replay
-resumes at the next full frame), and for each tick writes the `ScoreRow` and `Observation` a
+**`sim_ai import-record <record-dir> --seat <f> --out <log-dir>`** reads
+`seat_<f>/frames/<latest world_epoch>/*.bin` in `frame_seq` order through the same
+`decode_frame_flatbuffer` + `apply_delta` chain a live seat uses (a delta before a full frame, or
+off a broken chain, is dropped with a warning and the replay resumes at the next full frame), and for each tick writes the `ScoreRow` and `Observation` a
 `sim_ai` process would have written off that view with **no brain lens** — `plan` and `alarms`
 null, radius `OBSERVATION_RADIUS_FLOOR`. Every `commands.jsonl` line of that seat becomes one
 accepted `Decision`: specialist `human`, intent `human:<verb>`, both scores 1.0, `commands_text`

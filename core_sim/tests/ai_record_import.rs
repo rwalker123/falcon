@@ -102,11 +102,30 @@ fn a_recorded_seat_imports_into_the_viewer_page() {
         Some((ONE_RIVAL + 1) as usize),
         "the human and one rival"
     );
+    // Frames are filed under the world that published them, so one game is one epoch directory.
+    let world_epoch = run_info["world_epoch"]
+        .as_u64()
+        .expect("run.json names the world epoch");
     let frames_dir = record_dir
         .join(format!("{SEAT_DIR_PREFIX}{RIVAL_SEAT}"))
         .join(FRAMES_DIR);
-    let frame_count = fs::read_dir(&frames_dir)
+    let epochs: Vec<String> = fs::read_dir(&frames_dir)
         .expect("the seat's frames")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into()
+        })
+        .collect();
+    assert_eq!(
+        epochs,
+        vec![world_epoch.to_string()],
+        "one world built, one epoch directory"
+    );
+    let frame_count = fs::read_dir(frames_dir.join(world_epoch.to_string()))
+        .expect("the world's frames")
         .count();
     assert!(
         frame_count > AI_TURNS as usize,

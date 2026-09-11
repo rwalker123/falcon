@@ -545,15 +545,17 @@ fn is_untargeted_role(row: &LaborAssignmentState) -> bool {
     UNTARGETED_ROLES.contains(&row.kind.as_str())
 }
 
-/// The `assign_labor` roles that take a worker count and no target
-/// (`sim_runtime::command_text`, the `scout | warrior | agriculture | husbandry | roadwork |
-/// builders` arm).
-const UNTARGETED_ROLES: [&str; 6] = [
+/// The `assign_labor` roles that take a worker count and no target. The authority for a **published
+/// snapshot row** is `LaborTarget::kind`'s band-wide arm (`core_sim/src/snapshot/population.rs`),
+/// which leaves `target_x` / `target_y` at the wire default `0, 0` for every one of them — a row
+/// whose kind is missing here is recorded as a crew working tile `0, 0`.
+const UNTARGETED_ROLES: [&str; 7] = [
     "scout",
     "warrior",
     "agriculture",
     "husbandry",
     "roadwork",
+    "quarrywork",
     "builders",
 ];
 
@@ -900,5 +902,21 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(scout.target, None);
+    }
+
+    /// ⛔ **Every band-wide role, not most of them.** A role missing from [`UNTARGETED_ROLES`]
+    /// falls through to the tile arm and records a crew working `0, 0` — the wire default the
+    /// band-wide arm of `LaborTarget::kind` leaves those rows at — which the viewer then outlines
+    /// and badges as a worked hex nobody works.
+    #[test]
+    fn every_band_wide_role_targets_nothing() {
+        for kind in UNTARGETED_ROLES {
+            let row = assignment_observation(&LaborAssignmentState {
+                kind: kind.into(),
+                workers: 2,
+                ..Default::default()
+            });
+            assert_eq!(row.target, None, "{kind} names no tile");
+        }
     }
 }
