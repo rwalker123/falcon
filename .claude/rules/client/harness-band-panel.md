@@ -171,12 +171,15 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 134 frames / 421 `assert OK` / 759 `: PASS`, exit 0 — RE-MEASURED ON THE MERGED
-TREE.** This arc removed one frame (`band_panel_faction_knowledge`) and added none, and measured
-126 / 404 / 685 on its own; the build-queue arc (#576) landed in `main` in between and the two sets
-of numbers are neither branch's. **That is the "RE-MEASURED, never summed" rule arriving through a
-MERGE rather than through a commit** — two correct tallies, both stale the moment the branches met,
-and adding them gets a third wrong answer. Re-run after any merge that touches this harness.
+**A clean run is 180 frames / 1274 `PASS` / 528 `assert OK`, exit 0 — RE-MEASURED ON THE MERGED
+TREE, and this line is the harness's ONLY tally.** An earlier arc removed one frame
+(`band_panel_faction_knowledge`) and added none, and measured 126 / 404 / 685 on its own; the
+build-queue arc (#576) landed in `main` in between and the two sets of numbers were neither
+branch's. **That is the "RE-MEASURED, never summed" rule arriving through a MERGE rather than
+through a commit** — two correct tallies, both stale the moment the branches met, and adding them
+gets a third wrong answer. Re-run after any merge that touches this harness, and write the answer
+HERE: a second tally further down the file is a second thing to forget, which is exactly how this
+one came to be read 170 / 1161 / 511 while the harness was in fact running 180 frames.
 
 
 ## `tools/band_panel_preview.gd` / `.tscn`
@@ -2629,8 +2632,6 @@ and its material aside through the shared price composer.
 **The per-row prohibition is unchanged and still asserted.** The existing scan walks the ROWS for the
 stepper's `−`/`+` faces and the road roster's `✕`; the mark is asserted BESIDE it, which is what says
 a declaring `⌃` is not one of the three controls roads.md forbids on a row.
-
-**A clean run is 170 frames / 1161 `PASS` / 511 `assert OK`, exit 0 — MEASURED on this tree.**
 
 ## `band_foreign_beside_own` — the two band tiers in ONE frame (`chapters/band_expedition.gd`)
 
