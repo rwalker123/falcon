@@ -13,6 +13,12 @@
   --site: #2f6f3a; --focus: #e0a800; --worked: #7a1fa2;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* The map never grows past this, however wide the window: a wider page shows MORE panels, not
+     a bigger map. The page itself stops widening at --page-max-width and centres. Breakpoints
+     (700 px two columns, 1200 px three) are literals in the @media rules below, which cannot read
+     custom properties. */
+  --map-max-height: min(60vh, 560px);
+  --page-max-width: 1700px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -24,9 +30,10 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; }
-header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: .5rem .75rem; z-index: 2; }
-h1 { font-size: 1rem; margin: 0 0 .35rem; font-weight: 600; }
+header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: .5rem .75rem; z-index: 2; min-width: 0; overflow: hidden; }
+h1 { font-size: 1rem; margin: 0 0 .35rem; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 h1 span { color: var(--muted); font-weight: 400; }
+h1 .path { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 h2 { font-size: .95rem; margin: 0 0 .5rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 h3 { font-size: .9rem; margin: .6rem 0 .3rem; }
 .caption { font-size: .78rem; color: var(--muted); margin: -.3rem 0 .5rem; }
@@ -34,16 +41,17 @@ h3 { font-size: .9rem; margin: .6rem 0 .3rem; }
 .scrub button, .tabs button, .focus-bar button { font: inherit; padding: .25rem .6rem; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: .4rem; cursor: pointer; }
 .scrub input[type=range] { flex: 1; min-width: 0; }
 .scrub .tick { font-family: var(--mono); min-width: 4.5rem; text-align: right; }
-.sparks { display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; margin-top: .4rem; }
+.sparks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .4rem; margin-top: .4rem; }
 .spark { background: var(--panel); border: 1px solid var(--line); border-radius: .4rem; padding: .25rem .35rem; }
 .spark .label { font-size: .7rem; color: var(--muted); display: flex; justify-content: space-between; }
 .spark svg { width: 100%; height: 34px; display: block; }
 .spark .a { stroke: var(--own); } .spark .b { stroke: var(--foreign); } .spark .m { stroke: var(--mark); stroke-dasharray: 2 2; }
-main { display: grid; grid-template-columns: 1fr; grid-template-areas: "map" "ledger" "work" "score" "orch" "dec"; gap: .75rem; padding: .75rem; align-items: start; }
-@media (min-width: 700px) { main { grid-template-columns: 1fr 1fr; grid-template-areas: "map orch" "ledger dec" "work dec" "score dec"; } }
+main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "map" "ledger" "work" "score" "orch" "dec"; gap: .75rem; padding: .75rem; align-items: start; max-width: var(--page-max-width); margin: 0 auto; }
+@media (min-width: 700px) { main { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "map orch" "ledger dec" "work dec" "score dec"; } }
+@media (min-width: 1200px) { main { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: "map ledger orch" "map work dec" "map score dec"; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: .75rem; min-width: 0; }
 #map { grid-area: map; } #ledger { grid-area: ledger; } #work { grid-area: work; } #score { grid-area: score; } #orchestrator { grid-area: orch; } #decisions { grid-area: dec; }
-#hexmap { width: 100%; height: auto; display: block; touch-action: manipulation; }
+#hexmap { width: auto; height: auto; max-width: 100%; max-height: var(--map-max-height); display: block; margin: 0 auto; touch-action: manipulation; }
 #hexmap polygon { stroke-width: 1.2; cursor: pointer; }
 #hexmap polygon.sel { stroke-width: 3; }
 #hexmap polygon.worked { stroke: var(--worked); stroke-width: 2.4; stroke-dasharray: 3 1.5; }
@@ -103,7 +111,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
 <main>
   <section id="map">
     <h2>Local map</h2>
-    <svg id="hexmap" viewBox="0 0 100 100" role="img" aria-label="the seat's neighbourhood"></svg>
+    <svg id="hexmap" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" role="img" aria-label="the seat's neighbourhood"></svg>
     <div class="legend" id="legend">
       <span><span class="ramp"></span> food site: forage biomass (low → high)</span>
       <span><span class="fill" style="background: var(--land)"></span>land the band cannot gather from</span>
@@ -635,7 +643,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
   }
   function go(i) { if (!TURNS.length) return; current = Math.max(0, Math.min(TURNS.length - 1, i)); render(); }
 
-  el("title").innerHTML = "seat " + esc(MODEL.faction) + " <span>· run " + esc(MODEL.seed) + " · " + TURNS.length + " turns · " + esc(MODEL.seat_dir) + "</span>";
+  el("title").innerHTML = "seat " + esc(MODEL.faction) + " <span>· run " + esc(MODEL.seed) + " · " + TURNS.length + " turns · <span class=\"path\" title=\"" + esc(MODEL.seat_dir) + "\">" + esc(MODEL.seat_dir) + "</span></span>";
   el("scrub").max = Math.max(0, TURNS.length - 1);
   el("scrub").addEventListener("input", function (e) { go(parseInt(e.target.value, 10)); });
   el("prev").addEventListener("click", function () { go(current - 1); });

@@ -571,9 +571,15 @@ must open from a file with no network — and `core_sim/tests/ai_bench.rs` asser
 real run's page. The SVG is built as markup inside `<svg>` elements rather than through
 `createElementNS`, so the page names no namespace URL either.
 
-**The page** (phone-first: one column under 700 px, two above — map, ledger and scoreboard down
-the left, orchestrator and decisions down the right; light/dark by `prefers-color-scheme`; the
-system font stack): a **turn scrubber** (range input, ◀ ▶ buttons, ← → keys, the current tick)
+**The page** (phone-first: one column under 700 px; two from 700 px — map, ledger, work and
+scoreboard down the left, orchestrator and decisions down the right; three from 1200 px — map |
+ledger, work, scoreboard | orchestrator, decisions; `main` stops widening at `--page-max-width`
+(1700 px) and centres, panels `align-items: start`. ⛔ **The map is capped, not scaled to the
+column**: `#hexmap` is `width: auto; max-width: 100%; max-height: var(--map-max-height)` —
+`min(60vh, 560px)` — centred, `preserveAspectRatio="xMidYMid meet"`, so a wider window shows
+more panels rather than a bigger map that pushes them below the fold. The title's seat path is an
+ellipsised `.path` span with the full path in its `title`, so it never forces horizontal scroll.
+Light/dark by `prefers-color-scheme`; the system font stack): a **turn scrubber** (range input, ◀ ▶ buttons, ← → keys, the current tick)
 over four inline-SVG **sparklines** of the run — stock, income vs consumption, runway (the 999
 sentinel drawn as a gap), hunger deaths per tick — with the current tick marked; the **local map**,
 the observation's neighbourhood as odd-r hexes unwrapped around the first own band, outlined by
