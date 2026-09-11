@@ -66,6 +66,11 @@ const NO_WORKING_POPULATION: f64 = 0.0;
 ///   dead row nobody marked (a zero that reads as a target), or a mark left on a row that lives.
 pub const M_SEAT_ALIVE: &str = "seat_alive";
 pub const M_DEGENERATE_MARKER: &str = "degenerate_marker";
+/// **The third pseudo-measure, and the twin of [`M_DEGENERATE_MARKER`] one level down**: the
+/// file's `declined` list disagrees with the row it names — an exemption left on a specialist that
+/// has started winning again (a suppression nobody withdrew), or one carrying no note (an
+/// exemption that does not say why, which is the only thing it is for). Neither exempts.
+pub const M_DECLINED_MARKER: &str = "declined_marker";
 /// **What a specialist on the roster has to show over the whole run**: one accepted decision — it
 /// proposed, and it won at least once. Below this it is being ignored, §8.2's failure; at it or
 /// above, how often it wins is the arbiter's business and `liveness`' to measure.
@@ -156,6 +161,19 @@ pub struct Baselines {
     /// [`Report::as_baselines`], not by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degenerate: Vec<DegenerateSeat>,
+    /// **The specialists that win nothing here because winning nothing is the right answer** — see
+    /// [`DeclinedSpecialist`]. [`Report::specialist_ignored_violations`] reads this list: a
+    /// specialist named here is not held to [`MIN_ACCEPTED`] on that one seed and seat, and an
+    /// entry that has gone stale is itself a violation ([`M_DECLINED_MARKER`]), so an exemption can
+    /// never quietly outlive the situation it describes.
+    ///
+    /// ⛔ **WRITTEN BY HAND, unlike [`Baselines::degenerate`]** — and that asymmetry is the whole
+    /// difference between the two lists. Deadness is a *fact about the numbers*, so `as_baselines`
+    /// derives it; "this specialist correctly declined" is a judgement about the world the seat was
+    /// given, which no measure carries. [`BaselinesFile::upsert`] therefore carries this list
+    /// across a `--write-baselines`, because a regeneration cannot recompute it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declined: Vec<DeclinedSpecialist>,
 }
 
 /// One row of [`Baselines::degenerate`]: the seat, and why its numbers are not a bar.
@@ -163,6 +181,23 @@ pub struct Baselines {
 pub struct DegenerateSeat {
     pub seed: String,
     pub seat: String,
+    pub note: String,
+}
+
+/// One row of [`Baselines::declined`]: **one specialist, on one seed, on one seat** — the narrowest
+/// key the data has — and why it is right that it never wins there.
+///
+/// ⛔ **THE NOTE IS THE POINT, NOT A COURTESY.** What the file records is an *absence*: the run
+/// leaves no `specialist.<name>.*` measures at all, so the next reader sees a blank where a number
+/// should be and has every reason to treat it as a regression to fix. The note is the only thing
+/// standing between them and "fixing" the behaviour that made the absence correct. A row whose note
+/// is blank therefore does not exempt, and says so ([`M_DECLINED_MARKER`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeclinedSpecialist {
+    pub seed: String,
+    pub seat: String,
+    /// The specialist id, as `specialist.<name>.accepted` spells it (`food`, `land`, …).
+    pub specialist: String,
     pub note: String,
 }
 
@@ -335,7 +370,12 @@ impl Report {
                         });
                     }
                 }
-                violations.extend(self.specialist_ignored_violations(seed, seat, actual_seat));
+                violations.extend(self.specialist_ignored_violations(
+                    baselines,
+                    seed,
+                    seat,
+                    actual_seat,
+                ));
             }
         }
         Ok(violations)
@@ -358,10 +398,22 @@ impl Report {
     /// which is arbitration working, and the only way to clear that would have been to change the
     /// brain to chase the check.
     ///
-    /// This is held against the run alone, not against the baseline: a baseline that recorded an
-    /// ignored specialist is not a licence to keep it ignored.
+    /// This is held against the run alone, not against the baseline's *numbers*: a baseline that
+    /// recorded an ignored specialist is not a licence to keep it ignored.
+    ///
+    /// ⛔ **"NEVER WINS" AND "CORRECTLY DECLINED" ARE DIFFERENT THINGS, AND ONLY THE FILE CAN TELL
+    /// THEM APART.** A specialist can be silent because the arbiter ignores it — the failure this
+    /// exists for — or because the world it was given offers nothing legal to propose, which is the
+    /// specialist working. No measure distinguishes them: both leave the same absent key. So the
+    /// second case is declared, per seed and seat and specialist, on [`Baselines::declined`], with
+    /// a note saying why; everything not declared is still held to [`MIN_ACCEPTED`].
+    ///
+    /// The exemption is **self-retiring**: a declared specialist that starts winning again, or one
+    /// declared without a note, fails as [`M_DECLINED_MARKER`] — the same *the-file-must-agree*
+    /// rule that keeps [`Baselines::degenerate`] honest, one level down.
     fn specialist_ignored_violations(
         &self,
+        baselines: &Baselines,
         seed: &str,
         seat: &str,
         actual: Option<&Measures>,
@@ -372,25 +424,41 @@ impl Report {
         let Some(spec) = spec_of_seat(&self.seats, seat) else {
             return Vec::new();
         };
-        expected_specialists(spec)
-            .into_iter()
-            .filter_map(|name| {
-                let measure = format!("{M_SPECIALIST_PREFIX}{name}.{M_ACCEPTED}");
-                let value = actual
-                    .get(&measure)
-                    .copied()
-                    .flatten()
-                    .unwrap_or(NO_DECISIONS_ACCEPTED);
-                (value < MIN_ACCEPTED).then(|| Violation {
+        let mut violations = Vec::new();
+        for name in expected_specialists(spec) {
+            let measure = format!("{M_SPECIALIST_PREFIX}{name}.{M_ACCEPTED}");
+            let value = actual
+                .get(&measure)
+                .copied()
+                .flatten()
+                .unwrap_or(NO_DECISIONS_ACCEPTED);
+            let declared = baselines.declined_row(seed, seat, &name);
+            // A note-less exemption is not one: it suppresses a gate while explaining nothing,
+            // which is the single thing this list may not be allowed to do.
+            let exempt = declared.is_some_and(|row| !row.note.trim().is_empty());
+            let stale = declared.is_some() && value >= MIN_ACCEPTED;
+            if declared.is_some() && (!exempt || stale) {
+                violations.push(Violation {
+                    seed: seed.to_owned(),
+                    seat: seat.to_owned(),
+                    measure: format!("{M_SPECIALIST_PREFIX}{name}.{M_DECLINED_MARKER}"),
+                    baseline: flag(false),
+                    tolerance: BASELINE_TOLERANCE,
+                    actual: flag(true),
+                });
+            }
+            if value < MIN_ACCEPTED && !exempt {
+                violations.push(Violation {
                     seed: seed.to_owned(),
                     seat: seat.to_owned(),
                     measure,
                     baseline: MIN_ACCEPTED,
                     tolerance: BASELINE_TOLERANCE,
                     actual: value,
-                })
-            })
-            .collect()
+                });
+            }
+        }
+        violations
     }
 
     /// The baseline file this run would be: the ratcheted measures at [`BASELINE_TOLERANCE`], and
@@ -420,6 +488,9 @@ impl Report {
                 .map(|measure| ((*measure).to_owned(), BASELINE_TOLERANCE))
                 .collect(),
             degenerate,
+            // Underivable from a run — a judgement, not a measurement — so a regenerated entry
+            // starts with none and `BaselinesFile::upsert` carries the file's across.
+            declined: Vec::new(),
         }
     }
 
@@ -512,6 +583,20 @@ impl Baselines {
             .iter()
             .any(|row| row.seed == seed && row.seat == seat)
     }
+
+    /// This specialist's row on the [`Baselines::declined`] list, if it has one — keyed on all
+    /// three of seed, seat and specialist, so an exemption covers exactly the one situation it was
+    /// written about and no other seed, seat or sibling specialist.
+    fn declined_row(
+        &self,
+        seed: &str,
+        seat: &str,
+        specialist: &str,
+    ) -> Option<&DeclinedSpecialist> {
+        self.declined
+            .iter()
+            .find(|row| row.seed == seed && row.seat == seat && row.specialist == specialist)
+    }
 }
 
 impl BaselinesFile {
@@ -536,7 +621,18 @@ impl BaselinesFile {
     }
 
     /// Add or replace the entry for `baselines`' seat set.
-    pub fn upsert(&mut self, baselines: Baselines) {
+    ///
+    /// ⛔ **THE HAND-WRITTEN `declined` LIST SURVIVES A REGENERATION.** Everything else in an entry
+    /// is derived from the run, so `--write-baselines` can rebuild it; the exemptions cannot be
+    /// rebuilt from any measure ([`Baselines::declined`]). Replacing the entry wholesale would drop
+    /// them, and the only symptom would be the next `--check` going red with a violation whose
+    /// explanation the same command had just deleted.
+    pub fn upsert(&mut self, mut baselines: Baselines) {
+        if let Some(existing) = self.runs.get(&baselines.key()) {
+            if baselines.declined.is_empty() {
+                baselines.declined = existing.declined.clone();
+            }
+        }
         self.runs.insert(baselines.key(), baselines);
     }
 
@@ -689,7 +785,12 @@ mod tests {
     use super::*;
 
     const SEED: &str = "7";
+    /// A second seed, so "the exemption did not leak" is a claim about a row that exists.
+    const OTHER_SEED: &str = "8";
     const SEAT: &str = "1";
+    /// Stand-in prose for an exemption's note — the tests are about the note being *present*, and
+    /// the shipped one is in `bench/baselines.json`.
+    const A_REASON: &str = "the ground offers this specialist nothing legal to propose";
     const PASS_SEAT_SPEC: &str = "1=pass";
     const UTILITY_SEAT_SPEC: &str = "1=utility:forager";
 
@@ -985,6 +1086,168 @@ mod tests {
         assert!(
             quiet_window.check(&baselines).unwrap().is_empty(),
             "liveness is measured, not gated"
+        );
+    }
+
+    /// ⛔ **AN EXEMPTION COVERS ONE SEED, ONE SEAT, ONE SPECIALIST — AND NOTHING ELSE.** The gate
+    /// it suppresses is the one that catches a specialist the arbiter ignores, so an exemption that
+    /// leaked across seeds, seats or siblings would disarm that gate exactly where nobody is
+    /// looking. This drives the *same* absent-specialist condition through four rows, one declared
+    /// and three not, and requires the three to still fail.
+    #[test]
+    fn a_declined_specialist_is_exempt_on_its_own_row_only() {
+        let accepted = |name: &str| format!("{M_SPECIALIST_PREFIX}{name}.{M_ACCEPTED}");
+        // Two seeds × the same seat, and the seat runs both specialists.
+        let inert_measures: Measures = [(M_POPULATION_WORKING.to_owned(), Some(12.0))]
+            .into_iter()
+            .collect();
+        let seats = BTreeMap::from([(SEAT.to_owned(), inert_measures)]);
+        let measures = RunMeasures::from([
+            (SEED.to_owned(), seats.clone()),
+            (OTHER_SEED.to_owned(), seats),
+        ]);
+        let report = Report {
+            seeds: vec![7, 8],
+            turns: 6,
+            seats: vec![UTILITY_SEAT_SPEC.to_owned()],
+            wall_seconds: BTreeMap::new(),
+            measures,
+            compare: None,
+            check: None,
+        };
+        let mut file = BaselinesFile::default();
+        file.upsert(report.as_baselines());
+
+        // Undeclared: every seed × specialist fails — four rows, which is the control.
+        let before: Vec<String> = report
+            .check(&file)
+            .unwrap()
+            .iter()
+            .map(|violation| format!("{} {}", violation.seed, violation.measure))
+            .collect();
+        assert_eq!(
+            before,
+            vec![
+                format!("{SEED} {}", accepted("food")),
+                format!("{SEED} {}", accepted("land")),
+                format!("{OTHER_SEED} {}", accepted("food")),
+                format!("{OTHER_SEED} {}", accepted("land")),
+            ],
+            "the gate fires on every roster specialist of every seed before any exemption"
+        );
+
+        // Declare exactly one of them.
+        entry(&mut file).declined.push(DeclinedSpecialist {
+            seed: SEED.to_owned(),
+            seat: SEAT.to_owned(),
+            specialist: "land".to_owned(),
+            note: A_REASON.to_owned(),
+        });
+        let after: Vec<String> = report
+            .check(&file)
+            .unwrap()
+            .iter()
+            .map(|violation| format!("{} {}", violation.seed, violation.measure))
+            .collect();
+        assert_eq!(
+            after,
+            vec![
+                format!("{SEED} {}", accepted("food")),
+                format!("{OTHER_SEED} {}", accepted("food")),
+                format!("{OTHER_SEED} {}", accepted("land")),
+            ],
+            "the sibling specialist on the same row, and the same specialist on the other seed, \
+             must still fail"
+        );
+    }
+
+    /// ⛔ **AN EXEMPTION RETIRES ITSELF.** The two ways one can rot — the specialist starts winning
+    /// again and nobody withdrew the line, or the line never said why — both fail, and neither
+    /// suppresses the gate. Same *the-file-must-agree* rule as `degenerate`, one level down.
+    #[test]
+    fn a_stale_or_unexplained_exemption_is_a_violation_and_exempts_nothing() {
+        let accepted = |name: &str| format!("{M_SPECIALIST_PREFIX}{name}.{M_ACCEPTED}");
+        let declined_marker =
+            |name: &str| format!("{M_SPECIALIST_PREFIX}{name}.{M_DECLINED_MARKER}");
+        let mut file = baselines_with(&[(M_POPULATION_WORKING, Some(12.0))], BASELINE_TOLERANCE);
+        entry(&mut file).seats = vec![UTILITY_SEAT_SPEC.to_owned()];
+        let declare = |file: &mut BaselinesFile, note: &str| {
+            entry(file).declined = vec![DeclinedSpecialist {
+                seed: SEED.to_owned(),
+                seat: SEAT.to_owned(),
+                specialist: "land".to_owned(),
+                note: note.to_owned(),
+            }];
+        };
+
+        // Stale: the exemption stands, but `Land` is winning again.
+        declare(&mut file, A_REASON);
+        let winning = report_of(
+            UTILITY_SEAT_SPEC,
+            &[
+                (M_POPULATION_WORKING, Some(12.0)),
+                (&accepted("food"), Some(MIN_ACCEPTED)),
+                (&accepted("land"), Some(MIN_ACCEPTED)),
+            ],
+        );
+        let violations = winning.check(&file).unwrap();
+        assert_eq!(
+            violations
+                .iter()
+                .map(|violation| violation.measure.as_str())
+                .collect::<Vec<_>>(),
+            vec![declined_marker("land")],
+            "an exemption nobody withdrew is the only complaint — the run itself is fine"
+        );
+
+        // Unexplained: a blank note suppresses nothing and says so.
+        declare(&mut file, "   ");
+        let inert = report_of(
+            UTILITY_SEAT_SPEC,
+            &[
+                (M_POPULATION_WORKING, Some(12.0)),
+                (&accepted("food"), Some(MIN_ACCEPTED)),
+            ],
+        );
+        let named: Vec<String> = inert
+            .check(&file)
+            .unwrap()
+            .iter()
+            .map(|violation| violation.measure.clone())
+            .collect();
+        assert_eq!(
+            named,
+            vec![declined_marker("land"), accepted("land")],
+            "the note is the point: without one the gate still fires"
+        );
+    }
+
+    /// ⛔ **`--write-baselines` MUST NOT DELETE THE EXEMPTIONS IT CANNOT REGENERATE.** Everything
+    /// else in an entry is derived from the run; this list is a judgement no measure carries. If a
+    /// regeneration dropped it, the next `--check` would go red with a violation whose explanation
+    /// the same command had just removed.
+    #[test]
+    fn regenerating_an_entry_carries_its_hand_written_exemptions_across() {
+        let mut file = baselines_with(&[(M_POPULATION_WORKING, Some(12.0))], BASELINE_TOLERANCE);
+        entry(&mut file).declined.push(DeclinedSpecialist {
+            seed: SEED.to_owned(),
+            seat: SEAT.to_owned(),
+            specialist: "land".to_owned(),
+            note: A_REASON.to_owned(),
+        });
+
+        // A later run of the same seat set, regenerated over the top.
+        let rerun = report_with(&[(M_POPULATION_WORKING, Some(14.0))]);
+        file.upsert(rerun.as_baselines());
+        assert_eq!(
+            entry(&mut file).declined.len(),
+            1,
+            "the regeneration kept the exemption it could not have derived"
+        );
+        assert_eq!(
+            entry(&mut file).measures[SEED][SEAT][M_POPULATION_WORKING],
+            Some(14.0),
+            "and still replaced the measures, which is what it is for"
         );
     }
 

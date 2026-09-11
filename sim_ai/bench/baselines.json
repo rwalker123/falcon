@@ -196,7 +196,7 @@
             "link.reconnects": 0.0,
             "link.turns_lost_to_timeout": 0.0,
             "link.turns_observed": 30.0,
-            "orchestrator.alarm_latency_turns": 4.4,
+            "orchestrator.alarm_latency_turns": 3.3333333333333335,
             "orchestrator.stance_switches_per_100_turns": 0.0,
             "patches_improved": 0.0,
             "patches_owned": 0.0,
@@ -209,11 +209,11 @@
             "specialist.food.intent_churn": 6.0,
             "specialist.food.liveness": 1.0,
             "specialist.food.rejected.conflict": 20.0,
-            "specialist.land.acceptance_rate": 0.3333333333333333,
+            "specialist.land.acceptance_rate": 0.5,
             "specialist.land.accepted": 2.0,
             "specialist.land.intent_churn": 0.6666666666666666,
             "specialist.land.liveness": 0.0,
-            "specialist.land.rejected.conflict": 4.0,
+            "specialist.land.rejected.conflict": 2.0,
             "sustainable_yield": 1.0616778135299683,
             "victory.hegemony": 0.5513707399368286
           },
@@ -260,14 +260,13 @@
             "food_consumption": 0.2488889992237091,
             "food_income": 0.1991109997034073,
             "food_stock": 0.1991109997034073,
-            "herd_biomass_in_view": 1382.06787109375,
+            "herd_biomass_in_view": 2717.169921875,
             "herds_corralled": 0.0,
-            "hunger_deaths_total": 19.0,
+            "hunger_deaths_total": 18.0,
             "idle_workers": 0.0,
-            "intent.food:assign": 0.13333333333333333,
-            "intent.food:relieve": 0.3333333333333333,
-            "intent.food:runway": 0.2,
-            "intent.land:move": 0.3333333333333333,
+            "intent.food:assign": 0.15384615384615385,
+            "intent.food:relieve": 0.6153846153846154,
+            "intent.food:runway": 0.23076923076923078,
             "knowledge.craft.bone_working": 0.0,
             "knowledge.craft.tanning": 0.0,
             "knowledge.craft.weaving": 0.0,
@@ -284,7 +283,7 @@
             "link.reconnects": 0.0,
             "link.turns_lost_to_timeout": 0.0,
             "link.turns_observed": 30.0,
-            "orchestrator.alarm_latency_turns": 5.0,
+            "orchestrator.alarm_latency_turns": 1.0,
             "orchestrator.stance_switches_per_100_turns": 0.0,
             "patches_improved": 0.0,
             "patches_owned": 0.0,
@@ -292,18 +291,13 @@
             "population_elders": 1.0,
             "population_working": 4.0,
             "runway_turns": 1.0,
-            "specialist.food.acceptance_rate": 0.7692307692307693,
-            "specialist.food.accepted": 10.0,
-            "specialist.food.intent_churn": 2.6666666666666665,
+            "specialist.food.acceptance_rate": 0.8125,
+            "specialist.food.accepted": 13.0,
+            "specialist.food.intent_churn": 2.3333333333333335,
             "specialist.food.liveness": 1.0,
             "specialist.food.rejected.conflict": 3.0,
-            "specialist.land.acceptance_rate": 0.7142857142857143,
-            "specialist.land.accepted": 5.0,
-            "specialist.land.intent_churn": 1.0,
-            "specialist.land.liveness": 1.0,
-            "specialist.land.rejected.conflict": 2.0,
             "sustainable_yield": 0.3791666626930237,
-            "victory.hegemony": 0.5509629249572754
+            "victory.hegemony": 0.5509399771690369
           },
           "2": {
             "actual_yield": 0.0,
@@ -346,7 +340,15 @@
         "population_children": 0.0,
         "population_elders": 0.0,
         "population_working": 0.0
-      }
+      },
+      "declined": [
+        {
+          "seed": "23",
+          "seat": "1",
+          "specialist": "land",
+          "note": "Land is honestly inert on this seed, not ignored: no unowned gathering site within land.horizon_tiles of the band out-pays the ground it already stands on, so `better_ground` has nothing legal to propose and `land_short` is raised on all 30 turns. The absent `specialist.land.*` measures ARE that result \u2014 do not restore them by relaxing the food-site filter `Land::better_patch` shares with `Food::reachable_sources`, which is the thing stopping the band from walking onto a patch `assign_labor \u2026 forage` then refuses (`plant_rung_site_refusal`, core_sim/src/bin/server.rs)."
+        }
+      ]
     }
   }
 }

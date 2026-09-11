@@ -427,6 +427,27 @@ spec implies (`utility` → `DISABLEABLE_SPECIALISTS` minus its `~` ablations, `
 Without it an inert specialist read as a passing check: `Land` proposed **nothing** across 30 turns
 of bench seed 23 and `--check` was green.
 
+⛔ **"Ignored" and "correctly declined" are different states, and only the file can tell them
+apart.** Seed 23 is now the second kind. Once `better_patch` gained the food-site filter it shares
+with `Food::reachable_sources`, no unowned gathering site within `land.horizon_tiles` out-pays the
+ground the band already stands on — so `Land` raises `land_short` for all 30 turns and has nothing
+legal to propose, and its measures go absent for the *right* reason. No measure carries that
+judgement, so the file carries it: a `declined: [{seed, seat, specialist, note}]` list beside
+`degenerate`, keyed on all three so an exemption covers exactly one cell. The note is the point —
+it must say why the seat is inert, or the next reader "restores" the measures by relaxing the very
+filter that stopped the band walking onto ground `assign_labor … forage` refuses.
+
+It self-retires both ways it can rot: a declared specialist that starts winning again is a
+`declined_marker` violation (withdraw the line), and a declaration with a blank note is a
+`declined_marker` violation **and** exempts nothing, so a note-less row can never suppress the gate.
+`a_declined_specialist_is_exempt_on_its_own_row_only` pins the narrowness — the sibling specialist
+on the same row and the same specialist on another seed both still fail.
+
+⚠ Unlike `degenerate`, which `as_baselines` **derives** from `population_working`, this list is a
+hand-written judgement no regeneration can recompute — so `upsert` carries it across
+`--write-baselines` explicitly. Without that, regenerating would delete the exemption and the next
+`--check` would go red citing a violation the same command had just erased the explanation for.
+
 ⛔ **The gate is "never wins", not `liveness`.** §8.2's bar is *"a specialist whose proposals never
 win is not being measured by the ablation, it is being ignored"* — and losing a single window to a
 higher-scoring sibling is ordinary arbitration, not being ignored. On seed 11 `Land` wins at ticks 9
