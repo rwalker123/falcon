@@ -5,6 +5,7 @@ members = [
     "sim_runtime",
     "integration_tests",
     "launcher",
+    "sim_ai",
     "shadow_scale_flatbuffers",
     "clients/godot_thin_client/native",
     "tools/script_harness",

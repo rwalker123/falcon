@@ -9,6 +9,7 @@
 #     ShadowScale.app         # double-click — ONE bundle, everything inside it
 #       Contents/MacOS/shadowscale_launcher    # the launcher (crate `launcher`)
 #       Contents/Helpers/server                # the core_sim server
+#       Contents/Helpers/sim_ai                # the AI player (crate `sim_ai`), one per rival
 #       Contents/Helpers/ShadowScaleClient.app # the Godot client (.dylib + data embedded)
 #     README.txt
 #
@@ -34,6 +35,8 @@ cd "$ROOT_DIR"
 GODOT_PROJECT="clients/godot_thin_client"
 DYLIB_NAME="libshadow_scale_godot.dylib"
 SERVER_NAME="server"
+# The AI player program (crate `sim_ai`); the launcher starts one per rival seat.
+AI_NAME="sim_ai"
 APP_NAME="ShadowScaleClient.app"
 # The outer bundle the player double-clicks; the client .app nests inside it.
 LAUNCHER_APP="ShadowScale.app"
@@ -56,12 +59,15 @@ command -v "$GODOT_BIN" >/dev/null || die "Godot ('$GODOT_BIN') not on PATH — 
 # --- 1. build the native server + launcher + GDExtension (godot-build copies the dylib) ---
 info "Building server + launcher + GDExtension (native) ..."
 cargo build --release --locked -p core_sim --bin server
+cargo build --release --locked -p sim_ai --bin "$AI_NAME"
 cargo build --release --locked -p launcher --bin "$LAUNCHER_NAME"
 cargo xtask godot-build   # builds shadow_scale_godot + copies dylib to native/bin/macos
 
 SERVER_SRC="$ROOT_DIR/target/release/$SERVER_NAME"
+AI_SRC="$ROOT_DIR/target/release/$AI_NAME"
 LAUNCHER_SRC="$ROOT_DIR/target/release/$LAUNCHER_NAME"
 [ -f "$SERVER_SRC" ] || die "server build produced no $SERVER_NAME"
+[ -f "$AI_SRC" ] || die "sim_ai build produced no $AI_NAME"
 [ -f "$LAUNCHER_SRC" ] || die "launcher build produced no $LAUNCHER_NAME"
 [ -f "$ROOT_DIR/$GODOT_PROJECT/native/bin/macos/$DYLIB_NAME" ] || die "godot-build produced no $DYLIB_NAME"
 
@@ -101,6 +107,8 @@ cp "$LAUNCHER_SRC" "$LAUNCHER_APP_DIR/Contents/MacOS/$LAUNCHER_NAME"
 chmod +x "$LAUNCHER_APP_DIR/Contents/MacOS/$LAUNCHER_NAME"
 cp "$SERVER_SRC" "$LAUNCHER_APP_DIR/Contents/Helpers/$SERVER_NAME"
 chmod +x "$LAUNCHER_APP_DIR/Contents/Helpers/$SERVER_NAME"
+cp "$AI_SRC" "$LAUNCHER_APP_DIR/Contents/Helpers/$AI_NAME"
+chmod +x "$LAUNCHER_APP_DIR/Contents/Helpers/$AI_NAME"
 # The client was exported to the package root; move it inside the bundle.
 mv "$PKG_DIR/$APP_NAME" "$LAUNCHER_APP_DIR/Contents/Helpers/$APP_NAME"
 
@@ -122,6 +130,8 @@ cp "$SCRIPT_DIR/macos_dist/README.txt"  "$PKG_DIR/README.txt"
 info "Ad-hoc signing the bundle (inside out) ..."
 codesign --force --sign - --timestamp=none \
   "$LAUNCHER_APP_DIR/Contents/Helpers/$SERVER_NAME"
+codesign --force --sign - --timestamp=none \
+  "$LAUNCHER_APP_DIR/Contents/Helpers/$AI_NAME"
 codesign --force --sign - --timestamp=none \
   "$LAUNCHER_APP_DIR/Contents/Helpers/$APP_NAME"
 codesign --force --sign - --timestamp=none \

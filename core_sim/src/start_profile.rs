@@ -7,7 +7,6 @@ use std::{
 
 use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sim_schema::{
     CampaignInventoryEntryState, CampaignLabel as SchemaCampaignLabel, CampaignProfileState,
     CampaignStartingUnitState,
@@ -135,8 +134,6 @@ pub struct StartProfileOverrides {
     pub starting_knowledge_tags: Vec<String>,
     #[serde(default)]
     pub inventory: Vec<InventoryEntry>,
-    #[serde(default)]
-    pub ai_profile_overrides: HashMap<String, Value>,
     #[serde(default)]
     pub victory_modes_enabled: Vec<String>,
     #[serde(default)]
@@ -867,6 +864,7 @@ mod tests {
         fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
         forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
     };
+    use serde_json::Value;
 
     /// Every knowledge the intensification ladder gates on (or earns), and the id it must map to.
     /// `foddering` (F3) is earned by running a pen but gates no rung of its own — still it must be

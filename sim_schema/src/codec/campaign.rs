@@ -1,9 +1,14 @@
 //! Campaign-section FlatBuffers serialization.
 
-use crate::codec::FbBuilder;
+use crate::codec::{
+    changed_scalar, decode_strings, map_rows, map_rows_if_present, text, FbBuilder,
+};
 use crate::state::campaign::{
-    CampaignLabel, CampaignProfileState, CommandEventState, OpeningLoadoutState, PendingForksState,
-    StanceState, VictorySnapshotState, VoiceLineState, VoiceMediumState,
+    CampaignInventoryEntryState, CampaignLabel, CampaignProfileState, CampaignStartingUnitState,
+    CommandEventState, ForkChoiceState, GlossEntryState, OpeningKitDefaultState,
+    OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState, PendingForksState,
+    StanceAxisState, StanceState, VictoryModeSnapshotState, VictoryResultState,
+    VictorySnapshotState, VoiceLineState, VoiceMediumState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -487,4 +492,175 @@ pub(crate) fn create_victory_state<'a>(
             winner,
         },
     )
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` above, in the same order.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_campaign_section(
+    section: fb::CampaignSection<'_>,
+    snapshot: &mut WorldSnapshot,
+) {
+    snapshot.campaign_profiles = map_rows(section.campaignProfiles(), decode_campaign_profile);
+    snapshot.command_events = map_rows(section.commandEvents(), decode_command_event);
+    // The header carries the same `VictoryState` offset; one home is enough, and this is the
+    // section whose serializer owns the table.
+    snapshot.victory = section
+        .victory()
+        .map(decode_victory_state)
+        .unwrap_or_default();
+    snapshot.pending_forks = map_rows(section.pendingForks(), decode_pending_forks);
+    snapshot.stance_axes = map_rows(section.stanceAxes(), decode_stance);
+    snapshot.voice_medium = map_rows(section.voiceMedium(), decode_voice_medium);
+    snapshot.command_events_retention_turns = section.commandEventsRetentionTurns();
+    snapshot.opening_loadout = section
+        .openingLoadout()
+        .map(decode_opening_loadout)
+        .unwrap_or_default();
+}
+
+pub(crate) fn decode_campaign_section_delta(
+    section: fb::CampaignSection<'_>,
+    delta: &mut WorldDelta,
+) {
+    delta.campaign_profiles =
+        map_rows_if_present(section.campaignProfiles(), decode_campaign_profile);
+    delta.command_events = map_rows_if_present(section.commandEvents(), decode_command_event);
+    delta.victory = section.victory().map(decode_victory_state);
+    delta.pending_forks = map_rows_if_present(section.pendingForks(), decode_pending_forks);
+    delta.stance_axes = map_rows_if_present(section.stanceAxes(), decode_stance);
+    delta.voice_medium = map_rows_if_present(section.voiceMedium(), decode_voice_medium);
+    delta.opening_loadout = section.openingLoadout().map(decode_opening_loadout);
+    // `0` IS the absent encoding — see `serialize_campaign_section_delta`.
+    delta.command_events_retention_turns = changed_scalar(section.commandEventsRetentionTurns());
+}
+
+/// The inverse of [`create_campaign_label`]. A label with nothing in it is never written, so a
+/// present table always has at least one field; the field-level `Option`s carry through as is.
+pub(crate) fn decode_campaign_label(label: fb::CampaignLabel<'_>) -> CampaignLabel {
+    CampaignLabel {
+        profile_id: label.profileId().map(str::to_owned),
+        title: label.title().map(str::to_owned),
+        title_loc_key: label.titleLocKey().map(str::to_owned),
+        subtitle: label.subtitle().map(str::to_owned),
+        subtitle_loc_key: label.subtitleLocKey().map(str::to_owned),
+    }
+}
+
+fn decode_campaign_profile(profile: fb::CampaignProfile<'_>) -> CampaignProfileState {
+    CampaignProfileState {
+        id: profile.id().map(str::to_owned),
+        title: profile.title().map(str::to_owned),
+        title_loc_key: profile.titleLocKey().map(str::to_owned),
+        subtitle: profile.subtitle().map(str::to_owned),
+        subtitle_loc_key: profile.subtitleLocKey().map(str::to_owned),
+        // Empty vectors are left absent by the serializer; absent reads back as empty.
+        starting_units: map_rows(profile.startingUnits(), |unit| CampaignStartingUnitState {
+            kind: text(unit.kind()),
+            count: unit.count(),
+            tags: decode_strings(unit.tags()),
+        }),
+        inventory: map_rows(profile.inventory(), |entry| CampaignInventoryEntryState {
+            item: text(entry.item()),
+            quantity: entry.quantity(),
+        }),
+        knowledge_tags: decode_strings(profile.knowledgeTags()),
+        primary_food_module: profile.primaryFoodModule().map(str::to_owned),
+        secondary_food_module: profile.secondaryFoodModule().map(str::to_owned),
+    }
+}
+
+fn decode_voice_lines(
+    lines: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::VoiceLine<'_>>>>,
+) -> Vec<VoiceLineState> {
+    map_rows(lines, |line| VoiceLineState {
+        register: text(line.register()),
+        text: text(line.text()),
+    })
+}
+
+fn decode_pending_forks(state: fb::PendingForksState<'_>) -> PendingForksState {
+    PendingForksState {
+        faction: state.faction(),
+        forks: map_rows(state.forks(), |fork| PendingForkState {
+            beat_id: text(fork.beatId()),
+            wardrobe_id: text(fork.wardrobeId()),
+            posted_tick: fork.postedTick(),
+            narration: decode_voice_lines(fork.narration()),
+            choices: map_rows(fork.choices(), |choice| ForkChoiceState {
+                choice_id: text(choice.choiceId()),
+                label: decode_voice_lines(choice.label()),
+                is_defer: choice.isDefer(),
+            }),
+            gloss: map_rows(fork.gloss(), |entry| GlossEntryState {
+                signal: text(entry.signal()),
+                value: entry.value(),
+            }),
+        }),
+    }
+}
+
+fn decode_stance(state: fb::StanceState<'_>) -> StanceState {
+    StanceState {
+        faction: state.faction(),
+        axes: map_rows(state.axes(), |axis| StanceAxisState {
+            axis: text(axis.axis()),
+            value: axis.value(),
+        }),
+    }
+}
+
+fn decode_voice_medium(state: fb::VoiceMediumState<'_>) -> VoiceMediumState {
+    VoiceMediumState {
+        faction: state.faction(),
+        medium_id: text(state.mediumId()),
+        medium_index: state.mediumIndex(),
+    }
+}
+
+fn decode_opening_loadout(state: fb::OpeningLoadoutState<'_>) -> OpeningLoadoutState {
+    OpeningLoadoutState {
+        pickable_materials: decode_strings(state.pickableMaterials()),
+        material_defaults: map_rows(state.materialDefaults(), |entry| {
+            OpeningMaterialDefaultState {
+                material_id: text(entry.materialId()),
+                units: entry.units(),
+            }
+        }),
+        craftable_recipe_ids: decode_strings(state.craftableRecipeIds()),
+        kit_defaults: map_rows(state.kitDefaults(), |entry| OpeningKitDefaultState {
+            kit_id: text(entry.kitId()),
+            count: entry.count(),
+        }),
+    }
+}
+
+fn decode_command_event(event: fb::CommandEventState<'_>) -> CommandEventState {
+    CommandEventState {
+        tick: event.tick(),
+        kind: text(event.kind()),
+        faction: event.faction(),
+        label: text(event.label()),
+        detail: event.detail().map(str::to_owned),
+        seq: event.seq(),
+    }
+}
+
+/// The inverse of [`create_victory_state`].
+pub(crate) fn decode_victory_state(state: fb::VictoryState<'_>) -> VictorySnapshotState {
+    VictorySnapshotState {
+        modes: map_rows(state.modes(), |mode| VictoryModeSnapshotState {
+            id: text(mode.id()),
+            kind: text(mode.kind()),
+            progress: mode.progress(),
+            threshold: mode.threshold(),
+            achieved: mode.achieved(),
+        }),
+        winner: state.winner().map(|winner| VictoryResultState {
+            mode: text(winner.mode()),
+            faction: winner.faction(),
+            tick: winner.tick(),
+        }),
+    }
 }

@@ -1,11 +1,14 @@
 //! Subsistence-section FlatBuffers serialization.
 
-use crate::codec::FbBuilder;
+use crate::codec::{
+    decode_scalars, decode_strings, map_rows, map_rows_if_present, text, FbBuilder,
+};
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
+    BuildLegState, CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
     ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    LadderKnowledgeState, MaterialDefState, MaterialPayoff, RecipeDefState, RouteRungState,
-    SedentarizationState,
+    LadderKnowledgeProgress, LadderKnowledgeState, MaterialDefState, MaterialPayoff,
+    RecipeDefState, RecipeInputState, RecipeOutputState, RouteRungState, SedentarizationState,
+    SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -1057,4 +1060,422 @@ fn create_food_modules<'a>(
         entries.push(entry);
     }
     builder.create_vector(&entries)
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` above, in the same order. The herd and patch
+// literals are EXHAUSTIVE on purpose: a field appended to either struct and its serializer does
+// not compile until its line exists here.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_subsistence_section(
+    section: fb::SubsistenceSection<'_>,
+    snapshot: &mut WorldSnapshot,
+) {
+    snapshot.herds = map_rows(section.herds(), decode_herd);
+    snapshot.forage_patches = map_rows(section.foragePatches(), decode_forage_patch);
+    snapshot.sedentarization = map_rows(section.sedentarization(), decode_sedentarization);
+    snapshot.intensification_knowledge = map_rows(
+        section.intensificationKnowledge(),
+        decode_intensification_knowledge,
+    );
+    snapshot.ladder_knowledge = map_rows(section.ladderKnowledge(), decode_ladder_knowledge);
+    snapshot.food_modules = map_rows(section.foodModules(), decode_food_module);
+    snapshot.kits = map_rows(section.kits(), decode_kit);
+    snapshot.default_hunt_kit_id = text(section.defaultHuntKitId());
+    snapshot.default_forage_kit_id = text(section.defaultForageKitId());
+    snapshot.default_scout_kit_id = text(section.defaultScoutKitId());
+    snapshot.default_warrior_kit_id = text(section.defaultWarriorKitId());
+    snapshot.default_expedition_kit_id = text(section.defaultExpeditionKitId());
+    snapshot.equipment_config_json = text(section.equipmentConfigJson());
+    snapshot.materials = map_rows(section.materials(), decode_material);
+    snapshot.characteristic_bands =
+        map_rows(section.characteristicBands(), decode_characteristic_band);
+    snapshot.recipes = map_rows(section.recipes(), decode_recipe);
+    snapshot.craft_knowledge = map_rows(section.craftKnowledge(), decode_craft_knowledge);
+    snapshot.route_rungs = map_rows(section.routeRungs(), decode_route_rung);
+}
+
+pub(crate) fn decode_subsistence_section_delta(
+    section: fb::SubsistenceSection<'_>,
+    delta: &mut WorldDelta,
+) {
+    delta.herds = map_rows_if_present(section.herds(), decode_herd);
+    delta.forage_patches = map_rows_if_present(section.foragePatches(), decode_forage_patch);
+    delta.sedentarization = map_rows_if_present(section.sedentarization(), decode_sedentarization);
+    delta.intensification_knowledge = map_rows_if_present(
+        section.intensificationKnowledge(),
+        decode_intensification_knowledge,
+    );
+    delta.ladder_knowledge =
+        map_rows_if_present(section.ladderKnowledge(), decode_ladder_knowledge);
+    delta.food_modules = map_rows_if_present(section.foodModules(), decode_food_module);
+    delta.kits = map_rows_if_present(section.kits(), decode_kit);
+    delta.default_hunt_kit_id = section.defaultHuntKitId().map(str::to_owned);
+    delta.default_forage_kit_id = section.defaultForageKitId().map(str::to_owned);
+    delta.default_scout_kit_id = section.defaultScoutKitId().map(str::to_owned);
+    delta.default_warrior_kit_id = section.defaultWarriorKitId().map(str::to_owned);
+    delta.default_expedition_kit_id = section.defaultExpeditionKitId().map(str::to_owned);
+    delta.equipment_config_json = section.equipmentConfigJson().map(str::to_owned);
+    delta.materials = map_rows_if_present(section.materials(), decode_material);
+    delta.characteristic_bands =
+        map_rows_if_present(section.characteristicBands(), decode_characteristic_band);
+    delta.recipes = map_rows_if_present(section.recipes(), decode_recipe);
+    delta.craft_knowledge = map_rows_if_present(section.craftKnowledge(), decode_craft_knowledge);
+    delta.route_rungs = map_rows_if_present(section.routeRungs(), decode_route_rung);
+}
+
+fn decode_material(state: fb::MaterialDefState<'_>) -> MaterialDefState {
+    MaterialDefState {
+        id: text(state.id()),
+        craft: text(state.craft()),
+        axes: decode_strings(state.axes()),
+        hand_workable: state.handWorkable(),
+        hand_working_rate: state.handWorkingRate(),
+        hand_working_quality_ceiling: state.handWorkingQualityCeiling(),
+        tool_item_id: text(state.toolItemId()),
+    }
+}
+
+fn decode_characteristic_band(state: fb::CharacteristicBandState<'_>) -> CharacteristicBandState {
+    CharacteristicBandState {
+        name: text(state.name()),
+        from: state.from(),
+    }
+}
+
+fn decode_recipe(state: fb::RecipeDefState<'_>) -> RecipeDefState {
+    RecipeDefState {
+        id: text(state.id()),
+        display_name: text(state.displayName()),
+        craft: text(state.craft()),
+        group: text(state.group()),
+        work: state.work(),
+        requires_knowledge: decode_strings(state.requiresKnowledge()),
+        inputs: map_rows(state.inputs(), |input| RecipeInputState {
+            material_id: text(input.materialId()),
+            amount: input.amount(),
+            reads_axis: text(input.readsAxis()),
+        }),
+        outputs: map_rows(state.outputs(), |output| RecipeOutputState {
+            equipment_id: text(output.equipmentId()),
+            material_id: text(output.materialId()),
+            amount: output.amount(),
+        }),
+    }
+}
+
+fn decode_craft_knowledge(state: fb::CraftKnowledgeState<'_>) -> CraftKnowledgeState {
+    CraftKnowledgeState {
+        faction: state.faction(),
+        craft_id: text(state.craftId()),
+        display_name: text(state.displayName()),
+        known: state.known(),
+        progress: state.progress(),
+        completion_threshold: state.completionThreshold(),
+    }
+}
+
+fn decode_kit(state: fb::KitOption<'_>) -> KitOptionState {
+    KitOptionState {
+        id: text(state.id()),
+        display_name: text(state.displayName()),
+        jobs: decode_strings(state.jobs()),
+        attack: state.attack(),
+        hunt_carry_per_worker_biomass: state.huntCarryPerWorkerBiomass(),
+        forage_carry_per_worker_biomass: state.forageCarryPerWorkerBiomass(),
+        scout_vantage_range: state.scoutVantageRange(),
+        attack_min_body_mass: state.attackMinBodyMass(),
+        attack_max_body_mass: state.attackMaxBodyMass(),
+        dispersion: state.dispersion(),
+        exposure: state.exposure(),
+        item_ids: decode_strings(state.itemIds()),
+        build_rate: state.buildRate(),
+        build_work_per_worker: state.buildWorkPerWorker(),
+        build_work_branch: text(state.buildWorkBranch()),
+        build_work_rung: text(state.buildWorkRung()),
+        expedition_sight_range: state.expeditionSightRange(),
+    }
+}
+
+fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> SedentarizationState {
+    SedentarizationState {
+        faction: state.faction(),
+        score: state.score(),
+        stage: text(state.stage()),
+    }
+}
+
+/// `None` crosses as [`crate::NO_BUILD_DESTINATION_CAPACITY`] rather than as `0` (a real
+/// capacity a real source can have) — see the herd serializer.
+fn decode_build_destination_capacity(raw: f32) -> Option<f32> {
+    (raw != crate::NO_BUILD_DESTINATION_CAPACITY).then_some(raw)
+}
+
+fn decode_build_legs(
+    legs: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::BuildLegState<'_>>>>,
+) -> Vec<BuildLegState> {
+    map_rows(legs, |leg| BuildLegState {
+        rung: text(leg.rung()),
+        work_remaining: leg.workRemaining(),
+        turns_remaining: leg.turnsRemaining(),
+    })
+}
+
+fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
+    HerdTelemetryState {
+        id: text(herd.id()),
+        label: text(herd.label()),
+        species: text(herd.species()),
+        x: herd.x(),
+        y: herd.y(),
+        biomass: herd.biomass(),
+        route_length: herd.routeLength(),
+        next_x: herd.nextX(),
+        next_y: herd.nextY(),
+        size_class: text(herd.sizeClass()),
+        huntable: herd.huntable(),
+        ecology_phase: text(herd.ecologyPhase()),
+        domestication: herd.domestication(),
+        corralled: herd.corralled(),
+        corral_progress: herd.corralProgress(),
+        per_worker_yield: herd.perWorkerYield(),
+        corral_yield: herd.corralYield(),
+        pen_fed_fraction: herd.penFedFraction(),
+        carrying_capacity: herd.carryingCapacity(),
+        graze_range_radius: herd.grazeRangeRadius(),
+        pen_radius: herd.penRadius(),
+        pen_footprint_tiles: herd.penFootprintTiles(),
+        pen_pasture_fraction: herd.penPastureFraction(),
+        pen_extend_progress: herd.penExtendProgress(),
+        husbandry_ceiling: text(herd.husbandryCeiling()),
+        body_mass: herd.bodyMass(),
+        food_per_animal: herd.foodPerAnimal(),
+        herders_needed: herd.herdersNeeded(),
+        herded_fraction: herd.herdedFraction(),
+        pastoral_yield: herd.pastoralYield(),
+        fodder_draw: herd.fodderDraw(),
+        pen_fodder_shortfall: herd.penFodderShortfall(),
+        attack: herd.attack(),
+        defense: herd.defense(),
+        ferocity: herd.ferocity(),
+        aggression: herd.aggression(),
+        prey_sense_radius: herd.preySenseRadius(),
+        herders_needed_if_managed: herd.herdersNeededIfManaged(),
+        upkeep_demand: herd.upkeepDemand(),
+        upkeep_supplied: herd.upkeepSupplied(),
+        upkeep_shortfall: herd.upkeepShortfall(),
+        upkeep_workers_needed: herd.upkeepWorkersNeeded(),
+        has_neglect_grace: herd.hasNeglectGrace(),
+        neglect_grace_remaining: herd.neglectGraceRemaining(),
+        provisions_per_biomass: herd.provisionsPerBiomass(),
+        fodder_per_biomass: herd.fodderPerBiomass(),
+        per_worker_biomass: herd.perWorkerBiomass(),
+        // Absent when empty on the wire; absent reads back as the empty curve it stood for.
+        regrowth_samples: decode_scalars(herd.regrowthSamples()),
+        collapse_fraction: herd.collapseFraction(),
+        stressed_fraction: herd.stressedFraction(),
+        engage_rate: herd.engageRate(),
+        durability: herd.durability(),
+        stay_fraction: herd.stayFraction(),
+        default_kit_id: text(herd.defaultKitId()),
+        material_per_biomass: decode_material_payoffs(herd.materialPerBiomass()),
+        per_worker_material: decode_material_payoffs(herd.perWorkerMaterial()),
+        corral_material: decode_material_payoffs(herd.corralMaterial()),
+        pastoral_material: decode_material_payoffs(herd.pastoralMaterial()),
+        tame_work_done: herd.tameWorkDone(),
+        tame_work_cost: herd.tameWorkCost(),
+        corral_work_done: herd.corralWorkDone(),
+        corral_work_cost: herd.corralWorkCost(),
+        build_turns_remaining: herd.buildTurnsRemaining(),
+        build_work_from_gear: herd.buildWorkFromGear(),
+        build_work_per_worker_turn: herd.buildWorkPerWorkerTurn(),
+        tame_upkeep_demand: herd.tameUpkeepDemand(),
+        corral_upkeep_demand: herd.corralUpkeepDemand(),
+        meter_rot_per_turn: herd.meterRotPerTurn(),
+        build_queue_position: herd.buildQueuePosition(),
+        build_blocked_reason: text(herd.buildBlockedReason()),
+        build_destination_rung: text(herd.buildDestinationRung()),
+        build_legs: decode_build_legs(herd.buildLegs()),
+        build_destination_capacity: decode_build_destination_capacity(
+            herd.buildDestinationCapacity(),
+        ),
+        build_kit_id: text(herd.buildKitId()),
+        pen_extend_cost: herd.penExtendCost(),
+        standing_output_fraction: herd.standingOutputFraction(),
+        standing_output_target: herd.standingOutputTarget(),
+        output_recommit_progress: herd.outputRecommitProgress(),
+        output_recommit_cost: herd.outputRecommitCost(),
+        current_rung: text(herd.currentRung()),
+        build_material_cost: decode_material_payoffs(herd.buildMaterialCost()),
+        upkeep_material_demand: decode_material_payoffs(herd.upkeepMaterialDemand()),
+        upkeep_material_supplied: decode_material_payoffs(herd.upkeepMaterialSupplied()),
+        tame_upkeep_material_demand: decode_material_payoffs(herd.tameUpkeepMaterialDemand()),
+        corral_upkeep_material_demand: decode_material_payoffs(herd.corralUpkeepMaterialDemand()),
+        corral_build_material_cost: decode_material_payoffs(herd.corralBuildMaterialCost()),
+        upkeep_kit_id: text(herd.upkeepKitId()),
+        upkeep_kit_named: herd.upkeepKitNamed(),
+    }
+}
+
+fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
+    ForagePatchState {
+        x: patch.x(),
+        y: patch.y(),
+        cultivation_progress: patch.cultivationProgress(),
+        is_cultivated: patch.isCultivated(),
+        // The pair `hasOwner`/`owner` is how the serializer spells `Option`.
+        owner: patch.hasOwner().then(|| patch.owner()),
+        biomass: patch.biomass(),
+        carrying_capacity: patch.carryingCapacity(),
+        ecology_phase: text(patch.ecologyPhase()),
+        per_worker_yield: patch.perWorkerYield(),
+        tended_yield: patch.tendedYield(),
+        field_progress: patch.fieldProgress(),
+        is_field: patch.isField(),
+        field_yield: patch.fieldYield(),
+        sow_site_refusal: text(patch.sowSiteRefusal()),
+        composition: decode_flora_shares(patch.composition()).into(),
+        composition_standing_biomass: decode_scalars(patch.compositionStandingBiomass()),
+        composition_provisions_per_biomass: decode_scalars(patch.compositionProvisionsPerBiomass()),
+        composition_fodder_per_biomass: decode_scalars(patch.compositionFodderPerBiomass()),
+        composition_material_per_biomass: map_rows(
+            patch.compositionMaterialPerBiomass(),
+            |entry| SpeciesMaterialRates {
+                rows: decode_material_payoffs(entry.rows()),
+            },
+        ),
+        committed_species: text(patch.committedSpecies()),
+        committed_display_name: text(patch.committedDisplayName()),
+        tended_fodder: patch.tendedFodder(),
+        field_fodder: patch.fieldFodder(),
+        upkeep_demand: patch.upkeepDemand(),
+        upkeep_supplied: patch.upkeepSupplied(),
+        upkeep_shortfall: patch.upkeepShortfall(),
+        upkeep_workers_needed: patch.upkeepWorkersNeeded(),
+        has_neglect_grace: patch.hasNeglectGrace(),
+        neglect_grace_remaining: patch.neglectGraceRemaining(),
+        provisions_per_biomass: patch.provisionsPerBiomass(),
+        fodder_per_biomass: patch.fodderPerBiomass(),
+        per_worker_biomass: patch.perWorkerBiomass(),
+        regrowth_samples: decode_scalars(patch.regrowthSamples()),
+        collapse_fraction: patch.collapseFraction(),
+        stressed_fraction: patch.stressedFraction(),
+        material_per_biomass: decode_material_payoffs(patch.materialPerBiomass()),
+        per_worker_material: decode_material_payoffs(patch.perWorkerMaterial()),
+        cultivation_work_done: patch.cultivationWorkDone(),
+        cultivation_work_cost: patch.cultivationWorkCost(),
+        field_work_done: patch.fieldWorkDone(),
+        field_work_cost: patch.fieldWorkCost(),
+        build_turns_remaining: patch.buildTurnsRemaining(),
+        build_work_from_gear: patch.buildWorkFromGear(),
+        build_work_per_worker_turn: patch.buildWorkPerWorkerTurn(),
+        cultivation_upkeep_demand: patch.cultivationUpkeepDemand(),
+        field_upkeep_demand: patch.fieldUpkeepDemand(),
+        meter_rot_per_turn: patch.meterRotPerTurn(),
+        build_queue_position: patch.buildQueuePosition(),
+        build_blocked_reason: text(patch.buildBlockedReason()),
+        build_destination_rung: text(patch.buildDestinationRung()),
+        build_legs: decode_build_legs(patch.buildLegs()),
+        tile_capacity: patch.tileCapacity(),
+        build_destination_capacity: decode_build_destination_capacity(
+            patch.buildDestinationCapacity(),
+        ),
+        build_kit_id: text(patch.buildKitId()),
+        current_rung: text(patch.currentRung()),
+        build_material_cost: decode_material_payoffs(patch.buildMaterialCost()),
+        upkeep_material_demand: decode_material_payoffs(patch.upkeepMaterialDemand()),
+        upkeep_material_supplied: decode_material_payoffs(patch.upkeepMaterialSupplied()),
+        cultivation_upkeep_material_demand: decode_material_payoffs(
+            patch.cultivationUpkeepMaterialDemand(),
+        ),
+        field_upkeep_material_demand: decode_material_payoffs(patch.fieldUpkeepMaterialDemand()),
+        upkeep_kit_id: text(patch.upkeepKitId()),
+        upkeep_kit_named: patch.upkeepKitNamed(),
+    }
+}
+
+/// The inverse of [`create_flora_shares`], in the order the wire carries them.
+fn decode_flora_shares(
+    shares: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::FloraShareInfo<'_>>>>,
+) -> Vec<FloraShareInfo> {
+    map_rows(shares, |share| FloraShareInfo {
+        species: text(share.species()),
+        display_name: text(share.displayName()),
+        share: share.share(),
+        can_cultivate: share.canCultivate(),
+        can_sow: share.canSow(),
+        cultivate_yield_ratio: share.cultivateYieldRatio(),
+        sow_yield_ratio: share.sowYieldRatio(),
+        cultivate_payoff: share.cultivatePayoff(),
+        sow_payoff: share.sowPayoff(),
+        sow_fodder_payoff: share.sowFodderPayoff(),
+        cultivate_fodder_payoff: share.cultivateFodderPayoff(),
+        role: text(share.role()),
+        sow_material_payoff: decode_material_payoffs(share.sowMaterialPayoff()),
+        cultivate_material_payoff: decode_material_payoffs(share.cultivateMaterialPayoff()),
+        sow_work_cost: share.sowWorkCost(),
+    })
+}
+
+/// The inverse of [`create_material_payoffs`]: empty in, empty out, and absent reads as empty.
+pub(crate) fn decode_material_payoffs(
+    payoffs: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::MaterialPayoff<'_>>>>,
+) -> Vec<MaterialPayoff> {
+    map_rows(payoffs, |payoff| MaterialPayoff {
+        material_id: text(payoff.materialId()),
+        amount: payoff.amount(),
+    })
+}
+
+fn decode_intensification_knowledge(
+    state: fb::IntensificationKnowledgeState<'_>,
+) -> IntensificationKnowledgeState {
+    IntensificationKnowledgeState {
+        faction: state.faction(),
+        knowledges: map_rows(state.knowledges(), |knowledge| LadderKnowledgeProgress {
+            knowledge_id: text(knowledge.knowledgeId()),
+            progress: knowledge.progress(),
+        }),
+    }
+}
+
+fn decode_ladder_knowledge(state: fb::LadderKnowledgeState<'_>) -> LadderKnowledgeState {
+    LadderKnowledgeState {
+        knowledge_id: text(state.knowledgeId()),
+        display_name: text(state.displayName()),
+        branch: text(state.branch()),
+        order: state.order(),
+        is_step: state.isStep(),
+    }
+}
+
+fn decode_route_rung(state: fb::RouteRungState<'_>) -> RouteRungState {
+    RouteRungState {
+        rung_key: text(state.rungKey()),
+        order: state.order(),
+        display_name: text(state.displayName()),
+        verb: text(state.verb()),
+        unlock_knowledge: text(state.unlockKnowledge()),
+        requires_rung: text(state.requiresRung()),
+        work_cost: state.workCost(),
+        upkeep_work_per_turn: state.upkeepWorkPerTurn(),
+        friction_multiplier: state.frictionMultiplier(),
+        holds_link_to_tiles: state.holdsLinkToTiles(),
+        grants_sight: state.grantsSight(),
+        earns_knowledge: text(state.earnsKnowledge()),
+        build_work_per_worker_turn: state.buildWorkPerWorkerTurn(),
+        build_material_cost: state.buildMaterialCost(),
+        build_material_id: text(state.buildMaterialId()),
+    }
+}
+
+fn decode_food_module(module: fb::FoodModuleState<'_>) -> FoodModuleState {
+    FoodModuleState {
+        x: module.x(),
+        y: module.y(),
+        module: text(module.module()),
+        seasonal_weight: module.seasonalWeight(),
+        kind: text(module.kind()),
+    }
 }

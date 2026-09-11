@@ -9,6 +9,30 @@ use tracing::{error, info, warn, Subscriber};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
+/// ⛔ **THE LAUNCHER'S CHANNEL, AND IT IS HAND-TARGETED.** The server's operator-facing events name
+/// this target rather than the crate, and the launcher supervises its `sim_ai` children off one of
+/// them ([`emit_seats_roster`]) — so the log-forward path must admit it whatever `RUST_LOG` says
+/// (`core_sim/src/bin/server.rs` → `log_forward_filter`).
+pub const LAUNCHER_LOG_TARGET: &str = "shadow_scale::server";
+
+/// **The launcher's supervisor contract, emitted from exactly one place.** `retain_claimed_seats`
+/// calls this at every world rebuild; the launcher's `parse_roster_event`
+/// (`launcher/src/main.rs`) is its twin, and its test drives *this function* so that changing a
+/// field's sigil here fails there instead of shipping a game with no rivals.
+///
+/// ⛔ **`factions` GOES ON THE WIRE AS A JSON ARRAY INSIDE A STRING**, because `tracing` fields
+/// carry no arrays. `%` (Display) is what puts the bare `[0,1,2]` there; `?` (Debug) would quote
+/// and escape it into `"\"[0,1,2]\""`, which the launcher's `from_str::<Vec<u32>>` cannot read.
+pub fn emit_seats_roster(faction_ids: &[u32], world_epoch: u32) {
+    let factions = serde_json::to_string(faction_ids).expect("a list of ids serialises");
+    info!(
+        target: LAUNCHER_LOG_TARGET,
+        %factions,
+        world_epoch,
+        "seats.roster"
+    );
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEnvelope {
     pub timestamp_ms: u64,

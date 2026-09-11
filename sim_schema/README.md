@@ -25,13 +25,17 @@ item is still reachable as `sim_schema::Foo` — consumers never name a submodul
 | `src/state/campaign.rs` | campaign profiles, command events, victory, and the whole Telling family (beats, voice, forks, stance) |
 | `src/state/connections.rs` | `ConnectionState` — the directed band-to-band tie contact leaves behind (arc #527, `docs/plan_contact_and_logistics.md` §Q2). Deliberately carries **no** faction column and no rider vocabulary: faction is a property of the endpoints, and logistics/culture/knowledge each own their own state |
 | `src/world.rs` | the deliberately **flat** `WorldSnapshot`/`WorldDelta`, `SnapshotHeader`, `hash_snapshot`, `MapExport`, and the **JSON** codecs (`encode_/decode_snapshot_json`, `_delta_json` — the only pair here with both directions; `MapExport` rides JSON too). **There is no bincode codec** — `finalize`/`hash_snapshot` call `bincode::serialize` inline purely to get bytes to hash, and nothing anywhere bincode-*decodes* these structs: the bincode snapshot socket was retired in #388, and the frames were never decodable anyway (`skip_serializing_if` omits fields a non-self-describing format still expects back) |
-| `src/codec/mod.rs` | `encode_snapshot_flatbuffer`/`encode_delta_flatbuffer`, the `build_*_flatbuffer` envelope assembly, and helpers shared by two or more sections (`create_scalar_raster`, `create_float_raster`, `create_known_fragments`) |
-| `src/codec/<section>.rs` | that section's `serialize_<section>_section` + `_delta` plus the `create_*`/`to_fb_*` helpers only those two use. `vision` is codec-only — its state is the rasters in `state/map.rs` |
+| `src/codec/mod.rs` | `encode_snapshot_flatbuffer`/`encode_delta_flatbuffer` and their inverses `decode_snapshot_flatbuffer`/`decode_delta_flatbuffer`/`decode_frame_flatbuffer` (→ `FramePayload`, errors as `DecodeError`), the `build_*_flatbuffer` / `decode_*_table` envelope assembly, and helpers shared by two or more sections in both directions (`create_scalar_raster`/`decode_scalar_raster`, `create_float_raster`/`decode_float_raster`, `create_known_fragments`/`decode_known_fragments`, the `map_rows`/`decode_rows` vocabulary). Its `round_trip_tests` are the decoder's definition of done: the saturated fixture must survive encode → decode → encode byte for byte |
+| `src/codec/<section>.rs` | that section's `serialize_<section>_section` + `_delta` **and** `decode_<section>_section` + `_delta`, plus the `create_*`/`to_fb_*` helpers and their `decode_*`/`to_state_*` inverses, side by side so a field is added in one file for both directions. Every decoded struct is an **exhaustive** literal (no `..Default::default()`), so an appended field fails to compile until decoded; an unknown enum discriminant is a `DecodeError`, never a default. `vision` is codec-only — its state is the rasters in `state/map.rs` |
+| `src/apply_delta.rs` | `WorldSnapshot::apply_delta` / `ApplyDeltaError` — the consumer of `core_sim`'s three diff shapes (`diff_indexed` → upsert-by-key then sweep `removed_*`, `diff_whole` → `Some` replaces and `Some(empty)` clears, `diff_appended` → append by new `seq` then trim by tick window), gated on `base_frame_seq`/`world_epoch`, destructuring the delta exhaustively so a new field has to be given a rule. `core_sim/tests/apply_delta_producer.rs` proves it against the shipped publication path |
+| `src/fixture.rs` | `saturated_snapshot()` — the one `WorldSnapshot` with every section, repeated field and scalar leaf populated. Consumed by this crate's codec round trip **and** by `cargo xtask decode-fixture` for the Godot decode guard; `assert_no_empty_arrays` refuses to build it with an unseeded `Vec`, which is what makes "every section is covered" a checked claim rather than a hope |
 
 **The rule when you add a snapshot field:** append it to your section's
-`state/` file *and* that section's `codec/` file (and to your section table in
+`state/` file *and* that section's `codec/` file — serializer **and** decoder, which
+the exhaustive decode literal will insist on (and to your section table in
 `schemas/snapshot.fbs`, which is append-only — see the FlatBuffers slot-order
-discipline). Nothing else should need to change. If a codec helper gains a second
+discipline). If it is a `Vec`, seed it in `fixture.rs` or the fixture refuses to
+build. Nothing else should need to change. If a codec helper gains a second
 section as a consumer, hoist it to `codec/mod.rs` rather than duplicating it.
 
 **Then run `cargo xtask decode-guard`** — "nothing else should need to change" is
@@ -43,7 +47,8 @@ dictionary against a golden; your new field should show up as a new line whose
 value is its own wire path. Two things will stop you first if you skip it: a new
 **repeated** field fails the fixture build until it is seeded, and a field added to
 one of the state structs without a `Default` fails to compile
-(`xtask/src/decode_fixture.rs` holds exhaustive literals for those on purpose).
+(`src/fixture.rs` holds exhaustive literals for those on purpose, and every decoder
+literal in `codec/` is exhaustive for the same reason).
 
 ## Terrain Overlay Channel
 - `WorldSnapshot` now carries a `terrainOverlay` table (width, height, packed

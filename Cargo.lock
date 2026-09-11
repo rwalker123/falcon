@@ -2839,7 +2839,11 @@ dependencies = [
 name = "launcher"
 version = "0.1.0"
 dependencies = [
+ "core_sim",
+ "crossbeam-channel",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
  "windows-sys 0.59.0",
 ]
 
@@ -4219,6 +4223,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "sim_ai"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "jsonschema",
+ "rand",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sim_runtime",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "sim_runtime"
 version = "0.1.0"
 dependencies = [
@@ -4244,6 +4264,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shadow_scale_flatbuffers",
+ "thiserror",
 ]
 
 [[package]]

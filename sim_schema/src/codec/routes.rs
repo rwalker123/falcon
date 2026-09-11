@@ -1,6 +1,6 @@
 //! Route-section FlatBuffers serialization — the roads in the ground, one row per tile.
 
-use crate::codec::FbBuilder;
+use crate::codec::{map_rows, map_rows_if_present, text, FbBuilder};
 use crate::state::routes::RouteState;
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::WIPOffset;
@@ -72,4 +72,44 @@ pub(crate) fn serialize_route_section_delta<'a>(
         .as_ref()
         .map(|routes| create_routes(builder, routes));
     fb::RouteSection::create(builder, &fb::RouteSectionArgs { routes })
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` above, in the same order.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_route_section(section: fb::RouteSection<'_>, snapshot: &mut WorldSnapshot) {
+    snapshot.routes = map_rows(section.routes(), decode_route);
+}
+
+pub(crate) fn decode_route_section_delta(section: fb::RouteSection<'_>, delta: &mut WorldDelta) {
+    // Absent is "unchanged this frame", exactly as the serializer left it.
+    delta.routes = map_rows_if_present(section.routes(), decode_route);
+}
+
+fn decode_route(route: fb::RouteState<'_>) -> RouteState {
+    RouteState {
+        tile_x: route.tileX(),
+        tile_y: route.tileY(),
+        rung: text(route.rung()),
+        build_fraction: route.buildFraction(),
+        has_keeper: route.hasKeeper(),
+        keeper_band_id: route.keeperBandId(),
+        keeper_remoteness: route.keeperRemoteness(),
+        upkeep_demand: route.upkeepDemand(),
+        upkeep_supplied: route.upkeepSupplied(),
+        upkeep_shortfall: route.upkeepShortfall(),
+        upkeep_workers_needed: route.upkeepWorkersNeeded(),
+        has_neglect_grace: route.hasNeglectGrace(),
+        neglect_grace_remaining: route.neglectGraceRemaining(),
+        grants_sight: route.grantsSight(),
+        friction_multiplier: route.frictionMultiplier(),
+        holds_link_to_tiles: route.holdsLinkToTiles(),
+        build_blocked_reason: text(route.buildBlockedReason()),
+        build_material_demand: route.buildMaterialDemand(),
+        build_material_supplied: route.buildMaterialSupplied(),
+        build_turns_remaining: route.buildTurnsRemaining(),
+        upkeep_material_demand: route.upkeepMaterialDemand(),
+        upkeep_material_supplied: route.upkeepMaterialSupplied(),
+    }
 }

@@ -39,6 +39,8 @@ TARGET="x86_64-pc-windows-msvc"
 GODOT_PROJECT="clients/godot_thin_client"
 DLL_NAME="shadow_scale_godot.dll"
 SERVER_NAME="server.exe"
+# The AI player program (crate `sim_ai`); the launcher starts one per rival seat.
+AI_NAME="sim_ai.exe"
 CLIENT_EXE="ShadowScaleClient.exe"
 # cargo names the binary after the [[bin]] target; the package presents it as the
 # thing the player double-clicks, so it is renamed on copy.
@@ -77,11 +79,13 @@ command -v zip >/dev/null         || die "zip not found (needed to package the b
 # --- 1. cross-compile the Rust artifacts (server + GDExtension) ---------------
 info "Cross-compiling server + launcher + GDExtension for $TARGET ..."
 cargo xwin build --release --locked --target "$TARGET" -p core_sim --bin server
+cargo xwin build --release --locked --target "$TARGET" -p sim_ai --bin sim_ai
 cargo xwin build --release --locked --target "$TARGET" -p launcher
 cargo xwin build --release --locked --target "$TARGET" -p shadow_scale_godot
 
 REL="$ROOT_DIR/target/$TARGET/release"
 [ -f "$REL/$SERVER_NAME" ]   || die "server build produced no $SERVER_NAME"
+[ -f "$REL/$AI_NAME" ]       || die "sim_ai build produced no $AI_NAME"
 [ -f "$REL/$LAUNCHER_BIN" ]  || die "launcher build produced no $LAUNCHER_BIN"
 [ -f "$REL/$DLL_NAME" ]      || die "GDExtension build produced no $DLL_NAME"
 
@@ -112,6 +116,7 @@ fi
 
 # --- 4. assemble the package --------------------------------------------------
 cp "$REL/$SERVER_NAME" "$PKG_DIR/$SERVER_NAME"
+cp "$REL/$AI_NAME" "$PKG_DIR/$AI_NAME"
 # Godot copies the GDExtension DLL next to the exe on export; copy defensively in
 # case the export embed setting changes. Not silenced — the source is verified to
 # exist above, so a failure here is a real problem worth surfacing.

@@ -1,7 +1,7 @@
 //! Economy-section FlatBuffers serialization.
 
-use crate::codec::FbBuilder;
-use crate::state::economy::FactionInventoryState;
+use crate::codec::{map_rows, map_rows_if_present, text, FbBuilder};
+use crate::state::economy::{FactionInventoryEntryState, FactionInventoryState};
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -64,4 +64,33 @@ fn create_faction_inventory<'a>(
         entries.push(faction_entry);
     }
     builder.create_vector(&entries)
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` above, in the same order.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_economy_section(
+    section: fb::EconomySection<'_>,
+    snapshot: &mut WorldSnapshot,
+) {
+    snapshot.faction_inventory = map_rows(section.factionInventory(), decode_faction_inventory);
+}
+
+pub(crate) fn decode_economy_section_delta(
+    section: fb::EconomySection<'_>,
+    delta: &mut WorldDelta,
+) {
+    delta.faction_inventory =
+        map_rows_if_present(section.factionInventory(), decode_faction_inventory);
+}
+
+fn decode_faction_inventory(state: fb::FactionInventoryState<'_>) -> FactionInventoryState {
+    FactionInventoryState {
+        faction: state.faction(),
+        inventory: map_rows(state.inventory(), |entry| FactionInventoryEntryState {
+            item: text(entry.item()),
+            quantity: entry.quantity(),
+        }),
+    }
 }

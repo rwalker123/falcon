@@ -1,9 +1,19 @@
 //! Population-section FlatBuffers serialization.
 
-use crate::codec::{create_known_fragments, FbBuilder};
+use crate::codec::subsistence::decode_material_payoffs;
+use crate::codec::{
+    create_known_fragments, decode_known_fragments, decode_rows, decode_scalars, decode_strings,
+    map_rows, map_rows_if_present, text, unknown_enum, DecodeError, FbBuilder,
+};
+use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState};
 use crate::state::population::{
-    AccessibleStockpileEntryState, GenerationState, MaterialShortfallState, PopulationCohortState,
-    PopulationDemographicsState, SourcePriorityState,
+    AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
+    BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchState, BuildQueueEntryState,
+    CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
+    LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PendingMigrationState,
+    PopulationCohortState, PopulationDemographicsState, ScoutTaskState, SettlementStageViewState,
+    SourcePriorityState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -1049,4 +1059,435 @@ fn create_generations<'a>(
         })
         .collect();
     builder.create_vector(&offsets)
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` above, in the same order. The cohort literal is
+// EXHAUSTIVE on purpose: a field appended to `PopulationCohortState` and `create_populations`
+// does not compile until its line exists here.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_population_section(
+    section: fb::PopulationSection<'_>,
+    snapshot: &mut WorldSnapshot,
+) -> Result<(), DecodeError> {
+    snapshot.populations = decode_rows(section.populations(), decode_population)?;
+    snapshot.demographics = map_rows(section.demographics(), decode_demographics);
+    snapshot.generations = map_rows(section.generations(), decode_generation);
+    Ok(())
+}
+
+pub(crate) fn decode_population_section_delta(
+    section: fb::PopulationSection<'_>,
+    delta: &mut WorldDelta,
+) -> Result<(), DecodeError> {
+    delta.populations = decode_rows(section.populations(), decode_population)?;
+    delta.removed_populations = decode_scalars(section.removedPopulations());
+    delta.demographics = map_rows_if_present(section.demographics(), decode_demographics);
+    delta.generations = map_rows(section.generations(), decode_generation);
+    delta.removed_generations = decode_scalars(section.removedGenerations());
+    Ok(())
+}
+
+fn decode_demographics(state: fb::PopulationDemographicsState<'_>) -> PopulationDemographicsState {
+    PopulationDemographicsState {
+        faction: state.faction(),
+        children: state.children(),
+        working: state.working(),
+        elders: state.elders(),
+    }
+}
+
+fn to_state_source_priority(
+    priority: fb::SourcePriority,
+) -> Result<SourcePriorityState, DecodeError> {
+    Ok(match priority {
+        fb::SourcePriority::Normal => SourcePriorityState::Normal,
+        fb::SourcePriority::High => SourcePriorityState::High,
+        fb::SourcePriority::Low => SourcePriorityState::Low,
+        other => return Err(unknown_enum("SourcePriority", other.0)),
+    })
+}
+
+fn decode_labor_assignment(
+    assignment: fb::LaborAssignment<'_>,
+) -> Result<LaborAssignmentState, DecodeError> {
+    Ok(LaborAssignmentState {
+        kind: text(assignment.kind()),
+        workers: assignment.workers(),
+        target_x: assignment.targetX(),
+        target_y: assignment.targetY(),
+        // Absent-when-empty strings and vectors read back as the empty value they stood for.
+        fauna_id: text(assignment.faunaId()),
+        floor: assignment.floor(),
+        species: text(assignment.species()),
+        take_species: decode_strings(assignment.takeSpecies()),
+        actual_yield: assignment.actualYield(),
+        sustainable_yield: assignment.sustainableYield(),
+        workers_needed: assignment.workersNeeded(),
+        wasted_yield: assignment.wastedYield(),
+        meat_yield: assignment.meatYield(),
+        standing_yield: assignment.standingYield(),
+        overdraws: assignment.overdraws(),
+        realized_yield: assignment.realizedYield(),
+        arrival_schedule: decode_scalars(assignment.arrivalSchedule()),
+        fodder_yield: assignment.fodderYield(),
+        actual_yield_low: assignment.actualYieldLow(),
+        actual_yield_high: assignment.actualYieldHigh(),
+        improvement: text(assignment.improvement()),
+        kit_id: text(assignment.kitId()),
+        material_yield: decode_material_payoffs(assignment.materialYield()),
+        material_upkeep_demand: decode_material_payoffs(assignment.materialUpkeepDemand()),
+        material_upkeep_supplied: decode_material_payoffs(assignment.materialUpkeepSupplied()),
+        hunt_useful_workers: assignment.huntUsefulWorkers(),
+        priority: to_state_source_priority(assignment.priority())?,
+    })
+}
+
+fn decode_loadout_supply_rows(
+    rows: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::BandLoadoutSupplyRow<'_>>>>,
+) -> Vec<BandLoadoutSupplyRowState> {
+    map_rows(rows, |row| BandLoadoutSupplyRowState {
+        id: text(row.id()),
+        units: row.units(),
+    })
+}
+
+fn decode_loadout_window(window: fb::BandLoadoutWindowState<'_>) -> BandLoadoutWindowState {
+    BandLoadoutWindowState {
+        open: window.open(),
+        kit_budget: window.kitBudget(),
+        material_budget: window.materialBudget(),
+        kits: map_rows(window.kits(), |row| OpeningKitDefaultState {
+            kit_id: text(row.kitId()),
+            count: row.count(),
+        }),
+        materials: map_rows(window.materials(), |row| OpeningMaterialDefaultState {
+            material_id: text(row.materialId()),
+            units: row.units(),
+        }),
+        parent_band_id: window.parentBandId(),
+        parent_item_supply: decode_loadout_supply_rows(window.parentItemSupply()),
+        parent_material_supply: decode_loadout_supply_rows(window.parentMaterialSupply()),
+    }
+}
+
+fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
+    Ok(BenchState {
+        recipe_id: text(bench.recipeId()),
+        display_name: text(bench.displayName()),
+        workers: bench.workers(),
+        progress: bench.progress(),
+        work: bench.work(),
+        teaches: text(bench.teaches()),
+        blocked_reason: text(bench.blockedReason()),
+        shortfalls: decode_shortfalls(bench.shortfalls()),
+        items_completed: bench.itemsCompleted(),
+        drawn: bench.drawn(),
+        output_grade: text(bench.outputGrade()),
+        rate_per_turn: bench.ratePerTurn(),
+        drawn_inputs: map_rows(bench.drawnInputs(), |input| DrawnInputState {
+            material_id: text(input.materialId()),
+            amount: input.amount(),
+        }),
+        blocked_severity: text(bench.blockedSeverity()),
+        priority: to_state_source_priority(bench.priority())?,
+    })
+}
+
+fn decode_population(
+    cohort: fb::PopulationCohortState<'_>,
+) -> Result<PopulationCohortState, DecodeError> {
+    Ok(PopulationCohortState {
+        entity: cohort.entity(),
+        band_id: cohort.bandId(),
+        home: cohort.home(),
+        current_x: cohort.currentX(),
+        current_y: cohort.currentY(),
+        is_traveling: cohort.isTraveling(),
+        size: cohort.size(),
+        // The raw fixed-point brackets are `(deprecated)` slots the serializer no longer writes
+        // (see `childrenCount` / `eldersCount` in `create_populations`); nothing was sent.
+        children: 0,
+        working: 0,
+        elders: 0,
+        stores: map_rows(cohort.stores(), |entry| CohortStoreState {
+            item: text(entry.item()),
+            quantity: entry.quantity(),
+        }),
+        age_turns: cohort.ageTurns(),
+        turns_of_food: cohort.turnsOfFood(),
+        activity: text(cohort.activity()),
+        labor_assignments: decode_rows(cohort.laborAssignments(), decode_labor_assignment)?,
+        idle_workers: cohort.idleWorkers(),
+        working_age: cohort.workingAge(),
+        work_range: cohort.workRange(),
+        scout_reveal_radius: cohort.scoutRevealRadius(),
+        is_expedition: cohort.isExpedition(),
+        expedition_mission: text(cohort.expeditionMission()),
+        expedition_phase: text(cohort.expeditionPhase()),
+        expedition_target_herd: text(cohort.expeditionTargetHerd()),
+        expedition_target_species: text(cohort.expeditionTargetSpecies()),
+        travel_target_x: cohort.travelTargetX(),
+        travel_target_y: cohort.travelTargetY(),
+        hunt_reach: cohort.huntReach(),
+        home_band_entity: cohort.homeBandEntity(),
+        expedition_announced: cohort.expeditionAnnounced(),
+        pending_reveal_x: decode_scalars(cohort.pendingRevealX()),
+        pending_reveal_y: decode_scalars(cohort.pendingRevealY()),
+        expedition_carry_cap: cohort.expeditionCarryCap(),
+        supply_network_id: cohort.supplyNetworkId(),
+        morale_delta: cohort.moraleDelta(),
+        morale_cause: cohort.moraleCause(),
+        output_multiplier: cohort.outputMultiplier(),
+        discontent_fraction: cohort.discontentFraction(),
+        last_emigrated: cohort.lastEmigrated(),
+        last_immigrated: cohort.lastImmigrated(),
+        grievance: cohort.grievance(),
+        morale_settling: cohort.moraleSettling(),
+        morale_terrain: cohort.moraleTerrain(),
+        morale_climate: cohort.moraleClimate(),
+        morale_unrest: cohort.moraleUnrest(),
+        morale: cohort.morale(),
+        generation: cohort.generation(),
+        faction: cohort.faction(),
+        knowledge_fragments: decode_known_fragments(cohort.knowledgeFragments()),
+        migration: cohort.migration().map(|pending| PendingMigrationState {
+            destination: pending.destination(),
+            eta: pending.eta(),
+            fragments: decode_known_fragments(pending.fragments()),
+        }),
+        harvest_task: cohort.harvestTask().map(|task| HarvestTaskState {
+            kind: text(task.kind()),
+            module: text(task.module()),
+            band_label: text(task.bandLabel()),
+            target_tile: task.targetTile(),
+            target_x: task.targetX(),
+            target_y: task.targetY(),
+            travel_remaining: task.travelRemaining(),
+            travel_total: task.travelTotal(),
+            gather_remaining: task.gatherRemaining(),
+            gather_total: task.gatherTotal(),
+            provisions_reward: task.provisionsReward(),
+            trade_goods_reward: task.tradeGoodsReward(),
+            started_tick: task.startedTick(),
+        }),
+        scout_task: cohort.scoutTask().map(|task| ScoutTaskState {
+            band_label: text(task.bandLabel()),
+            target_tile: task.targetTile(),
+            target_x: task.targetX(),
+            target_y: task.targetY(),
+            travel_remaining: task.travelRemaining(),
+            travel_total: task.travelTotal(),
+            reveal_radius: task.revealRadius(),
+            reveal_duration: task.revealDuration(),
+            morale_gain: task.moraleGain(),
+            started_tick: task.startedTick(),
+        }),
+        accessible_stockpile: cohort.accessibleStockpile().map(|stockpile| {
+            AccessibleStockpileState {
+                radius: stockpile.radius(),
+                entries: map_rows(stockpile.entries(), |entry| AccessibleStockpileEntryState {
+                    item: text(entry.item()),
+                    quantity: entry.quantity(),
+                }),
+            }
+        }),
+        settlement_stage: cohort
+            .settlementStage()
+            .map(|stage| SettlementStageViewState {
+                id: text(stage.id()),
+                label: text(stage.label()),
+                icon: text(stage.icon()),
+            })
+            .unwrap_or_default(),
+        food_income: cohort.foodIncome(),
+        food_consumption: cohort.foodConsumption(),
+        hunt_per_worker_provisions: cohort.huntPerWorkerProvisions(),
+        expedition_viability_warn_turns: cohort.expeditionViabilityWarnTurns(),
+        expedition_per_worker_carry: cohort.expeditionPerWorkerCarry(),
+        band_move_tiles_per_turn: cohort.bandMoveTilesPerTurn(),
+        expedition_eta_turns: cohort.expeditionEtaTurns(),
+        expedition_projected_delivery: cohort.expeditionProjectedDelivery(),
+        expedition_recurring: cohort.expeditionRecurring(),
+        fodder_store: cohort.fodderStore(),
+        fertility_hunger: cohort.fertilityHunger(),
+        fertility_reserve: cohort.fertilityReserve(),
+        fertility_trend: cohort.fertilityTrend(),
+        raid_radius: cohort.raidRadius(),
+        raid_forfeit: cohort.raidForfeit(),
+        expedition_floor: cohort.expeditionFloor(),
+        expedition_trip_bound: text(cohort.expeditionTripBound()),
+        kit_item_conditions: map_rows(cohort.kitItemConditions(), |condition| {
+            KitItemConditionState {
+                item_id: text(condition.itemId()),
+                remaining: condition.remaining(),
+                count: condition.count(),
+                workers_holding: condition.workersHolding(),
+                workers_on_quoted_job: condition.workersOnQuotedJob(),
+            }
+        }),
+        kit_tiers: map_rows(cohort.kitTiers(), |tiers| BandKitTiersState {
+            kit_id: text(tiers.kitId()),
+            attack: tiers.attack(),
+            hunt_carry_per_worker_biomass: tiers.huntCarryPerWorkerBiomass(),
+            forage_carry_per_worker_biomass: tiers.forageCarryPerWorkerBiomass(),
+            attack_min_body_mass: tiers.attackMinBodyMass(),
+            attack_max_body_mass: tiers.attackMaxBodyMass(),
+            dispersion: tiers.dispersion(),
+            exposure: tiers.exposure(),
+            scout_vantage_range: tiers.scoutVantageRange(),
+            build_rate: tiers.buildRate(),
+            build_work_per_worker: tiers.buildWorkPerWorker(),
+            build_work_saturating_crew: tiers.buildWorkSaturatingCrew(),
+            build_work_branch: text(tiers.buildWorkBranch()),
+            build_work_rung: text(tiers.buildWorkRung()),
+            hunt_carry_saturating_crew: tiers.huntCarrySaturatingCrew(),
+            forage_carry_saturating_crew: tiers.forageCarrySaturatingCrew(),
+            hunt_carry_bare_per_worker_biomass: tiers.huntCarryBarePerWorkerBiomass(),
+            forage_carry_bare_per_worker_biomass: tiers.forageCarryBarePerWorkerBiomass(),
+        }),
+        hunter_attack: cohort.hunterAttack(),
+        hunt_carry_per_worker_biomass: cohort.huntCarryPerWorkerBiomass(),
+        forage_carry_per_worker_biomass: cohort.forageCarryPerWorkerBiomass(),
+        kit_id: text(cohort.kitId()),
+        expedition_forecast_horizon_turns: cohort.expeditionForecastHorizonTurns(),
+        scout_vantage_range: cohort.scoutVantageRange(),
+        warrior_attack: cohort.warriorAttack(),
+        founding_min_workers: cohort.foundingMinWorkers(),
+        founding_parent_min_workers: cohort.foundingParentMinWorkers(),
+        material_batches: map_rows(cohort.materialBatches(), |batch| MaterialBatchState {
+            material_id: text(batch.materialId()),
+            amount: batch.amount(),
+            readings: map_rows(batch.readings(), |reading| CharacteristicReadingState {
+                axis: text(reading.axis()),
+                value: reading.value(),
+                band_name: text(reading.bandName()),
+            }),
+            variety_name: text(batch.varietyName()),
+        }),
+        bench: cohort
+            .bench()
+            .map(decode_bench)
+            .transpose()?
+            .unwrap_or_default(),
+        craft_offers: map_rows(cohort.craftOffers(), |offer| CraftOfferState {
+            recipe_id: text(offer.recipeId()),
+            display_name: text(offer.displayName()),
+            group: text(offer.group()),
+            output_item_id: text(offer.outputItemId()),
+            available: offer.available(),
+            reason: text(offer.reason()),
+            severity: text(offer.severity()),
+            shortfalls: decode_shortfalls(offer.shortfalls()),
+            output_grade: text(offer.outputGrade()),
+            on_bench: offer.onBench(),
+            output_tier_name: text(offer.outputTierName()),
+            output_tier_rank: offer.outputTierRank(),
+            owned_note: text(offer.ownedNote()),
+        }),
+        equipment_batches: map_rows(cohort.equipmentBatches(), |batch| EquipmentBatchState {
+            item_id: text(batch.itemId()),
+            tier_id: text(batch.tierId()),
+            grade: text(batch.grade()),
+            count: batch.count(),
+            remaining: batch.remaining(),
+            quanta_left: batch.quantaLeft(),
+            quantum_noun: text(batch.quantumNoun()),
+            life: text(batch.life()),
+            life_severity: text(batch.lifeSeverity()),
+        }),
+        children_count: cohort.childrenCount(),
+        elders_count: cohort.eldersCount(),
+        hunt_crews: map_rows(cohort.huntCrews(), |crew| BandKitCrewState {
+            workers: crew.workers(),
+            hunter_attack: crew.hunterAttack(),
+            item_ids: decode_strings(crew.itemIds()),
+        }),
+        expedition_destination_band: cohort.expeditionDestinationBand(),
+        expedition_destination_name: text(cohort.expeditionDestinationName()),
+        expedition_cargo_food: cohort.expeditionCargoFood(),
+        expedition_cargo_materials: decode_material_payoffs(cohort.expeditionCargoMaterials()),
+        transfer_received: cohort.transferReceived(),
+        transfer_sent: cohort.transferSent(),
+        expedition_trade_per_worker_carry: cohort.expeditionTradePerWorkerCarry(),
+        expedition_trade_material_carry_weight: cohort.expeditionTradeMaterialCarryWeight(),
+        transfer_received_turn: cohort.transferReceivedTurn(),
+        transfer_sent_turn: cohort.transferSentTurn(),
+        upkeep_fund_mode: text(cohort.upkeepFundMode()),
+        build_queue: map_rows(cohort.buildQueue(), |entry| BuildQueueEntryState {
+            kind: text(entry.kind()),
+            target_x: entry.targetX(),
+            target_y: entry.targetY(),
+            fauna_id: text(entry.faunaId()),
+        }),
+        fodder_need: cohort.fodderNeed(),
+        fodder_income: cohort.fodderIncome(),
+        turns_of_fodder: cohort.turnsOfFodder(),
+        material_upkeep_need: decode_material_payoffs(cohort.materialUpkeepNeed()),
+        material_upkeep_income: decode_material_payoffs(cohort.materialUpkeepIncome()),
+        material_store: decode_material_payoffs(cohort.materialStore()),
+        roadwork_demand: cohort.roadworkDemand(),
+        roadwork_supplied: cohort.roadworkSupplied(),
+        roadwork_shortfall: cohort.roadworkShortfall(),
+        transfer_local_received_turn: cohort.transferLocalReceivedTurn(),
+        transfer_local_sent_turn: cohort.transferLocalSentTurn(),
+        transfer_route_received_turn: cohort.transferRouteReceivedTurn(),
+        transfer_route_sent_turn: cohort.transferRouteSentTurn(),
+        fodder_transfer_local_received_turn: cohort.fodderTransferLocalReceivedTurn(),
+        fodder_transfer_local_sent_turn: cohort.fodderTransferLocalSentTurn(),
+        fodder_transfer_route_received_turn: cohort.fodderTransferRouteReceivedTurn(),
+        fodder_transfer_route_sent_turn: cohort.fodderTransferRouteSentTurn(),
+        expedition_cargo_fodder: cohort.expeditionCargoFodder(),
+        expedition_trade_fodder_carry_weight: cohort.expeditionTradeFodderCarryWeight(),
+        name: text(cohort.name()),
+        loadout_window: cohort.loadoutWindow().map(decode_loadout_window),
+    })
+}
+
+/// The inverse of [`create_shortfalls`].
+fn decode_shortfalls(
+    shortfalls: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::MaterialShortfall<'_>>>>,
+) -> Vec<MaterialShortfallState> {
+    map_rows(shortfalls, |shortfall| MaterialShortfallState {
+        material_id: text(shortfall.materialId()),
+        required: shortfall.required(),
+        held: shortfall.held(),
+        short: shortfall.short(),
+    })
+}
+
+fn decode_generation(generation: fb::GenerationState<'_>) -> GenerationState {
+    GenerationState {
+        id: generation.id(),
+        name: text(generation.name()),
+        bias_knowledge: generation.biasKnowledge(),
+        bias_trust: generation.biasTrust(),
+        bias_equity: generation.biasEquity(),
+        bias_agency: generation.biasAgency(),
+    }
+}
+
+#[cfg(test)]
+mod enum_round_trip_tests {
+    use super::*;
+
+    /// Every rank the encoder can write, the decoder reads back as the same rank — including
+    /// `Normal`, the wire's `0`, which the client's own decoder cannot distinguish from a dropped
+    /// field and which therefore has no coverage anywhere but here and `crafting_wire`.
+    #[test]
+    fn every_source_priority_round_trips() {
+        for priority in [
+            SourcePriorityState::Normal,
+            SourcePriorityState::High,
+            SourcePriorityState::Low,
+        ] {
+            let wire = match priority {
+                SourcePriorityState::Normal => fb::SourcePriority::Normal,
+                SourcePriorityState::High => fb::SourcePriority::High,
+                SourcePriorityState::Low => fb::SourcePriority::Low,
+            };
+            assert_eq!(to_state_source_priority(wire).expect("known"), priority);
+        }
+    }
 }

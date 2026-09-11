@@ -3,7 +3,8 @@
 **Built on `docs/plan_multiplayer_seats.md`, which is not restated here.** That document says the sim
 knows seats and never who fills one. This document is about the things that fill them.
 
-Issue #287 decided the architecture; #645 builds the first one.
+Issue #287 decided the architecture; #645 builds the first one. **The buildable shape of a player
+process — orchestrator, specialists, arbiter, and how each is measured — is `docs/plan_ai_driver.md`.**
 
 ---
 

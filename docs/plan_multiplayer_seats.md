@@ -86,7 +86,7 @@ this shape does not foreclose.
 `resolve_turn_with_auto_orders` (`server.rs:10855`) force-submits `FactionOrders::end_turn()` for
 every faction still awaited, then resolves. That is why an AI faction sits and passes forever.
 
-Under seats it inverts: **the orchestrator waits for every occupied seat to submit**, and
+Under seats it inverts: **the turn scheduler waits for every occupied seat to submit**, and
 auto-submits only for a seat that is vacant or has not answered within a timeout.
 
 The existing code is already the degenerate case of this with the timeout at zero, which is the

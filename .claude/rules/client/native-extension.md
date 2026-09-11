@@ -261,8 +261,8 @@ plus `hunter_attack` / `hunt_carry_per_worker_biomass` / `forage_carry_per_worke
 shipped on the wire with **no consumer here at all** — the third time this arc reproduced this crate's
 most-repeated bug — as did the labor assignment's forecast BAND (`actual_yield_low`/`_high`, plus a
 `trade_yield_low`/`_high` pair arc #527 has since retired with its account, §6.4) and `HerdTelemetryState.durability` (§4.2/§6.5, the last term the
-combat gate needed). Eleven fields, thirty golden lines, no fixture edit: `decode_fixture.rs`'s
-SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
+combat gate needed). Eleven fields, thirty golden lines, no fixture edit: the fixture builder's
+(`sim_schema/src/fixture.rs`) SATURATION reaches an appended scalar automatically, so the only step an appended scalar needs here is
 the converter and a re-record.
 
 **A VECTOR FIELD IS NOT AN APPENDED SCALAR, and the three material fields are the worked example**
@@ -463,7 +463,8 @@ cargo xtask decode-guard --write-golden   # re-record after an INTENDED decode c
 **When you append a snapshot field, that command is what tells you the decoder actually emitted
 it.** The golden gains a line carrying the field's own wire path as its value; if the new key does
 not appear, the converter was never wired up — the "decoded in `native/src/lib.rs`" bug this file
-records **six** times. Two forcing functions sit under it, both in `xtask/src/decode_fixture.rs`:
+records **six** times. Two forcing functions sit under it, both in `sim_schema/src/fixture.rs`
+(the builder `xtask/src/decode_fixture.rs` encodes):
 appending a **repeated** field fails the fixture build until it is seeded (`assert_no_empty_arrays`
 names the path), and appending to one of the state structs that has no `Default` fails the *compile*
 (those blanks are exhaustive literals on purpose).
