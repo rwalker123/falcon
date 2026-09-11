@@ -870,9 +870,11 @@ const RUNG_CATALOG_RECOVERY := "recovery_fraction"
 ## no field for one, so *stone's rate is zero* survives as arithmetic rather than as a rule.
 const RUNG_CATALOG_REGROWTH_MULTIPLIER := "regrowth_multiplier"
 
-## ⛔ **WHAT THE GROUND MUST HOLD FOR THIS RUNG TO STAND ON IT** — the one placement rule on either
-## branch, and the whole of *you cannot quarry just anywhere*. The SITE gate reads it against the
-## working's own `capacity`.
+## ⛔ **WHAT THE GROUND MUST HOLD FOR THIS RUNG TO STAND ON IT** — the whole of *you cannot quarry
+## just anywhere*, and of *a coppice is not worth laying out on a copse*. The SITE gate reads it
+## against the working's own `capacity`. **BOTH deposit branches carry one**: `extraction:quarry`
+## at 100, `forestry:coppice` at 70. It is read off the catalog row and no rung is named here, so a
+## branch gaining or losing a threshold is a sim config edit that reaches this client for free.
 const RUNG_CATALOG_MIN_CAPACITY := "min_deposit_capacity"
 
 ## ⛔ **THE WIRE'S OWN SPELLING OF *there is none*, A NAMED EMPTY STRING RATHER THAN A SENTINEL.**

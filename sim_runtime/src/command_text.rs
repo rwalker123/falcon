@@ -246,7 +246,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "quarry",
         aliases: &[],
-        summary: "DECLARE a cut working face on the stone at a tile - the extraction branch's rung-2 verb, declared and funded exactly as `fell` is and naming the material the same way. What it buys is REACH, not rate: a finite deposit has no regrowth to raise, so the rung lowers the floor it can reach beneath instead. IT IS THE ONE RUNG ON EITHER BRANCH THAT ASKS SOMETHING OF THE GROUND - the tile's own capacity for the material must clear the rung's min_deposit_capacity, which is the whole of 'you cannot quarry just anywhere': a scatter of loose stone is not a body of rock, and the refusal says so and names the ground that carries one. Needs Quarrying knowledge, earned by picking loose stone.",
+        summary: "DECLARE a cut working face on the stone at a tile - the extraction branch's rung-2 verb, declared and funded exactly as `fell` is and naming the material the same way. What it buys is REACH, not rate: a finite deposit has no regrowth to raise, so the rung lowers the floor it can reach beneath instead. ITS GROUND CAN REFUSE IT, AS A COPPICE'S CAN - the tile's own capacity for the material must clear the rung's min_deposit_capacity, which is the whole of 'you cannot quarry just anywhere': a scatter of loose stone is not a body of rock, and the refusal says so and names the ground that carries one. Needs Quarrying knowledge, earned by picking loose stone.",
         usage: "quarry <faction_id> <x> <y> <material>",
     },
     CommandVerbHelp {

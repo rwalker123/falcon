@@ -5622,7 +5622,7 @@ pub enum Improvement {
     ///
     /// **What it buys is REACH, not rate**: a finite deposit has no regrowth to raise, so the rung
     /// lowers the floor `(1 − recovery) × capacity` instead — the fauna escapement floor upside
-    /// down. And it is the one rung on either branch that asks something of the ground: the tile's
+    /// down. And its ground can refuse it, as [`Self::Coppice`]'s can: the tile's
     /// stone must clear the rung's `min_deposit_capacity`, which is what makes *you cannot quarry
     /// just anywhere* true with no second mechanism.
     Quarry,

@@ -5821,9 +5821,10 @@ table DepositRungState {
   regrowthMultiplier:float = 1;
   // WHAT THE GROUND MUST HOLD FOR THIS RUNG TO BE PLACED THERE — the rung's
   // `site_requirement.min_deposit_capacity`, struck against the tile's own capacity for the
-  // working's material. 100 at `extraction:quarry`, the one placement rule on either branch and the
-  // whole of "you cannot quarry just anywhere"; 0 where the rung asks nothing of the ground, which
-  // is every other shipped rung.
+  // working's material. 100 at `extraction:quarry` -- the whole of "you cannot quarry just
+  // anywhere" -- and 70 at `forestry:coppice`, below which doubling a stand's renewal buys under a
+  // third of a unit a turn; 0 where the rung asks nothing of the ground, which is every other
+  // shipped rung.
   //
   // It is published so a client can say WHY a rung is refused rather than only that it is: the
   // capacity a working already publishes (`DepositState.capacity`) is the other half of that

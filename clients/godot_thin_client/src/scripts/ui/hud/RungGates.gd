@@ -768,10 +768,13 @@ static func track(knowledge: Dictionary, key: String) -> float:
 ##      **Stated ALONE**, and the loop `continue`s past every other gate for that rung, exactly as the
 ##      route branch's gate 1 does: a craft or a site rule beside it would read as a prerequisite for
 ##      something that is not on offer.
-##   2. ⛔ **THE SITE — `min_deposit_capacity` against this working's own `capacity`.** New to this
-##      branch; the route branch has no placement rule at all. It is what refuses a quarry on a
-##      35-unit scatter, and it OUTRANKS every gate below because it is the one refusal here that no
-##      amount of learning, standing or staffing will ever close.
+##   2. ⛔ **THE SITE — `min_deposit_capacity` against this working's own `capacity`.** Both deposit
+##      branches carry one now (the route branch has no placement rule at all): `extraction:quarry`
+##      refuses a 35-unit scatter, and `forestry:coppice` a stand under 70, where doubling the
+##      renewal buys under a third of a unit a turn. It OUTRANKS every gate below because it is the
+##      one refusal here that no amount of learning, standing or staffing will ever close. **This
+##      client reads the threshold off the CATALOG ROW and names no rung**, so a branch gaining or
+##      losing one is a config edit and never a change here.
 ##   3. ⛔ **THE CREW — nobody on the working.** The sim reaches a deposit verb only to bands with a
 ##      staffed `extract` row on it, so a working held at zero cutters refuses its whole ladder. See
 ##      `HudDepositVocab.GATE_KIND_CREW` for why it outranks the craft and why this branch needs it at

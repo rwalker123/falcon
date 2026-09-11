@@ -1246,8 +1246,8 @@ enum Command {
         target_y: u32,
         material: String,
     },
-    /// The extraction branch's rung-2 verb, declared on [`Command::Fell`]'s terms. The one verb on
-    /// either branch whose ground can refuse it (`min_deposit_capacity`).
+    /// The extraction branch's rung-2 verb, declared on [`Command::Fell`]'s terms. Its ground can refuse
+    /// it (`min_deposit_capacity`), as `coppice`'s can.
     Quarry {
         faction: FactionId,
         target_x: u32,
@@ -22448,8 +22448,8 @@ mod tests {
     /// ⛔ **`quarry` IS REFUSED ON A SCATTER, WHICH IS THE WHOLE OF "YOU CANNOT QUARRY JUST
     /// ANYWHERE".**
     ///
-    /// `extraction:quarry`'s `min_deposit_capacity` is the one placement rule on either branch, and
-    /// it is resolved through the same `rung_site_refusal` seam a `sow` goes through. Closed
+    /// `extraction:quarry`'s `min_deposit_capacity` is resolved through the same `rung_site_refusal`
+    /// seam a `sow` — and `forestry:coppice`'s own threshold — goes through. Closed
     /// woodland carries 35 units of loose stone against the rung's 100; rolling hills carry 900. The
     /// two halves run against the identical line, so the refusal is the ground and nothing else.
     #[test]

@@ -201,7 +201,8 @@ pub enum CommandPayload {
     },
     /// Extraction rung 2: open a cut working face. Needs **Quarrying**, earned by picking loose
     /// stone, and a tile whose own capacity for this material clears the rung's
-    /// `min_deposit_capacity` — the one placement rule on either branch. See [`Self::Fell`] for the
+    /// `min_deposit_capacity` — the extraction branch's placement rule, `forestry:coppice`'s twin on
+    /// the other deposit branch. See [`Self::Fell`] for the
     /// shared grammar.
     Quarry {
         faction_id: u32,

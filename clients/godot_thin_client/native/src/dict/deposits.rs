@@ -328,7 +328,7 @@ pub(crate) fn deposit_rungs_to_array(
         // for one**, so "stone's rate is zero" survives as arithmetic rather than as a rule.
         let _ = dict.insert("regrowth_multiplier", f64::from(rung.regrowthMultiplier()));
         // ⛔ **WHAT THE GROUND MUST HOLD FOR THIS RUNG TO STAND THERE** -- 100 at
-        // `extraction:quarry`, the one placement rule on either branch. It is published so a client
+        // `extraction:quarry` and 70 at `forestry:coppice`. It is published so a client
         // can say WHY a rung is refused rather than only that it is; the working's own `capacity` is
         // the other half of that sentence, and a threshold transcribed client-side would be a second
         // authority over a rule the config owns.

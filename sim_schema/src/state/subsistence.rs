@@ -2533,7 +2533,7 @@ pub struct DepositRungState {
     pub regrowth_multiplier: f32,
     /// **What the ground must hold for this rung to be placed there** — the rung's
     /// `site_requirement.min_deposit_capacity`, struck against the tile's own capacity for the
-    /// working's material. `100` at `extraction:quarry`, the one placement rule on either branch and
+    /// working's material. `100` at `extraction:quarry` and `70` at `forestry:coppice`, the two placement rules the deposit branches carry, and
     /// the whole of *"you cannot quarry just anywhere"*; `0` where the rung asks nothing of the
     /// ground, which is every other shipped rung.
     ///
