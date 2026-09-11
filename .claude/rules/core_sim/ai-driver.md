@@ -661,17 +661,19 @@ with logs is read; a seat the record has frames for and no logs — the human's 
 `seat_<f>/` on the fly; with no `--seat` the lowest seat, logged or recorded, is the default; the
 page is labelled `<run_id> (seed <map_seed>)` off `run.json`.
 
-**The recipe — play, quit, then run this.** Launch the packaged game, play some turns against a
-rival, quit. The launcher printed `run directory: <path>` at start and at exit. Then, with the
-packaged `sim_ai` (beside the server):
+**The recipe — play, quit, then paste.** Launch the packaged game, play some turns against a
+rival, quit. The launcher's log (stderr) holds `run directory: <path>` and, under "open this run
+with:", **one complete command per seat** — the human's at start, each rival's the moment the
+supervisor started it, and all of them again at exit (`launcher.md` → the run directory):
 
 ```text
-sim_ai viewer <run directory> --seat 0 --out human.html    # your seat, imported from the record
-sim_ai viewer <run directory> --seat 1 --out rival.html    # the rival's, from its own logs
+<sim_ai> viewer <run dir> --seat 0 --out <run dir>/seat_0.html    # your seat, imported from the record
+<sim_ai> viewer <run dir> --seat 1 --out <run dir>/seat_1.html    # the rival's, from its own logs
 ```
 
-`--seat 0` is the human (`HUMAN_FACTION_ID`); the rivals are the roster's other ids. The record of
-the last `KEPT_RUNS` sessions is kept.
+`<sim_ai>` is the packaged binary the launcher itself spawned rivals with and `<run dir>` is
+absolute, so a line pastes as printed. `--seat 0` is the human (`HUMAN_FACTION_ID`); the rivals are
+the roster's other ids. The record of the last `KEPT_RUNS` sessions is kept.
 
 ## The script format (`ScriptedBrain`)
 

@@ -105,7 +105,15 @@ they just played. Under it:
   `sim_ai` it starts (`Session::rival_log_dir`, `SEAT_LOG_DIR_PREFIX`). The human's client writes
   none; its seat is imported from `record/` by the viewer.
 
-`sim_ai viewer <run directory> --seat <faction> --out <page.html>` opens either kind of seat.
+**The launcher prints the exact lines.** `viewer_lines` renders, per seat, `<sim_ai> viewer <run
+dir> --seat <f> --out <run dir>/seat_<f>.html` with `Layout::ai` (the very binary rivals are spawned
+with) and the run directory as created, both absolute — paste-ready. The human's line is printed at
+start under `VIEWER_LINES_LABEL_START` ("after quitting, open this run with:"), each rival's the
+first time `spawn_rival` starts that faction (a roster is only known once the server announces it),
+and every seat's again at exit under `VIEWER_LINES_LABEL_EXIT` — `Session::started_rivals` keeps
+every faction ever started, so a rival reaped mid-session still gets its line and a respawned one
+is not listed twice. Plain `eprintln!` (`report_viewer_lines`), the launcher's existing verbosity,
+so a crash still leaves the recipe in the log.
 
 **Pruning.** `create_run_dir` makes this session's directory and then removes every `run-*`
 directory under `runs/` but the newest `KEPT_RUNS` (5), by name — a run holds every frame of every

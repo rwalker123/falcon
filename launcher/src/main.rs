@@ -165,6 +165,13 @@ const ENV_RECORD_DIR: &str = "SIM_RECORD_DIR";
 /// A rival's `--log-dir` under the run directory: `seat_<faction>`, the prefix the bench, the
 /// record and the viewer all use for a seat.
 const SEAT_LOG_DIR_PREFIX: &str = "seat_";
+/// `sim_ai`'s viewer subcommand (`VIEWER_SUBCOMMAND` in `sim_ai/src/main.rs`) and the page each
+/// printed line writes beside the seat's directory: `<run dir>/seat_<f>.html`.
+const VIEWER_SUBCOMMAND: &str = "viewer";
+const VIEWER_PAGE_EXTENSION: &str = ".html";
+/// How the printed viewer lines are introduced, at start and at exit.
+const VIEWER_LINES_LABEL_START: &str = "after quitting, open this run with:";
+const VIEWER_LINES_LABEL_EXIT: &str = "open this run with:";
 
 /// **The human's faction.** Contract twin of `PLAYER_FACTION_ID` in
 /// `clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd`: the seat the
@@ -251,6 +258,12 @@ fn run() -> Result<(), String> {
     // at start and again at exit.
     let run_dir = create_run_dir(&data_dir.join(RUNS_DIR), &mint_run_id())?;
     report_info(&format!("run directory: {}", run_dir.display()));
+    // The human's line is known before anything runs; a rival's is printed the moment the
+    // supervisor starts it, so a crash still leaves the whole recipe in the log.
+    report_viewer_lines(
+        VIEWER_LINES_LABEL_START,
+        &viewer_lines(&layout.ai, &run_dir, &[HUMAN_FACTION_ID]),
+    );
 
     let server = Command::new(&layout.server)
         .current_dir(&data_dir)
@@ -283,12 +296,41 @@ fn run() -> Result<(), String> {
 
     let outcome =
         session.wait_for_human(&roster_events, &layout.ai, &data_dir, &ports_file, &group);
-    report_info(&format!(
-        "run directory: {} — open it with `sim_ai viewer <run directory> --seat <faction> --out \
-         <page.html>`",
-        run_dir.display()
-    ));
+    report_info(&format!("run directory: {}", run_dir.display()));
+    report_viewer_lines(
+        VIEWER_LINES_LABEL_EXIT,
+        &viewer_lines(&layout.ai, &run_dir, &session.seats_of_run()),
+    );
     outcome
+}
+
+/// **One paste-ready viewer command per seat**: `<sim_ai> viewer <run dir> --seat <f> --out
+/// <run dir>/seat_<f>.html`, with the `sim_ai` the layout resolved for spawning rivals and the
+/// run directory as created — both absolute — so a player copies a line and gets the page.
+fn viewer_lines(sim_ai: &Path, run_dir: &Path, seats: &[u32]) -> Vec<String> {
+    seats
+        .iter()
+        .map(|seat| {
+            format!(
+                "{} {VIEWER_SUBCOMMAND} {} --seat {seat} --out {}",
+                sim_ai.display(),
+                run_dir.display(),
+                run_dir
+                    .join(format!(
+                        "{SEAT_LOG_DIR_PREFIX}{seat}{VIEWER_PAGE_EXTENSION}"
+                    ))
+                    .display()
+            )
+        })
+        .collect()
+}
+
+/// Print the viewer lines under `label`, one per line, at the launcher's ordinary verbosity.
+fn report_viewer_lines(label: &str, lines: &[String]) {
+    report_info(label);
+    for line in lines {
+        eprintln!("  {line}");
+    }
 }
 
 /// This launcher session's run id: [`RUN_ID_PREFIX`], the start time in Unix seconds, the pid.
@@ -799,6 +841,9 @@ struct Session {
     rival_brain: String,
     /// This session's run directory: every rival's `--log-dir` is `seat_<faction>` under it.
     run_dir: PathBuf,
+    /// Every rival faction the supervisor ever started this session, in first-start order —
+    /// the seats whose pages the exit lines name, whether or not the child is still running.
+    started_rivals: Vec<u32>,
 }
 
 impl Session {
@@ -810,7 +855,15 @@ impl Session {
             ports_file,
             rival_brain,
             run_dir,
+            started_rivals: Vec::new(),
         }
+    }
+
+    /// The seats this run can be viewed for: the human's, then every rival ever started.
+    fn seats_of_run(&self) -> Vec<u32> {
+        let mut seats = vec![HUMAN_FACTION_ID];
+        seats.extend(self.started_rivals.iter().copied());
+        seats
     }
 
     /// Where a rival's instruments go: `<run_dir>/seat_<faction>`.
@@ -984,6 +1037,13 @@ impl Session {
                 )
             })?;
         self.rivals.push((faction, child));
+        if !self.started_rivals.contains(&faction) {
+            self.started_rivals.push(faction);
+            report_viewer_lines(
+                VIEWER_LINES_LABEL_START,
+                &viewer_lines(ai_program, &self.run_dir, &[faction]),
+            );
+        }
         let (_, child) = self
             .rivals
             .last_mut()
@@ -1477,6 +1537,11 @@ mod tests {
             )
             .expect("reconcile reaps");
         assert_eq!(session.rival_factions(), vec![1]);
+        assert_eq!(
+            session.seats_of_run(),
+            vec![HUMAN_FACTION_ID, 1, 2],
+            "a reaped rival still has a page to open"
+        );
         assert!(
             !process_is_alive(departed),
             "a rival whose faction left the roster must be reaped"
@@ -1492,6 +1557,11 @@ mod tests {
             )
             .expect("reconcile respawns");
         assert_eq!(session.rival_factions(), vec![1, 2]);
+        assert_eq!(
+            session.seats_of_run(),
+            vec![HUMAN_FACTION_ID, 1, 2],
+            "a respawned rival is not listed twice"
+        );
 
         drop(session);
         let _ = fs::remove_file(&ports_file);
@@ -1558,6 +1628,27 @@ mod tests {
     /// otherwise hold the test harness's captured output pipe open for its whole
     /// lifetime, turning a clean assertion failure into a ten-minute hang.
     #[cfg(unix)]
+    /// One line per seat, each a complete command a player can paste: the resolved `sim_ai`,
+    /// the run directory, the seat, and the page beside that seat's directory.
+    #[test]
+    fn a_viewer_line_per_seat_names_the_program_the_run_and_the_page() {
+        let sim_ai = Path::new("/pkg/Contents/Helpers/sim_ai");
+        let run_dir = Path::new("/data/ShadowScale/runs/run-1757600000-42");
+        let lines = viewer_lines(sim_ai, run_dir, &[HUMAN_FACTION_ID, 1, 2]);
+        assert_eq!(
+            lines,
+            vec![
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 0 --out /data/ShadowScale/runs/run-1757600000-42/seat_0.html",
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 1 --out /data/ShadowScale/runs/run-1757600000-42/seat_1.html",
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 2 --out /data/ShadowScale/runs/run-1757600000-42/seat_2.html",
+            ]
+        );
+        assert!(viewer_lines(sim_ai, run_dir, &[]).is_empty());
+    }
+
     /// A run id sorts by its start time, which is what pruning by name relies on.
     #[test]
     fn a_run_id_carries_the_prefix_and_the_start_time() {
