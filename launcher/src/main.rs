@@ -27,16 +27,26 @@
 //! the game is a remote player whose process happens to be local. So the human's
 //! client is spawned *as the process filling a seat*, through the same path any
 //! other locally-hosted seat would use — there is deliberately no in-process
-//! fast path for a local player. Rival seats are left **vacant**, which the
-//! server's turn timeout already handles.
+//! fast path for a local player.
+//!
+//! **Rival seats are supervised, not listed.** The server decides the roster at
+//! every world build — boot, `new_game` from the client's menu, a load — and
+//! announces it as a `seats.roster` event on its log stream. A supervisor thread
+//! reads that stream and, on every event, the session reconciles: one `sim_ai`
+//! child per rival faction not yet running, and a child whose faction left the
+//! roster is reaped. The human's client owns the session window: when it exits,
+//! every AI child is reaped, then the server.
 
 // No console window when the player double-clicks the packaged .exe. Errors are
 // surfaced through `report_error` (a message box) rather than stdio.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::fs;
+use std::io::Read;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -106,6 +116,57 @@ const SERVER_PORT_ALLOC_EXIT_CODE: i32 = 2;
 const SERVER_STEM: &str = "server";
 /// Name of the client executable/bundle inside the package.
 const CLIENT_STEM: &str = "ShadowScaleClient";
+/// Name of the AI player executable inside the package, beside the server
+/// (crate `sim_ai`; Windows adds the `.exe` suffix below).
+const AI_STEM: &str = "sim_ai";
+
+/// **The brain every rival seat plays on.** `sim_ai`'s own `--brain` default is
+/// `pass`, a seat that assigns no labor and starves, because Pass is the
+/// control the bench measures every other brain against — a default meant for
+/// tests. The shipped game wants rivals that play, so the launcher names the
+/// brain instead of inheriting that one. Contract twin of `BrainKind::as_str`
+/// in `sim_ai/src/main.rs`.
+const AI_BRAIN_DEFAULT: &str = "utility";
+/// ⛔ **EVERY BRAIN `sim_ai` ACCEPTS, RESTATED — because a rejected one dies
+/// invisibly.** `sim_ai`'s clap refuses an unknown `--brain`, but it does so
+/// *after* the launcher has spawned it: `spawn()` succeeds, the child exits 2 in
+/// milliseconds, the reconcile loop reaps the corpse, and a typo in
+/// [`ENV_AI_BRAIN`] costs the run every rival with nothing said anywhere. So the
+/// value is checked here, before anything starts. Contract twin of `BrainKind`
+/// in `sim_ai/src/main.rs`: a variant added there is added here.
+const AI_BRAIN_NAMES: [&str; 3] = ["pass", "scripted", "utility"];
+/// Replaces [`AI_BRAIN_DEFAULT`] for one run — how a developer puts the rivals
+/// back on `pass` (or on `scripted`) without a rebuild, the same way the server's
+/// own levers are set (`core_sim/CLAUDE.md` → Environment Overrides). Empty or
+/// unset is the default.
+const ENV_AI_BRAIN: &str = "SIM_AI_BRAIN";
+
+/// **The human's faction.** Contract twin of `PLAYER_FACTION_ID` in
+/// `clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd`: the seat the
+/// Godot client claims, and therefore the one roster entry that never gets a
+/// `sim_ai` child.
+const HUMAN_FACTION_ID: u32 = 0;
+
+/// The roster event's identity on the log stream. Contract twin of the
+/// `seats.roster` event `retain_claimed_seats` emits in
+/// `core_sim/src/bin/server.rs`, whose doc comment states the shape.
+const ROSTER_EVENT_TARGET: &str = "shadow_scale::server";
+const ROSTER_EVENT_MESSAGE: &str = "seats.roster";
+/// Its two fields: the faction ids as a JSON array in a string, and the world
+/// build they belong to.
+const ROSTER_FIELD_FACTIONS: &str = "factions";
+const ROSTER_FIELD_WORLD_EPOCH: &str = "world_epoch";
+/// The handshake file's keys the supervisor reads to reach the log stream.
+const PORTS_KEY_HOST: &str = "host";
+const PORTS_KEY_LOG: &str = "log";
+/// A log-stream frame is `[u32 LE length][JSON]` (`core_sim/src/log_stream.rs`).
+const LOG_FRAME_PREFIX_BYTES: usize = std::mem::size_of::<u32>();
+/// A log line longer than this is not a log line.
+const MAX_LOG_FRAME: usize = 1024 * 1024;
+/// How long the supervisor waits before redialling a dropped log stream.
+const LOG_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
+/// How often the session checks on the human's process between roster events.
+const HUMAN_EXIT_POLL: Duration = Duration::from_millis(250);
 
 /// How the launcher's messages name the simulation server when reporting a
 /// failure that is about the *process* rather than the package layout.
@@ -114,6 +175,8 @@ const SERVER_LABEL: &str = "the server";
 /// phrase has to read naturally in "Could not find …", "Could not start …" and
 /// "Could not add … to the process group".
 const HUMAN_PLAYER_LABEL: &str = "the game";
+/// …and a rival's.
+const AI_PLAYER_LABEL: &str = "a rival player";
 
 /// On macOS both children live in `ShadowScale.app/Contents/Helpers/`, one level
 /// up from the launcher's own `Contents/MacOS/`.
@@ -152,6 +215,10 @@ fn run() -> Result<(), String> {
     // object covers this process being killed outright. It is created before the
     // first spawn so that every child — server and seats alike — joins it the
     // instant it exists.
+    // Before anything is spawned: a `SIM_AI_BRAIN` the AI would refuse is a run
+    // with no rivals at all, so it stops here, with the offending value named.
+    let rival_brain = rival_brain()?;
+
     let group = ProcessGroup::kill_on_close()?;
 
     let server = Command::new(&layout.server)
@@ -167,29 +234,34 @@ fn run() -> Result<(), String> {
 
     // From here on every exit path must reap every child, so ownership moves
     // into a guard rather than being cleaned up at each `return`.
-    let mut session = Session::new(server, ports_file.clone());
+    let mut session = Session::new(server, ports_file.clone(), rival_brain);
     group.adopt(session.server(), SERVER_LABEL)?;
 
     wait_for_ready(&mut session, &ports_file)?;
 
-    // One process per player. The server never spawns these: in a real
-    // multiplayer game the other seats are on other machines, so a server that
-    // spawned its players would only work locally.
-    for seat in local_seats(&layout) {
-        session.fill_seat(&seat, &data_dir, &ports_file, &group)?;
-    }
+    // The supervisor listens BEFORE the human's client starts: the boot world is
+    // idle until that client asks for one, so every roster the server will ever
+    // announce comes after this connection exists.
+    let roster_events = spawn_roster_watcher(log_stream_addr(&ports_file)?);
 
-    session.wait_for_players()
+    // The human's seat. The server never spawns players: in a real multiplayer
+    // game the other seats are on other machines, so a server that spawned its
+    // players would only work locally.
+    session.fill_seat(&human_seat(&layout), &data_dir, &ports_file, &group)?;
+
+    session.wait_for_human(&roster_events, &layout.ai, &data_dir, &ports_file, &group)
 }
 
 // ---------------------------------------------------------------------------
 // Path resolution
 // ---------------------------------------------------------------------------
 
-/// Absolute paths to the two child programs in the installed package.
+/// Absolute paths to the three child programs in the installed package.
 struct Layout {
     server: PathBuf,
     client: PathBuf,
+    /// The AI player program, staged beside the server.
+    ai: PathBuf,
 }
 
 impl Layout {
@@ -197,6 +269,7 @@ impl Layout {
         let layout = Self::platform_layout(exe_dir)?;
         require_file(&layout.server, "the simulation server")?;
         require_file(&layout.client, HUMAN_PLAYER_LABEL)?;
+        require_file(&layout.ai, AI_PLAYER_LABEL)?;
         Ok(layout)
     }
 
@@ -213,6 +286,7 @@ impl Layout {
         Ok(Self {
             server: helpers.join(SERVER_STEM),
             client: macos_bundle_executable(&bundle)?,
+            ai: helpers.join(AI_STEM),
         })
     }
 
@@ -223,6 +297,7 @@ impl Layout {
         Ok(Self {
             server: exe_dir.join(format!("{SERVER_STEM}.exe")),
             client: exe_dir.join(format!("{CLIENT_STEM}.exe")),
+            ai: exe_dir.join(format!("{AI_STEM}.exe")),
         })
     }
 
@@ -233,6 +308,7 @@ impl Layout {
         Ok(Self {
             server: exe_dir.join(SERVER_STEM),
             client: exe_dir.join(CLIENT_STEM),
+            ai: exe_dir.join(AI_STEM),
         })
     }
 }
@@ -371,23 +447,162 @@ struct LocalSeat<'a> {
     what: &'a str,
 }
 
-/// Every seat this launcher fills on this machine, in the order it starts them.
-///
-/// **Today the list holds exactly one entry** — the human at this keyboard, in
-/// the Godot client. The client claims its own seat over the command socket at
-/// handshake (`SeatClaim.gd`), so the launcher passes no seat identity: the only
-/// thing it has to decide is *how many processes to start and how to reap them*.
-///
-/// **Rival seats are left vacant.** There is no AI player program to launch yet
-/// (#645), and a vacant seat is auto-submitted immediately by the server's turn
-/// scheduler, so a world with N rival seats paces exactly as single-player
-/// always has. Adding one is adding an entry here, not a second code path: the
-/// human's client is spawned through the same `fill_seat` as any other occupant.
-fn local_seats(layout: &Layout) -> Vec<LocalSeat<'_>> {
-    vec![LocalSeat {
+/// The human at this keyboard, in the Godot client. The client claims its own
+/// seat over the command socket at handshake (`SeatClaim.gd`), so the launcher
+/// passes no seat identity. Rival seats are filled by [`Session::reconcile`] as
+/// the server announces them.
+fn human_seat(layout: &Layout) -> LocalSeat<'_> {
+    LocalSeat {
         program: &layout.client,
         what: HUMAN_PLAYER_LABEL,
-    }]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The seat supervisor
+// ---------------------------------------------------------------------------
+
+/// One `seats.roster` event: which factions the world now seats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RosterEvent {
+    factions: Vec<u32>,
+    world_epoch: u64,
+}
+
+/// A line that **is** the roster event and whose fields the launcher could not
+/// read: the contract broke, and that is a different thing from a line about
+/// something else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RosterEventRejected {
+    /// Which clause of the contract failed, in the launcher's words.
+    reason: &'static str,
+    /// The frame verbatim, so the mismatch is legible rather than described.
+    payload: String,
+}
+
+impl RosterEventRejected {
+    fn message(&self) -> String {
+        format!(
+            "the server's {ROSTER_EVENT_MESSAGE} event {}, so no rival players could be started \
+             for this world: {}",
+            self.reason, self.payload
+        )
+    }
+}
+
+/// The `seats.roster` event, if this log line is one. The contract twin of
+/// `core_sim::log_stream::emit_seats_roster`.
+///
+/// ⛔ **THREE ANSWERS, NOT TWO.** `None` is *some other line* — the log stream
+/// carries every event the server emits, and skipping them is the normal case.
+/// `Some(Err(_))` is this line **being** the roster event and failing to parse,
+/// which is the launcher's whole contract broken and must never be swallowed as
+/// though it were one more line about something else: changing the event's
+/// `factions` field from `%` to `?` is enough to produce it, and the packaged
+/// game then ships with zero rivals and zero diagnostics.
+fn parse_roster_event(line: &[u8]) -> Option<Result<RosterEvent, RosterEventRejected>> {
+    let envelope: serde_json::Value = serde_json::from_slice(line).ok()?;
+    if envelope.get("target")?.as_str()? != ROSTER_EVENT_TARGET
+        || envelope.get("message")?.as_str()? != ROSTER_EVENT_MESSAGE
+    {
+        return None;
+    }
+    Some(
+        roster_fields(&envelope).map_err(|reason| RosterEventRejected {
+            reason,
+            payload: String::from_utf8_lossy(line).into_owned(),
+        }),
+    )
+}
+
+/// The roster event's two fields, or the clause of the contract that failed.
+fn roster_fields(envelope: &serde_json::Value) -> Result<RosterEvent, &'static str> {
+    let fields = envelope.get("fields").ok_or("carries no `fields` object")?;
+    let factions = fields
+        .get(ROSTER_FIELD_FACTIONS)
+        .and_then(serde_json::Value::as_str)
+        .ok_or("names no `factions` string (a tracing field recorded with `?` quotes itself)")?;
+    let factions: Vec<u32> = serde_json::from_str(factions)
+        .map_err(|_| "carries a `factions` string that is not a JSON array of faction ids")?;
+    let world_epoch = fields
+        .get(ROSTER_FIELD_WORLD_EPOCH)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("names no numeric `world_epoch`")?;
+    Ok(RosterEvent {
+        factions,
+        world_epoch,
+    })
+}
+
+/// Where the server's log stream is, off the handshake file the readiness wait
+/// already confirmed complete.
+fn log_stream_addr(ports_file: &Path) -> Result<SocketAddr, String> {
+    let text = fs::read_to_string(ports_file)
+        .map_err(|err| format!("Could not read the server's ports file: {err}"))?;
+    let json: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|err| format!("The server's ports file is not JSON: {err}"))?;
+    let host = json
+        .get(PORTS_KEY_HOST)
+        .and_then(serde_json::Value::as_str)
+        .and_then(|host| host.parse().ok())
+        .ok_or_else(|| "The server's ports file names no host.".to_string())?;
+    let port = json
+        .get(PORTS_KEY_LOG)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .ok_or_else(|| "The server's ports file names no log port.".to_string())?;
+    Ok(SocketAddr::new(host, port))
+}
+
+/// Read the server's log stream on its own thread, forwarding every roster
+/// event. A dropped stream is redialled; the thread ends when the session stops
+/// listening (the receiver is dropped).
+fn spawn_roster_watcher(addr: SocketAddr) -> Receiver<RosterEvent> {
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("seat-supervisor".into())
+        .spawn(move || watch_roster(addr, sender))
+        .expect("spawn the seat supervisor thread");
+    receiver
+}
+
+/// A dropped stream is only ever redialled — never reported as an empty roster,
+/// which would reap every rival over a hiccup on the log socket. The thread ends
+/// with the process, or when the session stops listening.
+fn watch_roster(addr: SocketAddr, sender: Sender<RosterEvent>) {
+    loop {
+        if let Ok(mut stream) = TcpStream::connect(addr) {
+            while let Some(line) = read_log_frame(&mut stream) {
+                match parse_roster_event(&line) {
+                    Some(Ok(event)) => {
+                        if sender.send(event).is_err() {
+                            return;
+                        }
+                    }
+                    Some(Err(rejected)) => report_warning(&rejected.message()),
+                    None => {}
+                }
+            }
+        }
+        thread::sleep(LOG_RECONNECT_BACKOFF);
+    }
+}
+
+/// One `[u32 LE length][JSON]` frame off the log stream, or `None` on EOF or a
+/// frame that cannot be a log line.
+///
+/// Generic over the reader only so the contract test can feed it bytes the
+/// server's own encoder produced, rather than a socket.
+fn read_log_frame<R: Read>(stream: &mut R) -> Option<Vec<u8>> {
+    let mut prefix = [0u8; LOG_FRAME_PREFIX_BYTES];
+    stream.read_exact(&mut prefix).ok()?;
+    let len = u32::from_le_bytes(prefix) as usize;
+    if len == 0 || len > MAX_LOG_FRAME {
+        return None;
+    }
+    let mut payload = vec![0u8; len];
+    stream.read_exact(&mut payload).ok()?;
+    Some(payload)
 }
 
 // ---------------------------------------------------------------------------
@@ -492,17 +707,24 @@ fn server_exit_message(code: Option<i32>) -> String {
 /// [`fill_seat`]: Session::fill_seat
 struct Session {
     server: Child,
-    /// One per filled seat, in start order.
+    /// One per filled seat, in start order — the human's client.
     players: Vec<Child>,
+    /// One `sim_ai` per rival faction the server's roster names, keyed by faction.
+    rivals: Vec<(u32, Child)>,
     ports_file: PathBuf,
+    /// The `--brain` every rival is spawned on, resolved and **validated** before
+    /// this session existed ([`rival_brain`]).
+    rival_brain: String,
 }
 
 impl Session {
-    fn new(server: Child, ports_file: PathBuf) -> Self {
+    fn new(server: Child, ports_file: PathBuf, rival_brain: String) -> Self {
         Self {
             server,
             players: Vec::new(),
+            rivals: Vec::new(),
             ports_file,
+            rival_brain,
         }
     }
 
@@ -549,18 +771,138 @@ impl Session {
             .expect("the player just pushed is the last one")
     }
 
-    /// Blocks until every locally-hosted player process has exited.
-    ///
-    /// With the single seat that exists today this is exactly the old "wait for
-    /// the game window to close": the launcher returns, and `Drop` reaps the
-    /// server behind it.
-    fn wait_for_players(&mut self) -> Result<(), String> {
-        for player in &mut self.players {
-            player
-                .wait()
-                .map_err(|err| format!("Lost track of the game process: {err}"))?;
+    /// **The human's client owns the session window.** Blocks until it exits,
+    /// reconciling the rival seats against every roster event that arrives in
+    /// the meantime; the launcher then returns, and `Drop` reaps every AI child
+    /// and the server behind it. An AI child exiting on its own does not end
+    /// the run — its seat goes vacant, and the next roster event may respawn it.
+    fn wait_for_human(
+        &mut self,
+        roster_events: &Receiver<RosterEvent>,
+        ai_program: &Path,
+        data_dir: &Path,
+        ports_file: &Path,
+        group: &ProcessGroup,
+    ) -> Result<(), String> {
+        loop {
+            match self.human().try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => {}
+                Err(err) => return Err(format!("Lost track of the game process: {err}")),
+            }
+            match roster_events.recv_timeout(HUMAN_EXIT_POLL) {
+                Ok(event) => {
+                    self.reconcile(&event.factions, ai_program, data_dir, ports_file, group)?;
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                // The supervisor thread is gone; the human's exit is still the
+                // only thing that ends the run.
+                Err(RecvTimeoutError::Disconnected) => thread::sleep(HUMAN_EXIT_POLL),
+            }
+        }
+    }
+
+    /// The human's client: the first seat filled.
+    fn human(&mut self) -> &mut Child {
+        self.players
+            .first_mut()
+            .expect("the human's seat is filled before the session waits on it")
+    }
+
+    /// Bring the rival children into line with `roster`: spawn one per rival
+    /// faction with no running child, reap every child whose faction is not
+    /// named. A child that exited on its own is dropped here and respawned by
+    /// this event if its faction is still in the roster — one respawn per
+    /// roster event, never a tight loop.
+    fn reconcile(
+        &mut self,
+        roster: &[u32],
+        ai_program: &Path,
+        data_dir: &Path,
+        ports_file: &Path,
+        group: &ProcessGroup,
+    ) -> Result<(), String> {
+        let mut kept = Vec::with_capacity(self.rivals.len());
+        for (faction, mut child) in self.rivals.drain(..) {
+            // ⛔ **A RIVAL THAT DIED SAYS SO.** Reaping in silence covered every
+            // way this seat can fail at startup — a `--brain` clap refuses, a seat
+            // claim the server will not grant, a panic — and roster events fire
+            // only on a world build, so within one world the seat then stays empty
+            // for the rest of the session with nothing anywhere to read.
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        report_warning(&format!(
+                            "{AI_PLAYER_LABEL} on seat {faction} exited ({status}); that seat is \
+                             unplayed until the next world build."
+                        ));
+                    }
+                    continue;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    report_warning(&format!(
+                        "Lost track of {AI_PLAYER_LABEL} on seat {faction}: {err}"
+                    ));
+                    continue;
+                }
+            }
+            if roster.contains(&faction) {
+                kept.push((faction, child));
+            } else {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+        self.rivals = kept;
+        for &faction in roster {
+            if faction == HUMAN_FACTION_ID || self.rivals.iter().any(|(held, _)| *held == faction) {
+                continue;
+            }
+            self.spawn_rival(faction, ai_program, data_dir, ports_file, group)?;
         }
         Ok(())
+    }
+
+    /// Start one `sim_ai` for `faction`, take ownership of it, and put it in the
+    /// process group — the same ordering [`Session::fill_seat`] follows.
+    fn spawn_rival(
+        &mut self,
+        faction: u32,
+        ai_program: &Path,
+        data_dir: &Path,
+        ports_file: &Path,
+        group: &ProcessGroup,
+    ) -> Result<(), String> {
+        let child = Command::new(ai_program)
+            .arg("--ports-file")
+            .arg(ports_file)
+            .arg("--faction")
+            .arg(faction.to_string())
+            .arg("--brain")
+            .arg(&self.rival_brain)
+            .current_dir(data_dir)
+            .env(ENV_PORTS_FILE, ports_file)
+            .stdin(Stdio::null())
+            .spawn()
+            .map_err(|err| {
+                format!(
+                    "Could not start {AI_PLAYER_LABEL}:\n{}\n\n{err}",
+                    ai_program.display()
+                )
+            })?;
+        self.rivals.push((faction, child));
+        let (_, child) = self
+            .rivals
+            .last_mut()
+            .expect("the rival just pushed is the last one");
+        group.adopt(child, AI_PLAYER_LABEL)
+    }
+
+    /// The factions with a running rival child, in spawn order.
+    #[cfg(test)]
+    fn rival_factions(&self) -> Vec<u32> {
+        self.rivals.iter().map(|(faction, _)| *faction).collect()
     }
 }
 
@@ -573,6 +915,10 @@ impl Drop for Session {
         // Every call is best-effort — an already-exited child makes `kill` fail,
         // which is exactly the state we want anyway — and none may short-circuit
         // the rest, because a stop halfway down this list is an orphan.
+        for (_, rival) in &mut self.rivals {
+            let _ = rival.kill();
+            let _ = rival.wait();
+        }
         for player in &mut self.players {
             let _ = player.kill();
             let _ = player.wait();
@@ -581,6 +927,32 @@ impl Drop for Session {
         let _ = self.server.wait();
         remove_ports_file(&self.ports_file);
     }
+}
+
+/// The brain every rival is spawned on: `$SIM_AI_BRAIN` when it is set to
+/// something, else [`AI_BRAIN_DEFAULT`]. Resolved once, before the server
+/// starts, so a rejected value stops the launch loudly instead of costing every
+/// rival silently.
+fn rival_brain() -> Result<String, String> {
+    brain_from_override(std::env::var(ENV_AI_BRAIN).ok())
+}
+
+/// [`rival_brain`]'s rule, apart from the environment so it can be tested
+/// without one: an override is honoured only when it carries a value, and only
+/// when that value names a brain [`AI_BRAIN_NAMES`] holds.
+fn brain_from_override(override_value: Option<String>) -> Result<String, String> {
+    let Some(named) = override_value.filter(|brain| !brain.trim().is_empty()) else {
+        return Ok(AI_BRAIN_DEFAULT.to_owned());
+    };
+    let named = named.trim().to_owned();
+    if AI_BRAIN_NAMES.contains(&named.as_str()) {
+        return Ok(named);
+    }
+    Err(format!(
+        "{ENV_AI_BRAIN} is set to `{named}`, which is not a brain {AI_STEM} plays. The choices \
+         are {}.",
+        AI_BRAIN_NAMES.join(", ")
+    ))
 }
 
 /// Deletes the handshake file if present, ignoring failure — a stale file is an
@@ -723,6 +1095,17 @@ fn report_error(message: &str) {
     show_error_dialog(message);
 }
 
+/// A problem the run **survives**, said out loud rather than swallowed.
+///
+/// No dialog: these arrive from the supervisor thread while the player is in the
+/// game, and a modal box per malformed log line would be worse than the fault it
+/// reports. `stderr` is the launcher's one diagnostic channel — it reaches a
+/// developer running the package from a terminal, and the packaged Windows build
+/// has no console at all, which is exactly why the swallowing was invisible.
+fn report_warning(message: &str) {
+    eprintln!("{ERROR_DIALOG_TITLE}: warning: {message}");
+}
+
 #[cfg(windows)]
 fn show_error_dialog(message: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
@@ -792,20 +1175,226 @@ mod tests {
         Layout {
             server: PathBuf::from("server"),
             client: PathBuf::from("ShadowScaleClient"),
+            ai: PathBuf::from("sim_ai"),
         }
     }
 
-    /// The human is a *seat*, not a special case — and the rivals are vacant,
-    /// because there is no player program to fill them with yet (#645). Both
-    /// halves of that sentence are what keeps a single-player launch identical
-    /// to what it has always been.
+    /// The human is a *seat*, not a special case: it is filled through the same
+    /// path any locally-hosted occupant would be.
     #[test]
-    fn the_only_local_seat_today_is_the_humans_client() {
+    fn the_humans_seat_is_filled_with_the_client() {
         let layout = fake_layout();
-        let seats = local_seats(&layout);
+        assert_eq!(human_seat(&layout).program, layout.client.as_path());
+    }
 
-        assert_eq!(seats.len(), 1, "rival seats are left vacant");
-        assert_eq!(seats[0].program, layout.client.as_path());
+    /// ⛔ **A RIVAL PLAYS.** `sim_ai`'s `--brain` default is `pass`, which assigns
+    /// nobody and starves; the shipped game must spawn its rivals on the utility
+    /// brain, and the environment lever is what puts them back on `pass` for a
+    /// comparison.
+    #[test]
+    fn a_rival_spawns_on_the_utility_brain_unless_the_environment_says_otherwise() {
+        let default = Ok(AI_BRAIN_DEFAULT.to_owned());
+        assert_eq!(brain_from_override(None), default);
+        assert_eq!(brain_from_override(Some(String::new())), default);
+        assert_eq!(brain_from_override(Some("   ".to_owned())), default);
+        assert_eq!(
+            brain_from_override(Some("pass".to_owned())),
+            Ok("pass".to_owned())
+        );
+    }
+
+    /// ⛔ **A BRAIN `sim_ai` WOULD REFUSE NEVER REACHES A `spawn()`.** `spawn`
+    /// succeeds for any name, clap then rejects it, and the child is gone in
+    /// milliseconds — reaped without a word, leaving a game with no rivals and
+    /// no diagnostics. The check is here, and the message names the value.
+    #[test]
+    fn a_brain_the_ai_does_not_play_is_refused_with_the_value_named() {
+        let refused = brain_from_override(Some("utilty".to_owned()))
+            .expect_err("a misspelt brain is not a brain");
+        assert!(refused.contains("utilty"), "{refused}");
+        assert!(refused.contains(ENV_AI_BRAIN), "{refused}");
+        for brain in AI_BRAIN_NAMES {
+            assert!(refused.contains(brain), "{refused}");
+            assert_eq!(
+                brain_from_override(Some(brain.to_owned())),
+                Ok(brain.to_owned()),
+                "every brain the AI plays is accepted"
+            );
+        }
+    }
+
+    /// The contract twin of the server's `seats.roster` event: the shape its
+    /// doc comment states parses, and nothing else does.
+    #[test]
+    fn a_roster_event_parses_and_other_lines_do_not() {
+        let line = br#"{"timestamp_ms":1,"level":"INFO","target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"[0,1,2]","world_epoch":3}}"#;
+        assert_eq!(
+            parse_roster_event(line),
+            Some(Ok(RosterEvent {
+                factions: vec![0, 1, 2],
+                world_epoch: 3,
+            }))
+        );
+        let other = br#"{"timestamp_ms":1,"level":"INFO","target":"shadow_scale::server","message":"seat.claimed","fields":{"faction":"1"}}"#;
+        assert_eq!(parse_roster_event(other), None);
+        assert_eq!(parse_roster_event(b"not json"), None);
+    }
+
+    /// ⛔ **A ROSTER LINE THE PARSER REFUSES IS NOT A LINE TO SKIP.** It is the
+    /// supervisor contract broken, and the launcher has to say so — the exact
+    /// shape `?factions` instead of `%factions` produces, which is one character
+    /// in the server and costs the packaged game every rival.
+    #[test]
+    fn a_roster_line_the_parser_refuses_is_rejected_and_not_silently_skipped() {
+        // `?factions` — the tracing Debug sigil — quotes the string it records.
+        let debug_sigil = br#"{"level":"INFO","target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"\"[0,1,2]\"","world_epoch":3}}"#;
+        let rejected = match parse_roster_event(debug_sigil) {
+            Some(Err(rejected)) => rejected,
+            other => panic!("a roster-shaped line must not read as another line: {other:?}"),
+        };
+        let message = rejected.message();
+        assert!(message.contains(ROSTER_EVENT_MESSAGE), "{message}");
+        assert!(
+            message.contains(ROSTER_FIELD_FACTIONS) && message.contains("[0,1,2]"),
+            "the offending frame is quoted back verbatim: {message}"
+        );
+        // The other two clauses answer the same way.
+        assert!(
+            matches!(
+                parse_roster_event(
+                    br#"{"target":"shadow_scale::server","message":"seats.roster","fields":{"factions":"[0]"}}"#
+                ),
+                Some(Err(_))
+            ),
+            "a roster event with no world_epoch"
+        );
+        assert!(
+            matches!(
+                parse_roster_event(
+                    br#"{"target":"shadow_scale::server","message":"seats.roster"}"#
+                ),
+                Some(Err(_))
+            ),
+            "a roster event with no fields"
+        );
+    }
+
+    /// ⛔ **PINNED TO THE SERVER'S OWN EMIT, NOT TO A HAND-WRITTEN STRING.** The
+    /// only guard this contract had asserted against a JSON literal, so the
+    /// launcher and the server could drift apart without a single test moving:
+    /// changing `%factions` to `?factions` in the server left every launcher test
+    /// green and shipped a game with zero rivals.
+    ///
+    /// So this drives the **real** chain — `core_sim::log_stream::emit_seats_roster`
+    /// through the **real** `LogForwardLayer`, serialized the way the log-stream
+    /// server serializes it, framed the way it frames it — into `read_log_frame`
+    /// and `parse_roster_event`.
+    #[test]
+    fn the_servers_own_roster_emit_parses() {
+        use tracing_subscriber::prelude::*;
+
+        const FACTIONS: [u32; 3] = [0, 1, 2];
+        const WORLD_EPOCH: u32 = 3;
+
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let subscriber =
+            tracing_subscriber::registry().with(core_sim::log_stream::LogForwardLayer::new(sender));
+        tracing::subscriber::with_default(subscriber, || {
+            core_sim::log_stream::emit_seats_roster(&FACTIONS, WORLD_EPOCH);
+        });
+        let envelope = receiver.try_recv().expect("the server emitted the event");
+
+        // `run_log_stream`'s own encoding: the envelope as JSON behind a u32 LE length.
+        let payload = serde_json::to_vec(&envelope).expect("the envelope serialises");
+        let mut framed = (payload.len() as u32).to_le_bytes().to_vec();
+        framed.extend_from_slice(&payload);
+        let mut stream = std::io::Cursor::new(framed);
+        let line = read_log_frame(&mut stream).expect("one whole frame");
+
+        assert_eq!(
+            parse_roster_event(&line),
+            Some(Ok(RosterEvent {
+                factions: FACTIONS.to_vec(),
+                world_epoch: WORLD_EPOCH as u64,
+            })),
+            "the launcher reads what the server writes: {}",
+            String::from_utf8_lossy(&line)
+        );
+        assert_eq!(envelope.target, ROSTER_EVENT_TARGET);
+        assert_eq!(envelope.message, ROSTER_EVENT_MESSAGE);
+    }
+
+    /// Reconciliation, on stand-in children: a roster spawns one rival per
+    /// non-human faction, a shrunken roster reaps the departed and keeps the
+    /// rest, and a grown one respawns. Unix-only for its `sleep` stand-in.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_spawns_a_rival_per_roster_faction_and_reaps_the_departed() {
+        const HUMAN_AND_TWO_RIVALS: [u32; 3] = [HUMAN_FACTION_ID, 1, 2];
+        const HUMAN_AND_ONE_RIVAL: [u32; 2] = [HUMAN_FACTION_ID, 1];
+
+        let ports_file = std::env::temp_dir().join(format!(
+            "{PORTS_FILE_PREFIX}reconcile-{}{PORTS_FILE_EXTENSION}",
+            std::process::id()
+        ));
+        fs::write(&ports_file, "{}").expect("write the stand-in handshake file");
+        let data_dir = std::env::temp_dir();
+        let group = ProcessGroup::kill_on_close().expect("a process group");
+        let stand_in = Path::new("sleep");
+        let mut session = Session::new(
+            spawn_sleeper(),
+            ports_file.clone(),
+            AI_BRAIN_DEFAULT.to_owned(),
+        );
+
+        // `sleep` needs a duration; the stand-in program gets the faction as its
+        // argument, which is a legal (short) duration — long enough for the
+        // assertions, short enough not to linger if a reap were skipped.
+        session
+            .reconcile(
+                &HUMAN_AND_TWO_RIVALS,
+                stand_in,
+                &data_dir,
+                &ports_file,
+                &group,
+            )
+            .expect("reconcile spawns");
+        assert_eq!(
+            session.rival_factions(),
+            vec![1, 2],
+            "one rival per non-human faction, and none for the human"
+        );
+        let departed = session.rivals[1].1.id();
+        assert!(process_is_alive(departed));
+
+        session
+            .reconcile(
+                &HUMAN_AND_ONE_RIVAL,
+                stand_in,
+                &data_dir,
+                &ports_file,
+                &group,
+            )
+            .expect("reconcile reaps");
+        assert_eq!(session.rival_factions(), vec![1]);
+        assert!(
+            !process_is_alive(departed),
+            "a rival whose faction left the roster must be reaped"
+        );
+
+        session
+            .reconcile(
+                &HUMAN_AND_TWO_RIVALS,
+                stand_in,
+                &data_dir,
+                &ports_file,
+                &group,
+            )
+            .expect("reconcile respawns");
+        assert_eq!(session.rival_factions(), vec![1, 2]);
+
+        drop(session);
+        let _ = fs::remove_file(&ports_file);
     }
 
     /// The reaping guarantee, exercised on N children rather than argued about:
@@ -828,11 +1417,20 @@ mod tests {
         ));
         fs::write(&ports_file, "{}").expect("write the stand-in handshake file");
 
-        let mut session = Session::new(spawn_sleeper(), ports_file.clone());
+        /// A rival's stand-in, so the reap covers the supervised children too.
+        const A_RIVAL_FACTION: u32 = 1;
+
+        let mut session = Session::new(
+            spawn_sleeper(),
+            ports_file.clone(),
+            AI_BRAIN_DEFAULT.to_owned(),
+        );
         let mut pids = vec![session.server().id()];
         for _ in 0..PLAYER_COUNT {
             pids.push(session.adopt_player(spawn_sleeper()).id());
         }
+        session.rivals.push((A_RIVAL_FACTION, spawn_sleeper()));
+        pids.push(session.rivals[0].1.id());
         assert!(pids.iter().all(|pid| process_is_alive(*pid)));
 
         drop(session);

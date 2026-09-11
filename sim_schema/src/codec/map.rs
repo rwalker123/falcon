@@ -1,9 +1,12 @@
 //! Map-section FlatBuffers serialization.
 
-use crate::codec::{create_float_raster, FbBuilder};
+use crate::codec::{
+    create_float_raster, decode_float_raster, decode_rows, decode_scalars, unknown_enum,
+    DecodeError, FbBuilder,
+};
 use crate::state::map::{
     ClimateBandsState, ElevationOverlayState, MountainKind, TemperatureSurvivabilityState,
-    TerrainOverlayState, TerrainType, TileState,
+    TerrainOverlayState, TerrainSample, TerrainTags, TerrainType, TileState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -239,5 +242,228 @@ fn to_fb_mountain_kind(kind: MountainKind) -> fb::MountainKind {
         MountainKind::Fault => fb::MountainKind::Fault,
         MountainKind::Volcanic => fb::MountainKind::Volcanic,
         MountainKind::Dome => fb::MountainKind::Dome,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` / `to_fb_*` above, in the same order.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_map_section(
+    section: fb::MapSection<'_>,
+    snapshot: &mut WorldSnapshot,
+) -> Result<(), DecodeError> {
+    snapshot.tiles = decode_rows(section.tiles(), decode_tile)?;
+    snapshot.terrain = section
+        .terrainOverlay()
+        .map(decode_terrain_overlay)
+        .transpose()?
+        .unwrap_or_default();
+    snapshot.elevation_overlay = section
+        .elevationOverlay()
+        .map(decode_elevation_overlay)
+        .unwrap_or_default();
+    snapshot.moisture_raster = section
+        .moistureRaster()
+        .map(decode_float_raster)
+        .unwrap_or_default();
+    snapshot.climate_bands = section
+        .climateBands()
+        .map(decode_climate_bands)
+        .unwrap_or_default();
+    snapshot.temperature_survivability = section
+        .temperatureSurvivability()
+        .map(decode_temperature_survivability)
+        .unwrap_or_default();
+    Ok(())
+}
+
+pub(crate) fn decode_map_section_delta(
+    section: fb::MapSection<'_>,
+    delta: &mut WorldDelta,
+) -> Result<(), DecodeError> {
+    delta.tiles = decode_rows(section.tiles(), decode_tile)?;
+    delta.removed_tiles = decode_scalars(section.removedTiles());
+    delta.terrain = section
+        .terrainOverlay()
+        .map(decode_terrain_overlay)
+        .transpose()?;
+    delta.elevation_overlay = section.elevationOverlay().map(decode_elevation_overlay);
+    delta.moisture_raster = section.moistureRaster().map(decode_float_raster);
+    delta.climate_bands = section.climateBands().map(decode_climate_bands);
+    delta.temperature_survivability = section
+        .temperatureSurvivability()
+        .map(decode_temperature_survivability);
+    Ok(())
+}
+
+fn decode_elevation_overlay(overlay: fb::ElevationOverlay<'_>) -> ElevationOverlayState {
+    ElevationOverlayState {
+        width: overlay.width(),
+        height: overlay.height(),
+        min_value: overlay.minValue(),
+        max_value: overlay.maxValue(),
+        samples: decode_scalars(overlay.samples()),
+        sea_level: overlay.seaLevel(),
+    }
+}
+
+fn decode_climate_bands(bands: fb::ClimateBands<'_>) -> ClimateBandsState {
+    ClimateBandsState {
+        polar_max_temp: bands.polarMaxTemp(),
+        boreal_max_temp: bands.borealMaxTemp(),
+        temperate_max_temp: bands.temperateMaxTemp(),
+    }
+}
+
+fn decode_temperature_survivability(
+    model: fb::TemperatureSurvivability<'_>,
+) -> TemperatureSurvivabilityState {
+    TemperatureSurvivabilityState {
+        cold_onset_temp: model.coldOnsetTemp(),
+        cold_mortality_scale: model.coldMortalityScale(),
+        cold_max_mortality: model.coldMaxMortality(),
+        heat_onset_temp: model.heatOnsetTemp(),
+        heat_mortality_scale: model.heatMortalityScale(),
+        heat_max_mortality: model.heatMaxMortality(),
+    }
+}
+
+fn decode_tile(tile: fb::TileState<'_>) -> Result<TileState, DecodeError> {
+    Ok(TileState {
+        entity: tile.entity(),
+        x: tile.x(),
+        y: tile.y(),
+        element: tile.element(),
+        temperature: tile.temperature(),
+        terrain: to_state_terrain_type(tile.terrain())?,
+        terrain_tags: TerrainTags::new(tile.terrainTags()),
+        culture_layer: tile.cultureLayer(),
+        mountain_kind: to_state_mountain_kind(tile.mountainKind())?,
+        mountain_relief: tile.mountainRelief(),
+        habitability: tile.habitability(),
+        river_edges: tile.riverEdges(),
+        river_inflow: tile.riverInflow(),
+        river_channel: tile.riverChannel(),
+        graze_biomass: tile.grazeBiomass(),
+        graze_capacity: tile.grazeCapacity(),
+        graze_ecology_phase: tile.grazeEcologyPhase(),
+        forage_capacity: tile.forageCapacity(),
+        underlying_terrain: to_state_terrain_type(tile.underlyingTerrain())?,
+    })
+}
+
+fn decode_terrain_overlay(
+    overlay: fb::TerrainOverlay<'_>,
+) -> Result<TerrainOverlayState, DecodeError> {
+    Ok(TerrainOverlayState {
+        width: overlay.width(),
+        height: overlay.height(),
+        samples: decode_rows(overlay.samples(), |sample| {
+            Ok(TerrainSample {
+                terrain: to_state_terrain_type(sample.terrain())?,
+                tags: TerrainTags::new(sample.tags()),
+                mountain_kind: to_state_mountain_kind(sample.mountainKind())?,
+                relief_scale: sample.reliefScale(),
+            })
+        })?,
+    })
+}
+
+fn to_state_terrain_type(terrain: fb::TerrainType) -> Result<TerrainType, DecodeError> {
+    Ok(match terrain {
+        fb::TerrainType::DeepOcean => TerrainType::DeepOcean,
+        fb::TerrainType::ContinentalShelf => TerrainType::ContinentalShelf,
+        fb::TerrainType::InlandSea => TerrainType::InlandSea,
+        fb::TerrainType::CoralShelf => TerrainType::CoralShelf,
+        fb::TerrainType::HydrothermalVentField => TerrainType::HydrothermalVentField,
+        fb::TerrainType::TidalFlat => TerrainType::TidalFlat,
+        fb::TerrainType::RiverDelta => TerrainType::RiverDelta,
+        fb::TerrainType::MangroveSwamp => TerrainType::MangroveSwamp,
+        fb::TerrainType::FreshwaterMarsh => TerrainType::FreshwaterMarsh,
+        fb::TerrainType::Floodplain => TerrainType::Floodplain,
+        fb::TerrainType::AlluvialPlain => TerrainType::AlluvialPlain,
+        fb::TerrainType::PrairieSteppe => TerrainType::PrairieSteppe,
+        fb::TerrainType::MixedWoodland => TerrainType::MixedWoodland,
+        fb::TerrainType::BorealTaiga => TerrainType::BorealTaiga,
+        fb::TerrainType::PeatHeath => TerrainType::PeatHeath,
+        fb::TerrainType::HotDesertErg => TerrainType::HotDesertErg,
+        fb::TerrainType::RockyReg => TerrainType::RockyReg,
+        fb::TerrainType::SemiAridScrub => TerrainType::SemiAridScrub,
+        fb::TerrainType::SaltFlat => TerrainType::SaltFlat,
+        fb::TerrainType::OasisBasin => TerrainType::OasisBasin,
+        fb::TerrainType::Tundra => TerrainType::Tundra,
+        fb::TerrainType::PeriglacialSteppe => TerrainType::PeriglacialSteppe,
+        fb::TerrainType::Glacier => TerrainType::Glacier,
+        fb::TerrainType::SeasonalSnowfield => TerrainType::SeasonalSnowfield,
+        fb::TerrainType::RollingHills => TerrainType::RollingHills,
+        fb::TerrainType::HighPlateau => TerrainType::HighPlateau,
+        fb::TerrainType::AlpineMountain => TerrainType::AlpineMountain,
+        fb::TerrainType::KarstHighland => TerrainType::KarstHighland,
+        fb::TerrainType::CanyonBadlands => TerrainType::CanyonBadlands,
+        fb::TerrainType::ActiveVolcanoSlope => TerrainType::ActiveVolcanoSlope,
+        fb::TerrainType::BasalticLavaField => TerrainType::BasalticLavaField,
+        fb::TerrainType::AshPlain => TerrainType::AshPlain,
+        fb::TerrainType::FumaroleBasin => TerrainType::FumaroleBasin,
+        fb::TerrainType::ImpactCraterField => TerrainType::ImpactCraterField,
+        fb::TerrainType::KarstCavernMouth => TerrainType::KarstCavernMouth,
+        fb::TerrainType::SinkholeField => TerrainType::SinkholeField,
+        fb::TerrainType::AquiferCeiling => TerrainType::AquiferCeiling,
+        fb::TerrainType::NavigableRiver => TerrainType::NavigableRiver,
+        other => return Err(unknown_enum("TerrainType", other.0)),
+    })
+}
+
+fn to_state_mountain_kind(kind: fb::MountainKind) -> Result<MountainKind, DecodeError> {
+    Ok(match kind {
+        fb::MountainKind::None => MountainKind::None,
+        fb::MountainKind::Fold => MountainKind::Fold,
+        fb::MountainKind::Fault => MountainKind::Fault,
+        fb::MountainKind::Volcanic => MountainKind::Volcanic,
+        fb::MountainKind::Dome => MountainKind::Dome,
+        other => return Err(unknown_enum("MountainKind", other.0)),
+    })
+}
+
+#[cfg(test)]
+mod enum_round_trip_tests {
+    use super::*;
+
+    /// Every variant the encoder can write, the decoder reads back as the same variant — an
+    /// enum's arms are the one thing the saturated fixture cannot cover past the default.
+    #[test]
+    fn every_terrain_type_and_mountain_kind_round_trips() {
+        for terrain in TerrainType::VALUES {
+            assert_eq!(
+                to_state_terrain_type(to_fb_terrain_type(terrain)).expect("a known variant"),
+                terrain
+            );
+        }
+        for kind in [
+            MountainKind::None,
+            MountainKind::Fold,
+            MountainKind::Fault,
+            MountainKind::Volcanic,
+            MountainKind::Dome,
+        ] {
+            assert_eq!(
+                to_state_mountain_kind(to_fb_mountain_kind(kind)).expect("a known variant"),
+                kind
+            );
+        }
+    }
+
+    /// …and a discriminant no build has ever written is an ERROR naming the field, never a
+    /// silent default.
+    #[test]
+    fn an_unknown_discriminant_is_an_error_naming_the_field() {
+        const UNASSIGNED_TERRAIN: u16 = u16::MAX;
+        match to_state_terrain_type(fb::TerrainType(UNASSIGNED_TERRAIN)) {
+            Err(DecodeError::UnknownEnum { field, value }) => {
+                assert_eq!(field, "TerrainType");
+                assert_eq!(value, i64::from(UNASSIGNED_TERRAIN));
+            }
+            other => panic!("expected UnknownEnum, got {other:?}"),
+        }
     }
 }

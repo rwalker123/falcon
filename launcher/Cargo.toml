@@ -12,6 +12,16 @@ path = "src/main.rs"
 # complete payload, not merely that it exists, before starting the client.
 serde_json = "1.0"
 
+# Test-only, and for one reason: `the_servers_own_roster_emit_parses` drives the
+# server's REAL `emit_seats_roster` through the REAL log-stream encoding into the
+# parser above, so a change to the event's tracing field sigil fails here instead
+# of shipping a game with no rivals. Nothing in the launcher's own build links it.
+[dev-dependencies]
+core_sim = { path = "../core_sim" }
+crossbeam-channel = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

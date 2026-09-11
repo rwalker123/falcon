@@ -1,13 +1,17 @@
 //! Knowledge-section FlatBuffers serialization.
 
-use crate::codec::FbBuilder;
+use crate::codec::{
+    decode_rows, decode_rows_if_present, decode_scalars, decode_strings, map_rows,
+    map_rows_if_present, text, unknown_enum, DecodeError, FbBuilder,
+};
 use crate::state::knowledge::{
-    DiscoveredSitesState, DiscoveryProgressEntry, GreatDiscoveryDefinitionState,
-    GreatDiscoveryProgressState, GreatDiscoveryRequirementState, GreatDiscoveryState,
-    GreatDiscoveryTelemetryState, KnowledgeCountermeasureKind, KnowledgeCountermeasureState,
-    KnowledgeField, KnowledgeInfiltrationState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeModifierBreakdownState, KnowledgeModifierSource, KnowledgeSecurityPosture,
-    KnowledgeTimelineEventKind, KnowledgeTimelineEventState,
+    DiscoveredSiteState, DiscoveredSitesState, DiscoveryProgressEntry,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryRequirementState,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, KnowledgeCountermeasureKind,
+    KnowledgeCountermeasureState, KnowledgeField, KnowledgeInfiltrationState, KnowledgeLeakFlags,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeModifierBreakdownState,
+    KnowledgeModifierSource, KnowledgeSecurityPosture, KnowledgeTimelineEventKind,
+    KnowledgeTimelineEventState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -520,5 +524,362 @@ fn to_fb_knowledge_timeline_kind(
         KnowledgeTimelineEventKind::Treaty => fb::KnowledgeTimelineEventKind::Treaty,
         KnowledgeTimelineEventKind::Cascade => fb::KnowledgeTimelineEventKind::Cascade,
         KnowledgeTimelineEventKind::Digest => fb::KnowledgeTimelineEventKind::Digest,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Decoders — the inverse of every `create_*` / `to_fb_*` above, in the same order.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn decode_knowledge_section(
+    section: fb::KnowledgeSection<'_>,
+    snapshot: &mut WorldSnapshot,
+) -> Result<(), DecodeError> {
+    snapshot.great_discovery_definitions = decode_rows(
+        section.greatDiscoveryDefinitions(),
+        decode_great_discovery_definition,
+    )?;
+    snapshot.great_discoveries = decode_rows(section.greatDiscoveries(), decode_great_discovery)?;
+    snapshot.great_discovery_progress = map_rows(
+        section.greatDiscoveryProgress(),
+        decode_great_discovery_progress,
+    );
+    snapshot.great_discovery_telemetry = section
+        .greatDiscoveryTelemetry()
+        .map(decode_great_discovery_telemetry)
+        .unwrap_or_default();
+    snapshot.knowledge_ledger = decode_rows(section.knowledgeLedger(), decode_knowledge_ledger)?;
+    snapshot.knowledge_timeline =
+        decode_rows(section.knowledgeTimeline(), decode_knowledge_timeline_event)?;
+    snapshot.knowledge_metrics = section
+        .knowledgeMetrics()
+        .map(decode_knowledge_metrics)
+        .unwrap_or_default();
+    snapshot.discovered_sites = map_rows(section.discoveredSites(), decode_discovered_sites);
+    snapshot.discovery_progress = map_rows(section.discoveryProgress(), decode_discovery_progress);
+    Ok(())
+}
+
+pub(crate) fn decode_knowledge_section_delta(
+    section: fb::KnowledgeSection<'_>,
+    delta: &mut WorldDelta,
+) -> Result<(), DecodeError> {
+    delta.great_discovery_definitions = decode_rows_if_present(
+        section.greatDiscoveryDefinitions(),
+        decode_great_discovery_definition,
+    )?;
+    delta.great_discoveries = decode_rows(section.greatDiscoveries(), decode_great_discovery)?;
+    delta.great_discovery_progress = map_rows(
+        section.greatDiscoveryProgress(),
+        decode_great_discovery_progress,
+    );
+    delta.great_discovery_telemetry = section
+        .greatDiscoveryTelemetry()
+        .map(decode_great_discovery_telemetry);
+    delta.knowledge_ledger = decode_rows(section.knowledgeLedger(), decode_knowledge_ledger)?;
+    delta.removed_knowledge_ledger = decode_scalars(section.removedKnowledgeLedger());
+    // Absent is "unchanged"; present-and-empty is "now empty" — the `cultureTensions` rule.
+    delta.knowledge_timeline =
+        decode_rows_if_present(section.knowledgeTimeline(), decode_knowledge_timeline_event)?;
+    delta.knowledge_metrics = section.knowledgeMetrics().map(decode_knowledge_metrics);
+    delta.discovered_sites =
+        map_rows_if_present(section.discoveredSites(), decode_discovered_sites);
+    delta.discovery_progress = map_rows(section.discoveryProgress(), decode_discovery_progress);
+    Ok(())
+}
+
+fn decode_discovered_sites(state: fb::DiscoveredSitesState<'_>) -> DiscoveredSitesState {
+    DiscoveredSitesState {
+        faction: state.faction(),
+        sites: map_rows(state.sites(), |site| DiscoveredSiteState {
+            x: site.x(),
+            y: site.y(),
+            site_id: text(site.site_id()),
+            category: text(site.category()),
+            display_name: text(site.display_name()),
+            glyph: text(site.glyph()),
+        }),
+    }
+}
+
+fn decode_discovery_progress(entry: fb::DiscoveryProgressEntry<'_>) -> DiscoveryProgressEntry {
+    DiscoveryProgressEntry {
+        faction: entry.faction(),
+        discovery: entry.discovery(),
+        progress: entry.progress(),
+    }
+}
+
+fn to_state_knowledge_field(field: fb::KnowledgeField) -> Result<KnowledgeField, DecodeError> {
+    Ok(match field {
+        fb::KnowledgeField::Physics => KnowledgeField::Physics,
+        fb::KnowledgeField::Chemistry => KnowledgeField::Chemistry,
+        fb::KnowledgeField::Biology => KnowledgeField::Biology,
+        fb::KnowledgeField::Data => KnowledgeField::Data,
+        fb::KnowledgeField::Communication => KnowledgeField::Communication,
+        fb::KnowledgeField::Exotic => KnowledgeField::Exotic,
+        other => return Err(unknown_enum("KnowledgeField", other.0)),
+    })
+}
+
+fn decode_great_discovery(
+    entry: fb::GreatDiscoveryState<'_>,
+) -> Result<GreatDiscoveryState, DecodeError> {
+    Ok(GreatDiscoveryState {
+        id: entry.id(),
+        faction: entry.faction(),
+        field: to_state_knowledge_field(entry.field())?,
+        tick: entry.tick(),
+        publicly_deployed: entry.publiclyDeployed(),
+        effect_flags: entry.effectFlags(),
+    })
+}
+
+fn decode_great_discovery_definition(
+    entry: fb::GreatDiscoveryDefinition<'_>,
+) -> Result<GreatDiscoveryDefinitionState, DecodeError> {
+    Ok(GreatDiscoveryDefinitionState {
+        id: entry.id(),
+        name: text(entry.name()),
+        field: to_state_knowledge_field(entry.field())?,
+        tier: entry.tier().map(str::to_owned),
+        summary: entry.summary().map(str::to_owned),
+        tags: decode_strings(entry.tags()),
+        observation_threshold: entry.observationThreshold(),
+        cooldown_ticks: entry.cooldownTicks(),
+        // The pair `hasFreshnessWindow`/`freshnessWindow` is how the serializer spells `Option`.
+        freshness_window: entry.hasFreshnessWindow().then(|| entry.freshnessWindow()),
+        effect_flags: entry.effectFlags(),
+        covert_until_public: entry.covertUntilPublic(),
+        effects_summary: decode_strings(entry.effectsSummary()),
+        observation_notes: entry.observationNotes().map(str::to_owned),
+        leak_profile: entry.leakProfile().map(str::to_owned),
+        requirements: map_rows(entry.requirements(), |requirement| {
+            GreatDiscoveryRequirementState {
+                discovery: requirement.discoveryId(),
+                weight: requirement.weight(),
+                minimum_progress: requirement.minimumProgress(),
+                name: requirement.name().map(str::to_owned),
+                summary: requirement.summary().map(str::to_owned),
+            }
+        }),
+    })
+}
+
+fn decode_great_discovery_progress(
+    entry: fb::GreatDiscoveryProgressState<'_>,
+) -> GreatDiscoveryProgressState {
+    GreatDiscoveryProgressState {
+        faction: entry.faction(),
+        discovery: entry.discovery(),
+        progress: entry.progress(),
+        observation_deficit: entry.observationDeficit(),
+        eta_ticks: entry.etaTicks(),
+        covert: entry.covert(),
+    }
+}
+
+fn decode_great_discovery_telemetry(
+    telemetry: fb::GreatDiscoveryTelemetryState<'_>,
+) -> GreatDiscoveryTelemetryState {
+    GreatDiscoveryTelemetryState {
+        total_resolved: telemetry.totalResolved(),
+        pending_candidates: telemetry.pendingCandidates(),
+        active_constellations: telemetry.activeConstellations(),
+    }
+}
+
+fn decode_knowledge_ledger(
+    entry: fb::KnowledgeLedgerState<'_>,
+) -> Result<KnowledgeLedgerEntryState, DecodeError> {
+    Ok(KnowledgeLedgerEntryState {
+        discovery_id: entry.discoveryId(),
+        owner_faction: entry.ownerFaction(),
+        tier: entry.tier(),
+        progress_percent: entry.progressPercent(),
+        half_life_ticks: entry.halfLifeTicks(),
+        time_to_cascade: entry.timeToCascade(),
+        security_posture: to_state_knowledge_security_posture(entry.securityPosture())?,
+        countermeasures: decode_rows(entry.countermeasures(), |countermeasure| {
+            Ok(KnowledgeCountermeasureState {
+                kind: to_state_knowledge_countermeasure(countermeasure.kind())?,
+                potency: countermeasure.potency(),
+                upkeep: countermeasure.upkeep(),
+                remaining_ticks: countermeasure.remainingTicks(),
+            })
+        })?,
+        infiltrations: map_rows(entry.infiltrations(), |infiltration| {
+            KnowledgeInfiltrationState {
+                faction: infiltration.faction(),
+                blueprint_fidelity: infiltration.blueprintFidelity(),
+                suspicion: infiltration.suspicion(),
+                cells: infiltration.cells(),
+                last_activity_tick: infiltration.lastActivityTick(),
+            }
+        }),
+        modifiers: decode_rows(entry.modifiers(), |modifier| {
+            Ok(KnowledgeModifierBreakdownState {
+                source: to_state_knowledge_modifier_source(modifier.source())?,
+                delta_half_life: modifier.deltaHalfLife(),
+                delta_progress: modifier.deltaProgress(),
+                note_handle: modifier.noteHandle().map(str::to_owned),
+            })
+        })?,
+        flags: KnowledgeLeakFlags::new(entry.flags()),
+    })
+}
+
+fn decode_knowledge_timeline_event(
+    event: fb::KnowledgeTimelineEventState<'_>,
+) -> Result<KnowledgeTimelineEventState, DecodeError> {
+    Ok(KnowledgeTimelineEventState {
+        tick: event.tick(),
+        kind: to_state_knowledge_timeline_kind(event.kind())?,
+        source_faction: event.sourceFaction(),
+        delta_percent: event.deltaPercent(),
+        note_handle: event.noteHandle().map(str::to_owned),
+    })
+}
+
+fn decode_knowledge_metrics(metrics: fb::KnowledgeMetricsState<'_>) -> KnowledgeMetricsState {
+    KnowledgeMetricsState {
+        leak_warnings: metrics.leakWarnings(),
+        leak_criticals: metrics.leakCriticals(),
+        countermeasures_active: metrics.countermeasuresActive(),
+        common_knowledge_total: metrics.commonKnowledgeTotal(),
+    }
+}
+
+fn to_state_knowledge_security_posture(
+    posture: fb::KnowledgeSecurityPosture,
+) -> Result<KnowledgeSecurityPosture, DecodeError> {
+    Ok(match posture {
+        fb::KnowledgeSecurityPosture::Minimal => KnowledgeSecurityPosture::Minimal,
+        fb::KnowledgeSecurityPosture::Standard => KnowledgeSecurityPosture::Standard,
+        fb::KnowledgeSecurityPosture::Hardened => KnowledgeSecurityPosture::Hardened,
+        fb::KnowledgeSecurityPosture::BlackVault => KnowledgeSecurityPosture::BlackVault,
+        other => return Err(unknown_enum("KnowledgeSecurityPosture", other.0)),
+    })
+}
+
+fn to_state_knowledge_countermeasure(
+    kind: fb::KnowledgeCountermeasureKind,
+) -> Result<KnowledgeCountermeasureKind, DecodeError> {
+    Ok(match kind {
+        fb::KnowledgeCountermeasureKind::SecurityInvestment => {
+            KnowledgeCountermeasureKind::SecurityInvestment
+        }
+        fb::KnowledgeCountermeasureKind::CounterIntelSweep => {
+            KnowledgeCountermeasureKind::CounterIntelSweep
+        }
+        fb::KnowledgeCountermeasureKind::Misinformation => {
+            KnowledgeCountermeasureKind::Misinformation
+        }
+        fb::KnowledgeCountermeasureKind::KnowledgeDebtRelief => {
+            KnowledgeCountermeasureKind::KnowledgeDebtRelief
+        }
+        other => return Err(unknown_enum("KnowledgeCountermeasureKind", other.0)),
+    })
+}
+
+fn to_state_knowledge_modifier_source(
+    source: fb::KnowledgeModifierSource,
+) -> Result<KnowledgeModifierSource, DecodeError> {
+    Ok(match source {
+        fb::KnowledgeModifierSource::Visibility => KnowledgeModifierSource::Visibility,
+        fb::KnowledgeModifierSource::Security => KnowledgeModifierSource::Security,
+        fb::KnowledgeModifierSource::Spycraft => KnowledgeModifierSource::Spycraft,
+        fb::KnowledgeModifierSource::Culture => KnowledgeModifierSource::Culture,
+        fb::KnowledgeModifierSource::Exposure => KnowledgeModifierSource::Exposure,
+        fb::KnowledgeModifierSource::Debt => KnowledgeModifierSource::Debt,
+        fb::KnowledgeModifierSource::Treaty => KnowledgeModifierSource::Treaty,
+        fb::KnowledgeModifierSource::Event => KnowledgeModifierSource::Event,
+        other => return Err(unknown_enum("KnowledgeModifierSource", other.0)),
+    })
+}
+
+fn to_state_knowledge_timeline_kind(
+    kind: fb::KnowledgeTimelineEventKind,
+) -> Result<KnowledgeTimelineEventKind, DecodeError> {
+    Ok(match kind {
+        fb::KnowledgeTimelineEventKind::LeakProgress => KnowledgeTimelineEventKind::LeakProgress,
+        fb::KnowledgeTimelineEventKind::SpyProbe => KnowledgeTimelineEventKind::SpyProbe,
+        fb::KnowledgeTimelineEventKind::CounterIntel => KnowledgeTimelineEventKind::CounterIntel,
+        fb::KnowledgeTimelineEventKind::Exposure => KnowledgeTimelineEventKind::Exposure,
+        fb::KnowledgeTimelineEventKind::Treaty => KnowledgeTimelineEventKind::Treaty,
+        fb::KnowledgeTimelineEventKind::Cascade => KnowledgeTimelineEventKind::Cascade,
+        fb::KnowledgeTimelineEventKind::Digest => KnowledgeTimelineEventKind::Digest,
+        other => return Err(unknown_enum("KnowledgeTimelineEventKind", other.0)),
+    })
+}
+
+#[cfg(test)]
+mod enum_round_trip_tests {
+    use super::*;
+
+    /// Every variant the encoder can write, the decoder reads back as the same variant.
+    #[test]
+    fn every_knowledge_enum_variant_round_trips() {
+        for field in KnowledgeField::VALUES {
+            assert_eq!(
+                to_state_knowledge_field(to_fb_knowledge_field(field)).expect("known"),
+                field
+            );
+        }
+        for posture in [
+            KnowledgeSecurityPosture::Minimal,
+            KnowledgeSecurityPosture::Standard,
+            KnowledgeSecurityPosture::Hardened,
+            KnowledgeSecurityPosture::BlackVault,
+        ] {
+            assert_eq!(
+                to_state_knowledge_security_posture(to_fb_knowledge_security_posture(posture))
+                    .expect("known"),
+                posture
+            );
+        }
+        for kind in [
+            KnowledgeCountermeasureKind::SecurityInvestment,
+            KnowledgeCountermeasureKind::CounterIntelSweep,
+            KnowledgeCountermeasureKind::Misinformation,
+            KnowledgeCountermeasureKind::KnowledgeDebtRelief,
+        ] {
+            assert_eq!(
+                to_state_knowledge_countermeasure(to_fb_knowledge_countermeasure(kind))
+                    .expect("known"),
+                kind
+            );
+        }
+        for source in [
+            KnowledgeModifierSource::Visibility,
+            KnowledgeModifierSource::Security,
+            KnowledgeModifierSource::Spycraft,
+            KnowledgeModifierSource::Culture,
+            KnowledgeModifierSource::Exposure,
+            KnowledgeModifierSource::Debt,
+            KnowledgeModifierSource::Treaty,
+            KnowledgeModifierSource::Event,
+        ] {
+            assert_eq!(
+                to_state_knowledge_modifier_source(to_fb_knowledge_modifier_source(source))
+                    .expect("known"),
+                source
+            );
+        }
+        for kind in [
+            KnowledgeTimelineEventKind::LeakProgress,
+            KnowledgeTimelineEventKind::SpyProbe,
+            KnowledgeTimelineEventKind::CounterIntel,
+            KnowledgeTimelineEventKind::Exposure,
+            KnowledgeTimelineEventKind::Treaty,
+            KnowledgeTimelineEventKind::Cascade,
+            KnowledgeTimelineEventKind::Digest,
+        ] {
+            assert_eq!(
+                to_state_knowledge_timeline_kind(to_fb_knowledge_timeline_kind(kind))
+                    .expect("known"),
+                kind
+            );
+        }
     }
 }

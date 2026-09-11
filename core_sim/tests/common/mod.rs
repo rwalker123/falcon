@@ -35,6 +35,9 @@
 /// The pinned flora fixture two harnesses quote their plant figures on — see its own docs.
 pub mod reference_basket;
 
+/// The player-process helpers the tests that drive a built `sim_ai` share — see its own docs.
+pub mod ai_process;
+
 use ciborium::value::Value;
 
 /// Encode with CBOR and parse back into a tree with every map in canonical key order.

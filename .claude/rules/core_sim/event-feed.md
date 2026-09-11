@@ -7,6 +7,8 @@ paths:
   - "core_sim/src/snapshot/campaign.rs"
   - "core_sim/tests/demographic_events.rs"
   - "core_sim/tests/delta_streaming.rs"
+  - "core_sim/tests/apply_delta_producer.rs"
+  - "sim_schema/src/apply_delta.rs"
   - "xtask/src/decode_fixture.rs"
 ---
 
@@ -50,6 +52,10 @@ client groups by, and the unit *"earlier turns"* walks backwards through.
   not state a window"* and fall back to their own default — so a configured `0` would be a silent
   divergence rather than a narrow window. `SimulationConfigData::into_config` rejects it for both
   the boot and hot-reload paths (see `config-loading.md`).
+- **The consumer mirrors the window.** `WorldSnapshot::apply_delta` (`sim_schema/src/apply_delta.rs`)
+  appends a delta's rows by new `seq` and then keeps `tick >= newest_held − (N − 1)`, anchored on
+  the newest tick the client holds — the same arithmetic as `evict`, on the viewer's own rows. The
+  backstop below is not mirrored; `core_sim/tests/apply_delta_producer.rs` pins the agreement.
 - **`MAX_RETAINED_EVENTS` (512) is a backstop, not the bound.** It exists so one pathological turn
   cannot grow the log — and therefore the resync snapshot — without limit. Reaching it drops events
   from *inside* the window, which is why it sits well above a normal turn's traffic rather than at

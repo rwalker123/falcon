@@ -20,8 +20,10 @@ paths:
   - "clients/godot_thin_client/tools/patch_crossref_guard.tscn"
   - "clients/godot_thin_client/tests/**"
   # The fixture BUILDER, which is where every claim below about what the golden covers is actually
-  # decided — it lives in xtask rather than the client tree, and gating on the golden alone left the
-  # one file that can silently narrow this gate's coverage outside the rule that documents it.
+  # decided — it lives in `sim_schema` (shared with the codec's own round trip) rather than the
+  # client tree, and gating on the golden alone left the one file that can silently narrow this
+  # gate's coverage outside the rule that documents it. `xtask` encodes it and builds the deltas.
+  - "sim_schema/src/fixture.rs"
   - "xtask/src/decode_fixture.rs"
 ---
 
@@ -91,12 +93,22 @@ status would break the fix on exactly the setup it exists for. It is skipped onc
 (the pass takes tens of seconds; this gate is run in a tight loop).
 
 **The fixture is SYNTHETIC, not a server capture, and that is the design**
-(`xtask/src/decode_fixture.rs`): a capture is *sparse* — an early-game world carries no crisis
-gauges, great discoveries or influencers, so most `dict/*` builders would go
-unexercised — and *unstable*, since worldgen is retuned constantly here and a capture-derived golden
-would churn on every tuning pass until its readers accepted the diff blind. The synthetic snapshot
-instead makes **every section non-empty**, with two rows apiece so a builder that returns row 0 for
-every row is visible.
+(`sim_schema/src/fixture.rs` builds it; `xtask/src/decode_fixture.rs` encodes it): a capture is
+*sparse* — an early-game world carries no crisis gauges, great discoveries or influencers, so most
+`dict/*` builders would go unexercised — and *unstable*, since worldgen is retuned constantly here
+and a capture-derived golden would churn on every tuning pass until its readers accepted the diff
+blind. The synthetic snapshot instead makes **every section non-empty**, with `ROWS` rows apiece so a
+builder that returns row 0 for every row is visible.
+
+**`ROWS` is 3 because two rows cannot separate two booleans.** Flag values used to alternate by
+ordinal, which at two rows gives only four possible sequences — two of them constant — so flags 0 and
+2 (and 1 and 3) read alike and a decoder that swapped them re-encoded **byte-identically**. Seven
+pairs were invisible, `herd.corralled ↔ herd.huntable` among them: the very swap the fixture's
+docstring cites as its reason to exist. Flags now take a per-ordinal sequence from `FLAG_ROW_MASKS`,
+listed in complementary pairs so neighbouring ordinals differ on *every* row, and
+`no_two_flags_of_a_table_read_alike` pins that no two flags of one table share a sequence. Three rows
+is the floor that leaves enough non-constant sequences for the fixture's widest table (4 booleans);
+raising `ROWS` again means extending `FLAG_ROW_MASKS` to match.
 
 **Every string in it is its own wire path** (`"herds[0].species"`), so the golden reads as a map
 from wire field to dictionary key — a mis-wired section accessor is *legible* in the diff, not

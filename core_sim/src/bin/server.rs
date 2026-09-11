@@ -102,6 +102,28 @@ const PORT_ALLOC_EXIT_CODE: i32 = 2;
 #[derive(Resource, Clone, Copy)]
 struct ResolvedPortBase(u16);
 
+/// ⛔ **THE LAUNCHER CONTRACT'S TARGET, AND IT IS NOT `RUST_LOG`-GATED.** `seats.roster` is hand-
+/// targeted at this name (`core_sim::log_stream::emit_seats_roster`) rather than at the crate name,
+/// and the launcher supervises rivals off it — so an operator filter that does not happen to admit
+/// it is an operator filter that silently disables every AI opponent.
+const LOG_FORWARD_ALWAYS_TARGET: &str = core_sim::log_stream::LAUNCHER_LOG_TARGET;
+
+/// What the log stream forwards: whatever the operator's `RUST_LOG` admits, **or** anything at
+/// [`LOG_FORWARD_ALWAYS_TARGET`] that is INFO or louder. The `or` is what pins the invariant — the
+/// forward path carries the launcher's contract whatever the environment says — while the rest of
+/// the stream still answers to `RUST_LOG` rather than becoming a firehose.
+fn log_forward_filter<S>(
+    env_filter: tracing_subscriber::EnvFilter,
+) -> impl tracing_subscriber::layer::Filter<S> + 'static
+where
+    S: tracing::Subscriber,
+{
+    use tracing_subscriber::filter::FilterExt;
+    env_filter.or(tracing_subscriber::filter::filter_fn(|metadata| {
+        metadata.target() == LOG_FORWARD_ALWAYS_TARGET && *metadata.level() <= tracing::Level::INFO
+    }))
+}
+
 fn main() {
     let mut app = build_headless_app();
     app.insert_resource(SimulationMetrics::default());
@@ -153,15 +175,19 @@ fn main() {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
     if let Some(handle) = &log_stream {
+        // ⛔ **THE FILTER IS PER LAYER, NOT ON THE REGISTRY.** A registry-level `EnvFilter` gates
+        // every layer under it, the log stream included — so `RUST_LOG=core_sim=debug`, a natural
+        // thing to type, dropped `seats.roster` before it reached the launcher and the packaged
+        // game ran with zero rivals and nothing saying why. The console keeps the operator's
+        // filter; the forward layer gets that filter **or** the launcher's contract target, so the
+        // supervisor's channel cannot be turned off from the environment.
         tracing_subscriber::registry()
-            .with(env_filter.clone())
-            .with(tracing_subscriber::fmt::layer())
-            .with(handle.layer())
+            .with(tracing_subscriber::fmt::layer().with_filter(env_filter.clone()))
+            .with(handle.layer().with_filter(log_forward_filter(env_filter)))
             .init();
     } else {
         tracing_subscriber::registry()
-            .with(env_filter)
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
             .init();
     }
 
@@ -918,9 +944,31 @@ fn answer_seat_claim(
     }
 }
 
-/// **Drop the seat claims a world rebuild left stranded.** `new_game`, `reset_map` and a load each
-/// replace the roster, and a claim on a faction the new world does not have would hold that seat id
-/// unclaimable while gating nothing — the membership check refuses such a command anyway.
+/// **Drop the seat claims a world rebuild left stranded, and announce the roster.** `new_game`,
+/// `reset_map` and a load each replace the roster, and a claim on a faction the new world does not
+/// have would hold that seat id unclaimable while gating nothing — the membership check refuses
+/// such a command anyway.
+///
+/// ## `seats.roster` — the launcher's supervisor contract
+///
+/// **Every world *rebuild* ends here** — the `ResetMap`, `NewGame` and `LoadGame` arms, and those
+/// three only. The server **boots with no world** (`world_active == false`) and announces no
+/// roster until a client asks for one, which is what makes the launcher's ordering safe: it
+/// connects to the log port before it starts the human's client, so no roster can precede its
+/// reader. This is where the server states **which seats exist**, on the log stream it already
+/// publishes (`log_stream.rs`, JSON lines on the `log` port):
+///
+/// ```json
+/// {"level":"INFO","target":"shadow_scale::server","message":"seats.roster",
+///  "fields":{"factions":"[0,1,2]","world_epoch":3}}
+/// ```
+///
+/// `factions` is the registered faction ids in roster order, as a JSON array **in a string**
+/// (`tracing` fields carry no arrays); `world_epoch` is the build the roster belongs to. The
+/// launcher (`launcher/src/main.rs` `parse_roster_event`, the contract twin of this comment) reads
+/// the stream on a supervisor thread and starts one `sim_ai` per rival faction it names, reaping a
+/// child whose faction left. It is emitted from the main loop at the moment the roster changes and
+/// nowhere else.
 fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
     let roster = app.world.resource::<FactionRegistry>().factions().to_vec();
     for (seat, connection) in seats.retain_seats(&roster) {
@@ -931,6 +979,8 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
             "seat.dropped=the new roster does not hold this seat"
         );
     }
+    let faction_ids: Vec<u32> = roster.iter().map(|faction| faction.0).collect();
+    core_sim::log_stream::emit_seats_roster(&faction_ids, app.world.resource::<WorldEpoch>().0);
 }
 
 /// **Publish the seat roster to the two places delivery depends on**, in one call so they cannot
@@ -12228,6 +12278,48 @@ fn handle_rollback(
 #[cfg(test)]
 mod tests {
     use core_sim::NO_CREW_ON_THIS_ACTIVITY;
+
+    /// ⛔ **`RUST_LOG` MUST NOT BE ABLE TO DISABLE THE RIVALS.** The launcher supervises `sim_ai`
+    /// children off `seats.roster` on the log stream. With the `EnvFilter` on the registry it gated
+    /// every layer beneath it, so `RUST_LOG=core_sim=debug` — which does not admit the hand-set
+    /// target `shadow_scale::server` — dropped the event before the forward layer saw it: the
+    /// packaged game ran with no rivals and said nothing.
+    ///
+    /// The filter that the operator sets is exercised here as the *real* thing an operator types,
+    /// and the roster event is emitted through `tracing` exactly as `retain_claimed_seats` does.
+    #[test]
+    fn the_roster_event_reaches_the_log_stream_under_a_rust_log_that_excludes_it() {
+        use core_sim::log_stream::LogForwardLayer;
+        use tracing_subscriber::prelude::*;
+
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        // An operator filter that admits plenty and does NOT name the roster's target.
+        let operator_filter = tracing_subscriber::EnvFilter::new("core_sim=debug");
+        let subscriber = tracing_subscriber::registry().with(
+            LogForwardLayer::new(sender)
+                .with_filter(super::log_forward_filter(operator_filter.clone())),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                target: super::LOG_FORWARD_ALWAYS_TARGET,
+                factions = %"[0,1,2]",
+                world_epoch = 3u32,
+                "seats.roster"
+            );
+        });
+
+        let envelope = receiver
+            .try_recv()
+            .expect("the roster event reached the log stream");
+        assert_eq!(envelope.message, "seats.roster");
+        assert_eq!(envelope.target, super::LOG_FORWARD_ALWAYS_TARGET);
+        assert_eq!(
+            envelope.fields.get("factions").and_then(|v| v.as_str()),
+            Some("[0,1,2]"),
+            "the launcher parses this string as a JSON array: {:?}",
+            envelope.fields
+        );
+    }
 
     /// **The shipped EQUIPPED haul rate** — off the sled's own tier. `labor_config`'s
     /// `hunt.per_worker_biomass_capacity` is the *bare-handed* baseline since quality tiers landed.

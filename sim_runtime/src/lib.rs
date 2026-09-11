@@ -369,14 +369,16 @@ pub mod knowledge {
         }
     }
 
-    /// Encode a knowledge ledger key (owner faction + discovery) into the compact u64 used on the wire.
+    /// Encode a knowledge ledger key (owner faction + discovery) into the compact u64 used on the
+    /// wire. The packing itself lives in `sim_schema` (`knowledge_ledger_wire_key`), beside the
+    /// merge that consumes it; this is that function under the name the runtime always exported.
     pub const fn encode_knowledge_ledger_key(owner_faction: u32, discovery_id: u32) -> u64 {
-        ((discovery_id as u64) << 32) | owner_faction as u64
+        sim_schema::knowledge_ledger_wire_key(owner_faction, discovery_id)
     }
 
     /// Decode an encoded knowledge ledger key into `(owner_faction, discovery_id)`.
     pub const fn decode_knowledge_ledger_key(key: u64) -> (u32, u32) {
-        ((key & 0xFFFF_FFFF) as u32, (key >> 32) as u32)
+        sim_schema::knowledge_ledger_key_parts(key)
     }
 
     #[cfg(test)]
