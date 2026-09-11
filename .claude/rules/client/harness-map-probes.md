@@ -290,7 +290,7 @@ render at least `WORK_FLOOR_MARKS_MIN` (2) DISTINCT marks and that none resolves
 sabotage-verified and they fail independently: pinning the glyph to the peak zone fails the first
 alone, resolving an unknown zone fails both.
 
-**Writing it exposed a live defect** — `_draw_yield_label` re-resolved its already-resolved glyph
+**Writing it exposed a live defect** — the retired on-tile pill re-resolved its already-resolved glyph
 through `FoodIcons.for_policy`, so the map had drawn NO harvest mark at all (`overlay-channels.md` →
 "The floor MARK is resolved ONCE"); the before/after frames were byte-identical until it was fixed,
 which is exactly how a one-glyph frame set hides a no-glyph one. `map_band_yield_farzoom` is
@@ -300,7 +300,7 @@ move it.
 **A THIRD PNG-less block rides beside them, `_assert_yield_label_component`** (issue #449): the
 label has room for exactly ONE rate, so WHICH account it states is the whole claim, and `+0.00` and
 `+0.40 fodder` are the same badge at map scale. It asks `BandOverlayRenderer._yield_label_rate_text`
-directly — the choice is split out of `_draw_yield_label` for that reason, a draw call rendering to
+directly — the choice is split out of the composer for that reason, a draw call rendering to
 a canvas nothing can read a glyph back off — over values rather than a fixture, and pairs every
 fall-through with the case that must NOT change: food still leads wherever there is food (which is
 what stops "always show fodder" passing), food still leads a source paying food AND a material,
@@ -730,13 +730,233 @@ band's **`builders` ROLE row** taken off, so the one plate that can differ goes 
 claim**, a plate that always warned passing either frame alone, and `_snapshot_work_ready` had to
 GAIN that role row for it: without it the ready frame stages the warned case under a comment
 describing work in flight. It was a per-source `improvement_workers` count until §2.5 moved the hands
-onto the band) · `map_hunt_expedition_quarry` (an outbound party's quarry marked beside a resident
+onto the band. **See the autopsy below — this pair went dead and both PNGs hashed the same for a
+while**) · `map_hunt_expedition_quarry` (an outbound party's quarry marked beside a resident
 band's local hunt — two routes to a worked source, one grammar) · `map_overflow_worked` (three wonders
 take every visible slot, so both worked sources roll into the chip as `+2 ⌃`). **Both new states push
 `set_faction_knowledge` explicitly**: `map_preview` has no HUD, so without it every source reads "not
 ready" — the correct degradation, but an unreadable frame. `map_band_work`'s fixture gained a food site
 on each worked tile, and that is load-bearing: the first cut of the ring rendered nothing at all
 because the fixture had none, and the mark correctly degraded to the bare tile outline.
+
+> #### ⛔ THE A/B THAT WENT DEAD: `map_worked_ready` AND `map_worked_unstaffed` HASHED THE SAME
+>
+> Verified by `md5`, and it had been true for some time. The rule above calls the pair the claim, and
+> the pair was claiming nothing.
+>
+> **Cause.** The fixture's only difference is dropping the band's `builders` role row, and
+> `SourceForecast.build_is_stalled` stopped answering `true` for that state:
+> `BUILD_UNSTAFFED_SLIDING` — *work banked and nobody on it* — was RETIRED as an inference that is
+> wrong under pooled keeping, leaving only `BUILD_UNSTAFFED_UNSTARTED` (declared, nobody on it, meter
+> never moved) and the WIRE's own rot verdict. The fixture stages a **42%** build, so neither arm
+> fires and the two frames rendered identically. **A predicate can be retired correctly and leave a
+> fixture staging a state nothing answers for; nothing errors, and the frames simply agree.**
+>
+> **Fix.** `_snapshot_work_unstaffed` now publishes `SourceForecast.BUILD_TURNS_ROTS` on that patch —
+> the sim's own `-3`, which is precisely *nobody is holding it and it is going back the way it came* —
+> through the named constant, never a literal. (`BUILD_UNSTAFFED_UNSTARTED`, progress 0 with no
+> builders, was the alternative and was rejected: it changes the frame's subject from a build that is
+> SLIDING to one never begun, and the pair is about a build in flight.)
+>
+> **And the liveness assertion that stops it going dead again.** The two frames' badge FACES are
+> compared off the renderer (`BandOverlayRenderer.badge_rung`, which exists so a probe can read a
+> plate that is otherwise only a canvas draw): the ready frame's names the verb under way, the
+> unstaffed one wears the stalled `⚠`, and **they must DIFFER**. A diff-based claim between two
+> fixtures silently becomes true the moment the feature under it breaks; pairing it with *and the two
+> are not equal* is the whole of what makes that detectable.
+
+### `map_working_*` — the WORKED-WORKING markers (issue #650)
+
+The last states in the run (`_worked_working_states`, appended after `_ready_for_improvement_state`
+so no existing frame moves), on their own fixture: one band, TWO deposit-bearing hexes carrying the
+SAME wood+stone pair, and the only thing that differs between them is whether anybody is cutting.
+That contrast is the frame — `map-markers.md` has the decision it renders.
+
+| frame | stages | read for |
+|---|---|---|
+| `map_working_worked` | ONE crewed working (wood, `⚒3`) beside the bare pair | a single 🪵 in an edge slot with its plate, and the neighbour hex **empty** |
+| `map_working_pair` | BOTH workings on one hex crewed | 🪵 `⚒3` and 🪨 `⚒2` in two DIFFERENT slots — a hex cutting timber and quarrying rock cannot read as one working |
+| `map_working_overflow` | the `_snapshot_mixed` crowded hex, plus a crewed wood working | the `+3 ⚒` chip, which is what stops a capped marker reading as *nothing is happening here* |
+| `map_working_farzoom` | the same crewed pair on a 110×80 grid (fit r **12.7** < the 16.0 gate) | nothing but the band token, its range border and the faint tile outline the LOD fallback leaves |
+| `map_working_unselected` | ONE crewed wood working, NO band selected | the thin slate ring and the `⚒3` plate — the marks that belong to the SOURCE — and no link, no pill, no range borders |
+| `map_working_beside_herd` | one selected band cutting a wood working on the left hex and hunting a deer on the right | **the parity claim**: both wear a ring, a hex outline and a link to the band's token, differing only in colour — plus the claim that the working's rate TEXT states its MATERIAL and not a food one (`_yield_label_rate_text`'s output, which the docked `BandSourceList` row renders; the working's noun came off in issue #650, its marker being the material). **No pill is drawn over a marker in any of these frames** — the rates left the map with that issue |
+| `map_working_pair_marked` | both workings on one hex crewed, band SELECTED | two complete sets that keep apart — two rings, two plates and two links, each in its own edge slot, with the two workings' ANCHORS asserted to clear a ring's diameter (which is what the docked rows' leader lines need) |
+| `map_working_pills` | **Ray's own frame**: a worked WOOD and a worked STONE on ADJACENT hexes, a worked forage PATCH three columns over, band selected | three rates of ONE shape (`+0.40` · `+0.30 ♻` · `+0.42 ♻`), asserted against `_yield_label_rate_text`'s output rather than against anything drawn over a marker, **no material noun on any of them** where the marker names it — and the `♻` on the renewing wood and the patch but NOT on the rate-0 rock between them |
+| `map_working_pills_crowded` | the same two workings in the two edge slots of ONE hex, fitted to r **28.2** (above the 16.0 detail gate) | TWO SOURCES, TWO ROWS, TWO LEADER LINES: each working produces its own row in `BandSourceList` with its own anchor at its own marker's slot centre, the two anchors clearing a ring's diameter, and each row stating its own rate. This is the crowding the whole rework exists for — it once asserted a pill LIFT, then the ACCEPTED OVERLAP that replaced it, and neither has a subject now that the rates are a docked list (issue #650) |
+
+**THE UNWORKED HEX'S CLAIM IS STRUCTURAL, NOT PHOTOGRAPHIC, and it is the one Ray's decision turns
+on.** `_assert_working_slots` reads `MapView.secondary_slot_of` for each `(tile, material)` key —
+`0..cap-1` for a marker that drew, `-1` for one that never existed — and asserts the two hexes of the
+SAME frame against each other. That pairing is what makes it falsifiable: a renderer marking ground
+lights the bare hex's keys, a renderer marking nothing darkens the worked hex's, and neither passes.
+It also asks for the **stone on the WORKED hex**, which nobody is cutting, because every other
+assertion in that state is satisfied by a renderer keyed on the TILE rather than the pair.
+
+**THE RATE'S OWN CLAIMS ARE ASKED OF THE RENDERER, NOT OF THE PNG** (issue #650). `+0.30` and
+`+0.30 wood` are the same badge at map scale, so `map_working_pills` drives
+`_yield_label_rate_text` directly as an A/B on `marker_names_material` — the marked form states the
+figure alone, the marker-less form still names the material — and does it for the RATE and for the
+ACCOUNT'S ZERO, since a pill that dropped the noun off one and kept it on the other would name the
+account only on the turns the working produced nothing. The two food webs are asserted UNCHANGED
+beside them (a food rate is the same figure either way; fodder keeps its WORD, an account's name not
+a material's), which is what stops "always drop the noun" passing. The `♻` fork is a third pair on
+the same frame: `HudDepositVocab.floor_mark` asked of both rows at the SAME floor, with the
+floor-ALONE reading asserted as the premise — without that premise a mark missing for any other
+reason would pass.
+
+**AND WHERE EACH CROWDED ROW POINTS IS ASKED OF THE ROW MODEL, NOT OF THE PNG.** Two leader lines
+converging on one hex are not separable in a picture, and `compute_source_rows` hands back the anchor
+as a NUMBER — which is the whole reason the rate moved somewhere a probe can read it at all; the
+retired pill was drawn into a canvas and could only ever be photographed.
+`map_working_pills_crowded` asserts four things off the model: both workings on the shared hex
+produce a row of their OWN (the premise — a tile-keyed renderer collapses them and the rest passes
+vacuously), each row anchors to its OWN marker's slot centre and never to the shared hex centre, the
+two anchors clear a ring's DIAMETER (the widest thing either source draws there, so "apart" means
+apart by something), and each row states its own rate rather than sharing one.
+
+⛔ **THE STATE HAS NOW OUTLIVED TWO CLAIMS AND WAS RETARGETED BOTH TIMES.** First a placement pass
+(`_lift_clear_of_placed`) raised a colliding pill clear of the plates already inked — Ray, on the
+live frame: *"having 1 way up there is worse then letting them overlapp a bit"* — and it went. Then
+the ACCEPTED OVERLAP that replaced it (both pills at the SAME height over their own markers, the
+plates measured as genuinely intersecting through `MapView.pill_half_extent`) went with the pills
+themselves, because ~90px plates over markers ~55px apart is not solvable by placement and is what
+moved the rates off the map. The frame survives both because the crowded geometry is still the only
+place two co-located sources can be looked at.
+
+**AND THE LOD CLAIM IS NOW A PAIRING IN `map_working_farzoom`.** The retired pill carried the
+markers' own far-zoom gate; the list is screen-space and does not, so that state asserts BOTH halves
+in one frame — every marker suppressed at r 12.7, every row still built — and additionally that a
+working's row still carries its own icon there, which is what lets its rate keep dropping the
+material's noun at a zoom where the HEX's marker is long gone.
+
+**The pair frame adds the two claims a slot index cannot carry**: that the two markers hold DIFFERENT
+slots (a tile-keyed renderer collapses them and still passes the presence claims), and that the two
+materials wear DIFFERENT non-empty marks — two markers in two corners drawing one emoji is exactly as
+unreadable as one marker, and `FoodIcons.for_material` is asked directly since a canvas draw cannot
+be read back for a glyph.
+
+**The far-zoom claim is structural too, which is why r 12.7 is far enough under the gate.** The
+`map_band_lethal_mark*` rule — *an absence is only worth asserting where a presence would have been
+visible* — governs PIXEL probes, and an antialiased glyph at r 12.7 is invisible either way; a slot
+index is not, so removing the LOD gate flips it to `>= 0` and the assertion fails. It states the
+measured radius in its own label and `push_warning`s if the grid ever stops fitting under the gate.
+
+Sabotage-verified in two runs, each restored, and they fail independently:
+
+- **marking bare ground** (emitting a working for every `deposit_tile_lookup` row at crew 0) → exit
+  1 with **five** failures, all of them the unworked claims, on both the single and the pair frames.
+  The far-zoom claims stay green, correctly: LOD hides everything there whatever the ground says.
+- **deleting `compute_slots`' LOD early-return** → exit 1 with the **two CREWED far-zoom** claims
+  failing and the unworked ones still passing, which is the split that proves the two guards are
+  measuring different things.
+
+**THE PARITY FRAMES ARE PROBED BY COLOUR, AND THE PROBE HAD TO CHANGE SHAPE ONCE.** *"Both wear the
+same parts"* is not a slot index, so `map_working_beside_herd` reads PIXELS: `_closest_mark_distance`
+takes the closest pixel around a hex to a mark's colour, and the claim is the RATIO between the hex a
+mark is drawn on and the hex it is not — 53× for the extraction mark and 14× for the hunt mark on the
+shipped frame, against a `WORKING_MARK_CONTRAST_MIN` of 3.0, so nothing absolute has to be tuned. It
+is a distance rather than `_frame_paints_near_hex`'s exact match because every mark in this family is
+drawn at an alpha (0.95 ring, 0.60 link, 0.35 outline) and therefore blends with the terrain under
+it.
+
+**And for the UNSELECTED ring the distance probe does not work at all** — that ring is drawn at
+`WORKED_RING_OTHER_ALPHA`, so it measured 0.141 from `EXTRACT_WORKED_COLOR` against 0.267 for bare
+ground, a ratio under 2 that no threshold separates from terrain variation. What survives the blend
+is the HUE, so `_max_blue_excess` asks for `max(b - r)` instead: the extraction mark is the only cool
+thing on this map and every terrain on it reads warm. Measured separation 0.079 (+0.024 on the ringed
+hex, −0.055 on bare ground) against a `WORKING_MARK_BLUE_MARGIN` of 0.02. This is
+`_frame_marks_warning_near_hex`'s lesson reaching a second mark: when a mark is blended or
+antialiased past its own ink, ask for the property that distinguishes it rather than for the colour.
+
+**The fixture states an honest `deposits` row even though the marker path reads only `tile_x` /
+`tile_y` / `material`** — every field it fills comes from `HudDepositVocab`'s own constants rather
+than a literal, the same rule `fixtures_rung.gd` enforces for a standing rung: a fixture staging a
+row the server could not publish proves something about a world that does not exist. The join is why
+the row has to be there at all — the map draws a working the SNAPSHOT carries, never one a labor row
+asserts.
+
+### `map_source_list*` / `map_build_arc` — the DOCKED SOURCE LIST (issue #650)
+
+The last states in the run (`_source_list_states`, appended after `_worked_working_states` so no
+existing frame moves). The rates left the map for a panel docked beside the selected band, and the
+claims that matter about a LIST — its sort, its pager, its footer's total, where it opens — are not
+things a picture carries. These four states render the panel at 1:1 and ask each claim of the row
+model or of `place()` directly.
+
+> #### ⛔ EVERY OTHER FRAME IN THIS HARNESS RENDERS ITS CONTROLS AT 0.52×
+>
+> `project.godot` declares a **1920×1080** base with `stretch/mode="canvas_items"` and
+> `aspect="expand"`, and `DEFAULT_CANVAS_SIZE` is **1000×800** — so the stretch scale is
+> `min(1000/1920, 800/1080)` = **0.52** and every `Control` in a captured frame is just over half
+> size. A 12 px row lands at ~6 px. **Colour, legibility and layout judgments off those PNGs are
+> unreliable**, which is the trap this file's own rules exist to avoid.
+>
+> `SOURCE_LIST_WINDOW_SIZE` is the project's own base, so the scale is exactly 1.0 and a Control is
+> captured at the size a player sees. The block `_set_canvas`es to it and restores
+> `DEFAULT_CANVAS_SIZE` after, the way the pasture states switch aspect; `_ensure_canvas` is bounded
+> by `CANVAS_PIN_MAX_FRAMES`, and the block `push_warning`s with the size actually granted and the
+> resulting scale if the WM refuses — a frame silently captured at 0.52× being the whole defect.
+>
+> **The same arithmetic applies to `map_overlay_picker`**, whose popover attachment and legend rows
+> are judged at that same 0.52×. Those claims are measured GAPS rather than legibility, so the frames
+> stand as they are — recorded here so the next person judging a Control off a map frame knows.
+
+| frame | stages | read for |
+|---|---|---|
+| `map_source_list` | one band working SIX sources — both food webs plus a wood working — selected | the panel at 1:1: six rows of `icon · ⚒N · rate · build-or-attention`, the attention row above the divider, and a leader line from each row to its own hex |
+| `map_source_list_quadrant` | the same band, zoomed in and panned so the camp sits well off centre | the placement rule as a PICTURE — the panel opens into the diagonally opposite direction, clear of the band's nameplate |
+| `map_source_list_paged` | twelve sources, four of them overdrawing | ten rows and a `1/2` pager, every attention row on page 1, and a footer total that is the BAND's |
+| `map_build_arc` | a rung in flight, a worked source with none, and a build the wire says is ROTTING | the ring carries the meter now: a green arc at 42% beside a DANGER arc at 75%, and a `🌱⚠` plate beside a plain `🌱` one — no percent on either |
+
+**THE PLACEMENT RULE IS ASKED AS ARITHMETIC, NOT BY PANNING.** `place()` is driven directly against a
+synthetic `bounds` with a non-zero origin, because where the panel opens is a calculation and a
+picture of one corner proves nothing about the other three. Each of the four quadrants is asserted by
+name; then the DEAD ZONE, which is the part a picture could never carry:
+
+- **It HOLDS a side.** The band is shoved past the zone to take a side, then nudged to either side of
+  centre INSIDE it, and the panel must not move. ⛔ **This is the leg that fails when the dead zone is
+  deleted** — without it the four corner claims all pass on a renderer that flips on every pixel.
+- **And it YIELDS past the zone, both ways.** A dead zone that never yields is a fixed side, and a
+  fixed side passes the hold claim.
+- **A fresh selection picks fresh.** The held side is put on the LEFT, the band ENTITY changes, and
+  the panel is asked from inside the zone — where nothing would move a side that was merely held.
+- **The rect never leaves `bounds`**, including one deliberately cramped room, whose PREMISE is
+  asserted first: 340 px cannot hold the band's box plus `BAND_GAP` plus the 300 px panel, so the
+  unclamped rect must overflow and the clamp is the only thing that can put it back.
+
+**THE FOOTER'S TOTAL IS DRIVEN THROUGH THE PAGER AND COMPARED AS STRINGS.** Its invariance is the
+entire justification for putting a total on a paged list — *the number stays the same whichever page
+you are on, which is what makes it worth reading* — and nothing else would catch a total that had
+quietly become the page's. It is also asserted AGAINST `SourceForecast.yield_components` composed
+from the merged rows, with the fixture staged so at least two different accounts are non-zero (food
+and a material): on a single-account band the "it sums no accounts together" claim passes vacuously.
+
+**AND THE BADGE CLAIMS ARE PAIRED, both halves in one frame.** `map_build_arc` asserts that the
+building source's plate carries its verb glyph and NO `%`, and that the non-building control's
+carries no verb glyph at all — the absence is only worth asserting because the presence is visible
+beside it, and the control's badge ENTRY is asserted to exist first so an empty face is not an absent
+plate. Faction knowledge is deliberately NOT pushed on this state, unlike `map_worked_ready`: with it
+every climbable source wears a ⌃ and the control has no claim left to make.
+
+**The arc itself is PIXELS, through `_closest_mark_distance`'s ratio idiom.** Every mark in this
+family is drawn at an alpha and blends with the terrain, so the claim is the DANGER distance on the
+rotting hex against the same distance on the hex whose arc is its own web's green — measured **0.024
+against 0.274, a ratio of 11.4×**, against a `BUILD_ARC_CONTRAST_MIN` of 2.5. A contrast inside one
+frame needs no absolute tolerance tuned.
+
+Sabotage-verified in two runs, each restored, and they fail independently:
+
+- **deleting the dead zone** (taking the side unconditionally) → exit 1 with **2** failures, both in
+  `map_source_list_quadrant`: the hold claim, and the fresh-selection claim that also rests on a side
+  being held inside the zone. The four corner claims and both yield claims stay green, correctly.
+- **making the footer total the PAGE's** (composed over `page_rows()`) → exit 1 with **2** failures,
+  both in `map_source_list_paged`: the invariance (`+2.65 /turn` against `+0.00 /turn`) and the
+  states-every-account claim. Nothing in the quadrant block moves.
+
+**Two defects the frames themselves surfaced, both fixed rather than filed.** A working's row printed
+`⚒0` beside a marker printing `⚒3` — the extraction arm never filled `_source_crew`, which is the map
+the row reads (`overlay-channels.md`). And the pager re-rendered only its ROWS, leaving `1/2` showing
+on page 2 with `‹` still greyed out and every leader line pointing at the page that had just left.
 
 ### `map_ready_for_improvement` — the AGGREGATE ⌃, and why the frame is a contrast rather than a glow
 

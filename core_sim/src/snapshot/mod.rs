@@ -15,7 +15,8 @@ use sim_runtime::{
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
+    CultureTraitEntry, DepositRungState, DepositState,
+    DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
@@ -113,6 +114,7 @@ mod capture;
 mod connections;
 pub(crate) mod crafting;
 mod culture;
+mod deposits;
 mod economy;
 mod flora_quotes;
 mod governance;
@@ -1102,6 +1104,7 @@ mod tests {
             header,
             ladder_knowledge: Vec::new(),
             route_rungs: Vec::new(),
+            deposit_rungs: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1142,6 +1145,7 @@ mod tests {
             discovered_sites: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1179,6 +1183,7 @@ mod tests {
             header,
             ladder_knowledge: Vec::new(),
             route_rungs: Vec::new(),
+            deposit_rungs: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1219,6 +1224,7 @@ mod tests {
             discovered_sites: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
@@ -1251,6 +1257,7 @@ mod tests {
             header,
             ladder_knowledge: Vec::new(),
             route_rungs: Vec::new(),
+            deposit_rungs: Vec::new(),
             kits: Vec::new(),
             materials: Vec::new(),
             characteristic_bands: Vec::new(),
@@ -1291,6 +1298,7 @@ mod tests {
             discovered_sites: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
+            deposits: Vec::new(),
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),

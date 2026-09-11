@@ -314,6 +314,13 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&assignment.kit_id))
                         };
+                        // The deposit this crew is on — `None` on every row that is not
+                        // `extract`, the `fauna_id` convention: an absent string is "no selection".
+                        let material = if assignment.material.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.material))
+                        };
                         // The plants this crew carries home. **Absent rather than an empty vector**
                         // when the crew named none, the `species`/`faunaId` convention: an absent
                         // vector reads as empty, and empty *is* "the whole basket".
@@ -396,6 +403,11 @@ fn create_populations<'a>(
                                     SourcePriorityState::High => fb::SourcePriority::High,
                                     SourcePriorityState::Low => fb::SourcePriority::Low,
                                 },
+                                // **WHICH DEPOSIT THIS CREW IS WORKING** — the other half of a
+                                // working's key, because one tile can hold two. Absent rather than
+                                // an empty string, the `species`/`faunaId` convention. Appended
+                                // last.
+                                material,
                             },
                         )
                     })
@@ -986,6 +998,12 @@ fn create_populations<'a>(
                     // THIS BAND'S OUTFITTING WINDOW — appended last. `None` is the ordinary state:
                     // a window shuts on the turn advance, so most frames carry none at all.
                     loadoutWindow: loadout_window,
+                    // The band's QUARRYWORK bill — appended last, always written, and summed by the
+                    // sim for the roadwork triple's reason: deposit rows are fog-filtered, so a
+                    // working out of sight would drop out of any client-side total the band owes.
+                    quarryworkDemand: cohort.quarrywork_demand,
+                    quarryworkSupplied: cohort.quarrywork_supplied,
+                    quarryworkShortfall: cohort.quarrywork_shortfall,
                 },
             )
         })
@@ -1119,6 +1137,9 @@ fn decode_labor_assignment(
         target_y: assignment.targetY(),
         // Absent-when-empty strings and vectors read back as the empty value they stood for.
         fauna_id: text(assignment.faunaId()),
+        // The deposit this crew is on — the `fauna_id` convention one web over: an absent string is
+        // "no selection", and only an `extract` row ever carries one.
+        material: text(assignment.material()),
         floor: assignment.floor(),
         species: text(assignment.species()),
         take_species: decode_strings(assignment.takeSpecies()),
@@ -1430,6 +1451,10 @@ fn decode_population(
         roadwork_demand: cohort.roadworkDemand(),
         roadwork_supplied: cohort.roadworkSupplied(),
         roadwork_shortfall: cohort.roadworkShortfall(),
+        // The GROUNDWORK pool, the deposit branches' twin of the three above (arc #583).
+        quarrywork_demand: cohort.quarryworkDemand(),
+        quarrywork_supplied: cohort.quarryworkSupplied(),
+        quarrywork_shortfall: cohort.quarryworkShortfall(),
         transfer_local_received_turn: cohort.transferLocalReceivedTurn(),
         transfer_local_sent_turn: cohort.transferLocalSentTurn(),
         transfer_route_received_turn: cohort.transferRouteReceivedTurn(),

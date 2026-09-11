@@ -2020,17 +2020,45 @@ pub enum LaborTarget {
     /// **abandoned**. The material is part of the key because **one tile can hold two deposits** — a
     /// wooded highland holds timber *and* rock — and working one is not working the other.
     ///
-    /// **There is no `floor` beside them, and its absence is the model.** A food web's floor is
-    /// escapement the player dials per row; a deposit's floor is the **rung's**
-    /// (`(1 − recovery_fraction) × capacity`), which is what makes climbing the ladder the way you
-    /// reach deeper. Adding a per-row floor would put a second, contradictory answer on the same
-    /// question.
+    /// **AND IT CARRIES A FLOOR, WHICH DOES NOT CONTRADICT THE RUNG'S** (issue #650). A deposit has
+    /// two floors and they are the same kind of quantity — *an amount left standing* — so they
+    /// compose as a **maximum**, never as two clamps and never as a sum: you stop at whichever is
+    /// higher of what the rung's reach cannot get at and what the player told the crew to leave —
+    /// **and the crew's half participates only where the deposit renews**.
+    /// `extraction::deposit_effective_floor` is the one place both of those are said.
     Extract {
         tile: UVec2,
         /// The `extraction.json` deposit this crew works — `wood`, `stone`, and whatever the minerals
         /// arc adds. **Which ladder that is, is the deposit's** (`DepositDef::branch`), never the
         /// row's, which is what lets one row kind serve both branches.
         material: String,
+        /// **WHERE THIS CREW STOPS**, as a fraction of the deposit's capacity — [`Self::Forage`]'s
+        /// own field, on a third and fourth branch.
+        ///
+        /// Validated `0.0..=1.0` at the command boundary ([`floor_is_valid`]) and never clamped
+        /// silently.
+        ///
+        /// ⛔ **WHEN THE PLAYER NAMED NONE IT DEPENDS ON THE GROUND, AND ONLY ON THIS BRANCH**
+        /// (issue #650, `server::unnamed_deposit_floor`): [`DEFAULT_ESCAPEMENT_FLOOR`] where the
+        /// deposit renews, [`STRIP_IT_BARE`] at `NEVER_RENEWS`. A [`Self::Forage`] or [`Self::Hunt`]
+        /// row keeps resolving absence to [`DEFAULT_ESCAPEMENT_FLOOR`] unconditionally — their
+        /// sources always renew. The client offers the dial only on renewing ground, so silence on a
+        /// quarry is *"nobody chose"*, and reading it as a chosen `0.5` is what misled four separate
+        /// readers of this field.
+        ///
+        /// **THE GRAMMAR ACCEPTS IT ON BOTH DEPOSIT BRANCHES, AND ON A FINITE ONE IT IS STORED,
+        /// PUBLISHED AND INERT** (issue #650) — an **explicitly sent** floor is kept exactly as sent
+        /// on a rock body, which is why every reader below still asks about the rate itself. An escapement floor protects **regrowth**, so at
+        /// `NEVER_RENEWS` there is no future for it to protect and
+        /// `extraction::deposit_effective_floor` drops it: it caps no take and shortens no runway.
+        ///
+        /// ⛔ **THE RULE IS THE SIM'S, NOT THE COMMAND BOUNDARY'S AND NOT THE CLIENT'S.** *Whether
+        /// to offer the dial* is a client decision through the `regrowth_rate > 0` fork it already
+        /// makes for every other deposit readout — but a script or a raw command line can send
+        /// `assign_labor … extract … 0.5 3` too, and the sim is what knows the rate. Refusing the
+        /// token here instead would make the two branches' commands differ in shape for a value that
+        /// simply has no effect, so it is accepted uniformly and applied conditionally.
+        floor: f32,
     },
 }
 
@@ -2128,10 +2156,12 @@ impl LaborTarget {
                 LaborTarget::Extract {
                     tile: a,
                     material: left,
+                    ..
                 },
                 LaborTarget::Extract {
                     tile: b,
                     material: right,
+                    ..
                 },
             ) => a == b && left == right,
             _ => false,
@@ -4128,7 +4158,7 @@ impl BuildSource {
         match target {
             LaborTarget::Forage { tile, .. } => Some(BuildSource::Patch(*tile)),
             LaborTarget::Hunt { fauna_id, .. } => Some(BuildSource::Herd(fauna_id.clone())),
-            LaborTarget::Extract { tile, material } => Some(BuildSource::Deposit {
+            LaborTarget::Extract { tile, material, .. } => Some(BuildSource::Deposit {
                 tile: *tile,
                 material: material.clone(),
             }),
@@ -4169,6 +4199,7 @@ impl BuildSource {
                 LaborTarget::Extract {
                     tile: other,
                     material: worked,
+                    ..
                 },
             ) => tile == other && material == worked,
             // **A road names no row.** `LaborTarget::Roadwork` is band-wide and covers every road
@@ -5591,7 +5622,7 @@ pub enum Improvement {
     ///
     /// **What it buys is REACH, not rate**: a finite deposit has no regrowth to raise, so the rung
     /// lowers the floor `(1 − recovery) × capacity` instead — the fauna escapement floor upside
-    /// down. And it is the one rung on either branch that asks something of the ground: the tile's
+    /// down. And its ground can refuse it, as [`Self::Coppice`]'s can: the tile's
     /// stone must clear the rung's `min_deposit_capacity`, which is what makes *you cannot quarry
     /// just anywhere* true with no second mechanism.
     Quarry,
@@ -5614,6 +5645,28 @@ pub const NO_RAID_FLOOR: f32 = 1.0;
 pub const NO_IMPROVEMENT_UNDERWAY: Option<Improvement> = None;
 
 impl Improvement {
+    /// **EVERY BUILD VERB THE GAME HAS**, in `RungKey::ALL`'s idiom and for its reason: a sweep
+    /// that must cover all of them needs something to iterate, and a hand-listed set of names in
+    /// the sweep's own file is a second authority that goes stale the day a verb lands.
+    ///
+    /// ⛔ **IT IS WHAT `every_build_verb_has_a_command_line` WALKS** (issue #650). `fell`, `coppice`
+    /// and `quarry` shipped as variants here, with a [`crate::intensification::RungKey`] apiece and
+    /// a validation arm written for them, and **no command of any kind** — no grammar, no proto
+    /// message, no dispatch. Nothing failed to compile, because a verb nobody sends is a verb
+    /// nothing calls; the feature was simply unreachable. Adding a variant now breaks that test's
+    /// exhaustive match until someone states the line a player types to declare it.
+    pub const ALL: [Improvement; 9] = [
+        Improvement::Cultivate,
+        Improvement::Sow,
+        Improvement::Tame,
+        Improvement::Corral,
+        Improvement::Grade,
+        Improvement::Pave,
+        Improvement::Fell,
+        Improvement::Coppice,
+        Improvement::Quarry,
+    ];
+
     /// Stable wire/config key — the `as_str` convention every wire enum here uses, and the value
     /// `LaborAssignmentState.improvement` carries (`""` for [`None`]).
     pub fn as_str(self) -> &'static str {

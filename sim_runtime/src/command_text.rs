@@ -232,6 +232,30 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "pave <faction_id> <band_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "fell",
+        aliases: &[],
+        summary: "DECLARE a felling working on the wood at a tile: appended to the build queue of every band already working that deposit, and raised by the band's `builders` pool when it reaches the HEAD of that queue - so this names no workers. IT NAMES A MATERIAL as well as a tile, unlike every other tile verb: one hex can hold two workings (a wooded highland holds timber AND rock), so a line naming only the tile names neither of them - the same token `assign_labor <f> <b> extract <x> <y> <material> <n>` carries. IT NAMES NO BAND, unlike `grade`: a working belongs to a camp exactly as a patch does, so its keeper is whoever already cuts it, and you must have a crew on the deposit before you can raise it. Forestry rung 2, and the rung at which OVER-CUTTING BECOMES POSSIBLE - the take is finally fast enough to outpace what the wood puts back. Needs Woodcraft knowledge, earned by gathering deadfall. Use `unqueue` to withdraw the declaration and `abandon_working` to put the working down - NOT `abandon`, which names a place and drops every holding on that tile.",
+        usage: "fell <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
+        verb: "coppice",
+        aliases: &[],
+        summary: "DECLARE a managed wood on the deposit at a tile - `fell`'s twin one rung up, declared and funded on exactly the same terms and naming the material the same way. What it buys is REGROWTH: it raises the deposit's own rate and NEVER its capacity, so you do not get more per turn by cutting harder, you get more per turn for ever by managing the wood. Needs Conservationism knowledge, earned by FELLING - the first rung on either branch at which a wood can be ruined.",
+        usage: "coppice <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
+        verb: "quarry",
+        aliases: &[],
+        summary: "DECLARE a cut working face on the stone at a tile - the extraction branch's rung-2 verb, declared and funded exactly as `fell` is and naming the material the same way. What it buys is REACH, not rate: a finite deposit has no regrowth to raise, so the rung lowers the floor it can reach beneath instead. ITS GROUND CAN REFUSE IT, AS A COPPICE'S CAN - the tile's own capacity for the material must clear the rung's min_deposit_capacity, which is the whole of 'you cannot quarry just anywhere': a scatter of loose stone is not a body of rock, and the refusal says so and names the ground that carries one. Needs Quarrying knowledge, earned by picking loose stone.",
+        usage: "quarry <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
+        verb: "abandon_working",
+        aliases: &[],
+        summary: "PUT A WORKING DOWN: drop your bands' holding of the deposit at a tile - the `extract` row AND its build-queue entry - on every band of the faction working it. THE WORKING'S METER IS UNTOUCHED: the face keeps whatever rung it stands on and, with nobody holding it, slides back down at the rung's own rate over the following turns exactly as an unkept working does. Nothing is destroyed on the spot, so it needs no confirmation. IT NAMES A MATERIAL as well as a tile, exactly as `fell`/`coppice`/`quarry` do: one hex can hold two workings, so a line naming only the tile names neither of them. IT IS ITS OWN VERB AND NOT A TOKEN ON `abandon` - `abandon <faction> <x> <y>` names a PLACE and puts down every holding on it, a forage row included, so widening it would make a destructive verb quietly more destructive. WHY YOU NEED IT: a working raised above its free floor is a HOLDING, so `assign_labor <f> <b> extract <x> <y> <material> 0` means 'stop cutting' and keeps the row - and the row goes on drawing your band's `quarrywork` keepers for the hundred-odd turns the meter takes to slide back to the free floor, competing with the workings you still want. This is how you stop paying for a face you have walked away from.",
+        usage: "abandon_working <faction_id> <x> <y> <material>",
+    },
+    CommandVerbHelp {
         verb: "extend_pen",
         aliases: &[],
         summary: "Grow the fenced footprint of your built pen at a tile by one ring. A ring rides the same animal:pen rung as the pen it widens, so it queues and is funded exactly like every other build: appended to the build queue of every band keeping the pen, raised by that band's `builders` pool when it reaches the head - this names no workers. Needs Penning, an owned penned herd, a band already keeping it, and room below the pen-radius max.",
@@ -258,8 +282,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are two MAINTENANCE roles: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the third band-wide pool: it serves both webs and its whole output goes on the head of the band's build queue, so zero stops building altogether. NONE OF THE THREE POOLS TAKES A `kit` TOKEN, and naming one is refused: a pool is HOW MANY hands, never what they carry. What a build is raised with is set per queue entry with `build_kit`, and what a site's keepers carry is set per work site with `upkeep_kit`.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | builders <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are four KEEPING roles, one per ladder a band holds sites on: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen, 'roadwork' every road it keeps, 'quarrywork' every working on a wood or a rock body. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the fifth band-wide pool: it serves every web and its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders', 'agriculture', 'husbandry' and 'roadwork' — a pool is HOW MANY hands, never what they carry: what a build is raised with is set per queue entry with `build_kit`, and what a site's keepers carry is set per work site with `upkeep_kit`. The worked sources (forage/hunt/extract), the two standing roles (scout/warrior) and 'quarrywork' do take one, and an absent token means the job's default.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | roadwork <workers> | quarrywork <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1190,6 +1214,77 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 })
             }
         }
+        // ⛔ **THE TWO DEPOSIT BRANCHES' THREE TILE VERBS**, in `cultivate`/`sow`'s grammar **plus a
+        // material** — and deliberately **not** `grade`/`pave`'s, which take a band.
+        //
+        // **No band token, because a working has a keeper already.** A road has no work row at all,
+        // so the band that will keep it must be said out loud; a working belongs to a camp exactly
+        // as a patch does, and its keeper is whoever already cuts or digs it. The verb reaches every
+        // band of the faction with an `extract` row on the source, as `cultivate` reaches every band
+        // foraging the patch.
+        //
+        // ⛔ **A MATERIAL TOKEN, WHICH NO OTHER TILE VERB CARRIES.** The working's key is
+        // `(tile, material)` because one hex can hold two — a wooded highland holds timber *and*
+        // rock — so a line naming only the tile names neither of them. It is the same trailing token
+        // the `assign_labor … extract` grammar above carries, in the same position after the tile, so
+        // the two ways of addressing one working read alike.
+        //
+        // **The tail is CLOSED.** The material is the last token, so an unnoticed extra would be
+        // silently dropped on exactly the verb where a second material name is the plausible typo.
+        // **`abandon_working` RIDES THE SAME GRAMMAR, and it is a separate verb from `abandon` for
+        // the reason its help states**: `abandon <f> <x> <y>` names a *place* and drops every
+        // holding on it, so covering a working with an optional trailing material would make a
+        // destructive verb quietly more destructive on exactly the hexes that hold two of them.
+        // Being on this arm is what keeps the material's position and the closed tail identical to
+        // the three rung verbs', which is the whole of *"the two ways of addressing one working read
+        // alike"*.
+        verb @ ("fell" | "coppice" | "quarry" | "abandon_working") => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let material = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("material"))?;
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            let faction_id = parse_u32(faction_str, "faction")?;
+            let target_x = parse_u32(x_str, "target_x")?;
+            let target_y = parse_u32(y_str, "target_y")?;
+            let material = material.to_string();
+            Ok(match verb {
+                "fell" => CommandPayload::Fell {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+                "coppice" => CommandPayload::Coppice {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+                "quarry" => CommandPayload::Quarry {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+                _ => CommandPayload::AbandonWorking {
+                    faction_id,
+                    target_x,
+                    target_y,
+                    material,
+                },
+            })
+        }
         "extend_pen" => {
             let faction_str = parts
                 .next()
@@ -1360,6 +1455,58 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         None,
                     )
                 }
+                // **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) —
+                // `extract <x> <y> <material> [floor] <workers>`, and the material is NOT optional:
+                // one tile can hold two workings (a wooded highland holds timber and rock), so a
+                // line naming only the tile names neither of them.
+                //
+                // **The material rides the `species` slot** because that is the one free-form string
+                // this command already carries and it means the same kind of thing on a forage row —
+                // *which of the things on this ground are you here for*. The sim's own `"extract"`
+                // arm reads it from there, so a token of its own would be a second spelling of one
+                // field.
+                //
+                // **AND IT CARRIES AN OPTIONAL FLOOR** (issue #650) —
+                // `extract <x> <y> <material> [floor] <workers>`, the `hunt` arm's shape with a
+                // material where the herd id goes. The material is read first and positionally, so
+                // what is left is the two-numbers tail `hunt` already disambiguates **by length**
+                // rather than by parsing; the forage arm's "does it parse as `f32`" test has nothing
+                // to decide here because the free-form token is never in the optional slot.
+                //
+                // A retired stance name is refused **by name** exactly as forage refuses one: a
+                // stale client sending `extract 4 5 wood sustain 3` gets the `RetiredStanceToken`
+                // that says what happened, not a float-parse failure naming a token it never typed.
+                "extract" => {
+                    let x = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
+                    let y = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
+                    let material = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("material"))?;
+                    let tail: Vec<&str> = parts.collect();
+                    let (workers_tok, floor_tok) = match tail.as_slice() {
+                        [w] => (*w, None),
+                        [t, w] => {
+                            reject_retired_stance(t)?;
+                            (*w, Some(parse_f32(t, "assign_labor floor")?))
+                        }
+                        [] => return Err(CommandParseError::MissingArgument("workers")),
+                        [_, _, extra, ..] => {
+                            return Err(CommandParseError::UnexpectedToken(extra.to_string()))
+                        }
+                    };
+                    (
+                        parse_u32(workers_tok, "assign_labor workers")?,
+                        Some(parse_u32(x, "assign_labor target_x")?),
+                        Some(parse_u32(y, "assign_labor target_y")?),
+                        None,
+                        floor_tok,
+                        Some(material.to_string()),
+                    )
+                }
                 // **A role passes TWO gates: this grammar and the sim's own `handle_assign_labor`.**
                 // They are separate enumerations in separate crates, and `builders` sat in the sim's
                 // one alone from `docs/plan_standing_upkeep.md` §2.5 — so the client's native bridge,
@@ -1372,7 +1519,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 // sends — so the route branch's keeping pool could not be staffed at all, with no
                 // error anywhere but the refusal. `command_guard`'s role sweep is what caught it, and
                 // is what keeps the two enumerations in step.
-                "scout" | "warrior" | "agriculture" | "husbandry" | "roadwork" | "builders" => {
+                //
+                // ⛔ **AND `quarrywork` IS THE THIRD, CAUGHT BEFORE IT SHIPPED** (arc #583). The
+                // deposit branches' keeping pool reached the server's dispatch in the commit before
+                // the one that gave it a card, and this list is the gate that card's stepper has to
+                // pass — so the role was added here alongside the `extract` arm above it rather than
+                // after a play report.
+                "scout" | "warrior" | "agriculture" | "husbandry" | "roadwork" | "quarrywork"
+                | "builders" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
@@ -2596,6 +2750,61 @@ mod tests {
         ));
     }
 
+    /// ⛔ **THE TWO DEPOSIT BRANCHES' THREE TILE VERBS** — `cultivate`'s grammar **plus a
+    /// material**, and deliberately not `grade`'s plus a band.
+    #[test]
+    fn parse_deposit_verbs() {
+        assert_eq!(
+            parse_command_line("fell 0 7 3 wood").unwrap(),
+            CommandPayload::Fell {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+                material: "wood".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command_line("coppice 1 7 3 wood").unwrap(),
+            CommandPayload::Coppice {
+                faction_id: 1,
+                target_x: 7,
+                target_y: 3,
+                material: "wood".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command_line("quarry 0 7 3 stone").unwrap(),
+            CommandPayload::Quarry {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+                material: "stone".to_string(),
+            }
+        );
+    }
+
+    /// ⛔ **THE MATERIAL IS NOT OPTIONAL, AND THE TAIL IS CLOSED.**
+    ///
+    /// One hex can hold two workings, so a line naming only the tile names **neither** of them —
+    /// which makes a defaulted material the one plausible way to raise the wrong one silently. And
+    /// the material is the last token, so an unnoticed extra would be dropped on exactly the verb
+    /// where a second material name is the plausible typo.
+    #[test]
+    fn a_deposit_verb_needs_its_material_and_takes_nothing_after_it() {
+        assert!(matches!(
+            parse_command_line("fell 0 7 3"),
+            Err(CommandParseError::MissingArgument("material"))
+        ));
+        assert!(matches!(
+            parse_command_line("quarry 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+        assert!(matches!(
+            parse_command_line("quarry 0 7 3 stone wood"),
+            Err(CommandParseError::UnexpectedToken(_))
+        ));
+    }
+
     /// A ring rides the same `animal:pen` rung as the pen it widens, so it queues on the same
     /// grammar as the four improvement verbs and, like them, names no crew
     /// (`docs/plan_standing_upkeep.md` §2.5).
@@ -2679,6 +2888,48 @@ mod tests {
         );
     }
 
+    /// **THE EXTRACT TAIL CARRIES AN OPTIONAL FLOOR, DISAMBIGUATED BY LENGTH** (issue #650) —
+    /// `extract <x> <y> <material> [floor] <workers>`, the `hunt` arm's shape with a material where
+    /// the herd id goes.
+    ///
+    /// The material is read **positionally and first**, so the free-form token is never in the
+    /// optional slot and the forage arm's *"does it parse as `f32`"* test has nothing to decide
+    /// here. Both readings round-trip, and the material still rides the `species` field.
+    #[test]
+    fn parse_assign_labor_extract_reads_an_optional_floor_after_the_material() {
+        let row = |floor: Option<f32>| CommandPayload::AssignLabor {
+            faction_id: 0,
+            band_id: Some(904),
+            role: "extract".to_string(),
+            workers: 6,
+            target_x: Some(3),
+            target_y: Some(5),
+            fauna_id: None,
+            policy: None,
+            species: Some("wood".to_string()),
+            floor,
+            kit_id: None,
+            take_species: Vec::new(),
+        };
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 extract 3 5 wood 6").unwrap(),
+            row(None),
+            "the short form is unchanged and still names no floor"
+        );
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 extract 3 5 wood 0.8 6").unwrap(),
+            row(Some(0.8)),
+            "and the long form's optional token is the FLOOR, not a second material"
+        );
+        assert!(
+            matches!(
+                parse_command_line("assign_labor 0 904 extract 3 5 wood 0.8 6 7"),
+                Err(CommandParseError::UnexpectedToken(_))
+            ),
+            "anything longer is a typo, not a longer form"
+        );
+    }
+
     /// **THE PROOF the disambiguation above rests on**: no `flora_config.json` species key parses as
     /// a float, so the two token languages are disjoint and a single optional token is never
     /// ambiguous. Asserted against the **shipped roster** rather than against the claim — a future
@@ -2708,6 +2959,10 @@ mod tests {
                 format!("assign_labor 0 904 forage 3 5 {stance} 6"),
                 format!("assign_labor 0 904 forage 3 5 {stance} wild_emmer 6"),
                 format!("assign_labor 0 904 hunt herd-7 {stance} 6"),
+                // **And the extract form** (issue #650) — its optional slot takes a float too, so
+                // without the guard a stale client's `sustain` reports as a bad number rather than
+                // as the grammar that moved.
+                format!("assign_labor 0 904 extract 3 5 wood {stance} 6"),
             ] {
                 assert!(
                     matches!(

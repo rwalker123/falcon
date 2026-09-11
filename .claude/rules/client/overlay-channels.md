@@ -703,12 +703,32 @@ where this row sits beside flat ones; an illegible swatch is the worse readout. 
 `OVERLAY_COLORS` row, having no single hue — so `_selection_has_map_color` answers false and the
 legend button wears `◐` rather than a swatch that could only name one stop of five.
 
-## The on-tile yield label carries ONE component (issues #337 / #449 / #527)
+## A worked source's RATE carries ONE component (issues #337 / #449 / #527 / #650)
 
-A source can pay more than one account, but the label sits on a hex a few pixels wide beside a floor
-mark and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
-shows the account the source PAYS, falling through **food → fodder → materials** in the wire's own
-order: food when `realized_yield` is non-zero (every forage patch and edible quarry, so those frames
+> #### ⛔ THE RATE LEFT THE MAP — IT IS A ROW IN `BandSourceList` NOW, AND THAT IS ARITHMETIC
+>
+> Issue #650. Selecting a band put ~20 floating elements over four hexes. A rate pill is ~90px wide,
+> two markers in one hex's edge slots sit ~55px apart, and a hex holds three slots — **a rate cannot
+> live above its own marker at those numbers.** So the rates became a list docked beside the selected
+> band, each row joined to its hex by a LEADER LINE, which is the association a pill's position used
+> to carry. `_queue_yield_label` / `_draw_yield_label` / `_deferred_yield_labels` and the plate's
+> whole const family are deleted; `flush_yield_labels` keeps its name (MapView reaches it by name)
+> and its BADGE half.
+>
+> **Everything below about WHICH account is stated survives unchanged and is the ROW's rule now** —
+> `_yield_label_rate_text`, `_entry_*`, `yield_label_overdraw` and `YIELD_LABEL_COMPONENT_MIN` are
+> the row's producers, called from `BandOverlayRenderer.compute_source_rows`. What changed is the
+> surface, not the vocabulary.
+>
+> **The far-zoom LOD gate went with the pill.** `show_yields` existed because a map-scale label is
+> unreadable; a fixed-size panel is exactly as readable at hex radius 12 as at 80 (the
+> `BAND_NAME_PILL` property), so rows are built at EVERY zoom. `map_working_farzoom` asserts both
+> halves in one frame: every marker suppressed, every row still there.
+
+A source can pay more than one account, but the row's rate cell sits beside a floor mark and a `⚠` —
+there is no room for a second rate. `BandOverlayRenderer._yield_label_rate_text` therefore
+shows the account the source PAYS, falling through **food → fodder → materials → the account's own
+ZERO** in the wire's own order: food when `realized_yield` is non-zero (every forage patch and edible quarry, so those frames
 are unchanged), else the assignment's `fodder_yield` spelled with the WORD — a sown hay Field reads
 `+0.40 fodder ♻` instead of `+0.00` — else its `material_yield`, each material naming itself, so a
 hunted wolf pack reads `+0.22 hide ⇊`. **The word, never a borrowed glyph**: fodder has none, and a
@@ -720,13 +740,155 @@ had no fall-through at all and read `+0.00`. The material arm is what closed it:
 the RESOLVED take, what the source actually credited to the band's `MaterialStore` this turn.
 
 **THE MATERIAL ARM STATES EVERY MATERIAL.** Naming one of a vector picks a winner the sim does not
-name, and summing them is the retired trade axis under a new name. `_draw_pill_plate` sizes to the
-MEASURED run, so a two-material label is wide rather than clipped — a legibility question for
-`map_band_label_overlap`, not a reason to state less than the truth.
+name, and summing them is the retired trade axis under a new name. The row's rate cell has the panel's
+own width and its detail cell elides with the full string on the hover, so a two-material rate is
+stated rather than clipped — never a reason to state less than the truth.
+
+### ⛔ THE MATERIAL'S NOUN COMES OFF WHERE SOMETHING BESIDE IT IS ALREADY THE MATERIAL
+
+Issue #650. Ray, on a live frame holding a worked rock and a worked log on adjacent hexes: *"remove
+the wood and stone text, it is obvious from the icon what it is."* A worked WORKING's rate sits beside
+a mark that IS its material (🪵 / 🪨), so `+0.40 stone ♻` said the same thing twice in the one place
+with no room to say anything twice. It reads **`+0.40 ♻`** — the shape the forage rate above it
+already had.
+
+- **The gate moved from the HEX's marker to the ROW's icon.** It was
+  `secondary_slot_of(working_key) >= 0` — *did this working's marker draw* — when the rate hung over
+  that marker. A row draws the material's mark ITSELF, through the same
+  `SecondaryMarkerRenderer.face_for_material` the marker goes through, so the test is now *does this
+  row render a face at all*. The consequence is a real behaviour change and the right one: the noun
+  no longer comes back at far zoom or behind the `+N` chip, because the row's icon is there in both
+  cases. It stays only for a material this client has no mark for, which is exactly the case where
+  nothing else names the account.
+- **The two FOOD WEBS are untouched.** A hunted wolf pack still reads `+0.22 hide ⇊`: a deer's marker
+  says nothing about `hide`, so the noun is the only thing naming that account. **They answer
+  `BandOverlayRenderer.MARKER_NAMES_NO_MATERIAL`, and that constant exists because they answered with
+  the wrong boolean's** — `SourceForecast.MATERIAL_NAMED`, which is `true` and belongs to the OPPOSITE
+  question (*does this rate write the noun*, `signed_material_components`' own argument). Handed to
+  `marker_names_material` it means *the mark already says it*, so both food arms silently dropped the
+  noun they were commented as keeping and a hide-only hunt read a bare `+0.22`. The flag
+  (`marker_names_material`) is the CALLER's statement about its own surface, never a fact about the
+  rows, and the hunt arm passes none.
+- **It drops the noun off the ACCOUNT'S ZERO on the same condition**, or a working would name its
+  material only on the turns it produced nothing — which is the one reading the zero arm exists to
+  make honest.
+- **It is safe only because a working takes ONE material**, its identity being the `(tile, material)`
+  pair. `SourceForecast.MATERIAL_UNNAMED` carries that condition: two un-named figures joined by
+  `COMPONENT_SEPARATOR` would be two numbers with nothing between them, which is worse than the
+  repetition. The named form is the default and every other readout in the HUD takes it.
+
+### ⛔ ONE ROW PER SOURCE, ONE LEADER LINE PER ROW — AND NO PLACEMENT PASS ANYWHERE
+
+The pills that used to hang over their markers overlapped, and the two cures that were tried are the
+reason this arc ended where it did. Both are recorded because both would be re-proposed:
+
+- ⛔ **A COLLISION PASS SHIPPED AND WAS REMOVED — DO NOT RE-ADD IT AS AN IMPROVEMENT.**
+  `_lift_clear_of_placed` lifted a colliding pill straight up off any plate already inked that frame.
+  Ray, on the live frame it shipped on: *"having 1 way up there is worse then letting them overlapp a
+  bit. I would move the pill back down"*. It guarded an ambiguity nobody had reported and made the
+  ordinary two-workings frame worse to do it.
+- **Then the overlap was ACCEPTED, and that is what finally failed.** A pill's POSITION was the whole
+  of what tied a rate to its source — no leader line, no colour key, no name on the plate — so a pill
+  moved off its anchor cost more than two plates touching. Accepting the touch was correct given the
+  surface, and the surface was the problem: ~90px plates over markers ~55px apart, three slots to a
+  hex, is not solvable by placement.
+
+**SO THE RATE MOVED OFF THE MAP AND GREW THE THING A PILL NEVER HAD: A LINE TO ITS HEX.**
+`BandSourceList` states one row per staffed source and `MapView._draw` runs a leader line from each
+row on the current page to that source's `_label_anchor` — its own marker's slot, falling back to the
+hex centre. The link is `_draw_worked_link`, unchanged in weight, alpha and seam test; what changed is
+that it starts at a ROW rather than at the band's token, and that **every kind draws one**, forage
+included (it had none).
+
+**THERE IS STILL NO PLACEMENT PASS ANYWHERE IN THIS FILE.** Every mark lands on its own source's
+marker and two that overlap are left to overlap. The panel is placed by a quadrant rule against
+`MapView.unreserved_screen_rect()`, which is placement of ONE surface against the room — not of marks
+against each other, and not something a marker ever consults.
+
+**AND THE LEADER LINES ARE DRAWN IN THE SAME FRAME THE PANEL IS PLACED.** Control layout is deferred
+a frame, so a row anchor read back off layout would lag visibly under a pan; `BandSourceList.place()`
+computes the geometry ARITHMETICALLY and `row_anchor()` reads that measurement — one function
+measures, two consumers read it, the `_name_pill_rects` rule from `map-markers.md`.
+
+### THE ATTENTION LADDER IS FOUR RUNGS, AND THE NEW ONE IS THE LOWEST
+
+`compute_source_rows` ranks every row it builds, and `_row_precedes` sorts on that rank first, so the
+rows a player would act on are the ones page 1 cannot cut. High to low:
+
+| rank | class | predicate | which cell states it |
+|---|---|---|---|
+| 4 | `ATTENTION_BUILD_STALLED` | `SourceForecast.build_is_stalled`, off the badge entry | the BUILD cell's own sentinel face |
+| 3 | `ATTENTION_OVER_CUT` | the sim's `overdraws` verdict | the RATE cell's `⚠` and WARN ink |
+| 2 | `ATTENTION_UNDER_KEPT` | `DetailFormat.rung_is_at_risk` on a food source, `HudDepositVocab.is_at_risk` on a working | `⚠ slipping` / `⚠ drifting` / `⚠ going back` |
+| 1 | `ATTENTION_OVERSTAFFED` | `SourceForecast.crew_is_wasted` against `max_useful_workers` (food) or `HudDepositVocab.max_useful_cutters` (a working) | `⚠ overstaffed` |
+| 0 | `ATTENTION_NONE` | — | — |
+
+**THE WASTE RANKS UNDER THE THREE LOSSES, and the three above it moved up one to make room.** A crew
+bigger than its source can use is a WASTE — the work goes on, at the rate the ground allows — where
+each rank above it is a LOSS: a rung sliding back, a stock cut past its renewal, a build the pool is
+spending on and not finishing. A player reading top-down meets what they are losing before what they
+are merely not gaining. `map_preview` asserts the resulting SEQUENCE (over-cut above overstaffed above
+the first calm row), not the flag, because the order is the feature.
+
+⛔ **AND THE CLAUSE IS UNGATED HERE, unlike on the work board.** `BandPanelController` suppresses it
+wherever the wire's `workers_needed` answers, because that row's FACE already states the same
+condition in figures and two spellings on one row is the defect. A source-list row states no such
+note — the rate cell is a rate — so the clause is this surface's ONLY voice for the condition, and
+gating it here would simply delete the reading. Same producer, same word; the gate belongs to the
+surface that has a second voice, not to the predicate.
+
+**ONE ROW STATES ONE CLAUSE.** The `attention_text` cell is single, so a source that is also slipping
+or over-cut spends it on the louder fact and the waste clause is dropped — never joined to it. The
+extract arm therefore hands `hazard_clause(deposit)` and `overstaffed_clause(crew, cap)` in as two
+separate arguments rather than asking the composer to rank them: `deposit_row_value` ranks them for a
+one-line ROSTER cell, and a list row's own ladder is what ranks them here.
+
+**THE PREVIOUS NOTE HERE SAID NOT TO INVENT AN IDLE-CREW CLASS, AND IT IS STILL TRUE OF WHAT IT MEANT.**
+A working with NO crew never appears in this list at all — every row has `workers > 0` — and
+`idle_workers` remains a BAND-level turn-orb row. `ATTENTION_OVERSTAFFED` is the opposite reading: a
+crew that IS here and is too big for the ground, which every web can answer per source. The design's
+idle-crew class had no shipped predicate; this one does.
+
+### ⛔ A ROW'S `⚒N` AND ITS MARKER'S `⚒N` ARE ONE NUMBER, AND THE EXTRACTION ARM DID NOT FILL IT
+
+`_source_crew` is the per-source crew map the mark pass fills and `compute_source_rows` READS — the
+whole point being that the plate under a marker and the row joined to it by a leader line cannot
+disagree about how many hands are on the source. The two food webs fill it as they walk their bands.
+**The workings arm did not**: it walked `_worked_workings` (where the crew is already summed across
+bands) and passed that number straight to `_queue_source_badge`, so the marker printed `⚒3` while the
+row two hundred pixels away printed `⚒0`, with a line drawn between them. The arm now ASSIGNS
+`_source_crew[key]` — assigns, not accumulates, the sum having already been made — and hands the badge
+that same entry, so there is one number and one producer.
+
+### THE BADGE'S RUNG FACE IS A FUNCTION, `badge_rung`, AND THE BATCH SURVIVES THE FRAME
+
+Two changes that exist for the same reason: **a draw call renders into a canvas, and no harness can
+read a glyph back off one.** The plate's whole claim is which characters are on it — the verb, the
+`⚠`, and the percent that issue #650 removed — so that composition was lifted out of
+`_draw_source_badge` into a public `badge_rung(entry) -> {text, color}`. One fork, two readers; a
+harness that re-composed the string would be a second producer of the very thing under test.
+
+And `flush_yield_labels` **renders without draining**. The batch is cleared at the top of
+`draw_worked_source_marks` — the pass that refills it, and the first thing `MapView` calls every
+frame — so the clear at the end was redundant, and dropping it gives the badge entries the same
+lifecycle `_source_rows` already has: this frame's answers, readable after this frame.
+
+**AND WHEN A SOURCE TOOK NOTHING, THE ZERO NAMES THE ACCOUNT IT PAYS INTO** (issue #650). Every arm
+above states a rate the take produced; this is the one place the label speaks for a take that produced
+none, and a bare `+0.00` is a claim about FOOD — false on a working, which pays a material and no
+food. `_yield_label_rate_text` takes a `zero_account` and the call sites resolve it once per row off
+**`SourceForecast.row_zero_account`**, the SHARED seam the tile card's deposit rows and the work row's
+second line are held to, so a working reads `+0.00 wood` and no surface can print a food figure on a
+source with no food account. A row answering `YIELD_ACCOUNT_NONE` states **no rate at all** —
+the row's rate cell is left EMPTY, which is that seam's own caller contract rather
+than a rule invented here. A food row answers `YIELD_ACCOUNT_FOOD` and nothing about the two webs
+changes.
 
 **A HUNT call site passes NO fodder argument**, deliberately: no animal is harvested for feed, so a
 hunt row's fodder is a structural zero and passing it would offer the label a branch it can never
-take. **It DOES pass the materials.** `_yield_label_rate_text(value, fodder, materials)` is split out
+take. **The `extract` arm passes none for the same reason, and passes no `has()` GATE either**: a
+working ALWAYS pays into its material account — the material is half its identity — so there is
+always a rate to state. **It DOES pass the materials.** `_yield_label_rate_text(value, fodder, materials)` is split out
 of the draw call so a harness can ask it — a draw renders to a canvas and no assertion can read a
 glyph back off one — and `_entry_materials` is its reader, the vector twin of `_entry_fodder` with
 the same "no realized fallback" reasoning.
@@ -743,12 +905,12 @@ render-only-when-non-zero rule lives in `labor-ui.md`.
 
 The label's trailing glyph is the assignment's floor ZONE mark — `_entry_floor_glyph(entry)` =
 `FoodIcons.for_floor_zone(SourceForecast.floor_zone(entry.floor))`, the same mark the work board's
-mark column and the floor picker wear. It travels through `_queue_yield_label` → the deferred batch →
-`_draw_yield_label` as `floor_glyph`, a **resolved glyph**, and every one of those hops spends it
-as-is.
+mark column and the floor picker wear. **On a WORKING it is `HudDepositVocab.floor_mark` instead, and
+a finite one wears none** — see below. It reaches the row as `floor_glyph`, a **resolved glyph**,
+appended verbatim after the rate, and every hop spends it as-is.
 
 **A GLYPH RESOLVED ONCE AND RE-RESOLVED IS A MARK THAT VANISHES SILENTLY, and this one did.** The
-parameter was called `policy` and `_draw_yield_label` ran it back through `FoodIcons.for_policy` — a
+parameter was called `policy` and the retired pill ran it back through `FoodIcons.for_policy` — a
 table keyed on the four IMPROVEMENT verbs since #442, which a floor-zone glyph is never a key of — so
 the lookup answered `""` and **the map drew no harvest mark at all** for the life of the harvest-floor
 arc. Nothing failed: a plain `+0.48` on a pill is a perfectly plausible label, and the frames that
@@ -756,6 +918,32 @@ would have shown it were frozen with it missing. The parameter carries its conte
 (`floor_glyph`), which is what makes the second lookup unwritable.
 
 The guard is `map_preview._assert_work_floor_marks` — see `harness-map-probes.md`.
+
+#### ⛔ …BUT A WORKING'S MARK FORKS ON THE GROUND'S RENEWAL RATE, AND A FINITE ONE WEARS NONE
+
+Issue #650. `♻` is the PEAK zone's mark — *the most this ground gives, forever* — and a rate-0 rock
+body has no peak: every take is stock that does not grow back. The extract arm therefore resolves its
+mark through **`HudDepositVocab.floor_mark(deposit, floor)`**, this arc's one fork (`renews()`,
+`regrowth_rate > 0`, never `branch`), asked of the working's own `deposits` row — which the renderer
+reaches through `_working_row(tile, material)`, the `(tile, material)` join it already made to refuse
+a phantom marker. A renewing wood is unchanged and reads the zone it is set to.
+
+**AND THE FLOOR IT WOULD HAVE BEEN MARKING IS ONE NOBODY CHOSE.** The compose sheet offers the dial
+only where the ground grows back, so a finite working's row carries `DEFAULT_HARVEST_FLOOR` — 0.5,
+which is exactly the value that classifies as the peak. The mark was drawn at its most confident on
+the one working that has no floor at all. **The silence is the established answer**, not a new one:
+`HudFormat.panel_expedition_summary` drops the glyph from a DENIAL row because that mission's floor is
+a real zone belonging to a floor it never chose. What a finite working's warning IS remains the
+RUNWAY, which the tile card and the roster state and a hex-sized pill has never had room for.
+
+**The same fork reaches the drawer's standing summary** (`DrawerComposeController._standing_summary_model`
+takes the `deposits` row on its `extract` calls), so `Assign diggers ▸`'s second line and the working's
+row in `BandSourceList` cannot answer differently about one working. An `extract` row arriving without a row answers the finite
+reading, which is the safe way round: the failure being forbidden is a quarry claiming `♻`.
+
+Frames: `map_working_pills` (a renewing wood, a rate-0 rock and a forage patch at one zoom — one mark
+between the two workings), with `HudDepositVocab.floor_mark` asked of both rows at the SAME floor and
+the floor-alone reading asserted as the premise.
 
 
 ---
@@ -773,14 +961,16 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
 `compute_slots()` above the overlay pass**. That hoist is safe because it is a pure computation over
 `discovered_sites` / `food_sites` / `herds` / `last_hex_radius`, none of which mutate during `_draw`.
 
-- **The ring: green = we forage this, red = we hunt this**, at two weights — thin
-  (`WORKED_RING_OTHER_ALPHA`) for any player band, bold plus a faint disc for the selected one.
+- **The ring: green = we forage this, red = we hunt this, SLATE = we cut this**, at two weights —
+  thin (`WORKED_RING_OTHER_ALPHA`) for any player band, bold plus a faint disc for the selected one.
   `FORAGE_WORKED_FILL`, the old whole-hex green tint, is **retired**: a fill belongs to a hex and a hex
   has no single answer. Radius `WORKED_RING_FACTOR` (0.34) sits deliberately INSIDE
   `MapView.FOOD_HARVEST_RING_FACTOR` (0.42) — the harvest ring is a different statement about the same
   marker and the two must read apart.
 - **The badge** (`_queue_source_badge` / `_draw_source_badge`): ONE plate per source under its marker,
-  carrying `⚒N` crew and, when the source can climb, a `⌃` chevron + the verb glyph. One plate rather
+  carrying `⚒N` crew — **`BADGE_CREW_GLYPH` reads `HudSelectionVocab.SOURCE_CREW_MARK`, one spelling
+  for one idea** (issue #650), since the tile card's deposit rows wear the same mark and a hex whose
+  badge said `⚒4` beside a card row silent about a crew was half of what Ray reported — and, when the source can climb, a `⌃` chevron + the verb glyph. One plate rather
   than two because three sources × two elements is six things in forty pixels. **Below the icon,
   never upper-right** — `HERD_DISTRESS_BADGE_OFFSET_FACTOR` owns that corner, and a herd can be both
   penned-and-starving and ready-to-something. Ready rides the plate's BORDER as well as its glyph
@@ -815,14 +1005,77 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   is the two-surface disagreement that shared producer exists to stop. The autopsy is
   `band-city-panel.md` → "THE PERCENTAGE IS THE LEG IN FLIGHT'S".
 - **The badge shows a rung ON OFFER or a rung UNDER WAY, never both** — one axis in two states,
-  mutually exclusive by construction. Under way renders `<verb glyph><percent>%` in
-  `HudStyle.SIGNAL_DEEP` with **no chevron** (`⌃` offers; this reports); on offer renders `⌃<glyph>` in
-  `HudStyle.SIGNAL`. The first cut shipped only the offer, which left a patch you were actively
+  mutually exclusive by construction. Under way renders the verb GLYPH ALONE in
+  `HudStyle.SIGNAL_DEEP` (`BADGE_BUILDING_FORMAT`) with **no chevron** (`⌃` offers; this reports); on
+  offer renders `⌃<glyph>` in `HudStyle.SIGNAL`. **The percent left the badge** — the progress figure
+  is the ARC `_draw_build_arc` draws around the marker, so the meter is geometry and the badge is one
+  glyph. The first cut shipped only the offer, which left a patch you were actively
   cultivating looking emptier than the untouched one beside it — the state the player is *waiting on*
   had no mark. `rung_in_progress` keys on the POLICY, not on a non-zero meter: a half-built source
   nobody works is a standing rung, which the rung glyph already reports.
 - **CREW IS AGGREGATED PER SOURCE, NOT PER BAND** — two bands can work one patch, and two plates on
   one marker would be a lie about a single number.
+- **A WORKED WORKING WEARS EVERY PART A HUNTED HERD WEARS** (issue #650) — the ring, the tile
+  outline and the band link, through the SAME routines, differing only in the colour
+  the ring already states. **The RATE is not among them and has not been since the same issue** — it
+  is a row in `BandSourceList` joined to its hex by a leader line; see the boxed note at the head of
+  "A worked source's RATE carries ONE component" above. The wood and stone workings are a THIRD kind of worked source and they
+  arrive at this pass differently from the two food webs, in ways worth keeping straight:
+  - **The set is resolved in a pass of its own, `compute_worked_workings`, which `MapView._draw` runs
+    BEFORE `SecondaryMarkerRenderer.compute_slots`.** A working's marker exists only where a crew is
+    on it, so the slot pass depends on this pass's answer rather than the other way round — the
+    inverse of the food/herd order, and the whole reason it is a separate function whose result is
+    threaded across (`map-markers.md` → "A WORKING gets a marker only where a CREW IS ON IT").
+  - **`EXTRACT_WORKED_COLOR` is quarried SLATE, and it is the third colour rather than a borrowed
+    one.** The two food webs own green and red; materials are the cool account beside them, and every
+    other mark this pass draws is saturated (forage green, hunt red, the azure scout border, the
+    amber pending dashes), so a desaturated slate is the one thing on the map it cannot be mistaken
+    for. It is ONE colour for BOTH branches — a felled wood and a quarried rock are the same
+    statement about the same account.
+  - > #### ⛔ IT SHIPPED WITH THE BADGE ALONE, AND THE ARGUMENT FOR THAT WAS ABOUT INFORMATION
+    >
+    > *A patch or a herd is on the map whether or not anybody works it, so the ring is what says* we
+    > work this*; a working's marker only exists because it is worked, so a ring would state it
+    > twice.* True of the ring's INFORMATION and false of the map. Ray put a worked rock and a worked
+    > log beside a hunted rabbit: the rabbit wore a ring, a hex outline, a link back to its band and a
+    > `+0.05 ♻` pill, and the deposits wore a `⚒1` plate and nothing else — so they read as a
+    > different and lesser kind of thing, not as the same relationship stated more briefly. **Parity
+    > is the requirement**, and the same reasoning retires the second half of that argument: a
+    > working takes the tile-level outline as its LOD/overflow fallback too, in its own colour, which
+    > is the objection ("a mark in the food webs' colour language") answered rather than sustained.
+  - **`selected` rides the `compute_worked_workings` entry**, an OR across the bands summed there,
+    and it is what picks the ring's weight. The food arms reach that answer per (band × source) as
+    they draw and so carry no such flag; the working arm walks SOURCES — the crew is already summed —
+    so it has no band in hand to ask.
+  - **The plate is `_queue_source_badge` with an EMPTY source**, deliberately: `RungGates`'
+    `rung_in_progress` / `next_rung_ready` answer for the FOOD webs and return nothing for an
+    `extract` kind, and a working's ladder is declared from the Work board, so the plate states the
+    crew (`⚒N`) and stops. It is the same plate a worked patch or a hunted herd wears, which is what
+    makes the map mark and the tile card's `crew_clause` one spelling of one idea.
+  - **It is the map-side twin of `SubjectDrawerController._cutters_on_working`, and it is local on
+    purpose.** That helper sums the same `(tile, material)` crew across every player band but reaches
+    it through `HudBandLaborState`; a renderer must not depend on the HUD's band-labor model (the
+    rule `_labor_assignments_of_marker` already follows), so this walks the markers' own
+    `labor_assignments`. The two agree because they sum the same wire field over the same set of
+    bands, not because one calls the other. **Not pending-aware**, matching the forage and hunt arms;
+    the card's clause is, so the two disagree for exactly one frame — which is the disagreement the
+    existing badges already have and not a new one.
+  - **A working the `deposits` section does not carry draws nothing** — the map states a working the
+    snapshot knows about, never one a labor row asserts, so a lapsing row cannot put a phantom marker
+    on a hex with no such deposit.
+  - **`_queue_source_badge`, `_draw_worked_mark` and `_label_anchor` all take a `hex_center` rather
+    than a column** because of this: the food and hunt arms anchor to the BAND's wrap image
+    (`eff_col + delta`, so a source across the seam draws beside the band that works it) while a
+    working anchors to its own marker's (`_hex_center_wrapped`), and a part that resolved the wrap
+    for itself would eventually disagree with the marker it hangs under. The wrap image is the
+    CALLER's to pick; every part of one source then hangs off the same copy of the hex.
+  - **The PENDING overlay has an `extract` arm too.** `HudBandLaborState.record_pending_assign` has
+    always carried `extract` rows — it takes the `material` half-key for exactly that kind — and
+    `_draw_band_pending` read only the two food kinds, so ordering a crew onto a wood or a rock was
+    the one assign in the client that drew nothing at all until the snapshot confirmed it. The
+    pending link hangs off the working's marker where one exists and off the hex centre where it does
+    not, which is the ORDINARY case here: a working's marker exists only once a CONFIRMED crew is on
+    it, and `_label_anchor`'s fallback is that case rather than a branch written for it.
 - **A HUNTING EXPEDITION'S QUARRY IS A WORKED SOURCE.** It rides the COHORT
   (`expedition_target_herd`), not a `labor_assignments` row, so a pass that only walks assignments
   misses it — which is how the first cut shipped, with parties crossing the map and nothing saying
@@ -833,6 +1086,13 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   earns its place as the LOD/overflow fallback: `compute_slots` returns early below
   `ICON_MIN_DETAIL_RADIUS` and answers `-1` for an overflowed source, and in both cases there is no
   marker to ring.
+- **THE BAND→SOURCE LINK IS ONE ROUTINE FOR EVERY WEB** (`_draw_worked_link`): it takes the source's
+  RING colour and applies the shared `WORKED_LINK_ALPHA` / `WORKED_LINK_WIDTH`, so a link can differ
+  only in the hue the ring already stated — never in weight or opacity. **It docks to the source's own
+  MARKER** (`_label_anchor`, the pill's anchor), not to the hex centre: a centre anchor overshoots
+  past a marker sitting in an edge slot, and it draws two hunted herds — or the two workings of a
+  wooded highland — as two lines to a single point. `_link_spans_seam` is the one seam test all of
+  them share, the confirmed links and the dashed pending ones alike.
 - **Badges are DEFERRED into `flush_yield_labels`**, the same batch and the same reason as the yield
   labels: they annotate the map, and drawn inline they are painted over by the marker glyphs, rings
   and pending overlays that follow.
@@ -851,4 +1111,6 @@ tracks a new world reuses (`.claude/rules/core_sim/world-handoff.md`).
 Frames: `map_band_work` (both webs ringed, badges, the green/red outline split),
 `map_worked_ready` (the ⌃ contrast — a tended patch offers Sow, a tamed pen-ceiling deer offers
 Corral, a wild-ceiling wolf offers nothing), `map_hunt_expedition_quarry`, `map_overflow_worked`,
-`map_band_label_overlap` (the slot-anchored labels).
+`map_band_label_overlap` (the slot-anchored labels), and the workings' own four in `map-markers.md`
+— of which `map_working_beside_herd` is the PARITY frame, a worked working and a hunted herd in one
+picture with each hex probed for its own web's mark colour and for the absence of the other's.

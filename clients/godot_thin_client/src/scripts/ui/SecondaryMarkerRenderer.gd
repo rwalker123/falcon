@@ -16,6 +16,9 @@ var _view: MapView = null
 #   _secondary_overflow:    tile -> count of entries past SECONDARY_VISIBLE_CAP
 var _secondary_slot_lookup: Dictionary = {}
 var _secondary_overflow: Dictionary = {}
+## The WORKED workings this frame, pushed in by `MapView._draw` — see `set_worked_workings`.
+##   key (`working_key`) -> {"tile": Vector2i, "material": String, "crew": int}
+var _worked_workings: Dictionary = {}
 ## Per-tile roll-up of the worked sources the cap hid — see `set_hidden_source_state`.
 var _hidden_source_state: Dictionary = {}
 # Marks the `+N` chip appends for what it hides, severity-ordered. They deliberately reuse the
@@ -28,10 +31,16 @@ func _init(view: MapView) -> void:
 	_view = view
 
 ## Assign each SECONDARY marker a fixed edge slot on its hex, once per frame. Priority
-## order wonder → food → herd, sequential fill, so a tile's icons never jump between
+## order wonder → food → herd → **working**, sequential fill, so a tile's icons never jump between
 ## frames. Beyond _view.SECONDARY_VISIBLE_CAP the extras collapse into a `+N` overflow chip
 ## (drawn in the next slot). Visibility gating matches each category's own rule
-## (_view.herds/food Active-only; wonders any explored tile). Skipped entirely at far zoom.
+## (_view.herds/food Active-only; wonders and workings any explored tile). Skipped entirely at far
+## zoom.
+##
+## **WORKINGS ARE APPENDED LAST, AND THE EXISTING THREE DO NOT MOVE** (issue #650). Sequential fill
+## is what stops icons jumping frame-to-frame, so a new category earns the END of the order rather
+## than a place in it — and on the rare hex already carrying three secondaries the working falls
+## honestly into the `+N` chip, which reports it as `⚒`.
 func compute_slots() -> void:
 	_secondary_slot_lookup.clear()
 	_secondary_overflow.clear()
@@ -60,6 +69,26 @@ func compute_slots() -> void:
 		if hx < 0 or hy < 0 or not _view._is_tile_visible(hx, hy):
 			continue
 		_append_secondary(per_tile, Vector2i(hx, hy), herd_key(String((herd as Dictionary).get("id", ""))))
+	# THE WORKINGS, LAST. Grouped and then SORTED within each hex rather than taken in the order the
+	# crew walk produced them: that order follows the snapshot's BAND array, so a hex whose wood and
+	# stone are cut by two different bands would swap its two markers the moment those bands
+	# reordered. A sort on the key (which carries the material) is the same answer every frame.
+	var workings_per_tile: Dictionary = {}   # Vector2i -> Array[String] of working keys
+	for key in _worked_workings:
+		var entry: Dictionary = _worked_workings[key]
+		var wtile: Vector2i = entry.get("tile", Vector2i(-1, -1))
+		if wtile.x < 0 or wtile.y < 0:
+			continue
+		if not _working_renders(entry):
+			continue
+		var wlist: Array = workings_per_tile.get(wtile, [])
+		wlist.append(key)
+		workings_per_tile[wtile] = wlist
+	for wtile in workings_per_tile:
+		var wkeys: Array = workings_per_tile[wtile]
+		wkeys.sort()
+		for wkey in wkeys:
+			_append_secondary(per_tile, wtile, wkey)
 	for tile in per_tile:
 		var keys: Array = per_tile[tile]
 		for i in range(keys.size()):
@@ -109,6 +138,111 @@ func food_key(x: int, y: int) -> String:
 
 func herd_key(herd_id: String) -> String:
 	return "herd:%s" % herd_id
+
+## …and the WORKING's, whose identity is the `(tile, material)` PAIR (issue #650) — a hex cutting
+## timber AND quarrying rock holds two workings, and a tile-only key would collapse them into one
+## marker. The same pair `HudBandLaborState.extract_assignment_of` and the tile card's rows key on.
+func working_key(x: int, y: int, material: String) -> String:
+	return "working:%d,%d:%s" % [x, y, material]
+
+## ⛔ **THE MARKER EXISTS ONLY WHERE A CREW IS ON THE WORKING** (issue #650, Ray's decision). Nearly
+## every land tile carries stone once the scrub-wood rows are gone, so marking UNWORKED deposits
+## would bury the map under a mark that means nothing is happening. `MapView._draw` therefore pushes
+## the worked set — and only it — in here, ahead of `compute_slots`, and a hex nobody is cutting gets
+## no working marker at all.
+##
+## **THE ORDER IS INVERTED FROM THE OTHER THREE CATEGORIES, and that is why this is a pushed input
+## rather than a source array read here.** A herd's marker exists because the herd exists; a
+## working's exists because somebody is WORKING it, which is a fact about the bands' labor rows —
+## the answer `BandOverlayRenderer` derives for the worked-source marks. So the mark pass's input has
+## to be computed BEFORE the slot pass rather than after it, and it is threaded across rather than
+## held, exactly like `set_hidden_source_state` in the other direction; neither renderer holds the
+## other.
+func set_worked_workings(entries: Dictionary) -> void:
+	_worked_workings = entries if entries is Dictionary else {}
+
+# ---- THE MARKER'S FACE, ONE ANSWER PER FAMILY --------------------------------------------------
+#
+## ⛔ **A SOURCE HAS ONE FACE AND THIS IS WHERE IT IS RESOLVED** (issue #650). The band SOURCE LIST
+## draws the same icon beside its row that the marker wears on the hex, and the row and the marker are
+## joined by a literal leader line on screen — so two lookups would be free to drift, and the drift
+## would be visible as a line running from a deer to a boar. The three draw functions below go through
+## these, which is what makes "the row's icon IS the marker's" true by construction rather than by two
+## careful copies.
+##
+## Each answers `{"sprite": Texture2D|null, "glyph": String}` and the **glyph is `""` wherever a
+## sprite covers it**: the pair is a CHOICE, not two things to draw, and a caller handed both would be
+## free to draw the emoji under the art. A face with neither is a source this client cannot render at
+## all, which is `_wonder_renders`' own test one family over.
+
+## A herd's face — bundled PNG art for the species where we have it, the OS emoji otherwise. Both
+## resolve off the herd's LABEL through the same species matcher (`FoodIcons.species_key_for`), so the
+## art and the emoji can never name two different animals.
+static func face_for_herd(herd: Dictionary) -> Dictionary:
+	var label := String(herd.get("label", herd.get("id", "Herd")))
+	var sprite := FaunaSprites.for_herd(label)
+	return {"sprite": sprite, "glyph": "" if sprite != null else FoodIcons.for_herd(label)}
+
+## A food site's face. Both halves resolve the module/hunt/terrain triple through
+## `FoodIcons.site_key_for`, so a riverine delta's fish↔reeds fork cannot be taken one way by the art
+## and the other by the emoji.
+static func face_for_food_site(site: Dictionary) -> Dictionary:
+	var module_key := String(site.get("module", ""))
+	var is_hunt := String(site.get("kind", "")) == "game_trail"
+	var terrain_id := int(site.get("terrain_id", -1))
+	var sprite := SiteSprites.for_site(module_key, is_hunt, terrain_id)
+	return {"sprite": sprite,
+		"glyph": "" if sprite != null else FoodIcons.for_site(module_key, is_hunt, terrain_id)}
+
+## A working's face — its MATERIAL's own mark. **No sprite arm today and the key is still stated**: a
+## material has no bundled art yet, and the two food webs' faces prove a family gains one without its
+## readers changing. A material this client has no mark for answers an empty face, which is exactly
+## what denies the working a slot below.
+static func face_for_material(material: String) -> Dictionary:
+	return {"sprite": null, "glyph": FoodIcons.for_material(material)}
+
+## Does a face render anything at all — the shared test behind `_working_renders` and the row list's
+## "draw no icon" fall-back, so neither can answer differently from the face itself.
+static func face_renders(face: Dictionary) -> bool:
+	return face.get("sprite") != null or String(face.get("glyph", "")) != ""
+
+## Whether a worked working will render ANYTHING on this hex — a MATERIAL MARK for its material, on
+## ground that is not unexplored. `compute_slots` (slot eligibility) and `draw_workings` (the draw
+## guard) MUST agree on this, so both ask HERE: a working denied a slot can never draw, and one given
+## a slot it then declines to draw leaves a hole in the ring and pushes a real marker into the chip.
+## That is `_wonder_renders`' rule, and the sprite-only-site bug it was written for.
+##
+## **THE FOG GATE IS THE WONDER'S, NOT THE HERD'S** — a working does not wander off, so any explored
+## hex may carry one, and the sim publishes a working only to a faction that has DISCOVERED its tile
+## (`MapView._workings_on_tile`). An unexplored hex is the one place a stale labor row could put a
+## marker on ground the player has never seen.
+func _working_renders(entry: Dictionary) -> bool:
+	if not face_renders(face_for_material(String(entry.get("material", "")))):
+		return false
+	var tile: Vector2i = entry.get("tile", Vector2i(-1, -1))
+	return _view._visibility_state_at(tile.x, tile.y) != "unexplored"
+
+## Every WORKED working's marker: the material's own mark in the edge slot `compute_slots` gave it.
+##
+## **THE MARKER'S PRESENCE IS THE STATEMENT** — it is drawn only where a crew is on the working, so
+## it needs no second "being worked" decoration on top. What the crew COUNT is rides the shared
+## source badge under the marker (`BandOverlayRenderer._draw_source_badge`, `⚒N`), the same plate a
+## worked patch or a hunted herd wears, so one hex cannot state a crew two ways.
+func draw_workings(radius: float, origin: Vector2) -> void:
+	for key in _worked_workings:
+		var entry: Dictionary = _worked_workings[key]
+		if not _working_renders(entry):
+			continue
+		var slot: int = _secondary_slot_lookup.get(key, -1)
+		if slot < 0:
+			continue   # far-zoom LOD or overflowed into the +N chip
+		var tile: Vector2i = entry.get("tile", Vector2i(-1, -1))
+		var tile_center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
+		# THE ROW'S ICON AND THIS ONE ARE ONE LOOKUP — see the face resolvers above.
+		var face := face_for_material(String(entry.get("material", "")))
+		_view._draw_marker_glyph(slot_center(tile_center, slot, radius),
+			String(face.get("glyph", "")),
+			_secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
 
 func _secondary_icon_size(radius: float) -> int:
 	return int(maxf(_view.SECONDARY_ICON_MIN_SIZE, radius * _view.SECONDARY_ICON_SIZE_FACTOR))
@@ -190,11 +324,12 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	_view._draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := slot_center(tile_center, slot, radius)
-	var herd_label := String(herd.get("label", herd.get("id", "Herd")))
 	# Bundled PNG art where we have it (identical on every OS), OS emoji for the species that
-	# don't have art yet — FaunaSprites returns null for those and we fall through unchanged.
-	var herd_sprite := FaunaSprites.for_herd(herd_label)
-	var herd_icon := FoodIcons.for_herd(herd_label)
+	# don't have art yet — through `face_for_herd`, the ONE resolver the source list's row icon
+	# reads too, so the row and the marker cannot show two different animals.
+	var herd_face := face_for_herd(herd)
+	var herd_sprite: Texture2D = herd_face.get("sprite")
+	var herd_icon := String(herd_face.get("glyph", ""))
 	var icon_size := _secondary_icon_size(radius)
 	# A starving pen's DANGER ring goes UNDER the glyph (it frames the animal); the badge goes OVER it
 	# (it must never be occluded by a wide emoji). REJECTED: tinting the glyph — a herd marker is a
@@ -235,15 +370,13 @@ func draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := slot_center(tile_center, slot, radius)
-	var module_key := String(site.get("module", ""))
-	var kind := String(site.get("kind", ""))
-	var is_hunt := kind == "game_trail"
-	var terrain_id := int(site.get("terrain_id", -1))
-	# Bundled PNG art where we have it (identical on every OS), OS emoji otherwise — SiteSprites
-	# returns null for an unmapped art key and we fall through unchanged. Both resolve the same
-	# module/hunt/terrain triple through `FoodIcons.site_key_for`, so they cannot disagree.
-	var site_sprite := SiteSprites.for_site(module_key, is_hunt, terrain_id)
-	var icon := FoodIcons.for_site(module_key, is_hunt, terrain_id)
+	# Bundled PNG art where we have it (identical on every OS), OS emoji otherwise — through
+	# `face_for_food_site`, the ONE resolver the source list's row icon reads too. Both halves
+	# resolve the same module/hunt/terrain triple through `FoodIcons.site_key_for`, so they cannot
+	# disagree, and the list cannot disagree with either.
+	var site_face := face_for_food_site(site)
+	var site_sprite: Texture2D = site_face.get("sprite")
+	var icon := String(site_face.get("glyph", ""))
 	if _view._food_harvest_active(x, y):
 		_view.draw_arc(icon_center, radius * _view.FOOD_HARVEST_RING_FACTOR, 0, TAU, 20, Color(HudStyle.SIGNAL, 0.9), _view.FOOD_HARVEST_RING_WIDTH)
 	if site_sprite != null:

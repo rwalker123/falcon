@@ -203,7 +203,7 @@ pub fn source_has_a_meter_at_risk(
         //
         // A working still on its **free floor** answers `false`, exactly as a wild stand does: there
         // is nothing there anybody paid for, so unstaffing it really does end the band's business.
-        LaborTarget::Extract { tile, material } => {
+        LaborTarget::Extract { tile, material, .. } => {
             deposits.source(*tile, material).is_some_and(|source| {
                 source.ladder_position() > crate::intensification::RUNG_UNSTARTED
             })
@@ -1164,6 +1164,50 @@ fn deposit_head_gate(
     ])
 }
 
+/// **YOU LEARN A RUNG BY PRACTISING WHERE THAT RUNG COULD BE BUILT** — the deposit arm's own term in
+/// the `eligible` it hands [`RungDef::knowledge_accrual`], and [`deposit_head_gate`]'s site reading
+/// asked one rung *up* the ladder.
+///
+/// Picking loose stone off a 40-unit scatter teaches nothing about quarrying, because no quarry could
+/// ever stand on a 40-unit scatter; picking it off a rock body teaches it. The lesson is credited for
+/// the ground it is practised on, not for the verb.
+///
+/// **It is the SAME `forage::rung_site_refusal` seam** the build gate and the command's rejection
+/// resolve through, asked of [`LadderConfig::rung_unlocked_by_lesson`]'s answer. Reading
+/// `min_deposit_capacity` here directly would be a second site evaluator, which is precisely the
+/// drift that seam exists to prevent: the ground a rung can be built on and the ground its lesson is
+/// worth learning on are one reading, or they are two readings that will disagree.
+///
+/// **`true` whenever there is no rung for the ground to refuse** — a lesson that opens nothing on its
+/// branch, or one that opens a rung with `site_requirement: null`. That is every rung on the plant,
+/// animal and route webs and both free floors here, so this term is inert outside the two cases the
+/// shipped ladder actually states: `extraction:gathering` → `quarrying` → `extraction:quarry`, and
+/// `forestry:felling` → `conservationism` → `forestry:coppice`. **Both follow from the one sentence**
+/// — you learn to work rock on rock worth quarrying, and to manage a wood on a wood worth managing.
+fn ground_takes_the_rung_this_lesson_unlocks(
+    standing: &RungDef,
+    ladder: &LadderConfig,
+    ground: &Tile,
+    material: &str,
+    labor: &LaborConfig,
+    extraction: &crate::extraction_config::ExtractionConfig,
+) -> bool {
+    let Some(unlocked) = ladder.rung_unlocked_by_lesson(standing) else {
+        return true;
+    };
+    rung_site_refusal(
+        unlocked,
+        ground,
+        &labor.forage,
+        // **A deposit rung asks nothing about gathering or water** — `deposit_head_gate`'s reading
+        // verbatim, so the gate and the lesson judge the ground by the same terms.
+        true,
+        true,
+        crate::extraction::tile_deposit_capacity(extraction, material, ground),
+    )
+    .is_none()
+}
+
 /// **THE `route:*` GATE**, stated once — the terms of the road build arm's own `eligible`, in the
 /// order their refusals are published in.
 ///
@@ -1565,6 +1609,13 @@ fn resolve_shed_facts(
     herds: &HerdRegistry,
     deposits: &crate::extraction::DepositRegistry,
     tile_capacity_of: &dyn Fn(UVec2) -> f32,
+    // **THE GROUND'S OWN RENEWAL RATE FOR ONE WORKING**, resolved by the caller through
+    // [`crate::extraction::tile_deposit_regrowth`] for `tile_capacity_of`'s reason: the tile query
+    // and the deposits config are the caller's to hand. It is what decides whether an `extract`
+    // row's escapement dial paces its lesson or the plain rate does
+    // ([`crate::extraction::deposit_lesson_floor`]) — the same fork the live credit takes, so the
+    // shedding order cannot report a rate the turn will not pay.
+    deposit_renewal_of: &dyn Fn(UVec2, &str) -> f32,
     forage: &crate::labor_config::ForageLaborConfig,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
@@ -1629,15 +1680,26 @@ fn resolve_shed_facts(
                         improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
                     })
             }
-            LaborTarget::Extract { tile, material } => {
+            LaborTarget::Extract {
+                tile,
+                material,
+                floor,
+            } => {
                 deposits
                     .source(*tile, material)
                     .map_or(SourceShedFacts::default(), |source| SourceShedFacts {
                         accruing_knowledge: source_is_still_teaching(
                             ladder.rung(source.rung()),
-                            // **A deposit has no escapement dial to trade against** — see
-                            // `intensification::PRACTICE_AT_THE_PLAIN_RATE`.
-                            crate::intensification::PRACTICE_AT_THE_PLAIN_RATE,
+                            // **A deposit crew's floor prices its lesson exactly as a gatherer's
+                            // does WHERE THE DIAL PARTICIPATES** (issue #650) — the shared
+                            // `intensification::learn_multiplier`, read off this row. On ground that
+                            // never renews the dial is inert, so the lesson is paced at the plain
+                            // rate; `deposit_lesson_floor` is the one seam that forks, and the live
+                            // credit in the `Extract` arm reads the same one.
+                            crate::extraction::deposit_lesson_floor(
+                                deposit_renewal_of(*tile, material),
+                                *floor,
+                            ),
                             faction,
                             discovery,
                             knowledge_threshold,
@@ -1902,7 +1964,7 @@ fn extraction_keeping_claims(
     let mut held: Vec<(UVec2, String)> = Vec::new();
     let mut claims: Vec<KeepingClaim> = Vec::new();
     for assignment in &allocation.assignments {
-        let LaborTarget::Extract { tile, material } = &assignment.target else {
+        let LaborTarget::Extract { tile, material, .. } = &assignment.target else {
             continue;
         };
         let Some(working) = deposits.source(*tile, material) else {
@@ -3308,6 +3370,13 @@ pub fn advance_labor_allocation(
     // its id).
     let mut patch_build_claims: BuildEstimateClaims<UVec2> = BuildEstimateClaims::default();
     let mut herd_build_claims: BuildEstimateClaims<String> = BuildEstimateClaims::default();
+    // **AND ONE FOR THE WORKINGS**, keyed the way a working is named — `(tile, material)`, because
+    // one tile can hold two. It is a claims set and not the road's bare write for the road's own
+    // stated reason read the other way: a road has **one keeper per tile**, so at most one band can
+    // hold an entry for it, while a deposit verb enqueues on *every* band of the faction working the
+    // source — so several bands really can quote one working and the sooner answer must win.
+    let mut deposit_build_claims: BuildEstimateClaims<(UVec2, String)> =
+        BuildEstimateClaims::default();
 
     for (mut cohort, mut allocation, mut band_equipment, band_id, mut bench) in cohorts.iter_mut() {
         // **WHOSE WORK BOARD THIS TURN'S LOSSES BELONG TO** — the `band=` token appended to every
@@ -3409,6 +3478,19 @@ pub fn advance_labor_allocation(
             &extraction_cfg,
             &ladder,
         );
+        // **THE GROUND'S OWN RATE UNDER ONE WORKING** — `tile_capacity_of`'s twin one branch over,
+        // resolved here for its reason: the tile index and the deposits config are this loop's to
+        // hand, and the shedding order needs the fork `extraction::deposit_lesson_floor` takes.
+        // Ground that is off the map holds no deposit, so it answers `NEVER_RENEWS` — the same
+        // reading `tile_deposit_regrowth` gives a terrain absent from the table.
+        let deposit_renewal_of = |coord: UVec2, material: &str| {
+            tile_registry
+                .index(coord.x, coord.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map_or(crate::extraction_config::NEVER_RENEWS, |tile| {
+                    crate::extraction::tile_deposit_regrowth(&extraction_cfg, material, tile)
+                })
+        };
         let shed_facts = resolve_shed_facts(
             &allocation,
             &shed_banking,
@@ -3418,6 +3500,7 @@ pub fn advance_labor_allocation(
             &registry,
             &deposits,
             &tile_capacity_of,
+            &deposit_renewal_of,
             &labor.forage,
             &fauna,
             &ladder,
@@ -6587,7 +6670,11 @@ pub fn advance_labor_allocation(
                         &mut event_log,
                     );
                 }
-                LaborTarget::Extract { tile, material } => {
+                LaborTarget::Extract {
+                    tile,
+                    material,
+                    floor,
+                } => {
                     // **Out of range → the assignment is ABANDONED**, byte-for-byte the Forage
                     // arm's rule and for its reason: a deposit cannot move, so beyond
                     // `band_work_range` the band walked away from it. **This is where the deposit
@@ -6796,9 +6883,17 @@ pub fn advance_labor_allocation(
                     let Some(working) = deposits.source_mut(*tile, material) else {
                         continue;
                     };
+                    // **The stock this turn's crew is FACING** — read before the take, the term the
+                    // ⚠ below is answered at, exactly as the two food webs' `biomass_before` is.
+                    let stock_before = working.stock;
                     let outcome = crate::extraction::take_from_deposit(
                         working,
                         workers,
+                        // **THE PLAYER'S OWN FLOOR, composed with the RUNG'S inside the take** —
+                        // `deposit_effective_floor` takes the greater of the two, so this row asks
+                        // the crew to leave more standing than its rung already cannot reach, never
+                        // to leave the sum of both.
+                        *floor,
                         ground,
                         &extraction_cfg,
                         &ladder,
@@ -6835,20 +6930,96 @@ pub fn advance_labor_allocation(
                             amount: outcome.taken,
                         }];
                     }
+                    // **The ⚠ — intent AND ability**, through the deposit web's one producer
+                    // ([`crate::extraction::deposit_take_overdraws`]), beside the Forage and Hunt
+                    // arms' own. A composed floor below the food peak is only an overdraw if these
+                    // cutters can actually get the stand down to it; a crew whose take settles above
+                    // the peak and holds there is drawing nothing below what the wood sustains,
+                    // whatever the dial says. **A working at `NEVER_RENEWS` never lights it** — §7's
+                    // fork: a finite working warns with its runway instead.
+                    yields[idx].overdraws = crate::extraction::deposit_take_overdraws(
+                        working,
+                        workers,
+                        stock_before,
+                        *floor,
+                        ground,
+                        &extraction_cfg,
+                        &ladder,
+                    );
+                    // **THE OVERSTAFFING FIGURE — the PLANT WEB'S OWN INVERSION, not a second one**
+                    // ([`workers_needed_for_take`]). A working can now say *"only 4 of 5 bring
+                    // anything home"* exactly as a patch and a herd do, because the question is one
+                    // arithmetic: invert the take by the per-worker throughput the take actually ran
+                    // at. The deposit's throughput term is the rung's interpolated
+                    // `yield_per_worker_turn` — the very rate [`crate::extraction::deposit_take`]
+                    // caps the hands at — so a crew cutting a stand already down at its composed
+                    // floor reports the hands that carried the whole take and no more. A second
+                    // inversion here is how the deposit web would come to disagree with the plant
+                    // web about one number.
+                    //
+                    // ⛔ **`0` STILL MEANS UNKNOWN**, and the Forage arm's rule is kept byte for
+                    // byte: a take of nothing inverts to `0` and the client prints no note, so a
+                    // rehydrated save cannot render a figure the turn never computed. Nothing is
+                    // clamped up to one — the config validator requires a **positive, finite**
+                    // `yield_per_worker_turn` on every deposit rung, so the only way this arm
+                    // answers `0` is a crew that genuinely took nothing (no hands, an emptied
+                    // working, or a floor that leaves the whole stand standing).
+                    //
+                    // **This is a WORKER COUNT and no part of the food identity** — `actual` stays
+                    // `SourceYield::ZERO` on this arm, and the take keeps paying only into
+                    // `yields[idx].materials`.
+                    let per_worker_take =
+                        crate::extraction::deposit_payoff(working.standing(), &ladder)
+                            .yield_per_worker_turn;
+                    yields[idx].workers_needed =
+                        workers_needed_for_take(outcome.taken, per_worker_take, workers);
                     // **THE LESSON, on the rung the working STANDS on** — `deadfall` teaches
                     // woodcraft, `felling` conservationism, `gathering` quarrying. Credited once per
                     // source per turn and never per worker, the ladder's own rule.
                     //
-                    // **`eligible` is *there is room above this rung's floor to work in*** — the
+                    // **`eligible` is *there is room above the COMPOSED floor to work in*** — the
                     // deposit reading of `crew_is_working_the_source`, taken **before** the take so
                     // a crew that cleared the last reachable unit this turn is still credited for
-                    // the turn it worked.
+                    // the turn it worked. `reachable_before` already carries the max of the rung's
+                    // floor and this row's, so a crew asked to leave everything standing is credited
+                    // nothing without a second test saying so.
                     credit_rung_lesson(
                         ladder.rung(standing.held),
-                        // **A deposit has no escapement dial to trade against** — see
-                        // `intensification::PRACTICE_AT_THE_PLAIN_RATE`.
-                        crate::intensification::PRACTICE_AT_THE_PLAIN_RATE,
-                        take_crew_present && source_is_workable(outcome.reachable_before),
+                        // **THE ROW'S OWN FLOOR PRICES THE LESSON WHERE THE DIAL PARTICIPATES**,
+                        // through the shared `intensification::learn_multiplier` both food webs go
+                        // through: a crew told to leave more of a wood standing learns
+                        // conservationism faster, in proportion, and one told to strip it learns
+                        // nothing. The predicate below is the other end of the same dial — at a
+                        // floor of `1.0` there is no room above it, so watching teaches nothing
+                        // either.
+                        //
+                        // **And on ground that never renews the dial does not participate**, so the
+                        // lesson is paced at `PRACTICE_AT_THE_PLAIN_RATE` — the one seam
+                        // `source_is_still_teaching` reads too, because a working that taught at one
+                        // rate and reported at another would thin a row it was still paying.
+                        crate::extraction::deposit_lesson_floor(
+                            crate::extraction::tile_deposit_regrowth(
+                                &extraction_cfg,
+                                material,
+                                ground,
+                            ),
+                            *floor,
+                        ),
+                        // **AND THE GROUND HAS TO BE ABLE TO CARRY WHAT THIS LESSON OPENS** — the
+                        // deposit web's third term, composed here because only the arm has the tile
+                        // in hand ([`ground_takes_the_rung_this_lesson_unlocks`]). Gathering on a
+                        // scatter no quarry could stand on teaches no quarrying, and felling a stand
+                        // no coppice could stand on teaches no conservationism.
+                        take_crew_present
+                            && source_is_workable(outcome.reachable_before)
+                            && ground_takes_the_rung_this_lesson_unlocks(
+                                ladder.rung(standing.held),
+                                &ladder,
+                                ground,
+                                material,
+                                &labor,
+                                &extraction_cfg,
+                            ),
                         &ladder.knowledge,
                         faction,
                         &mut discovery,
@@ -7292,9 +7463,10 @@ pub fn advance_labor_allocation(
             &mut forage_registry,
             &mut registry,
             &mut roads,
-            &deposits,
+            &mut deposits,
             &mut patch_build_claims,
             &mut herd_build_claims,
+            &mut deposit_build_claims,
         );
     }
 }
@@ -7499,12 +7671,12 @@ fn publish_build_chain(
     // **Written, not merely read.** A road is a source row and this pass stamps its countdown, the
     // one figure on it that only the queue can answer for.
     roads: &mut crate::routes::RoadRegistry,
-    // **Read only.** A working carries no published estimate yet — the deposit readouts are the next
-    // slice — but the staffed-head invariant below has to be able to ask whether one is on the
-    // ground.
-    deposits: &crate::extraction::DepositRegistry,
+    // **Written, not merely read.** A working is a source row (`DepositState`) and this pass stamps
+    // its countdown, the one figure on it that only the queue can answer for.
+    deposits: &mut crate::extraction::DepositRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
+    deposit_claims: &mut BuildEstimateClaims<(UVec2, String)>,
 ) {
     let quote_for = |source: &BuildSource| {
         quotes
@@ -7632,8 +7804,10 @@ fn publish_build_chain(
             forage_registry,
             herds,
             roads,
+            deposits,
             patch_claims,
             herd_claims,
+            deposit_claims,
         );
     }
     // **Everything the band works that is NOT queued** — quoted where it would land if the player
@@ -7692,12 +7866,22 @@ fn publish_build_chain(
             // without one, a staffed road head published `Blocked` with no cause and `carried` handed that
             // same answer to every entry behind it.
             BuildSource::Road(_) => {}
-            // **A working has no wire row to publish an estimate on YET** — the deposit readouts
-            // are the next slice (`docs/plan_extraction.md` §7), so there is nowhere to put the
-            // quote. The quote itself is still *taken* above, which is the half that matters: it is
-            // what lets a staffed working's head record a cause rather than publishing `Blocked`
-            // with none and handing that to every entry behind it.
-            BuildSource::Deposit { .. } => {}
+            // **A working the band cuts but has not queued is dated at the BACK OF THE LINE**, the
+            // two food webs' arm rather than the road's silence — a working has a row to put the
+            // quote on now, and quoting it at the head would over-promise a compose sheet by the
+            // whole queue. A running build on it has already answered, so the claims set is what
+            // stops the projection displacing a real date.
+            BuildSource::Deposit { tile, material } => {
+                if let Some(working) = deposits.source_mut(*tile, material) {
+                    deposit_claims.publish_projected(
+                        &(*tile, material.clone()),
+                        &mut working.build_turns_remaining,
+                        &mut working.build_blocked_reason,
+                        projected,
+                        reason,
+                    );
+                }
+            }
         }
     }
 }
@@ -7823,8 +8007,10 @@ fn publish_entry(
     forage_registry: &mut ForageRegistry,
     herds: &mut HerdRegistry,
     roads: &mut crate::routes::RoadRegistry,
+    deposits: &mut crate::extraction::DepositRegistry,
     patch_claims: &mut BuildEstimateClaims<UVec2>,
     herd_claims: &mut BuildEstimateClaims<String>,
+    deposit_claims: &mut BuildEstimateClaims<(UVec2, String)>,
 ) {
     let answer = BuildEstimate {
         turns,
@@ -7899,12 +8085,33 @@ fn publish_entry(
                 road.build_queue_position = answer.position;
             }
         }
-        // **A working carries no published estimate YET** — there is no deposit row on the wire for
-        // one to land on, and the readouts are the next slice
-        // (`docs/plan_extraction.md` §7). It is deliberately not a `DepositSource` field written and
-        // read by nobody: transient per-turn scratch that no capture reads is a second, silently
-        // stale statement of what the queue already knows.
-        BuildSource::Deposit { .. } => {}
+        // ⛔ **A WORKING IS A SOURCE ROW AND IT PUBLISHES A CHAINED COUNTDOWN LIKE ANY OTHER.**
+        // `DepositState` is that row — keyed by `(tile, material)` exactly as a patch row is keyed by
+        // tile — and this is the one figure on it that **only the queue can answer for**: an entry is
+        // dated as everything above it plus its own span, which no per-source seam can see.
+        //
+        // ⛔ **IT GOES THROUGH A CLAIMS SET, WHERE THE ROAD ARM ABOVE DOES NOT** — the road's own
+        // reason, read the other way. A road has one keeper per tile, so at most one band holds an
+        // entry for it; a deposit verb enqueues on **every** band of the faction working the source,
+        // so several bands really can quote one working and the sooner answer must win.
+        //
+        // **It publishes the countdown TRIO and not the six-field estimate.** `DepositState` carries
+        // the date, its cause and the place in the line; it carries no `buildWorkFromGear`,
+        // destination or leg list, and writing scratch no capture reads is a second, silently stale
+        // statement of what the queue already knows.
+        BuildSource::Deposit { tile, material } => {
+            if let Some(working) = deposits.source_mut(*tile, material) {
+                deposit_claims.publish_countdown(
+                    (*tile, material.clone()),
+                    CountdownSlots {
+                        turns: &mut working.build_turns_remaining,
+                        reason: &mut working.build_blocked_reason,
+                        position: &mut working.build_queue_position,
+                    },
+                    &answer,
+                );
+            }
+        }
     }
 }
 
@@ -8125,7 +8332,7 @@ fn announce_shed_crew(
             format!("hunters on {fauna_id}"),
             format!("kind=hunt herd={fauna_id}"),
         ),
-        LaborTarget::Extract { tile, material } => (
+        LaborTarget::Extract { tile, material, .. } => (
             CommandEventKind::Extraction,
             format!("the {material} crew at ({}, {})", tile.x, tile.y),
             format!("kind=extract material={material} x={} y={}", tile.x, tile.y),
@@ -8560,6 +8767,15 @@ struct BuildEstimateSlots<'a> {
     legs: &'a mut Vec<crate::intensification::PublishedBuildLeg>,
 }
 
+/// **THE THREE SLOTS A SOURCE THAT PUBLISHES ONLY THE COUNTDOWN CARRIES** — the date, its cause and
+/// its place in the line. [`BuildEstimateSlots`]' short form, and the shape a working's row
+/// (`DepositState`) has: it carries no `buildWorkFromGear`, no destination and no leg list.
+struct CountdownSlots<'a> {
+    turns: &'a mut Option<BuildTurns>,
+    reason: &'a mut BuildGate,
+    position: &'a mut i32,
+}
+
 /// The answer [`BuildEstimateSlots`] carries.
 #[derive(Clone)]
 struct BuildEstimate {
@@ -8595,6 +8811,25 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
             // down — a climb quoted against a countdown that is not measuring it.
             *slots.destination = answer.destination;
             *slots.legs = answer.legs;
+        }
+    }
+
+    /// **Publish a running build's answer for a source that carries only the countdown TRIO** —
+    /// the date, its cause and the place in the line — on [`Self::publish_running`]'s exact rules.
+    ///
+    /// It exists because a working (`DepositState`) publishes those three and nothing else: it
+    /// carries no `buildWorkFromGear`, no destination and no leg list, and giving `DepositSource`
+    /// scratch fields for them so this could take a [`BuildEstimateSlots`] would be writing state no
+    /// capture reads — a second, silently stale statement of what the queue already knows.
+    fn publish_countdown(&mut self, key: K, slots: CountdownSlots<'_>, answer: &BuildEstimate) {
+        let first_claim = self.claimed.insert(key);
+        if first_claim || is_a_sooner_estimate(answer.turns, *slots.turns) {
+            *slots.turns = answer.turns;
+            // **The cause and the place ride the same winner**, for the reason the six-field twin
+            // above states: a cause from one band's queue beside a date from another's would be two
+            // answers pretending to be one.
+            *slots.reason = answer.reason;
+            *slots.position = answer.position;
         }
     }
 

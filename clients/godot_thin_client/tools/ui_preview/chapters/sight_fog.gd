@@ -124,7 +124,7 @@ func run(harness) -> void:
 
 	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
 	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
-	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's forage range (2)").
+	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's work range (2)").
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[1]
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()

@@ -206,14 +206,26 @@ pub fn learn_multiplier(floor: f32) -> f32 {
 }
 
 /// **THE FLOOR AT WHICH PRACTICE IS WORTH EXACTLY ITS `learn_rate`** — [`learn_multiplier`]'s fixed
-/// point, and what a source with **no escapement dial** passes.
+/// point, and what a source **whose escapement dial does not participate** passes.
 ///
-/// The floor-scales-learning trade is a *food web* mechanism: it prices calories given up against
-/// lessons gained, and it is the player's own dial on a Forage or Hunt row. **A deposit pays no
-/// calories and carries no floor** — its floor is the *rung's*, not the row's
-/// (`extraction::deposit_floor`) — so there is nothing for a deposit crew to trade and this is the
-/// honest multiplier for one. Named rather than passed as a bare `0.5`, because a literal there
-/// would read as a tuning value on the deposit branches when it is the identity.
+/// The floor-scales-learning trade prices *what you left standing* against *what you learned*, so it
+/// is only a trade where leaving stock standing buys something. On a deposit at
+/// [`crate::extraction_config::NEVER_RENEWS`] it buys nothing —
+/// [`crate::extraction::deposit_effective_floor`] drops the crew's half of the composed floor there,
+/// because stock held back on a body that does not grow is simply never taken. So the dial on such a
+/// row is stored, published and **inert**, and pacing its lesson off it would pay a crew a learning
+/// bonus calibrated to a choice that changed nothing. [`crate::extraction::deposit_lesson_floor`] is
+/// the one seam that decides which of the two a working's lesson is priced at.
+///
+/// ⛔ **AND IT IS NOT THE COMPOSED FLOOR EITHER.** The obvious alternative — price the lesson off
+/// whatever the take actually stopped at — reads the **rung's** own unreachable remainder as though
+/// the player had asked for it: `extraction:gathering` recovers `0.15`, so its rung floor is `0.85`
+/// and every gathering crew would collect a permanent `×1.7` whatever it chose. That makes the dial
+/// irrelevant to learning on the one rung that teaches `quarrying`. A rung's reach is not a
+/// conservation choice, so it may not be paid for as one.
+///
+/// Named rather than passed as a bare `0.5`, because a literal there would read as a tuning value on
+/// the deposit branches when it is the identity.
 pub const PRACTICE_AT_THE_PLAIN_RATE: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
 /// **WHAT ONE WORKER BANKS ON A BUILD IN ONE TURN AT THE FOOD PEAK** — its bare output
@@ -3671,6 +3683,29 @@ impl LadderConfig {
         self.rungs
             .iter()
             .any(|rung| rung.unlock_knowledge.as_deref() == Some(knowledge))
+    }
+
+    /// **THE RUNG THIS ONE'S LESSON OPENS** — the rung on the **same branch** whose
+    /// `unlock_knowledge` names what `rung` teaches. The ladder lookup behind *you learn a rung by
+    /// practising where that rung could be built*: a caller that wants to know whether a lesson is
+    /// worth anything on this ground asks the ladder which rung the lesson buys, and then asks
+    /// [`crate::forage::rung_site_refusal`] whether the ground takes it.
+    ///
+    /// **Branch-scoped, unlike [`Self::knowledge_gates_a_rung`]**, which asks the whole ladder
+    /// whether a name is a *step* at all. Here the question is which rung the practitioner is
+    /// climbing towards, and a rung belongs to exactly one [`RungBranch`] — the same fact
+    /// [`RungDef::knowledge_accrual`] leans on for *"the two webs cannot cross-teach"*. Two branches
+    /// that ever shared a knowledge name would otherwise hand back the wrong ladder's rung.
+    ///
+    /// `None` when the rung teaches nothing (`earns_knowledge: null`) or when nothing on its branch
+    /// waits on the lesson — a **capability**, learned for its own sake. Both readings mean *there
+    /// is no rung for the ground to refuse*, so a caller composing a site gate treats `None` as
+    /// permissive.
+    pub fn rung_unlocked_by_lesson(&self, rung: &RungDef) -> Option<&RungDef> {
+        let lesson = rung.earns_knowledge.as_deref()?;
+        self.rungs.iter().find(|other| {
+            other.branch == rung.branch && other.unlock_knowledge.as_deref() == Some(lesson)
+        })
     }
 
     /// A rung by branch + id, if it exists.

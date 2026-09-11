@@ -5350,3 +5350,30 @@ fn ninety_percent_keeping_never_frays_a_herd_below_the_whole_animal_gate() {
          {fresh_shed}"
     );
 }
+
+/// ⛔ **THE DEPOSIT BRANCHES' SITE RULE ON LESSONS IS INERT ON THE FOOD WEBS** — the claim that the
+/// *"you learn a rung by practising where that rung could be built"* gate changed nothing outside
+/// the two rungs the shipped ladder actually states it for.
+///
+/// The gate is composed by `advance_labor_allocation`'s **deposit** arm alone, and it is permissive
+/// wherever the lesson opens no rung or opens one with `site_requirement: null`. `animal:wild` earns
+/// `herding`, which unlocks `animal:pastoral`, which asks nothing of the ground — so a Sustain hunt
+/// of a wild herd learns exactly what it always learned, on ground with no deposit on it at all.
+///
+/// **Without this the pair that pins the deposit gate would pass on a gate that refused
+/// everything**, which is why it is asserted rather than assumed.
+#[test]
+fn the_deposit_lesson_site_rule_leaves_the_animal_web_alone() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    spawn_hunter(&mut app, &id, 0.5);
+
+    run_turns_with_hunt(&mut app, 5);
+
+    let herding = ladder_knowledge(&app, HERDING_DISCOVERY_ID);
+    assert!(
+        herding > 0.0 && herding < LESSON_LEARNED,
+        "working a wild herd must still teach Herding, at the rate it always did and with the \
+         lesson still in progress: {herding}"
+    );
+}

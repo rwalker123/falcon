@@ -56,6 +56,14 @@ const FLOOR_MAX := 1.0
 # other floor is read against. It is also what the sim assumes when a command carries no floor token.
 const FLOOR_FOOD_PEAK := 0.5
 const DEFAULT_HARVEST_FLOOR := FLOOR_FOOD_PEAK
+# ⛔ **THE PLAYER WAS NEVER ASKED FOR A FLOOR — a sentinel, and deliberately OUTSIDE `0..1`** so it can
+# never be confused with a dial the player really did set (`FLOOR_MIN` is *strip it bare*, a real and
+# common choice). It travels from a compose sheet that offers NO dial to `Main`'s command builder,
+# which then omits the optional floor token entirely rather than substituting this default — because
+# what an omitted token means is the SIM's to decide, and on ground that never renews it answers
+# `STRIP_IT_BARE` rather than the shared default (issue #650, `server::unnamed_deposit_floor`).
+# Storing 0.5 there wrote a conservation choice onto a row where nobody made one.
+const FLOOR_UNNAMED := -1.0
 # THE THREE INTENT PRESETS — marks on the dial, deliberately NOT a set of options. They exist so the
 # three decisions a player actually makes are one click each; every value between them is reachable
 # through the slider beside them, and the sim accepts any of them.
@@ -111,11 +119,25 @@ const IMPROVEMENT_CORRAL := "corral"
 # work row for its keeper to be inferred from. See `Main.format_improvement`.
 const IMPROVEMENT_GRADE := "grade"
 const IMPROVEMENT_PAVE := "pave"
-# The three ladders, each in RUNG ORDER (low → high). Kept apart because no two webs share a rung,
-# and read by nothing that needs "all six".
+# **THE DEPOSIT BRANCHES' THREE VERBS** (issue #650). `fell` raises a wood to a felling and `coppice`
+# to a managed stand; `quarry` raises a rock scatter to a cut face. All three NAME A MATERIAL as well
+# as a tile — a working is keyed `(tile, material)` because one hex can hold two — and NO band, a
+# working's keeper being whoever already cuts it. See `Main.format_improvement`.
+const IMPROVEMENT_FELL := "fell"
+const IMPROVEMENT_COPPICE := "coppice"
+const IMPROVEMENT_QUARRY := "quarry"
+# The four ladders, each in RUNG ORDER (low → high). Kept apart because no two webs share a rung,
+# and read by nothing that needs "all of them".
 const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
 const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
 const ROUTE_IMPROVEMENTS := [IMPROVEMENT_GRADE, IMPROVEMENT_PAVE]
+# ⛔ **THE DEPOSIT SET SPANS BOTH BRANCHES AND IS THEREFORE NOT IN RUNG ORDER** — `fell` and
+# `coppice` are forestry's rungs 2 and 3, `quarry` is extraction's rung 2, and no ordering over the
+# union means anything. Its ONE reader asks *does this verb name a material*, which is a grammar
+# question rather than a ladder walk. The verbs themselves come off the wire's rung CATALOG
+# (`HudDepositVocab.catalog_verb`); this list exists because `Main` must know the token SHAPE of a
+# line before it can build one, which no catalog field states.
+const DEPOSIT_IMPROVEMENTS := [IMPROVEMENT_FELL, IMPROVEMENT_COPPICE, IMPROVEMENT_QUARRY]
 # **THE FENCE RING'S JOB TOKEN, AND IT IS NOT A RUNG.** `snapshot::population::resolved_build_job`
 # publishes this in the `improvement` slot for a queue entry whose declared job is
 # `BuildJob::ExtendPen`: a ring widens the pen rung its herd already stands on, so there is no meter
@@ -137,6 +159,16 @@ const SOURCE_KIND_FORAGE := "forage"
 ## road has no labor row to be routed FROM, so there is nothing for that alias to widen; what needs
 ## the kind is the queue row's price clause, which resolves it from the entry's own `roadwork` kind.
 const SOURCE_KIND_ROUTE := "route"
+
+## ⛔ **THE FOURTH BRANCH'S SOURCE KIND, AND IT IS STATED SO THAT EVERY KIND-KEYED TABLE ANSWERS ITS
+## NEUTRAL ARM ON PURPOSE RATHER THAN BY FALLING OFF THE END.** A working reaches `floor_chart_model`
+## exactly as a patch does — the same curve, the same projection, the same verdict — but it is neither
+## a plant nor an animal: `FORECAST_MANAGED_FLAG_KEYS` has no row for it (nothing here is ever
+## managed), `RUNG_LESSONS` has none (its lesson is CONFIG, read off the deposit rung catalog by
+## `HudDepositVocab.standing_lesson`), and `herd_display_name` is not asked. `source_kind_for_labor`
+## deliberately does not answer it, for the road's reason: that alias is a two-way map over the food
+## webs and would come back `SOURCE_KIND_HERD`.
+const SOURCE_KIND_DEPOSIT := "deposit"
 
 ## THE ONE MAPPING between the two kind vocabularies — an ASSIGNMENT's `kind` (`LABOR_KIND_*`, the
 ## sim's own word) and a FORECAST's (`SOURCE_KIND_*`). They coincide on the plant web (`"forage"` both
@@ -214,7 +246,12 @@ const YIELD_PER_TURN_SUFFIX := " /turn"
 # cannot drift into two different words.
 const YIELD_RENEWABLE_NOTE := "renewable"
 const YIELD_TOOLTIP_RENEWABLE := " · " + YIELD_RENEWABLE_NOTE
-const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# …and its opposite, in the same two spellings of ONE word: the bare WORD for a state clause that
+# leads with the hazard mark (`HudDepositVocab`'s working row), the joined form for this tooltip.
+# **Taking more than a source renews is one idea, so it gets one word** wherever it is stated — a
+# second spelling in the deposit vocab would be exactly the drift the renewable pair above avoids.
+const YIELD_OVERDRAW_WORD := "overdrawing"
+const YIELD_TOOLTIP_OVERDRAW := " — " + YIELD_OVERDRAW_WORD
 # **THE ROW'S TWO RATES, EACH NAMED** — `+1.96 a turn on average · +1.91 this turn`. The row's FACE is
 # `realizedYield`, the forward projection of this source's take; the number beside it is
 # `actualYield`, the take the sim resolved THIS turn. They are different quantities and routinely
@@ -338,6 +375,23 @@ const PICKER_FODDER_PRODUCT_FORMAT := "%s fodder"
 ## **Do not add one.**
 const PICKER_MATERIAL_PRODUCT_FORMAT := "%s %s"
 
+## **WHETHER THE FIGURE SAYS THE MATERIAL'S NAME AT ALL** — the argument
+## `signed_material_components` takes, named at both call sites because a bare `true` beside a row
+## array says nothing about which of the two readouts is being asked for.
+##
+## ⛔ **`MATERIAL_UNNAMED` IS ONLY LEGIBLE WHERE SOMETHING BESIDE THE FIGURE ALREADY NAMES THE
+## MATERIAL, AND ONLY WHERE THERE IS EXACTLY ONE OF THEM.** Two un-named figures joined by
+## `COMPONENT_SEPARATOR` are two numbers with nothing to tell them apart, which is worse than the
+## repetition the form exists to remove. Its one caller is the map's on-tile pill over a WORKING
+## (issue #650): a working takes ONE material by construction — the pair `(tile, material)` is its
+## identity — and the pill hangs over that working's own marker, which is the material's own mark
+## (`FoodIcons.for_material`, 🪵 / 🪨). The icon is the noun, so the noun was the icon twice.
+##
+## Every other readout takes `MATERIAL_NAMED`: a work-board row, a picker face and a drawer summary
+## are all read away from any mark that could carry the material.
+const MATERIAL_NAMED := true
+const MATERIAL_UNNAMED := false
+
 ## The picker face's product line for a source's yield VECTOR — `0.96 food`, `0.62 food · 0.40 fodder`
 ## (a tended patch carrying a hay crop), `1.80 fodder` (a hay-only meadow). Same food-leads order and
 ## same render-only-when-non-zero rule as `yield_components`, in words instead of glyphs and without
@@ -414,6 +468,29 @@ static func zero_account_of(src: Dictionary, prefix: String) -> String:
     if float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0)) > 0.0:
         return YIELD_ACCOUNT_FODDER
     return YIELD_ACCOUNT_NONE
+
+## **THE SAME QUESTION ASKED OF A WORKED ROW RATHER THAN OF A SOURCE** — which account's zero
+## `source_yield_readout` may print when a row's take resolved to nothing in every account.
+##
+## `zero_account_of` above reads the per-biomass yield VECTOR, which a labor assignment does not
+## carry; a row carries its KIND, and on the one kind whose structural account is neither food nor
+## fodder that is enough to answer. So this is a second entry point to one rule, not a second rule.
+##
+## ⛔ **A WORKING PAYS NO FOOD, SO `+0.00 /turn` ON AN `extract` ROW IS A FALSE READING, NOT AN EMPTY
+## ONE** — the hay-only meadow's defect (`zero_account_of`), one account further out. The sim declines
+## to seed a food figure on a working precisely so the client will not print one
+## (`core_sim/src/bin/server.rs` → `seed_source_yield`), and the row's `actual_yield` is nonetheless
+## always on the wire at `0.0`, so the food zero reached the screen anyway.
+##
+## The account a working DOES pay is the row's own MATERIAL, which is half of its identity and
+## therefore always present; `yield_rows` renders a material row under its own id, so a working that
+## took nothing reads `+0.00 wood`. A row naming no material answers `YIELD_ACCOUNT_NONE` and its
+## caller states no rate at all — the same "there is no account to be empty in" answer an inedible
+## quarry gets.
+static func row_zero_account(m: Dictionary, kind: String) -> String:
+    if kind != HudConst.LABOR_KIND_EXTRACT:
+        return YIELD_ACCOUNT_FOOD
+    return String(m.get(ASSIGNMENT_MATERIAL_KEY, "")).strip_edges()
 
 # The two keys of one `yield_rows` entry — which account it is, and what this take pays into it.
 const YIELD_ROW_ACCOUNT := "account"
@@ -532,6 +609,17 @@ static func yield_rows(food: float, fodder: float = 0.0,
             String(material.get(MATERIAL_PAYOFF_ID_KEY, "")),
             float(material.get(MATERIAL_PAYOFF_AMOUNT_KEY, 0.0)),
         ])
+    # **AN ACCOUNT THE VECTOR DOES NOT CONTAIN IS STILL AN ACCOUNT** (issue #650). `food` and `fodder`
+    # are pairs above unconditionally, so a `zero_account` naming one of them was always present and
+    # this branch was unreachable. A MATERIAL account is not: a material row exists only where the
+    # source PAID that material, and a working whose take resolved to nothing pays no rows at all — so
+    # the account whose zero is the honest reading is precisely the one missing from the vector.
+    #
+    # Adding it at zero is what lets the surviving-zero rule reach it, and it changes nothing else:
+    # `empty` is computed over the pairs below, so the moment ANY component is non-empty this pair is
+    # suppressed exactly as the food zero is beside a material row.
+    if zero_account != YIELD_ACCOUNT_NONE and not _pairs_name_account(pairs, zero_account):
+        pairs.append([zero_account, 0.0])
     var empty := true
     for pair in pairs:
         if has_component(float(pair[1])):
@@ -549,6 +637,15 @@ static func yield_rows(food: float, fodder: float = 0.0,
                 row[YIELD_ROW_AFTER] = float(after[account])
             rows.append(row)
     return rows
+
+## Does this take's account vector already name `account`? — the guard on the synthesized zero pair
+## above, so a source that DID pay its zero account keeps the one row it paid rather than growing a
+## duplicate beside it.
+static func _pairs_name_account(pairs: Array, account: String) -> bool:
+    for pair in pairs:
+        if String(pair[0]) == account:
+            return true
+    return false
 
 ## The spelling of ONE row of that vector, given the row's account. The four joiners below differ
 ## only in which of these tables they reach for, so a new account is spelled once per REGISTER rather
@@ -736,6 +833,13 @@ const FORECAST_PER_WORKER_MATERIAL_KEY := "per_worker_material"
 # `MaterialStore` this turn. Read through `material_rows_of`, never as a forecast: the sim seeds it
 # EMPTY pre-commit by design (see there).
 const ASSIGNMENT_MATERIAL_YIELD_KEY := "material_yield"
+# **WHICH WORKING THIS `extract` ROW IS ON, ON A LABOR ASSIGNMENT** — half of the `(tile, material)`
+# pair that IS an extract row's identity, and `""` on every other kind, which names no material.
+#
+# It is read here for ONE reason: it is the account a deposit row's zero belongs to. A working pays
+# no food and no fodder, so `zero_account_of`'s structural question has an answer the assignment
+# itself carries, and `row_zero_account` is where the two meet.
+const ASSIGNMENT_MATERIAL_KEY := "material"
 # **THE GOOD-SIDE SHORTFALL'S TWO TERMS, ON A LABOR ASSIGNMENT** (`docs/plan_standing_upkeep.md`
 # §2.7) — what this row's SOURCE was billed in materials to hold its rung, and what the band's store
 # actually paid. The sim publishes BOTH rather than their difference so the row's note can read
@@ -1793,7 +1897,7 @@ const HUNT_EMPTY_REFUSALS := {
     TRIP_BOUND_HERD_LOST: {
         "line": "%s is gone before the party can make up a load",
         "button": "Nothing left to raid",
-        "reason": "%s collapses before your party lands anything — the raid would return empty. Leave it standing and find another quarry.",
+        "reason": "%s collapses before your party lands anything — the raid would return empty. Leave it standing and find other prey.",
     },
     # THE UNATTRIBUTED REFUSAL, keyed on `TRIP_BOUND_NONE` and used for every bound this branch cannot
     # explain — an estimate row carrying no bound at all, or one of the two party-side stops, which are
@@ -5946,6 +6050,33 @@ static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: in
         note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
     return {"can_add": false, "note": note}
 
+## **IS THIS CREW BIGGER THAN ITS SOURCE CAN USE?** — hands standing on a job that has nothing left
+## for them, which is the one question every web asks and only two of them used to answer. It is the
+## ONE predicate behind the work board's attention flag, the map source list's `overstaffed` rank and
+## the workings roster's clause, so a forage patch, a herd and a seam cannot resolve one condition
+## three ways.
+##
+## ⛔ **THE TEST IS `workers > useful`, STRICTLY.** `workers == useful` is FULLY STAFFED — the good
+## state, and the one `source_worker_cap_state` already describes at the `+`. A `>=` here would put a
+## hazard on every correctly-crewed source in the game.
+##
+## ⛔ **IT IS NOT `source_worker_cap_state`'s `note`, AND THE TWO ANSWER DIFFERENT QUESTIONS.** That
+## note says *the `+` is dead and you still have idle hands*, so it is silent on an over-staffed
+## source whose band has nobody idle — the very case a hazard exists for. This is asked BESIDE it,
+## never instead of it.
+##
+## ⛔ **AND IT IS NOT REACHABLE FROM A COMPOSE SHEET.** All three webs cap their stepper at this same
+## ceiling, so over-assigning is refused where the crew is chosen; what this catches is the GROUND
+## MOVING UNDER A STANDING CREW — a seam worked down, a stand cut back, a herd thinned — which no
+## stepper can gate.
+##
+## `MAX_USEFUL_UNBOUNDED` (and every other negative sentinel this client's ceilings use, all of them
+## the same `-1`) answers FALSE: a source nobody can price makes no claim about waste.
+static func crew_is_wasted(workers: int, useful: int) -> bool:
+    if useful <= MAX_USEFUL_UNBOUNDED:
+        return false
+    return workers > useful
+
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
 ## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
 static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
@@ -6057,6 +6188,18 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # …and its MATERIAL twin, as a VECTOR (arc #527 follow-up). Empty on every row whose source pays
     # no material AND on every row whose take has not resolved yet, which render identically — no row.
     var material_rows: Array[Dictionary] = []
+    # **WHICH ACCOUNT THIS ROW IS ABOUT**, resolved ONCE for the whole readout (issue #650). The face
+    # and the hover are two spellings of one row, so they must not ask this separately — the defect
+    # that produced a button reading `+0.00 wood` over a hover reading `Sustainable +0.00 /turn` was
+    # exactly a face that had been taught the row's account and a tooltip that had not.
+    var zero_account := row_zero_account(m, kind)
+    # …and the one question every food-scalar clause below turns on. `actual_yield`,
+    # `sustainable_yield`, `realized_yield` and the `actual_yield_low/high` band are all the FOOD
+    # account, so a row whose account is not food may not spell any of them: on a working they are the
+    # structural zeros `systems/labor.rs`' `Extract` arm leaves behind, and printing them is asserting
+    # a rate in an account the source does not pay. What such a row has to say is its MATERIAL clause,
+    # which is composed below and is unconditional.
+    var states_food := zero_account == YIELD_ACCOUNT_FOOD
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
@@ -6083,19 +6226,23 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             rate = float(m["realized_yield"])
         else:
             rate = sustainable if kind == LABOR_KIND_HUNT else actual
-        tooltip = YIELD_TOOLTIP_RATES_FORMAT % [format_signed(rate), format_signed(actual)]
-        # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
-        # stays the expectation — that is what `forecast == actual` is restated on — and the band
-        # QUALIFIES it rather than replacing it. `""` where the distribution is degenerate, which is
-        # every row shipped today and is what keeps this string byte-identical to what it printed
-        # before.
-        tooltip += yield_range_clause(m)
-        if renewable:
-            tooltip += YIELD_TOOLTIP_RENEWABLE
-        else:
-            tooltip += " · Sustainable %s" % format_yield(sustainable)
-            if warn:
-                tooltip += YIELD_TOOLTIP_OVERDRAW
+        # **THE FOOD CLAUSES, AND THEY BELONG TO ROWS THAT PAY FOOD.** On a food row this composes
+        # exactly the string it always did — `states_food` is true for every `forage` and `hunt` row —
+        # and on a working it composes nothing, leaving the material clause below as the whole hover.
+        if states_food:
+            tooltip = YIELD_TOOLTIP_RATES_FORMAT % [format_signed(rate), format_signed(actual)]
+            # **THE ACTUAL IS AN EXPECTATION NOW, AND ITS BAND RIDES BESIDE IT** (§6.4). The headline
+            # stays the expectation — that is what `forecast == actual` is restated on — and the band
+            # QUALIFIES it rather than replacing it. `""` where the distribution is degenerate, which
+            # is every row shipped today and is what keeps this string byte-identical to what it
+            # printed before.
+            tooltip += yield_range_clause(m)
+            if renewable:
+                tooltip += YIELD_TOOLTIP_RENEWABLE
+            else:
+                tooltip += " · Sustainable %s" % format_yield(sustainable)
+                if warn:
+                    tooltip += YIELD_TOOLTIP_OVERDRAW
         # THE SECOND PRODUCT (issue #449), under the SAME render-only-when-non-zero gate: a sown hay
         # Field pays no provisions, so without this its row headlined `+0.00 /turn` while it fed the
         # band's pens every turn. The word rather than a glyph — fodder has none, the reason
@@ -6111,16 +6258,29 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # is why the compose sheet reads the herd's rates instead (`material_rows_of`).
         fodder_rate = fodder_rate_of(m)
         material_rows = material_rows_of(m)
+        # **THEY JOIN, RATHER THAN CONCATENATE.** Both used to prepend `COMPONENT_SEPARATOR`
+        # unconditionally, which was safe only because the food clause above them always ran first. A
+        # working's hover opens on the material clause, so a bare `+=` would have produced a tooltip
+        # beginning ` · `. On a food row `tooltip` is never empty here, so every existing string is
+        # byte-identical.
         if has_component(fodder_rate):
-            tooltip += COMPONENT_SEPARATOR + (POLICY_CAP_FODDER_FORMAT % format_signed(fodder_rate))
+            tooltip = _joined_clause(tooltip,
+                POLICY_CAP_FODDER_FORMAT % format_signed(fodder_rate))
         for row in material_rows:
             if has_component(float(row[MATERIAL_PAYOFF_AMOUNT_KEY])):
-                tooltip += COMPONENT_SEPARATOR + (POLICY_CAP_MATERIAL_FORMAT % [
+                tooltip = _joined_clause(tooltip, POLICY_CAP_MATERIAL_FORMAT % [
                     format_signed(row[MATERIAL_PAYOFF_AMOUNT_KEY]),
                     String(row[MATERIAL_PAYOFF_ID_KEY])])
-        # `zero_account` stays defaulted: a source that produced nothing in ANY account still prints
-        # its `+0.00 /turn`, which is a fact worth reading and is what this row has always said.
-        label_suffix = " " + yield_components(rate, fodder_rate, YIELD_ACCOUNT_FOOD, material_rows)
+        # **THE SURVIVING ZERO IS THE ROW'S OWN ACCOUNT, NOT ALWAYS FOOD** (issue #650). A source that
+        # produced nothing in ANY account still prints one zero — that is a fact worth reading and is
+        # what this row has always said — but *which* account it belongs to is a property of the row.
+        # It was hardcoded to food, and on an `extract` row food is exactly the account the wire
+        # contradicts: a working pays a MATERIAL, so `+0.00 /turn` there is a false reading rather than
+        # an empty one. `row_zero_account` is that decision, and it answers `YIELD_ACCOUNT_NONE` for a
+        # row with no account at all — hence the empty-string guard, which keeps a row with nothing to
+        # say from growing a dangling separator on the surfaces that join this suffix.
+        var components := yield_components(rate, fodder_rate, zero_account, material_rows)
+        label_suffix = "" if components == "" else " " + components
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
@@ -6156,9 +6316,20 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # rows, the drawer's standing summary, the stepper's status line) show it without a channel of
     # their own. `""` while the distribution is degenerate, so no row grows a band where there is
     # none: that emptiness is the assertion, not a hope.
-    var muted_note := yield_range_clause(m) if bool(m.get("has_yield", false)) else ""
+    #
+    # **AND IT IS THE FOOD BAND**, so it rides `states_food` with the tooltip clause it mirrors — the
+    # two are one quantity stated twice, and a row that may not name a food rate may not qualify one
+    # either.
+    var muted_note := yield_range_clause(m) \
+        if states_food and bool(m.get("has_yield", false)) else ""
     var wasted := float(m.get("wasted_yield", 0.0))
-    if kind != LABOR_KIND_FORAGE and wasted >= FOOD_FLOW_MIN:
+    # ⛔ **THE TEST IS THE HUNT WEB, NOT "NOT THE PLANT WEB"** (issue #650). The paragraph above says
+    # ANIMAL WEB ONLY and the condition said *every kind but forage*, which admitted `extract` the day
+    # a third source kind existed — and `wasted_yield` on a working is the same structural food zero
+    # every other scalar here is, spelled through `format_yield`'s `/turn`. It is inert today (the
+    # `Extract` arm publishes `SourceYield::ZERO`), so this asserts the intent rather than fixing a
+    # visible line: the note is about meat left to rot, which is a thing only a kill can do.
+    if kind == LABOR_KIND_HUNT and wasted >= FOOD_FLOW_MIN:
         muted_note += WASTED_NOTE_FORMAT % format_magnitude(wasted)
         var wasted_tip := WASTED_TOOLTIP % format_yield(wasted)
         tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip
@@ -6174,6 +6345,12 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # sentence all compose their own string and must state what an inedible quarry pays.
         "material_rows": material_rows,
     }
+
+## One tooltip clause appended to whatever is already there, separated only where there IS something
+## already there. The hover is a `COMPONENT_SEPARATOR`-joined list whose FIRST clause used to be
+## guaranteed (the food rates), and is not once a row may open on its material.
+static func _joined_clause(tooltip: String, clause: String) -> String:
+    return clause if tooltip == "" else tooltip + COMPONENT_SEPARATOR + clause
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
 ## fully tamed (pastoral), being penned under the composed Corral policy, or **owed a herder crew by
@@ -6644,14 +6821,57 @@ static func material_rows_of(source: Dictionary) -> Array[Dictionary]:
 ## (`band-city-panel.md` → "THE ROW IS TWO LINES") — so **no caller has one fixed slot any more**, and
 ## the bound was deleted rather than left parameterised: an unreachable cap is a thing the next reader
 ## assumes is load-bearing.
-static func signed_material_components(rows: Array) -> String:
+## **`name_material` DROPS THE NOUN AND NOTHING ELSE** (issue #650) — same rows, same display floor,
+## same sign, same join. See `MATERIAL_NAMED` / `MATERIAL_UNNAMED` above for the one condition under
+## which a figure may go un-named, which is a fact about the CALLER's surface rather than about the
+## rows: the gate this function is asked to be (`""` when there is nothing to say) is unchanged by
+## it, so a caller that only tests emptiness need not pass one.
+static func signed_material_components(rows: Array,
+        name_material: bool = MATERIAL_NAMED) -> String:
     var parts: Array[String] = []
     for row in material_payoff_rows(rows):
         var amount := float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
-        if has_component(amount):
-            parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
-                format_signed(amount), String(row[MATERIAL_PAYOFF_ID_KEY])])
+        if not has_component(amount):
+            continue
+        var figure := format_signed(amount)
+        parts.append(PICKER_MATERIAL_PRODUCT_FORMAT % [
+            figure, String(row[MATERIAL_PAYOFF_ID_KEY])] if name_material else figure)
     return COMPONENT_SEPARATOR.join(parts)
+
+## **SEVERAL SOURCES' MATERIAL VECTORS ADDED INTO ONE, BY MATERIAL ID** — what a whole band's
+## extraction pays per turn, for a readout that states the band rather than one working.
+##
+## **THE MERGE IS BY ID AND NEVER ACROSS IDS.** Summing a `wood` row into a `hide` row would be the
+## retired trade axis under a new name (`signed_material_components`' own ⛔): two materials are two
+## accounts, and one figure standing for both is a number nothing in the sim ever computes. What IS
+## legitimate is two SOURCES paying the same material — two workings cutting wood, a hunt paying hide
+## beside a quarry that pays none — because that is one account credited twice.
+##
+## **FIRST-SEEN ORDER IS KEPT, so a repeated render states the accounts in the same sequence**: the
+## rows come off the caller's own ordered walk, and a dictionary-key order that shuffled would make
+## the joined face flicker between frames.
+##
+## `row_sets` is an array of per-source row arrays; each is normalized through `material_payoff_rows`,
+## so a malformed or absent vector contributes nothing rather than a zero row.
+static func merged_material_rows(row_sets: Array) -> Array[Dictionary]:
+    var order: Array[String] = []
+    var totals: Dictionary = {}
+    for rows_variant in row_sets:
+        if not (rows_variant is Array):
+            continue
+        for row in material_payoff_rows(rows_variant as Array):
+            var material_id := String(row[MATERIAL_PAYOFF_ID_KEY])
+            if not totals.has(material_id):
+                order.append(material_id)
+            totals[material_id] = float(totals.get(material_id, 0.0)) \
+                + float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
+    var out: Array[Dictionary] = []
+    for material_id in order:
+        out.append({
+            MATERIAL_PAYOFF_ID_KEY: material_id,
+            MATERIAL_PAYOFF_AMOUNT_KEY: float(totals[material_id]),
+        })
+    return out
 
 ## One per-material vector times a scalar — a per-biomass vector through the escapement room, a
 ## per-worker vector through the build dip, or any of them through the band's `output_multiplier`.

@@ -58,6 +58,16 @@ const QUARRY_NO_REACH_BOUND := -1
 ## Where `begin_pick_quarry` files the mission on the pending dict, read back by `_pick_quarry_mission`.
 const PICK_QUARRY_MISSION_KEY := "mission"
 
+## **THE TARGETING MODE'S OWN TOKEN, AND THE PLAYER READS IT UPPERCASED.** `_targeting_banner_bbcode`
+## prints the `command` it is handed as the banner's lead word, so this string is not plumbing — it is
+## the banner (`PREY  Band 1 — click on a herd to hunt`). It is a CLIENT token: no command by this
+## name is ever sent, the pick emits `send_expedition_requested`, and MapView keys its halo off
+## `need` rather than off this.
+##
+## ⛔ **`prey`, NOT `quarry` (issue #650)** — the sim's `quarry` verb opens a stone working, so the
+## old spelling put the same banner word on hunting a herd and on digging a pit.
+const PICK_PREY_COMMAND := "prey"
+
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
 var _compose: ComposeState = null
@@ -226,7 +236,7 @@ func _current_targeting_info() -> Dictionary:
 		# and so changes nothing for move/scout-tile targeting.
 		return {
 			"active": true,
-			"command": "quarry",
+			"command": PICK_PREY_COMMAND,
 			"need": "herd",
 			"origin_x": ox,
 			"origin_y": oy,
@@ -251,7 +261,7 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
 		instruction = "click a destination tile"
 	elif cmd == "EXPEDITION":
 		instruction = "click a target tile to scout"
-	elif cmd == "QUARRY":
+	elif cmd == PICK_PREY_COMMAND.to_upper():
 		instruction = "click on a herd to hunt"
 	else:
 		instruction = "click a tile to survey"
@@ -372,7 +382,7 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
 # ---- Pick-quarry ---------------------------------------------------------------------------------
 
 ## Quarry PICK: enter HERD-targeting so the next map click names the herd the compose sheet is aimed
-## at. It dispatches NOTHING — the sheet stays open behind the targeting and fills its Quarry row in,
+## at. It dispatches NOTHING — the sheet stays open behind the targeting and fills its Prey row in,
 ## then asks for the floor and the party size against that herd.
 ##
 ## **THE MISSION RIDES WITH THE PICK** because eligibility is a function of it (`is_expedition_quarry`):
@@ -422,7 +432,7 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 	var mission := _pick_quarry_mission()
 	if not is_expedition_quarry(band, herd, mission):
 		var band_tile := SourceForecast.band_tile(band)
-		_note_sink.call("Hunt expedition", HudComposeVocab.QUARRY_WITHIN_REACH_FORMAT % [
+		_note_sink.call("Hunt expedition", HudComposeVocab.PREY_WITHIN_REACH_FORMAT % [
 			SourceForecast.herd_display_name(herd),
 			_hex_distance_wrapped(band_tile.x, band_tile.y,
 				int(herd.get("x", -1)), int(herd.get("y", -1))),

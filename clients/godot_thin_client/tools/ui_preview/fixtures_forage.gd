@@ -661,7 +661,7 @@ const THREE_ROLE_GRAZE_CAPACITY := 130.0
 
 static func sowable_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
-	# Kept WITHIN the reference band's forage range (it sits on 66,10 with work_range 2) so the Forage
+	# Kept WITHIN the reference band's work range (it sits on 66,10 with work_range 2) so the Forage
 	# button ENABLES: this state exists to judge the Sow affordance, and an out-of-range tile disables
 	# the button for an unrelated reason and hides exactly what the frame is for.
 	tile["x"] = 67

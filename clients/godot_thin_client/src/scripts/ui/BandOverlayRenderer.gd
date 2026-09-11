@@ -4,21 +4,22 @@ extends RefCounted
 ## Renders the SELECTED-BAND / SELECTED-HERD overlay family for MapView: the three range
 ## borders + worked-forage fills + hunted-herd rings and links of the selected player band, the
 ## dashed-amber optimistic PENDING overlay, the travel-destination line + reticle, the selected
-## herd's graze-range ring, the corralled herd's pen footprint, and the deferred per-source
-## yield-label batch. Extracted from MapView (composition — MapView owns one and calls its four
+## herd's graze-range ring, the corralled herd's pen footprint, the deferred per-source badge
+## batch and the SELECTED BAND'S SOURCE ROWS (`compute_source_rows`, the model behind the docked
+## `BandSourceList`). Extracted from MapView (composition — MapView owns one and calls its four
 ## entry points during its _draw pass). Owns only this family's selection-derived state (the
-## pushed `_labor_pending` map and the per-frame `_deferred_yield_labels` batch); every draw
+## pushed `_labor_pending` map, the per-frame badge batch and the per-frame row model); every draw
 ## command plus the shared geometry/hex/glyph/pill primitives and the unit/herd/selection state
 ## stay on MapView and are reached through the `_view` back-ref. Behaviour — and every rendered
 ## pixel — is identical to the old inlined code: the move was verified by byte-diffing all 56
 ## `map_preview` frames (plus the `blend_probe` set) before and after, with zero differing frames.
 ##
-## THE YIELD-LABEL BATCH IS A TWO-PHASE CONTRACT and the whole lifecycle lives HERE:
-##   1. `draw_band_work_highlights` CLEARS the batch (before its early-outs, so a deselected band
-##      leaves nothing stale behind) and QUEUES a label per staffed source;
+## THE BADGE BATCH IS A TWO-PHASE CONTRACT and the whole lifecycle lives HERE:
+##   1. `draw_worked_source_marks` CLEARS the batch and QUEUES one entry per worked source, which is
+##      also the one place each source's BUILD STATE is resolved;
 ##   2. `flush_yield_labels` renders + drains it, and MapView must call it LAST in `_draw` — after
 ##      the markers, rings, links, pending overlays and targeting — because those layers used to
-##      paint over the numbers. The far-zoom LOD gate stays at the QUEUE site, never at the flush.
+##      paint over the plates. (The name is older than its contents; see that function.)
 ##
 ## `set_labor_pending` is reached through a thin same-named pass-through on MapView: Main.gd wires
 ## the HUD's `labor_pending_changed` signal to `MapView.set_labor_pending` BY NAME (has_method /
@@ -68,9 +69,29 @@ const RANGE_BORDER_EDGE_AXIAL: Array[Vector2i] = [
 #
 # TWO WEIGHTS, not two shapes: THIN for any player band (persistent, no selection needed — the whole
 # point of the mark) and BOLD for the SELECTED band, so selection still wins the eye. The band→herd
-# link and the per-source yield labels stay selection-only — N bands of links is spaghetti.
+# link and the per-source ROWS stay selection-only — N bands of links is spaghetti.
 const FORAGE_WORKED_COLOR := Color(0.46, 0.96, 0.46, 0.95)
 const HUNT_WORKED_COLOR := Color(0.92, 0.34, 0.30, 0.95)
+# **AND A THIRD COLOUR FOR THE THIRD WEB** (issue #650): a worked WORKING wears the same ring, link
+# and outline as a patch or a herd, in a hue that is in neither food web — quarried slate, one colour
+# for both branches, because a felled wood and a quarried rock are the same statement about the same
+# account. The COOL HUE is what keeps it out of either food web's language — materials are the cool
+# account beside two warm-blooded webs — and it is the only cool mark this pass draws.
+#
+# ⛔ **BUT THE HUE ALONE WAS NOT ENOUGH, AND THE ARITHMETIC SAYS WHY.** It shipped at
+# `Color(0.68, 0.74, 0.80)`, a pale slate whose luminance is **0.732** against the khaki terrain of
+# `map_working_beside_herd` at **0.735** — three thousandths apart, i.e. NEAR-ISOLUMINANT with the
+# ground, carrying its whole reading on a +0.12 blue excess. Beside it the hunted herd's salmon sits
+# **0.274** from that terrain and the forage green 0.083, so both food webs differ from the ground in
+# VALUE as well as hue and the working's mark did not. Reported from play as reading paler than the
+# herd's, and visible in the parity frame: the deer's ring and tile outline read instantly, the log's
+# outline almost not at all.
+#
+# **So it keeps the hue and takes the VALUE the other two have** — 0.523, i.e. 0.212 from that
+# terrain, in the same league as the salmon, with the blue excess doubled to +0.24 on top. Darker
+# also separates the ring from the light 🪵 sprite inside it. `_max_blue_excess`, the harness probe
+# that exists because this mark is blended past its own ink, only gets a wider margin from this.
+const EXTRACT_WORKED_COLOR := Color(0.42, 0.54, 0.66, 0.95)
 # Ring radius as a factor of the hex radius. A secondary marker is drawn at SECONDARY_ICON_SIZE_FACTOR
 # (0.55) of the hex, so the ring sits just outside its glyph — and deliberately INSIDE the food-harvest
 # ring (MapView.FOOD_HARVEST_RING_FACTOR 0.42 measured from the same centre), which is a different
@@ -78,6 +99,17 @@ const HUNT_WORKED_COLOR := Color(0.92, 0.34, 0.30, 0.95)
 const WORKED_RING_FACTOR := 0.34
 const WORKED_RING_WIDTH_SELECTED := 3.0
 const WORKED_RING_WIDTH_OTHER := 1.6
+# Segments in the worked ring's circle, and in the BUILD ARC drawn over it — one number, because a
+# 28-segment track under a 32-segment arc would show the arc riding slightly off the ring it fills.
+const WORKED_RING_SEGMENTS := 28
+# **THE BUILD METER IS AN ARC ON THE RING** (issue #650, Part 3). A source with a rung under way draws
+# its ring at this fraction of its own alpha and then paints the progress over it, from 12 o'clock
+# clockwise. **The faint full ring is what makes 5% readable** — a bright tick against a visible track,
+# rather than a nearly-absent arc floating on nothing. A source building nothing is untouched by this.
+const RING_TRACK_ALPHA_FACTOR := 0.35
+# Where the arc starts: 12 o'clock, so the sweep reads like a clock face rather than from an arbitrary
+# point on the rim. `draw_arc` measures angles from 3 o'clock going clockwise in screen space.
+const RING_ARC_START_ANGLE := -PI * 0.5
 # The selected band's ring gets a faint disc behind it — the one thing carried over from the retired
 # whole-hex fill, at the source's own scale instead of the tile's.
 const WORKED_RING_GLOW_ALPHA := 0.16
@@ -100,7 +132,10 @@ const WORKED_TILE_OUTLINE_WIDTH := 1.4
 #
 # BELOW the icon, never upper-right: `MapView.HERD_DISTRESS_BADGE_OFFSET_FACTOR` already owns that
 # corner, and a herd can be both penned-and-starving and ready-to-something.
-const BADGE_CREW_GLYPH := "⚒"
+# **ONE SPELLING, AND IT IS THE CARD'S** (issue #650): the tile card's deposit rows wear the same
+# mark, so the glyph lives in `HudSelectionVocab` and both surfaces read it from there. A hex whose
+# badge said `⚒4` beside a card row that said nothing about a crew is half of what Ray reported.
+const BADGE_CREW_GLYPH := HudSelectionVocab.SOURCE_CREW_MARK
 # The chevron is what makes the mark read "available" rather than "done". It has to be the carrier
 # because the verb and standing-rung glyphs COLLIDE — ▦ is both "Sow" and "this is a Field", 🐄 both
 # "Corral" and "this is a Pen" — so a bare verb glyph on a marker would say the opposite of the truth.
@@ -118,10 +153,16 @@ const BADGE_BG := Color(0.04, 0.05, 0.07, 0.88)
 # A rung UNDER WAY reads in the SAME hue one step deeper (`HudStyle.SIGNAL_DEEP`): ready and building
 # are one axis in two states, so they belong to one colour family — bright says "act now", deep says
 # "already under way". A different hue would file them as unrelated facts, and amber is spoken for.
-# The building face is `<verb glyph><percent>%`. The chevron is deliberately ABSENT: `⌃` means "you
-# could start this", and the work has started. The percent is the whole point — it is what moves every
-# turn, and the only number that answers "how much longer?".
-const BADGE_BUILDING_FORMAT := "%s%d%% "
+# The building face is the VERB GLYPH ALONE. The chevron is deliberately ABSENT: `⌃` means "you could
+# start this", and the work has started.
+#
+# ⛔ **THE PERCENT CAME OFF THE PLATE AND THE METER MOVED TO THE RING** (issue #650). `35%` never
+# answered *when will it land* — 35% of a coppice and 35% of a cultivation are weeks apart — so the
+# number that a player acts on is the TURN COUNT, and that is on the source list's build cell
+# (`DetailFormat.build_countdown_value`, the tile card's own string). What a glance wants from the map
+# is *roughly how far*, which is what the ring's arc says (`RING_TRACK_ALPHA_FACTOR` below): colour
+# still says which web, sweep says how far, two independent variables on one mark.
+const BADGE_BUILDING_FORMAT := "%s "
 # **THE THIRD FACE: a rung declared with nobody on it.** It keeps the verb glyph and puts a `⚠` where
 # the percentage would go, because the percentage is precisely the lie — a `0%` plate over a build the
 # player staffed with nobody is pixel-identical to one they started this turn. There is no number to
@@ -131,10 +172,17 @@ const BADGE_UNSTAFFED_FORMAT := "%s⚠ "
 # OPPORTUNITY must never be amber; an unstaffed commitment is not an opportunity — it is the trouble
 # channel's own subject, and it wears the `HudStyle.WARN` the overdraw and under-herded marks do.
 const BADGE_BORDER_WIDTH := 1.2
-# Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
-# work-range ring — hunt reach = work_range + leash).
-const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
-const HUNT_WORKED_LINK_WIDTH := 2.5
+# THE SELECTED BAND'S LINK TO A SOURCE IT WORKS — a thin line from its token to the source's own
+# marker (the source can sit well outside the work-range ring: hunt reach = work_range + leash, and a
+# working is joined to whichever band opened it). ONE alpha and ONE width for every kind, applied to
+# the SOURCE's own ring colour by `_draw_worked_link`, so a link can never be a different weight from
+# web to web — the ring already carries which source this is.
+const WORKED_LINK_ALPHA := 0.60
+const WORKED_LINK_WIDTH := 2.5
+# A link whose two ends straddle the horizontal seam is a stripe across the whole map rather than a
+# join, so it is dropped: past this fraction of the rendered map width the two ends are not
+# neighbours. Shared by the CONFIRMED links and the dashed PENDING ones — one seam, one rule.
+const LINK_MAX_SPAN_FACTOR := 0.4
 # Selected-herd GRAZING RANGE (Grazing Phase 2b-iii): the tiles within `graze_range_radius` of the herd
 # — the EXACT ring the sim grazes and derives its carrying capacity K over — as a filled region + tile
 # outlines. Warm graze amber, deliberately DISTINCT from the band work-range ring's faint cyan (a herd's
@@ -159,30 +207,23 @@ const PREY_SENSE_RING_OUTLINE_WIDTH := 2.0
 const PEN_FOOTPRINT_FILL := Color(0.20, 0.60, 0.42, 0.22)    # enclosed-pasture green, translucent
 const PEN_FOOTPRINT_OUTLINE := Color(0.34, 0.82, 0.58, 0.85) # fence-green rim on each fenced tile
 const PEN_FOOTPRINT_OUTLINE_WIDTH := 2.0
-# On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
-# the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
-# (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
-# sign-formatted to 2 decimals, food-income green — with a WARN-amber
-# `⚠` overhunting flag driven by the assignment's own `overdraws`, the sim's verdict that every
-# surface flying this mark reads (never a client-side `actual > sustainable` comparison, which the
-# schema forbids). Decimals mirror Hud's `YIELD_DECIMALS` (separate script, so named here rather than
-# shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
-# Font scales with the hex radius (clamped) so the label reads at any zoom, not just tiny at big hexes.
-const YIELD_LABEL_SIZE_FACTOR := 0.16     # of hex radius
-const YIELD_LABEL_MIN_FONT := 11
-const YIELD_LABEL_MAX_FONT := 24
-const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction of the hex radius
+# ---- THE PER-SOURCE RATE: ITS VOCABULARY, NOW READ BY A ROW RATHER THAN A PILL -------------------
+#
+# ⛔ **THE ON-TILE PILL AND ITS WHOLE CHROME ARE GONE** (issue #650). Selecting a band put ~20
+# floating elements over four hexes; a rate pill is ~90px and two markers in one hex's edge slots sit
+# ~55px apart, so a rate could not live above its own marker — that is arithmetic, not tuning, and a
+# collision/lift pass shipped and was reverted rather than kept. The rate is now a ROW in the docked
+# `BandSourceList` beside the selected band, and `YIELD_LABEL_SIZE_FACTOR` / `_MIN_FONT` / `_MAX_FONT`
+# / `_OFFSET_FACTOR` / `_PLATE_BG` / `_PLATE_PAD_FACTOR` went with the plate that used them.
+#
+# **WHAT SURVIVES IS THE VOCABULARY, and it is the ROW's producer now** — the same composition, the
+# same one-slot fall-through, the same `⚠`, read by `compute_source_rows`. Decimals mirror Hud's
+# `YIELD_DECIMALS` (separate script, so named here rather than shared).
 const YIELD_LABEL_DECIMALS := 2
 # Below this a component is absent, not zero — the map twin of `SourceForecast.FOOD_FLOW_MIN`, and the
-# test that decides WHICH of a hunt's two products a one-slot label shows (issue #337).
+# test that decides WHICH of a hunt's two products a one-slot rate shows (issue #337).
 const YIELD_LABEL_COMPONENT_MIN := 0.001
 const YIELD_OVERHUNT_FLAG := "⚠"
-# Backing plate: bare drop-shadowed text washed out against light terrain (tan prairie/desert), so the
-# label sits on the SAME rounded dark pill chrome as the `×N`/`+N` count badges (`_draw_pill_plate`).
-# Slightly translucent so the terrain still reads through. Padding is symmetric about the label's
-# existing anchor (so the text does not shift) and scales with the font, like the label itself.
-const YIELD_LABEL_PLATE_BG := Color(0.04, 0.05, 0.07, 0.82)
-const YIELD_LABEL_PLATE_PAD_FACTOR := 0.45   # horizontal padding per side, as a fraction of the font size
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -210,17 +251,39 @@ var _view: MapView = null
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
-# DEFERRED per-source yield labels (see _queue_yield_label / flush_yield_labels). The labels are an
-# annotation ON TOP OF the map, so they must be the LAST thing drawn: collected during the
-# work-highlight pass, flushed at the very end of MapView's _draw.
-var _deferred_yield_labels: Array[Dictionary] = []
-## Per-source BADGES, deferred for the same reason the labels are: they annotate the map and would
-## otherwise be painted over by the marker glyphs, rings and pending overlays drawn after this pass.
+## Per-source BADGES, deferred because they annotate the map and would otherwise be painted over by
+## the marker glyphs, rings and pending overlays drawn after this pass. Each also carries the ONE
+## resolution of its source's build state — see `_queue_source_badge`.
 var _deferred_source_badges: Array[Dictionary] = []
 ## Per-tile roll-up of the worked sources the marker cap HID this frame: `Vector2i → {worked, ready,
 ## warn}`. A cap that hides state silently reads as "nothing here", which is the very failure this
 ## feature exists to fix at a different scale — so the `+N` chip reports what it is covering.
 var _hidden_source_state: Dictionary = {}
+## THE WORKED WORKINGS this frame — `working_key → {tile, material, crew, selected}` — see
+## `compute_worked_workings`, which is the one place it is built.
+var _worked_workings: Dictionary = {}
+## **THE CREW ON EACH SOURCE THIS FRAME** — `source key → int`, summed across every player band by
+## `draw_worked_source_marks`, which is the one place it is built.
+##
+## ⛔ **PROMOTED TO A MEMBER SO THE ROW PASS CAN READ IT, AND FOR NO OTHER REASON** (issue #650). The
+## source list's `⚒N` and the marker badge's `⚒N` are joined by a literal leader line on screen, so
+## two producers of that one number is a disagreement the player can see in a single glance. The row
+## reads this; it never re-walks the bands.
+var _source_crew: Dictionary = {}
+## THE SELECTED BAND'S SOURCE ROWS this frame — see `compute_source_rows`. Rebuilt (and emptied) by
+## `draw_band_work_highlights`, read by `MapView` for the docked source list and its leader lines.
+var _source_rows: Array[Dictionary] = []
+## The selected band's token centre in MAP-LOCAL units this frame, `Vector2.ZERO` with nothing
+## selected. Held because the source list docks BESIDE the band and MapView has no band walk of its
+## own; resolved once, by the pass that already had to resolve it.
+var _selected_band_center: Vector2 = Vector2.ZERO
+## …and its TILE, for the one consumer that has to ask another renderer about the same band: the
+## source list avoids the band's NAMEPLATE, which `BandMarkerRenderer` measures per tile.
+## `NO_SELECTED_TILE` with nothing selected.
+const NO_SELECTED_TILE := Vector2i(-1, -1)
+var _selected_band_tile: Vector2i = NO_SELECTED_TILE
+## The band's WHOLE income across every row, already composed — see `compute_source_rows`.
+var _source_total_text: String = ""
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -237,9 +300,109 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## mid-frame can't leave a queued label to paint over the new world.
 func reset_world_state() -> void:
 	_labor_pending = {}
-	_deferred_yield_labels.clear()
 	_deferred_source_badges.clear()
 	_hidden_source_state.clear()
+	_worked_workings.clear()
+	_source_crew.clear()
+	_source_rows.clear()
+	_selected_band_center = Vector2.ZERO
+	_selected_band_tile = NO_SELECTED_TILE
+	_source_total_text = ""
+
+## **WHICH WORKINGS ARE BEING CUT, AND BY HOW MANY** — `working_key → {tile, material, crew,
+## selected}`, summed across EVERY player band (issue #650). `MapView._draw` calls this FIRST and hands the answer to
+## `SecondaryMarkerRenderer.set_worked_workings`, because a working's marker exists only where a crew
+## is on it: the slot pass needs this pass's answer, which is the reverse of the food/herd order.
+##
+## **IT IS THE MAP-SIDE TWIN OF `SubjectDrawerController._cutters_on_working`, DELIBERATELY LOCAL.**
+## That helper sums the same `(tile, material)` crew across every player band, and the tile card's
+## `⚒N` clause is its face — but it reaches it through `HudBandLaborState`, and a renderer must not
+## depend on the HUD's band-labor model (the rule `_labor_assignments_of_marker` beside it already
+## follows). So this reads the same rows off the MARKERS' own `labor_assignments`, exactly as the
+## forage and hunt arms below do, and the two surfaces agree because they sum the same wire field
+## over the same set of bands rather than because one calls the other.
+##
+## **NOT PENDING-AWARE, matching the forage and hunt arms**: the map's marks report the crew the
+## SNAPSHOT confirms, and the dashed-amber pending overlay is the separate statement about an order
+## that has not landed yet. (The tile card's clause IS pending-aware; the disagreement lasts one
+## frame and is the same one the existing worked-source badges already have.)
+##
+## **A WORKING THE `deposits` SECTION DOES NOT KNOW ABOUT DRAWS NOTHING.** The map states a working
+## the snapshot carries, never one a labor row asserts — the same `(tile, material)` join the tile
+## card and the Workings roster make — so a lapsing row pointing at a hex with no such deposit cannot
+## put a phantom marker on it.
+func compute_worked_workings() -> Dictionary:
+	_worked_workings.clear()
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary):
+			continue
+		var band: Dictionary = unit_variant
+		if not HudConst.is_player_unit(band):
+			continue
+		# A DETACHED PARTY CUTS NOTHING — it carries no `labor_assignments` of its own, its one
+		# source being the quarry the mark pass reads off the cohort.
+		if bool(band.get("is_expedition", false)):
+			continue
+		for entry_variant in _labor_assignments_of_marker(band):
+			if not (entry_variant is Dictionary):
+				continue
+			var entry: Dictionary = entry_variant
+			var workers := int(entry.get("workers", 0))
+			if workers <= 0:
+				continue
+			if String(entry.get("kind", "")).strip_edges().to_lower() != HudConst.LABOR_KIND_EXTRACT:
+				continue
+			var material := String(entry.get("material", "")).strip_edges()
+			if material == "":
+				continue
+			var tile := Vector2i(int(entry.get("target_x", -1)), int(entry.get("target_y", -1)))
+			if tile.x < 0 or tile.y < 0 or tile.y >= _view.grid_height:
+				continue
+			if not _working_on_tile(tile, material):
+				continue
+			var key := _view.secondary_working_key(tile.x, tile.y, material)
+			var known: Dictionary = _worked_workings.get(key, {})
+			_worked_workings[key] = {
+				"tile": tile,
+				"material": material,
+				"crew": int(known.get("crew", 0)) + workers,
+				# **IS THE SELECTED BAND ONE OF THE CUTTERS** — an OR across the bands summed above,
+				# and it rides here for the same reason the crew does: this walk is the one place a
+				# working is joined to the bands working it, and the mark pass walks SOURCES rather
+				# than bands (the crew is already summed) so it has no band in hand to ask. The food
+				# webs reach the same answer per (band × source) as they draw, which is why they
+				# carry no such flag. It is what picks the ring's WEIGHT — bold for the selected
+				# band, thin for any other — exactly as `selected` does on the two food arms.
+				"selected": bool(known.get("selected", false))
+					or int(band.get("entity", -1)) == _view.selected_unit_id,
+				# **IS ANY CUTTER OVER-CUTTING IT** — the same OR across the bands summed above, and
+				# it rides here for `selected`'s reason: the mark pass walks SOURCES and has no
+				# entry in hand to read the flag off. The sim writes `overdraws` on an Extract row
+				# now (it was a structural `false` when this walk was written), so the `+N` overflow
+				# chip's warn state can be answered for a working the marker cap hid — which the two
+				# food webs have always answered for their own hidden rows.
+				"overdraws": bool(known.get("overdraws", false))
+					or yield_label_overdraw(entry),
+			}
+	return _worked_workings
+
+## Does the `deposits` section carry a working of `material` on this hex — the `(tile, material)` join
+## every other surface makes, restated here because this renderer holds no deposit model.
+func _working_on_tile(tile: Vector2i, material: String) -> bool:
+	return not _working_row(tile, material).is_empty()
+
+## The `deposits` row for this `(tile, material)` pair, `{}` where the section carries none. The join
+## every other surface makes, restated here because this renderer holds no deposit model — and it
+## answers the ROW rather than a bool because the pill needs a FIELD off it (`regrowth_rate`, through
+## `HudDepositVocab.floor_mark`) and not only the row's existence.
+func _working_row(tile: Vector2i, material: String) -> Dictionary:
+	var rows: Variant = _view.deposit_tile_lookup.get(tile, null)
+	if not (rows is Array):
+		return {}
+	for row in (rows as Array):
+		if row is Dictionary and HudDepositVocab.material_of(row as Dictionary) == material:
+			return row as Dictionary
+	return {}
 
 ## EVERY player band's worked sources, drawn whatever is selected (docs/plan_worked_source_marks.md).
 ##
@@ -262,8 +425,10 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 	_hidden_source_state.clear()
 	# CREW IS AGGREGATED PER SOURCE, NOT PER BAND — two bands can work one patch, and two badges on one
 	# marker would be a lie about a single number. Keyed by the source's own slot key, the same identity
-	# the ring docks to.
-	var crew: Dictionary = {}
+	# the ring docks to. A MEMBER (`_source_crew`), because the row pass reads this answer rather than
+	# summing a second one of its own — see the member's own ⛔.
+	var crew: Dictionary = _source_crew
+	crew.clear()
 	# **AND THE BUILD CREW IS AGGREGATED THE SAME WAY, because "nobody is building this" is a claim
 	# about the SOURCE and not about one band's row.** One band's declaration with no builders is
 	# covered by another band's builders on the same rung, so the badge asks the summed count.
@@ -310,10 +475,16 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# so its improvement axis is structurally empty and its quarry's badge can
 						# only ever show a rung on OFFER, never one under way (issue #442). It carries
 						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
-						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
-						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
+						var qcenter := _view._hex_center(qcol, qrow, radius, origin)
+						# **THE BADGE IS QUEUED BEFORE THE MARK IS DRAWN, at all four call sites**
+						# (issue #650). The queue is where the BUILD STATE is resolved, and the ring
+						# has to know it — a source with a rung under way draws its ring as a faint
+						# TRACK with the progress arc over it. Resolving the state twice is the one
+						# thing forbidden here, so the mark reads the queue's answer instead.
+						_queue_source_badge(qcenter, qkey, LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin,
-							int(builders.get(qkey, 0)))
+							HUNT_WORKED_COLOR, selected, int(builders.get(qkey, 0)))
+						_draw_worked_mark(qcenter, qkey, HUNT_WORKED_COLOR, selected, radius)
 						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, false)
 			# A party carries no `labor_assignments` of its own; its one source is the quarry above.
@@ -337,11 +508,12 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var fkey := _view.secondary_food_key(tx, trow)
 				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
 				builders[fkey] = int(builders.get(fkey, 0)) + band_builders
-				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
-				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
+				var fcenter := _view._hex_center(tcol, trow, radius, origin)
+				_queue_source_badge(fcenter, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin,
-					int(builders[fkey]))
+					FORAGE_WORKED_COLOR, selected, int(builders[fkey]))
+				_draw_worked_mark(fcenter, fkey, FORAGE_WORKED_COLOR, selected, radius)
 				_note_if_hidden(fkey, Vector2i(tx, trow), LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
@@ -361,12 +533,50 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				var hkey := _view.secondary_herd_key(herd_id)
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
 				builders[hkey] = int(builders.get(hkey, 0)) + band_builders
-				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
-				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
+				var hcenter := _view._hex_center(hcol, hrow, radius, origin)
+				_queue_source_badge(hcenter, hkey, LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin,
-					int(builders[hkey]))
+					HUNT_WORKED_COLOR, selected, int(builders[hkey]))
+				_draw_worked_mark(hcenter, hkey, HUNT_WORKED_COLOR, selected, radius)
 				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
 					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
+	# **THE WORKED WORKINGS** (issue #650), off the set `compute_worked_workings` resolved before the
+	# slot pass — this walk is over SOURCES rather than bands because the crew is already summed.
+	#
+	# **THE SAME `_draw_worked_mark` THE TWO FOOD WEBS GO THROUGH, in the working's own colour.** The
+	# first cut queued the badge alone on the argument that a working's marker exists only where a
+	# crew is on it, so a ring would state *we work this* twice — which is true of the ring's
+	# INFORMATION and false of the map: beside a hunted herd wearing a ring, a hex outline, a link
+	# and a rate, a lone `⚒1` plate read as a different and lesser kind of thing (Ray, issue #650).
+	# Parity is the requirement, so a working takes every part a patch and a herd take, through the
+	# same routines, and `EXTRACT_WORKED_COLOR` is what keeps it out of either food web's language —
+	# including on the tile-level outline, which is therefore its LOD/overflow fallback too.
+	for key in _worked_workings:
+		var working: Dictionary = _worked_workings[key]
+		var wtile: Vector2i = working.get("tile", Vector2i(-1, -1))
+		# The working's OWN wrap image, the one its marker and its badge are drawn on.
+		var wcenter := _view._hex_center_wrapped(wtile.x, wtile.y, radius, origin)
+		# **THE PLATE IS THE SHARED `⚒N` SOURCE BADGE, not a shape of its own** — the tile card's
+		# deposit row, the band badge and this plate are one spelling of one idea (`BADGE_CREW_GLYPH`
+		# → `HudSelectionVocab.SOURCE_CREW_MARK`), so a hex whose marker said one number beside a card
+		# row saying another is unwritable. It is queued with an EMPTY source deliberately: the rung
+		# answers `_queue_source_badge` reaches for (`RungGates.rung_in_progress` /
+		# `next_rung_ready`) are the FOOD webs' — they answer nothing for an `extract` kind — and a
+		# working's ladder is declared from the Work board, so the plate states the crew and stops.
+		# ⛔ **AND THE CREW LANDS IN `_source_crew`, WHICH IS WHAT THE ROW READS.** The two food webs
+		# fill it as they walk their bands; this arm did not, so a working's row printed `⚒0` beside a
+		# marker printing `⚒3` — the exact disagreement the leader line between them makes visible, and
+		# the reason the class note forbids a second producer. `compute_worked_workings` has already
+		# summed this crew across every band on the source, so it is ASSIGNED rather than accumulated.
+		crew[key] = int(working.get("crew", 0))
+		_queue_source_badge(wcenter, key,
+			HudConst.LABOR_KIND_EXTRACT, {}, SourceForecast.IMPROVEMENT_NONE,
+			int(crew[key]), radius, origin, EXTRACT_WORKED_COLOR,
+			bool(working.get("selected", false)))
+		_draw_worked_mark(wcenter, key, EXTRACT_WORKED_COLOR,
+			bool(working.get("selected", false)), radius)
+		_note_if_hidden(key, wtile, HudConst.LABOR_KIND_EXTRACT, {},
+			SourceForecast.IMPROVEMENT_NONE, bool(working.get("overdraws", false)))
 
 ## Fold a worked source the marker cap HID into its tile's roll-up, so the `+N` chip can report it.
 ## A source with a visible slot returns immediately — its own badge already says everything.
@@ -393,34 +603,49 @@ func _note_if_hidden(key: String, tile: Vector2i, kind: String, source: Dictiona
 func hidden_source_state() -> Dictionary:
 	return _hidden_source_state
 
-## Where a source's yield label hangs: its MARKER's slot when it drew in one, the hex centre otherwise.
+## Where a source's ANNOTATION lands: its MARKER's slot when it drew in one, the hex centre otherwise.
+## It is the source-list row's leader-line target and the pending link's end — and it was the on-tile
+## rate pill's anchor before those.
 ##
-## THE HEX CENTRE ALONE WAS A CO-LOCATION BUG. Every label used to anchor there for both webs, so two
+## THE HEX CENTRE ALONE WAS A CO-LOCATION BUG. Every pill used to anchor there for both webs, so two
 ## hunted herds on one hex drew two rates at the identical point, one exactly on top of the other — and
-## a herd sharing a hex with a worked patch did the same. The rates belong to different sources, so
-## they hang off the sources. The hex-centre fallback covers a source with no visible marker.
-func _label_anchor(col: int, row: int, key: String, radius: float, origin: Vector2) -> Vector2:
-	var center := _view._hex_center(col, row, radius, origin)
+## a herd sharing a hex with a worked patch did the same. The annotations belong to different sources,
+## so they hang off the sources; two leader lines converging on one point would read as one source in
+## exactly the same way. The hex-centre fallback covers a source with no visible marker.
+## `hex_center` arrives resolved for `_draw_worked_mark`'s reason — the wrap image is the caller's to
+## pick, and an annotation must hang off the same copy of the hex its ring is drawn on.
+func _label_anchor(hex_center: Vector2, key: String, radius: float) -> Vector2:
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
-		return center
-	return _view.secondary_slot_center(center, slot, radius)
+		return hex_center
+	return _view.secondary_slot_center(hex_center, slot, radius)
 
 ## Queue this source's badge for the deferred flush. A source can be reached by more than one band, so
 ## the LAST queue for a key wins and carries the running crew total — cheaper and simpler than a second
 ## aggregation pass, and correct because `crew[key]` is accumulated before this is called.
 ##
-## Skipped entirely when the source's marker did not draw (`slot_of == -1`: overflowed past the visible
-## cap, or LOD-suppressed at far zoom). What the chip hides is the chip's job to report, not a badge's
-## to draw somewhere arbitrary.
+## **THE ENTRY IS RECORDED EVEN WHERE THE MARKER DID NOT DRAW** (`slot_of == -1`: overflowed past the
+## visible cap, or LOD-suppressed at far zoom); it simply carries no `center`, and the flush skips it,
+## so no PLATE is drawn somewhere arbitrary — what the chip hides is the chip's job to report.
+##
+## ⛔ **IT IS RECORDED BECAUSE THIS IS THE ONE RESOLUTION OF THE BUILD STATE** (issue #650). The
+## plate, the ring's progress ARC and the source list's build cell are three faces of one answer, and
+## the list is drawn at EVERY zoom — a queue that returned before resolving would leave a row with no
+## countdown on exactly the frames where the map has no plate to read it off either.
 ## `builders` is this source's BUILD crew, summed across bands — see `_draw_source_badge` for why a
 ## rung under way has to know it.
-func _queue_source_badge(col: int, row: int, key: String, kind: String, source: Dictionary,
+## `hex_center` is the plate's ANCHOR HEX in screen space, passed in rather than derived from a
+## column here: the food and hunt arms anchor to the BAND's wrap image (`eff_col + delta`, so a
+## source across the seam draws beside the band that works it) while a working anchors to its own
+## marker's (`_hex_center_wrapped`), and a badge that resolved the wrap for itself would eventually
+## disagree with the marker it hangs under.
+## `ring_color` / `selected` are the SOURCE's own worked-ring colour and weight, threaded on because
+## the build ARC is drawn in the flush and must wear exactly the ring it fills — colour says which
+## web, sweep says how far, and a second colour lookup would be free to disagree with the ring itself.
+func _queue_source_badge(hex_center: Vector2, key: String, kind: String, source: Dictionary,
 		improvement: String, crew: int, radius: float, origin: Vector2,
-		builders: int = 0) -> void:
+		ring_color: Color, selected: bool, builders: int = 0) -> void:
 	var slot := _view.secondary_slot_of(key)
-	if slot < 0:
-		return
 	# BUILDING TAKES PRECEDENCE, and the two are mutually exclusive anyway: `next_rung_ready` excludes
 	# the verb already in flight, and `rung_in_progress` answers only for that verb.
 	var ready: Dictionary = {}
@@ -452,7 +677,7 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 		else:
 			stalled = SourceForecast.build_is_stalled(
 				source, float(building.get("progress", 0.0)), builders)
-	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
+	var progress := float(building.get("progress", 0.0))
 	# One entry per source key: a later band working the same source replaces the earlier queue rather
 	# than stacking a second plate on the same marker.
 	for i in range(_deferred_source_badges.size()):
@@ -460,52 +685,100 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 			_deferred_source_badges.remove_at(i)
 			break
 	_deferred_source_badges.append({
-		"key": key, "center": center, "crew": crew, "radius": radius,
+		"key": key,
+		# `Vector2.ZERO` where the marker did not draw — read only behind the `slot >= 0` guard.
+		"center": _view.secondary_slot_center(hex_center, slot, radius) if slot >= 0 else Vector2.ZERO,
+		"slot": slot,
+		"crew": crew, "radius": radius,
+		"ring_color": ring_color,
+		"selected": selected,
 		"ready_glyph": String(ready.get("glyph", "")),
 		"building_glyph": String(building.get("glyph", "")),
-		"building_progress": float(building.get("progress", 0.0)),
+		"building_progress": progress,
 		"stalled": stalled,
+		# **THE TILE CARD'S OWN STRING, COMPOSED HERE AND NOWHERE ELSE** — `≈11 turns (60%)`, or
+		# whichever sentinel the wire spells (blocked / holding / rotting / queued / no estimate).
+		# `DetailFormat.build_countdown_value` answers every one of them, and the documented failure
+		# mode in that file is a SECOND fork missing a newly-spelled sentinel — so the source list
+		# reads this rather than composing a `▸ N turns` of its own. `""` where no rung is in flight.
+		"build_text": DetailFormat.build_countdown_value(
+			SourceForecast.build_turns_remaining(source, HudComposeVocab.BARE_FORECAST_PREFIX),
+			builders, HudFormat.progress_percent(progress),
+			SourceForecast.build_queue_position(source, HudComposeVocab.BARE_FORECAST_PREFIX))
+			if not building.is_empty() else "",
 	})
 
+## THIS FRAME'S BADGE ENTRY FOR A SOURCE, `{}` when the mark pass queued none. The reader that lets
+## the ring's ARC and the source list's build cell come off `_queue_source_badge`'s ONE resolution of
+## the build state — see that function's ⛔.
+func _badge_entry_for(key: String) -> Dictionary:
+	for entry in _deferred_source_badges:
+		if String(entry.get("key", "")) == key:
+			return entry
+	return {}
+
+## The two keys `badge_rung` answers with — the plate's rung RUN and the ink it is drawn in.
+const BADGE_RUNG_TEXT := "text"
+const BADGE_RUNG_COLOR := "color"
+
+## **THE RUNG HALF OF A SOURCE BADGE'S FACE — ONE PRODUCER, BECAUSE TWO SURFACES READ IT.**
+## `""` where the source is merely worked; otherwise at most ONE of the two rung states, a verb being
+## neither offered nor under way at once (`next_rung_ready` excludes the verb in flight).
+##
+## It is PUBLIC and split out of `_draw_source_badge` so a probe can read the face: a draw call
+## renders into a canvas, and `map_preview` could otherwise only photograph a plate whose whole claim
+## is which characters are on it (`harness-map-probes.md` -> `map_build_arc`). Composing it a second
+## time in the harness would be a second producer of the very string under test.
+##
+## **A PERCENT ON A BUILD NOBODY IS STAFFING IMPLIES PROGRESS THAT IS NOT HAPPENING.** The unstaffed
+## face drops the number entirely (see `BADGE_UNSTAFFED_FORMAT`); the plate still says WHICH rung is
+## promised here, and stops saying it is being worked.
+##
+## **A LOSING METER TAKES THE SAME FACE, and it is the wire's verdict rather than a staffing guess**
+## (`docs/plan_standing_upkeep.md` 4.6a). A percent that is falling is the same lie as a percent that
+## is not moving — but a meter merely PARKED, with its keeping covered, keeps its number, because that
+## number is honest and the state is a decision rather than a failure. Both halves are
+## `SourceForecast.build_is_stalled`, resolved at QUEUE time; the work board's rung slot calls the
+## same function, which is what stops the two surfaces disagreeing.
+##
+## **AND A CLIMBING BUILD SHOWS NO PERCENT EITHER — THE METER IS THE RING'S ARC NOW** (issue #650).
+## See `BADGE_BUILDING_FORMAT`, and `_draw_build_arc` for what carries the number instead.
+func badge_rung(entry: Dictionary) -> Dictionary:
+	var building_glyph := String(entry.get("building_glyph", ""))
+	if building_glyph != "":
+		if bool(entry.get("stalled", false)):
+			return {BADGE_RUNG_TEXT: BADGE_UNSTAFFED_FORMAT % building_glyph,
+				BADGE_RUNG_COLOR: HudStyle.WARN}
+		return {BADGE_RUNG_TEXT: BADGE_BUILDING_FORMAT % building_glyph,
+			BADGE_RUNG_COLOR: HudStyle.SIGNAL_DEEP}
+	var ready_glyph := String(entry.get("ready_glyph", ""))
+	if ready_glyph != "":
+		return {BADGE_RUNG_TEXT: "%s%s " % [BADGE_READY_CHEVRON, ready_glyph],
+			BADGE_RUNG_COLOR: HudStyle.SIGNAL}
+	return {BADGE_RUNG_TEXT: "", BADGE_RUNG_COLOR: HudStyle.SIGNAL}
+
 ## Render (and drain) the deferred badge batch — the crew count, and the ⌃ chevron when the source can
-## climb. Drawn in `flush_yield_labels` alongside the yield labels, i.e. LAST in `_draw`.
+## climb. Drawn in `flush_yield_labels` alongside the build arcs, i.e. LAST in `_draw`.
 func _draw_source_badge(entry: Dictionary) -> void:
+	# The marker did not draw (overflowed past the visible cap, or LOD-suppressed) — the entry exists
+	# for the ROW's sake (see `_queue_source_badge`), and there is nothing on the hex to dock a plate
+	# under. The `+N` chip reports what the cap hid.
+	if int(entry.get("slot", -1)) < 0:
+		return
 	var radius := float(entry.get("radius", 0.0))
 	var crew := int(entry.get("crew", 0))
 	if crew <= 0:
 		return
-	var ready_glyph := String(entry.get("ready_glyph", ""))
 	# MapView is a Node2D, so there is no theme to ask — `ThemeDB.fallback_font` is what every
-	# other map-side text draw uses (`_draw_yield_label`, the count pills).
+	# other map-side text draw uses (the count pills, the band name plates).
 	var font: Font = ThemeDB.fallback_font
 	if font == null:
 		return
 	var font_size := int(clampf(radius * BADGE_FONT_SIZE_FACTOR, BADGE_FONT_SIZE_MIN, BADGE_FONT_SIZE_MAX))
 	var crew_text := "%s%d" % [BADGE_CREW_GLYPH, crew]
-	# THE RUNG FACE — at most one of the two, a verb being neither offered nor under way at once.
-	var rung_text := ""
-	var rung_color := HudStyle.SIGNAL
-	var building_glyph := String(entry.get("building_glyph", ""))
-	if building_glyph != "":
-		# **A PERCENT ON A BUILD NOBODY IS STAFFING IMPLIES PROGRESS THAT IS NOT HAPPENING.** The
-		# unstaffed face drops the number entirely (see `BADGE_UNSTAFFED_FORMAT`); the plate still says
-		# WHICH rung is promised here, and stops saying it is being worked.
-		#
-		# **A LOSING METER TAKES THE SAME FACE, and it is the wire's verdict rather than a staffing
-		# guess** (§4.6a). A percent that is falling is the same lie as a percent that is not moving —
-		# but a meter merely PARKED, with its keeping covered, keeps its number, because that number is
-		# honest and the state is a decision rather than a failure. Both halves are
-		# `SourceForecast.build_is_stalled`, resolved at queue time; the work board's rung slot calls
-		# the same function, which is what stops the two surfaces disagreeing.
-		if bool(entry.get("stalled", false)):
-			rung_text = BADGE_UNSTAFFED_FORMAT % building_glyph
-			rung_color = HudStyle.WARN
-		else:
-			rung_text = BADGE_BUILDING_FORMAT % [building_glyph,
-				int(round(float(entry.get("building_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))]
-			rung_color = HudStyle.SIGNAL_DEEP
-	elif ready_glyph != "":
-		rung_text = "%s%s " % [BADGE_READY_CHEVRON, ready_glyph]
+	var rung: Dictionary = badge_rung(entry)
+	var rung_text := String(rung[BADGE_RUNG_TEXT])
+	var rung_color: Color = rung[BADGE_RUNG_COLOR]
 	var text := rung_text + crew_text
 	var run: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
 	var pad := font_size * BADGE_PAD_FACTOR
@@ -527,15 +800,20 @@ func _draw_source_badge(entry: Dictionary) -> void:
 ## One source's worked mark: the ring on its marker's slot, plus the tile-level outline underneath.
 ## `slot_of(key) == -1` means the marker did not draw at all (overflowed or far zoom), so only the
 ## outline renders — the mark degrades to the aggregate rather than landing somewhere arbitrary.
-func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: bool,
-		radius: float, origin: Vector2) -> void:
+## `hex_center` is the source's ANCHOR HEX in screen space, passed in rather than derived from a
+## column here for `_queue_source_badge`'s reason one function down: the food and hunt arms anchor to
+## the BAND's wrap image (`eff_col + delta`, so a source across the seam draws beside the band that
+## works it) while a working anchors to its own marker's (`_hex_center_wrapped`). A mark that resolved
+## the wrap for itself would eventually disagree with the marker it rings.
+func _draw_worked_mark(hex_center: Vector2, key: String, color: Color, selected: bool,
+		radius: float) -> void:
 	var outline := color
 	outline.a = WORKED_TILE_OUTLINE_ALPHA
-	_view._outline_hex(col, row, radius, origin, outline, WORKED_TILE_OUTLINE_WIDTH)
+	_view._outline_hex_at(hex_center, radius, outline, WORKED_TILE_OUTLINE_WIDTH)
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
 		return
-	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
+	var center := _view.secondary_slot_center(hex_center, slot, radius)
 	var ring_radius := radius * WORKED_RING_FACTOR
 	var ring_color := color
 	if selected:
@@ -544,8 +822,46 @@ func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: 
 		_view.draw_circle(center, ring_radius, glow)
 	else:
 		ring_color.a = color.a * WORKED_RING_OTHER_ALPHA
+	# **A SOURCE WITH A RUNG UNDER WAY DRAWS ITS RING AS A TRACK** — the progress arc is painted over
+	# it in the badge flush, so nothing later can scribble on the meter. The build state is READ from
+	# the badge entry, never resolved a second time (`_badge_entry_for`).
+	if String(_badge_entry_for(key).get("building_glyph", "")) != "":
+		ring_color.a *= RING_TRACK_ALPHA_FACTOR
 	var width := WORKED_RING_WIDTH_SELECTED if selected else WORKED_RING_WIDTH_OTHER
-	_view.draw_arc(center, ring_radius, 0, TAU, 28, ring_color, width)
+	_view.draw_arc(center, ring_radius, 0, TAU, WORKED_RING_SEGMENTS, ring_color, width)
+
+## THE LEADER LINE from a SOURCE LIST ROW to the source it names, one routine for every kind of
+## source. `color` is the source's own RING colour and the alpha is applied here, so a hunted herd's
+## link and a worked working's can differ only in the hue the ring already stated — never in weight or
+## opacity.
+##
+## **IT USED TO RUN FROM THE BAND'S TOKEN, AND IT USED TO SKIP THE PLANT WEB** (issue #650). The rates
+## left the map for a docked list, so the thing that needs joining to a hex is the ROW — and every
+## row draws one now, forage included. The signature is unchanged: the caller passes the row's end
+## where the band's centre used to go.
+##
+## `target` is the source's own MARKER anchor, not its hex centre, wherever the caller has one: two
+## workings on one hex are two markers in two edge slots, and links to the hex centre would land the
+## pair on the same point and read as one.
+##
+## A link whose ends straddle the horizontal seam is dropped rather than drawn across the whole map.
+func _draw_worked_link(from_point: Vector2, target: Vector2, color: Color) -> void:
+	if _link_spans_seam(from_point, target):
+		return
+	var link := color
+	link.a = WORKED_LINK_ALPHA
+	_view.draw_line(from_point, target, link, WORKED_LINK_WIDTH)
+
+## The public seam `MapView` draws a row's leader line through — both ends in MAP-LOCAL units. It
+## exists so the row pass does not have to reach a private, and so the seam test and the shared
+## alpha/width stay this file's, exactly as they are for every other link it draws.
+func draw_row_link(row_point: Vector2, target: Vector2, color: Color) -> void:
+	_draw_worked_link(row_point, target, color)
+
+## Are these two ends on opposite sides of the horizontal seam — i.e. would a line between them be a
+## stripe across the whole map rather than a join? One test for every link this renderer draws.
+func _link_spans_seam(a: Vector2, b: Vector2) -> bool:
+	return absf(a.x - b.x) > _view.last_map_size.x * LINK_MAX_SPAN_FACTOR
 
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - three RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
@@ -553,14 +869,17 @@ func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: 
 ##    boundary == actually-in-range) — forage (green, `work_range`), hunt (red, `hunt_reach`,
 ##    only when it extends past `work_range`), and scout sight (azure, `scout_reveal_radius`,
 ##    only when scouts are staffed). Distinct colors so the nested reaches read apart at a glance.
-##  - worked forage tiles: strong green fill on each `forage` assignment's target tile.
-##  - hunted herds: a red ring on the herd tile + a band→herd link (the herd can sit outside
-##    the forage border — hunt reach = work_range + leash).
+##  - the SOURCE ROWS (`compute_source_rows`) — the model the docked `BandSourceList` renders and
+##    the anchors its leader lines run to. The worked RINGS themselves belong to
+##    `draw_worked_source_marks`, which runs for every player band whatever is selected.
 ## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
 func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
-	# Start every frame's annotation batch empty (cleared BEFORE the early-outs, so a deselected band
-	# leaves no stale labels for the flush to paint).
-	_deferred_yield_labels.clear()
+	# Start every frame's row model empty (cleared BEFORE the early-outs, so a deselected band leaves
+	# no stale rows for the source list to render and no stale anchors for its leader lines).
+	_source_rows.clear()
+	_selected_band_center = Vector2.ZERO
+	_selected_band_tile = NO_SELECTED_TILE
+	_source_total_text = ""
 	if _view.selected_unit_id < 0:
 		return
 	var band := _selected_player_band()
@@ -597,77 +916,387 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	if scout_reveal_radius > 0:
 		_draw_range_border(eff_col, band_row, scout_reveal_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
 
-	# 2. Worked forage tiles + 3. hunted herds, from the band's assignments. Each staffed source is
-	# annotated with its per-turn `actual_yield` (LOD-suppressed at far zoom so tiny hexes stay clean).
-	var show_yields := radius >= _view.ICON_MIN_DETAIL_RADIUS
+	# 2. THE SOURCE ROWS — the model behind the docked `BandSourceList` (issue #650), one entry per
+	#    staffed source across all three webs. The rates left the map: a pill is ~90px and two markers
+	#    in one hex's edge slots sit ~55px apart, so a rate could not live above its own marker.
+	#
+	#    **BUILT AT EVERY ZOOM.** The old pills carried a far-zoom LOD gate (`show_yields`) because a
+	#    map-scale label is unreadable; the list is SCREEN-SPACE, so a fixed-size panel is exactly as
+	#    readable at hex radius 12 as at 80 — the `BAND_NAME_PILL` property.
+	#
+	#    **THE LEADER LINES ARE NOT DRAWN HERE.** A link now runs from the ROW to the source's anchor
+	#    rather than from the band's token, and the row's y is not known until the panel has been
+	#    placed — so `MapView` draws them, in the SAME frame, immediately after placing it.
+	_selected_band_center = band_center
+	_selected_band_tile = Vector2i(band_col, band_row)
+	_source_rows = compute_source_rows(radius, origin)
+
+	# 3. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
+	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
+	_draw_band_pending(band, band_col, band_row, eff_col, band_center, radius, origin)
+
+	# 4. Travel destination: a confirmed in-progress move the snapshot reports (`is_traveling`).
+	#    Line + reticle toward the wrapped-nearest copy of the target, so it follows the short
+	#    (possibly seam-crossing) path the sim actually takes. Works for bands AND expeditions.
+	_draw_travel_destination(band, band_col, band_row, eff_col, band_center, radius, origin)
+
+## ---- THE SELECTED BAND'S SOURCE ROWS (issue #650) ---------------------------------------------
+
+## THIS FRAME'S ROWS, for `MapView` to hand to the docked `BandSourceList`. Empty with nothing
+## selected.
+func source_rows() -> Array[Dictionary]:
+	return _source_rows
+
+## The selected band's token centre in MAP-LOCAL units this frame — where the list docks BESIDE.
+func selected_band_center() -> Vector2:
+	return _selected_band_center
+
+## …and its RAW tile (the snapshot's own column/row, unwrapped), `NO_SELECTED_TILE` with nothing
+## selected. `BandMarkerRenderer.name_pill_offset` is keyed by exactly that tile.
+func selected_band_tile() -> Vector2i:
+	return _selected_band_tile
+
+## **THE BAND'S WHOLE INCOME ACROSS EVERY SOURCE**, already composed, unchanged as the player pages.
+##
+## ⛔ **IT IS NOT ONE SUMMED NUMBER.** Adding food to fodder to hide is the retired trade axis under a
+## new name. `SourceForecast.yield_components` is the signed twin of the work-zone chips' own
+## producer: it states every ACCOUNT and renders only the non-zero ones, so a band cutting wood and
+## foraging reads `+1.20 /turn · +0.40 wood` rather than a meaningless `1.60`.
+func source_total_text() -> String:
+	return _source_total_text
+
+## ---- the attention ladder ---------------------------------------------------------------------
+##
+## Four classes, each a SHIPPED predicate, ranked high-first; `ATTENTION_NONE` is an ordinary row.
+## The sort puts them at the top of page 1, which is the whole point: **a row you would act on must
+## never be the row that got cut.**
+##
+## ⛔ **THERE IS STILL NO "NOBODY IS ON IT" CLASS, AND `ATTENTION_OVERSTAFFED` IS NOT IT.** A working
+## with NO crew (`HudDepositVocab.DEPOSIT_RUNWAY_IDLE`) by construction never appears in this list,
+## every row having `workers > 0`, and `idle_workers` is a BAND-level turn-orb row. The class below is
+## the opposite reading — a crew that IS here and is bigger than its source can use — which every web
+## can answer per source. **What the retired note said was that the design's idle-crew class had no
+## shipped predicate; this one has, and it is `SourceForecast.crew_is_wasted`.**
+const ATTENTION_NONE := 0
+## A crew bigger than its source can use, on ALL THREE WEBS — `SourceForecast.crew_is_wasted` against
+## `max_useful_workers` for a patch or a herd and `HudDepositVocab.max_useful_cutters` for a working.
+##
+## ⛔ **IT RANKS BELOW THE THREE ABOVE IT, WHICH IS WHY THEY EACH MOVED UP ONE.** Idle hands are a
+## WASTE — the work goes on, at the rate the ground allows — where the three above are each a LOSS: a
+## rung sliding back, a stock cut past its renewal, a build the pool is spending on and not
+## finishing. A player reading top-down should meet what they are losing before what they are merely
+## not gaining.
+const ATTENTION_OVERSTAFFED := 1
+## Short of keepers — the rung is slipping back down. `DetailFormat.rung_is_at_risk` on a food source,
+## `HudDepositVocab.is_at_risk` on a working; both wear the tile card's own words.
+const ATTENTION_UNDER_KEPT := 2
+## Taking more than the source renews — the sim's own `overdraws` verdict. The RATE cell already
+## carries the `⚠` and the WARN ink, so the row spells it once.
+const ATTENTION_OVER_CUT := 3
+## A declared build that is unstaffed or going backwards (`SourceForecast.build_is_stalled`, read off
+## the badge entry). The BUILD cell already carries the sentinel's own face.
+const ATTENTION_BUILD_STALLED := 4
+
+## **ONE ROW PER STAFFED SOURCE, ACROSS ALL THREE WEBS** — the model behind the docked
+## `BandSourceList`, and the anchors its leader lines run to.
+##
+## ⛔ **IT RE-DERIVES NOTHING THE MARK PASS ALREADY RESOLVED.** The crew comes off `_source_crew` and
+## the build state off `_badge_entry_for`, both filled by `draw_worked_source_marks` — which MapView
+## calls first. The row's `⚒N` and the marker badge's `⚒N` are joined by a literal leader line on
+## screen, so two producers of one number is a disagreement a player sees in a single glance.
+##
+## The `anchor` is MAP-LOCAL and is exactly the point the retired rate pill hung over
+## (`_label_anchor`): the source's own marker slot, falling back to the hex centre where no marker
+## drew. Two workings on one hex are two markers in two edge slots, so anchoring to the hex centre
+## would land both leader lines on one point and read as one source.
+##
+## **THE ROW BUILD IS ALSO WHERE THE FOOTER'S TOTAL IS ACCUMULATED** (`_source_total_text`), because
+## this is the one walk that visits every one of the band's sources.
+func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	_source_total_text = ""
+	if _view.selected_unit_id < 0:
+		return rows
+	var band := _selected_player_band()
+	if band.is_empty():
+		return rows
+	var pos: Array = Array(band.get("pos", []))
+	if pos.size() != 2:
+		return rows
+	var band_col := int(pos[0])
+	var eff_col := _view._band_effective_col(band_col, radius, origin)
+	var total_food := 0.0
+	var total_fodder := 0.0
+	# The per-source material vectors, merged by id at the end — never summed across ids.
+	var material_sets: Array = []
 	for entry_variant in _labor_assignments_of_marker(band):
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		var kind := String(entry.get("kind", "")).strip_edges().to_lower()
 		if int(entry.get("workers", 0)) <= 0:
 			continue
+		var kind := String(entry.get("kind", "")).strip_edges().to_lower()
+		# **WHICH ACCOUNT'S ZERO THIS ROW MAY PRINT**, resolved once for every arm off the SHARED seam
+		# rather than per branch — the same answer the tile card's deposit rows and the work row's
+		# second line are held to (`SourceForecast.row_zero_account`).
+		var zero_account := SourceForecast.row_zero_account(entry, kind)
+		var materials := _entry_materials(entry)
+		var row := {}
 		if kind == LABOR_KIND_FORAGE:
-			var tcol := eff_col + _view._wrapped_col_delta(band_col, int(entry.get("target_x", -1)))
+			var tx := int(entry.get("target_x", -1))
 			var trow := int(entry.get("target_y", -1))
-			if trow < 0 or trow >= _view.grid_height:
+			# **THE COLUMN IS GUARDED WITH THE ROW, the shape both siblings use** — the hunt arm
+			# below and `draw_worked_source_marks`' own forage arm. A row with `target_x == -1` is
+			# keyed on tile `(-1, y)` and hangs its leader line off an anchor resolved from a
+			# negative column: the row's CLICK is refused one layer out (`BandSourceList`), the LINE
+			# is not, so the drop belongs here where the row is made.
+			if tx < 0 or trow < 0 or trow >= _view.grid_height:
 				continue
-			# (The worked ring itself is drawn by `draw_worked_source_marks`, for EVERY player band.)
-			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
-			# (it answers the crew's own floor), NOT the client-derived `actual > sustainable` — mirrors
-			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
-			# trips ⚠.
-			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
-				var fcenter := _label_anchor(tcol, trow, _view.secondary_food_key(int(entry.get("target_x", -1)), trow), radius, origin)
-				var forage_overdraw := yield_label_overdraw(entry)
-				# The FODDER component rides along for the one-slot rule in `_draw_yield_label`; a
-				# forage patch normally pays food, so it changes nothing here — except on the patch
-				# this exists for, a sown hay Field, which pays fodder alone.
-				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
-					_entry_floor_glyph(entry), _entry_fodder(entry), _entry_materials(entry))
+			# The two food arms keep their `has()` gates: a row the wire never described a take for
+			# has no rate to state, exactly as the retired pill required.
+			if not (entry.has("realized_yield") or entry.has("actual_yield")):
+				continue
+			var tile := Vector2i(tx, trow)
+			var key := _view.secondary_food_key(tx, trow)
+			var food := _entry_realized_yield(entry)
+			var fodder := _entry_fodder(entry)
+			total_food += food
+			total_fodder += fodder
+			material_sets.append(materials)
+			var patch: Dictionary = _view.forage_patch_lookup.get(tile, {})
+			row = _source_row(key, tile,
+				_label_anchor(_view._hex_center(eff_col + _view._wrapped_col_delta(band_col, tx),
+					trow, radius, origin), key, radius),
+				# **THE ROW'S ICON IS THE MARKER'S OWN FACE**, through the one resolver, so the
+				# leader line cannot run from a mushroom to a fish.
+				SecondaryMarkerRenderer.face_for_food_site(_view.food_site_lookup.get(tile, {})),
+				FORAGE_WORKED_COLOR, entry, food, fodder, materials, zero_account,
+				# **THE TWO FOOD WEBS NEVER DROP A MATERIAL'S NOUN.** A deer's icon says nothing
+				# about `hide`, so the noun is the only thing naming that account.
+				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
+				_food_attention_text(patch, SourceForecast.SOURCE_KIND_FORAGE),
+				_food_overstaffed_text(entry, patch, SourceForecast.SOURCE_KIND_FORAGE),
+				food)
 		elif kind == LABOR_KIND_HUNT:
-			var herd := _view._herd_by_id(String(entry.get("fauna_id", "")))
-			var herd_col := int(entry.get("target_x", -1))
-			var herd_row := int(entry.get("target_y", -1))
+			# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
+			# target is only the fallback for a herd that left the visible fauna set.
+			var herd_id := String(entry.get("fauna_id", ""))
+			var herd := _view._herd_by_id(herd_id)
+			var hx := int(entry.get("target_x", -1))
+			var hrow := int(entry.get("target_y", -1))
 			if not herd.is_empty():
-				herd_col = int(herd.get("x", herd_col))
-				herd_row = int(herd.get("y", herd_row))
-			if herd_col < 0 or herd_row < 0 or herd_row >= _view.grid_height:
+				hx = int(herd.get("x", hx))
+				hrow = int(herd.get("y", hrow))
+			if hx < 0 or hrow < 0 or hrow >= _view.grid_height:
 				continue
-			var hc := _view._hex_center(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row, radius, origin)
-			# Link the band to the herd it is hunting (skip a wrap-spanning artifact).
-			if absf(band_center.x - hc.x) <= _view.last_map_size.x * 0.4:
-				_view.draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
-			# (The worked ring itself is drawn by `draw_worked_source_marks`, for EVERY player band.)
-			# Depletable herd: HEADLINE the STEADY realized average (`realized_yield`), NOT the
-			# kill-credit PULSE (`actual_yield` is 0 on a wait turn, a spike on a kill turn) — mirrors
-			# the Band panel's hunt-headline rule in `SourceForecast.source_yield_readout` (which now reads
-			# `realized_yield` for both hunt and forage), so the map label and the Band panel can never
-			# disagree. Falls back to the old `sustainable_yield` if `realized_yield` is absent. The
-			# overhunt ⚠ flag is the sim-answered `overdraws` bool (it answers the crew's own floor) —
-			# NOT `actual > sustainable`, which false-positives on a kill turn when a banked animal spikes.
-			if show_yields and (entry.has("realized_yield") or entry.has("sustainable_yield")):
-				var hlabel := _label_anchor(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row,
-					_view.secondary_herd_key(String(entry.get("fauna_id", ""))), radius, origin)
-				var overhunt := yield_label_overdraw(entry)
-				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
-					else float(entry.get("sustainable_yield", 0.0))
-				# NO FODDER ARGUMENT, and that is a decision rather than an omission (issue #449): no
-				# animal is harvested for feed, so a hunt row's fodder is a structural zero and passing
-				# it would only offer the label a fall-through it can never take. **THE MATERIALS ARE
-				# PASSED, and they are the arm that closes the inedible quarry's `+0.00`** — a wolf's
-				# steady food rate is honestly 0, and its pelts are the whole of what the hunt pays.
-				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, _entry_floor_glyph(entry),
-					0.0, _entry_materials(entry))
+			if not (entry.has("realized_yield") or entry.has("sustainable_yield")):
+				continue
+			var key := _view.secondary_herd_key(herd_id)
+			# HEADLINE the STEADY realized average, not the kill-credit PULSE (`actual_yield` is 0 on
+			# a wait turn and a spike on a kill turn) — the Band panel's own hunt-headline rule, so
+			# the row and the panel can never disagree.
+			var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
+				else float(entry.get("sustainable_yield", 0.0))
+			total_food += hunt_rate
+			material_sets.append(materials)
+			row = _source_row(key, Vector2i(hx, hrow),
+				_label_anchor(_view._hex_center(eff_col + _view._wrapped_col_delta(band_col, hx),
+					hrow, radius, origin), key, radius),
+				SecondaryMarkerRenderer.face_for_herd(herd),
+				# NO FODDER, and that is a decision rather than an omission (issue #449): no animal
+				# is harvested for feed, so a hunt row's fodder is a structural zero.
+				HUNT_WORKED_COLOR, entry, hunt_rate, 0.0, materials, zero_account,
+				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
+				_food_attention_text(herd, SourceForecast.SOURCE_KIND_HERD),
+				_food_overstaffed_text(entry, herd, SourceForecast.SOURCE_KIND_HERD),
+				hunt_rate)
+		elif kind == HudConst.LABOR_KIND_EXTRACT:
+			var material := String(entry.get("material", "")).strip_edges()
+			var wtile := Vector2i(int(entry.get("target_x", -1)), int(entry.get("target_y", -1)))
+			var key := _view.secondary_working_key(wtile.x, wtile.y, material)
+			# **THE `(tile, material)` JOIN IS ASKED ONCE, IN `compute_worked_workings`**, and this
+			# arm reads its answer: a row pointing at a hex the `deposits` section carries no such
+			# working on drew no marker and no ring, so a row and a leader line into that empty air
+			# would be the phantom the join exists to refuse.
+			if not _worked_workings.has(key):
+				continue
+			# **NO `has()` GATE, unlike the two food arms** — a working ALWAYS pays into its material
+			# account (the material is half its identity), so there is always a rate to state, and
+			# `zero_account` is what makes an empty take read `+0.00 wood` rather than claim a food
+			# zero.
+			var food := _entry_realized_yield(entry)
+			total_food += food
+			material_sets.append(materials)
+			var deposit := _working_row(wtile, material)
+			var face := SecondaryMarkerRenderer.face_for_material(material)
+			row = _source_row(key, wtile,
+				_label_anchor(_view._hex_center_wrapped(wtile.x, wtile.y, radius, origin),
+					key, radius),
+				face, EXTRACT_WORKED_COLOR, entry, food, 0.0, materials, zero_account,
+				# **THE ROW DROPS THE MATERIAL'S NOUN WHERE THE ROW ITSELF DRAWS THE MATERIAL'S
+				# MARK.** `marker_names_material` is the caller's statement about its OWN surface,
+				# re-answered here: the pill asked whether the HEX's marker drew, and a row asks
+				# whether the ROW's icon does. A face with neither sprite nor glyph keeps the noun,
+				# which is the only thing naming the account there.
+				SecondaryMarkerRenderer.face_renders(face),
+				# **THE MARK FORKS ON THE GROUND'S OWN RENEWAL RATE, NOT ON THE FLOOR ALONE** — a
+				# finite seam is offered no dial, so `♻` over a quarry would claim a renewal the rock
+				# cannot make.
+				HudDepositVocab.floor_mark(deposit, _entry_floor(entry)),
+				# ⛔ **THE KEEPING QUESTION ALONE — the crew is deliberately NOT passed.** That
+				# composer ranks the two hazards for a ONE-LINE CELL; here the row's own ladder is
+				# what ranks them, so each class is handed the clause it is the class for and the
+				# waste arm arrives below as its own argument.
+				HudDepositVocab.hazard_clause(deposit),
+				# **AND THE WASTE QUESTION, AT THIS BAND'S OWN FLOOR** — `max_useful_cutters` is the
+				# same quotient the working's compose sheet caps its stepper at, so a `+` the sheet
+				# refused and a row that flags the hands already standing there are one ceiling.
+				HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
+					HudDepositVocab.max_useful_cutters(deposit, _entry_floor(entry))),
+				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is
+				# a structural zero here (see the sort key's own note on `_source_row`).
+				_entry_material_rate(entry, material))
+		if row.is_empty():
+			continue
+		rows.append(row)
+	# ATTENTION FIRST, THEN YIELD, THEN THE KEY — a STABLE, TOTAL order, so page 1 cannot reshuffle
+	# between frames while the player is reading it.
+	rows.sort_custom(_row_precedes)
+	_source_total_text = SourceForecast.yield_components(total_food, total_fodder,
+		SourceForecast.YIELD_ACCOUNT_FOOD, SourceForecast.merged_material_rows(material_sets))
+	return rows
 
-	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
-	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
-	_draw_band_pending(band, band_col, band_row, eff_col, band_center, radius, origin)
+## One row, assembled from the parts its arm resolved. Everything common to the three webs is HERE —
+## the rate composition, the overdraw flag, the crew, the build cell and the attention rank — so the
+## arms differ only in the facts that genuinely differ between webs.
+func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary, color: Color,
+		entry: Dictionary, food: float, fodder: float, materials: Array, zero_account: String,
+		names_material: bool, floor_glyph: String, attention_text: String,
+		overstaffed_text: String, sort_yield: float) -> Dictionary:
+	var badge := _badge_entry_for(key)
+	var overdraw := yield_label_overdraw(entry)
+	# Composed EXACTLY as the retired pill composed it, through the same function: the rate, then the
+	# overdraw flag, then the floor mark. `""` where the source pays into no account at all —
+	# `row_zero_account`'s own caller contract, and the row then states no rate.
+	var rate_text := _yield_label_rate_text(food, fodder, materials, zero_account, names_material)
+	if rate_text != "":
+		if overdraw:
+			rate_text += " " + YIELD_OVERHUNT_FLAG
+		if floor_glyph != "":
+			rate_text += " " + floor_glyph
+	var attention := ATTENTION_NONE
+	if bool(badge.get("stalled", false)):
+		attention = ATTENTION_BUILD_STALLED
+		# The build cell already carries the sentinel's own face; spelling it twice on one row wastes
+		# the only column that can say anything else.
+		attention_text = ""
+	elif overdraw:
+		attention = ATTENTION_OVER_CUT
+		# The rate cell already carries the `⚠` and the WARN ink.
+		attention_text = ""
+	elif attention_text != "":
+		attention = ATTENTION_UNDER_KEPT
+	elif overstaffed_text != "":
+		# **LAST, AND ONLY WHERE NOTHING IS BEING LOST.** A source that is ALSO slipping, over-cut or
+		# stalled already spends its one text cell on the louder fact — the clause is not joined to
+		# it, because two hazards on one row is how the column stops being readable at a glance.
+		attention = ATTENTION_OVERSTAFFED
+		attention_text = overstaffed_text
+	return {
+		"key": key,
+		"tile": tile,
+		"anchor": anchor,
+		"color": color,
+		"sprite": face.get("sprite"),
+		"glyph": String(face.get("glyph", "")),
+		"crew": int(_source_crew.get(key, 0)),
+		"rate_text": rate_text,
+		"overdraw": overdraw,
+		"build_text": String(badge.get("build_text", "")),
+		"attention": attention,
+		"attention_text": attention_text,
+		# **THE SORT KEY IS THE FIGURE THE ROW HEADLINES, not a second reading of the entry.** It was
+		# `_entry_realized_yield` — which is the headline on a forage row but NOT on a HUNT one,
+		# where the headline falls back to `sustainable_yield` when the wire published no realized
+		# average. A deer showing `+0.20` then sorted on its `actual_yield` of 0.46 and landed ABOVE
+		# a patch showing `+0.27`: a list that states it is ordered by yield, printing its numbers
+		# out of order. One number, read once, and the order is the one on screen — **which is why
+		# the ARM supplies it** rather than this composer picking a field.
+		#
+		# ⛔ **AND A WORKING'S HEADLINE IS ITS MATERIAL RATE, NOT ITS FOOD.** `systems::labor`'s
+		# `Extract` arm leaves `SourceYield::ZERO` on the row by design — a deposit must not pollute
+		# `food_income` — so a working paying `+3.00 wood` sorted at zero, below every patch paying
+		# `+0.01 /turn` and tied with every other working. **The key is therefore a PER-TURN RATE in
+		# the row's own account, and it orders three webs that do not share a unit**: it says *how
+		# much this source pays per turn as the row states it*, and NEVER that a unit of wood is
+		# worth a unit of food. There is no conversion to make — the trade axis this client could
+		# have asked one from is retired (arc #527) — so the honest reading of the order is *the
+		# sources each web pays most from, interleaved*, which is what a single list of three webs
+		# can mean at all.
+		"sort_yield": sort_yield,
+	}
 
-	# 6. Travel destination: a confirmed in-progress move the snapshot reports (`is_traveling`).
-	#    Line + reticle toward the wrapped-nearest copy of the target, so it follows the short
-	#    (possibly seam-crossing) path the sim actually takes. Works for bands AND expeditions.
-	_draw_travel_destination(band, band_col, band_row, eff_col, band_center, radius, origin)
+## **IS THIS FOOD SOURCE SHORT OF KEEPERS, AND IN WHICH WEB'S WORDS** — `⚠ slipping` on the plant web,
+## `⚠ drifting` on the animal one, `""` when its keeping is paid. The tile card's own pair
+## (`DetailFormat.rung_under_kept_word`), so a row and the card cannot name one failure two ways.
+##
+## **THE RUNG ARGUMENT IS THE SOURCE'S OWN AT-RISK RUNG.** `rung_is_at_risk` is ROUTING plus a
+## verdict — it decides which of a CARD's two rung rows may wear the mark — and a list row is the
+## whole SOURCE rather than one of its rungs, so it asks about the rung the shortfall is actually
+## about. `SourceForecast.at_risk_rung` is that answer and is the same one the card routes on.
+##
+## The prefix is BARE because the dicts in hand here are the map's own — a `forage_patches` row and a
+## `herds` row — not the `patch_`-prefixed `tile_info` the compose sheets carry. `RungGates` reads
+## these same dicts with the same prefix one function over.
+func _food_attention_text(src: Dictionary, source_kind: String) -> String:
+	if src.is_empty():
+		return ""
+	var prefix := HudComposeVocab.BARE_FORECAST_PREFIX
+	if not DetailFormat.rung_is_at_risk(src, prefix, source_kind,
+			SourceForecast.at_risk_rung(src, prefix, source_kind)):
+		return ""
+	# The glyph-then-state-word pair, in the one format the workings' own hazard clause already uses
+	# — one spelling of "hazard mark, then what is happening to it".
+	return HudDepositVocab.DEPOSIT_HAZARD_CLAUSE_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, DetailFormat.rung_under_kept_word(source_kind)]
+
+## **IS THIS FOOD CREW BIGGER THAN ITS SOURCE CAN USE** — `⚠ overstaffed`, the deposit arm's own
+## clause from the same producer, because it is the same condition. `""` where the crew fits and where
+## the source is not on the map at all (a herd that left the visible fauna set prices no ceiling, and
+## a row must never flag waste it cannot measure).
+##
+## **THE CEILING IS `max_useful_workers`, WHICH IS THE WORK BOARD'S AND THE STEPPER'S** — the row and
+## the panel are joined by a leader line on screen, so two readings of *how many hands this source can
+## use* would be a disagreement the player sees in one glance.
+##
+## ⛔ **THE HUNT ARM CARRIES THE SIM'S PUBLISHED PLATEAU ONTO THE FORECAST, exactly as the work board
+## does.** Without it `max_useful_workers` falls through to the closed form, which divides by a reach
+## carrying no attack and no defense, and a fight-bound quarry reads a ceiling the compose sheet's own
+## curve disagrees with. The forage arm deliberately does not — its `0` is a structural *does not
+## apply*, never *no crew is useful here*.
+func _food_overstaffed_text(entry: Dictionary, src: Dictionary, source_kind: String) -> String:
+	if src.is_empty():
+		return ""
+	var forecast := SourceForecast.forecast_inputs(src, source_kind,
+		HudComposeVocab.BARE_FORECAST_PREFIX, _entry_floor(entry))
+	if source_kind == SourceForecast.SOURCE_KIND_HERD:
+		forecast = SourceForecast.with_published_useful_crew(forecast, entry)
+	return HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
+		SourceForecast.max_useful_workers(forecast))
+
+## The row order: attention descending, then realized yield descending, then the KEY ascending. The
+## key tie-break is what makes it TOTAL — two calm rows at identical yields would otherwise be free
+## to swap places between frames, and the pager's page 1 must hold still while it is being read.
+static func _row_precedes(a: Dictionary, b: Dictionary) -> bool:
+	var a_rank := int(a.get("attention", ATTENTION_NONE))
+	var b_rank := int(b.get("attention", ATTENTION_NONE))
+	if a_rank != b_rank:
+		return a_rank > b_rank
+	var a_yield := float(a.get("sort_yield", 0.0))
+	var b_yield := float(b.get("sort_yield", 0.0))
+	if not is_equal_approx(a_yield, b_yield):
+		return a_yield > b_yield
+	return String(a.get("key", "")) < String(b.get("key", ""))
 
 ## Draw the selected herd's GRAZING RANGE — the hex tiles within `graze_range_radius` of its tile — as
 ## a filled + outlined region (Grazing Phase 2b-iii). This is the EXACT ring the sim grazes / derives K
@@ -787,8 +1416,28 @@ func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col:
 				var hcol := eff_col + _view._wrapped_col_delta(band_col, int(herd.get("x", -1)))
 				var hc := _view._hex_center(hcol, hrow, radius, origin)
 				_draw_dashed_hex(hcol, hrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
-				if absf(band_center.x - hc.x) <= _view.last_map_size.x * 0.4:
+				if not _link_spans_seam(band_center, hc):
 					_draw_dashed_line(band_center, hc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
+			elif kind == HudConst.LABOR_KIND_EXTRACT:
+				# **A JUST-ORDERED CREW ON A WORKING GETS THE SAME OPTIMISTIC PAIR** (issue #650). The
+				# record has always carried `extract` rows — `HudBandLaborState.record_pending_assign`
+				# takes the `material` half-key for exactly this row kind — and this pass read only
+				# the two food kinds, so ordering a crew onto a wood or a rock was the one assign in
+				# the client that drew NOTHING until the snapshot confirmed it.
+				var wrow := int(a.get("y", -1))
+				if wrow < 0 or wrow >= _view.grid_height:
+					continue
+				var wcol := eff_col + _view._wrapped_col_delta(band_col, int(a.get("x", -1)))
+				# The pending link hangs off the working's marker where one exists and off the hex
+				# centre where it does not — which is the ORDINARY case here, a working's marker
+				# existing only once a CONFIRMED crew is on it (`compute_worked_workings`). That is
+				# what `_label_anchor`'s fallback is, so no branch is written for it.
+				var wc := _label_anchor(_view._hex_center(wcol, wrow, radius, origin),
+					_view.secondary_working_key(int(a.get("x", -1)), wrow,
+						String(a.get("material", "")).strip_edges()), radius)
+				_draw_dashed_hex(wcol, wrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
+				if not _link_spans_seam(band_center, wc):
+					_draw_dashed_line(band_center, wc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
 	var move_variant: Variant = pend.get("move", {})
 	if move_variant is Dictionary and not (move_variant as Dictionary).is_empty():
 		var mrow := int((move_variant as Dictionary).get("y", -1))
@@ -796,7 +1445,7 @@ func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col:
 			var mcol := eff_col + _view._wrapped_col_delta(band_col, int((move_variant as Dictionary).get("x", -1)))
 			var mc := _view._hex_center(mcol, mrow, radius, origin)
 			_draw_dashed_hex(mcol, mrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
-			if absf(band_center.x - mc.x) <= _view.last_map_size.x * 0.4:
+			if not _link_spans_seam(band_center, mc):
 				_draw_dashed_line(band_center, mc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
 
 ## Draw the selected traveling unit's destination: a thin cyan line from its current tile to the
@@ -909,7 +1558,7 @@ func _draw_range_border(eff_col: int, band_row: int, r_range: int, color: Color,
 					continue
 				_view.draw_line(pts[edge], pts[(edge + 1) % 6], color, width, true)
 
-## The STEADY per-source rate a yield label headlines: the assignment's `realized_yield` (the honest
+## The STEADY per-source rate a source row headlines: the assignment's `realized_yield` (the honest
 ## long-run average of its lumpy `actual_yield`), falling back to `actual_yield` if absent (older
 ## snapshot). Reading the steady average keeps the map label and the Band panel row in lockstep.
 func _entry_realized_yield(entry: Dictionary) -> float:
@@ -931,85 +1580,98 @@ func _entry_fodder(entry: Dictionary) -> float:
 func _entry_materials(entry: Dictionary) -> Array:
 	return SourceForecast.material_rows_of(entry)
 
-## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
-## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
-## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
-## a deer glyph landing squarely on the number). Callers queue here; `flush_yield_labels` renders the
-## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
-## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
+## **WHAT ONE MATERIAL OF THAT VECTOR PAYS PER TURN** — the working's OWN account, picked out by id.
+##
+## ⛔ **NEVER A SUM ACROSS THE ROWS.** One materials/turn figure is the retired trade axis under a new
+## name (`SourceForecast.signed_material_components`' own ⛔), so this reads the ONE id the row is
+## about — a working takes one material by construction, that pair being its identity — and asks
+## nothing about the others. `MATERIAL_RATE_NONE` where the vector carries no row for it, which is a
+## crew that has cut nothing yet and is exactly what the row headlines there (`+0.00 wood`).
+static func _entry_material_rate(entry: Dictionary, material: String) -> float:
+	for row in SourceForecast.material_rows_of(entry):
+		if String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY]) == material:
+			return float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY])
+	return MATERIAL_RATE_NONE
+
+## Nothing has come out of this working yet — a measured zero, not a sentinel.
+const MATERIAL_RATE_NONE := 0.0
+
 ## The assignment's harvest MARK — its floor's zone glyph, the same one the Band panel's work row
 ## draws, so a worked source reads alike on the map and in the panel. `assign_labor` always carries a
 ## floor and the decoder always inserts it, so an absent one means the wire never described this
 ## assignment; the sim's own default is then the honest reading.
 func _entry_floor_glyph(entry: Dictionary) -> String:
-	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(
-		float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
+	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(_entry_floor(entry)))
 
-func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		fodder: float = 0.0, materials: Array = []) -> void:
-	_deferred_yield_labels.append({
-		"tile_center": tile_center,
-		"value": value,
-		"overhunt": overhunt,
-		"radius": radius,
-		"floor_glyph": floor_glyph,
-		"fodder": fodder,
-		"materials": materials,
-	})
+## The assignment's own escapement floor. Split out because the WORKING arm needs the NUMBER rather
+## than the mark — a working's mark forks on the ground's renewal rate as well as on the floor
+## (`HudDepositVocab.floor_mark`) — and two readers spelling the same default is how the food webs'
+## floor and the workings' floor would come to disagree about what an absent field means.
+func _entry_floor(entry: Dictionary) -> float:
+	return float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
 
-## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
-## rings, links, pending overlays and targeting — so nothing paints over the labels.
+## **THE BUILD METER, AS AN ARC ON THE SOURCE'S OWN RING** (issue #650, Part 3). Drawn in the badge
+## flush — so it comes off the SAME resolution of the build state the plate does, and so nothing
+## painted later can scribble across it — over the faint track `_draw_worked_mark` left behind.
+##
+## From 12 o'clock clockwise through `progress · TAU`, at the ring's own width and in the ring's own
+## colour: **colour still says which web this is and sweep says how far along, two independent
+## variables on one mark.** A STALLED build turns the arc `HudStyle.DANGER` — the plate's `⚠` says the
+## same thing in the same frame, which is the point: one state, two faces, one resolution.
+##
+## ⛔ **THE PERCENT THIS REPLACED WAS ON THE PLATE AND ANSWERED THE WRONG QUESTION.** `35%` never said
+## *when will it land* — 35% of a coppice and 35% of a cultivation are weeks apart — so the turn count
+## moved to the source list's build cell, and what a glance wants from the map is *roughly how far*.
+func _draw_build_arc(entry: Dictionary) -> void:
+	if int(entry.get("slot", -1)) < 0:
+		return
+	if String(entry.get("building_glyph", "")) == "":
+		return
+	var progress := clampf(float(entry.get("building_progress", 0.0)), 0.0, 1.0)
+	var radius := float(entry.get("radius", 0.0))
+	var selected := bool(entry.get("selected", false))
+	var arc_color: Color = entry.get("ring_color", HudStyle.SIGNAL)
+	if not selected:
+		arc_color.a *= WORKED_RING_OTHER_ALPHA
+	if bool(entry.get("stalled", false)):
+		arc_color = Color(HudStyle.DANGER, arc_color.a)
+	_view.draw_arc(entry.get("center", Vector2.ZERO), radius * WORKED_RING_FACTOR,
+		RING_ARC_START_ANGLE, RING_ARC_START_ANGLE + progress * TAU, WORKED_RING_SEGMENTS,
+		arc_color, WORKED_RING_WIDTH_SELECTED if selected else WORKED_RING_WIDTH_OTHER)
+
+## Render (and drain) the deferred SOURCE-BADGE batch — the `⚒N` plate under each worked marker, and
+## the BUILD ARC on the ring above it. Called LAST in `_draw` — after the markers, rings, links,
+## pending overlays and targeting — so nothing paints over either.
+##
+## **THE NAME OUTLIVED THE LABELS ON PURPOSE.** The per-source RATE PILLS this batch was built for are
+## gone: they became the docked SOURCE LIST beside the selected band (`BandSourceList`, issue #650),
+## because a ~90px pill cannot live over its own marker when two markers in one hex's edge slots sit
+## ~55px apart — that is arithmetic, and a collision/lift pass shipped here and was reverted (Ray, on
+## the live frame: *"having 1 way up there is worse then letting them overlapp a bit"*). What survives
+## here is the half that always fitted: a count and a rung glyph. `MapView` reaches this seam by name,
+## so the name stays.
+##
+## ⛔ **DO NOT RE-ADD A PILL COLLISION / LIFT / STAGGER PASS.** Nothing in this file places anything
+## relative to anything else; every mark lands on its own source's marker and two that overlap are
+## left to overlap.
+##
+## The ARC goes first and the PLATE second: the arc rides the ring (above the marker) and the plate
+## hangs below it, so they never touch — the order is stated rather than incidental.
+##
+## **IT RENDERS AND DOES NOT DRAIN, which is `_source_rows`' lifecycle exactly.** The batch is cleared
+## at the top of `draw_worked_source_marks` — the pass that refills it, and the first thing `MapView`
+## calls every frame — so a clear here was redundant, and dropping it leaves THIS frame's badge
+## entries readable AFTER the frame. That is what lets `map_preview` ask the plate what it says
+## (`badge_rung`) rather than photograph it; a draw call renders into a canvas and a harness cannot
+## read a glyph back off one.
 func flush_yield_labels() -> void:
 	for badge in _deferred_source_badges:
+		_draw_build_arc(badge)
+	for badge in _deferred_source_badges:
 		_draw_source_badge(badge)
-	_deferred_source_badges.clear()
-	for label in _deferred_yield_labels:
-		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
-			label["floor_glyph"], float(label.get("fodder", 0.0)), label.get("materials", []))
-	_deferred_yield_labels.clear()
-
-## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
-## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
-## `floor_glyph` is a RESOLVED GLYPH, appended verbatim after the rate — the floor-zone mark
-## (`_entry_floor_glyph`), the same one the Hud's floor-picker buttons and the work board's mark column
-## show, so a worked source reads "+0.38 ♻" on the map; "" = no glyph.
-##
-## **IT IS APPENDED, NEVER LOOKED UP AGAIN.** This parameter was named `policy` and ran back through
-## `FoodIcons.for_policy` — a table keyed on the four IMPROVEMENT verbs since #442, which a floor-zone
-## glyph is never a key of — so the lookup answered `""` and **the map drew no harvest mark at all**.
-## A glyph resolved once and re-resolved is a mark that silently disappears the next time either table
-## is re-keyed; the argument arrives resolved and is spent as-is.
-##
-## ONE ACCOUNT ONLY, and deliberately so (issues #337 / #449 / #527): a source pays a VECTOR — food,
-## fodder and materials — but a map label sits on a hex a few pixels wide beside a floor mark and a ⚠,
-## and there is no room for a second rate. It shows the one the source actually PAYS, in the wire's own
-## order: food when there is food (every edible quarry and every forage patch), else the fodder rate
-## spelled with the WORD (fodder has no glyph), else the MATERIALS, each naming itself. A sown hay
-## Field therefore reads `+0.40 fodder ♻` and a hunted wolf pack `+0.22 hide ⇊`, rather than the
-## `+0.00` that said either was worth nothing. (A trade branch sat between food and fodder until arc
-## #527 retired that account; the material vector is what replaced it, and it is a vector because a
-## mammoth hide and a hare pelt are both `hide` and are not the same thing.)
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
-		fodder: float = 0.0, materials: Array = []) -> void:
-	var text := _yield_label_rate_text(value, fodder, materials)
-	var color := HudStyle.HEALTHY
-	if overhunt:
-		text += " " + YIELD_OVERHUNT_FLAG
-		color = HudStyle.WARN
-	if floor_glyph != "":
-		text += " " + floor_glyph
-	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
-	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
-	# Dark rounded plate behind the text so the label pops on ANY terrain (bare text washed out on the
-	# light tan biomes). Same pill chrome as the count badges, sized to the MEASURED text+glyph run.
-	var font: Font = ThemeDB.fallback_font
-	if font != null:
-		var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-		_view._draw_pill_plate(label_center, text_size, font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
-	_view._draw_marker_glyph(label_center, text, font_size, color)
 
 ## THE ONE-SLOT CHOICE, on its own so it can be asserted: which of the accounts this label states, and
-## how it is spelled. Split out of `_draw_yield_label` because a draw call renders to a canvas and a
+## how it is spelled. Split out of the retired on-tile pill because a draw call renders to a canvas and a
 ## harness cannot read a glyph back off one — the fall-through order (food → fodder → materials) is
 ## the claim, and it needs somewhere to be asked. `YIELD_LABEL_COMPONENT_MIN` is the same threshold on
 ## the two scalars, so neither can be shown at a magnitude the other would have been hidden at; the
@@ -1020,13 +1682,52 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 ## name, and summing them is the retired trade axis under a new name. The plate sizes to the MEASURED
 ## run (`_draw_pill_plate`), so a two-material label is wide rather than clipped — which is a
 ## legibility question for `map_band_label_overlap`, not a reason to state less than the truth.
-func _yield_label_rate_text(value: float, fodder: float, materials: Array = []) -> String:
+##
+## ⛔ **`marker_names_material` IS SAFE ONLY BECAUSE A WORKING TAKES ONE MATERIAL** — its identity is
+## the `(tile, material)` pair — so the un-named join states exactly one figure. Two un-named figures
+## would be two numbers with nothing between them, which `SourceForecast.MATERIAL_UNNAMED` says at
+## more length. It is threaded to BOTH material arms below (the rate and the account's zero), because
+## a pill that dropped the noun off one and kept it on the other would name the account only on the
+## turns the source produced nothing.
+## **A FOOD WEB'S MARKER NEVER NAMES A MATERIAL** — the `marker_names_material` argument's answer for
+## the forage and hunt arms, spelled once rather than as a bare `false` at two call sites.
+##
+## ⛔ **IT IS NOT `SourceForecast.MATERIAL_NAMED`, AND THE TWO BOOLEANS ARE OPPOSITES.**
+## `MATERIAL_NAMED` answers *does this label WRITE the noun* (`signed_material_components`' own
+## argument); `marker_names_material` answers *does the MARK already say it, so the label need not*.
+## The food arms were handed `MATERIAL_NAMED` — `true` — under a comment saying the food webs never
+## drop the noun, which is exactly what it made them do: a hunt paying only `hide` printed a bare
+## `+0.22`, naming the account nowhere at all, because a deer's icon says nothing about hide.
+const MARKER_NAMES_NO_MATERIAL := false
+
+func _yield_label_rate_text(value: float, fodder: float, materials: Array = [],
+		zero_account: String = SourceForecast.YIELD_ACCOUNT_FOOD,
+		marker_names_material: bool = false) -> String:
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder >= YIELD_LABEL_COMPONENT_MIN:
 		return SourceForecast.PICKER_FODDER_PRODUCT_FORMAT % _format_yield_signed(fodder)
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and fodder < YIELD_LABEL_COMPONENT_MIN:
-		var material_text := SourceForecast.signed_material_components(materials)
+		var material_text := SourceForecast.signed_material_components(materials,
+			SourceForecast.MATERIAL_UNNAMED if marker_names_material \
+				else SourceForecast.MATERIAL_NAMED)
 		if material_text != "":
 			return material_text
+		# **NOTHING TOOK, SO THE ZERO NAMES THE ACCOUNT THIS SOURCE PAYS INTO** (issue #650). Every
+		# other arm above states a rate the take produced; this is the one place the row speaks
+		# for a take that produced none, and a bare `+0.00` is a claim about FOOD — false on a
+		# working, which pays a material and no food, and the third surface that fault has been
+		# fixed on. `SourceForecast.row_zero_account` is the shared answer, and the material names
+		# itself in the same idiom `signed_material_components` just declined to use.
+		if zero_account == SourceForecast.YIELD_ACCOUNT_NONE:
+			return ""
+		if zero_account != SourceForecast.YIELD_ACCOUNT_FOOD:
+			# **AND THE ZERO DROPS THE NOUN ON THE SAME CONDITION THE RATE DOES.** This arm exists
+			# because a bare `+0.00` is a claim about FOOD — but that is only true where nothing else
+			# says otherwise, and a pill hanging under a 🪵 is not such a place. The mark under the
+			# figure names the account whether the take was 0.30 or nothing at all.
+			if marker_names_material:
+				return _format_yield_signed(value)
+			return SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT % [
+				_format_yield_signed(value), zero_account]
 	return _format_yield_signed(value)
 
 ## **THE ⚠ THIS LABEL FLIES — `LaborAssignment.overdraws`, read and never derived.** Split out for
@@ -1039,7 +1740,7 @@ func _yield_label_rate_text(value: float, fodder: float, materials: Array = []) 
 static func yield_label_overdraw(entry: Dictionary) -> bool:
 	return bool(entry.get("overdraws", false))
 
-## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
+## Signed, fixed-decimal food-rate string for a source row's rate cell ("+0.48" / "-0.30"). Mirrors
 ## the HUD's `SourceForecast.format_signed`; actual yields are ≥0 but the sign keeps it explicit.
 func _format_yield_signed(value: float) -> String:
 	var magnitude := String.num(absf(value), YIELD_LABEL_DECIMALS).pad_decimals(YIELD_LABEL_DECIMALS)

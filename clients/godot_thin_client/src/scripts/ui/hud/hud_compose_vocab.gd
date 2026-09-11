@@ -56,9 +56,14 @@ const FLOOR_ZONE_HINTS := {
 # The per-WEB half of the strip-it warning, and the reason it is a clause rather than a second table:
 # everything else about floor 0 is identical on both webs. A plant stand grows back from its reseed
 # floor; a herd taken to nothing is EXTINCT, which is permanent and shared with every other faction.
+# **THE DEPOSIT BRANCHES' ENTRY IS ONLY EVER READ ON A RENEWING WORKING** (issue #650): rock does not
+# grow back, so a finite seam is offered no dial at all and never reaches this line. What floor 0 costs
+# a WOOD is the plant web's consequence in the working's own noun — the sim's growth term reads its
+# curve at a seeded stock (`extraction::deposit_regrowth`), so a seam cut clean does come back, slowly.
 const FLOOR_STRIP_CONSEQUENCE := {
 	"forage": "The patch is stripped bare and has to reseed itself from nothing.",
 	"hunt": "It is the last hunt: the herd is gone for good, for you and for everyone else.",
+	"extract": "The seam is cut to nothing and has to grow back from a seed.",
 }
 
 # The one thing a detached party changes about the rule above: an expedition's Hunting arm banks BOTH
@@ -128,15 +133,15 @@ const CREW_TARGET_UNREACHABLE_FACE := "✕"
 
 # …and the REASON, on the hover, because the sheet stays quiet while the why stays reachable. One
 # sentence each, because the two targets fail differently: a clear that no crew reaches is often
-# permanent rather than a matter of pool size — a wary quarry breaks off and retreats, so the last of
+# permanent rather than a matter of pool size — wary prey breaks off and retreats, so the last of
 # it is never standing there to be taken — while a hold that no crew reaches is the take flattening
 # out below what the source puts back.
 #
 # **EACH LEADS WITH WHAT IS TRUE ON EVERY SOURCE AND QUALIFIES THE REST.** The same `✕` renders for a
 # second reason — a source with no throughput to divide by, a patch in deep winter — and there is no
-# quarry on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
+# prey on a forage tile to break off and retreat. So the retreat rides a CONDITIONAL clause rather
 # than an assertion, and the flat-take half says only that more hands do not lift it.
-const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "No crew this band can field clears it in one turn, and where a quarry breaks off and retreats no crew ever could, at any size."
+const CREW_TARGET_CLEAR_UNREACHABLE_TOOLTIP := "No crew this band can field clears it in one turn, and where prey breaks off and retreats no crew ever could, at any size."
 const CREW_TARGET_HOLD_UNREACHABLE_TOOLTIP := "No crew this band can field takes what grows back here — more hands do not lift the take past it."
 
 # ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
@@ -839,6 +844,33 @@ const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 # collides with nothing.
 const HARVEST_ASSIGN_BUTTON := "Harvest"
 
+# ⛔ **THE STATIONARY WEBS' ONE OUT-OF-RANGE REFUSAL, AND IT IS ONE STRING BECAUSE IT IS ONE NUMBER**
+# (issue #650). The forage sheet and the two DEPOSIT sheets are all judged against the same
+# `band_work_range` — `systems::labor`'s `Extract` arm lapses an out-of-range crew byte-for-byte as
+# its `Forage` arm does — so both sheets refuse in the same sentence, composed here once. Two
+# spellings of one limit is two limits as far as a player can tell.
+#
+# ⛔ **THE RANGE IS CALLED `work range`, WHICH IS THE SIM'S OWN NAME FOR THE NUMBER, and it was
+# `forage range` until issue #650.** That word was only ever right because foraging was the one web
+# with the gate: a digger told they are beyond their *forage* range is being refused in another web's
+# vocabulary. `LaborConfig::band_work_range` is what BOTH arms measure against, and the sim's own
+# lapse event already reads *"out of the band's work range"* — so the refusal and the abandonment a
+# player reads a turn later now use one word, and the Workbench's `Band work range` dial is a third
+# surface that always did.
+#
+# ⛔ **`hunt reach` IS NOT THIS NUMBER AND KEEPS ITS OWN NAME.** It is `band_work_range` PLUS the
+# leash, so the two names in this client name two quantities rather than one thing twice.
+#
+# **AND IT IS A PLAIN REFUSAL RATHER THAN THE HUNT SHEET'S OFFER.** A herd beyond reach can be
+# followed by a detached party, so that sheet says so (`"…Detach a party to follow it."`). Nothing in
+# the expedition roster works ground — the missions are `scout` / `hunt` / `deny` / `trade` — so a
+# seam beyond reach has no alternative to offer and the honest answer is *no*. What a player does
+# instead is move the band, which is a different control on a different surface.
+#
+# Args: `[x, y, distance, work_range]`.
+const WORK_RANGE_REFUSAL_FORMAT := \
+    "(%d,%d) is %d tiles away — beyond this band's work range (%d)."
+
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
 # submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a source this
@@ -918,6 +950,36 @@ const COMPOSE_SHEET_EYEBROW_FORMAT := "Assign %s"
 const STANDING_SUMMARY_FORMAT := "%s %d %s"
 
 const STANDING_SUMMARY_SEPARATOR := " ·"
+
+# ⛔ **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT THIS SIZE, AND IT IS ONE CONST BECAUSE
+# RAY IS TUNING IT.** *"we are getting more buttons now … make the font for the `Assign …` label
+# smaller, let's try 25% to see how it looks. Make that change for all the buttons in the TILE
+# panel."* — so this is exploratory by his own words, and a scattered literal would make the retune a
+# sweep.
+#
+# **25% OFF GODOT'S OWN DEFAULT.** `HudStyle.apply_button` writes styleboxes and colours and NO font
+# size, so a tile button has always drawn at the stock theme size (16); 12 is that less a quarter.
+# The five `Assign … ▸` faces, `Road ▸` and `Move` all read it — the road and move builders directly,
+# the assign ones through `HudWidgets.build_stacked_action_button`'s first line.
+const TILE_ACTION_LABEL_FONT_SIZE := 12
+
+# …and the standing summary UNDER that label, which must stay the quieter of the two. It is its own
+# const rather than `HudWorkVocab.ALLOC_SECTION_FONT_SIZE` (which it happens to equal) for two
+# reasons: the label above it is being retuned, so a second line pinned to a third module's constant
+# would stop being proportionate the moment it moves; and inside a button the summary is ONE readout,
+# where the sibling row rendered its main part at 10 and its `⚠` / note labels at the stock 16 — a
+# mixture that read as two registers on one line.
+#
+# ⛔ **10, NOT THE 9 THE LABEL'S OWN RATIO GIVES.** Applying the 25% a second time lands here, and
+# the Options pane's interface scale is what refuses it: `ui_scale` clamps to [0.75, 1.50], so a 9
+# draws at under 7px effective at the floor. That is a legibility trade nobody chose — and it is a
+# whole readout, `⚠` and material-shortfall note included, not an ornament. The LABEL is the size
+# Ray asked for; this one is sized to be readable under it.
+const TILE_ACTION_SUMMARY_FONT_SIZE := 10
+
+# The gap between the two lines of a stacked action button. Tighter than a section gap on purpose:
+# the pair is one control's face, so anything that reads as a stack of two rows would undo the move.
+const TILE_ACTION_FACE_SEPARATION := 1
 
 ## The parties inspector strip's two inline links (mirrors the work inspector's Jump/Unassign). The
 ## second one's face is the VERB PAIR below, since which verb the sim will honour is not fixed.
@@ -1182,7 +1244,7 @@ const SEND_TRADE_EXPEDITION_HINT := "Detach a party to carry food and materials 
 const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment…"
 
 ## The destination row's key. `To` rather than `Destination`: the row is one of the field stack that
-## `COMPOSE_FIELD_KEY_WIDTH` (64px, sized for `Quarry`) lines up, and the short word leaves the
+## `COMPOSE_FIELD_KEY_WIDTH` (64px, sized for the longest key) lines up, and the short word leaves the
 ## picker its whole share of a 354px dock column.
 const COMPOSE_FIELD_DESTINATION := "To"
 
@@ -1356,7 +1418,7 @@ const COMPOSE_FLOAT_SLACK := 1.0
 ## beside `col.get_combined_minimum_size().y == 1278` where the laid-out answer is **207** — every
 ## autowrap `Label` under it shaping one word per line. 1278px floats that sheet out of every dock this
 ## client has, and the high-water mark then holds it there for the rest of the composing act: the
-## reported picture exactly, `Quarry: Choose…` and a disabled Send floating out of a dock with 800px to
+## reported picture exactly, `Prey: Choose…` and a disabled Send floating out of a dock with 800px to
 ## spare. The other half of the test is the SHEET having been FITTED to this column — see
 ## `_party_compose_measurable`. **A bare width floor on the sheet does not do it either**: an unsorted
 ## Control still clamps its own size up to its own combined minimum, so the unlaid-out sheet measures a
@@ -1385,69 +1447,80 @@ const COMPOSE_TITLE_SPLIT := "Form a new band…"
 ## brings almost nothing home — because that is the ONE thing a player must know before pressing it.
 const SEND_DENIAL_RAID_HINT := "Detach a party to break a herd. It never stops engaging, so it kills far more than it can carry and brings almost nothing home."
 
-## The denial form's own quarry hint. The hunt form's says the rest of the form follows from the
-## quarry; on this form the quarry and the party size ARE the whole form, so it says what the number
+## The denial form's own prey hint. The hunt form's says the rest of the form follows from the
+## prey; on this form the prey and the party size ARE the whole form, so it says what the number
 ## under it will answer instead.
-const COMPOSE_DENY_QUARRY_HINT := "Choose a herd to break — the collapse estimate follows from it."
+const COMPOSE_DENY_PREY_HINT := "Choose a herd to break — the collapse estimate follows from it."
 
 ## **THE WIDTH EVERY FIELD ROW'S KEY LABEL RESERVES, so the three controls line up as one stack.**
-## `Band:`, `Kit` and `Quarry` are three different words in front of three different widget types
+## `Band:`, `Kit` and `Prey` are three different words in front of three different widget types
 ## (two `OptionButton`s and a `Button`), and each row is built by a different module — so without one
 ## declared width the value controls start at three different x positions and the sheet reads as
 ## three unrelated widgets rather than one form.
 ##
 ## **The two obvious alternatives were both measured and both lose.** A key at its natural width puts
-## each control against its own word (`Kit` is 22px, `Quarry` 55), which is the ragged edge this
-## exists to remove. A key at `SIZE_EXPAND_FILL` splits the row 50/50 — the shape the Kit and Quarry
+## each control against its own word (`Kit` is 22px, `Quarry` measured 55 when the prey row still
+## carried that word), which is the ragged edge this exists to remove. A key at `SIZE_EXPAND_FILL`
+## splits the row 50/50 — the shape the Kit and prey
 ## rows shipped with — and on a ~245px sheet that leaves the control ~119px, which `🧺 Harvesting
 ## kit` plus a themed arrow does not fit (it read `Gathering kit` when the width was measured, one
 ## character shorter, so the conclusion holds a fortiori): the fix for a clipped affordance would have clipped the name
 ## instead. A declared floor gives the key exactly what the longest key needs and hands the whole
 ## remainder to the control, which is the axis that has something to lose.
 ##
-## 64 is the widest key on any of the four sheets — `Quarry`, measured at 55px against this client's
-## unthemed default font — plus a gutter, so no key can push its own row's control out of line.
+## 64 is the widest key any of the four sheets has needed — `Quarry`, measured at 55px against this
+## client's unthemed default font — plus a gutter, so no key can push its own row's control out of
+## line. **The figure is held where it is now that the row says `Prey` (issue #650)**: a declared
+## width is what keeps every value control at ONE x position, so shrinking it to the shorter word
+## would move all three controls for a rename that changed nothing about the widest key a later row
+## may bring.
 const COMPOSE_FIELD_KEY_WIDTH := 64.0
 
 const COMPOSE_FIELD_PARTY := "Party"
 
 const COMPOSE_FIELD_POLICY := "Policy"
 
-## The QUARRY is the hunt form's FIRST question: the herd sets the useful party size, the per-policy
+## The PREY is the hunt form's FIRST question: the herd sets the useful party size, the per-policy
 ## take and the trip length, so every field below it is unanswerable until it is picked.
-const COMPOSE_FIELD_QUARRY := "Quarry"
+##
+## ⛔ **THE ROW SAYS `Prey`, NOT `Quarry` (issue #650).** `quarry` is the extraction ladder's own rung
+## (`HudDepositVocab.RUNG_KEY_QUARRY`), the command verb behind it and the word every deposit readout
+## uses, so one word on the hunted animal AND on the pit being dug is a collision a bug report cannot
+## survive. `Prey` also states what the row holds in a word a player reads as hunting on the first
+## pass rather than as mining.
+const COMPOSE_FIELD_PREY := "Prey"
 
-const COMPOSE_QUARRY_CHOOSE := "Choose…"
+const COMPOSE_PREY_CHOOSE := "Choose…"
 
-const COMPOSE_QUARRY_HINT := "Choose a quarry — the rest of the form follows from it."
+const COMPOSE_PREY_HINT := "Choose prey — the rest of the form follows from it."
 
-const COMPOSE_QUARRY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
+const COMPOSE_PREY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
 
-const COMPOSE_QUARRY_LABEL_FORMAT := "%s %s"
+const COMPOSE_PREY_LABEL_FORMAT := "%s %s"
 
-# The picked quarry's face carries the species' bundled ART where there is any (issue #439), as the
+# The picked prey's face carries the species' bundled ART where there is any (issue #439), as the
 # Button's own `icon` rather than a glyph in its text. The source PNGs are 256px, which a Button
 # would otherwise reserve in full and blow the compose row's width apart, so the icon is capped
 # through the stock `icon_max_width` theme constant — sized to sit with the button's label rather
 # than to be read on its own, the row already naming the herd in words beside it.
-const COMPOSE_QUARRY_ICON_MAX_WIDTH := 20
+const COMPOSE_PREY_ICON_MAX_WIDTH := 20
 
 ## **A HEX CAN HOLD MORE THAN ONE HERD, AND THE MAP CLICK NAMES ONLY THE HEX.** `try_dispatch` is
 ## handed a TILE, so a click on a tile carrying a rabbit warren and a wolf pack can resolve to just
 ## one of them and re-clicking resolves to the same one — there was no way to reach the other. The
-## Quarry row therefore grows a chooser LISTING the tile's eligible quarries, and it appears ONLY
-## when there are two or more: one quarry is the common case and it renders exactly as before.
+## Prey row therefore grows a chooser LISTING the tile's eligible herds, and it appears ONLY
+## when there are two or more: one herd is the common case and it renders exactly as before.
 ## It is the `⋯` the zone heads already use, so the panel keeps ONE "there are choices here" glyph.
-## A chooser entry names the herd the same way the picked-quarry button does, so the row and the menu
+## A chooser entry names the herd the same way the picked-prey button does, so the row and the menu
 ## cannot describe one herd differently: bundled ART where the species has any (as the item's own
-## icon), else the emoji through `COMPOSE_QUARRY_LABEL_FORMAT`. Unicode ships ONE deer, so two roster
+## icon), else the emoji through `COMPOSE_PREY_LABEL_FORMAT`. Unicode ships ONE deer, so two roster
 ## species can share a glyph — which is exactly why the art branch exists in the menu too.
-const COMPOSE_QUARRY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
+const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
 
 ## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
 ## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
 ## the distance, the reach that binds and the local alternative.
-const QUARRY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt reach (%d). Hunt it from the herd itself instead of sending a party."
+const PREY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt reach (%d). Hunt it from the herd itself instead of sending a party."
 
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 
@@ -1545,16 +1618,16 @@ const KIT_PICKER_ICON_MAX_WIDTH := 16
 ## job this table has never heard of must still render a legible face rather than an empty one.
 const KIT_JOB_GLYPH_FALLBACK := "🎒"
 
-const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear. A kit that could change nothing about this quarry is greyed out and says why."
+const KIT_PICKER_TOOLTIP := "What this crew carries. A kit decides what they can hurt and how much they can haul — the line beneath it is this band's own tier, after wear. A kit that could change nothing about this prey is greyed out and says why."
 
-## **A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED AND STATES ITS REASON, on the entry's own face.**
+## **A KIT THAT CANNOT WORK ON THIS PREY IS GREYED AND STATES ITS REASON, on the entry's own face.**
 ## Greyed rather than hidden: *"a snare cannot hold a Red Deer"* is a fact about the world worth
 ## teaching once, and a kit that simply vanished from three of four sheets is exactly what let the
 ## picker quote a real take for a hunt that brought home nothing. `%s` the kit's name (with its
 ## `(default)` mark if it carries one), `%s` the reason.
 const KIT_WITHHELD_ENTRY_FORMAT := "%s — %s"
 ## The WEAPON rule's reason — the kit's fresh attack, resolved against this animal's mass, cannot
-## clear its defence. `%s` the quarry. It names the ANIMAL rather than the weapon because what the
+## clear its defence. `%s` the prey. It names the ANIMAL rather than the weapon because what the
 ## player is choosing between is kits, and the animal is the term that changes under them.
 const KIT_WITHHELD_REASON_CANNOT_HURT := "nothing it carries can bring down a %s"
 ## ⛔ **THE PEN RULE'S REASON IS GONE WITH THE RULE** (issue #543). It read
@@ -1842,9 +1915,15 @@ const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — " + LOCAL_FORAGE_OVERDRAW_NOTE
 # small-print part beside the number rather than joining it into the sentence above. Keyed exactly as
 # `FLOOR_STRIP_CONSEQUENCE` is (the `SourceForecast.LABOR_KIND_*` values), so one lookup answers "what
 # does overdrawing this web cost?" wherever it is asked.
+# The DEPOSIT twin, in the working's own noun. It is the same idea the other two state — a take above
+# what the source renews draws it down — so it is a third row of this table rather than a word the
+# deposit vocabulary spells for itself.
+const LOCAL_EXTRACT_OVERDRAW_NOTE := "overdraws the seam"
+
 const LOCAL_OVERDRAW_NOTES := {
 	"forage": LOCAL_FORAGE_OVERDRAW_NOTE,
 	"hunt": LOCAL_HUNT_OVERDRAW_NOTE,
+	"extract": LOCAL_EXTRACT_OVERDRAW_NOTE,
 }
 
 # CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an

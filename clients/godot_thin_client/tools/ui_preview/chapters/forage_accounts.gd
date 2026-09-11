@@ -363,7 +363,8 @@ func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: S
 	h._assert_hud("%s: the drawer opens with `%s`" % [state_name,
 			HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower()],
 		open_btn != null
-			and open_btn.text == HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower())
+			and Q.action_button_face(open_btn)
+				== HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower())
 	# THE CONSISTENCY CLAIM, stated without naming the noun — a header and a stepper that resolve
 	# through one function cannot disagree, and a frame where they do is the defect itself.
 	h._assert_hud("%s: the eyebrow and the stepper name the SAME crew on one frame" % state_name,

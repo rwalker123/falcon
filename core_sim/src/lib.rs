@@ -267,8 +267,8 @@ pub use hydrology::{generate_hydrology, HydrologyState};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
-    deposit_measure, deposit_meter_rot, deposit_upkeep_demand, renew_deposit, DepositRegistry,
-    DepositSource, DEPOSIT_EMPTY,
+    deposit_measure, deposit_meter_rot, deposit_rungs_in_climb_order, deposit_upkeep_demand,
+    renew_deposit, DepositRegistry, DepositSource, DEPOSIT_BRANCHES, DEPOSIT_EMPTY,
 };
 pub use extraction_config::{
     load_extraction_config_from_env, DepositDef, DepositTerrain, ExtractionConfig,

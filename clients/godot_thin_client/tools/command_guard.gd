@@ -104,6 +104,13 @@ const BAND_Y := 20
 ## Where `move_band` / `send_expedition` are told to go — inside the grid, away from the band.
 const TARGET_X := 44
 const TARGET_Y := 23
+
+## The working the three deposit verbs are ordered on. **It is a MATERIAL and never a branch**: the
+## wire's `material` field is what `LaborTarget::Extract` keys on, and the same token addresses the
+## same working through `assign_labor extract`. `wood` deliberately — the extraction branch would let
+## `quarry`'s line pass with a forestry material and this guard reads the PARSE, not the pairing, so
+## the one that carries information is that all three verbs spell the tail the same way.
+const DEPOSIT_MATERIAL := "wood"
 const GRID_W := 80
 const GRID_H := 52
 
@@ -250,6 +257,8 @@ func _ready() -> void:
 	await _drive_build_order()
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
+	_drive_deposit_verbs()
+	_drive_abandon_working()
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
 
@@ -443,6 +452,31 @@ func _drive_assign_labor_kits() -> void:
 	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
+	await _settle()
+	# **THE FOURTH GRAMMAR — the deposit branches' take row** (arc #583).
+	# `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, where the MATERIAL rides the
+	# `species` token and is not optional: one tile can hold two workings, so a line naming only the
+	# tile names neither of them.
+	#
+	# **THE FLOOR ARRIVED WITH THE ESCAPEMENT DIAL** (issue #650) and rides forage's own position after
+	# the material, a validated NUMBER the retired stance words are refused by name against. It still
+	# carries no kit (`default_kits.extract` is the bare `none` kit and the working card mounts no
+	# picker), so the tail is closed after the worker count and this is the exact line a RENEWING
+	# working's sheet — the one branch that offers a dial — emits.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
+		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
+	await _settle()
+	# ⛔ **…AND THE SAME GRAMMAR WITH THE FLOOR OMITTED, which is what a FINITE working sends** (PR
+	# #651 review). The sheet offers no dial there, so the player named no floor and the token is
+	# dropped rather than filled with the sheet's default — the sim answers what silence means, and on
+	# ground that never renews it answers `STRIP_IT_BARE`. **Both forms are driven because they are two
+	# LINES**: the parser reads `<material> [floor] <workers>` positionally, so an emitter that dropped
+	# the token where a floor WAS named would put the floor in the worker slot, and one that kept it
+	# where none was named would parse perfectly and store a choice nobody made.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, EXTRACT_MATERIAL,
+		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
 	await _settle()
 	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
 	# `assign_labor <faction> <band> <role> <workers>` takes no tile, no herd, no floor and no
@@ -772,6 +806,84 @@ func _drive_road_verbs() -> void:
 	if not MAIN_SCRIPT.format_improvement(bandless).is_empty():
 		_fail("grade: a road verb with no band built a line — the keeper token is not optional")
 
+## ⛔ **THE DEPOSIT BRANCHES' THREE TILE VERBS — the only tile commands that NAME A MATERIAL** (issue
+## #650). `fell <faction> <x> <y> <material>`, and `coppice` / `quarry` likewise: a working is keyed on
+## the `(tile, material)` PAIR because one hex can hold two, so the material rides the tail in
+## `assign_labor extract`'s own position and the two ways of addressing one working read alike. They
+## name NO band — a working is backed by a `LaborTarget::Extract` row, so its keeper is already known —
+## which is `cultivate`'s shape rather than `grade`'s.
+##
+## **THE TRAILING TOKEN IS EXACTLY WHAT THIS GUARD EXISTS FOR, and its failure mode is the sharper of
+## the two the road verbs record.** A builder that dropped the material emits `cultivate`'s three-token
+## form, which the sim refuses outright — so THAT one is caught by the parse alone. What is not is a
+## builder that emits the material of the OTHER working on the hex, which parses perfectly and raises
+## the wrong ladder; the client-side half of that is asserted where the click path is real
+## (`band_panel_preview`'s `_assert_the_row_opens_the_rung_track`, which presses the ladder row on the
+## rock's own roster row and requires the emitted line to name that row's tile AND its material).
+##
+## **DRIVEN THROUGH `Main.format_improvement`, the pure static the ladder's press reaches.** The three
+## verbs have no click path in THIS harness — the ladder is opened from the Band panel's workings
+## roster, which needs a deposits fixture and a rung catalog this guard stands up none of — and the
+## builder is the whole of the client's grammar for them. The Rust half classifies all three
+## `PlaceAddressed`, so what it asserts is the PARSE.
+func _drive_deposit_verbs() -> void:
+	for improvement in SourceForecast.DEPOSIT_IMPROVEMENTS:
+		var payload := {
+			"improvement": improvement,
+			"faction": HudConst.PLAYER_FACTION_ID,
+			"x": TARGET_X,
+			"y": TARGET_Y,
+			"material": DEPOSIT_MATERIAL,
+		}
+		_record(String(improvement), payload, MAIN_SCRIPT.format_improvement(payload))
+	# **AND A DEPOSIT VERB WITH NO MATERIAL BUILDS NOTHING**, which is a refusal rather than a default:
+	# the material is half the working's identity and guessing one would order a rung on the other
+	# working of the same hex. Asserted here rather than left to the parser for the road verbs' own
+	# reason — a line missing its trailing token is a shorter line some other verb's grammar accepts.
+	var materialless := {
+		"improvement": SourceForecast.IMPROVEMENT_FELL,
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+	}
+	if not MAIN_SCRIPT.format_improvement(materialless).is_empty():
+		_fail("fell: a deposit verb with no material built a line — the material token is not optional")
+
+## ⛔ **`abandon_working <faction> <x> <y> <material>` — PUTTING ONE WORKING DOWN, AND IT IS NOT
+## `abandon`** (issue #650). That verb names a PLACE: it resolves a tile to a FORAGE source sim-side,
+## so it does not reach a working at all, and it drops every band-of-the-faction's holding on the
+## tile. This one rides the three rung verbs' OWN parser arm, so the material sits in the same
+## trailing position and the tail is closed — which is exactly what this guard proves, the two
+## grammars being one arm apart and therefore able to drift apart in one edit.
+##
+## **DRIVEN THROUGH `Main.format_abandon_working`, the pure static both controls reach** — the
+## workings roster row's `✕` and the deposit ladder card's put-down row, which converge on one
+## `HudLayer.abandon_working_requested` relay. Their CLICK PATH is asserted where it is real
+## (`band_panel_preview`), which is also the only place a wrong material could be caught: a line
+## naming the other working of the same hex parses perfectly here.
+##
+## The Rust half classifies it `PlaceAddressed` beside `abandon` and the three rung verbs, so what
+## this asserts is the PARSE.
+func _drive_abandon_working() -> void:
+	var payload := {
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+		"material": DEPOSIT_MATERIAL,
+	}
+	_record("abandon_working", payload, MAIN_SCRIPT.format_abandon_working(payload))
+	# **AND WITH NO MATERIAL IT BUILDS NOTHING**, the three rung verbs' own refusal: the material is
+	# half the working's identity, so a line carrying only the tile would put down the OTHER working
+	# on a hex that holds two. Asserted here rather than left to the parser, a three-token
+	# `abandon_working` being a shorter line rather than an obviously broken one.
+	var materialless := {
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"x": TARGET_X,
+		"y": TARGET_Y,
+	}
+	if not MAIN_SCRIPT.format_abandon_working(materialless).is_empty():
+		_fail("abandon_working: a line was built with no material — the token is not optional")
+
 ## ⛔ **`abandon <faction> <x> <y>` — THE ONE VERB THIS GUARD DRIVES THAT NAMES NO BAND AT ALL**, and
 ## that is the sim's grammar rather than an omission: it drops every band-of-that-faction's holding on
 ## the tile, a forage assignment there included. The Rust half classifies it `PlaceAddressed` for the
@@ -876,22 +988,33 @@ const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_AGRICULTURE,
 	HudConst.LABOR_KIND_HUSBANDRY,
 	HudConst.LABOR_KIND_ROADWORK,
+	HudConst.LABOR_KIND_QUARRYWORK,
 	HudConst.LABOR_KIND_BUILDERS,
 ]
+
+## The material the `extract` drive names. A real shipped material, so the line this guard parses is
+## the line the client emits rather than one built out of a placeholder.
+const EXTRACT_MATERIAL := "wood"
 
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 
-## The three TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
-## map's quick-hunt, and hunt + forage with a `kit <id>` tail.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 3
+## The FIVE TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
+## map's quick-hunt, hunt + forage with a `kit <id>` tail, and the deposit branches' `extract` in BOTH
+## of its shapes — with the floor token and without it.
+##
+## ⛔ **`extract` IS A TARGETED GRAMMAR AND NOT A ROLE, so the sweep below cannot reach it** — it names
+## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
+## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
+## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 5
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits.
 const ASSIGN_LABOR_BARE_DRIVES := 1
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 10
+const ASSIGN_LABOR_EXPECTED := 13
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -971,9 +1094,18 @@ const EXPECTED_KINDS := {
 	# the BAND token in the middle. See `_drive_road_verbs`.
 	"grade": 1,
 	"pave": 1,
+	# ONE EACH — the deposit branches' three tile verbs, whose whole difference from `cultivate`/`sow`
+	# is the MATERIAL token on the tail. A verb dropped from the client's own list emits nothing and
+	# fails here by count. See `_drive_deposit_verbs`.
+	"fell": 1,
+	"coppice": 1,
+	"quarry": 1,
 	# ONE — the roadwork roster's `✕`, the route branch's only `abandon` emitter and the only command
 	# here that names a PLACE rather than a band.
 	"abandon": 1,
+	# ONE — the deposit branches' own release, which names a place AND a material. It is a separate
+	# verb from `abandon` rather than a widening of it; see `_drive_abandon_working`.
+	"abandon_working": 1,
 	# ONE — the outfitting card's commit, the only emitter of the verb. It names a band positionally
 	# since every band has a window of its own; see `_drive_set_starting_loadout`.
 	"set_starting_loadout": 1,

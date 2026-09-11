@@ -13,8 +13,8 @@ use crate::forage::{
 };
 use crate::intensification::{
     build_fraction, build_work_per_worker_turn, knowledge_title_from_id, NOT_IN_ANY_BUILD_QUEUE,
-    NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WIDTH, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
-    RUNG_COST_UNSCALED,
+    NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR, NO_RUNG_WIDTH, NO_UPKEEP_DECAY,
+    NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED,
@@ -169,6 +169,14 @@ pub(crate) struct BuildKitIds {
     /// answered off the bands' queues rather than off the turn-written row — the row's scratch lags
     /// a command by a whole turn, and the state this separates exists precisely in that frame.
     roads: std::collections::HashSet<UVec2>,
+    /// **The workings some band has queued, and the kit each is being raised with** — keyed
+    /// `(tile, material)`, because one tile can hold two workings and a `fell` queued on the timber
+    /// is not a `quarry` queued on the rock beneath it.
+    ///
+    /// **A map and not a set, where the road's is a set**: a working publishes *both* halves on its
+    /// own row (`buildKitId` and `isQueued`), so the map's **presence** is the membership and its
+    /// value is the kit — one index answering both, rather than two that could disagree.
+    deposits: HashMap<(UVec2, String), String>,
 }
 
 impl BuildKitIds {
@@ -202,6 +210,22 @@ impl BuildKitIds {
     /// The animal twin — see [`Self::patch_is_queued`].
     fn herd_is_queued(&self, id: &str) -> bool {
         self.herds.contains_key(id)
+    }
+
+    /// The kit this working's entry resolves to, `""` when no band has it queued.
+    pub(crate) fn deposit(&self, tile: UVec2, material: &str) -> String {
+        self.deposits
+            .get(&(tile, material.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// **IS THIS WORKING IN SOME BAND'S LIVE QUEUE?** — the deposit twin of
+    /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
+    /// **Membership is the map's own presence**, which is why it cannot be replaced by a
+    /// `!deposit(..).is_empty()` test: a resolved builders kit is never the empty string.
+    pub(crate) fn deposit_is_queued(&self, tile: UVec2, material: &str) -> bool {
+        self.deposits.contains_key(&(tile, material.to_string()))
     }
 }
 
@@ -275,12 +299,25 @@ pub(crate) fn resolve_build_kit_ids<'a>(
                 crate::components::BuildSource::Road(tile) => {
                     resolved.roads.insert(*tile);
                 }
-                // **A deposit publishes nothing here YET**, for the road's original reason: there is
-                // no deposit row on the wire to carry a kit or a membership flag, and the readouts
-                // are the next slice (`docs/plan_extraction.md` §7). The resolution above still
-                // runs for it — the entry's kit is priced off the same one seam — it simply has
-                // nowhere to be published.
-                crate::components::BuildSource::Deposit { .. } => {}
+                // **A working records BOTH halves here** — the kit its build is being raised with
+                // *and*, in the map's own presence, whether some band has it queued at all. The
+                // road records only membership because its kit rides its own row's build arm; a
+                // working's `DepositState` publishes both, so one index answers both rather than
+                // two that could disagree.
+                //
+                // ⛔ **NO CLAIMS ARBITRATION, unlike the patch and herd arms above.** Those pick a
+                // winner because several bands can work one source and the row's own published
+                // position names which band's answer it is. A working carries no such published
+                // position on the wire — the entry's date is stamped straight onto the source by
+                // the chain pass, exactly as a road's is — so the fallback here is the first band
+                // in iteration order, the same arbitrary-but-deterministic rule the two food webs
+                // fall back to for a source no matching band claimed.
+                crate::components::BuildSource::Deposit { tile, material } => {
+                    resolved
+                        .deposits
+                        .entry((*tile, material.clone()))
+                        .or_insert(kit);
+                }
             }
         }
     }
@@ -308,6 +345,9 @@ pub(crate) fn resolve_build_kit_ids<'a>(
 pub(crate) struct UpkeepKitIds {
     patches: HashMap<UVec2, ResolvedUpkeepKit>,
     herds: HashMap<String, ResolvedUpkeepKit>,
+    /// The deposit twin, keyed the way a working is named — `(tile, material)`, because one tile
+    /// can hold two and keeping the timber is not keeping the rock.
+    deposits: HashMap<(UVec2, String), ResolvedUpkeepKit>,
 }
 
 /// One site's answer: the kit its keepers carry, and whether a band stated it.
@@ -332,6 +372,13 @@ impl UpkeepKitIds {
     fn herd(&self, id: &str) -> (String, bool) {
         self.herds
             .get(id)
+            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
+    }
+
+    /// The deposit twin, keyed `(tile, material)`.
+    pub(crate) fn deposit(&self, tile: UVec2, material: &str) -> (String, bool) {
+        self.deposits
+            .get(&(tile, material.to_string()))
             .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
     }
 
@@ -361,6 +408,9 @@ pub(crate) fn resolve_upkeep_kits<'a>(
     // bound to a rung, so the derivation cannot be answered off the row alone.
     forage: &ForageRegistry,
     herds: &HerdRegistry,
+    // **The workings' registry, for the same reason** — a `quarrywork` keeping tool may be bound to
+    // a rung, and only the source knows which rung it stands on.
+    deposits: &crate::extraction::DepositRegistry,
     equipment: &crate::equipment_config::EquipmentConfig,
 ) -> UpkeepKitIds {
     let mut resolved = UpkeepKitIds::default();
@@ -381,6 +431,21 @@ pub(crate) fn resolve_upkeep_kits<'a>(
                     herds.find(fauna_id).map(crate::fauna::herd_rung_key),
                     SourceKey::Herd(fauna_id.clone()),
                 ),
+                // **The working's own branch, off the SOURCE and never off the row** — one row kind
+                // serves both ladders (`LaborTarget::Extract`), so the branch is the deposit's
+                // (`DepositDef::branch`) as read back through the rung it stands on. A row naming
+                // ground that holds none of the material resolves no source and therefore no rung,
+                // which is the same forgiveness the two food webs give an unplaced source.
+                crate::components::LaborTarget::Extract { tile, material, .. } => {
+                    let working = deposits.source(*tile, material);
+                    (
+                        working.map_or(crate::intensification::RungBranch::Extraction, |source| {
+                            source.rung().branch()
+                        }),
+                        working.map(crate::extraction::DepositSource::rung),
+                        SourceKey::Deposit(*tile, material.clone()),
+                    )
+                }
                 // A band-wide role stands on no ground, so it keeps nothing.
                 _ => continue,
             };
@@ -396,6 +461,9 @@ pub(crate) fn resolve_upkeep_kits<'a>(
             let slot = match key {
                 SourceKey::Patch(tile) => resolved.patches.entry(tile).or_default(),
                 SourceKey::Herd(id) => resolved.herds.entry(id).or_default(),
+                SourceKey::Deposit(tile, material) => {
+                    resolved.deposits.entry((tile, material)).or_default()
+                }
             };
             // A stated override beats a derivation; among two stated ones the first wins, so a slot
             // already carrying a named pick is never displaced. An empty slot is the fresh entry in
@@ -408,10 +476,12 @@ pub(crate) fn resolve_upkeep_kits<'a>(
     resolved
 }
 
-/// The two ways a worked source is named, so [`resolve_upkeep_kits`]'s two arms share one body.
+/// The three ways a worked source is named, so [`resolve_upkeep_kits`]'s arms share one body.
 enum SourceKey {
     Patch(UVec2),
     Herd(String),
+    /// **Both halves**, because one tile can hold two workings.
+    Deposit(UVec2, String),
 }
 
 /// **The viewer's own settling score, and nobody else's** — a bare number with nothing on the map to
@@ -454,7 +524,11 @@ pub(crate) const REGROWTH_CURVE_SAMPLES: usize = 11;
 
 /// The fraction of `K` sample `index` is taken at — see [`REGROWTH_CURVE_SAMPLES`] for why the
 /// spacing is uniform and therefore implicit on the wire.
-fn regrowth_sample_fraction(index: usize) -> f32 {
+///
+/// Shared with [`crate::snapshot::deposits`], which samples a **third** growth model on the same
+/// x-axis: one spacing for every curve the client interpolates, or the chart would need to know
+/// which source it is drawing before it could place a sample.
+pub(crate) fn regrowth_sample_fraction(index: usize) -> f32 {
     index as f32 / (REGROWTH_CURVE_SAMPLES - 1) as f32
 }
 
@@ -2459,6 +2533,102 @@ pub(crate) fn snapshot_route_rungs(ladder: &LadderConfig) -> Vec<RouteRungState>
                 // transcribed noun is a second authority that goes stale the day a rung is retuned,
                 // which is the mistake `build_work_per_worker_turn` above exists to have prevented.
                 build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
+            }
+        })
+        .collect()
+}
+
+/// **WHAT A WOOD OR A ROCK BODY MAY BECOME** — the forestry and extraction branches' rung catalog,
+/// once per world and carrying no working. `DepositState` publishes the rung a working **stands
+/// on**; this publishes both climbs, so a client can price a rung nothing has opened yet — including
+/// on ground where nothing has been opened at all.
+///
+/// ⛔ **EVERY FIELD IS DERIVED FROM `intensification_ladder.json`, EXACTLY AS THE ROUTE CATALOG
+/// ABOVE IS.** Nothing here is separately authored and no value is restated: the cost and the bill
+/// are the rung's own `build` / `upkeep` blocks, the payoff is its `extraction_payoff`, the site rule
+/// is its `site_requirement`, and the chain is its `requires_rung`. A rung added to that config
+/// appears in the ladder with no further edit — which is not hypothetical on these two branches, the
+/// minerals arc's `mine` being already reserved above `extraction:quarry`.
+///
+/// **The rates are the rung's own, before the working's own multipliers.** A working's real bill
+/// also carries its keeper-loads (`DepositState::upkeep_demand` is that resolved reading) and its
+/// real take is capped by the reachable stock; a catalog row is the branch's figure, which is the
+/// only one that is the same for every wood and every seam in the world.
+///
+/// **`build_work_per_worker_turn` is the one field that is the SIM'S and not the config rung's**,
+/// and it rides here for the route catalog's reason: it is identical for every rung and every
+/// working, so a client left to transcribe [`crate::intensification::PER_WORKER_OUTPUT`] would not
+/// learn of a second term landing in it.
+pub(crate) fn snapshot_deposit_rungs(ladder: &LadderConfig) -> Vec<DepositRungState> {
+    crate::extraction::deposit_rungs_in_climb_order(ladder)
+        .into_iter()
+        .map(|rung| {
+            // The same `expect` `extraction::deposit_payoff` makes, and for the same reason: the
+            // ladder's own `validate` requires an `extraction_payoff` on every forestry and
+            // extraction rung and rejects one anywhere else, so a neutral default here would be a
+            // second, quieter answer to a config that cannot load.
+            let payoff = rung
+                .extraction_payoff
+                .as_ref()
+                .expect("validate requires an extraction_payoff on every deposit rung");
+            // **THE PILE AND ITS NOUN, FROM ONE LOOKUP**, so the amount and the material it is
+            // counted in can never disagree. `None` for a rung that eats nothing, which is every
+            // rung on either branch but `extraction:quarry`. The first entry and not a sum, for
+            // `snapshot_route_rungs`' reason: the wire carries a single float, so a second declared
+            // material would make the *amount* meaningless before the id had to choose between them.
+            let pile = rung.build_materials().next();
+            DepositRungState {
+                rung_key: rung.wire_key(),
+                // One vector carries both ladders, so every row says which one it is on — the field
+                // the single-branch route catalog has no need of.
+                branch: rung.branch.as_str().to_string(),
+                order: rung.order,
+                // The same spelling the knowledge roster and the route catalog resolve their titles
+                // with — all three are underscored ladder ids, and a second capitalization rule
+                // would be a second answer to one question.
+                display_name: knowledge_title_from_id(&rung.id),
+                verb: rung.verb.clone().unwrap_or_default(),
+                unlock_knowledge: rung.unlock_knowledge.clone().unwrap_or_default(),
+                requires_rung: rung.requires_rung_wire_key().unwrap_or_default(),
+                // **The remedy a gate asks for**, and it is the rung's own `earns_knowledge` rather
+                // than anything read off the chain: the rung that TEACHES a knowledge and the rung
+                // directly beneath the one it gates are two different facts that merely coincide on
+                // the shipped five.
+                earns_knowledge: rung.earns_knowledge.clone().unwrap_or_default(),
+                // Unscaled, and on these two branches that is already the whole price: the deposit
+                // ladder's own rung price is the unscaled one, so unlike a road there is no per-tile
+                // multiplier still to be applied to this figure.
+                work_cost: rung.build_cost(RUNG_COST_UNSCALED).unwrap_or(NO_BUILD_WORK),
+                upkeep_work_per_turn: rung
+                    .upkeep
+                    .as_ref()
+                    .map_or(NO_UPKEEP_DEMAND, |upkeep| upkeep.work_per_turn),
+                build_material_cost: pile.map_or(NO_BUILD_MATERIAL, |(_, amount)| amount),
+                // ⛔ **THE NOUN, BECAUSE THE AMOUNT ALONE CANNOT BE A SENTENCE** — and the client
+                // must not supply `wood` itself: which material a rung eats is a fact about the
+                // **config**, so a transcribed noun is a second authority that goes stale the day a
+                // rung is retuned.
+                build_material_id: pile.map_or_else(String::new, |(id, _)| id.to_string()),
+                // **The bare rate, read and not restated** — through the same
+                // `build_work_per_worker_turn` seam every other catalog and source row publishes
+                // theirs by, at `NO_BUILD_GEAR`, because it is the *sum of terms* the model is
+                // written as and a second term added there must reach this row too.
+                build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
+                yield_per_worker_turn: payoff.yield_per_worker_turn,
+                // ⛔ **PUBLISHED, NEVER DERIVED FROM `reachable / capacity`.** `deposit_reachable`
+                // clamps to the **stock**, so that ratio stops being the rung's recovery the moment
+                // the seam is drawn down — a payoff row computing it would quote a number that falls
+                // as the rock is worked, on a rung whose reach never moved.
+                recovery_fraction: payoff.recovery_fraction,
+                regrowth_multiplier: payoff.regrowth_multiplier,
+                // **Why a rung is refused, and not merely that it is** — the rung's own floor,
+                // struck against the capacity a working already publishes. A rung with no
+                // `site_requirement` reads [`NO_DEPOSIT_FLOOR`]: it has never heard of deposits,
+                // which is not the same statement as a deposit rule of zero but is the same number.
+                min_deposit_capacity: rung
+                    .site_requirement
+                    .as_ref()
+                    .map_or(NO_DEPOSIT_FLOOR, |site| site.min_deposit_capacity),
             }
         })
         .collect()

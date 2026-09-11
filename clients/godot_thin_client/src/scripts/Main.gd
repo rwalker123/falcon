@@ -412,6 +412,8 @@ func _ready() -> void:
             hud.connect("unqueue_requested", Callable(self, "_on_hud_unqueue"))
         if hud.has_signal("abandon_requested") and not hud.is_connected("abandon_requested", Callable(self, "_on_hud_abandon")):
             hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
+        if hud.has_signal("abandon_working_requested") and not hud.is_connected("abandon_working_requested", Callable(self, "_on_hud_abandon_working")):
+            hud.connect("abandon_working_requested", Callable(self, "_on_hud_abandon_working"))
         if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
             hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
         if hud.has_signal("upkeep_kit_requested") and not hud.is_connected("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit")):
@@ -495,6 +497,12 @@ func _ready() -> void:
         if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
             if not hud.is_connected("labor_pending_changed", Callable(map_view, "set_labor_pending")):
                 hud.connect("labor_pending_changed", Callable(map_view, "set_labor_pending"))
+        # The map's SOURCE LIST asks for a band's Work tab (issue #650). The link is drawn ONLY when
+        # this connection exists (`MapView._update_source_list` tests it), so a harness with no HUD
+        # shows no dead control rather than a button that does nothing.
+        if hud != null and map_view.has_signal("work_tab_requested") and hud.has_method("show_band_work_tab_for_entity"):
+            if not map_view.is_connected("work_tab_requested", Callable(hud, "show_band_work_tab_for_entity")):
+                map_view.connect("work_tab_requested", Callable(hud, "show_band_work_tab_for_entity"))
         if hud != null and hud.has_signal("faction_knowledge_changed") and map_view.has_method("set_faction_knowledge"):
             if not hud.is_connected("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge")):
                 hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))
@@ -916,6 +924,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # `intensification_ladder.json` reaches the player with no client edit.
     if snapshot.has("route_rungs") and SnapshotSections.changed(snapshot, "route_rungs"):
         _hud_invoke("update_route_rungs", [snapshot["route_rungs"]])
+    # …and the two DEPOSIT branches' catalog beside it, the third per-world ladder declaration. It is
+    # what lets a working's ladder, its tile-card payoff row and its compose sheet all name a rung,
+    # price it and state what it buys off the sim's own record rather than a client table.
+    if snapshot.has("deposit_rungs") and SnapshotSections.changed(snapshot, "deposit_rungs"):
+        _hud_invoke("update_deposit_rungs", [snapshot["deposit_rungs"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
@@ -993,6 +1006,12 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # the knowledge screen's *"is anything using this"* verdict is asked of the faction's own sources.
     if snapshot.has("routes") and SnapshotSections.changed(snapshot, "routes"):
         _hud_invoke("update_road_network", [snapshot["routes"]])
+    # THE LIVE WORKINGS ON THE GROUND (arc #583). The map ingests the same section into its own
+    # per-tile lookup for the tile card; the HUD needs it because the WORKINGS ROSTER asks a
+    # whole-list question — *which workings is this band paying the `quarrywork` pool for* — which no
+    # per-hex index answers.
+    if snapshot.has("deposits") and SnapshotSections.changed(snapshot, "deposits"):
+        _hud_invoke("update_deposits", [snapshot["deposits"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
     # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
     # cached forks on absence would drop the end-turn gate every quiet turn.
@@ -1325,7 +1344,53 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
-        "scout", "warrior", "agriculture", "husbandry", "roadwork", "builders":
+        "extract":
+            # **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6, arc #583) —
+            # `assign_labor <f> <b> extract <x> <y> <material> <workers>`, and `0` unassigns.
+            #
+            # ⛔ **THE MATERIAL RIDES THE `species` TOKEN, AND IT IS NOT OPTIONAL.** That is where
+            # the sim's own `"extract"` arm reads it from — it is the one free-form string this
+            # command already carries and it means the same kind of thing on a forage row (*which of
+            # the things on this ground are you here for*). One tile can hold two workings, so a line
+            # with no material names neither of them and the sim refuses it by name; declining to
+            # build a line here is the honest answer rather than emitting a refusal.
+            #
+            # **THE FLOOR RIDES AFTER THE MATERIAL, AND IT IS FORAGE'S OWN TOKEN** (issue #650) —
+            # `extract <x> <y> <material> [floor] <workers>`, a validated NUMBER at
+            # `FLOOR_COMMAND_DECIMALS`, never `str(float)`. The four retired stance words are rejected
+            # BY NAME at parse, so a stale emitter fails loudly rather than being reinterpreted.
+            #
+            # ⛔ **AND IT IS SENT ONLY WHERE THE SHEET OFFERED A DIAL** (PR #651 review). A finite
+            # working has no dial, so the player named no floor — and the FLOOR KEY IS ABSENT from its
+            # payload rather than carrying a stand-in. Sending the sheet's default made
+            # `handle_assign_labor` see a floor the player chose, so `server::unnamed_deposit_floor` —
+            # the fork that answers `STRIP_IT_BARE` on ground at `NEVER_RENEWS` — could never fire on
+            # the shipped path, and the row stored a conservation choice nobody made. **Absence is the
+            # only thing a builder can honestly say for a question that was never asked**; what it
+            # MEANS is the sim's, and it answers differently per branch.
+            #
+            # **STILL NO KIT TOKEN**: `default_kits.extract` is the bare `none` kit with no picker
+            # anywhere on the working card, so the tail is closed after the worker count.
+            var ex := int(payload.get("x", -1))
+            var ey := int(payload.get("y", -1))
+            var material := String(payload.get("species", "")).strip_edges().to_lower()
+            if ex < 0 or ey < 0 or material == "":
+                return {}
+            var extract_head := "assign_labor %d %d extract %d %d %s" % [
+                faction, band_id, ex, ey, material]
+            var extract_message := "Assign %d worker%s to the %s working at (%d, %d)." % [
+                workers, "" if workers == 1 else "s", material, ex, ey]
+            if payload.has("floor"):
+                extract_head += " " + _format_floor(payload)
+                extract_message = \
+                    "Assign %d worker%s to the %s working at (%d, %d), leaving %s standing." % [
+                        workers, "" if workers == 1 else "s", material, ex, ey,
+                        _floor_percent_text(payload)]
+            return {
+                "line": "%s %d" % [extract_head, workers],
+                "message": extract_message,
+            }
+        "scout", "warrior", "agriculture", "husbandry", "roadwork", "quarrywork", "builders":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
             # every one of those on a role target — but `kit_job()` answers for all four
@@ -1333,12 +1398,13 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
             # player who never opened the role card's picker emits the line they always did.
             #
-            # **THE THREE KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
-            # arc #532). `agriculture`, `husbandry` and `roadwork` are band-wide standing roles in
-            # exactly the grammar scout and warrior use, so a branch of their own would be the same
-            # line typed three times. They send no kit today — the role cards mount no picker, the
-            # wire naming no default kit for any of the three jobs (`default_kits.roadwork` is the
-            # bare `none` kit, so road keepers work bare-handed and that is intended) — and
+            # **THE FOUR KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
+            # arc #532, arc #583). `agriculture`, `husbandry`, `roadwork` and `quarrywork` are
+            # band-wide standing roles in exactly the grammar scout and warrior use, so a branch of
+            # their own would be the same line typed four times. They send no kit today — the role
+            # cards mount no picker, the wire naming no default kit for any of the four jobs
+            # (`default_kits.roadwork` and `default_kits.quarrywork` are both the bare `none` kit, so
+            # road keepers and working keepers work bare-handed and that is intended) — and
             # `_kit_token` omits an empty selection.
             #
             # **AND SO DOES `builders`, which the sim has always parsed and this builder DID NOT
@@ -1667,6 +1733,24 @@ const IMPROVEMENT_BAND_TARGETED := SourceForecast.ROUTE_IMPROVEMENTS
 ## so this is a REFUSAL rather than a default — see `format_improvement`.
 const IMPROVEMENT_NO_BAND := -1
 
+## ⛔ **THE DEPOSIT BRANCHES' THREE VERBS NAME A TILE *AND* A MATERIAL** (issue #650), which is the one
+## way they differ from every other tile verb here — `fell <faction> <x> <y> <material>`, the material
+## riding `assign_labor extract`'s own trailing position so the two ways of addressing one working read
+## alike. **ONE HEX CAN HOLD TWO WORKINGS** (a wooded highland holds timber AND rock), so a line naming
+## only the tile names neither of them and would raise the wrong ladder.
+##
+## They name NO band, unlike `grade`/`pave`: a working is backed by a `LaborTarget::Extract` row, so its
+## keeper is already known and the sim resolves it through `queue_build_on_working_bands` — the
+## `cultivate`/`sow` precedent, not the road's.
+##
+## Read off `SourceForecast.DEPOSIT_IMPROVEMENTS` rather than restated, so the branch's verbs are
+## spelled once.
+const IMPROVEMENT_MATERIAL_TARGETED := SourceForecast.DEPOSIT_IMPROVEMENTS
+
+## The material a deposit verb names when the payload carries none. A working's key is the
+## `(tile, material)` PAIR, so this is a REFUSAL rather than a default — see `format_improvement`.
+const IMPROVEMENT_NO_MATERIAL := ""
+
 ## ⛔ **NONE OF THESE VERBS TAKES A WORKER COUNT, and a trailing one is a PARSE ERROR**
 ## (`docs/plan_standing_upkeep.md` §2.5). Each carried the build's own crew for one slice; they
 ## DECLARE now — the verb appends an entry to a build queue, and the hands stand on
@@ -1700,6 +1784,20 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
             "line": "%s %d %d %d %d" % [improvement, faction, band, x, y],
             "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
                 improvement.capitalize(), x, y],
+        }
+    if improvement in IMPROVEMENT_MATERIAL_TARGETED:
+        # ⛔ **NO MATERIAL, NO COMMAND.** The token is half the working's identity, so an absent one is
+        # refused here rather than dropped — a three-token `fell` does not merely lose the material, it
+        # is a shorter line the parser rejects outright, and guessing one would raise the wrong ladder
+        # on a hex holding two workings. The way an absent band is refused one branch up, and an
+        # absent herd id one branch above that.
+        var material := String(payload.get("material", IMPROVEMENT_NO_MATERIAL)).strip_edges()
+        if material == IMPROVEMENT_NO_MATERIAL:
+            return {}
+        return {
+            "line": "%s %d %d %d %s" % [improvement, faction, x, y, material],
+            "message": "%s the %s at (%d, %d) — queued for this band's builders." % [
+                improvement.capitalize(), material, x, y],
         }
     return {
         "line": "%s %d %d %d" % [improvement, faction, x, y],
@@ -1774,6 +1872,38 @@ static func format_abandon(payload: Dictionary) -> Dictionary:
     return {
         "line": "abandon %d %d %d" % [faction, x, y],
         "message": "Put down what your people hold at (%d, %d)." % [x, y],
+    }
+
+## **`abandon_working <faction> <x> <y> <material>` — PUT ONE WORKING DOWN** (issue #650).
+##
+## ⛔ **ITS OWN BUILDER BECAUSE IT IS ITS OWN VERB, AND `abandon` MUST NOT BE WIDENED INTO IT.**
+## `abandon` names a PLACE: `BuildSourceRef::target` resolves a tile pair to a forage source, which
+## `LaborTarget::same_source` never pairs with an `Extract` row — so it does not reach a working at
+## all — and it drops every band-of-the-faction's holding on the tile, a forage assignment there
+## included. Covering a working with an optional trailing material would make an already destructive
+## verb quietly more destructive on exactly the hexes that hold two workings.
+##
+## ⛔ **THE MATERIAL IS HALF THE SUBJECT AND IS REFUSED WHEN ABSENT, exactly as the tile is.** A
+## working's key is the `(tile, material)` PAIR because one hex can hold two, so a three-token line
+## does not merely under-specify the order — and it is refused HERE rather than left to the parser,
+## because a line missing its trailing token is a shorter line another verb's grammar accepts. The
+## `IMPROVEMENT_NO_MATERIAL` refusal one builder up, in the one other place this pair is sent.
+##
+## **THE TAIL IS CLOSED AND THERE IS NO BAND TOKEN.** It rides the three deposit verbs' own parser arm
+## (`sim_runtime::command_text`), so the material sits in the same trailing position; and a working's
+## keeper is known from its `Extract` row, exactly as a patch's is from its forage row.
+static func format_abandon_working(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    var material := String(payload.get("material", IMPROVEMENT_NO_MATERIAL)).strip_edges()
+    if material == IMPROVEMENT_NO_MATERIAL:
+        return {}
+    return {
+        "line": "abandon_working %d %d %d %s" % [faction, x, y, material],
+        "message": "Stop holding the %s working at (%d, %d)." % [material, x, y],
     }
 
 ## **`build_kit <faction> <x> <y> [kit <id>]` | `build_kit <faction> <herd_id> [kit <id>]` — THE
@@ -2213,6 +2343,12 @@ func _on_hud_unqueue(payload: Dictionary) -> void:
 ## shadow, so there is nothing a refused send would have to take back.
 func _on_hud_abandon(payload: Dictionary) -> void:
     _send_formatted_command(format_abandon(payload))
+
+## PUT ONE WORKING DOWN — the deposit branches' own release, and a different verb from the one above.
+## **No rollback** for the road's reason: nothing optimistic is written for it, and the next snapshot
+## restates the `deposits` section and the band's labor rows together.
+func _on_hud_abandon_working(payload: Dictionary) -> void:
+    _send_formatted_command(format_abandon_working(payload))
 
 ## NAME THE KIT one queued build is raised with (`docs/plan_standing_upkeep.md` §4.7a ②) — its own
 ## handler because its own command and its own scope: it names a SOURCE and sets a property of that

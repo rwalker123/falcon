@@ -817,6 +817,15 @@ const DETAIL_KV_SEPARATOR := ": "
 ## the old `is_nan` guards decided. `disclosures` is row-label → `{key, open, concerning}` (see
 ## `DisclosureController.state`); empty means no row wears a caret.
 class Context extends RefCounted:
+    ## ⛔ **WHICH OF THIS CARD'S KEYS ARE DEPOSIT MATERIAL ROWS** (issue #650) — `{key: true}`, filled by
+    ## `HudDepositVocab.deposit_lines` as it emits them.
+    ##
+    ## **It exists because a material NAMES ITSELF.** Every other arm of `_value_hex` dispatches on a
+    ## literal row key (`Road`, `Upkeep`, `Foraging`); a working's row key is `Wood` or `Stone` —
+    ## `materials.json`'s ids, which are config and may not be spelled in this client — so there is no
+    ## literal to compare against and the producer has to say which keys it wrote. `row_tooltips` one
+    ## field up is the same shape for the same reason: only the producer knows.
+    var deposit_rows: Dictionary = {}
     var food_turns: float = NAN
     ## The FODDER larder's runway, for the `Fodder:` row's value tint — the food field's twin, filled
     ## by `BandDetailLines._band_fodder_line` and read by `_value_hex` through the same
@@ -1053,6 +1062,12 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # the ink is the only thing marking it out, and it takes no value: the row is emitted solely
         # where the rung buys something.
         return HudRouteVocab.bonus_value_hex()
+    elif ctx.deposit_rows.has(key):
+        # ⛔ **THE WORKING'S MATERIAL ROW (issue #650), AND IT IS THE ONE ARM KEYED ON MEMBERSHIP
+        # RATHER THAN ON A LITERAL** — see `Context.deposit_rows` for why a material row's key cannot
+        # be a constant here. The fork itself is the branch's own, keyed on the hazard mark its
+        # composer put there rather than on a second reading of the working.
+        return HudDepositVocab.deposit_land_value_hex(value)
     elif key == HudFloraVocab.FIELD_ROW:
         # Plant rung 3 — the patch twin of the Corral row's tint (ink while building, signal once
         # complete). Same shape as Cultivation's; kept its own case because a Field is a different

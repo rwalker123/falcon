@@ -2776,3 +2776,158 @@ sheet of the chapter that runs after `hunt` — renders its card ~300px SHORTER,
 documented fit sensitivity to the sheet rendered before it, and the new frame is the correctly fitted
 one. Measured by disabling the block's one call and diffing the whole set: **421 of 422 frames
 byte-identical**, that frame the only mover.
+
+## The `workings` chapter, reworked to the three surfaces (issue #650)
+
+**Nineteen frames and one hundred and eighteen checkpoints**, `EXPECTED_CHECKPOINTS` **118** —
+RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this file's
+own rule says. **The const in `chapters/workings.gd` is the authority and this paragraph is the
+description**: a figure here that disagrees with it is this file being stale, never a licence to lower
+the const to match. The chapter has been re-measured that way repeatedly — a declared 43 against a
+real 47, then a declared 91 against a real 95 — which is why a DELTA is never applied to the figure
+written down: a delta on a stale count sets a floor the chapter can fall through. The chapter's subject is
+`extraction-workings.md`'s; what belongs here is the shape of the drive and the three things it cost.
+
+**FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
+`workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
+against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
+branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is nineteen** —
+`workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
+`workings_extraction_sheet` / `workings_unopened`, the two ORDER frames
+(`workings_road_last` / `workings_road_remembered`), `workings_worked_buttons` and
+`workings_just_assigned` below, the THREE `workings_floor_*` frames the preset loop emits
+(`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
+`workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
+`workings_out_of_range`, and the pair `workings_tile_crews` / `workings_tile_crews_other_band`.
+
+### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
+
+Appended after the two ORDER frames. The standing summary is the `Assign … ▸` control's own SECOND
+LINE now (`selection-card.md`), and this is the one state in the corpus that stages a WORKED deposit —
+Ray's own card, two foresters on the wood — so it is where that face can be read at all.
+
+- **THE PAIR IS ON ONE HEX, which is what makes it a claim rather than a sample**: the band works the
+  wood and not the rock, so `Assign foresters ▸` carries a second line and `Assign diggers ▸` carries
+  none. A control that grew a blank second line on every source satisfies the presence half on its
+  own, and the blank gap is exactly what the single-line rule forbids.
+- **THE LABEL IS ASSERTED ON THE FIRST LINE**, which is what says the summary JOINED the control
+  rather than replacing its face.
+- ⛔ **AND THE FACE IS ASSERTED INERT, because no picture can show a swallowed click.** Every control
+  in a stacked face is `MOUSE_FILTER_IGNORE`; the summary's note labels have been through
+  `set_label_tooltip`, which sets **STOP**, so each would be a dead patch over the button.
+
+**THE HARNESS SIDE OF THE MOVE IS FOUR REPOINTINGS, NOT FOUR DELETIONS.** Every claim survived; what
+changed is where it is read from. `Q.find_button_by_text` matches a stacked cell on its first line
+and returns the PRESSABLE button under it (so every existing caller is untouched); `Q.action_button_face`
+is what a caller asserts against instead of `Button.text`, which is empty by construction on a
+stacked one; `Q.stacked_action_cell` / `_button` / `_summary` reach the parts; and `ui_preview.gd`'s
+`_forage_open_button` descends into the cell, the host's direct child now being that cell rather than
+a Button. `tile_panel`'s `_forage_summary_text` reads the summary through the cell for the same
+reason, and `compose_rungs`' survives-the-restate claim compares the CELL's instance id — the button
+under the face survives with it, and comparing the button against `get_child(0)` would compare two
+different nodes and fail on a drawer that patched perfectly.
+
+### ⛔ THE TWO ORDER FRAMES ARE A FOG PAIR, AND THE REMEMBERED ONE IS THE WHOLE POINT
+
+`workings_road_last` / `workings_road_remembered` are appended after `workings_unopened` and before
+the chapter hands the hex back bare, so nothing before them moves. They exist because Ray asked for
+the `Road` ROW to close the tile card (`roads.md`), and the road block is COMPOSED above
+`_tile_terrain_lines`' Discovered early return — so *"move it to the end"* has an implementation that
+looks right on a live hex and drops the road from every REMEMBERED one.
+
+- **They are this chapter's only states that stand all four row families on ONE hex** — the two
+  seams, the human web with its basket, the animal web and a road — which is the only shape the
+  ORDER is a claim about. Composed from the SHARED `BaseFx.food_tile_fixture()` with the deposits and
+  the road re-homed onto this chapter's hex, rather than from the bare `_workings_tile`, which states
+  deposits and nothing else.
+- **The road is deliberately the FLOOR rung with no payoff and no bill** (`ROAD_PATH_METER`, friction
+  at `HudRouteVocab.ROAD_FRICTION_NO_HELP`), so the block is exactly ONE line and *the road is last*
+  can be asserted by INDEX (`== lines.size() - 1`) rather than by a tail-scan whose own correctness
+  would need arguing. The block's other four rows are already walked by `land_readouts.gd`'s eleven
+  road frames.
+- **The pair is the claim.** The live frame alone passes on a client that composes the road below the
+  early return; the remembered frame alone passes on one that never moved it. The remembered half
+  makes two claims for that reason — the road is still THERE, and it is still LAST.
+- **And the deposits' own position is asserted beside them**, because the move reorders the ONE
+  producer both blocks are emitted from: Wood and Stone must still sit above `Foraging`.
+
+⛔ **THE CHAPTER STAGES ITS OWN BAND, AND WITHOUT ONE EVERY SHEET CLAIM IS ABOUT A CREW OF ZERO.** It
+runs LAST in `CHAPTERS`, so the roster it inherits is whichever one the twenty-fifth chapter left; a
+band with no idle worker clamps the compose sheet's stepper to 0, and that renders a perfectly
+ordinary sheet — no take row, no deal row, and the pointer line's *send diggers here first* arm
+instead of its live one. **Measured**: that is exactly how the chapter first failed, on four claims
+that said nothing about the code under test. `BandFx.band_fixture()` is pushed through
+`update_band_alerts` at the top, and the crew the sheet SETTLED on is read back off
+`ComposeState.deposit_count()` rather than assumed — a deal asserted at a count the sheet refused is
+a claim about a number nothing on screen shows.
+
+⛔ **IT PUSHES ITS OWN RUNG CATALOG, THROUGH THE REAL INGEST** (`Hud.update_deposit_rungs`). Every
+rung NAME, PRICE, PAYOFF and GATE on all three surfaces is read out of
+`SubsistenceSection.depositRungs`, so a chapter that staged no catalog would assert against raw wire
+keys and against a ladder with no rows on it.
+
+⛔ **AND THE LADDER IS ASSERTED OVER ITS PRODUCER, WITH NO FRAME OF ITS OWN.** The track is opened
+from the WORK BOARD's workings roster and this harness stands up no Band panel, so the rendered frame
+is `band_panel_preview`'s (`band_panel_workings_track`). What is asserted here is the five ROW STATES
+the branch can reach — the new SITE gate, the CRAFT gate and its looked-up remedy, the free floor as
+a FACT, a priced row leading with its pile and quoting no turns, and a row mid-build quoting the sim's
+own countdown — because a frame can show one of them and the branch has five.
+
+**Two claims are structural rather than textual, and each is the only thing that can see its
+failure.** The payoff row's key is a BLANK rather than absent, so the claim is that the rendered
+markup keeps exactly ONE `[table=`: a keyless line closes the card's table and every key below it
+stops sharing a column with `Foraging`, which no `contains` can see. And the payoff rows are read
+through the chapter's own `_payoff_values` scan rather than `Readout.detail_row_value`, because a hex
+carrying two RAISED deposits emits two rows keyed `" "` and the shared reader answers with the first.
+
+**Three gotchas cost a run each, all of them harness rather than feature:**
+
+- **`h` is untyped, so every local taken off it needs an annotation.** Six `var x := h._hud…` lines
+  failed to compile with `Cannot infer the type of "x"`, which takes the whole chapter down at LOAD
+  and reports as `did not load`.
+- **`Readout.verdict_text` includes the severity DOT**, the dot being a Label of the verdict row, so
+  a sentence is asserted with `contains` and never `==`.
+- **The readout's NOTE is uppercased by `_readout_unit_label`**, so the needle is the vocabulary's own
+  word `.to_upper()` — `yields_text` does carry it, the note being a child of the row's own flow.
+
+**A clean run is 446 frames / 2115 `PASS`, exit 0 — MEASURED windowed on this tree.** ⛔ **The
+`--headless` run exits 1 here and that is the dummy renderer, not this chapter**: `button_faces`
+skips two pixel probes for want of a renderer and falls 8 short of its own floor, which is that
+harness's documented headless behaviour. Judge this harness windowed.
+
+### The floor the sim discards, discarded here too (issue #650)
+
+One frame and nine checkpoints appended LAST in `chapters/workings.gd`, before it hands the hex back
+bare, so no earlier state moves. The behaviour is `extraction-workings.md`'s — "AND THE CREW'S HALF IS
+DISCARDED WHERE THE GROUND NEVER RENEWS"; what belongs here is the shape of the drive.
+
+**THE FIXTURE'S STOCK IS THE WHOLE DESIGN.** `_worked_down_quarry` sits at 700 of 2200, which is
+BETWEEN `extraction:quarry`'s own floor (`0.15 × 2200` = 330) and the sheet's omitted-token default
+(`0.5 × 2200` = 1100) — the one band of stock where the discarded floor changes an answer instead of
+losing a `max` it was never going to win. A quarry at full stock composes a plausible number either
+way, which is why the existing `workings_extraction_sheet` could not see this: it stands on
+**gathering**, whose 0.85 rung floor beats the 0.5 default already, so the `max` is unchanged there
+and that state passes with the defect restored.
+
+**THE ROOM IS ASSERTED AGAINST THE PUBLISHED `reachable`, NEVER AGAINST A SECOND SUBTRACTION.** Rock's
+curve is all zeros, so `room_next_turn` reduces to `stock − rung floor × capacity`, which IS
+`extraction::deposit_reachable` at a crew that named no floor — so the fixture states 370 on the wire
+and the claim is that the client's composition arrives at the same figure from the other end. A claim
+recomposing that subtraction in the chapter could only agree with itself.
+
+**THE CREW IS READ BACK, AND THAT IS WHAT MAKES THE TAKE CLAIM POSSIBLE AT ALL.** Composed at the
+default the cap was ZERO, so `clamp_deposit_count` clamped the band's three diggers away and the take
+went blank — a take asserted at an assumed crew would have failed for the wrong reason. The band
+fixture staffs three so the sheet SEEDS there rather than at the `WORKER_STEP` floor.
+
+**THE NARROWNESS CLAIMS ARE A PAIR ON THE RENEWING SCATTER, both directions** — the rung's 0.85
+winning at the default, and a dial of 0.90 winning over the rung. Either alone passes on a
+`composed_floor` that has stopped taking a maximum at all, which is the over-correction the condition
+is one keystroke away from.
+
+**Sabotage-verified** by restoring the unconditional `max`: exactly **five** claims fail and the
+failure text is the defect in its own words — `composes at the rung's floor alone, never 0.50 (0.50)`,
+`room … (0.0 of 370.0)`, `169 cutters (0)`, `3 diggers … (0)` and an empty take. The precondition and
+both renewing claims correctly stay green, which is the decomposition: the condition and the maximum
+are independent, so a defect in one leaves the other's claims standing.
+

@@ -40,6 +40,10 @@ signal targeting_cancel_requested()
 ## real change (it early-returns on a no-op); `_fit_map_to_view` also emits after
 ## resetting zoom + pan, so a fit re-syncs the readout even when already at 1.0×.
 signal zoom_changed(zoom_factor: float)
+## **THE SOURCE LIST'S `Work tab ▸` LINK** (issue #650) — re-emitted from `BandSourceList`, carrying
+## the SELECTED BAND'S ENTITY so the panel jumps to that band rather than to whichever one it happens
+## to be showing. `Main` relays it to the HUD; the map never reaches the Band/City panel itself.
+signal work_tab_requested(band_entity: int)
 
 ## The two channels this renderer paints WITHOUT consulting `OVERLAY_COLORS` and that own no single
 ## hue of their own: the empty key (terrain art, or the fog tones over it) and the terrain-tag blend
@@ -934,6 +938,19 @@ var road_network: Array = []
 ## tile sim-side, so the array holds exactly one — it stays an array so a duplicated row would render
 ## twice rather than vanish silently, and so the tile card's block loop is unchanged.
 var road_tile_lookup: Dictionary = {}
+## **THE LIVE WORKINGS ON THE GROUND, keyed by the tile they stand on** (`{Vector2i: Array[deposit]}`,
+## arc #583) — the deposit twin of `road_tile_lookup`, so `_tile_info_at` can answer *what is being
+## worked on this hex* without walking the section every hover.
+##
+## ⛔ **THE ARRAY REALLY DOES HOLD TWO, AND THAT IS THE WHOLE REASON IT IS AN ARRAY.** The registry is
+## keyed `(tile, material)` sim-side: a wooded highland carries a timber working AND a rock working,
+## and working one is not working the other. A lookup that kept one row per tile would silently drop
+## whichever arrived second.
+##
+## ⛔ **AN ABSENT TILE MEANS *NOBODY HAS WORKED THIS GROUND*, NEVER *THERE IS NO DEPOSIT HERE*.** The
+## registry is sparse and lazy, so an untouched map fills none of this; what a tile HOLDS is a pure
+## function of its terrain and is not on this table.
+var deposit_tile_lookup: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
@@ -1126,6 +1143,10 @@ var _fow_noise_amount: float = FOW_DEFAULT_NOISE_AMOUNT
 
 # 2D Minimap (owned by MinimapController — see ui/MinimapController.gd)
 var _minimap: MinimapController = null
+## The selected band's SOURCE LIST, docked beside its token (issue #650) — a Control on its own
+## CanvasLayer, created here in `_ready`. Not lazy like the minimap: that one waits because it needs
+## `Main` to have supplied the HUD reference first, and this panel needs nothing from the HUD.
+var _source_list: BandSourceList = null
 # Primary player-band markers (owned by BandMarkerRenderer — see ui/BandMarkerRenderer.gd)
 var _band_markers: BandMarkerRenderer = null
 # Secondary markers — herds/food/sites (owned by SecondaryMarkerRenderer — see ui/SecondaryMarkerRenderer.gd)
@@ -1168,6 +1189,11 @@ const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_ma
 const PROFILE_LAYERS_CRISIS := "layers.crisis"            # AnnotationRenderer.set_crisis_annotations
 const PROFILE_LAYERS_ROUTES := "layers.routes"            # AnnotationRenderer.set_routes (the `orders` array)
 const PROFILE_LAYERS_ROAD_NETWORK := "layers.road_network"  # _ingest_road_network (the `routes` SECTION — the roads in the ground)
+# **THE DEPOSITS GET THEIR OWN SPAN, and it is not an optional nicety**: the section is one row per
+# DISCOVERED DEPOSIT-BEARING TILE (issue #650), thousands of them on a revealed map against a few
+# hundred roads, so folded into the road span it would be an unattributable step in a bucket named
+# after something else.
+const PROFILE_LAYERS_DEPOSITS := "layers.deposits"        # _ingest_deposit_workings (the `deposits` SECTION)
 const PROFILE_SITES_FOOD := "sites.food"                  # food_modules ingest + the terrain_id stamp
 const PROFILE_SITES_DISCOVERED := "sites.discovered"      # the per-faction discovered-site ingest
 const PROFILE_SITES_FORAGE := "sites.forage"              # the forage_patches ingest
@@ -1198,6 +1224,10 @@ const SECTION_POPULATIONS := "populations"
 ## for it and the manifest carries that spelling; the client-side NOUN is `road_network`, to keep it
 ## clear of `AnnotationRenderer`'s order-path `_routes`.
 const SECTION_ROUTES := "routes"
+## The WORKINGS section (arc #583) — one row per `(tile, material)` a band has opened. **Not a shader
+## input**: a working is drawn by no terrain pass, so it rides `SHADER_INPUT_SECTIONS` nowhere and a
+## frame that moves only this section rebuilds no splatmap.
+const SECTION_DEPOSITS := "deposits"
 const SECTION_OVERLAY_TERRAIN := "overlays.terrain"
 const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
 const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
@@ -1263,6 +1293,15 @@ func _ready() -> void:
 	_secondary_markers = SecondaryMarkerRenderer.new(self)
 	_band_overlays = BandOverlayRenderer.new(self)
 	_annotations = AnnotationRenderer.new(self)
+	_source_list = BandSourceList.new()
+	_source_list.setup(self)
+	# A row click PANS; it deliberately does not re-select the hex — see `_on_row_pressed` there.
+	_source_list.tile_focus_requested.connect(focus_on_tile)
+	_source_list.work_tab_requested.connect(
+		func() -> void: work_tab_requested.emit(selected_unit_id))
+	# Turning a page moves the rows the LEADER LINES run to, and those are drawn here — see the
+	# signal's own note.
+	_source_list.page_changed.connect(queue_redraw)
 	_apply_ui_scale()
 	ClientSettings.changed.connect(_apply_ui_scale)
 	# Note: the MinimapPanel node is created lazily from _minimap.update()
@@ -1513,6 +1552,14 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	if SnapshotSections.changed(snapshot, SECTION_ROUTES):
 		_ingest_road_network(snapshot.get("routes", []))
 	profile.end(PROFILE_LAYERS_ROAD_NETWORK, t_layers_roads)
+	# **AND THE DEPOSITS IN IT** (arc #583) — a different section, a different kind of thing, and
+	# gated on its own name for the road section's reason: the decoder republishes the whole section
+	# whenever any row moves and names it, so a frame that does not name it carries the deposits it
+	# already had.
+	var t_layers_deposits: int = profile.begin(PROFILE_LAYERS_DEPOSITS)
+	if SnapshotSections.changed(snapshot, SECTION_DEPOSITS):
+		_ingest_deposit_workings(snapshot.get("deposits", []))
+	profile.end(PROFILE_LAYERS_DEPOSITS, t_layers_deposits)
 	profile.end(PROFILE_LAYERS, t_layers)
 	var t_sites: int = profile.begin(PROFILE_SITES)
 	# Four independent ingests, each now gated on the section IT reads and each clearing its own
@@ -2061,6 +2108,13 @@ func _draw() -> void:
 	# they can draw. This is a PURE computation over `discovered_sites` / `food_sites` / `herds` /
 	# `last_hex_radius`, none of which mutate during `_draw`, so hoisting it above the overlay pass is
 	# behaviour-neutral for the marker draws that still read the result further down.
+	#
+	# **A WORKING'S MARKER IS THE ONE CATEGORY WHOSE EXISTENCE THE SLOT PASS CANNOT SEE FOR ITSELF**
+	# (issue #650): it is drawn only where a crew is on the working, which is a fact about the bands'
+	# labor rows rather than about a source array. So the worked set is resolved FIRST and threaded
+	# in — the inverse of the `hidden_source_state` hand-off below, and the same rule: threaded
+	# across, never held, so neither renderer depends on the other.
+	_secondary_markers.set_worked_workings(_band_overlays.compute_worked_workings())
 	_secondary_markers.compute_slots()
 
 	# Every player band's worked sources — a ring on each source's OWN marker, bold for the selected
@@ -2073,6 +2127,11 @@ func _draw() -> void:
 	# always-on marks above. Its per-source yield LABELS are the exception — they are queued here and
 	# flushed at the very end of _draw (see _band_overlays.flush_yield_labels).
 	_band_overlays.draw_band_work_highlights(radius, origin)
+	# …and the SOURCE LIST that carries what those sources PAY (issue #650). Placed and linked here,
+	# in the same `_draw` that built the rows: the leader lines run from a ROW to its hex, so the
+	# panel's geometry has to be settled before they can be drawn, and a frame's delay would show as
+	# lines trailing the panel under a pan.
+	_update_source_list(radius)
 
 	# Selected herd: its grazing range (the ground that sets its carrying capacity), drawn over the
 	# tile tints / Pasture overlay but under the herd markers so the animal still reads on top.
@@ -2096,6 +2155,8 @@ func _draw() -> void:
 		_secondary_markers.draw_food_site(site, radius, origin)
 	for wsite in discovered_sites:
 		_secondary_markers.draw_discovered_site(wsite, radius, origin)
+	# The WORKINGS being cut — the fourth secondary family, drawn from the set threaded in above.
+	_secondary_markers.draw_workings(radius, origin)
 	# The chip reports what the cap hid, so it needs the mark pass's roll-up (threaded across here so
 	# neither renderer holds the other).
 	_secondary_markers.set_hidden_source_state(_band_overlays.hidden_source_state())
@@ -2482,6 +2543,10 @@ func reset_world_state() -> void:
 	# that is gone.
 	road_network = []
 	road_tile_lookup = {}
+	# …and the workings of that world with them. The section is diffed as a whole vector, so a new
+	# world's first frame restates it — but a world with NO workings at all restates nothing, and a
+	# lookup left standing would answer a hover off a map that is gone.
+	deposit_tile_lookup = {}
 	culture_layer_map.clear()
 	selected_unit_id = -1
 	selected_herd_id = ""
@@ -2492,6 +2557,10 @@ func reset_world_state() -> void:
 	highlighted_culture_context = ""
 	_annotations.reset_world_state()
 	_band_overlays.reset_world_state()
+	# The list describes a band of the world we are leaving; its rows are rebuilt from the next
+	# frame's selection, and until then it must not stand over the new map.
+	if _source_list != null:
+		_source_list.hide_list()
 	queue_redraw()
 
 func _herd_by_id(herd_id: String) -> Dictionary:
@@ -2714,16 +2783,17 @@ func _draw_marker_sprite(center: Vector2, tex: Texture2D, size: int, modulate: C
 ## The shared rounded-pill PLATE: a dark rounded-rect (draw_rect body + two end-cap circles) centered
 ## on `center`, sized to an already-measured `text_size` plus `pad_x` of symmetric horizontal padding.
 ## Single source of truth for the pill look — used by the `×N`/`+N` count badges (`_draw_count_pill`,
-## no extra padding: the end caps are its padding), by the on-tile yield labels
-## (`BandOverlayRenderer._draw_yield_label`, padded so the plate hugs the text+glyph run), and by the
-## BAND NAME PILL (`BandMarkerRenderer._draw_band_name_pill`), which is the one caller that asks for a
-## border.
+## no extra padding: the end caps are its padding) and by the BAND NAME PILL
+## (`BandMarkerRenderer._draw_band_name_pill`), which is the one caller that asks for a border. The
+## per-source `⚒N` badge draws its own plate as two `draw_rect`s rather than through here, a squared
+## plate being what distinguishes it from the rounded family. (The on-tile YIELD LABEL was the third
+## caller until issue #650 moved the rates into `BandSourceList`; there is no pill on the map now.)
 ##
 ## The optional BORDER is drawn as a second, larger plate UNDERNEATH the body rather than as a stroke:
 ## a stroked rounded pill would have to seam a rect outline into two arcs, and the two-plate form has
 ## no joins to get wrong. It costs nothing for the borderless callers — `PILL_NO_BORDER` is fully
-## transparent and `border_width` defaults to 0, so the `×N`/`+N`/yield callers render exactly the
-## pixels they always did.
+## transparent and `border_width` defaults to 0, so the `×N`/`+N` callers render exactly the pixels
+## they always did.
 const PILL_NO_BORDER := Color(0.0, 0.0, 0.0, 0.0)   # the default: draw no border plate at all
 func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color,
 		border: Color = PILL_NO_BORDER, border_width: float = 0.0) -> void:
@@ -3635,6 +3705,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	# the terrain label and the river edges, so a remembered hex still reports the road that crosses
 	# it — which is exactly the `Discovered` gate the sim publishes these rows under.
 	info["roads"] = _roads_on_tile(col, row)
+	# THE WORKINGS ON THIS HEX (arc #583) — the card's `Workings ▸` action reads its rows out of here
+	# and nowhere else, the road block's own cross-ref idiom. Stamped BEFORE the fog split below and
+	# deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`: the sim publishes a working only under the
+	# same `Discovered` gate a road takes, so a remembered hex still reports the working opened on it.
+	info["deposits"] = _workings_on_tile(col, row)
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here
@@ -3738,6 +3813,47 @@ func _ingest_road_network(raw: Variant) -> void:
 		if not road_tile_lookup.has(tile):
 			road_tile_lookup[tile] = []
 		(road_tile_lookup[tile] as Array).append(road)
+
+## **THE LIVE WORKINGS, INDEXED BY THE TILE THEY STAND ON** (arc #583) — `_ingest_road_network`'s twin,
+## and it keeps that function's two rules: the lookup is cleared and refilled inside one gate (so
+## erasure is free), and a row missing either coordinate is DROPPED rather than stamped on `(0, 0)`.
+##
+## ⛔ **IT DOES NOT DE-DUPLICATE ON THE TILE.** Two rows on one hex is the ORDINARY case here, not a
+## truncated frame — the registry key is `(tile, material)` — so both are appended and the tile card
+## renders a block for each. This is exactly where a road-shaped `if not has(tile)` would lose one.
+func _ingest_deposit_workings(raw: Variant) -> void:
+	deposit_tile_lookup = {}
+	if not (raw is Array):
+		return
+	for entry in raw:
+		if not (entry is Dictionary):
+			continue
+		# ⛔ **HELD BY REFERENCE, NEVER COPIED** — the snapshot sub-tree rule (`turn-profiling.md` →
+		# "Snapshot sub-trees are HELD BY REFERENCE"): a row belongs to the DECODER, which keeps it as
+		# the baseline the next delta patches, so holding one is free and WRITING into one edits the
+		# decoder's world. Nothing downstream stamps a derived key onto a deposit row — the tile card
+		# and the roster both read it through `HudDepositVocab`'s readers, and `HudBandLaborState`
+		# already holds the same array by reference — so there is no consumer to copy for. **It is the
+		# section where that matters most**: one row per discovered deposit-bearing tile is thousands
+		# on a revealed map (3,245 measured on the shipped 80x52 at full reveal), and the
+		# `duplicate(true)` this replaced cost **7.7 ms of every frame that carried the section**
+		# against the forage patches' 1.0 for two thirds as many rows.
+		var deposit: Dictionary = entry as Dictionary
+		var tile := HudDepositVocab.tile_of(deposit)
+		if tile.x < 0 or tile.y < 0:
+			continue
+		if not deposit_tile_lookup.has(tile):
+			deposit_tile_lookup[tile] = []
+		(deposit_tile_lookup[tile] as Array).append(deposit)
+
+## The workings on a hex — the tile card's cross-ref, read through `_tile_info_at`.
+##
+## **NOT fog-gated here, and that is deliberate**: the sim already publishes a working only to a
+## faction that has DISCOVERED its tile (the road's gate, not the herd list's — a working does not
+## wander off), and `_apply_visibility_to_info` drops the whole payload on an UNEXPLORED hex.
+func _workings_on_tile(col: int, row: int) -> Array:
+	var found: Variant = deposit_tile_lookup.get(Vector2i(col, row), null)
+	return found if found is Array else []
 
 ## The road on a hex — the tile card's cross-ref, read through `_tile_info_at`. The rows come back BY
 ## REFERENCE into `road_network` rather than duplicated: nothing downstream writes to a road, and a
@@ -5088,6 +5204,30 @@ func screen_size_local() -> Vector2:
 		return viewport_size
 	return viewport_size / to_screen
 
+## **MAP-LOCAL → CANVAS, THE ONE CONVERSION PAIR** (issue #650). A point this node DRAWS at, expressed
+## in the units a `Control` on a `CanvasLayer` positions in — and back.
+##
+## `get_global_transform_with_canvas()` composes this node's own transform (position = the leading
+## reserved insets, scale = the interface counter-scale) with the canvas transform, which is the same
+## single division `screen_size_local` and `_reserved_inset_span_local` already make. So this is ONE
+## seam rather than a fourth place that arithmetic is written out, and it cannot drift from them.
+##
+## Used by the source list — both to dock the panel beside the band's token and to bring the row
+## anchors back into map-local for the leader lines, which must be drawn in the SAME frame the panel
+## was placed in or they lag visibly under a pan.
+func local_to_canvas(point: Vector2) -> Vector2:
+	return get_global_transform_with_canvas() * point
+
+func canvas_to_local(point: Vector2) -> Vector2:
+	return get_global_transform_with_canvas().affine_inverse() * point
+
+## A RECT through the same pair. The transform is a scale plus a translation with no rotation, so
+## converting the two corners and re-forming is exact — and it is written once here rather than at the
+## call site, where a `size * scale` shortcut would silently assume the scale.
+func local_rect_to_canvas(rect: Rect2) -> Rect2:
+	var start := local_to_canvas(rect.position)
+	return Rect2(start, local_to_canvas(rect.end) - start)
+
 ## The summed reserved strips per axis (left+right, top+bottom), converted into LOCAL units.
 ## `set_reserved_inset` receives widths measured in CANVAS units (a docked panel's width), which is
 ## also the space this node's `position` lives in — but `_get_adjusted_viewport_size` subtracts them
@@ -5385,6 +5525,12 @@ func secondary_food_key(x: int, y: int) -> String:
 
 func secondary_herd_key(herd_id: String) -> String:
 	return _secondary_markers.herd_key(herd_id)
+
+## …and the WORKING's, keyed on the `(tile, material)` PAIR (issue #650). Same pass-through
+## convention as the two above: `BandOverlayRenderer` reaches the slot system through `MapView`, so
+## no renderer holds another.
+func secondary_working_key(x: int, y: int, material: String) -> String:
+	return _secondary_markers.working_key(x, y, material)
 
 ## THE unit fog rule — one definition, used by every unit draw/lookup/hit-test:
 ##     hidden == tile not currently visible AND the unit is not ours.
@@ -5728,6 +5874,59 @@ func unreserved_screen_rect() -> Rect2:
 		Vector2(
 			maxf(0.0, full.x - _inset_left - _inset_right),
 			maxf(0.0, full.y - _inset_top - _inset_bottom)))
+
+## **PUSH THIS FRAME'S ROWS INTO THE SOURCE LIST, PLACE IT, AND DRAW ITS LEADER LINES.** Called from
+## `_draw`, immediately after `BandOverlayRenderer.draw_band_work_highlights` has built the model.
+##
+## Visible iff a player band is selected AND it works at least one source; the renderer's rows answer
+## both halves, an unselected band yielding none.
+##
+## **THE LINK RUNS ROW → SOURCE, AND BOTH ENDS ARE CONVERTED THROUGH THE ONE PAIR.** The row anchor is
+## a CANVAS point (the panel lives in that space); the source's anchor is MAP-LOCAL (it is the point
+## the source's own marker was drawn at). `local_to_canvas` decides which panel EDGE the line leaves
+## from — the one facing the hex — and `canvas_to_local` brings that end back into the space this node
+## draws in.
+func _update_source_list(radius: float) -> void:
+	if _source_list == null:
+		return
+	var rows: Array = _band_overlays.source_rows()
+	if rows.is_empty():
+		_source_list.hide_list()
+		return
+	_source_list.visible = true
+	_source_list.set_work_tab_available(work_tab_requested.get_connections().size() > 0)
+	_source_list.update_rows(rows, selected_unit_id, _band_overlays.source_total_text())
+	_source_list.place(local_rect_to_canvas(_selected_band_avoid_rect(radius)),
+		unreserved_screen_rect())
+	var page: Array = _source_list.page_rows()
+	for i in range(page.size()):
+		var row: Dictionary = page[i]
+		var target: Vector2 = row.get("anchor", Vector2.ZERO)
+		_band_overlays.draw_row_link(
+			canvas_to_local(_source_list.row_anchor(i, local_to_canvas(target))),
+			target, row.get("color", HudStyle.LINE))
+
+## **EVERYTHING THE SELECTED BAND INKS, IN MAP-LOCAL UNITS** — the rect `BandSourceList.place()` keeps
+## clear of. Built from the parts that already know their own extents and NEVER re-measured here.
+##
+## ⛔ **THE NAMEPLATE IS WHY THIS IS NOT JUST THE TOKEN.** `BAND_GAP` used to be taken from the token's
+## CENTRE, so a panel opening below-right landed on the band's name pill — which hangs BELOW the token
+## and is wider than it. The plate's own footprint is `BandMarkerRenderer`'s one measurement
+## (`name_pill_offset`, the FOOTPRINT the overlap cull tests, end caps and `×N` chip included); a
+## second formula for one shape is the defect `map-markers.md` records under "A plate's half-extent is
+## ONE expression".
+##
+## Where the band draws NO nameplate — below `BAND_NAME_PILL_MIN_RADIUS`, an expedition, or one the
+## cull ate — the rect is the token's box alone, which is the honest footprint of what is drawn.
+func _selected_band_avoid_rect(radius: float) -> Rect2:
+	var center: Vector2 = _band_overlays.selected_band_center()
+	var token_radius := radius * BAND_TOKEN_RADIUS_FACTOR
+	var avoid := Rect2(center - Vector2(token_radius, token_radius),
+		Vector2(token_radius, token_radius) * 2.0)
+	var pill: Rect2 = _band_markers.name_pill_offset(_band_overlays.selected_band_tile())
+	if pill.size == Vector2.ZERO:
+		return avoid
+	return avoid.merge(Rect2(center + pill.position, pill.size))
 
 ## Sum the registered reservations into the four per-edge totals.
 func _recompute_insets() -> void:

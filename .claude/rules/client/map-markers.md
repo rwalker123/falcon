@@ -14,7 +14,7 @@ paths:
 Co-located hex markers no longer overlap at the hex center. Markers split into two
 classes by their source array (not a predicate): **PRIMARY** = player bands, drawn by
 `MapView._draw_primary_bands` over the `units`/`populations` array; **SECONDARY** = herds /
-food sites / wondrous sites, placed by `MapView._compute_secondary_slots`. (Tuning consts
+food sites / wondrous sites / **worked workings**, placed by `MapView._compute_secondary_slots`. (Tuning consts
 are grouped near the top of `MapView.gd`, after the FoW/height consts.)
 
 - **PRIMARY — player bands** own the **center spotlight** as an offset card-stack
@@ -41,13 +41,16 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
   Beyond 3, a `×N` count pill folded onto the **right end of whichever nameplate is drawn**
   (nameplate-with-count) — one anchoring rule, fed the `Rect2` the bar or the pill returns.
   Food-days dot + the travel arrow draw on the active card only.
-- **SECONDARY — herds / food sites / wondrous sites** ring the hex in **fixed edge slots**
+- **SECONDARY — herds / food sites / wondrous sites / worked WORKINGS** ring the hex in **fixed edge
+  slots**
   (`SECONDARY_SLOT_OFFSETS`, near the hex corners), computed once per frame in
-  `_compute_secondary_slots` by category priority **wonder → food → herd** (sequential fill,
+  `_compute_secondary_slots` by category priority **wonder → food → herd → working** (sequential fill,
   so icons never jump frame-to-frame). Cap `SECONDARY_VISIBLE_CAP` (3) visible icons; extras
   collapse into a `+N` overflow chip (`_draw_secondary_overflow`). Glyphs drop the old dark
   backing disc for a 1px drop shadow (`_draw_marker_glyph`). Herd migration arrow is thinner
   and only drawn on the hovered/selected herd tile. The `×N`/`+N` pills share `_draw_count_pill`.
+  The **working** category is the fourth and last — see "A WORKING gets a marker only where a crew is
+  on it" below.
 - **Selected + hovered hex outline** (`_draw_tile_selection_highlight`, reusing `_outline_hex`):
   a solid white hex outline on `selected_tile`, a faint one on `_hovered_tile` (skipped when
   hover == selection) — this replaces the old selection-as-marker-ring feel.
@@ -63,6 +66,86 @@ Verify visual changes via `tools/map_preview.gd` (`scripts/preview.sh res://tool
 `map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) /
 `map_band_names.png` / `map_band_names_overlap.png` / `map_band_names_gate.png` /
 `map_band_names_below_gate.png` + the existing labor-highlight states).
+
+
+## A WORKING gets a marker only where a CREW IS ON IT — bare ground gets nothing (issue #650)
+
+Ray's decision, and it is the whole feature: *"If it is being worked, we can show the marker and it
+being worked. If it is not being worked, many/most tiles have rock, so it would dirty up the map."*
+With the scrub-wood rows deleted nearly every land tile still holds stone, so a mark on unworked
+ground would be a mark on the whole map saying nothing is happening. **There is no large-deposit
+variant** — that was named as a fallback if worked-only turned out to be too little, not as a
+request.
+
+**IT IS A FOURTH SECONDARY CATEGORY, APPENDED LAST, AND THE EXISTING THREE DO NOT MOVE.** Sequential
+fill is what stops icons jumping frame-to-frame, so a new category earns the END of `wonder → food →
+herd` rather than a place inside it; on the rare hex already carrying three secondaries the working
+falls into the `+N` chip, which reports it as `⚒` through the roll-up the chip already carries. A
+worked working is **not promoted** past a herd for the same reason a ready source is not — see
+"A ready source is deliberately NOT promoted into a visible slot" in the slot-lookup section.
+
+**THE MARKER'S PRESENCE IS THE "AND IT BEING WORKED" — AND IT WEARS THE FULL MARK SET ON TOP OF
+IT.** A worked working takes the ring, the tile outline and the band link a worked
+patch and a hunted herd take, through the same routines, in its own quarried slate
+(`BandOverlayRenderer.EXTRACT_WORKED_COLOR`); the whole grammar is
+`overlay-channels.md` → "A WORKED WORKING WEARS EVERY PART A HUNTED HERD WEARS", including the
+autopsy on the first cut, which shipped the `⚒N` plate alone. What the visible cap hides the `+N`
+chip reports; what far zoom hides is hidden on purpose — the tile outline is the fallback in both
+cases, exactly as it is for the two food webs.
+
+**THE GLYPH IS THE MATERIAL, NEVER THE RUNG'S VERB** (`FoodIcons.MATERIAL_ICONS` / `for_material`:
+`wood` → 🪵, `stone` → 🪨). This is `BADGE_READY_CHEVRON`'s collision one layer out — 🌲 is both
+*"Coppice"* and *"this is a wood"*, ⛏ both *"Quarry"* and *"this is a rock face"* — and a marker
+answers WHAT IS HERE, so a verb glyph on one would say the opposite of the truth on any working that
+is standing rather than climbing. What comes out of the ground has no second reading. **An unmarked
+material wears no symbol and therefore takes no slot**, the module-less land row's rule, enforced by
+the one `_working_renders` predicate both the slot pass and the draw guard ask (`_wonder_renders`'
+contract — a source given a slot it then declines to draw leaves a hole in the ring and pushes a real
+marker into the chip).
+
+**AND BECAUSE SOMETHING NAMES THE MATERIAL, THE RATE BESIDE IT DOES NOT.** Ray, on a live frame
+holding a worked rock and a worked log: *"remove the wood and stone text, it is obvious from the icon
+what it is."* A working's rate reads `+0.40 ♻`, the shape the forage rate beside it already had.
+
+**THE CONDITION MOVED FROM THE HEX'S MARKER TO THE ROW'S ICON** (issue #650): the rate is a row in
+`BandSourceList` now, and that row draws the material's mark itself, through the same
+`SecondaryMarkerRenderer.face_for_material` the marker goes through. So the test is *does this row
+render a face at all* rather than `secondary_slot_of(key) >= 0` — which is why the noun stays only
+for a material this client has no mark for, and no longer comes back at far zoom or behind the `+N`
+chip. It is still a statement the CALLER makes about its OWN surface, never a fact about the rows: the two
+food webs answer `BandOverlayRenderer.MARKER_NAMES_NO_MATERIAL` unconditionally, a deer's icon saying
+nothing about `hide`.
+
+> ⛔ **THE FOOD ARMS ANSWERED WITH THE WRONG BOOLEAN'S CONSTANT, AND IT INVERTED THEM.**
+> `SourceForecast.MATERIAL_NAMED` answers *does this rate WRITE the noun*; the argument here answers
+> *does the MARK already say it, so the rate need not*. They are opposites, and the food arms were
+> handed `MATERIAL_NAMED` — `true` — under a comment stating that the food webs never drop the noun,
+> which is exactly what it made them do: a hunt paying only `hide` printed a bare `+0.22`, naming that
+> account nowhere at all. `MARKER_NAMES_NO_MATERIAL` exists so the two food arms state the answer in
+> the argument's own vocabulary rather than borrowing a `true` from a different question.
+
+**THE KEY IS THE `(tile, material)` PAIR** (`working_key`, `MapView.secondary_working_key`), the same
+identity `HudBandLaborState.extract_assignment_of` and the tile card's rows use: a hex cutting timber
+AND quarrying rock is TWO markers, and a tile-only key would collapse them. Within one hex the
+working keys are **sorted** before they are appended — the crew walk yields them in the snapshot's
+BAND order, so two bands cutting the same hex's two materials would swap corners the moment those
+bands reordered.
+
+**THE COMPUTATION ORDER IS INVERTED FROM THE OTHER THREE CATEGORIES, which is why the worked set is a
+PUSHED INPUT here** (`set_worked_workings`, fed from `MapView._draw`). A herd's marker exists because
+the herd exists, so the slot pass reads `_view.herds` for itself; a working's exists because somebody
+is WORKING it, which is a fact about the bands' labor rows — `BandOverlayRenderer`'s territory. So
+`compute_worked_workings()` runs BEFORE `compute_slots()` and its answer is threaded across, the
+mirror image of the `hidden_source_state` hand-off in the other direction, and by the same rule:
+threaded, never held, so neither renderer depends on the other.
+
+Frames: `map_working_worked` / `map_working_pair` / `map_working_overflow` / `map_working_farzoom`,
+plus the three parity states — `map_working_unselected` (the ring and the plate with nothing
+selected), `map_working_beside_herd` (**the side-by-side**: a worked working and a hunted herd in one
+picture, each hex probed for its own web's mark colour and for the absence of the other's) and
+`map_working_pair_marked` (two complete sets on one hex, their anchors asserted a ring's diameter
+apart). `harness-map-probes.md` records those probes and the sabotage runs behind the bare-ground and
+LOD claims.
 
 
 ## The slot lookup is public, and the overflow chip reports what it hides
@@ -184,6 +267,15 @@ and its food dot all still draw, so the band is never hidden; only its name is.
   anchor was harmless wherever it landed — on a pill it is what keeps the chip off the name's last
   letters. The bar needs no allowance at all, which is why all of this lives on the pill rather than
   in the anchoring code.
+- **THE FOOTPRINT HAS A SECOND READER NOW, AND IT TAKES AN OFFSET** (issue #650).
+  `BandSourceList` docks beside the selected band and used to measure its gap from the token's
+  CENTRE, so a panel opening below-right landed on the nameplate — which hangs BELOW the token and is
+  wider than it. `name_pill_offset(tile)` hands back that same FOOTPRINT rect **relative to the token
+  centre it was measured from**, `MapView._selected_band_avoid_rect` unions it with the token's box,
+  and `place()` takes its gap from the resulting rect's EDGES. Relative rather than absolute because
+  the two renderers resolve the band's wrapped copy by different routes (`_hex_center_wrapped` here,
+  `_band_effective_col` there) and an offset cannot disagree about WHICH copy is meant. It is the
+  measured rect and never a second formula — the ⛔ two bullets up.
 
 Foreign bands take the pill exactly as your own do — the fog rule already means a foreign band you
 cannot see is not drawn at all, so it needs no rule of its own. **Expeditions get no pill**, the same

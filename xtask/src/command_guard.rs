@@ -409,6 +409,25 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // FACTION has on the tile, which is why the roster's own tooltip warns that a forage
         // assignment there goes down with the road.
         CommandPayload::Abandon { .. } => return BandHandle::PlaceAddressed,
+        // ⛔ **AND SO DO THE TWO DEPOSIT BRANCHES' THREE TILE VERBS** (issue #650). `fell`,
+        // `coppice` and `quarry` name a faction, a tile and a MATERIAL — a working's key is
+        // `(tile, material)` because one hex can hold two — and no band at all: a working belongs
+        // to a camp exactly as a patch does, so its keeper is whoever already cuts or digs it and
+        // the declaration reaches every band of the faction with an `extract` row there. They are
+        // `cultivate`'s shape with a material token, not `grade`'s with a band one, so the handle
+        // assertion has nothing to check and the parse assertion is the whole of what this gate
+        // proves about them.
+        //
+        // ⛔ **AND `abandon_working` RIDES THAT SAME ARM, WHICH IS WHY IT IS LISTED WITH THEM.** It
+        // names a faction, a tile and a MATERIAL and no band: a working's keeper is whoever already
+        // cuts it, so the verb drops that band's hold on the one working the pair names. It is a
+        // separate verb from `abandon` — which names a place and drops every holding on it — and
+        // being on this arm is what keeps the material's position and the closed tail identical to
+        // the three rung verbs'.
+        CommandPayload::Fell { .. }
+        | CommandPayload::Coppice { .. }
+        | CommandPayload::Quarry { .. }
+        | CommandPayload::AbandonWorking { .. } => return BandHandle::PlaceAddressed,
         _ => return BandHandle::NotBandAddressed,
     };
     match optional {

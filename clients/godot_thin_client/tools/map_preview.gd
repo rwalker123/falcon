@@ -34,6 +34,23 @@ const DEFAULT_CANVAS_SIZE := Vector2i(1000, 800)
 # honour it (a window mode/size change lands asynchronously, whatever mode the process booted in). Bounded
 # so a WM that refuses to shrink the window fails loudly rather than hanging.
 const CANVAS_PIN_MAX_FRAMES := 60
+# The canvas the SOURCE-LIST states render at, and it is the project's OWN base
+# (`project.godot` → `window/size/viewport_*`, 1920×1080, stretch `canvas_items` + aspect `expand`).
+# **That makes the stretch scale exactly 1.0, so a `Control` is captured at the size a player sees.**
+# At `DEFAULT_CANVAS_SIZE` the scale is `min(1000/1920, 800/1080)` = **0.52**, and every Control in
+# the frame renders at just over half size — a 12px row lands at ~6px, which is not a legible thing to
+# judge colour, type or layout from. Every frame in this harness that carries a Control is subject to
+# the same arithmetic (`map_overlay_picker`'s popover and its legend rows are the other ones); those
+# states judge measured GAPS rather than legibility, so they stay where they are.
+const SOURCE_LIST_WINDOW_SIZE := Vector2i(1920, 1080)
+# What the stretch scale COMES OUT AT when the canvas is the project's base — asserted rather than
+# assumed, because a window the WM refused to grant silently returns the frame to ~0.52 and a frame
+# captured at half size is the whole defect this const exists to close.
+const SOURCE_LIST_EXPECTED_SCALE := 1.0
+# How far the measured stretch scale may sit from `SOURCE_LIST_EXPECTED_SCALE` before the state warns
+# that its frames are not 1:1. Float slop only — the two sizes are integers and the quotient is exact
+# when the WM honours the request.
+const SOURCE_LIST_SCALE_EPSILON := 0.01
 
 ## The run's exit status. **A clean run exits 0 and a run with any `FAIL` in it exits non-zero**, so
 ## the status and the output agree — a harness that printed an error and still exited 0 was
@@ -115,6 +132,14 @@ const WORK_PEAK_FLOOR := SourceForecast.FLOOR_FOOD_PEAK
 # Below the peak → the drawdown mark. 0.15 is the floor `band_panel_preview.LEGACY_STANCE_FLOORS`
 # maps the retired `deplete` stance onto, so the rows that used to say "deplete" still mean it.
 const WORK_DRAWDOWN_FLOOR := 0.15
+## The SECOND worked forage tile — the DRAWDOWN patch of `_snapshot_work`, which `_snapshot_work_ready`
+## then puts mid-Cultivate and `_snapshot_work_unstaffed` leaves rotting. Named because four fixtures
+## and every build-state probe have to mean the same hex.
+const WORK_CULTIVATE_X := 9
+const WORK_CULTIVATE_Y := 8
+## The wolf pack `_snapshot_work` hunts — a "wild"-ceiling herd that offers no rung and builds nothing,
+## which is what makes it the CONTROL wherever a verb glyph's ABSENCE is the claim.
+const WOLF_HERD_ID := "game_wolf_03"
 # How many DISTINCT floor marks the worked-band fixture must render. Two is the smallest number that
 # makes the mark falsifiable at all; the guard is `_assert_work_floor_marks`.
 const WORK_FLOOR_MARKS_MIN := 2
@@ -820,6 +845,8 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_worked_ready")
+	var cultivate_key: String = _map.secondary_food_key(WORK_CULTIVATE_X, WORK_CULTIVATE_Y)
+	var ready_build_face := _badge_face(cultivate_key)
 	# State A-unstaffed — **THE SAME THREE SOURCES, with the mid-Cultivate patch's BUILD CREW taken
 	# off.** Only the band's `builders` ROW moves between this frame and the one above, so the ⌃ marks and
 	# the crew counts are held constant and the one thing that can differ is the building patch's own
@@ -831,6 +858,24 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_worked_unstaffed")
+	# ⛔ **THE PAIR IS THE CLAIM, SO THE PAIR IS ASSERTED — AND THIS WENT DEAD ONCE.** Both PNGs hashed
+	# to the same value for as long as `BUILD_UNSTAFFED_SLIDING` was retired without the fixture
+	# following, and a frame-pair whose difference nothing asserts becomes true the moment the feature
+	# under it breaks. So the two badge FACES are compared off the renderer's one producer: the ready
+	# frame's names the verb under way, the unstaffed one wears the stalled `⚠`, and they DIFFER.
+	var unstaffed_build_face := _badge_face(cultivate_key)
+	var unstaffed_build_glyph := String(
+		_map._band_overlays._badge_entry_for(cultivate_key).get("building_glyph", ""))
+	_assert_map("map_worked_unstaffed — the A/B really differs: `%s` under way becomes `%s` unstaffed"
+			% [ready_build_face, unstaffed_build_face],
+		ready_build_face != "" and unstaffed_build_face != ""
+		and ready_build_face != unstaffed_build_face)
+	_assert_map("map_worked_unstaffed — …and the difference is the STALLED face, on the same verb (`%s`)"
+			% unstaffed_build_glyph,
+		unstaffed_build_glyph != ""
+		and ready_build_face == BandOverlayRenderer.BADGE_BUILDING_FORMAT % unstaffed_build_glyph
+		and unstaffed_build_face
+			== BandOverlayRenderer.BADGE_UNSTAFFED_FORMAT % unstaffed_build_glyph)
 	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
@@ -1122,7 +1167,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_hunt_expeditions")
 
-	# State M2 — QUARRY targeting: the party compose sheet asks for a herd, and the map glows the
+	# State M2 — PREY targeting (the frame's name predates the row's rename, issue #650): the party
+	# compose sheet asks for a herd, and the map glows the
 	# VALID ones. A hunting party is for game the band cannot work from home, so only a herd strictly
 	# beyond the band's `hunt_reach` qualifies — carried on the targeting info as `min_distance`, the
 	# render-side mirror of `TargetingController.is_expedition_quarry`. Both herds here are huntable and visible;
@@ -1133,7 +1179,7 @@ func _ready() -> void:
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	_map.set_targeting({
-		"active": true, "command": "quarry", "need": "herd",
+		"active": true, "command": TargetingController.PICK_PREY_COMMAND, "need": "herd",
 		"origin_x": BAND_X, "origin_y": BAND_Y,
 		"min_distance": QUARRY_HUNT_REACH, "context_label": "Band 1",
 	})
@@ -1947,6 +1993,8 @@ func _ready() -> void:
 
 	await _overlay_picker_state()
 	await _ready_for_improvement_state()
+	await _worked_working_states()
+	await _source_list_states()
 	await _faction_palette_state()
 
 	_finish()
@@ -3126,6 +3174,22 @@ func _assert_yield_label_component() -> void:
 		overlays._entry_materials({SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY:
 			YIELD_LABEL_MATERIAL_ROWS}).size() == YIELD_LABEL_MATERIAL_ROWS.size()
 		and overlays._entry_materials({}).is_empty())
+	# **THE ZERO NAMES THE ACCOUNT THE SOURCE PAYS INTO** (issue #650). Both halves are asserted: a
+	# working that took nothing still says WOOD, and a food row's zero is untouched — the same
+	# `SourceForecast.row_zero_account` answer the tile card's deposit rows and the work row's second
+	# line are held to, so the map cannot print a food figure on a source that pays a material.
+	_assert_map("yield label — a working that took nothing states its material's zero, not a food one",
+		overlays._yield_label_rate_text(0.0, 0.0, [], WORKING_MATERIAL_WOOD)
+			== WORKING_ZERO_PILL_FACE)
+	_assert_map("yield label — a FOOD row's zero is unchanged by the account argument",
+		overlays._yield_label_rate_text(0.0, 0.0, [], SourceForecast.YIELD_ACCOUNT_FOOD)
+			== YIELD_LABEL_EMPTY_FACE)
+	_assert_map("yield label — a source paying into NO account states no rate at all",
+		overlays._yield_label_rate_text(0.0, 0.0, [], SourceForecast.YIELD_ACCOUNT_NONE) == "")
+	_assert_map("yield label — an extract row's account is its OWN material, off the shared seam",
+		SourceForecast.row_zero_account(
+			{SourceForecast.ASSIGNMENT_MATERIAL_KEY: WORKING_MATERIAL_WOOD},
+			HudConst.LABOR_KIND_EXTRACT) == WORKING_MATERIAL_WOOD)
 	_assert_map("yield label — the feed rate is read off the entry with no realized fallback",
 		is_equal_approx(overlays._entry_fodder({"fodder_yield": YIELD_LABEL_FODDER_RATE}),
 			YIELD_LABEL_FODDER_RATE)
@@ -4067,7 +4131,7 @@ func _snapshot_work() -> Dictionary:
 		# ⬆ learning / ⊘ untouched) — two different ones here so the map read is verifiable in one
 		# frame. `_assert_work_floor_marks` pins that they stay different.
 		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "floor": WORK_DRAWDOWN_FLOOR, "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
+		{"kind": "forage", "workers": 3, "target_x": WORK_CULTIVATE_X, "target_y": WORK_CULTIVATE_Y, "floor": WORK_DRAWDOWN_FLOOR, "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR, "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 		# THE INEDIBLE QUARRY's label (issue #337, arc #527): a hunted wolf pack pays NO food, so every
 		# food field here is honestly 0. It used to fall through to a `⇄+0.22` trade rate; with that
@@ -4094,7 +4158,7 @@ func _snapshot_work() -> Dictionary:
 	# the first cut of this state rendered, and why the fallback is visible here as well as the ring.
 	snap["food_modules"] = [
 		{"x": FORAGE_A_X, "y": FORAGE_A_Y, "module": "berry_patch", "kind": "forage"},
-		{"x": 9, "y": 8, "module": "berry_patch", "kind": "forage"},
+		{"x": WORK_CULTIVATE_X, "y": WORK_CULTIVATE_Y, "module": "berry_patch", "kind": "forage"},
 		# The hay Field's own site, for the same load-bearing reason: no site, no marker to ring.
 		# `savanna_grassland` rather than the berry patch beside it — grassland is where hay comes
 		# from, and it resolves to a DIFFERENT bundled sprite, so the fodder tile is identifiable in
@@ -4132,6 +4196,19 @@ func _snapshot_work_unstaffed() -> Dictionary:
 			continue
 		kept.append(entry_variant)
 	snap["populations"][0]["labor_assignments"] = kept
+	# ⛔ **AND THE PATCH CARRIES THE WIRE'S OWN ROT VERDICT, because dropping the pool is no longer
+	# enough on its own.** `BUILD_UNSTAFFED_SLIDING` — *work banked and nobody on it* — was RETIRED as
+	# an inference that is wrong under pooled keeping, so at this fixture's 42% meter
+	# `SourceForecast.build_is_stalled` answered `false` for BOTH frames and the two PNGs came out
+	# BYTE-IDENTICAL. What is left that honestly says *nobody is holding it and it is going back the
+	# way it came* is the sim's own `-3`, which is what this row now publishes. The alternative —
+	# progress 0 with no builders, `BUILD_UNSTAFFED_UNSTARTED` — changes the frame's subject from a
+	# build that is SLIDING to one never begun, and the pair above is about a build in flight.
+	for patch_variant in snap["forage_patches"]:
+		var patch: Dictionary = patch_variant
+		if int(patch.get("x", -1)) == WORK_CULTIVATE_X \
+				and int(patch.get("y", -1)) == WORK_CULTIVATE_Y:
+			patch[SourceForecast.FORECAST_BUILD_TURNS_KEY] = SourceForecast.BUILD_TURNS_ROTS
 	return snap
 
 func _snapshot_work_ready() -> Dictionary:
@@ -4153,7 +4230,7 @@ func _snapshot_work_ready() -> Dictionary:
 		# a patch you were actively building looked emptier than the untouched one beside it. Its
 		# assignment's improvement is switched to `cultivate` below, which is what makes it "in progress"
 		# (a meter alone is a standing rung, not work in flight).
-		"x": 9, "y": 8,
+		"x": WORK_CULTIVATE_X, "y": WORK_CULTIVATE_Y,
 		"ecology_phase": "thriving",
 		"is_cultivated": false, "is_field": false,
 		# **STILL `plant:wild` AT 42%**, and that is the wire's own reading: a patch stands on the rung
@@ -4172,7 +4249,8 @@ func _snapshot_work_ready() -> Dictionary:
 		_stamp_patch_owner(patch_variant, HudConst.PLAYER_FACTION_ID)
 	for entry_variant in snap["populations"][0]["labor_assignments"]:
 		var entry: Dictionary = entry_variant
-		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
+		if String(entry.get("kind", "")) == "forage" \
+				and int(entry.get("target_x", -1)) == WORK_CULTIVATE_X:
 			# The BUILD BADGE keys on the IMPROVEMENT axis, not the floor (issue #442): the crew holds
 			# its floor while it cultivates, and the badge reads the second field.
 			entry["improvement"] = "cultivate"
@@ -4201,7 +4279,7 @@ func _snapshot_work_ready() -> Dictionary:
 		# chevron on every marker would prove nothing"), so the one source that must offer nothing has
 		# to say so rather than rely on a default that means the opposite. Stated HERE and not on
 		# `_pelt_only_wolf_herd`, so only the two frames that push knowledge move.
-		elif String(herd.get("id", "")) == "game_wolf_03":
+		elif String(herd.get("id", "")) == WOLF_HERD_ID:
 			herd["husbandry_ceiling"] = "wild"
 			# Untamed → `animal:wild`, the branch FLOOR. The wolf is now held dark by two independent
 			# terms (its ceiling admits no rung, and nothing has been built on it); it stays because the
@@ -5584,3 +5662,1424 @@ func _snapshot_routes() -> Dictionary:
 		_route_order(ROUTE_PLAYER_FACTION, ROUTE_DEGENERATE_PATH),
 	]
 	return snap
+
+## ---- THE WORKED-WORKING MARKERS (issue #650) ---------------------------------------------------
+## A working gets a map marker **only where a crew is on it**. That is Ray's decision and it is the
+## whole feature: with the scrub-wood rows gone nearly every land tile still holds stone, so marking
+## unworked deposits would bury the map under a mark that says nothing is happening.
+##
+## The two hexes below sit either side of the band and carry the SAME two deposits; the only thing
+## that differs is whether anybody is cutting them. That contrast is the frame — a marker family
+## that drew on ground alone would render a perfectly plausible picture, so the claim is asserted
+## structurally against the slot system as well as photographed.
+const WORKING_WORKED_OFFSET := Vector2i(-1, 0)     # the hex a crew is on
+const WORKING_BARE_OFFSET := Vector2i(1, 0)        # the CONTROL: same deposits, nobody on them
+const WORKING_MATERIAL_WOOD := "wood"
+const WORKING_MATERIAL_STONE := "stone"
+## The two together, where a probe wants "every working in this fixture" as a count rather than as
+## two names — one list, so a fixture that grew a third material cannot leave a probe behind.
+const WORKING_MATERIALS: Array[String] = [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]
+## How a working's SOURCE-LIST row key begins (`MapView.secondary_working_key`), which is how a probe
+## tells an extraction row from a forage or hunt one without re-deriving the key.
+const WORKING_ROW_KEY_PREFIX := "working:"
+## Crews per material, distinct so the two `⚒N` plates in the pair frame are told apart by their
+## numbers as well as by the glyph above them.
+const WORKING_CREW := {
+	WORKING_MATERIAL_WOOD: 3,
+	WORKING_MATERIAL_STONE: 2,
+}
+# ---- THE WORKED WORKING'S PARITY WITH A WORKED HERD (issue #650) --------------------------------
+# A working wears the same ring / hex outline / band link / rate pill a hunted herd wears, in its own
+# colour (`BandOverlayRenderer.EXTRACT_WORKED_COLOR`). Ray reported the deposits carrying the badge
+# and NOTHING else beside a rabbit carrying all of it, so the claim is a SIDE-BY-SIDE: one frame
+# holding a worked working and a hunted herd, each hex reached by its OWN web's mark colour and by
+# neither the other's.
+#
+# The probe is a colour DISTANCE rather than the exact match `_frame_paints_near_hex` makes, because
+# every mark in this family is drawn at an alpha (0.95 ring, 0.60 link, 0.35 outline) and therefore
+# blends with the terrain under it — an exact test can only pass on a fully opaque mark. The claim is
+# made as a CONTRAST in one frame, so no absolute tolerance has to be tuned: the hex a mark is drawn
+# on must come at least this many times closer to that mark's colour than the hex it is NOT drawn on.
+# Measured on the shipped side-by-side frame at 53× for the extraction mark (0.005 against 0.267) and
+# 14× for the hunt mark (0.019 against 0.274); 3.0 is an order of magnitude below both and still far
+# above anything terrain variation produces.
+const WORKING_MARK_CONTRAST_MIN := 3.0
+# How far around a hex centre the mark probe looks, in hex radii. Wider than a hex, because the RING
+# docks to the source's edge slot and the LINK leaves the hex entirely — both are the marks under
+# test — but not so wide that it reaches the neighbour it is being contrasted against (the two probed
+# hexes are `WORKING_BARE_OFFSET - WORKING_WORKED_OFFSET` = 2 columns apart).
+const WORKING_MARK_PROBE_RADII := 0.7
+# …and the margin the HUE probe (`_max_blue_excess`) works to, for the half-alpha ring an UNSELECTED
+# band's working wears — see that function for why a distance probe cannot judge that one. Measured
+# on the shipped frame at 0.079 (the ringed hex leans +0.024 blue, bare ground −0.055), so this sits
+# at roughly a quarter of the real separation.
+const WORKING_MARK_BLUE_MARGIN := 0.02
+# The herd the side-by-side frame hunts, parked on the CONTROL hex — the one carrying deposits nobody
+# is cutting — so the two webs' marks land on two different hexes and can be told apart by position.
+const WORKING_BESIDE_HERD_ID := "game_deer_09"
+const WORKING_BESIDE_HERD_CREW := 4
+const WORKING_BESIDE_HERD_RATE := 0.05
+# What the WORKING's crew banked this turn, and what its pill must therefore read. A working pays a
+# MATERIAL and no food, so a bare food format would print `+0.00` here — the defect this arc has now
+# fixed on three surfaces (the compose button's second line, the work row's hover, and this pill).
+const WORKING_BESIDE_TAKE := 0.30
+# ⛔ **AND THE FACE CARRIES NO NOUN, BECAUSE THIS FRAME'S WORKING HAS A MARKER** (issue #650). The
+# pill hangs over the 🪵 its own material drew, so the name would be the mark restated in words;
+# the marker-less form (`+0.30 wood`, what a far-zoom or overflowed working still gets) is asserted
+# beside its own frame in `map_working_pills`.
+const WORKING_BESIDE_PILL_FACE := "+0.30"
+# …and the same working before its first turn resolves, which is the case a bare food format gets
+# WRONG rather than merely incomplete: the wire seeds no material take pre-commit, so the fall-through
+# reaches `SourceForecast.row_zero_account` and the ZERO has to name the material.
+const WORKING_ZERO_PILL_FACE := "+0.00 wood"
+## The grid the far-zoom state renders on — fitted hexes must come out under `LOD_MIN_RADIUS`, which
+## is where `compute_slots` returns early and every secondary marker (workings included) vanishes.
+const WORKING_FAR_GRID_W := 110
+const WORKING_FAR_GRID_H := 80
+
+## A deposit row as the wire ships one, trimmed to the fields the MAP reads plus the ones that make
+## it an honest row. The marker path needs only `tile_x` / `tile_y` / `material` — it states no stock
+## and no rung — but a fixture staging a row the server could not publish is this harness's own
+## documented hazard, so the seam's shape is stated rather than reduced to the join key.
+func _working_deposit(tile: Vector2i, material: String) -> Dictionary:
+	var renews := material == WORKING_MATERIAL_WOOD
+	return {
+		"tile_x": tile.x, "tile_y": tile.y, "material": material,
+		"branch": "forestry" if renews else "extraction",
+		"stock": 600.0 if renews else 3000.0,
+		"capacity": 600.0 if renews else 3000.0,
+		"reachable": 600.0 if renews else 450.0,
+		"regrowth_rate": 0.03 if renews else HudDepositVocab.REGROWTH_NEVER_RENEWS,
+		"rung": HudDepositVocab.RUNG_KEY_DEADFALL if renews else HudDepositVocab.RUNG_KEY_GATHERING,
+		"ladder_position": HudDepositVocab.LADDER_UNSTARTED,
+		"actual_take": HudDepositVocab.TAKE_NONE,
+		"sustainable_take": HudDepositVocab.TAKE_NONE,
+	}
+
+## One band, two deposit-bearing hexes, and a crew on `worked_materials` of the LEFT one.
+## `worked_materials` empty is a legitimate call — it is what "both hexes are bare" looks like — and
+## the grid is a parameter so the far-zoom state drives the identical fixture at a tiny hex radius.
+func _snapshot_workings(w: int, h: int, worked_materials: Array) -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(w * h)
+	terrain.fill(TERRAIN_ID)
+	var center := _work_grid_center(w, h)
+	var worked_tile: Vector2i = center + WORKING_WORKED_OFFSET
+	var bare_tile: Vector2i = center + WORKING_BARE_OFFSET
+	var assignments: Array = []
+	for material in worked_materials:
+		assignments.append({
+			"kind": HudConst.LABOR_KIND_EXTRACT,
+			"workers": int(WORKING_CREW[material]),
+			"target_x": worked_tile.x, "target_y": worked_tile.y,
+			"material": String(material),
+		})
+	var band := _with_stage({
+		"entity": BAND_ENTITY, "faction": 0, "current_x": center.x, "current_y": center.y,
+		"size": 30, "id": "Band 1", "work_range": 2, "scout_reveal_radius": 0,
+		"labor_assignments": assignments,
+	}, STAGE_NOMADIC)
+	return {
+		"grid": {"width": w, "height": h, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [band],
+		"herds": [],
+		"deposits": [
+			_working_deposit(worked_tile, WORKING_MATERIAL_WOOD),
+			_working_deposit(worked_tile, WORKING_MATERIAL_STONE),
+			_working_deposit(bare_tile, WORKING_MATERIAL_WOOD),
+			_working_deposit(bare_tile, WORKING_MATERIAL_STONE),
+		],
+	}
+
+## **THE SIDE-BY-SIDE** (issue #650): one band, one worked WOOD working on the left hex and one
+## hunted HERD on the right, both crewed by that band, so a frame holds a worked working and a worked
+## herd at the same zoom and the two can be read against each other directly. The herd stands on the
+## CONTROL hex — the one whose deposits nobody is cutting — which keeps the two webs' marks on two
+## different hexes and lets the probe contrast them.
+##
+## The working's row carries a resolved MATERIAL take and no food, which is what its pill states.
+func _snapshot_working_beside_herd() -> Dictionary:
+	var snap := _snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD])
+	var center := _work_grid_center(GRID_W, GRID_H)
+	var herd_tile: Vector2i = center + WORKING_BARE_OFFSET
+	var band: Dictionary = snap["populations"][0]
+	var assignments: Array = band["labor_assignments"]
+	# The working's own take, so the pill has a material rate to state rather than only a zero.
+	(assignments[0] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = [
+		{"material_id": WORKING_MATERIAL_WOOD, "amount": WORKING_BESIDE_TAKE},
+	]
+	(assignments[0] as Dictionary)["floor"] = WORK_PEAK_FLOOR
+	assignments.append({
+		"kind": SourceForecast.LABOR_KIND_HUNT, "workers": WORKING_BESIDE_HERD_CREW,
+		"fauna_id": WORKING_BESIDE_HERD_ID,
+		"target_x": herd_tile.x, "target_y": herd_tile.y,
+		"floor": WORK_PEAK_FLOOR, "improvement": "",
+		"actual_yield": WORKING_BESIDE_HERD_RATE, "sustainable_yield": WORKING_BESIDE_HERD_RATE,
+		"realized_yield": WORKING_BESIDE_HERD_RATE, "overdraws": false,
+	})
+	# The band reaches both hexes: the working is 1 west, the herd 1 east.
+	band["hunt_reach"] = int(band.get("work_range", 2))
+	snap["herds"] = [RUNG_FX.stamp_herd({
+		"id": WORKING_BESIDE_HERD_ID, "label": "Red Deer (%s)" % WORKING_BESIDE_HERD_ID,
+		"x": herd_tile.x, "y": herd_tile.y, "biomass": 800.0, "huntable": true,
+	})]
+	return snap
+
+## How close does the closest pixel around this hex come to `color`? `INF` when the frame is missing.
+##
+## The distance twin of `_frame_paints_near_hex`, and it exists because every mark in the
+## worked-source family is drawn at an ALPHA and therefore blends with the terrain beneath it — the
+## exact test that predicate makes can only pass on an opaque mark like the lethal hatch. A raw
+## distance is not a claim on its own (the autopsy under `_frame_marks_warning_near_hex` is about
+## exactly that), so callers use it as a RATIO between the hex a mark is on and one it is not.
+func _closest_mark_distance(image: Image, tile: Vector2i, color: Color,
+		radii: float = WORKING_MARK_PROBE_RADII) -> float:
+	if image == null:
+		return INF
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
+	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
+	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
+	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
+	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	var best := INF
+	var want := Vector3(color.r, color.g, color.b)
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			var got: Color = image.get_pixel(px, py)
+			best = minf(best, Vector3(got.r, got.g, got.b).distance_to(want))
+	return best
+
+## How far does the BLUEST pixel around this hex lean blue — `max(b - r)` over the probe box?
+##
+## **THE DISTANCE PROBE CANNOT ANSWER FOR AN UNSELECTED BAND'S RING, and it is the alpha that does
+## it.** That ring is drawn at `WORKED_RING_OTHER_ALPHA` (half), so its pixels are roughly half slate
+## and half terrain — measured 0.141 from `EXTRACT_WORKED_COLOR` against 0.267 for bare ground, a
+## ratio under 2 that no threshold separates from terrain variation. What survives the blend is the
+## HUE: the extraction mark is the only cool thing on this map, and every terrain on it reads warm
+## (red at or above blue). This is `_frame_marks_warning_near_hex`'s lesson — when a mark is blended
+## or antialiased past its own ink, ask for the property that distinguishes it rather than for the
+## colour itself.
+func _max_blue_excess(image: Image, tile: Vector2i,
+		radii: float = WORKING_MARK_PROBE_RADII) -> float:
+	if image == null:
+		return -INF
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
+	var x0 := clampi(int(center.x * px_scale - half), 0, image.get_width() - 1)
+	var y0 := clampi(int(center.y * px_scale - half), 0, image.get_height() - 1)
+	var x1 := clampi(int(center.x * px_scale + half), 0, image.get_width())
+	var y1 := clampi(int(center.y * px_scale + half), 0, image.get_height())
+	var best := -INF
+	for py in range(y0, y1):
+		for px in range(x0, x1):
+			var got: Color = image.get_pixel(px, py)
+			best = maxf(best, got.b - got.r)
+	return best
+
+## The crowded hex from `_snapshot_mixed` — three wonders, a herd and a food site — with a WOOD
+## working being cut on it too. Every visible slot is spoken for before the working is reached, so it
+## falls past the cap and the only thing that reports it is the `+N` chip's `⚒`.
+func _snapshot_workings_overflow() -> Dictionary:
+	var snap := _snapshot_mixed()
+	var tile := Vector2i(BAND_X, BAND_Y)
+	snap["populations"] = [_with_stage({
+		"entity": BAND_ENTITY, "faction": 0, "current_x": BAND_X, "current_y": BAND_Y,
+		"size": 30, "id": "Band 1", "work_range": 2, "scout_reveal_radius": 0,
+		"labor_assignments": [{
+			"kind": HudConst.LABOR_KIND_EXTRACT,
+			"workers": int(WORKING_CREW[WORKING_MATERIAL_WOOD]),
+			"target_x": tile.x, "target_y": tile.y, "material": WORKING_MATERIAL_WOOD,
+		}],
+	}, STAGE_VILLAGE)]
+	snap["deposits"] = [_working_deposit(tile, WORKING_MATERIAL_WOOD)]
+	return snap
+
+## **THE UNWORKED HEX SHOWS NOTHING, AND THAT IS THE CLAIM RAY'S DECISION TURNS ON** — so it is
+## asserted against the slot system rather than left to a picture. `secondary_slot_of` answers
+## `0..cap-1` for a marker that drew and `-1` for one that did not exist, so the A and the B of the
+## same frame are one comparison: a renderer that marked ground would light the bare hex's keys, and
+## a renderer that marked nothing at all would darken the worked hex's.
+## This frame's SOURCE ROWS, keyed by the source key each carries, so a probe can name the row it
+## means instead of indexing into an order the sort is free to change. `compute_source_rows` returns
+## STRINGS a harness can read — the whole reason the rate moved somewhere a probe can see it at all;
+## the retired pill was drawn into a canvas and could only ever be photographed.
+func _rows_by_key(rows: Array) -> Dictionary:
+	var by_key: Dictionary = {}
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		by_key[String(row.get("key", ""))] = row
+	return by_key
+
+func _assert_working_slots(label: String, w: int, h: int, worked: Array, bare: Array) -> void:
+	var center := _work_grid_center(w, h)
+	var worked_tile: Vector2i = center + WORKING_WORKED_OFFSET
+	var bare_tile: Vector2i = center + WORKING_BARE_OFFSET
+	for material in worked:
+		var key: String = _map.secondary_working_key(worked_tile.x, worked_tile.y, String(material))
+		_assert_map("%s — the %s working a crew is on took a marker slot (%d)"
+			% [label, material, _map.secondary_slot_of(key)],
+			_map.secondary_slot_of(key) >= 0)
+	for material in bare:
+		var bkey: String = _map.secondary_working_key(bare_tile.x, bare_tile.y, String(material))
+		_assert_map("%s — the UNWORKED %s deposit on (%d, %d) has no marker at all"
+			% [label, material, bare_tile.x, bare_tile.y],
+			_map.secondary_slot_of(bkey) < 0)
+
+# ---- THE PILL ITSELF: the noun comes off, and two crowded pills are LEFT to overlap (#650) -------
+# Ray, on a live frame holding a worked rock and a worked log on adjacent hexes: *"remove the wood and
+# stone text, it is obvious from the icon what it is."* A working's marker IS its material's mark, so
+# the noun said it twice in the one place on the map with no room to say anything twice; the pill
+# reads `+0.40 ♻`, which is the shape the forage pill three hexes over always had.
+#
+# **THE THREE TAKES DIFFER, AND THAT IS WHAT MAKES THE FRAME FALSIFIABLE.** Three pills reading one
+# figure would pass a renderer that composed a single label and drew it three times — the tile-keyed
+# collapse this arc guards against on every other surface — and with the nouns gone the figure is the
+# only thing left to tell two pills apart.
+const WORKING_PILL_WOOD_TAKE := 0.30
+const WORKING_PILL_STONE_TAKE := 0.40
+const WORKING_PILL_FORAGE_TAKE := 0.42
+const WORKING_PILL_WOOD_FACE := "+0.30"
+const WORKING_PILL_WOOD_NAMED_FACE := "+0.30 wood"
+const WORKING_PILL_STONE_ZERO_FACE := "+0.00"
+const WORKING_PILL_STONE_ZERO_NAMED_FACE := "+0.00 stone"
+const WORKING_PILL_FORAGE_FACE := "+0.42"
+const WORKING_PILL_FODDER_FACE := "+0.40 fodder"
+# The hex the STONE working sits on: next door to the wood one, which is RAY'S OWN GEOMETRY and not
+# the one `map_working_pair_marked` already stages (two workings in two edge slots of ONE hex). Both
+# pills anchor at the same height about a hex apart, which is what two plates wide enough to state a
+# material merged into one dark shape.
+const WORKING_PILL_STONE_OFFSET := Vector2i(-2, 0)
+# The crew on the forage patch beside them, and the patch's own tile is the CONTROL hex — the one
+# whose deposits nobody cuts — so the plant web's pill sits clear of both workings.
+const WORKING_PILL_FORAGE_CREW := 2
+# ---- AND THE ZOOM WHERE TWO SOURCES ARE GENUINELY CROWDED ---------------------------------------
+# `YIELD_LABEL_MIN_FONT` — the floor that stopped a pill shrinking with the map while the gap between
+# two edge slots went on closing — went with the pill itself (issue #650), and so did the overlap it
+# produced. What is left at this zoom is the geometry that MADE the pills unworkable and that the
+# leader lines now have to survive: two markers on ONE hex, about 34px apart, each needing its own
+# row and its own line back to its own slot centre.
+#
+# This grid fits ABOVE `MapView.ICON_MIN_DETAIL_RADIUS` (or no marker draws at all and the state
+# guards nothing — `map_working_farzoom`'s claim, inverted) and far enough below `GRID_W`'s ~83px that
+# the two slots sit about 34px apart.
+const WORKING_CROWDED_GRID_W := 48
+const WORKING_CROWDED_GRID_H := 36
+
+## **RAY'S FRAME**: one band cutting a WOOD working and a STONE working on ADJACENT hexes, and
+## foraging a patch on the control hex three columns over — three pills at one zoom, so the two
+## workings' can be read against each other AND against the shape the plant web already had.
+##
+## The stone is the rate-**0** body `_working_deposit` gives every `extraction` row, and the wood
+## renews, so the pair is also the ♻ fork's own frame: same floor on both assignments, one mark
+## between them.
+func _snapshot_working_pills() -> Dictionary:
+	var snap := _snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD])
+	var center := _work_grid_center(GRID_W, GRID_H)
+	var stone_tile: Vector2i = center + WORKING_PILL_STONE_OFFSET
+	var patch_tile: Vector2i = center + WORKING_BARE_OFFSET
+	var band: Dictionary = snap["populations"][0]
+	var assignments: Array = band["labor_assignments"]
+	# The wood crew's own resolved take, so its pill states a rate rather than only an account's zero.
+	(assignments[0] as Dictionary)[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = [
+		{"material_id": WORKING_MATERIAL_WOOD, "amount": WORKING_PILL_WOOD_TAKE},
+	]
+	(assignments[0] as Dictionary)["floor"] = WORK_PEAK_FLOOR
+	assignments.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": int(WORKING_CREW[WORKING_MATERIAL_STONE]),
+		"target_x": stone_tile.x, "target_y": stone_tile.y,
+		"material": WORKING_MATERIAL_STONE,
+		"floor": WORK_PEAK_FLOOR,
+		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
+			{"material_id": WORKING_MATERIAL_STONE, "amount": WORKING_PILL_STONE_TAKE},
+		],
+	})
+	assignments.append({
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": WORKING_PILL_FORAGE_CREW,
+		"target_x": patch_tile.x, "target_y": patch_tile.y, "improvement": "",
+		"floor": WORK_PEAK_FLOOR, "overdraws": false,
+		"actual_yield": WORKING_PILL_FORAGE_TAKE,
+		"realized_yield": WORKING_PILL_FORAGE_TAKE,
+	})
+	# The patch ROW itself, because a fixture staging an assignment against ground the wire carries no
+	# source for is this harness's own documented hazard — and it is what the pill's marker docks to.
+	snap["forage_patches"] = [{
+		"x": patch_tile.x, "y": patch_tile.y,
+		"ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false,
+		"current_rung": RUNG_FX.patch_rung_key(false, false),
+		"sow_site_refusal": "",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+	(snap["deposits"] as Array).append(
+		_working_deposit(stone_tile, WORKING_MATERIAL_STONE))
+	return snap
+
+func _worked_working_states() -> void:
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.set_faction_knowledge({})
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+
+	# State "worked working" — ONE working being cut (wood, ⚒3) beside a hex carrying the SAME two
+	# deposits with nobody on them. Read for: a single 🪵 in an edge slot on the left hex with its
+	# `⚒3` plate under it, and the right hex completely bare.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_worked")
+	_assert_working_slots("map_working_worked", GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD], [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	# The STONE on the SAME hex is untouched, so it must be as absent as the bare hex's pair — the
+	# marker is per `(tile, material)`, not per tile, and a tile-keyed renderer passes every other
+	# assertion in this state.
+	_assert_map("map_working_worked — the stone on the WORKED hex, which nobody is cutting, has no marker",
+		_map.secondary_slot_of(_map.secondary_working_key(
+			(_work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET).x,
+			(_work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET).y,
+			WORKING_MATERIAL_STONE)) < 0)
+
+	# State "worked pair" — the same hex with BOTH workings crewed. Read for: two DIFFERENT glyphs
+	# (🪵 wood and 🪨 stone) in two edge slots of one hex, each with its own plate (`⚒3` / `⚒2`), so a
+	# hex cutting timber and quarrying rock cannot read as one working.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pair")
+	_assert_working_slots("map_working_pair", GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE],
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	# The two markers must not land in ONE slot — that is what a renderer keying the tile rather than
+	# the pair would do, and both slot assertions above would still pass.
+	var pair_center := _work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET
+	var wood_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_center.x, pair_center.y, WORKING_MATERIAL_WOOD))
+	var stone_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_center.x, pair_center.y, WORKING_MATERIAL_STONE))
+	_assert_map("map_working_pair — the wood and the stone hold DIFFERENT slots (%d vs %d)"
+		% [wood_slot, stone_slot], wood_slot != stone_slot)
+	# And the glyphs themselves must differ, which is the half a slot index cannot carry: two markers
+	# in two corners drawing one emoji is exactly as unreadable as one marker.
+	_assert_map("map_working_pair — wood and stone wear DIFFERENT marks (%s vs %s)"
+		% [FoodIcons.for_material(WORKING_MATERIAL_WOOD), FoodIcons.for_material(WORKING_MATERIAL_STONE)],
+		FoodIcons.for_material(WORKING_MATERIAL_WOOD) != FoodIcons.for_material(WORKING_MATERIAL_STONE)
+			and FoodIcons.for_material(WORKING_MATERIAL_WOOD) != "")
+
+	# State "working overflow" — the crowded hex, where three wonders take every visible slot before
+	# the working is reached. Read for: the `+N` chip carrying `⚒`, which is what stops a capped
+	# marker reading as "nothing is happening here".
+	_map.display_snapshot(_snapshot_workings_overflow())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_overflow")
+	var crowded := Vector2i(BAND_X, BAND_Y)
+	var over_key: String = _map.secondary_working_key(crowded.x, crowded.y, WORKING_MATERIAL_WOOD)
+	_assert_map("map_working_overflow — the working is pushed past the visible cap (slot %d) and the chip hides %d"
+		% [_map.secondary_slot_of(over_key), _map._secondary_markers.overflow_at(crowded)],
+		_map.secondary_slot_of(over_key) < 0 and _map._secondary_markers.overflow_at(crowded) > 0)
+	_assert_map("map_working_overflow — the chip reports the hidden working as worked (⚒), not as a bare count",
+		bool((_map._band_overlays.hidden_source_state().get(crowded, {}) as Dictionary).get("worked", false)))
+
+	# State "working far zoom" — the SAME crewed pair on a grid large enough that fitted hexes fall
+	# under `ICON_MIN_DETAIL_RADIUS`. `compute_slots` returns early there, so every secondary MARKER
+	# goes, workings included, and what survives is the tile-level outline — the LOD/overflow fallback
+	# the working now shares with the two food webs (issue #650), in its own slate rather than in
+	# either of theirs. So the claim here is about the SLOT, not about a clean hex. **The premise is
+	# asserted with the measured radius**, because an absence is only worth asserting where a presence
+	# would have been visible — and the pair frame above IS that presence.
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_workings(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	if _map.last_hex_radius >= LOD_MIN_RADIUS:
+		push_warning("map_preview: working-farzoom fitted radius %.1f >= LOD gate %.1f — this state no longer guards the LOD suppression; grow WORKING_FAR_GRID_*" % [_map.last_hex_radius, LOD_MIN_RADIUS])
+	await _save("map_working_farzoom")
+	_assert_working_slots("map_working_farzoom (radius %.1f < gate %.1f)"
+		% [_map.last_hex_radius, LOD_MIN_RADIUS],
+		WORKING_FAR_GRID_W, WORKING_FAR_GRID_H,
+		[], [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	var far_center := _work_grid_center(WORKING_FAR_GRID_W, WORKING_FAR_GRID_H) + WORKING_WORKED_OFFSET
+	for material in [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]:
+		_assert_map("map_working_farzoom — the CREWED %s working is LOD-suppressed at radius %.1f (gate %.1f)"
+			% [material, _map.last_hex_radius, LOD_MIN_RADIUS],
+			_map.secondary_slot_of(_map.secondary_working_key(
+				far_center.x, far_center.y, String(material))) < 0)
+	# **AND THE RATE SURVIVES WHERE THE MARKER DOES NOT** (issue #650). The retired on-tile pill
+	# carried the same LOD gate the markers do — a map-scale label is unreadable — and the SOURCE LIST
+	# does not: it is screen-space, so a fixed-size panel is exactly as readable at this radius as at
+	# 80. This is the pairing that makes that claim falsifiable: the slots are gone above, the rows
+	# are here, in one frame.
+	var far_rows: Array = _map._band_overlays.source_rows()
+	_assert_map("map_working_farzoom — the source ROWS are still built at radius %.1f, where every marker is suppressed (%d rows)"
+			% [_map.last_hex_radius, far_rows.size()],
+		far_rows.size() >= WORKING_MATERIALS.size())
+	# **AND AN UNMARKED ROW STATES ITS MATERIAL'S NAME.** The noun is dropped only where the ROW draws
+	# the material's mark; here the row draws it (a row's icon is not LOD-gated) — the condition moved
+	# from the HEX's marker to the ROW's icon, which is what the pair below pins.
+	for far_row_variant in far_rows:
+		var far_row: Dictionary = far_row_variant
+		if String(far_row.get("key", "")).begins_with(WORKING_ROW_KEY_PREFIX):
+			_assert_map("map_working_farzoom — a working row still carries its own icon at far zoom, so its rate needs no noun (%s)"
+					% String(far_row.get("glyph", "")),
+				String(far_row.get("glyph", "")) != "")
+
+	# State "working unselected" (issue #650) — THE PERSISTENT HALF. The same single crewed wood
+	# working with NO band selected: the ring and the `⚒3` plate are the marks that belong to the
+	# SOURCE and stay whatever is selected, exactly as a hunted herd's ring does. Read for a slate
+	# ring around the 🪵 and its plate, and for NO band link and NO rate pill — those are what
+	# selection buys, and the frame after this one is where they appear.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H, [WORKING_MATERIAL_WOOD]))
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_unselected")
+	var unsel_tile := _work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET
+	var unsel_bare := _work_grid_center(GRID_W, GRID_H) + WORKING_BARE_OFFSET
+	var unsel_frame: Image = await _capture()
+	# The ring reaches the worked hex with nothing selected — a mark drawn only for the selected band
+	# would leave this frame carrying the badge alone, which is the state Ray reported.
+	var unsel_worked_blue := _max_blue_excess(unsel_frame, unsel_tile)
+	var unsel_bare_blue := _max_blue_excess(unsel_frame, unsel_bare)
+	_assert_map("map_working_unselected — the working's own ring is drawn with NO band selected (blue lean %.3f vs %.3f on the bare hex)"
+			% [unsel_worked_blue, unsel_bare_blue],
+		unsel_worked_blue - unsel_bare_blue >= WORKING_MARK_BLUE_MARGIN)
+
+	# State "working beside herd" (issue #650) — **THE SIDE-BY-SIDE, AND THE CLAIM RAY IS MAKING.**
+	# One selected band working a WOOD working on the left hex and hunting a DEER on the right, so the
+	# two webs' full mark sets sit in one frame at one zoom: each wears a ring, a hex outline, a link
+	# back to the band's token and a rate pill, differing only in the colour the ring already states.
+	# A frame alone cannot say the two are alike, so the marks are probed by colour: each hex must be
+	# reached by its OWN web's mark and not by the other's.
+	_map.display_snapshot(_snapshot_working_beside_herd())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_beside_herd")
+	var beside_center := _work_grid_center(GRID_W, GRID_H)
+	var beside_working: Vector2i = beside_center + WORKING_WORKED_OFFSET
+	var beside_herd: Vector2i = beside_center + WORKING_BARE_OFFSET
+	_assert_map("map_working_beside_herd — premise: both sources hold a marker slot to dock to",
+		_map.secondary_slot_of(_map.secondary_working_key(
+			beside_working.x, beside_working.y, WORKING_MATERIAL_WOOD)) >= 0
+		and _map.secondary_slot_of(_map.secondary_herd_key(WORKING_BESIDE_HERD_ID)) >= 0)
+	var beside_frame: Image = await _capture()
+	var working_slate := _closest_mark_distance(beside_frame, beside_working,
+		BandOverlayRenderer.EXTRACT_WORKED_COLOR)
+	var herd_slate := _closest_mark_distance(beside_frame, beside_herd,
+		BandOverlayRenderer.EXTRACT_WORKED_COLOR)
+	var herd_red := _closest_mark_distance(beside_frame, beside_herd, BandOverlayRenderer.HUNT_WORKED_COLOR)
+	var working_red := _closest_mark_distance(beside_frame, beside_working,
+		BandOverlayRenderer.HUNT_WORKED_COLOR)
+	_assert_map("map_working_beside_herd — the WORKING wears the extraction mark and the herd does not (%.3f vs %.3f)"
+			% [working_slate, herd_slate],
+		herd_slate >= working_slate * WORKING_MARK_CONTRAST_MIN)
+	_assert_map("map_working_beside_herd — the HERD wears the hunt mark and the working does not (%.3f vs %.3f)"
+			% [herd_red, working_red],
+		working_red >= herd_red * WORKING_MARK_CONTRAST_MIN)
+	# **AND THE PILL STATES THE WORKING'S OWN ACCOUNT**, through the same fall-through the frame's
+	# label is composed by — a working pays a material and no food, so a bare food format prints
+	# `+0.00` on a source that is producing.
+	var beside_row: Dictionary = (_snapshot_working_beside_herd()["populations"][0]
+		["labor_assignments"] as Array)[0]
+	var overlays: BandOverlayRenderer = _map._band_overlays
+	_assert_map("map_working_beside_herd — the working's pill states its MATERIAL rate, not a food one",
+		overlays._yield_label_rate_text(overlays._entry_realized_yield(beside_row), 0.0,
+			overlays._entry_materials(beside_row),
+			SourceForecast.row_zero_account(beside_row, HudConst.LABOR_KIND_EXTRACT), true)
+			== WORKING_BESIDE_PILL_FACE)
+
+	# **THE PAIR'S PARTS KEEP THEMSELVES APART.** Two workings on one hex hold two edge slots, so
+	# their rings, pills and links anchor to two points — anchoring to the hex centre would stack both
+	# sets on one spot and read as one working. Asserted as a separation wider than a ring's own
+	# diameter, which is what "do not overlap" means for the widest part either set draws.
+	_map.display_snapshot(_snapshot_workings(GRID_W, GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pair_marked")
+	var pair_tile := _work_grid_center(GRID_W, GRID_H) + WORKING_WORKED_OFFSET
+	var pair_hex: Vector2 = _map._hex_center_wrapped(pair_tile.x, pair_tile.y,
+		_map.last_hex_radius, _map.last_origin)
+	var wood_mark_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_tile.x, pair_tile.y, WORKING_MATERIAL_WOOD))
+	var stone_mark_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pair_tile.x, pair_tile.y, WORKING_MATERIAL_STONE))
+	_assert_map("map_working_pair_marked — premise: both workings still hold marker slots (%d, %d)"
+			% [wood_mark_slot, stone_mark_slot], wood_mark_slot >= 0 and stone_mark_slot >= 0)
+	var wood_anchor: Vector2 = _map.secondary_slot_center(pair_hex, wood_mark_slot, _map.last_hex_radius)
+	var stone_anchor: Vector2 = _map.secondary_slot_center(pair_hex, stone_mark_slot, _map.last_hex_radius)
+	var ring_diameter: float = _map.last_hex_radius * BandOverlayRenderer.WORKED_RING_FACTOR * 2.0
+	_assert_map("map_working_pair_marked — the two workings' anchors clear a ring's diameter (%.1f px apart, ring %.1f)"
+			% [wood_anchor.distance_to(stone_anchor), ring_diameter],
+		wood_anchor.distance_to(stone_anchor) > ring_diameter)
+
+	# State "working pills" (issue #650) — **RAY'S OWN FRAME, AND THE THREE CLAIMS IT CARRIES.** A
+	# worked WOOD and a worked STONE on ADJACENT hexes with the band selected, a worked forage PATCH
+	# three columns the other side of it. Read for: three pills of ONE shape, each over its own
+	# marker, each stating a figure and no noun — and the ♻ on the wood and the forage and NOT on
+	# the rate-0 rock between them.
+	_map.display_snapshot(_snapshot_working_pills())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pills")
+	var pill_center := _work_grid_center(GRID_W, GRID_H)
+	var pill_wood: Vector2i = pill_center + WORKING_WORKED_OFFSET
+	var pill_stone: Vector2i = pill_center + WORKING_PILL_STONE_OFFSET
+	var pill_overlays: BandOverlayRenderer = _map._band_overlays
+	# **THE PREMISE, AND IT IS THE NOUN-DROP'S OWN CONDITION.** The pill sheds the material's name
+	# only where this working's MARKER drew it (`secondary_slot_of >= 0`), so a frame where either
+	# marker was LOD-suppressed or overflowed would be showing the named form and proving nothing.
+	var pill_wood_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pill_wood.x, pill_wood.y, WORKING_MATERIAL_WOOD))
+	var pill_stone_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(pill_stone.x, pill_stone.y, WORKING_MATERIAL_STONE))
+	_assert_map("map_working_pills — premise: both workings' markers drew, which is what lets the pill drop the noun (%d, %d)"
+			% [pill_wood_slot, pill_stone_slot],
+		pill_wood_slot >= 0 and pill_stone_slot >= 0)
+	# **THE NOUN, ASKED OF THE RENDERER AS AN A/B** — a PNG cannot carry it (`+0.30` and `+0.30 wood`
+	# are the same badge at map scale), and the pair is what stops "always drop the noun" passing:
+	# the marker-less form still names the material, which is the form a far-zoom or overflowed
+	# working still gets.
+	var pill_wood_rows: Array = [
+		{"material_id": WORKING_MATERIAL_WOOD, "amount": WORKING_PILL_WOOD_TAKE}]
+	_assert_map("map_working_pills — a working whose marker names the material states the figure alone",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, pill_wood_rows,
+			WORKING_MATERIAL_WOOD, true) == WORKING_PILL_WOOD_FACE)
+	_assert_map("map_working_pills — with no marker to name it, the material names itself as before",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, pill_wood_rows,
+			WORKING_MATERIAL_WOOD, false) == WORKING_PILL_WOOD_NAMED_FACE)
+	# **AND THE ACCOUNT'S ZERO DROPS IT ON THE SAME CONDITION.** A pill that shed the noun off the
+	# rate and kept it on the zero would name the account only on the turns the working produced
+	# nothing, which is the one reading that arm exists to make honest.
+	_assert_map("map_working_pills — a marked working that took nothing states a bare zero, its marker carrying the account",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, [], WORKING_MATERIAL_STONE, true)
+			== WORKING_PILL_STONE_ZERO_FACE)
+	_assert_map("map_working_pills — an unmarked working's zero still names its material",
+		pill_overlays._yield_label_rate_text(0.0, 0.0, [], WORKING_MATERIAL_STONE, false)
+			== WORKING_PILL_STONE_ZERO_NAMED_FACE)
+	# **THE TWO FOOD WEBS ARE UNTOUCHED BY THE FLAG**, which is the half Ray fenced off: a patch's
+	# food figure never wore a noun, and FODDER's word is not a material's name and must survive a
+	# caller that happens to pass the flag.
+	_assert_map("map_working_pills — a food rate is the same figure whatever the marker says",
+		pill_overlays._yield_label_rate_text(WORKING_PILL_FORAGE_TAKE, 0.0, [],
+			SourceForecast.YIELD_ACCOUNT_FOOD, true) == WORKING_PILL_FORAGE_FACE
+		and pill_overlays._yield_label_rate_text(WORKING_PILL_FORAGE_TAKE, 0.0, [],
+			SourceForecast.YIELD_ACCOUNT_FOOD, false) == WORKING_PILL_FORAGE_FACE)
+	_assert_map("map_working_pills — fodder keeps its WORD, which is an account's name and not a material's",
+		pill_overlays._yield_label_rate_text(0.0, FODDER_FIELD_RATE, [],
+			SourceForecast.YIELD_ACCOUNT_FOOD, true) == WORKING_PILL_FODDER_FACE)
+	# **THE ♻ IS THE GROUND'S ANSWER, NOT THE FLOOR'S** (issue #650). Both assignments carry
+	# `WORK_PEAK_FLOOR`, so the floor alone says `♻` for both — which is exactly what the map drew
+	# on a rate-0 quarry before the fork. The pair is the claim: same floor, one mark.
+	var pill_wood_row := pill_overlays._working_row(pill_wood, WORKING_MATERIAL_WOOD)
+	var pill_stone_row := pill_overlays._working_row(pill_stone, WORKING_MATERIAL_STONE)
+	_assert_map("map_working_pills — premise: the floor alone would mark BOTH workings renewable",
+		FoodIcons.for_floor_zone(SourceForecast.floor_zone(WORK_PEAK_FLOOR))
+			== FoodIcons.FLOOR_ZONE_ICONS[SourceForecast.FLOOR_ZONE_PEAK])
+	_assert_map("map_working_pills — the renewing WOOD wears the floor's own mark",
+		HudDepositVocab.floor_mark(pill_wood_row, WORK_PEAK_FLOOR)
+			== FoodIcons.for_floor_zone(SourceForecast.floor_zone(WORK_PEAK_FLOOR)))
+	_assert_map("map_working_pills — the rate-0 STONE wears NO mark, a quarry having no peak to sit on",
+		HudDepositVocab.floor_mark(pill_stone_row, WORK_PEAK_FLOOR)
+			== HudDepositVocab.FLOOR_MARK_NONE)
+	# State "working pills crowded" (issue #650) — **TWO SOURCES ON ONE HEX, TWO ROWS, TWO LEADER
+	# LINES.** The same two workings in the two edge slots of ONE hex, at a zoom where the markers are
+	# ~55px apart. This is the crowding the whole rework exists for.
+	#
+	# ⛔ **THE PILLS THIS FRAME WAS BUILT FOR ARE GONE, AND SO IS THE LIFT BEFORE THEM.** It first
+	# asserted a placement pass that raised the second pill clear of the first (Ray, on the frame it
+	# shipped on: *"having 1 way up there is worse then letting them overlapp a bit. I would move the
+	# pill back down"*), then asserted the accepted overlap that replaced it — two ~90px plates
+	# touching over markers ~55px apart, which is the arithmetic that finally moved the rates OFF the
+	# map into `BandSourceList`. **Neither claim has a subject any more.** What survives is the half
+	# both cuts rested on and that the leader lines now rest on: each source keeps its OWN anchor, at
+	# its own marker's slot centre, never at the shared hex centre — which is what stops two rows
+	# pointing at one point and reading as one working.
+	_map.display_snapshot(_snapshot_workings(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H,
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_working_pills_crowded")
+	# **THE PREMISE IS THE ZOOM**, and it is stated with the measured radius in it: below the detail
+	# gate every marker vanishes and this frame would be showing an empty hex rather than two pills
+	# keeping apart. `map_working_farzoom` makes the same claim from the other side.
+	_assert_map("map_working_pills_crowded — premise: the fitted radius %.1f is still above the detail gate %.1f, so both markers draw"
+			% [_map.last_hex_radius, MAP_VIEW.ICON_MIN_DETAIL_RADIUS],
+		_map.last_hex_radius >= MAP_VIEW.ICON_MIN_DETAIL_RADIUS)
+	_assert_working_slots("map_working_pills_crowded", WORKING_CROWDED_GRID_W,
+		WORKING_CROWDED_GRID_H, [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE],
+		[WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE])
+	# **WHERE EACH LEADER LINE LANDS IS ASKED OF THE ROW MODEL**, which is the one thing a harness can
+	# read — `compute_source_rows` hands back the anchor as a number, where a canvas draw could only
+	# be photographed, and two lines converging on one hex are not separable in a PNG.
+	var crowded_tile := _work_grid_center(WORKING_CROWDED_GRID_W, WORKING_CROWDED_GRID_H) \
+		+ WORKING_WORKED_OFFSET
+	var crowded_hex: Vector2 = _map._hex_center_wrapped(crowded_tile.x, crowded_tile.y,
+		_map.last_hex_radius, _map.last_origin)
+	var crowded_wood_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_WOOD))
+	var crowded_stone_slot: int = _map.secondary_slot_of(
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_STONE))
+	var crowded_rows: Dictionary = _rows_by_key(pill_overlays.source_rows())
+	var crowded_wood_row: Dictionary = crowded_rows.get(
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_WOOD), {})
+	var crowded_stone_row: Dictionary = crowded_rows.get(
+		_map.secondary_working_key(crowded_tile.x, crowded_tile.y, WORKING_MATERIAL_STONE), {})
+	_assert_map("map_working_pills_crowded — premise: both workings on the shared hex produce a row of their own",
+		not crowded_wood_row.is_empty() and not crowded_stone_row.is_empty())
+	var crowded_wood_anchor: Vector2 = crowded_wood_row.get("anchor", Vector2.ZERO)
+	var crowded_stone_anchor: Vector2 = crowded_stone_row.get("anchor", Vector2.ZERO)
+	_assert_map("map_working_pills_crowded — each row anchors to its OWN marker's slot centre, never to the shared hex centre",
+		crowded_wood_anchor == _map.secondary_slot_center(crowded_hex, crowded_wood_slot,
+				_map.last_hex_radius)
+		and crowded_stone_anchor == _map.secondary_slot_center(crowded_hex, crowded_stone_slot,
+				_map.last_hex_radius)
+		and crowded_wood_anchor != crowded_hex and crowded_stone_anchor != crowded_hex)
+	# **AND THE TWO ANCHORS ARE GENUINELY APART.** "Each row on its own marker" is vacuous if the two
+	# markers landed on the same point, which is exactly what anchoring to the hex centre would do —
+	# so the separation is measured against a ring's own DIAMETER, the widest thing either source
+	# draws on that hex.
+	var crowded_ring_diameter: float = _map.last_hex_radius \
+		* BandOverlayRenderer.WORKED_RING_FACTOR * 2.0
+	_assert_map("map_working_pills_crowded — the two rows' anchors clear a ring's diameter (%.1f px apart, ring %.1f)"
+			% [crowded_wood_anchor.distance_to(crowded_stone_anchor), crowded_ring_diameter],
+		crowded_wood_anchor.distance_to(crowded_stone_anchor) > crowded_ring_diameter)
+	# **AND THE ROWS KEEP THEIR OWN RATES.** Two sources crowded onto one hex used to be two plates
+	# inking one continuous dark shape; as rows they are two lines with two figures, and each states
+	# the account its own material pays into.
+	_assert_map("map_working_pills_crowded — each row states its own rate rather than sharing one (%s / %s)"
+			% [String(crowded_wood_row.get("rate_text", "")),
+				String(crowded_stone_row.get("rate_text", ""))],
+		String(crowded_wood_row.get("rate_text", "")) != ""
+		and String(crowded_stone_row.get("rate_text", "")) != "")
+
+## ---- THE DOCKED SOURCE LIST (issue #650) -------------------------------------------------------
+##
+## The rates left the map and became a docked panel, and **none of the states above can judge it**:
+## they render at `DEFAULT_CANVAS_SIZE`, where the project's `canvas_items` stretch puts every Control
+## on screen at 0.52× (see `SOURCE_LIST_WINDOW_SIZE`). These render the panel at 1:1 and ask the
+## claims a picture cannot carry — the SORT, the PAGER, the footer's invariant total, and the
+## placement rule with its dead zone — of the row model and of `place()` directly.
+
+## The band's own working, on a free hex one column east of the camp: this fixture's only MATERIAL
+## account, which is what makes the footer's total more than one number.
+const SOURCE_LIST_WOOD_TILE := Vector2i(BAND_X + 1, BAND_Y)
+const SOURCE_LIST_WOOD_CREW := 3
+## What that crew banked this turn — a magnitude, not a sentinel. It is what the row's rate states.
+const SOURCE_LIST_WOOD_TAKE := 0.30
+
+## The extra sources the PAGED fixture adds, one row per tile: enough to carry the band past
+## `BandSourceList.PAGE_SIZE` and onto a second page. The rates DESCEND and are all distinct, so the
+## sort's "non-increasing headline" claim has something to order; the three that overdraw are what
+## give the attention block more than one row to lift onto page 1.
+const PAGED_EXTRA_SOURCES := [
+	{"tile": Vector2i(5, 5), "rate": 0.44, "overdraws": true},
+	{"tile": Vector2i(6, 4), "rate": 0.38, "overdraws": false},
+	{"tile": Vector2i(7, 9), "rate": 0.33, "overdraws": true},
+	{"tile": Vector2i(10, 9), "rate": 0.25, "overdraws": false},
+	{"tile": Vector2i(12, 8), "rate": 0.18, "overdraws": true},
+	{"tile": Vector2i(4, 7), "rate": 0.12, "overdraws": false},
+]
+const PAGED_EXTRA_CREW := 2
+
+## ---- THE CREW THAT OUTGREW ITS GROUND ----------------------------------------------------------
+##
+## ⛔ **THE GROUND IS SHRUNK UNDER A STANDING CREW, NEVER OVER-ASSIGNED.** Every web's compose sheet
+## caps its stepper at exactly the ceiling `SourceForecast.crew_is_wasted` measures against, so an
+## over-assignment cannot be MADE on a sheet and a fixture staged that way would prove nothing about
+## the state a player actually reaches. What is staged instead is Ray's own case: a stand cut back
+## under the cutters already on it, which no stepper can gate.
+##
+## ⛔ **TWO HEXES CARRYING THE IDENTICAL GROUND, DIFFERING ONLY IN CREW.** That is what makes the
+## pair a control: one is staffed PAST what the stand can use and the other EXACTLY at it, so the only
+## thing the flag can be reading is the crew. Two different stands would leave *the ground is
+## different* as a second explanation for the two answers.
+const SOURCE_LIST_WORN_TILE := Vector2i(BAND_X, BAND_Y + 1)
+const SOURCE_LIST_FIT_TILE := Vector2i(BAND_X + 2, BAND_Y)
+
+## What one cutter moves in a turn on these two (`ForagePatchState.perWorkerBiomass`'s deposit twin).
+## The baseline `_working_deposit` states none — a working the client was never sent a rate for —
+## which is why every OTHER working in this harness is `CUTTERS_UNCAPPED` and unaffected by this pair.
+const SOURCE_LIST_WORN_PER_WORKER := 2.2
+
+## The stand after it was cut back: a `deadfall` wood working whose stock has come down to a hair over
+## its composed floor, so the room next turn is worth about one cutter. **A REAL WORKING, not a
+## sentinel** — the seam still pays, and the row still states a rate.
+const SOURCE_LIST_WORN_STOCK := 302.0
+const SOURCE_LIST_WORN_TAKE := 0.18
+
+## …and the hands beyond what that ground can use. The fixture's crew is the shipped cap PLUS this,
+## rather than a typed number, so a re-dial of `max_useful_cutters` moves the fixture with it and the
+## claim cannot quietly become vacuous.
+const SOURCE_LIST_WASTED_HANDS := 2
+## How many ACCOUNTS the footer's total has to name before "it is not a sum across accounts" says
+## anything at all — on a single-account band that claim passes vacuously.
+const MULTI_ACCOUNT_MIN := 2
+
+## Two materials on one source, for the RATE COLUMN'S ELIDE. Ids from `core_sim/src/data/materials.json`
+## (the same rule the deposit fixtures follow — a row the server could not publish proves nothing):
+## `hide` and `fibre` are both shipped, and a hunt really does pay both off one carcass. The material
+## arm states EVERY material by design, so this is the widest a rate cell can honestly get.
+const RATE_OVERRUN_MATERIALS := [
+	{"material_id": "hide", "amount": 0.22},
+	{"material_id": "fibre", "amount": 0.10},
+]
+
+## The bounds the PLACEMENT probe drives `place()` against — a synthetic rect with a NON-ZERO origin,
+## so a claim cannot pass by quietly assuming the room starts at the screen corner.
+const QUADRANT_BOUNDS := Rect2(Vector2(120.0, 80.0), Vector2(1600.0, 900.0))
+## …and the synthetic band FOOTPRINT it places beside: about the size of a token with its nameplate
+## under it, because the rule is stated against the band's whole inked rect now rather than against
+## its centre (`BandSourceList.place`'s ⛔).
+const QUADRANT_BAND_SIZE := Vector2(64.0, 40.0)
+## Where in `QUADRANT_BOUNDS` each quadrant's band stands, as a fraction of the room.
+const QUADRANT_NEAR := 0.25
+const QUADRANT_FAR := 0.75
+## How far off centre the probe puts the band. `NUDGE` stays INSIDE the dead zone
+## (1600 · 0.12 = 192 px, so 100 is comfortably within it) and `SHOVE` is clearly outside it — the
+## pair is what tells "the side is held" apart from "the side is fixed".
+const QUADRANT_NUDGE := 100.0
+const QUADRANT_SHOVE := 400.0
+## Fresh subjects for the probe. The panel resets its held sides when the band ENTITY changes, so a
+## leg that wants a fresh pick asks with a new one rather than by reaching into a member.
+const QUADRANT_ENTITY_A := 9301
+const QUADRANT_ENTITY_B := 9302
+## The cramped room, for the CLAMP: 340 px cannot hold the band's 64 px box plus `BAND_GAP` plus the
+## panel's 300 px on either side, so wherever the band stands the unclamped rect overflows and the
+## clamp is the only thing that can put it back. Asserted as a premise rather than assumed.
+const QUADRANT_CRAMPED_BOUNDS := Rect2(Vector2(40.0, 40.0), Vector2(340.0, 260.0))
+## Where the band stands in that room — hard against its right edge, so the panel opens LEFT and runs
+## off the near side.
+const QUADRANT_CRAMPED_INSET := 20.0
+## How far the quadrant PICTURE pans the map, as a fraction of the viewport: enough to carry the camp
+## well off centre so the panel visibly opens back into the room.
+##
+## **THE ZOOM IS WHAT MAKES THE PAN POSSIBLE.** `MapView` clamps `pan_offset` to keep the map on
+## screen, and at the cover FIT a 16×12 grid barely overhangs a 1920×1080 canvas — so a pan at fit
+## zoom is clamped almost to nothing and the band stays in the middle, which is the one thing this
+## picture must not show.
+const QUADRANT_ZOOM_STEPS := 2
+const QUADRANT_PAN_FRACTION := Vector2(0.22, 0.18)
+
+## The character a build badge must NOT wear any more (issue #650): the meter is the ring's ARC, and a
+## percent on the plate answered the wrong question. Named because an ABSENCE is being asserted.
+const BADGE_PERCENT_MARK := "%"
+
+## The mid-Cultivate patch's third twin, and the one this arc had to stage honestly: a rung in flight
+## whose meter the WIRE says is going backwards. `build_is_stalled` answers `true` for it through
+## `build_pace`, which is the only honest way left to reach a stalled build at a non-zero meter.
+const BUILD_ARC_ROT_TILE := Vector2i(BAND_X, BAND_Y + 2)
+const BUILD_ARC_ROT_CREW := 2
+const BUILD_ARC_ROT_RATE := 0.22
+## Its meter, deliberately UNLIKE the 42% one beside it, so the two arcs differ in sweep as well as in
+## colour — the frame's whole job is that two builds can be told apart at a glance.
+const BUILD_ARC_ROT_PROGRESS := 0.75
+## The FINITE estimate stamped on the healthy build of this frame. **Without it the wire's own
+## default (`buildTurnsRemaining = -1`, no estimate) reaches the row and the cell renders a SENTINEL
+## face** — a reachable state, but it left the ordinary countdown, the very reading that replaced the
+## `%` on the marker, absent from every frame and every assertion in the run.
+const BUILD_ARC_TURNS := 7
+## How many times closer the ROTTING source's hex must come to `HudStyle.DANGER` than the hex of the
+## build beside it, which draws the same arc in its own web's green. `_closest_mark_distance`'s ratio
+## idiom (see `WORKING_MARK_CONTRAST_MIN`): an absolute tolerance cannot be tuned for a mark drawn at
+## an alpha over terrain, but a CONTRAST inside one frame needs none. Measured on the shipped frame at
+## **11.4×** (0.024 on the rotting hex against 0.274 on the building one); this sits well under it.
+const BUILD_ARC_CONTRAST_MIN := 2.5
+## Guards the reported RATIO against a division by zero on a hex that hit the mark's colour exactly.
+## It bounds only the number printed in the label; the assertion itself is a multiplication.
+const MARK_DISTANCE_FLOOR := 0.0001
+
+## One band working SIX sources across all three webs — the two food webs of `_snapshot_work` plus a
+## WOOD working, which is what puts a second ACCOUNT in the footer's total. The forage/hunt half is
+## untouched, so these rows carry the same figures `map_band_work` has always rendered.
+func _snapshot_source_list() -> Dictionary:
+	var snap := _snapshot_work()
+	var assignments: Array = snap["populations"][0]["labor_assignments"]
+	assignments.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": SOURCE_LIST_WOOD_CREW,
+		"target_x": SOURCE_LIST_WOOD_TILE.x, "target_y": SOURCE_LIST_WOOD_TILE.y,
+		"material": WORKING_MATERIAL_WOOD,
+		"floor": WORK_PEAK_FLOOR,
+		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
+			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WOOD_TAKE},
+		],
+	})
+	# **AND THE WASTED-CREW PAIR** — one stand cut back under the crew standing on it, beside the SAME
+	# stand crewed at exactly what it can use. The pair is what tells *this crew is too big* apart from
+	# *this row is crewed*, and without the second half the claim would pass on a renderer that flagged
+	# every crewed source in the game.
+	assignments.append(_worn_working_assignment(SOURCE_LIST_WORN_TILE,
+		_worn_cap() + SOURCE_LIST_WASTED_HANDS))
+	assignments.append(_worn_working_assignment(SOURCE_LIST_FIT_TILE, _worn_cap()))
+	# The working the map draws is the one the SNAPSHOT carries, never one a labor row asserts — the
+	# `(tile, material)` join `compute_worked_workings` makes.
+	snap["deposits"] = [_working_deposit(SOURCE_LIST_WOOD_TILE, WORKING_MATERIAL_WOOD),
+		_worn_working(SOURCE_LIST_WORN_TILE), _worn_working(SOURCE_LIST_FIT_TILE)]
+	return snap
+
+## **THE STAND CUT BACK TO A HAIR ABOVE ITS FLOOR** — `_working_deposit`'s wood row with its stock
+## drawn down and a per-cutter rate stated, which is what gives it a real ceiling at all. Both hexes
+## of the pair get this same ground; only their crews differ.
+func _worn_working(tile: Vector2i) -> Dictionary:
+	var deposit := _working_deposit(tile, WORKING_MATERIAL_WOOD)
+	deposit["per_worker_biomass"] = SOURCE_LIST_WORN_PER_WORKER
+	deposit["actual_take"] = SOURCE_LIST_WORN_TAKE
+	deposit["stock"] = SOURCE_LIST_WORN_STOCK
+	deposit["reachable"] = SOURCE_LIST_WORN_STOCK
+	return deposit
+
+## **THE SHIPPED CEILING FOR THAT GROUND, asked of the producer rather than typed here** — the same
+## quotient the working's own compose sheet caps its `+` at. Both crews below are sized from it, so
+## the overstaffed row is overstaffed BY CONSTRUCTION and the fully-staffed one sits exactly on it.
+func _worn_cap() -> int:
+	return HudDepositVocab.max_useful_cutters(
+		_worn_working(SOURCE_LIST_WORN_TILE), WORK_PEAK_FLOOR)
+
+## One `extract` row on one of that pair, at a stated crew.
+func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
+	return {
+		"kind": HudConst.LABOR_KIND_EXTRACT,
+		"workers": crew,
+		"target_x": tile.x, "target_y": tile.y,
+		"material": WORKING_MATERIAL_WOOD,
+		"floor": WORK_PEAK_FLOOR,
+		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
+			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WORN_TAKE},
+		],
+	}
+
+## …and the same band with `PAGED_EXTRA_SOURCES` bolted on, so the list runs past one page. Each extra
+## is a forage patch with its own food SITE, for `map_band_work`'s own load-bearing reason: a forage
+## assignment on a tile with no site has no marker to ring and no face for its row's icon.
+func _snapshot_source_list_paged() -> Dictionary:
+	var snap := _snapshot_source_list()
+	var assignments: Array = snap["populations"][0]["labor_assignments"]
+	var sites: Array = snap["food_modules"]
+	for extra_variant in PAGED_EXTRA_SOURCES:
+		var extra: Dictionary = extra_variant
+		var tile: Vector2i = extra["tile"]
+		assignments.append({
+			"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": PAGED_EXTRA_CREW,
+			"target_x": tile.x, "target_y": tile.y, "floor": WORK_PEAK_FLOOR,
+			"actual_yield": float(extra["rate"]), "sustainable_yield": float(extra["rate"]),
+			"realized_yield": float(extra["rate"]), "overdraws": bool(extra["overdraws"]),
+		})
+		sites.append({"x": tile.x, "y": tile.y, "module": "berry_patch", "kind": "forage"})
+	return snap
+
+## **THE BUILD ARC'S A/B/C, IN ONE FRAME**: the mid-Cultivate patch of `_snapshot_work_ready` (a rung
+## in flight, staffed, drawing its meter as an arc in its own web's colour), the wolf pack beside it
+## (worked, no rung offered and none under way — the CONTROL), and a third patch whose build the WIRE
+## says is rotting, which wears the `⚠` face and a DANGER arc.
+##
+## **FACTION KNOWLEDGE IS DELIBERATELY NOT PUSHED HERE**, unlike `map_worked_ready`: with it, sources
+## that can merely CLIMB wear a ⌃ verb glyph too, and the control's claim is that its badge carries no
+## verb glyph AT ALL. Without knowledge the only verb glyphs in the frame are the two builds.
+func _snapshot_build_arc() -> Dictionary:
+	var snap := _snapshot_work_ready()
+	var assignments: Array = snap["populations"][0]["labor_assignments"]
+	assignments.append({
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": BUILD_ARC_ROT_CREW,
+		"target_x": BUILD_ARC_ROT_TILE.x, "target_y": BUILD_ARC_ROT_TILE.y,
+		"floor": WORK_PEAK_FLOOR, "improvement": SourceForecast.IMPROVEMENT_CULTIVATE,
+		"overdraws": false,
+		"actual_yield": BUILD_ARC_ROT_RATE, "sustainable_yield": BUILD_ARC_ROT_RATE,
+		"realized_yield": BUILD_ARC_ROT_RATE,
+	})
+	(snap["food_modules"] as Array).append({
+		"x": BUILD_ARC_ROT_TILE.x, "y": BUILD_ARC_ROT_TILE.y,
+		"module": "berry_patch", "kind": "forage"})
+	var rotting := {
+		"x": BUILD_ARC_ROT_TILE.x, "y": BUILD_ARC_ROT_TILE.y,
+		"ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false,
+		"current_rung": RUNG_FX.patch_rung_key(false, false),
+		"cultivation_progress": BUILD_ARC_ROT_PROGRESS,
+		"sow_site_refusal": "",
+		# **THE WIRE'S OWN ROT VERDICT** — the sentinel, never a literal, and never a client-side
+		# inference about the staffing (see `SourceForecast`'s `BUILD_UNSTAFFED_SLIDING` retirement).
+		SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_ROTS,
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
+			"share": 1.0, "can_cultivate": true, "can_sow": false}],
+	}
+	_stamp_patch_owner(rotting, HudConst.PLAYER_FACTION_ID)
+	(snap["forage_patches"] as Array).append(rotting)
+	# **AND THE HEALTHY BUILD GETS A FINITE ESTIMATE, so this frame carries all three faces** — a real
+	# countdown, the rot sentinel above, and a worked source building nothing. It is stamped HERE
+	# rather than in `_snapshot_work_ready`, which the `map_worked_ready` / `map_worked_unstaffed` A/B
+	# is measured against and which must not move.
+	for patch_variant in snap["forage_patches"]:
+		var patch: Dictionary = patch_variant
+		if int(patch.get("x", -1)) == WORK_CULTIVATE_X \
+				and int(patch.get("y", -1)) == WORK_CULTIVATE_Y:
+			patch[SourceForecast.FORECAST_BUILD_TURNS_KEY] = BUILD_ARC_TURNS
+	return snap
+
+## The rung half of a source's badge FACE this frame, off the renderer's ONE producer
+## (`BandOverlayRenderer.badge_rung`). `""` where the source is merely worked — which is a real answer
+## and is asserted as one, so the badge ENTRY is checked separately wherever an absence is the claim.
+func _badge_face(key: String) -> String:
+	var overlays: BandOverlayRenderer = _map._band_overlays
+	return String(overlays.badge_rung(overlays._badge_entry_for(key))[
+		BandOverlayRenderer.BADGE_RUNG_TEXT])
+
+## The stretch scale this frame is being captured at — window ÷ logical viewport, under the project's
+## `canvas_items` stretch. 1.0 means a Control is captured at the size a player sees it; see
+## `SOURCE_LIST_WINDOW_SIZE` for why anything else makes a legibility judgment worthless.
+func _canvas_stretch_scale() -> float:
+	return float(get_window().size.x) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+
+## A synthetic band footprint centred on `centre` — see `QUADRANT_BAND_SIZE`.
+func _quadrant_band(centre: Vector2) -> Rect2:
+	return Rect2(centre - QUADRANT_BAND_SIZE * 0.5, QUADRANT_BAND_SIZE)
+
+## Place the live panel beside a synthetic band and hand back its rect. `entity` is the SUBJECT: pass
+## the same one to keep the held sides, a fresh one to make the panel pick fresh.
+func _place_probe(centre: Vector2, bounds: Rect2, entity: int) -> Rect2:
+	var list: BandSourceList = _map._source_list
+	list.update_rows(_map._band_overlays.source_rows(), entity,
+		_map._band_overlays.source_total_text())
+	list.place(_quadrant_band(centre), bounds)
+	return Rect2(list.position, list.size)
+
+## Did the panel open to the RIGHT of the band it was placed beside? The OBSERVABLE form of
+## `BandSourceList._side_x` — read off where the rect landed rather than out of a member, so the
+## claim is about the placement and not about the flag behind it.
+func _opened_right(panel: Rect2, band_centre: Vector2) -> bool:
+	return panel.position.x >= band_centre.x
+
+func _source_list_states() -> void:
+	await _set_canvas(SOURCE_LIST_WINDOW_SIZE)
+	await _settle()
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.set_faction_knowledge({})
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	# **THESE FRAMES ARE ONLY WORTH LOOKING AT AT 1:1.** A window the WM refused would silently return
+	# them to ~0.52×, which is the whole defect this block's canvas exists to close.
+	if absf(_canvas_stretch_scale() - SOURCE_LIST_EXPECTED_SCALE) > SOURCE_LIST_SCALE_EPSILON:
+		push_warning("map_preview: source-list states asked for %s and got %s — stretch scale %.3f rather than %.1f; these frames are NOT 1:1 and cannot be judged for legibility"
+			% [SOURCE_LIST_WINDOW_SIZE, get_window().size, _canvas_stretch_scale(),
+				SOURCE_LIST_EXPECTED_SCALE])
+
+	# State "source list" (issue #650) — **THE FRAME TO LOOK AT.** One band working six sources across
+	# all three webs, selected, with the docked list beside its token and a leader line from every row
+	# to its own hex.
+	_map.display_snapshot(_snapshot_source_list())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_source_list")
+
+	var overlays: BandOverlayRenderer = _map._band_overlays
+	var rows: Array = overlays.source_rows()
+	# **THE ROW COUNT IS THE BAND'S WORKED-SOURCE COUNT**, counted off the FIXTURE's own assignments
+	# rather than restated as a number, so a fixture that grew a source cannot leave this behind. The
+	# `warrior` row is not a source and drops out on the same kind test the row pass makes.
+	var worked := 0
+	for entry_variant in _snapshot_source_list()["populations"][0]["labor_assignments"]:
+		var entry_kind := String((entry_variant as Dictionary).get("kind", ""))
+		if entry_kind == SourceForecast.LABOR_KIND_FORAGE \
+				or entry_kind == SourceForecast.LABOR_KIND_HUNT \
+				or entry_kind == HudConst.LABOR_KIND_EXTRACT:
+			worked += 1
+	_assert_map("map_source_list — one row per worked source (%d rows, %d worked assignments)"
+			% [rows.size(), worked],
+		rows.size() == worked and worked > 0)
+
+	# **THE SORT HOLDS: ATTENTION FIRST, THEN THE SORT KEY DESCENDING.** The measured sequence goes in
+	# the label — a bare `true` here tells the next reader nothing about what it was.
+	#
+	# The key is the row's FOOD figure (`sort_yield`), which is why the wood working sorts among the
+	# zeros while its row states `+0.30 wood`: there is no ordering BETWEEN accounts, and inventing one
+	# would be the retired trade axis under a new name. A material-only row therefore sorts on the food
+	# it does not pay, which is the honest fallback rather than a bug in the comparison.
+	var sequence: Array[String] = []
+	var sort_holds := true
+	var seen_calm := false
+	var previous_yield := INF
+	var previous_rank := -1
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		var rank := int(row.get("attention", BandOverlayRenderer.ATTENTION_NONE))
+		var figure := float(row.get("sort_yield", 0.0))
+		sequence.append("%d:%.2f" % [rank, figure])
+		if rank == BandOverlayRenderer.ATTENTION_NONE:
+			seen_calm = true
+		elif seen_calm:
+			sort_holds = false          # an attention row AFTER a calm one
+		if rank == previous_rank and figure > previous_yield \
+				and not is_equal_approx(figure, previous_yield):
+			sort_holds = false          # the headline figure climbed within a group
+		previous_rank = rank
+		previous_yield = figure
+	_assert_map("map_source_list — attention rows lead and the sort KEY never climbs within a group (%s)"
+			% " ".join(PackedStringArray(sequence)),
+		sort_holds)
+
+	# ---- A CREW BIGGER THAN ITS GROUND CAN USE (the third web joins the other two) ---------------
+	#
+	# ⛔ **THE PREMISE FIRST, because every claim under it is vacuous without one.** The pair is sized
+	# from the SHIPPED ceiling, so if `max_useful_cutters` ever answered `CUTTERS_UNCAPPED` for this
+	# ground — a fixture that lost its per-cutter rate, say — the overstaffed crew would be `1` and the
+	# fully-staffed one `-1`, and both rows would pass for the wrong reason.
+	var worn_cap := _worn_cap()
+	_assert_map("map_source_list — premise: the cut-back stand PRICES a ceiling (max %d cutters)"
+			% worn_cap,
+		worn_cap != HudDepositVocab.CUTTERS_UNCAPPED and worn_cap > 0)
+	var by_key := _rows_by_key(rows)
+	var worn_row: Dictionary = by_key.get(_map.secondary_working_key(
+		SOURCE_LIST_WORN_TILE.x, SOURCE_LIST_WORN_TILE.y, WORKING_MATERIAL_WOOD), {})
+	var fit_row: Dictionary = by_key.get(_map.secondary_working_key(
+		SOURCE_LIST_FIT_TILE.x, SOURCE_LIST_FIT_TILE.y, WORKING_MATERIAL_WOOD), {})
+	_assert_map("map_source_list — premise: both halves of the pair produced a row of their own",
+		not worn_row.is_empty() and not fit_row.is_empty())
+	_assert_map(("map_source_list — the crew that outgrew its ground is flagged OVERSTAFFED "
+			+ "(%d cutters on ground that can use %d → rank %d, `%s`)")
+			% [worn_cap + SOURCE_LIST_WASTED_HANDS, worn_cap,
+				int(worn_row.get("attention", BandOverlayRenderer.ATTENTION_NONE)),
+				String(worn_row.get("attention_text", ""))],
+		int(worn_row.get("attention", BandOverlayRenderer.ATTENTION_NONE))
+			== BandOverlayRenderer.ATTENTION_OVERSTAFFED
+		and String(worn_row.get("attention_text", "")).contains(
+			HudDepositVocab.OVERSTAFFED_WORD))
+	# ⛔ **AND THE FULLY-STAFFED TWIN CARRIES NOTHING — `workers == useful` IS THE GOOD STATE.** This
+	# is the half the predicate's strictness exists for: a `>=` would put a hazard on every correctly
+	# crewed source in the game, and the frame would look like a world in permanent trouble.
+	_assert_map(("map_source_list — …while the SAME ground crewed EXACTLY to its ceiling carries no "
+			+ "hazard at all (%d cutters on ground that can use %d → rank %d, `%s`)")
+			% [worn_cap, worn_cap,
+				int(fit_row.get("attention", BandOverlayRenderer.ATTENTION_NONE)),
+				String(fit_row.get("attention_text", ""))],
+		int(fit_row.get("attention", BandOverlayRenderer.ATTENTION_NONE))
+			== BandOverlayRenderer.ATTENTION_NONE
+		and String(fit_row.get("attention_text", "")) == "")
+	# **THE RANK IS THE FEATURE, so the SEQUENCE is asserted rather than the flag.** Idle hands are a
+	# WASTE where the classes above are each a LOSS, so this row must sit UNDER every one of them and
+	# OVER every calm row — which is a claim about where it lands in the list, not about its number.
+	var over_cut_at := -1
+	var overstaffed_at := -1
+	var first_calm_at := -1
+	for i in range(rows.size()):
+		var rank := int((rows[i] as Dictionary).get("attention",
+			BandOverlayRenderer.ATTENTION_NONE))
+		if rank == BandOverlayRenderer.ATTENTION_OVER_CUT and over_cut_at < 0:
+			over_cut_at = i
+		elif rank == BandOverlayRenderer.ATTENTION_OVERSTAFFED and overstaffed_at < 0:
+			overstaffed_at = i
+		elif rank == BandOverlayRenderer.ATTENTION_NONE and first_calm_at < 0:
+			first_calm_at = i
+	_assert_map(("map_source_list — …and it sorts BELOW the losses and ABOVE the calm rows "
+			+ "(over-cut at %d, overstaffed at %d, first calm at %d)")
+			% [over_cut_at, overstaffed_at, first_calm_at],
+		over_cut_at >= 0 and overstaffed_at >= 0 and first_calm_at >= 0
+		and over_cut_at < overstaffed_at and overstaffed_at < first_calm_at)
+
+	# **THE RATE A ROW STATES IS THE PILL'S OWN STRING**, driven with that row's OWN arguments — which
+	# is what pins the rate to one producer now that the on-tile pill is gone. The WOOD row is the one
+	# asked, being the only one whose rate goes through the material arm AND the floor-mark fork.
+	var wood_key: String = _map.secondary_working_key(SOURCE_LIST_WOOD_TILE.x,
+		SOURCE_LIST_WOOD_TILE.y, WORKING_MATERIAL_WOOD)
+	var wood_row: Dictionary = _rows_by_key(rows).get(wood_key, {})
+	_assert_map("map_source_list — premise: the wood working produced a row of its own",
+		not wood_row.is_empty())
+	var wood_entry := {
+		SourceForecast.ASSIGNMENT_MATERIAL_KEY: WORKING_MATERIAL_WOOD,
+		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
+			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WOOD_TAKE},
+		],
+		"floor": WORK_PEAK_FLOOR,
+	}
+	var wood_face: String = overlays._yield_label_rate_text(0.0, 0.0,
+		overlays._entry_materials(wood_entry),
+		SourceForecast.row_zero_account(wood_entry, HudConst.LABOR_KIND_EXTRACT),
+		SecondaryMarkerRenderer.face_renders(
+			SecondaryMarkerRenderer.face_for_material(WORKING_MATERIAL_WOOD)))
+	var wood_mark: String = HudDepositVocab.floor_mark(
+		_working_deposit(SOURCE_LIST_WOOD_TILE, WORKING_MATERIAL_WOOD),
+		overlays._entry_floor(wood_entry))
+	var wood_expected := wood_face if wood_mark == "" else "%s %s" % [wood_face, wood_mark]
+	_assert_map("map_source_list — the row's rate IS `_yield_label_rate_text` driven with its own arguments (`%s`)"
+			% String(wood_row.get("rate_text", "")),
+		String(wood_row.get("rate_text", "")) == wood_expected)
+
+	# **AND THE RATE CELL ELIDES RATHER THAN OVERRUNNING ITS NEIGHBOUR.** The material arm states EVERY
+	# material by design, so a two-material take is wider than the fixed `RATE_WIDTH` column — the
+	# retired PILL sized to its measured run and could not overflow, and a list row's cell cannot do
+	# that. Both halves are asserted: the composed string still names BOTH materials (nothing is
+	# shortened) and its measured run really does outrun the column, or the elide is unexercised and
+	# this passes on a cell that never overflowed.
+	var pair_face: String = overlays._yield_label_rate_text(0.0, 0.0,
+		RATE_OVERRUN_MATERIALS, SourceForecast.YIELD_ACCOUNT_FOOD,
+		BandOverlayRenderer.MARKER_NAMES_NO_MATERIAL)
+	var pair_width: float = ThemeDB.fallback_font.get_string_size(pair_face,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, BandSourceList.ROW_FONT_SIZE).x
+	_assert_map("map_source_list — a two-material rate names both and outruns its column, so it MUST elide (`%s` = %.1f px against RATE_WIDTH %.1f)"
+			% [pair_face, pair_width, BandSourceList.RATE_WIDTH],
+		pair_face.contains(String((RATE_OVERRUN_MATERIALS[0] as Dictionary)["material_id"]))
+		and pair_face.contains(String((RATE_OVERRUN_MATERIALS[1] as Dictionary)["material_id"]))
+		and pair_width > BandSourceList.RATE_WIDTH)
+	_assert_map("map_source_list — …and the rate cell is the one that trims it, with the whole run kept on the row's hover",
+		_map._source_list._row_rates[0].text_overrun_behavior
+			== TextServer.OVERRUN_TRIM_ELLIPSIS
+		and _map._source_list._row_rates[0].clip_text
+		and _map._source_list._row_rates[0].text != ""
+		and _map._source_list._rows[0].tooltip_text.contains(
+			_map._source_list._row_rates[0].text))
+
+	# State "source list quadrant" (issue #650) — **THE PLACEMENT RULE, ASKED AS ARITHMETIC.** Driven
+	# against a synthetic `bounds` rather than by panning the map: where the panel opens is a
+	# calculation, and a picture of one corner proves nothing about the other three.
+	var quadrant_centre: Vector2 = QUADRANT_BOUNDS.position + QUADRANT_BOUNDS.size * 0.5
+	var corners := [
+		{"name": "north-west", "at": Vector2(QUADRANT_NEAR, QUADRANT_NEAR),
+			"right": true, "below": true},
+		{"name": "north-east", "at": Vector2(QUADRANT_FAR, QUADRANT_NEAR),
+			"right": false, "below": true},
+		{"name": "south-west", "at": Vector2(QUADRANT_NEAR, QUADRANT_FAR),
+			"right": true, "below": false},
+		{"name": "south-east", "at": Vector2(QUADRANT_FAR, QUADRANT_FAR),
+			"right": false, "below": false},
+	]
+	for i in range(corners.size()):
+		var corner: Dictionary = corners[i]
+		var at: Vector2 = corner["at"]
+		var centre: Vector2 = QUADRANT_BOUNDS.position + QUADRANT_BOUNDS.size * at
+		var band := _quadrant_band(centre)
+		var rect := _place_probe(centre, QUADRANT_BOUNDS, QUADRANT_ENTITY_A + i)
+		var opens_right: bool = rect.position.x >= band.end.x
+		var opens_below: bool = rect.position.y >= band.end.y
+		_assert_map("map_source_list_quadrant — a band in the %s quadrant opens the panel into the DIAGONALLY OPPOSITE one (%s / %s)"
+				% [String(corner["name"]),
+					"right" if opens_right else "left", "below" if opens_below else "above"],
+			opens_right == bool(corner["right"]) and opens_below == bool(corner["below"]))
+		_assert_map("map_source_list_quadrant — …and the %s placement stays inside the room (%s in %s)"
+				% [String(corner["name"]), rect, QUADRANT_BOUNDS],
+			QUADRANT_BOUNDS.encloses(rect))
+
+	# **THE DEAD ZONE HOLDS A SIDE.** Past the zone the side is TAKEN; inside it the side already held
+	# is KEPT, whichever way the band drifts. ⛔ This is the leg that fails if the dead zone is deleted
+	# — without it the four corners above all still pass on a panel that flips on every pixel.
+	var shove_left := Vector2(quadrant_centre.x - QUADRANT_SHOVE, quadrant_centre.y)
+	var shove_right := Vector2(quadrant_centre.x + QUADRANT_SHOVE, quadrant_centre.y)
+	var nudge_left := Vector2(quadrant_centre.x - QUADRANT_NUDGE, quadrant_centre.y)
+	var nudge_right := Vector2(quadrant_centre.x + QUADRANT_NUDGE, quadrant_centre.y)
+	var took_right := _place_probe(shove_left, QUADRANT_BOUNDS, QUADRANT_ENTITY_A)
+	_assert_map("map_source_list_quadrant — premise: %.0f px LEFT of centre (past the %.0f px dead zone) opens the panel RIGHT"
+			% [QUADRANT_SHOVE, QUADRANT_BOUNDS.size.x * BandSourceList.DEAD_ZONE_FRACTION],
+		_opened_right(took_right, shove_left))
+	var held_near := _place_probe(nudge_left, QUADRANT_BOUNDS, QUADRANT_ENTITY_A)
+	var held_across := _place_probe(nudge_right, QUADRANT_BOUNDS, QUADRANT_ENTITY_A)
+	_assert_map("map_source_list_quadrant — the DEAD ZONE holds the side: crossing centre by %.0f px keeps the panel on the RIGHT (x %.1f then %.1f)"
+			% [QUADRANT_NUDGE, held_near.position.x, held_across.position.x],
+		_opened_right(held_near, nudge_left) and _opened_right(held_across, nudge_right))
+	# **AND IT YIELDS PAST THE ZONE, BOTH WAYS.** A dead zone that never yields is a fixed side, and a
+	# fixed side passes the hold claim above.
+	var yielded_left := _place_probe(shove_right, QUADRANT_BOUNDS, QUADRANT_ENTITY_A)
+	_assert_map("map_source_list_quadrant — …and YIELDS past it: %.0f px right of centre the panel flips to the LEFT side"
+			% QUADRANT_SHOVE,
+		not _opened_right(yielded_left, shove_right))
+	var yielded_back := _place_probe(shove_left, QUADRANT_BOUNDS, QUADRANT_ENTITY_A)
+	_assert_map("map_source_list_quadrant — …and flips BACK, so the yield is not a one-way trip",
+		_opened_right(yielded_back, shove_left))
+	# **A FRESH SELECTION PICKS FRESH.** Put the held side on the LEFT, then change the subject and ask
+	# from INSIDE the dead zone, where nothing would move a side that was merely held.
+	_place_probe(shove_right, QUADRANT_BOUNDS, QUADRANT_ENTITY_A)
+	var fresh := _place_probe(nudge_right, QUADRANT_BOUNDS, QUADRANT_ENTITY_B)
+	_assert_map("map_source_list_quadrant — a NEW band resets the held side rather than inheriting the last one's quadrant",
+		_opened_right(fresh, nudge_right))
+	# **AND THE RECT NEVER LEAVES THE ROOM**, including a room too narrow to hold the unclamped answer.
+	_assert_map("map_source_list_quadrant — premise: %.0f px of room cannot hold the band's %.0f px box plus the %.0f px gap plus the %.0f px panel, so the unclamped rect MUST overflow"
+			% [QUADRANT_CRAMPED_BOUNDS.size.x, QUADRANT_BAND_SIZE.x, BandSourceList.BAND_GAP,
+				BandSourceList.PANEL_WIDTH],
+		QUADRANT_CRAMPED_BOUNDS.size.x < QUADRANT_BAND_SIZE.x + BandSourceList.BAND_GAP
+			+ BandSourceList.PANEL_WIDTH)
+	var cramped := _place_probe(
+		Vector2(QUADRANT_CRAMPED_BOUNDS.end.x - QUADRANT_CRAMPED_INSET,
+			QUADRANT_CRAMPED_BOUNDS.position.y + QUADRANT_CRAMPED_INSET),
+		QUADRANT_CRAMPED_BOUNDS, QUADRANT_ENTITY_B)
+	_assert_map("map_source_list_quadrant — …and it is CLAMPED back into the cramped room (%s in %s)"
+			% [cramped, QUADRANT_CRAMPED_BOUNDS],
+		QUADRANT_CRAMPED_BOUNDS.encloses(cramped))
+
+	# …and one PICTURE of a genuinely off-centre band, so the rule has a frame too: the map is panned
+	# until the camp sits well off centre and the panel opens back into the room.
+	for _step in range(QUADRANT_ZOOM_STEPS):
+		_map.zoom_step(1)
+	_map.pan_offset += get_viewport().get_visible_rect().size * QUADRANT_PAN_FRACTION
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_source_list_quadrant")
+	_map.fit_to_view()
+	_map.pan_offset = Vector2.ZERO
+
+	# State "source list paged" (issue #650) — **TEN A PAGE, AND A TOTAL THAT DOES NOT MOVE.**
+	_map.display_snapshot(_snapshot_source_list_paged())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_source_list_paged")
+
+	var list: BandSourceList = _map._source_list
+	var all_rows: Array = overlays.source_rows()
+	var pages: int = list._page_count()
+	var expected_pages := int(ceil(float(all_rows.size()) / float(BandSourceList.PAGE_SIZE)))
+	_assert_map("map_source_list_paged — %d rows fill %d pages of %d (the ceiling)"
+			% [all_rows.size(), pages, BandSourceList.PAGE_SIZE],
+		all_rows.size() > BandSourceList.PAGE_SIZE and pages == expected_pages)
+	var page_one: Array = list.page_rows()
+	_assert_map("map_source_list_paged — page 1 holds exactly PAGE_SIZE rows (%d)" % page_one.size(),
+		page_one.size() == BandSourceList.PAGE_SIZE)
+	# **EVERY ATTENTION ROW IS ON PAGE 1** — *a row you would act on must never be the row that got
+	# cut*, as an assertion. Counted on both sides, because "0 of 0" would pass vacuously.
+	var attention_total := 0
+	for row_variant in all_rows:
+		if int((row_variant as Dictionary).get("attention",
+				BandOverlayRenderer.ATTENTION_NONE)) != BandOverlayRenderer.ATTENTION_NONE:
+			attention_total += 1
+	var attention_on_page_one := 0
+	for row_variant in page_one:
+		if int((row_variant as Dictionary).get("attention",
+				BandOverlayRenderer.ATTENTION_NONE)) != BandOverlayRenderer.ATTENTION_NONE:
+			attention_on_page_one += 1
+	_assert_map("map_source_list_paged — all %d attention rows are on page 1 (%d there)"
+			% [attention_total, attention_on_page_one],
+		attention_total > 1 and attention_on_page_one == attention_total)
+	_assert_map("map_source_list_paged — the pager's PREV is disabled on page 1 and NEXT is not",
+		list._prev_button.disabled and not list._next_button.disabled)
+	# ⛔ **THE FOOTER'S TOTAL IS THE BAND'S, NOT THE PAGE'S** — the invariance that is the whole
+	# justification for putting a total on a paged list. Driven through the pager, compared as strings.
+	var total_page_one := list.total_text()
+	list._on_page_step(1)
+	var page_two: Array = list.page_rows()
+	var total_page_two := list.total_text()
+	_assert_map("map_source_list_paged — the last page holds the remainder (%d of %d)"
+			% [page_two.size(), all_rows.size()],
+		page_two.size() == all_rows.size() - BandSourceList.PAGE_SIZE)
+	_assert_map("map_source_list_paged — ⛔ the footer's total is IDENTICAL on both pages (`%s` / `%s`)"
+			% [total_page_one, total_page_two],
+		total_page_one != "" and total_page_one == total_page_two)
+	_assert_map("map_source_list_paged — the pager's NEXT is disabled on the last page and PREV is not",
+		list._next_button.disabled and not list._prev_button.disabled)
+	list._on_page_step(-1)
+	# **AND THE TOTAL IS NOT A SUM ACROSS ACCOUNTS.** Recomposed here from the fixture's own rows
+	# through `SourceForecast.yield_components` + `merged_material_rows` — the merge is BY MATERIAL ID
+	# and never across ids, so a band cutting wood while foraging reads two accounts rather than one
+	# meaningless number. Staged so at least two accounts are non-zero, or the claim passes vacuously.
+	var expected_food := 0.0
+	var expected_fodder := 0.0
+	var expected_sets: Array = []
+	for entry_variant in _snapshot_source_list_paged()["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		var entry_kind := String(entry.get("kind", ""))
+		if entry_kind == SourceForecast.LABOR_KIND_FORAGE \
+				or entry_kind == HudConst.LABOR_KIND_EXTRACT:
+			expected_food += overlays._entry_realized_yield(entry)
+			expected_fodder += overlays._entry_fodder(entry)
+		elif entry_kind == SourceForecast.LABOR_KIND_HUNT:
+			expected_food += float(entry["realized_yield"]) if entry.has("realized_yield") \
+				else float(entry.get("sustainable_yield", 0.0))
+		else:
+			continue
+		expected_sets.append(overlays._entry_materials(entry))
+	var expected_total: String = SourceForecast.yield_components(expected_food, expected_fodder,
+		SourceForecast.YIELD_ACCOUNT_FOOD, SourceForecast.merged_material_rows(expected_sets))
+	var account_count := list.total_text().split(
+		SourceForecast.COMPONENT_SEPARATOR).size()
+	_assert_map("map_source_list_paged — the total states every ACCOUNT and sums none of them together (%d accounts: `%s`)"
+			% [account_count, expected_total],
+		list.total_text() == expected_total
+		and account_count >= MULTI_ACCOUNT_MIN)
+
+	# State "build arc" (issue #650) — **THE RING CARRIES THE BUILD NOW.** Three sources in one frame:
+	# a rung in flight, a worked source with none, and a build the wire says is rotting.
+	_map.display_snapshot(_snapshot_build_arc())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_build_arc")
+
+	var building_key: String = _map.secondary_food_key(WORK_CULTIVATE_X, WORK_CULTIVATE_Y)
+	var rotting_key: String = _map.secondary_food_key(BUILD_ARC_ROT_TILE.x, BUILD_ARC_ROT_TILE.y)
+	var control_key: String = _map.secondary_herd_key(WOLF_HERD_ID)
+	var building_face := _badge_face(building_key)
+	var rotting_face := _badge_face(rotting_key)
+	var control_entry: Dictionary = overlays._badge_entry_for(control_key)
+	var building_glyph := String(
+		overlays._badge_entry_for(building_key).get("building_glyph", ""))
+	var rotting_glyph := String(
+		overlays._badge_entry_for(rotting_key).get("building_glyph", ""))
+	# **THE PLATE NAMES THE VERB AND STATES NO PERCENT.** ⛔ The absence of the `%` is only worth
+	# asserting because the verb glyph IS present in the same face — both halves, or this is the probe
+	# that passes with the whole build state deleted.
+	_assert_map("map_build_arc — the building source's badge names its VERB and carries no percent (`%s`)"
+			% building_face,
+		building_glyph != "" and building_face.contains(building_glyph)
+		and not building_face.contains(BADGE_PERCENT_MARK)
+		and building_face == BandOverlayRenderer.BADGE_BUILDING_FORMAT % building_glyph)
+	# …and the CONTROL, in the same frame: a source that is worked and building nothing wears no verb
+	# glyph at all. Its badge entry is asserted to EXIST first, or the empty face is an absent plate.
+	_assert_map("map_build_arc — premise: the control source queued a badge of its own",
+		not control_entry.is_empty())
+	_assert_map("map_build_arc — …and that badge carries no verb glyph at all (`%s`)"
+			% _badge_face(control_key),
+		_badge_face(control_key) == "")
+	# **AND THE ROW STATES THE ORDINARY COUNTDOWN** — the reading that REPLACED the `%` on the plate,
+	# and the one the whole meter change was made for. ⛔ Asserted as an equality against
+	# `DetailFormat.build_countdown_value` driven with the fixture's own numbers, not as "contains a
+	# digit": the row and the tile card are held to ONE producer, and a probe that merely looked for a
+	# number would pass on a second fork spelling it differently. The `%` absence claim above is about
+	# the MARKER; the row is where the figure went, so the two are asserted together or neither is
+	# falsifiable.
+	var building_row: Dictionary = _rows_by_key(overlays.source_rows()).get(building_key, {})
+	# The percent comes off the badge entry's OWN `building_progress` — the same value the renderer
+	# spent — so this compares the string rather than re-deriving the meter the string is about.
+	var expected_countdown := DetailFormat.build_countdown_value(BUILD_ARC_TURNS,
+		WORKED_READY_BUILDERS,
+		HudFormat.progress_percent(float(overlays._badge_entry_for(building_key).get(
+			"building_progress", 0.0))),
+		SourceForecast.NOT_IN_ANY_BUILD_QUEUE)
+	_assert_map("map_build_arc — the building ROW carries the finite countdown the plate no longer does (`%s`)"
+			% String(building_row.get("build_text", "")),
+		not building_row.is_empty()
+		and String(building_row.get("build_text", "")) == expected_countdown
+		and String(building_row.get("build_text", "")).contains(str(BUILD_ARC_TURNS)))
+	# **THE BLOCKED CASE**: a build the WIRE says is rotting wears the ⚠ face, not a confident meter.
+	_assert_map("map_build_arc — the rotting build wears the stalled face (`%s`)" % rotting_face,
+		rotting_glyph != ""
+		and rotting_face == BandOverlayRenderer.BADGE_UNSTAFFED_FORMAT % rotting_glyph
+		and not rotting_face.contains(BADGE_PERCENT_MARK))
+	# **AND THE ARC ITSELF IS PIXELS.** Every mark in this family is drawn at an alpha and blends with
+	# the terrain, so the claim is `_closest_mark_distance`'s RATIO rather than an exact colour: the
+	# hex whose arc is DANGER against the hex whose arc is its own web's green, in ONE frame, so
+	# nothing absolute has to be tuned.
+	var arc_image: Image = await _capture()
+	var rot_distance := _closest_mark_distance(arc_image, BUILD_ARC_ROT_TILE, HudStyle.DANGER)
+	var build_distance := _closest_mark_distance(arc_image,
+		Vector2i(WORK_CULTIVATE_X, WORK_CULTIVATE_Y), HudStyle.DANGER)
+	_assert_map("map_build_arc — the stalled arc really is DANGER on the ground: %.3f from it on the rotting hex against %.3f on the building hex (%.1f×, min %.1f×)"
+			% [rot_distance, build_distance,
+				build_distance / maxf(rot_distance, MARK_DISTANCE_FLOOR), BUILD_ARC_CONTRAST_MIN],
+		build_distance > rot_distance * BUILD_ARC_CONTRAST_MIN)
+
+	await _set_canvas(DEFAULT_CANVAS_SIZE)

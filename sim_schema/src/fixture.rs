@@ -737,6 +737,10 @@ fn seed_snapshot() -> WorldSnapshot {
     // exercise, which is how an appended field reaches the client as nothing at all.
     s.route_rungs = rows();
 
+    // **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — what a wood or a rock body may become,
+    // once per world, beside the route catalog above and seeded for the same reason.
+    s.deposit_rungs = rows();
+
     // --- connections -----------------------------------------------------
     // The contact primitive's own section (arc #527). Seeded for the reason every repeated
     // field here is: an empty vector is a field the decode guard cannot exercise.
@@ -750,6 +754,20 @@ fn seed_snapshot() -> WorldSnapshot {
     // halves went with the path object — a road is a per-tile improvement, so the row carries its
     // own `tile_x`/`tile_y` scalars and nothing to walk.
     s.routes = rows();
+
+    // --- deposits --------------------------------------------------------
+    // The live workings on deposits (arc #583), **one row per `(tile, material)`**. Seeded for
+    // the same reason every repeated field here is: an empty vector is a field the decode guard
+    // cannot exercise.
+    s.deposits = rows();
+    for deposit in &mut s.deposits {
+        // **The deposit's own sampled growth curve** (issue #650) — a `[float]`, so it needs
+        // seeding like every other repeated field or the decode guard cannot see it. Only the
+        // LENGTH matters (saturation overwrites the values), and it is the shipped one so the
+        // fixture exercises a real-shaped curve, exactly as the patch and herd curves beside it
+        // do.
+        deposit.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+    }
 
     // --- knowledge -------------------------------------------------------
     s.discovered_sites = rows();

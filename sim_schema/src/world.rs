@@ -32,9 +32,9 @@ use crate::state::population::{
 };
 use crate::state::routes::RouteState;
 use crate::state::subsistence::{
-    CharacteristicBandState, CraftKnowledgeState, FoodModuleState, ForagePatchState,
-    HerdTelemetryState, IntensificationKnowledgeState, KitOptionState, LadderKnowledgeState,
-    MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
+    CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState, FoodModuleState,
+    ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
+    LadderKnowledgeState, MaterialDefState, RecipeDefState, RouteRungState, SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -187,6 +187,13 @@ pub struct WorldSnapshot {
     /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
     #[serde(default)]
     pub forage_patches: Vec<ForagePatchState>,
+    /// **The deposits under the viewer's eye** — one row per `(tile, material)` on a **discovered**
+    /// tile whose ground holds that material, with the registry's live working merged in where one
+    /// stands and an opening state derived where none does. So a row says *the land holds this*,
+    /// never *somebody has worked it* — see [`DepositState`]. Diffed as a whole vector like
+    /// [`Self::forage_patches`].
+    #[serde(default)]
+    pub deposits: Vec<DepositState>,
     /// Per-faction progress on every ladder knowledge, `0..1`. Sparse in FACTIONS (a faction that
     /// has learned nothing is absent) and never in knowledges.
     #[serde(default)]
@@ -245,6 +252,12 @@ pub struct WorldSnapshot {
     /// A per-world constant, diffed whole like [`Self::ladder_knowledge`]. See [`RouteRungState`].
     #[serde(default)]
     pub route_rungs: Vec<RouteRungState>,
+    /// **The two deposit branches' rung catalog** — every rung of `intensification_ladder.json`'s
+    /// forestry and extraction branches, grouped by branch and in climb order within it, so a client
+    /// can draw a wood or stone ladder of rungs nothing has opened yet. A per-world constant, diffed
+    /// whole like [`Self::route_rungs`] beside it. See [`DepositRungState`].
+    #[serde(default)]
+    pub deposit_rungs: Vec<DepositRungState>,
     pub moisture_raster: FloatRasterState,
     pub elevation_overlay: ElevationOverlayState,
     /// Climate-band cut points (`docs/plan_climate_authority.md` §8.3), a per-map constant.
@@ -343,6 +356,10 @@ pub struct WorldDelta {
     pub discovered_sites: Option<Vec<DiscoveredSitesState>>,
     pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub forage_patches: Option<Vec<ForagePatchState>>,
+    /// The live workings; diffed as a whole vector like [`Self::forage_patches`]. `None` means
+    /// unchanged.
+    #[serde(default)]
+    pub deposits: Option<Vec<DepositState>>,
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     /// The ladder knowledge roster; a per-world constant, so a delta re-sends it only when the world
     /// is rebuilt. `None` means unchanged.
@@ -382,6 +399,10 @@ pub struct WorldDelta {
     /// world is rebuilt. `None` means unchanged.
     #[serde(default)]
     pub route_rungs: Option<Vec<RouteRungState>>,
+    /// The two deposit branches' rung catalog; a per-world constant, so a delta re-sends it only
+    /// when the world is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub deposit_rungs: Option<Vec<DepositRungState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     /// Climate-band cut points; a per-map constant, so a delta re-sends it only when the map is

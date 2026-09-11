@@ -296,12 +296,15 @@ func _chip_text(strip: Node, index: int) -> String:
 
 ## The forage drawer's standing-summary text (the first child of `%ForageAssignControls` is the
 ## summary HFlowContainer; its first child is the main status Label).
+## The standing forage summary's own text. ⛔ **IT IS THE `Assign … ▸` BUTTON'S SECOND LINE NOW**, not
+## a sibling row above it, so the read goes through the stacked cell rather than through the host's
+## child 0 — which is that cell.
 func _forage_summary_text() -> String:
 	var controls = h._hud.forage_assign_controls
 	if controls == null or controls.get_child_count() == 0:
 		return ""
-	var flow = controls.get_child(0)
-	if flow.get_child_count() == 0:
+	var flow = Q.stacked_action_summary(controls.get_child(0))
+	if flow == null or flow.get_child_count() == 0:
 		return ""
 	var label = flow.get_child(0) as Label
 	return label.text if label != null else ""

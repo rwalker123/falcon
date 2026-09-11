@@ -169,7 +169,7 @@ const ICON_BUTTON_SIZE := 24.0
 ## theme constant. A cap is needed at all because the source PNGs are 256px and a `Button` reserves
 ## its icon's drawn size in its MINIMUM — one art-bearing action would otherwise set the whole icon
 ## family's button size and blow the row apart. The compose sheet's quarry picker caps at 20
-## (`HudComposeVocab.COMPOSE_QUARRY_ICON_MAX_WIDTH`), but that is a wide label-bearing button; here
+## (`HudComposeVocab.COMPOSE_PREY_ICON_MAX_WIDTH`), but that is a wide label-bearing button; here
 ## the cap plus its padding IS the whole face, so it is the art's size rather than a ceiling it will
 ## never reach.
 const ICON_BUTTON_ICON_MAX_WIDTH := 18

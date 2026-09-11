@@ -4,11 +4,11 @@ use crate::codec::{
     decode_scalars, decode_strings, map_rows, map_rows_if_present, text, FbBuilder,
 };
 use crate::state::subsistence::{
-    BuildLegState, CharacteristicBandState, CraftKnowledgeState, FloraShareInfo, FoodModuleState,
-    ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState, KitOptionState,
-    LadderKnowledgeProgress, LadderKnowledgeState, MaterialDefState, MaterialPayoff,
-    RecipeDefState, RecipeInputState, RecipeOutputState, RouteRungState, SedentarizationState,
-    SpeciesMaterialRates,
+    BuildLegState, CharacteristicBandState, CraftKnowledgeState, DepositRungState, DepositState,
+    FloraShareInfo, FoodModuleState, ForagePatchState, HerdTelemetryState,
+    IntensificationKnowledgeState, KitOptionState, LadderKnowledgeProgress, LadderKnowledgeState,
+    MaterialDefState, MaterialPayoff, RecipeDefState, RecipeInputState, RecipeOutputState,
+    RouteRungState, SedentarizationState, SpeciesMaterialRates,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -39,6 +39,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let recipes = create_recipes(builder, &snapshot.recipes);
     let craft_knowledge = create_craft_knowledge(builder, &snapshot.craft_knowledge);
     let route_rungs = create_route_rungs(builder, &snapshot.route_rungs);
+    let deposit_rungs = create_deposit_rungs(builder, &snapshot.deposit_rungs);
+    let deposits = create_deposits(builder, &snapshot.deposits);
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -62,6 +64,8 @@ pub(crate) fn serialize_subsistence_section<'a>(
             recipes: Some(recipes),
             craftKnowledge: Some(craft_knowledge),
             routeRungs: Some(route_rungs),
+            deposits: Some(deposits),
+            depositRungs: Some(deposit_rungs),
         },
     )
 }
@@ -142,6 +146,14 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .route_rungs
         .as_ref()
         .map(|entries| create_route_rungs(builder, entries));
+    let deposit_rungs = delta
+        .deposit_rungs
+        .as_ref()
+        .map(|entries| create_deposit_rungs(builder, entries));
+    let deposits = delta
+        .deposits
+        .as_ref()
+        .map(|entries| create_deposits(builder, entries));
     fb::SubsistenceSection::create(
         builder,
         &fb::SubsistenceSectionArgs {
@@ -163,6 +175,8 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             recipes,
             craftKnowledge: craft_knowledge,
             routeRungs: route_rungs,
+            deposits,
+            depositRungs: deposit_rungs,
         },
     )
 }
@@ -1039,6 +1053,53 @@ fn create_route_rungs<'a>(
     builder.create_vector(&entries)
 }
 
+/// **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** — every rung the forestry and extraction branches
+/// declare, grouped by branch and in climb order within it, once per world. A per-world constant,
+/// written whole on a snapshot and only when it moved on a delta, exactly like the route catalog
+/// above.
+fn create_deposit_rungs<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[DepositRungState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DepositRungState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let rung_key = builder.create_string(&state.rung_key);
+        // Which ladder the row is on — one vector carries both branches, so this is what a reader
+        // groups by.
+        let branch = builder.create_string(&state.branch);
+        let display_name = builder.create_string(&state.display_name);
+        let verb = builder.create_string(&state.verb);
+        let unlock_knowledge = builder.create_string(&state.unlock_knowledge);
+        let requires_rung = builder.create_string(&state.requires_rung);
+        let earns_knowledge = builder.create_string(&state.earns_knowledge);
+        // The noun the pile beside it is counted in — `""` for a rung that eats nothing.
+        let build_material_id = builder.create_string(&state.build_material_id);
+        entries.push(fb::DepositRungState::create(
+            builder,
+            &fb::DepositRungStateArgs {
+                rungKey: Some(rung_key),
+                branch: Some(branch),
+                order: state.order,
+                displayName: Some(display_name),
+                verb: Some(verb),
+                unlockKnowledge: Some(unlock_knowledge),
+                requiresRung: Some(requires_rung),
+                earnsKnowledge: Some(earns_knowledge),
+                workCost: state.work_cost,
+                upkeepWorkPerTurn: state.upkeep_work_per_turn,
+                buildMaterialCost: state.build_material_cost,
+                buildMaterialId: Some(build_material_id),
+                buildWorkPerWorkerTurn: state.build_work_per_worker_turn,
+                yieldPerWorkerTurn: state.yield_per_worker_turn,
+                recoveryFraction: state.recovery_fraction,
+                regrowthMultiplier: state.regrowth_multiplier,
+                minDepositCapacity: state.min_deposit_capacity,
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
 fn create_food_modules<'a>(
     builder: &mut FbBuilder<'a>,
     modules: &[FoodModuleState],
@@ -1060,6 +1121,139 @@ fn create_food_modules<'a>(
         entries.push(entry);
     }
     builder.create_vector(&entries)
+}
+
+/// **The deposits under the viewer's eye** — one row per `(tile, material)` on a discovered,
+/// deposit-bearing tile, built by `core_sim::snapshot::deposits::deposit_states` off the capture's
+/// tile sweep rather than off the registry, and handed here already sorted **`(tile_y, tile_x,
+/// material)`** — `snapshot_forage_patches`' own row order, so the section is stable frame to frame
+/// and diffs out when nothing moved.
+///
+/// ⛔ **IT IS NOT THE REGISTRY'S KEY ORDER**, which is `(x, y, material)`: the rows come from the
+/// sweep, and a working the registry holds is merged into the sweep's row rather than the other way
+/// round. This function's only job is preserving the order it was given.
+fn create_deposits<'a>(
+    builder: &mut FbBuilder<'a>,
+    deposits: &[DepositState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DepositState<'a>>>> {
+    let entries: Vec<_> = deposits
+        .iter()
+        .map(|deposit| {
+            // **Built before the parent table opens**, the ordinary FlatBuffers rule.
+            let material = builder.create_string(&deposit.material);
+            let branch = builder.create_string(&deposit.branch);
+            let rung = builder.create_string(&deposit.rung);
+            // Always written, `""` included: *"not blocked"* is a statement about this turn, not an
+            // absent field.
+            let build_blocked_reason = builder.create_string(&deposit.build_blocked_reason);
+            let build_kit_id = builder.create_string(&deposit.build_kit_id);
+            let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
+            // **Absent, not empty, where the sim published no curve** — `regrowthSamples`' own rule
+            // one table over: an empty vector is *"no curve was sent"* and a client blanks its chart
+            // on it, where a quarry's all-zero curve is the live reading *"this does not grow"*.
+            let regrowth_samples = if deposit.regrowth_samples.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&deposit.regrowth_samples))
+            };
+            fb::DepositState::create(
+                builder,
+                &fb::DepositStateArgs {
+                    tileX: deposit.tile_x,
+                    tileY: deposit.tile_y,
+                    material: Some(material),
+                    branch: Some(branch),
+                    stock: deposit.stock,
+                    capacity: deposit.capacity,
+                    reachable: deposit.reachable,
+                    rungFloorFraction: deposit.rung_floor_fraction,
+                    perWorkerBiomass: deposit.per_worker_biomass,
+                    regrowthSamples: regrowth_samples,
+                    regrowthRate: deposit.regrowth_rate,
+                    rung: Some(rung),
+                    buildFraction: deposit.build_fraction,
+                    ladderPosition: deposit.ladder_position,
+                    sustainableTake: deposit.sustainable_take,
+                    actualTake: deposit.actual_take,
+                    turnsRemaining: deposit.turns_remaining,
+                    upkeepDemand: deposit.upkeep_demand,
+                    upkeepSupplied: deposit.upkeep_supplied,
+                    upkeepShortfall: deposit.upkeep_shortfall,
+                    upkeepWorkersNeeded: deposit.upkeep_workers_needed,
+                    hasNeglectGrace: deposit.has_neglect_grace,
+                    neglectGraceRemaining: deposit.neglect_grace_remaining,
+                    buildTurnsRemaining: deposit.build_turns_remaining,
+                    buildBlockedReason: Some(build_blocked_reason),
+                    isQueued: deposit.is_queued,
+                    buildKitId: Some(build_kit_id),
+                    upkeepKitId: Some(upkeep_kit_id),
+                    upkeepKitNamed: deposit.upkeep_kit_named,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&entries)
+}
+
+/// The inverse of [`create_deposits`]. **Exhaustive on purpose**, like the herd and patch literals
+/// beside it: a field appended to `DepositState` and its serializer does not compile until its line
+/// exists here, which is what stops an appended field reaching the client as nothing at all.
+fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
+    DepositState {
+        tile_x: deposit.tileX(),
+        tile_y: deposit.tileY(),
+        material: text(deposit.material()),
+        branch: text(deposit.branch()),
+        stock: deposit.stock(),
+        capacity: deposit.capacity(),
+        reachable: deposit.reachable(),
+        rung_floor_fraction: deposit.rungFloorFraction(),
+        per_worker_biomass: deposit.perWorkerBiomass(),
+        regrowth_samples: decode_scalars(deposit.regrowthSamples()),
+        regrowth_rate: deposit.regrowthRate(),
+        rung: text(deposit.rung()),
+        build_fraction: deposit.buildFraction(),
+        ladder_position: deposit.ladderPosition(),
+        sustainable_take: deposit.sustainableTake(),
+        actual_take: deposit.actualTake(),
+        turns_remaining: deposit.turnsRemaining(),
+        upkeep_demand: deposit.upkeepDemand(),
+        upkeep_supplied: deposit.upkeepSupplied(),
+        upkeep_shortfall: deposit.upkeepShortfall(),
+        upkeep_workers_needed: deposit.upkeepWorkersNeeded(),
+        has_neglect_grace: deposit.hasNeglectGrace(),
+        neglect_grace_remaining: deposit.neglectGraceRemaining(),
+        build_turns_remaining: deposit.buildTurnsRemaining(),
+        build_blocked_reason: text(deposit.buildBlockedReason()),
+        is_queued: deposit.isQueued(),
+        build_kit_id: text(deposit.buildKitId()),
+        upkeep_kit_id: text(deposit.upkeepKitId()),
+        upkeep_kit_named: deposit.upkeepKitNamed(),
+    }
+}
+
+/// The inverse of [`create_deposit_rungs`] — the two deposit branches' rung catalog, once per
+/// world. Exhaustive for [`decode_deposit`]'s reason.
+fn decode_deposit_rung(rung: fb::DepositRungState<'_>) -> DepositRungState {
+    DepositRungState {
+        rung_key: text(rung.rungKey()),
+        branch: text(rung.branch()),
+        order: rung.order(),
+        display_name: text(rung.displayName()),
+        verb: text(rung.verb()),
+        unlock_knowledge: text(rung.unlockKnowledge()),
+        requires_rung: text(rung.requiresRung()),
+        earns_knowledge: text(rung.earnsKnowledge()),
+        work_cost: rung.workCost(),
+        upkeep_work_per_turn: rung.upkeepWorkPerTurn(),
+        build_material_cost: rung.buildMaterialCost(),
+        build_material_id: text(rung.buildMaterialId()),
+        build_work_per_worker_turn: rung.buildWorkPerWorkerTurn(),
+        yield_per_worker_turn: rung.yieldPerWorkerTurn(),
+        recovery_fraction: rung.recoveryFraction(),
+        regrowth_multiplier: rung.regrowthMultiplier(),
+        min_deposit_capacity: rung.minDepositCapacity(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1288,8 @@ pub(crate) fn decode_subsistence_section(
     snapshot.recipes = map_rows(section.recipes(), decode_recipe);
     snapshot.craft_knowledge = map_rows(section.craftKnowledge(), decode_craft_knowledge);
     snapshot.route_rungs = map_rows(section.routeRungs(), decode_route_rung);
+    snapshot.deposits = map_rows(section.deposits(), decode_deposit);
+    snapshot.deposit_rungs = map_rows(section.depositRungs(), decode_deposit_rung);
 }
 
 pub(crate) fn decode_subsistence_section_delta(
@@ -1123,6 +1319,8 @@ pub(crate) fn decode_subsistence_section_delta(
     delta.recipes = map_rows_if_present(section.recipes(), decode_recipe);
     delta.craft_knowledge = map_rows_if_present(section.craftKnowledge(), decode_craft_knowledge);
     delta.route_rungs = map_rows_if_present(section.routeRungs(), decode_route_rung);
+    delta.deposits = map_rows_if_present(section.deposits(), decode_deposit);
+    delta.deposit_rungs = map_rows_if_present(section.depositRungs(), decode_deposit_rung);
 }
 
 fn decode_material(state: fb::MaterialDefState<'_>) -> MaterialDefState {

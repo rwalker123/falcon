@@ -28,13 +28,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   allocation. Three targeting flows remain, all built on the same `_pending_*` →
   `_current_targeting_info()` → `_refresh_targeting()` machinery ON THE CONTROLLER: `_pending_move_band`
   (`command: "move"`, `need: "tile"`), `_pending_send_expedition` (`command: "expedition"`, `need:
-  "tile"`, carries the outfitted band + party size), and `_pending_pick_quarry` (`command: "quarry"`,
+  "tile"`, carries the outfitted band + party size), and `_pending_pick_quarry` (`command: "prey"` (`TargetingController.PICK_PREY_COMMAND`),
   `need: "herd"`, plus **`min_distance`** = the band's `hunt_reach` — the party compose sheet's quarry
   PICKER: it carries only the band, dispatches nothing, and returns the clicked herd to the sheet).
   `_current_targeting_info()` returns a descriptor (`{active, command, need, origin_x/y,
   context_label}`) for whichever is set; `_refresh_targeting()` shows the floating **targeting
   banner** (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel)
-  and emits the controller's `targeting_changed(info)` (relayed onto the HudLayer signal). HudLayer's
+  and emits the controller's `targeting_changed(info)` (relayed onto the HudLayer signal). **The
+  `command` token IS the banner's lead word, uppercased** (`_targeting_banner_bbcode`), so it is a
+  player-facing string rather than plumbing: the herd picker's reads `PREY  Band 1 — click on a herd
+  to hunt`, spelled `prey` since issue #650 because the sim's `quarry` verb opens a stone working.
+  MapView keys its halo off `need`, never off this token. HudLayer's
   `show_tile_selection` + `notify_hex_selected` call `_targeting.try_dispatch(tile_info)`, which runs
   all three pending flows on the click (the tile click carries `tile_info.herds`, which the hunt flow
   resolves its target from).
@@ -116,9 +120,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   section (party stepper + "Send scouting expedition"), a **hunt policy radio**
   (`HudWidgets.build_policy_picker(…, _send_hunt_policy)`, Sustain/Surplus/Deplete/Eradicate, default Sustain)
   with a one-line behaviour hint (`SEND_HUNT_POLICY_HINTS`), then "Send hunting expedition". It enters
-  a HERD-targeting pending mode (`_pending_pick_quarry`, `command: "quarry"`, `need: "herd"`) carrying
+  a HERD-targeting pending mode (`_pending_pick_quarry`, `command: "prey"`, `need: "herd"`) carrying
   the band; the pick resolves to a huntable herd on the clicked hex (`_huntable_herd_on_tile` reads
-  `tile_info.herds`), fills the sheet's Quarry row, and the sheet's own Send then emits
+  `tile_info.herds`), fills the sheet's Prey row, and the sheet's own Send then emits
   `send_hunt_expedition_requested` → `Main._on_hud_send_hunt_expedition` →
   `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor]` (a trailing `0.0..=1.0`
   fraction of `K`; the server defaults `DEFAULT_ESCAPEMENT_FLOOR`, and a retired stance word is a hard
@@ -163,7 +167,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   gone**, and the hover-forecast + `_hovered_tile_info` with it: the herd is what determines the useful
   party size, the per-policy take, the trip length and whether the raid is worth making, so it cannot be
   the LAST question. The targeting mode is now a quarry **PICKER** (`_pending_pick_quarry` /
-  `_on_pick_quarry_pressed` / `_try_pick_quarry`, `command: "quarry"`, `need: "herd"` — still what makes
+  `_on_pick_quarry_pressed` / `_try_pick_quarry`, `command: "prey"`, `need: "herd"` — still what makes
   MapView glow the huntable herds): it carries only the band, dispatches nothing, and on a hit stores the
   herd id in the sheet and re-renders. **The forecast, the max-useful cap, the ascending per-policy metrics
   and the no-surplus block therefore all live in the FORM**, from the SAME helpers the herd drawer's

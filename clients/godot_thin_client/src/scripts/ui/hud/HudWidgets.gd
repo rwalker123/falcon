@@ -654,11 +654,20 @@ static func clear_children(node: Node) -> void:
 
 ## A zone section head: an uppercase title on the left, a dim readout on the right, and an optional
 ## trailing `⋯` menu button. The one head vocabulary all three zones use.
-static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "") -> HBoxContainer:
+## ⛔ **`title_tooltip` IS THE TRAILING OPTIONAL, AND IT EXISTS SO A HEAD CAN CARRY A HOVER WITH NO
+## READOUT.** `readout_tooltip` above rides the RIGHT-hand Label, which is built only where a readout
+## is stated — so a head whose readout is a conditional MARK (the workings roster's shortfall glyph)
+## would lose its hover on exactly the calm band that most needs the words. It goes through
+## `set_label_tooltip` for that helper's own reason: a `Label` defaults to `MOUSE_FILTER_IGNORE`, so a
+## bare `tooltip_text` here is a silent no-op.
+static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "", title_tooltip: String = "") -> HBoxContainer:
     var head := HBoxContainer.new()
     head.custom_minimum_size = Vector2(0.0, HudWorkVocab.ZONE_HEAD_HEIGHT)
     head.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
-    head.add_child(alloc_section_label(title))
+    var title_label := alloc_section_label(title)
+    if title_tooltip != "":
+        set_label_tooltip(title_label, title_tooltip)
+    head.add_child(title_label)
     var spacer := Control.new()
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1728,6 +1737,112 @@ static func _crew_target_pill(btn: Button, count_face: String, label_text: Strin
     pad.add_child(face)
     cell.add_child(pad)
     return cell
+
+## The three handles a stacked action button's parts are found by — the CELL a caller mounts, the
+## first line whose text a patch rewrites, and the second line a patch hands to the summary's own
+## updater. They are metas rather than child indices because the face is three containers deep and a
+## positional read would be asserting against this builder's nesting rather than against the parts.
+const STACKED_ACTION_CELL_META := "stacked_action_cell"
+const STACKED_ACTION_LABEL_META := "stacked_action_label"
+const STACKED_ACTION_BODY_META := "stacked_action_body"
+
+## ⛔ **A TILE-CARD ACTION BUTTON WHOSE FACE IS TWO LINES — the label over its own readout.**
+##
+## Ray, on the deposit drawer: *"See the 2 foresters +0.60 wood. That looks strange there, I know that
+## is the existing pattern with foragers and hunters, maybe roads, not sure. But I think that would
+## look more at home inside the button. We should make it the second line on the button."* So the
+## standing summary stops being a SIBLING ROW above the button and becomes the button's own second
+## line, on every web at once — the pattern is what he is objecting to, and two shapes for one readout
+## is the inconsistency this rework keeps removing.
+##
+## **IT IS `_crew_target_pill`'s MECHANISM, DELIBERATELY.** Two font sizes cannot live in one
+## `Button.text` and a `\n` cannot carry two of them either, so the control is a `MarginContainer`
+## CELL holding an EMPTY-`text` `Button` with the face painted over it — which is the shape the crew
+## pills, the policy rungs and the two-line steppers already take, for the same reason.
+##
+## **THE CELL IS WHAT SIZES THE CONTROL**, which is why the parent must be a `MarginContainer` and not
+## the `Button`: a `Button` is not a `Container` and would not grow to fit children. The button keeps
+## its stylebox, its click, its focus, its disabled state and its `tooltip_text`; what it loses is its
+## text.
+##
+## ⛔ **EVERY CONTROL IN THE FACE IS `MOUSE_FILTER_IGNORE`, and that is not decoration — it is what
+## keeps the whole button pressable.** A `Label` defaults to IGNORE, so a plain face is safe by
+## accident; a summary's note labels have been through `set_label_tooltip`, which sets **STOP** for
+## exactly the opposite reason (a Label's own `tooltip_text` is a silent no-op otherwise), and each of
+## those would be a dead patch over the button. `mute_button_face` is therefore called on the whole
+## subtree here AND again by any patch path that re-runs `set_label_tooltip` on it.
+##
+## **SO THE TOOLTIP MOVES TO THE BUTTON.** With the face muted, the summary's own hover cannot fire;
+## a `Button` shows `tooltip_text` natively and is the whole control's hit target, so the caller sets
+## it there. The flow's own `tooltip_text` is left in place as well — it costs nothing and it is what
+## the harnesses read the summary's hover off.
+##
+## `second_line` is `null` on a source nobody works, and the face is then ONE line with no blank
+## second one: a summary exists only where this faction already works the source.
+static func build_stacked_action_button(btn: Button, label_text: String,
+        second_line: Control = null) -> MarginContainer:
+    btn.text = ""
+    var cell := MarginContainer.new()
+    cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    cell.set_meta(STACKED_ACTION_CELL_META, true)
+    cell.add_child(btn)
+    var pad := MarginContainer.new()
+    pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    pad.add_theme_constant_override("margin_left", HudStyle.BUTTON_PADDING_H)
+    pad.add_theme_constant_override("margin_right", HudStyle.BUTTON_PADDING_H)
+    pad.add_theme_constant_override("margin_top", HudStyle.BUTTON_PADDING_V)
+    pad.add_theme_constant_override("margin_bottom", HudStyle.BUTTON_PADDING_V)
+    var face := VBoxContainer.new()
+    face.add_theme_constant_override("separation", HudComposeVocab.TILE_ACTION_FACE_SEPARATION)
+    var label := Label.new()
+    label.text = label_text
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    label.add_theme_font_size_override("font_size", HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
+    label.set_meta(STACKED_ACTION_LABEL_META, true)
+    face.add_child(label)
+    if second_line != null:
+        second_line.set_meta(STACKED_ACTION_BODY_META, true)
+        # **CENTRED UNDER THE LABEL, which is centred** — a SHORT summary
+        # (`♻ 2 foresters · +0.60 /turn`) left against the button's left edge under a centred label
+        # reads as two unrelated things in one box.
+        #
+        # ⛔ **AND A WRAPPING CONTAINER IS CENTRED BY ITS OWN `alignment`, NEVER BY `SHRINK_CENTER`.**
+        # The standing summary is an `HFlowContainer`; shrinking it hands it its MINIMUM width — the
+        # widest single child — so every part after the widest one wraps onto a line of its own, and
+        # a lone `⚠` under `💀 3 hunters · +0.63 /turn` is the shape that produces. Keeping the flow
+        # full width and centring its content keeps the wrap where the button's width puts it.
+        if second_line is FlowContainer:
+            (second_line as FlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
+        else:
+            second_line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        face.add_child(second_line)
+    pad.add_child(face)
+    cell.add_child(pad)
+    mute_button_face(pad)
+    return cell
+
+## Make a stacked button's whole painted face inert, and size its SECOND LINE as one readout.
+##
+## ⛔ **RE-RUN IT AFTER ANY PATCH THAT TOUCHES THE FACE.** `set_label_tooltip` sets
+## `MOUSE_FILTER_STOP`, and the summary's in-place patch path calls it on every note label it
+## rewrites — so a face muted only at build time grows a dead patch over the button the first time a
+## note's text moves. Nothing else in the face can re-arm itself.
+##
+## **THE FONT SIZE RIDES HERE RATHER THAN IN THE SUMMARY'S OWN BUILDERS**, because those builders are
+## shared with the sibling-row hosts (the work inspector, the parties strip) that want their own
+## registers: `build_status_part` pins `HudWorkVocab.ALLOC_SECTION_FONT_SIZE` and
+## `build_row_note_label` pins nothing at all, i.e. the stock 16. Inside a button the second line is
+## ONE readout and reads as one size.
+static func mute_button_face(root: Control) -> void:
+    if root == null:
+        return
+    root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    if root is Label and not root.has_meta(STACKED_ACTION_LABEL_META):
+        (root as Label).add_theme_font_size_override("font_size",
+            HudComposeVocab.TILE_ACTION_SUMMARY_FONT_SIZE)
+    for child in root.get_children():
+        if child is Control:
+            mute_button_face(child as Control)
 
 static func _pill_face_line(text: String, tint: Color, font_size: int) -> Label:
     var label := Label.new()

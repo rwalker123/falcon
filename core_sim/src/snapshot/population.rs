@@ -134,14 +134,22 @@ pub(crate) fn labor_assignment_to_state(
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
         }
-        // ⛔ **THE TILE ONLY — THE MATERIAL HAS NO WIRE FIELD YET.** A deposit row is keyed by
-        // `(tile, material)` because one tile can hold two of them, so a client reading this row
-        // cannot yet tell a felling crew from a quarrying crew standing on the same wooded highland.
-        // Adding the field is a schema change and belongs with the readouts
-        // (`docs/plan_extraction.md` §7), which are the next slice.
-        LaborTarget::Extract { tile, .. } => {
+        // **THE TILE AND THE MATERIAL — BOTH HALVES OF THE WORKING'S KEY.** One tile can hold two
+        // workings, so the coords alone cannot tell a felling crew from a quarrying crew standing on
+        // the same wooded highland; the pair is what joins this row to its `DepositState`.
+        LaborTarget::Extract {
+            tile,
+            material,
+            floor,
+        } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
+            state.material = material.clone();
+            // **The same field a forage and a hunt row publish**, because it is the same quantity:
+            // where this crew stops, as a fraction of the source's capacity. What a deposit row adds
+            // is that the sim composes it with the *rung's* own floor as a maximum, which is why
+            // `DepositState::rung_floor_fraction` rides the working's row beside it.
+            state.floor = *floor;
         }
         // The six band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
@@ -1093,6 +1101,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // still owes.
     let roadwork_demand = allocation.map(|a| a.last_roadwork_demand).unwrap_or(0.0);
     let roadwork_supplied = allocation.map(|a| a.last_roadwork_supplied).unwrap_or(0.0);
+    // **The QUARRYWORK twin, one keeping pool over** — the summed stamped bill of the workings this
+    // band holds a row on, and what its `quarrywork` keepers paid in. Summed by the sim for the
+    // roadwork pair's reason: deposit rows are fog-filtered, so a working out of sight would drop
+    // out of any client-side total the band certainly still owes.
+    let quarrywork_demand = allocation.map(|a| a.last_quarrywork_demand).unwrap_or(0.0);
+    let quarrywork_supplied = allocation
+        .map(|a| a.last_quarrywork_supplied)
+        .unwrap_or(0.0);
     // **WHAT CROSSED BETWEEN THIS BAND AND ANOTHER THIS TURN, BOTH ACCOUNTS**, split by
     // `TransferLink` — the per-turn ledgers `systems::publish_turn_transfers` copied onto the cohort
     // immediately before this capture. Read here once, because three readings hang off them: the
@@ -1592,6 +1608,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         roadwork_shortfall: crate::intensification::upkeep_shortfall(
             roadwork_demand,
             roadwork_supplied,
+        ),
+        // **THE BAND'S QUARRYWORK BILL** — the roadwork triple two lines above, one pool over and
+        // on every one of its rules: summed by the sim off the same stamped basis the per-working
+        // rows publish, and the shortfall derived here from the pair so
+        // `demand − supplied == shortfall` holds on this row exactly as it does on `DepositState`.
+        quarrywork_demand,
+        quarrywork_supplied,
+        quarrywork_shortfall: crate::intensification::upkeep_shortfall(
+            quarrywork_demand,
+            quarrywork_supplied,
         ),
     }
 }
@@ -2300,6 +2326,7 @@ mod tests {
                         BuildSource::Deposit { tile, material } => LaborTarget::Extract {
                             tile: *tile,
                             material: material.clone(),
+                            floor: crate::components::DEFAULT_ESCAPEMENT_FLOOR,
                         },
                     },
                     workers: 1,

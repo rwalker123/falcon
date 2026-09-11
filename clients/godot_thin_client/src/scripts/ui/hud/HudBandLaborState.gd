@@ -153,6 +153,13 @@ func default_kit_id(job: String) -> String:
 			return _default_warrior_kit_id
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
+		KitRoster.JOB_EXTRACT:
+			# **THE WIRE NAMES NO EXTRACT DEFAULT IN THIS INGEST**, so this answers `""` — stated
+			# rather than reached by fall-through, for the reason the builders arm below is: falling
+			# through would hand the deposit sheets the HUNT kit as their marked `(default)`, and
+			# `Main._kit_token` would then omit the token for a selection that happened to equal it.
+			# The shipped roster offers `extract` no kit at all, so nothing renders either way.
+			return KitRoster.NO_KIT_ID
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
 			# not named a default for" case above, stated rather than reached by fall-through. Falling
@@ -466,6 +473,32 @@ func set_roads(roads_variant: Variant) -> void:
 func roads() -> Array:
 	return _roads
 
+## **THE LIVE WORKINGS ON THE GROUND**, as the `deposits` section sent them — one row per
+## `(tile, material)` pair (arc #583).
+##
+## ⛔ **A MISSING ROW IS NOT "NO DEPOSIT HERE".** The registry is sparse and lazy: a working opens the
+## first turn a band puts a crew on it, so an untouched map publishes no rows at all. What a tile
+## HOLDS is a pure function of its terrain and is not on this table, so a reader that painted
+## *nothing here* from the absence of a row would hide every unworked seam on the map.
+##
+## Held whole rather than indexed, `_roads`' arrangement and for its reason: this model's reader is
+## the WORKINGS ROSTER, which asks a whole-list question (*which workings is this band paying for*).
+## `MapView` keeps its own per-tile index for the tile card, which is a per-hex question.
+var _deposits: Array = []
+
+## Ingest the snapshot deposit rows. A non-Array input is ignored (the list keeps its last value),
+## matching every other catalogue setter here: a delta carries a section only when it CHANGED, so
+## absence means unchanged and never "the world has no workings".
+func set_deposits(deposits_variant: Variant) -> void:
+	if not (deposits_variant is Array):
+		return
+	_deposits = deposits_variant
+	changed.emit(&"deposits")
+
+## The working rows, BY REFERENCE — every reader is read-only.
+func deposits() -> Array:
+	return _deposits
+
 ## ⛔ **WHICH ROAD TILES THE PLAYER HAS QUEUED — `{Vector2i: true}` over EVERY player band's queue.**
 ##
 ## A road is the one build source with **no labor row** (deliberately: a road is not worked like a
@@ -533,19 +566,30 @@ func set_forage_patches(patches_variant: Variant) -> void:
 ##
 ## **WITHOUT THE TILE, TWO QUEUED ROADS SHARE ONE KEY** and the queue block would join both entries to
 ## whichever road it looked up first, draw one row for two jobs, and send that row's rank for both.
-func pending_key(kind: String, x: int, y: int, herd_id: String) -> String:
+## ⛔ **AND AN `extract` ROW KEYS PER TILE *AND* MATERIAL, WHICH IS WHY THIS TAKES A FIFTH TOKEN**
+## (arc #583). One tile can hold two workings — a wooded highland holds timber and rock — so a key
+## built from the tile alone would join a band's Wood crew to its Stone crew, draw one row for two
+## jobs and send that row's count for both. It is `roadwork`'s two-queued-roads trap with a second
+## axis, and the axis is the material.
+##
+## **The parameter is OPTIONAL and every existing call site is untouched.** No other kind reads it,
+## and an `extract` row missing it keys as the bare-material working, which is a row the wire cannot
+## produce (`LaborTarget::Extract` carries the material by construction).
+func pending_key(kind: String, x: int, y: int, herd_id: String, material: String = "") -> String:
 	match kind:
 		LABOR_KIND_FORAGE:
 			return "forage:%d,%d" % [x, y]
 		LABOR_KIND_HUNT:
 			return "hunt:%s" % herd_id
+		HudConst.LABOR_KIND_EXTRACT:
+			return "extract:%d,%d:%s" % [x, y, material]
 		HudConst.LABOR_KIND_ROADWORK:
 			# A road BUILD keys per tile; the band-wide roadwork ROLE falls through to the bare kind.
 			if x >= 0 and y >= 0:
 				return "roadwork:%d,%d" % [x, y]
 			return kind
 		_:
-			return kind  # scout / warrior — one band-wide role each
+			return kind  # scout / warrior / the three other keeping pools — one band-wide role each
 
 ## **THIS BAND'S OWN BUILD QUEUE, AS THE KEYS THE QUEUE MODELS ARE KEYED BY** — the wire's
 ## `PopulationCohortState.buildQueue` in the band's own order, each row mapped through `pending_key`,
@@ -627,18 +671,23 @@ func pending_improvement_for(band: Dictionary, kind: String, x: int, y: int,
 ##
 ## **THE HUNT WEB ONLY LOOKED IMMUNE.** A herd publishes `default_kit_id`, so the picker's fallback
 ## resolved a real face there and the blank face never showed; the SILENT RE-KIT was live on both webs.
+##
+## ⛔ **`material` IS THE `extract` ROW'S OTHER HALF-KEY** (arc #583) and rides the record for
+## `kit_id`'s reason: the pending branch REPLACES the merged row rather than patching it, so a
+## material left off here is a pending working with no material at all — which would key it apart
+## from the confirmed row it is shadowing and leave both drawn.
 func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String,
 		floor: float, improvement: String = SourceForecast.IMPROVEMENT_NONE,
-		kit_id: String = KitRoster.NO_KIT_ID) -> void:
+		kit_id: String = KitRoster.NO_KIT_ID, material: String = "") -> void:
 	if entity < 0:
 		return
 	var entry: Dictionary = _pending_labor.get(entity, {})
 	entry["turn"] = _current_turn
 	var assigns: Dictionary = entry.get("assign", {})
-	assigns[pending_key(kind, x, y, herd_id)] = {
+	assigns[pending_key(kind, x, y, herd_id, material)] = {
 		"kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id,
 		"floor": SourceForecast.clamp_floor(floor), "improvement": improvement,
-		"kit_id": kit_id,
+		"kit_id": kit_id, "material": material,
 	}
 	entry["assign"] = assigns
 	_pending_labor[entity] = entry
@@ -837,7 +886,11 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if not (a is Dictionary):
 			continue
 		var kind := String((a as Dictionary).get("kind", "")).strip_edges().to_lower()
-		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)), String(a.get("fauna_id", "")))
+		# **THE MATERIAL IS THE `extract` ROW'S OTHER HALF-KEY** (arc #583) and is read off the
+		# confirmed row here, so a Wood crew and a Stone crew on ONE tile stay two rows. Empty on
+		# every other kind, which `pending_key` ignores.
+		var key := pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)),
+			String(a.get("fauna_id", "")), String(a.get("material", "")))
 		merged[key] = {
 			# **ONE CREW PER ROW AGAIN** (`docs/plan_standing_upkeep.md` §2.5). A row carried a second
 			# `improvement_workers` allocation for one slice; the builders are a band-level POOL now, so
@@ -1185,6 +1238,26 @@ func roadwork_pool_state(band: Dictionary) -> Dictionary:
 		"shortfall": float(band.get("roadwork_shortfall", SourceForecast.NO_UPKEEP_DEMAND)),
 	}
 
+## **THE `quarrywork` POOL'S BILL, SUPPLY AND SHORTFALL — `roadwork_pool_state`'s twin one pool
+## over** (arc #583), and every word of that function's rule applies here unchanged.
+##
+## ⛔ **DO NOT SUM THE DEPOSIT ROWS.** Three published fields and no arithmetic:
+## `demand − supplied == shortfall` holds verbatim on the wire. The `deposits` rows are
+## **fog-filtered**, so a working out of sight would silently drop out of any client-side total while
+## the band certainly still owes its keeping. The demand is summed sim-side BEFORE the head-count
+## gate, so a band with nobody on `quarrywork` reports the bill it is FAILING to pay rather than a
+## reassuring zero — that is the alarm.
+##
+## It carries no `POOL_PER_WORKER_TURN_KEY` for `roadwork_pool_state`'s own reason: the shortfall
+## beside the supply is the sim's answer to *did that cover it*, so there is nothing left for a
+## projection to decide.
+func quarrywork_pool_state(band: Dictionary) -> Dictionary:
+	return {
+		"demand": float(band.get("quarrywork_demand", SourceForecast.NO_UPKEEP_DEMAND)),
+		"supplied": float(band.get("quarrywork_supplied", SourceForecast.NO_UPKEEP_DEMAND)),
+		"shortfall": float(band.get("quarrywork_shortfall", SourceForecast.NO_UPKEEP_DEMAND)),
+	}
+
 ## The key the bare per-worker work rate rides out on. **Named rather than spelled at each reader**,
 ## unlike the three figures beside it, because it is read from another script: a typo in a `get` there
 ## is a silent zero, which would read as *this pool supplies nothing* and mark a fully staffed card.
@@ -1411,6 +1484,37 @@ func forage_assignment_of(band: Dictionary, x: int, y: int) -> Dictionary:
 			return a
 	return {}
 
+## The band's standing EXTRACT assignment on ONE WORKING — `{}` when it works no such deposit
+## (arc #583). The deposit twin of `forage_assignment_of`.
+##
+## ⛔ **IT MATCHES ON THE TILE *AND* THE MATERIAL**, because that pair is the working's identity: a
+## band cutting timber and quarrying rock on one hex holds TWO rows, and a tile-only match would hand
+## the Stone stepper the Wood crew's count.
+func extract_assignment_of(band: Dictionary, x: int, y: int, material: String) -> Dictionary:
+	for entry in labor_assignments_of(band):
+		if not (entry is Dictionary):
+			continue
+		var a: Dictionary = entry
+		if String(a.get("kind", "")).to_lower() == HudConst.LABOR_KIND_EXTRACT \
+				and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y \
+				and String(a.get("material", "")) == material:
+			return a
+	return {}
+
+## Workers currently on ONE working; 0 when nobody is cutting it.
+func workers_for_extract(band: Dictionary, x: int, y: int, material: String) -> int:
+	return int(extract_assignment_of(band, x, y, material).get("workers", 0))
+
+## Effective worker count on ONE working, overlaying any pending value —
+## `effective_forage_workers`' twin, and it keys through the material for `extract_assignment_of`'s
+## reason.
+func effective_extract_workers(band: Dictionary, x: int, y: int, material: String) -> int:
+	var pend := pending_assigns_for(int(band.get("entity", -1)))
+	var key := pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material)
+	if pend.has(key):
+		return int((pend[key] as Dictionary).get("workers", 0))
+	return workers_for_extract(band, x, y, material)
+
 ## The band's standing HUNT assignment on `herd_id` — `{}` when it hunts no such herd. The herd twin
 ## of `forage_assignment_of`.
 func hunt_assignment_of(band: Dictionary, herd_id: String) -> Dictionary:
@@ -1442,6 +1546,21 @@ func floor_for_hunt(band: Dictionary, herd_id: String) -> float:
 ## The plant twin: the floor of the band's existing forage on (x,y), else the default.
 func floor_for_forage(band: Dictionary, x: int, y: int) -> float:
 	var assignment := forage_assignment_of(band, x, y)
+	if not assignment.has("floor"):
+		return DEFAULT_HARVEST_FLOOR
+	return SourceForecast.clamp_floor(float(assignment["floor"]))
+
+## …and the DEPOSIT twin: the floor of the band's existing `extract` row on ONE working, else the
+## default. Keyed through the `(tile, material)` pair for `extract_assignment_of`'s reason.
+##
+## ⛔ **A REOPENED SHEET SEEDS FROM THE ASSIGNMENT, NEVER FROM `DepositState.floor`** — the crop
+## seeding rule one section over, and for its reason. That wire field is the SOURCE's reading, kept at
+## the deepest floor any band cutting the working named, so seeding a dial from it silently adopts
+## another band's order; and on a working nobody has opened it is `0`, which is *strip it bare* — the
+## one value that must never be reached by accident. The assignment is the record of what THIS band
+## asked for, and its absence is exactly when the default is the right answer.
+func floor_for_extract(band: Dictionary, x: int, y: int, material: String) -> float:
+	var assignment := extract_assignment_of(band, x, y, material)
 	if not assignment.has("floor"):
 		return DEFAULT_HARVEST_FLOOR
 	return SourceForecast.clamp_floor(float(assignment["floor"]))
@@ -1517,6 +1636,11 @@ func source_crew_pool_hunt(band: Dictionary, herd_id: String) -> int:
 
 func source_crew_pool_forage(band: Dictionary, x: int, y: int) -> int:
 	return maxi(int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y), 0)
+
+## …and the deposit twin, keyed through the `(tile, material)` PAIR for `extract_assignment_of`'s
+## reason: a tile-keyed pool would offer the Wood crew's hands back to the Stone sheet beside it.
+func source_crew_pool_extract(band: Dictionary, x: int, y: int, material: String) -> int:
+	return maxi(int(band.get("idle_workers", 0)) + workers_for_extract(band, x, y, material), 0)
 
 ## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** — the declared verb when every band working
 ## the source has zero builders on it, `IMPROVEMENT_NONE` otherwise. The client half of the

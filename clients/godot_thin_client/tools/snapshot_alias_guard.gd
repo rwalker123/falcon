@@ -3,8 +3,9 @@ extends Node
 ## Headless regression guard for the "MapView writes into the decoder's cached world" bug class,
 ## and for the deep copies that guard used to be paid for with.
 ##
-## `MapView.display_snapshot` ingests five snapshot sub-trees into its own lookups — culture layers,
-## food modules, discovered sites, forage patches, and the per-cohort harvest/scout targets. Those
+## `MapView.display_snapshot` ingests six snapshot sub-trees into its own lookups — culture layers,
+## food modules, discovered sites, forage patches, the per-cohort harvest/scout targets, and the
+## DEPOSITS, which is the largest of them by row count and the last to lose its copy. Those
 ## rows are NOT the client's to own: the native decoder keeps the frame it published as the baseline
 ## the next delta patches, and it merges by shallow-duplicating the cached array and writing changed
 ## slots (`native/src/snapshot/cache.rs`), so an unchanged row is literally the same `Dictionary`
@@ -59,6 +60,7 @@ func _ready() -> void:
 	mv._ingest_discovered_sites(snapshot)
 	mv._ingest_forage_patches(snapshot)
 	mv._ingest_population_sites(snapshot)
+	mv._ingest_deposit_workings(snapshot.get("deposits", []))
 
 	var key := Vector2i(SITE_X, SITE_Y)
 	var src_layer: Dictionary = (snapshot["culture_layers"] as Array)[0]
@@ -95,6 +97,20 @@ func _ready() -> void:
 		_expect_same((scout_entries as Array)[0], src_scout, "scout_sites[site][0]")
 	else:
 		_fail("scout_sites[site] is not a 1-entry Array (got %s)" % str(scout_entries))
+
+	# 2a. THE DEPOSITS, which is the section where the copy cost the most (issue #650): one row per
+	#     discovered deposit-bearing tile is 3,245 on the shipped 80x52 at full reveal, and the
+	#     `duplicate(true)` this pins out cost 7.7 ms of every frame that carried the section against
+	#     the forage patches' 1.0 for two thirds as many rows. Both of the hex's rows are asked.
+	var src_wood: Dictionary = (snapshot["deposits"] as Array)[0]
+	var src_stone: Dictionary = (snapshot["deposits"] as Array)[1]
+	var workings: Variant = mv.deposit_tile_lookup.get(key, null)
+	if workings is Array and (workings as Array).size() == 2:
+		_expect_same((workings as Array)[0], src_wood, "deposit_tile_lookup[site][0]")
+		_expect_same((workings as Array)[1], src_stone, "deposit_tile_lookup[site][1]")
+	else:
+		_fail(("deposit_tile_lookup[site] is not a 2-entry Array (got %s) — one tile holds two "
+			+ "workings and the lookup must not de-duplicate on the tile") % str(workings))
 
 	# 2b. The nested sub-tree is what made the forage copy expensive (~25 scalars plus a per-species
 	#     `composition` array of dictionaries). Holding the row holds the roster with it.
@@ -166,6 +182,30 @@ func _fixture() -> Dictionary:
 			{"entity": 9001, "faction": PLAYER_FACTION,
 				"harvest": {"target_x": SITE_X, "target_y": SITE_Y, "module": "riverine_delta"},
 				"scout": {"target_x": SITE_X, "target_y": SITE_Y, "reveal_radius": 3}},
+		],
+		# ⛔ **TWO ROWS ON ONE TILE, which is what makes this section's own hazard different.** A
+		# working is keyed `(tile, material)` and the lookup deliberately does not de-duplicate on
+		# the tile, so the identity claim is made on BOTH entries of one hex's array — a lookup that
+		# kept one of them would satisfy a claim asked of `[0]` alone.
+		"deposits": [
+			{"tile_x": SITE_X, "tile_y": SITE_Y, "material": "wood", "branch": "forestry",
+				"stock": 600.0, "capacity": 600.0, "reachable": 600.0, "regrowth_rate": 0.03,
+				"rung": "forestry:deadfall", "build_fraction": 0.0, "ladder_position": 0.0,
+				"sustainable_take": 0.0, "actual_take": 0.0, "turns_remaining": -1,
+				"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+				"upkeep_workers_needed": 0, "has_neglect_grace": false,
+				"neglect_grace_remaining": 0, "build_turns_remaining": -1,
+				"build_blocked_reason": "", "is_queued": false, "build_kit_id": "",
+				"upkeep_kit_id": "", "upkeep_kit_named": false},
+			{"tile_x": SITE_X, "tile_y": SITE_Y, "material": "stone", "branch": "extraction",
+				"stock": 3000.0, "capacity": 3000.0, "reachable": 450.0, "regrowth_rate": 0.0,
+				"rung": "extraction:gathering", "build_fraction": 0.0, "ladder_position": 0.0,
+				"sustainable_take": 0.0, "actual_take": 0.0, "turns_remaining": -2,
+				"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+				"upkeep_workers_needed": 0, "has_neglect_grace": false,
+				"neglect_grace_remaining": 0, "build_turns_remaining": -1,
+				"build_blocked_reason": "", "is_queued": false, "build_kit_id": "",
+				"upkeep_kit_id": "", "upkeep_kit_named": false},
 		],
 	}
 

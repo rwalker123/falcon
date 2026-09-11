@@ -171,12 +171,15 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 134 frames / 421 `assert OK` / 759 `: PASS`, exit 0 — RE-MEASURED ON THE MERGED
-TREE.** This arc removed one frame (`band_panel_faction_knowledge`) and added none, and measured
-126 / 404 / 685 on its own; the build-queue arc (#576) landed in `main` in between and the two sets
-of numbers are neither branch's. **That is the "RE-MEASURED, never summed" rule arriving through a
-MERGE rather than through a commit** — two correct tallies, both stale the moment the branches met,
-and adding them gets a third wrong answer. Re-run after any merge that touches this harness.
+**A clean run is 180 frames / 1274 `PASS` / 528 `assert OK`, exit 0 — RE-MEASURED ON THE MERGED
+TREE, and this line is the harness's ONLY tally.** An earlier arc removed one frame
+(`band_panel_faction_knowledge`) and added none, and measured 126 / 404 / 685 on its own; the
+build-queue arc (#576) landed in `main` in between and the two sets of numbers were neither
+branch's. **That is the "RE-MEASURED, never summed" rule arriving through a MERGE rather than
+through a commit** — two correct tallies, both stale the moment the branches met, and adding them
+gets a third wrong answer. Re-run after any merge that touches this harness, and write the answer
+HERE: a second tally further down the file is a second thing to forget, which is exactly how this
+one came to be read 170 / 1161 / 511 while the harness was in fact running 180 frames.
 
 
 ## `tools/band_panel_preview.gd` / `.tscn`
@@ -276,8 +279,13 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 382 `assert OK` lines, 589 `: PASS` ones and ZERO `FAIL` ones, over
-116 frames.** (It was 379 / 570 / 115 before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
+**THE HARNESS'S TALLY IS THE ONE AT THE TOP OF THIS FILE AND IS DELIBERATELY NOT RESTATED HERE** — a
+second tally is a second thing to forget, which is the rule that line states about itself. A clean run
+still exits 0 with ZERO `FAIL` lines; for how many frames and claims that is, read the tally above.
+**What follows is the DELTA HISTORY** — kept for what each step COST, never for the absolutes it
+quotes: every figure in it is frozen at the moment that step landed, several were already behind the
+harness when written, and summing them gives a wrong answer by construction. (It was 379 / 570 / 115
+before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
 → "THE PERCENTAGE IS THE LEG IN FLIGHT'S". That step is **+1 frame and +17 `: PASS`**:
 `band_panel_queue_leg_animal` and the four-state block below, whose remaining two `assert OK`s are
 that frame's own bounds/content-fits pair. The `assert OK` delta reads +3 rather than +2 and the
@@ -593,7 +601,7 @@ reason on it) and `herd_kit_offer_rabbit`, all three in `chapters/compose_rungs.
 locally-built roster, `BandFx.kit_roster_fixture()` carrying neither a trapping nor a pen-axis kit.
 The dock harness is untouched because its own roster carries no mass-bounded weapon and its quarry
 no pen, so every kit on every one of its sheets is offered exactly as before. Rationale in
-`labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS QUARRY IS GREYED". The fodder face contributes ONE
+`labor-ui.md` → "A KIT THAT CANNOT WORK ON THIS PREY IS GREYED". The fodder face contributes ONE
 frame and 2 `assert OK` / 12 `PASS` here (`band_panel_work_fodder`, whose two zone assertions are
 the `assert OK` pair, whose `_assert_work_fodder_readouts` + the paired negative on
 `band_panel_work_trade_totals` are eight of the `PASS`es, and whose review pass added
@@ -1243,7 +1251,7 @@ about **which question the harness was in a position to ask**:
 - **No state staged an EMPTY compose form as a composing act of its own.** Every compose fixture writes
   `_party_compose_open` directly and picks a quarry first, so the smallest the sheet ever is — the form
   a player sees the instant they press `🏹 Hunt`, on a band with no parties — was never rendered from
-  that entry point. `band_panel_compose_hunt_no_quarry` looks like it covers this and does not: it
+  that entry point. `band_panel_compose_hunt_no_prey` looks like it covers this and does not: it
   reaches the empty form by CLEARING a quarry mid-act, so it inherits the full form's mark and never
   arms a fresh measurement.
 - **Every render in this harness happens from a coroutine resumed at `process_frame`**, i.e. the most
@@ -2449,6 +2457,186 @@ consults the sight axis — **no frame rendered before it existed changes.**
 `KIT_DEFAULT_EXPEDITION`), and the verb joined `KIT_BEARING_KINDS`; `xtask/src/command_guard.rs`'s
 `kit_token` gained the `SendExpedition` arm, that verb having left the `NotKitBearing` list. Without
 both halves the drive would prove only that a line PARSES.
+
+## `All 0` — an absence claim that needs the presence one push earlier
+
+`band_panel_work_empty_wide` already staged the only band in this file that works NOTHING (the
+zero-source path, reached by cycling off a busy band — the ordering is the reproduction, see
+`band-city-panel.md` → "AN EMPTY WORK BOARD STILL DECLARES ITS WIDTH"). It gains the chips claim:
+**no chips row at all**, plus the hint still rendering, since "no chips" is otherwise satisfied by a
+zone drawing nothing.
+
+⛔ **THE PRESENCE IS ASSERTED ON THE BUSY BAND ONE PUSH EARLIER**, in the same function — an absence
+asserted alone passes on a builder that never draws chips anywhere.
+
+**`_work_chip_count()` counts by `WORK_CHIP_TOOLTIP`, never by matching a face**: `All 0` is precisely
+the face under test, and it is the same probe `_assert_queue_expanded_shape` already uses, so "the
+chips are gone" means one thing wherever it is claimed.
+
+## THE ROSTER DOOR — the fixture that did not exist, and the claim that is not a row count
+
+**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `1202 : PASS / 515 assert OK / 176 frames` →
+`1238 / 524 / 180`, exit 0 both times. Moving the door ONTO the head — and extending the same control
+to the BUILD QUEUE — took it to `1274 / 528 / 182`. The behaviour is `band-city-panel.md` → "THE
+ROSTER DOOR" and "ONE CONTROL IN TWO STATES"; what belongs here is the fixture and what each claim can
+tell apart.
+
+⛔ **NO FIXTURE IN THIS FILE HAD MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
+DEFECT.** Both rosters cap at `ROADWORK_ROSTER_ROWS_MAX`, every roster state staged exactly three
+rows, so the cap never truncated anything — and the thing it truncates is the only control that opens
+a working's ladder (`_open_deposit_track` has ONE caller and it is a roster ROW) and the only other
+control that stops the band being billed for it. Two disjoint frame families with the defect living in
+the gap, one more time.
+
+**`DOOR_WORKINGS` IS FIVE HOLDINGS ON THREE TILES, NOT FIVE TILES.** The near hex and the mid hex each
+carry BOTH materials, so the fixture is `(tile, material)` pairs — the identity a working actually
+has, and the shape a tile-keyed roster cannot draw. The road roster gains two roads for the same
+reason, so the shared builder is exercised on a block that also overflows.
+
+⛔ **THE BAND'S WORKFORCE IS BUDGETED, and that is what makes the head's stepper pressable at all.**
+The `+` is gated on `effective_idle > 0`, so `_door_band_fixture` writes its OWN `labor_assignments`
+— trimmed source rows, both pools, five one-cutter holdings, 14 of 16 — rather than layering five
+crews on top of the reference band's 13. A fixture that merely appended would have staged a band with
+no idle hands and a dead `+`, and the stepper claim would have proved nothing.
+
+### The four states, and what each one alone cannot tell
+
+- **`band_panel_workings_roster_collapsed`** — the PAIRED NEGATIVE, and it runs first. Three rows and
+  a `+2 more ▾` **on the head**, plus the claim that matters as an absence: the other two workings
+  have **no row, no `⌃` and no `✕` at all**. An absence is worth asserting only where a presence would
+  otherwise have been visible, which is why it is the same frame family as the expansion. It also
+  asserts the door is a DESCENDANT OF THE HEAD — a door anywhere else is the two-controls-in-two-places
+  shape the correction removed, and no reachability claim would notice.
+- **`band_panel_workings_roster_expanded`** — reached by a **REAL** `_drive_click` on the door
+  (`pressed.emit()` cannot see a control that is covered, zero-size or filtered out of the hit test,
+  and this is a small ghost Button in a head row). Every model has a row, every row its `⌃` AND its
+  `✕`; the head's ONE control now reads `Show less ▴` and stands for no hidden row; the board GONE
+  rather than squeezed; the OTHER roster gone with it; the POOLS block still above.
+- **`band_panel_roadwork_roster_expanded`** — the same builder on the other roster, one frame being
+  enough for a second caller of one function, plus the claim that GROUNDWORK folded.
+- **`band_panel_workings_roster_expanded_tight`** — the 1920 BOTTOM dock, the shortest work zone this
+  panel ships. The viewport is declared off the zone's own box and is **not clamped up to a floor**,
+  so the claim on the tightest dock is `_assert_zone_content_fits`; the geometry is PRINTED beside it
+  (`WORK zone box 380 × 356, pools 110, expanded roster declares 193px = 6.9 rows of 28`) rather than
+  asserted, a near-miss and a comfortable fit being the same green line otherwise.
+
+### THE THREE-STATE TABLE, ASSERTED DIRECTLY — including the row that is an ABSENCE
+
+`band-city-panel.md` → "ONE CONTROL IN TWO STATES" is the design; these are the claims.
+
+- **collapsed over the cap** — `band_panel_workings_roster_collapsed` (5 workings) and
+  `band_panel_queue_collapsed_long` (14 entries): the head carries the button, its face is
+  `zone_disclosure_face(false, hidden)` **composed rather than spelled**, and its `*_OVERFLOW_META`
+  equals the count of rows with no row of their own.
+- **expanded** — the same two blocks one press later: face `Show less ▴`, meta `0`.
+- **collapsed and drawn WHOLE** — the ABSENCE, and it is paired with a presence in the same family
+  every time. `band_panel_roadwork_roster` keeps exactly the cap, so **no door and the head is NOT a
+  toggle** (`_roster_head_toggle` answers `null`). On the queue it is a FORK inside
+  `_assert_build_queue_block`, on the very count that function just asserted — so every state that
+  calls it claims one or the other, and the presence and the absence cannot drift into two frames.
+
+⛔ **THE STRANDING CASE IS ITS OWN CLAIM, ON BOTH BLOCKS.**
+`_assert_the_expanded_roster_cannot_strand_the_player` re-pushes the door band holding only
+`DOOR_WORKINGS_KEPT_AFTER_DROP` (2) while the list is OPEN;
+`_assert_the_expanded_queue_cannot_strand_the_player` does the same with
+`QUEUE_STRANDING_ENTRIES` (= `BUILD_QUEUE_ROWS_MAX`, the boundary rather than a number beside it).
+Each then asserts the collapse affordance is STILL there, and — one press later, on the same band —
+that folding back leaves a list drawn whole with no door. **Frames:**
+`band_panel_workings_roster_expanded_under_the_cap`, `band_panel_queue_expanded_under_the_cap`.
+
+**FALSIFIED:** making the expanded affordance conditional on overflow (dropping `not expanded` from
+`_make_zone_head_a_toggle`'s guard and passing the real overflow from both expanded builders) fails
+**exactly 2** claims — one per block, both the stranding one — and nothing else. The narrowness is the
+point: the sabotage is invisible to every other frame, which is precisely why the case needs a claim
+of its own.
+
+⛔ **THE HEAD HEIGHTS ARE MEASURED BY THE HARNESS, NOT ASSERTED INTO EXISTENCE.**
+`_assert_zone_head_reserves(where, block, reserved)` is one helper over all three blocks: it PRINTS
+`block head reserves Xpx, draws Ypx` and asserts `reserved ≥ drawn`. The print is what the constants
+are corrected from — the zone `clip_contents`, so a head drawing taller than its block reserved takes
+the difference off the bottom of the BOARD in silence. The with-button cases need their own call
+sites, because the states that assert each block by default are the ones drawn WHOLE:
+`band_panel_workings_roster` measures 21 (stepper only) while
+`band_panel_workings_roster_collapsed` measures 22 (stepper + door), and `band_panel_roadwork_roster`
+measures 20 while `band_panel_roadwork_roster_expanded` measures 22.
+
+⛔ **`_assert_the_expanded_roster_reaches_every_working` WALKS THE MODELS, NEVER A LIST THIS FILE
+TYPED TWICE.** It asks the controller's own `_workings_roster_models` for the keys and requires a row
+for each, then requires each row to carry both controls. **A probe that counted rows would pass on a
+renderer that drew five rows without controls, which is the defect restated.**
+
+> #### ⛔ THE STEPPER PRESS RE-RENDERS THE *SELECTION* INTO THE PANEL, AND THIS FILE'S SELECTION IS
+> STALE
+>
+> The trap `_assert_crew_edit_keeps_the_kit` already records, met again: `_emit_assign_labor` →
+> `_after_pending_change` re-renders the SELECTED unit, which here is an unstamped `_band_fixture()`
+> left behind long ago — so the panel band comes back with no `band_id`, and BOTH rosters' membership
+> tests then match nothing (a road is filtered on its keeper's `band_id`, a working on this band's own
+> `extract` rows). **Measured: every claim after the press reported an EMPTY roster.** The door's band
+> is re-pushed straight after it, and the optimistic overlay cleared with it.
+
+> #### ⛔ A RESTORE IS AN ASSIGNMENT, NEVER A SECOND TOGGLE
+>
+> `_assert_the_roster_door_excludes_the_zones_other_expansions` put the zone back with a second
+> `_toggle_queue_expanded()`. A toggle is a function of the state it is undoing, so under a BROKEN
+> exclusion it lands on the OPPOSITE value and leaves the queue's expansion open over every state
+> below — **measured under sabotage as 61 failures burying the three claims that had actually
+> fired**. It assigns `_queue_expanded = false` and re-pages instead, and the same sabotage then
+> reports exactly 3.
+>
+> The two KEYS in that block are likewise set directly: what is under test is the MUTATOR's clear, and
+> reaching them through their own togglers would re-render the zone between the precondition and the
+> claim.
+
+### The falsifications
+
+| Restored defect | Failures |
+|---|---|
+| the expanded list capped at `ROADWORK_ROSTER_ROWS_MAX` (the door opening onto the same truncation) | **3**, and every one is the reachability claim — both docks' `EVERY working this band holds has a row — 3 of 5 (missing ["68,18:wood", "71,12:stone"])` and the road roster's `3 of 5 kept`. Nothing else moves: the block still draws, the head still toggles, the frames still fit |
+| the exclusion removed from `_toggle_roster_expanded` and `_toggle_queue_expanded` | **3** — the two keys (`precondition` / `precondition`), the queue's expansion (`queue expanded true`), and the other direction (`roster quarrywork, queue expanded false`) |
+
+## The workings roster's rung TRACK (issue #650)
+
+One frame and eight assertions appended to `_assert_the_workings_roster_names_its_workings`, plus a
+rung CATALOG the whole state now needs. The behaviour is `extraction-workings.md`'s; what belongs
+here is the shape of the drive.
+
+**`band_panel_workings_track` is the deposit ladder's ONE rendered frame, and this is the only
+harness that can take it**: the track is opened from the roster ROW's declaring mark, and
+`ui_preview` stands up no Band panel. Its four ROW STATES are asserted over the producer in
+`ui_preview`'s `workings` chapter — a frame shows one, and the branch has four.
+
+⛔ **THE STATE PUSHES A DEPOSIT RUNG CATALOG, AND WITHOUT ONE IT IS EVIDENCE OF NOTHING.** Every
+value cell names its rung out of `SubsistenceSection.depositRungs`, so a roster with no catalog
+behind it draws `forestry:felling` in each one; and the row's mark is built from
+`RungLadder.has_track` over its rows, so with no catalog the mark does not draw at all and **every
+claim about it passes vacuously**. It is cleared with the deposits in
+`_restore_workings_roster_fixture`, a per-world constant being exactly the thing a later state
+inherits.
+
+⛔ **THE VALUE-CELL CLAIM IS ASKED WITH THE SAME CATALOG THE ROW WAS BUILT FROM.** `deposit_row_value`
+names the rung out of it, so an expectation composed against `[]` compares a display name with a raw
+wire key and fails for a reason that has nothing to do with the REUSE being claimed. A second claim
+beside it pins the name as the catalog's word and the raw key as its negative.
+
+⛔ **THE CARD IS A `PopupPanel`, i.e. a `Window`, SO `_find_meta_control` WALKS STRAIGHT PAST IT** —
+the road ladder's own trap, and it cost a run here (`pressing it opens the SHARED rung track` failed
+on a track that was up and correct). The rows are read through the same `_rung_track_states` /
+`_rung_track_faces` pair the plant track's own states use, which recurse through the Window because
+they walk `get_children()` rather than gating the recursion on `Control`.
+
+**What only this frame can say:** one mark per row with somewhere left to go, each keyed to its own
+`(tile, material)`; the branch's own TWO rungs and no more — the two ladders are ONE vector, so a walk
+that forgot to filter on `branch` would offer a coppice here; the floor stated as a FACT rather than a
+price of zero, asserted BOTH as `STATE_STANDING` and as the rendered face, since a `0 work` price is
+the shape the branch's own ⛔ refuses; the quarry LEADING with its pile and its standing bill (a
+`begins_with`, because *every ordered rung leads with its price, refused or not* and this walk's
+faction may or may not have learned Quarrying by the time it gets here); **no `≈` estimate on it**;
+and its material aside through the shared price composer.
+
+**The per-row prohibition is unchanged and still asserted.** The existing scan walks the ROWS for the
+stepper's `−`/`+` faces and the road roster's `✕`; the mark is asserted BESIDE it, which is what says
+a declaring `⌃` is not one of the three controls roads.md forbids on a row.
 
 ## `band_foreign_beside_own` — the two band tiers in ONE frame (`chapters/band_expedition.gd`)
 

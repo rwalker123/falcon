@@ -102,6 +102,18 @@ signal unqueue_requested(payload: Dictionary)
 ## built by `Main.format_abandon`.
 signal abandon_requested(payload: Dictionary)
 
+## ⛔ **PUT A WORKING DOWN — `abandon_working <faction> <x> <y> <material>`, which is NOT `abandon`**
+## (issue #650). That verb names a PLACE: it resolves a tile to a forage source sim-side and drops
+## every band-of-the-faction's holding there, a forage assignment included, so it neither reaches a
+## working nor confines itself to one. This one names the `(tile, material)` PAIR — one hex can hold
+## two workings — and drops the acting band's hold on that one, leaving the meter to rot.
+##
+## **TWO EMITTERS, ONE RELAY**: the workings roster row's `✕` and the deposit ladder card's put-down
+## row, both `BandPanelController.working_abandon_requested`, converging here on
+## `Main.format_abandon_working`. **No optimistic overlay write** — the next snapshot restates the
+## whole `deposits` section and the band's own rows with it.
+signal abandon_working_requested(payload: Dictionary)
+
 ## The KIT one queued build is raised with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
 ## formatting `build_kit <faction> <x> <y> [kit <id>]` / `build_kit <faction> <herd_id> [kit <id>]`
 ## (`docs/plan_standing_upkeep.md` §4.7a ②). RELAYED from `BandPanelController`'s queue-row settings
@@ -285,6 +297,11 @@ var _server_build: String = "?"
 ## slice 13). Its own container rather than a row inside `%ForageAssignControls`, which is gated on
 ## the tile being a gathering site with a band in hand — a road crosses ground that is neither.
 @onready var road_ladder_controls: VBoxContainer = %RoadLadderControls
+## …and the LAND drawer's WORKINGS action (arc #583), beside it and for the same reason: a deposit is
+## a tile-keyed source reached by a tile-first pick, and the ground it stands on need be neither a
+## gathering site nor a hex with a band in hand.
+@onready var forestry_assign_controls: VBoxContainer = %ForestryAssignControls
+@onready var extraction_assign_controls: VBoxContainer = %ExtractionAssignControls
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -641,7 +658,9 @@ func _ready() -> void:
     # parents that sheet into, and the three HudLayer helpers that keep callers on this side.
     _drawercompose = DrawerComposeController.new(
         _compose, _band_labor, _selection, _topbar, _selectioncard, self,
-        herd_assign_controls, forage_assign_controls, road_ladder_controls, tile_panel,
+        herd_assign_controls, forage_assign_controls, road_ladder_controls,
+        forestry_assign_controls, extraction_assign_controls,
+        tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
     _drawercompose.send_hunt_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
@@ -755,6 +774,13 @@ func _ready() -> void:
     # the drawer's relay above states: a road has no labor row to shadow.
     _bandpanel.road_abandon_requested.connect(
         func(payload: Dictionary) -> void: abandon_requested.emit(payload))
+    # **THE WORKINGS ROSTER'S `✕` AND THE DEPOSIT LADDER'S PUT-DOWN ROW, ONTO ONE BUILDER** (issue
+    # #650). Both controls live on this controller and both emit this one signal, so the pair
+    # converges before it even reaches here; the relay is what keeps `Main.format_abandon_working` the
+    # single place the verb's grammar is spelled. Deliberately NOT folded onto `abandon_requested`:
+    # that verb names a place and drops every holding on it, which is a wider act than this label.
+    _bandpanel.working_abandon_requested.connect(
+        func(payload: Dictionary) -> void: abandon_working_requested.emit(payload))
     _bandpanel.roster_occupant_selected.connect(
         func(kind: String, id: Variant) -> void: roster_occupant_selected.emit(kind, id))
     # MATERIALS & CRAFTING. Constructed after `_bandpanel` because the launch edge comes off it, and
@@ -848,7 +874,8 @@ func _ready() -> void:
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
-        road_ladder_controls, subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
+        road_ladder_controls, forestry_assign_controls, extraction_assign_controls,
+        subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
     _load_ui_balance_config()
     _connect_zoom_rail()
     # AFTER `_connect_zoom_rail()`: that call applies the nav backing's stylebox, hence its padding,
@@ -989,11 +1016,28 @@ func update_ladder_knowledge(roster_variant: Variant) -> void:
 func update_route_rungs(catalog_variant: Variant) -> void:
     _topbar.update_route_rungs(catalog_variant)
 
+## **THE TWO DEPOSIT BRANCHES' RUNG CATALOG** (issue #650) — what the forestry and extraction ladders
+## HOLD, per world. `update_route_rungs`' twin, and a thin delegator for its reason: `Main` reaches it
+## BY NAME through `_hud_invoke`, whose `has_method` probe fails silently.
+##
+## **IT PUSHES NO RE-RENDER.** The catalog is read when a working's ladder is opened and when the tile
+## card composes a deposit's rows, not at ingest, and a world's catalog lands long before any working
+## exists to read it.
+func update_deposit_rungs(catalog_variant: Variant) -> void:
+    _topbar.update_deposit_rungs(catalog_variant)
+
 ## THE ROADS IN THE GROUND, into the shared labor model — the road twin of `update_forage_patches`,
 ## and it exists for one reader: a route knowledge is *in use* when one of the faction's own road
 ## tiles stands on the rung it unlocked, and a road tile is the only source that can.
 func update_road_network(roads_variant: Variant) -> void:
     _band_labor.set_roads(roads_variant)
+
+## THE LIVE WORKINGS ON THE GROUND, into the shared labor model (arc #583) — the deposit twin of
+## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER, which names WHICH
+## workings the band's `quarrywork` pool is paying for. `Main` reaches this BY NAME through
+## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
+func update_deposits(deposits_variant: Variant) -> void:
+    _band_labor.set_deposits(deposits_variant)
 
 func update_intensification(intensification_variant: Variant) -> void:
     _topbar.update_intensification(intensification_variant)
@@ -1410,10 +1454,29 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     # REPLACES the confirmed one, so a kit left off here is a pending row with no kit at all — which
     # blanks the work inspector's take picker and, through `_emit_work_assign`'s restate, re-kits the
     # crew to the job default on the next `+`. `record_pending_assign` carries the long form.
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement,
-        kit_id)
+    # ⛔ **ON AN `extract` ROW THE `species` TOKEN IS THE MATERIAL, AND IT IS HALF THE OVERLAY KEY**
+    # (arc #583). One tile can hold two workings, so the pending entry has to be keyed by
+    # `(tile, material)` exactly as the confirmed row is — without it a Wood edit and a Stone edit on
+    # one hex overwrite each other. It is read on that kind ALONE: on a forage row the same token is
+    # the CROP COMMIT, which is not part of that row's identity and must not enter its key.
+    var material := species if kind == HudConst.LABOR_KIND_EXTRACT else ""
+    # ⛔ **A SHEET THAT OFFERED NO DIAL NAMES NO FLOOR, AND THE COMMAND THEN CARRIES NO TOKEN**
+    # (issue #650). `SourceForecast.FLOOR_UNNAMED` arrives from the deposit sheet's finite arm and from
+    # nowhere else; what an omitted token MEANS is the sim's to answer, and on ground that never renews
+    # it answers `STRIP_IT_BARE` rather than the shared default — so substituting the default here is
+    # exactly the conservation choice nobody made.
+    #
+    # **THE PENDING OVERLAY STILL NEEDS A NUMBER, and it records the sim's own answer to silence.**
+    # `FLOOR_MIN` is that answer on the only ground this sentinel can reach; every deposit reader
+    # discards a crew floor on finite ground anyway (`HudDepositVocab.composed_floor`), so this is what
+    # the row will read AS rather than a figure any surface renders.
+    var names_floor := not is_equal_approx(floor, SourceForecast.FLOOR_UNNAMED)
+    var recorded_floor := SourceForecast.clamp_floor(floor) if names_floor \
+        else SourceForecast.FLOOR_MIN
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, recorded_floor,
+        improvement, kit_id, material)
     _after_pending_change()
-    emit_signal("assign_labor_requested", {
+    var payload := {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": band_id,
         "kind": kind,
@@ -1424,8 +1487,10 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity — the whole of the
         # harvest axis since the four stances were deleted. `Main` renders it as the optional numeric
         # token `assign_labor` takes; the sim REJECTS the four stance words by name, so a stale
-        # emitter fails loudly rather than being silently reinterpreted.
-        "floor": SourceForecast.clamp_floor(floor),
+        # emitter fails loudly rather than being silently reinterpreted. **ERASED BELOW where the
+        # sheet offered no dial** — absence is the whole of what a builder can say for a player who
+        # was never asked.
+        "floor": recorded_floor,
         "species": species,
         # **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the FULL selection,
         # every commit, never a delta: the sim reads an omitted `take:` token as *"the whole basket"*
@@ -1455,7 +1520,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # client-local `entity`, never by `band_id` (see the two handles above). No `format_*` builder
         # reads this key; `Main._on_hud_assign_labor` hands it straight back to `drop_pending_assign`.
         "pending_entity": entity,
-    })
+    }
+    # **THE KEY IS ERASED RATHER THAN SET TO A SENTINEL**, so `Main`'s builders test `has()` — the same
+    # question the sim's parser asks of the line — instead of every one of them learning a magic value.
+    if not names_floor:
+        payload.erase("floor")
+    emit_signal("assign_labor_requested", payload)
 
 ## **A DECLARATION FROM THE WORK ROW'S `⌃`, AND ITS OPTIMISTIC HALF**
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). The verb goes on the wire; the declaration is ALSO
@@ -1586,9 +1656,15 @@ func drop_pending_assign(payload: Dictionary) -> void:
     var entity := int(payload.get("pending_entity", -1))
     if entity < 0:
         return
+    # **THE KEY IS REBUILT THE WAY THE WRITE BUILT IT**, material included — see `_emit_assign_labor`
+    # for why an `extract` row's `species` token is half its identity. A rollback that dropped the
+    # material would miss the entry it was sent to undo and leave the phantom crew standing.
+    var kind := String(payload.get("kind", ""))
+    var material := String(payload.get("species", "")) \
+        if kind == HudConst.LABOR_KIND_EXTRACT else ""
     if _band_labor.drop_pending_assign(entity, _band_labor.pending_key(
-            String(payload.get("kind", "")), int(payload.get("x", -1)),
-            int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
+            kind, int(payload.get("x", -1)),
+            int(payload.get("y", -1)), String(payload.get("herd_id", "")), material)):
         _after_pending_change()
         _drawercompose.withdraw_declaration(String(payload.get("kind", "")),
             int(payload.get("x", -1)), int(payload.get("y", -1)),
@@ -2037,6 +2113,10 @@ func _hide_drawer_blocks() -> void:
         forage_assign_controls.visible = false
     if road_ladder_controls != null:
         road_ladder_controls.visible = false
+    if forestry_assign_controls != null:
+        forestry_assign_controls.visible = false
+    if extraction_assign_controls != null:
+        extraction_assign_controls.visible = false
     if allocation_panel != null:
         allocation_panel.visible = false
     if herd_assign_controls != null:
@@ -2106,6 +2186,13 @@ const NO_BAND_ENTITY := -1
 func show_band_work_tab(band_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     _bandpanel.show_work_tab(int(band.get("entity", NO_BAND_ENTITY)))
+
+## **THE MAP'S SOURCE LIST ASKS FOR THE SAME TAB, HOLDING THE OTHER HANDLE** — the `Work tab ▸` link
+## on `BandSourceList` (issue #650). The map keys every overlay on the client-local `entity`, so this
+## caller needs no roster lookup at all; the pair above and this one differ only in which of the two
+## band handles arrives, which is exactly the join `show_band_work_tab` exists to make.
+func show_band_work_tab_for_entity(band_entity: int) -> void:
+    _bandpanel.show_work_tab(band_entity)
 
 func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).

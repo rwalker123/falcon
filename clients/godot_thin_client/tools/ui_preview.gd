@@ -56,6 +56,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/knowledge_panel.gd",
 	"res://tools/ui_preview/chapters/supply_network.gd",
 	"res://tools/ui_preview/chapters/starting_loadout.gd",
+	"res://tools/ui_preview/chapters/workings.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -774,10 +775,18 @@ func _compose_herd(herd: Dictionary, count: int = Spine.COMPOSE_COUNT_UNSET,
 ## The LAND drawer's `Assign … ▸` button. Found STRUCTURALLY — `%ForageAssignControls` holds at most a
 ## standing-summary `HFlowContainer` and this one Button (`build_forage_drawer_actions`) — for the same
 ## reason the identity finders in `node_query.gd` exist: its face carries the crew noun under test.
+## ⛔ **THE HOST'S CHILD IS THE STACKED CELL, NOT THE BUTTON.** The `Assign … ▸` control is a
+## `MarginContainer` holding an empty-`text` `Button` under its two-line face
+## (`HudWidgets.build_stacked_action_button`), so a walk over the host's DIRECT children finds no
+## Button at all and every caller reads `null` — which is a claim about a control that is there.
 func _forage_open_button() -> Button:
 	for child in _hud.forage_assign_controls.get_children():
 		if child is Button:
 			return child as Button
+		if child is Control:
+			var nested := Q.stacked_action_button(child as Control)
+			if nested != null:
+				return nested
 	return null
 
 

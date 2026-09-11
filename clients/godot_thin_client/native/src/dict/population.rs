@@ -837,6 +837,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // survives a rollback, while the patch's is what the ground is actually committed to and
             // is only set once work begins. `""` = *"pick the tile's dominant legal plant for me"*.
             let _ = entry.insert("species", assignment.species().unwrap_or_default());
+            // **WHICH DEPOSIT THIS CREW IS WORKING** — the other half of a working's registry
+            // key (arc #583). ⛔ **ONE TILE CAN HOLD TWO WORKINGS** — a wooded highland holds
+            // timber and rock — so `target_x`/`target_y` alone cannot tell a felling crew from a
+            // quarrying crew standing on the same hex, and a consumer joining this row to its
+            // `deposits` row must carry BOTH halves.
+            //
+            // `""` on every row that is not `extract`, which is every other row kind: nothing else
+            // names a material. Always inserted so the entry shape is stable.
+            let _ = entry.insert("material", assignment.material().unwrap_or_default());
             // **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the species
             // keys the crew is gathering, or an EMPTY array for *"take the whole basket"*, which is
             // the default and byte-identical to every assignment sent before this field existed.
@@ -1427,6 +1436,30 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("roadwork_demand", cohort.roadworkDemand() as f64);
     let _ = dict.insert("roadwork_supplied", cohort.roadworkSupplied() as f64);
     let _ = dict.insert("roadwork_shortfall", cohort.roadworkShortfall() as f64);
+
+    // **THE BAND'S WORKING-KEEPING BILL** (arc #583) — the exact `roadwork` triple above, one pool
+    // over, so the Work board can show the `quarrywork` role's need the way it shows agriculture's
+    // and husbandry's.
+    //
+    // **ONE POOL FOR BOTH DEPOSIT BRANCHES.** Forestry and extraction split on KNOWLEDGE and on
+    // nothing a keeper does — hold the face open, clear what has fallen is one job — so a band
+    // keeping a coppice and a quarry pays both out of this one bill.
+    //
+    // ⛔ **THE SIM SUMS IT AND THE CLIENT MUST NOT** — `roadwork_demand`'s rule, load-bearing for
+    // its reason: `deposits` rows are fog-filtered, so a working out of sight would silently drop
+    // out of a client-side total while the band certainly still owes its keeping.
+    //
+    //   `quarrywork_demand`    = the summed stamped bill of the workings this band holds a row on,
+    //                            summed BEFORE fog and BEFORE the head-count gate, so a band with
+    //                            nobody on `quarrywork` publishes the bill it is FAILING to pay
+    //                            rather than a reassuring zero. It is the alarm.
+    //   `quarrywork_supplied`  = what this band's `quarrywork` keepers paid into those workings
+    //                            this turn.
+    //   `quarrywork_shortfall` = demand - supplied, and that identity holds verbatim here as it
+    //                            does on the `deposits` row, so nothing downstream re-derives it.
+    let _ = dict.insert("quarrywork_demand", cohort.quarryworkDemand() as f64);
+    let _ = dict.insert("quarrywork_supplied", cohort.quarryworkSupplied() as f64);
+    let _ = dict.insert("quarrywork_shortfall", cohort.quarryworkShortfall() as f64);
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and

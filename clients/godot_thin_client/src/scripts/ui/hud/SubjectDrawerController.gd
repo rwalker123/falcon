@@ -70,6 +70,9 @@ var _forage_assign_controls: VBoxContainer = null
 # …and the LAND drawer's road action, hidden alongside `_forage_assign_controls` on every branch that
 # is not the land: a road is a property of the GROUND, so it belongs to exactly one subject.
 var _road_ladder_controls: VBoxContainer = null
+# …and the LAND drawer's WORKINGS action (arc #583), hidden and shown beside the road's.
+var _forestry_assign_controls: VBoxContainer = null
+var _extraction_assign_controls: VBoxContainer = null
 var _subject_body: VBoxContainer = null
 var _subject_scroll: ScrollContainer = null
 # The fit ceiling — read only, the room the drawer may claim in the dock beneath the card.
@@ -96,7 +99,9 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
         bandpanel: BandPanelController, banddetail: BandDetailLines, host: Node,
         tile_detail: RichTextLabel, occupant_detail: RichTextLabel, allocation_panel: VBoxContainer,
         herd_assign_controls: VBoxContainer, forage_assign_controls: VBoxContainer,
-        road_ladder_controls: VBoxContainer, subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
+        road_ladder_controls: VBoxContainer,
+        forestry_assign_controls: VBoxContainer, extraction_assign_controls: VBoxContainer,
+        subject_body: VBoxContainer, subject_scroll: ScrollContainer, left_dock_scroll: ScrollContainer,
         targeting: TargetingController, topbar: FactionReadouts) -> void:
     _selection = selection
     _band_labor = band_labor
@@ -112,6 +117,8 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
     _herd_assign_controls = herd_assign_controls
     _forage_assign_controls = forage_assign_controls
     _road_ladder_controls = road_ladder_controls
+    _forestry_assign_controls = forestry_assign_controls
+    _extraction_assign_controls = extraction_assign_controls
     _subject_body = subject_body
     _subject_scroll = subject_scroll
     _left_dock_scroll = left_dock_scroll
@@ -194,6 +201,11 @@ func _render_land_drawer() -> void:
     # exactly where the `Road` readout row above does — a tile carrying a road — so nothing shows on
     # ground with no road; the builder decides that from the same `roads` key the rows are drawn from.
     _drawercompose.build_road_drawer_actions(_selection.tile_info())
+    # …and the two DEPOSIT actions beside it (issue #650) — `Assign foresters ▸` and
+    # `Assign diggers ▸`, each appearing exactly where its branch's readout ROW above does, off the
+    # same `deposits` key. **One container per BRANCH**, because a wooded highland offers both at once
+    # and putting foresters on the timber is not putting diggers on the rock.
+    _drawercompose.build_deposit_drawer_actions(_selection.tile_info())
     if _allocation_panel != null:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
@@ -214,6 +226,38 @@ func _render_land_drawer() -> void:
 ## only happens for your own party on an unseen hex, and `_rebuild_subject_list` appends
 ## `OCCUPANTS_UNSEEN_OTHERS_HINT` to the list in exactly that case.
 ##
+## **THE HEX'S OWN CUTTERS ON ONE WORKING, summed across every player band** (issue #650) — the
+## deposit twin of `SelectionCardController._forage_workers_on_tile`, and band-independent for that
+## function's own reason: this card's subject is the GROUND, so its rows state what the faction has
+## on this seam rather than what the band the player happens to have picked has. That is what makes
+## the row the MINIMAL level of the pair Ray asked for; the band-specific level is the Work board's
+## workings roster, whose value cell takes the panel band's own `cutters`.
+##
+## ⛔ **THE PENDING-AWARE READ, unlike the land row's.** `effective_extract_workers` overlays a
+## commit this client has sent and the sim has not answered yet, and a working is the one source
+## whose card is the surface the player lands back on the instant the compose sheet closes: reading
+## the wire alone would leave the row saying `⚒0` about the crew they just committed until the turn
+## resolved — the very silence this clause exists to end.
+##
+## `CUTTERS_UNSTATED` where there is no band model at all (the map-hover path builds its own text and
+## the harnesses read the lines directly), which the composer answers with no clause rather than with
+## a crew of nobody.
+func _cutters_on_working(deposit: Dictionary) -> int:
+    if _band_labor == null:
+        return HudDepositVocab.CUTTERS_UNSTATED
+    var tile := HudDepositVocab.tile_of(deposit)
+    var material := HudDepositVocab.material_of(deposit)
+    if tile.x < 0 or material == "":
+        return HudDepositVocab.CUTTERS_UNSTATED
+    var bands: Array = _band_labor.player_bands() if not _band_labor.player_bands().is_empty() \
+        else [_band_labor.player_band()]
+    var total := 0
+    for band_variant in bands:
+        if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
+            total += _band_labor.effective_extract_workers(
+                band_variant as Dictionary, tile.x, tile.y, material)
+    return total
+
 ## **UNLESS `force`, which `_render_land_drawer` passes when the drawer produced NO terrain rows.**
 ## An UNEXPLORED hex produces none at all, and it routinely carries roster rows — the sim excludes
 ## expeditions from fog reveal, so your own party stands on unexplored ground as a matter of course.
@@ -357,12 +401,20 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # owner in is the sense the order-path overlay does, which is coloured per faction. And it has no
     # STAMPED PATH — that model went with the per-tile rebuild.)
     #
-    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND THAT MATCHES THE SIM'S OWN FOG
-    # GATE.** A road is published to a faction that has seen the TILE — `Discovered`, deliberately NOT
-    # the herd list's `Active` — because a road does not wander off, so remembering one is
-    # remembering something true. Appending below that return would have dropped the whole block from
-    # every remembered hex the sim went to the trouble of sending it for. An UNEXPLORED hex is
-    # already covered: this producer returns before here.
+    # **COMPOSED ABOVE THE DISCOVERED EARLY-RETURN, APPENDED LAST ON BOTH BRANCHES, AND THE FIRST
+    # HALF OF THAT MATCHES THE SIM'S OWN FOG GATE.** A road is published to a faction that has seen
+    # the TILE — `Discovered`, deliberately NOT the herd list's `Active` — because a road does not
+    # wander off, so remembering one is remembering something true. So the block is COMPOSED here,
+    # above the return, where a remembered hex still reaches it; MOVING it below that return would
+    # drop the whole block from every remembered hex the sim went to the trouble of sending it for.
+    # An UNEXPLORED hex is already covered: this producer returns before here.
+    #
+    # **WHERE IT RENDERS IS A SEPARATE QUESTION FROM WHERE IT IS COMPOSED, and the answer is LAST.**
+    # Ray, on a live Alluvial Plain card: *"Road should go last in the list"* — the deposits and the
+    # two food webs are what the ground IS, and the road is what has been built across it, so it
+    # closes the card rather than splitting the rivers from the seams. The lines are therefore held
+    # in `road_lines` and appended at the END of BOTH branches, which keeps Road last in both fog
+    # states while leaving the data path — and the fog gate above — exactly as it was.
     #
     # ONE BLOCK PER ROAD — a hex may carry more than one, and each is its own investment with its own
     # bill, so they are never summed into a hex total.
@@ -401,6 +453,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
     var queued_tiles: Dictionary = {}
     if _band_labor != null:
         queued_tiles = _band_labor.road_queue_tiles()
+    # HELD, NOT EMITTED — see the placement note above. Every join this block needs (`ctx` included,
+    # which the rung rows' hovers are registered on as they are composed) happens right here on the
+    # fog-safe side of the return; only the APPEND is deferred to the end of each branch.
+    var road_lines: Array[String] = []
     for road in Array(tile_info.get("roads", [])):
         if road is Dictionary:
             var keeper_label := ""
@@ -409,8 +465,42 @@ func _tile_terrain_lines(tile_info: Dictionary,
                     HudRouteVocab.keeper_band_id_of(road))
             var upkeep_material := HudRouteVocab.catalog_material_id(
                 HudRouteVocab.ladder_entry_of(ladder, HudRouteVocab.rung_of(road)))
-            lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
+            road_lines.append_array(HudRouteVocab.road_lines(road, keeper_label, ctx, build_rate,
                 queued_tiles, upkeep_material))
+    # THE DEPOSITS THIS HEX HOLDS (issue #650) — **the tile card is the working's readout**, and this
+    # is where it goes for the road block's reason one paragraph up: a seam is IN THE GROUND, so it is
+    # a property of the LAND and the land drawer is the one surface whose subject is a piece of ground.
+    #
+    # **ABOVE THE DISCOVERED EARLY-RETURN, WITH THE RIVERS, AND EMITTED WHERE IT IS COMPOSED.** The
+    # sim publishes a deposit row under the same `Discovered` gate a road takes — a seam does not
+    # wander off, so remembering one is remembering something true — so appending below that return
+    # would drop the block from every remembered hex the sim went to the trouble of sending it for.
+    # Unlike the road block above, these rows RENDER here as well: the deposits sit between the
+    # rivers and the two food webs, which is the order Ray asked for.
+    #
+    # **ONE ROW PER MATERIAL, AND THE PAYOFF ROW BENEATH IT WHERE THE RUNG BUYS SOMETHING.** A hex
+    # carries up to two (`(tile, material)` is the registry key), and each is its own seam with its
+    # own rung — so they are never summed into a hex total.
+    #
+    # ⛔ **THE CATALOG JOIN IS RESOLVED HERE AND HANDED OVER**, exactly as the road block's keeper
+    # name, build rate and material noun are: the rung's display name, its reach and its renewal all
+    # ride `SubsistenceSection.depositRungs`, and `HudDepositVocab` stays a leaf with no catalog
+    # dependency. `[]` before a catalog has arrived, which the composer reads as *the rung cannot be
+    # named* and answers with the raw wire key rather than a blank.
+    var deposit_ladder: Array[Dictionary] = []
+    if _topbar != null:
+        deposit_ladder = HudDepositVocab.deposit_ladder(_topbar.deposit_rungs())
+    #
+    # ⛔ **AND THE CREW IS RESOLVED HERE TOO, PER MATERIAL** (issue #650) — the second join this
+    # block threads in, for the catalog's reason: `HudDepositVocab` holds no band roster, so a count
+    # summed over the faction's bands cannot be composed inside it. The row said nothing at all about
+    # a crew until now, which is why a player who had just put diggers on a seam saw no sign of it
+    # anywhere on the hex.
+    for deposit_variant in Array(tile_info.get("deposits", [])):
+        if deposit_variant is Dictionary:
+            var working: Dictionary = deposit_variant
+            lines.append_array(HudDepositVocab.deposit_lines(
+                working, deposit_ladder, ctx, _cutters_on_working(working)))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
@@ -445,6 +535,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
     if not stock_known:
         lines.append_array(_forage_stock_lines(tile_info, false))
         lines.append_array(graze_lines)
+        # …AND THE ROAD LAST HERE TOO. A remembered hex keeps its road (the sim publishes one under
+        # this very fog gate), so this append is what makes "Road is last" true in BOTH fog states
+        # rather than only on the live card.
+        lines.append_array(road_lines)
         return lines
     # FORAGING — the HUMAN-edible stock, and the first of the pair. Standing biomass over the patch's
     # ceiling, with the ecology phase inline: the phase is a condition OF this stock and gates whether
@@ -614,6 +708,10 @@ func _tile_terrain_lines(tile_info: Dictionary,
     # producer — a shortfall, a countdown and an indented remedy — is retired: the state is on the rung
     # row (`⚠ slipping`) and the remedy is that row's hover, so the card carries one row where it
     # carried three, and no figure the player cannot act on from here.
+    #
+    # THE ROAD BLOCK CLOSES THE CARD, composed far above beside the rivers and held until now — see
+    # the placement note there. Last on the live branch as it is on the remembered one.
+    lines.append_array(road_lines)
     return lines
 
 ## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of
@@ -695,6 +793,10 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         _forage_assign_controls.visible = false
     if _road_ladder_controls != null:
         _road_ladder_controls.visible = false
+    if _forestry_assign_controls != null:
+        _forestry_assign_controls.visible = false
+    if _extraction_assign_controls != null:
+        _extraction_assign_controls.visible = false
     # This render's tint context, constructed LOCALLY: the band line producers below fill it as they
     # emit rows, and it is handed to the formatter at the bottom. Nothing outlives this call.
     var ctx := DetailFormat.Context.new()
@@ -833,6 +935,11 @@ func _make_band_move_actions() -> HBoxContainer:
     var move_btn := Button.new()
     move_btn.text = HudSelectionVocab.MOVE_BAND_BUTTON_TEXT
     HudStyle.apply_button(move_btn, "ghost")
+    # **THE TILE CARD'S ONE LABEL SIZE.** `Move` is a tile-card button like the five `Assign … ▸`
+    # faces and `Road ▸`, and Ray asked for the reduction on all of them; the const lives with the
+    # compose vocabulary because that is where the family's first caller is.
+    move_btn.add_theme_font_size_override("font_size",
+        HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
     move_btn.tooltip_text = HudSelectionVocab.MOVE_BAND_BUTTON_TOOLTIP
     move_btn.pressed.connect(_targeting.begin_move_band)
     actions.add_child(move_btn)

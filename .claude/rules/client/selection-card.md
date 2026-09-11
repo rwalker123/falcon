@@ -119,10 +119,33 @@ paths:
     it SMALL — the two compose blocks were still ~270px of always-expanded picker sitting permanently
     in a column that also has to show the land, the roster and the detail rows. Composing is **modal
     by nature** (open, decide, commit, done), so `%ForageAssignControls` / `%HerdAssignControls` now
-    end at a one-line **standing-assignment summary** + an **`Assign foragers ▸` / `Assign hunters ▸`
-    / `Assign herders ▸`** button (`_build_forage_drawer_actions` / `_build_herd_drawer_actions`),
-    and the block itself renders into the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays
-    INLINE (for an expedition it is two buttons and a callout).
+    end at a single **`Assign harvesters ▸` / `Assign hunters ▸` / `Assign herders ▸`** control
+    (`build_forage_drawer_actions` / `build_herd_drawer_actions`), and the block itself renders into
+    the floating `ui/hud/ComposeSheet.gd`. `%AllocationPanel` stays INLINE (for an expedition it is
+    two buttons and a callout).
+    - ⛔ **THE STANDING SUMMARY IS THAT CONTROL'S SECOND LINE, NOT A ROW ABOVE IT.** It was a sibling
+      row for the whole life of this layout, and Ray retired that shape on sight of the deposit
+      drawer: *"See the 2 foresters +0.60 wood. That looks strange there, I know that is the existing
+      pattern with foragers and hunters … I think that would look more at home inside the button. We
+      should make it the second line on the button."* **The pattern was what he was objecting to**, so
+      every web moved together — forage, hunt, herd, forestry and extraction — rather than the deposit
+      one alone; two shapes for one readout is the inconsistency this whole rework keeps removing.
+      The mechanism and its three traps (the empty-`text` button under a painted face, the
+      `MOUSE_FILTER_IGNORE` sweep that keeps it pressable, and the re-mute the in-place patch owes)
+      are on `HudWidgets.build_stacked_action_button`.
+    - **A SOURCE NOBODY WORKS KEEPS ITS SINGLE LINE** and grows no blank second one: a summary exists
+      only where this faction already holds a standing assignment on the source, and the face is built
+      with `null` there.
+    - **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT `HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE`**
+      — the five `Assign … ▸` faces, `Road ▸` and `Move`. Ray: *"we are getting more buttons now …
+      make the font for the `Assign …` label smaller, let's try 25% to see how it looks. Make that
+      change for all the buttons in the TILE panel."* It is 25% off Godot's stock theme size, which is
+      what these buttons drew at (`HudStyle.apply_button` writes styleboxes and colours and no font
+      size), and it is ONE const because it is being tuned. The second line has its own
+      (`TILE_ACTION_SUMMARY_FONT_SIZE`), smaller again, so retuning the label cannot leave the readout
+      competing with it. ⛔ **THAT ONE IS NOT THE SAME RATIO APPLIED TWICE** — the label's 25% lands
+      it at 9, and the Options pane's `ui_scale` floor of 0.75 draws a 9 at under 7px, so it is 10.
+      Ray specified the ratio for the LABEL; the readout under it is sized to stay readable.
     - **The builders were NOT reparented — they were PARAMETERISED.** `_build_forage_assign_controls(
       tile_info, target)` / `_build_herd_assign_controls(herd, target)` take an explicit target
       container, because reparenting a `%Name` node silently clears `unique_name_in_owner` and breaks
@@ -147,7 +170,7 @@ paths:
       INDEPENDENT flags a Band-panel Current-actions row wears: the ⚠ overdraw (ecological, the
       sim-answered `overdraws`) and the `· only N of M working` overstaff note (labor). `has_yield` is
       the one key the readout needs that is not on the wire assignment, so it is set locally; every
-      number comes off the assignment the sim sent. Unstaffed → no summary row, just the button.
+      number comes off the assignment the sim sent. Unstaffed → no second line, just the label.
     - **LIFECYCLE.** Opens on the drawer button; one sheet at a time. Closes on commit, the `✕`, a
       catcher click, `Esc`, a **selection change** (`show_*_selection` / `_select_roster_occupant` /
       `_on_land_row_selected` / `clear_selection`) or a **targeting flow starting** (`_on_move_band_
@@ -168,7 +191,7 @@ paths:
       three — the sheet is transient and modal, targeting is a question the client has asked and is
       waiting on, and this one is still there afterwards, so it yields.
     - **Nothing is re-derived.** Every yield, forecast, ceiling and gate reason comes from the same
-      call it came from when the block lived in the drawer, and the forage range gate / herd
+      call it came from when the block lived in the drawer, and the work range gate / herd
       local-vs-expedition branch still read the **selected band's** position, explicitly threaded.
   - `_selected_subject` (`SUBJECT_LAND|UNIT|HERD`) says which KIND of row is lit;
     `_selected_unit`/`_selected_herd` stay authoritative for WHICH. **The auto-select rule is
@@ -364,6 +387,30 @@ and the mark is its own trailing node, so `2 <forage>` on a hex, `1 <hunt>` on a
 activity are one column of drawn marks down the subject list. Splitting only the band row would have
 left a drawn sprig beside an emoji bow two rows under it, which is the *half a set* failure
 `sprites-widgets.md` → "`HudSprites` keys the ACTIVITY" exists to name.
+
+### THE `<count> <mark>` PAIR IS THE CARD'S BAND-INDEPENDENT LEVEL, AND A WORKING BORROWED IT
+
+⛔ **`_forage_workers_on_tile` AND `_hunt_workers_on_herd` SUM ACROSS EVERY PLAYER BAND**, so the
+land row's meta and the herd row's state what the FACTION has on that source rather than what the
+band the player happens to have picked has. That is not incidental: it is what makes the pair the
+*minimal* reading of a source — true whichever subject is selected, and on the one surface whose
+subject is the ground. The band-specific reading is the Work board's own rosters, which take the
+panel band's crew and add its bill.
+
+**A WORKING'S ROWS NOW READ THE SAME WAY** (issue #650). Ray asked for the tile to say a deposit was
+being worked *"the same [as] we do for forage sites"*, and the mechanism he meant is this pair;
+`SubjectDrawerController._cutters_on_working` is `_forage_workers_on_tile` for a `(tile, material)`
+working, and `HudDepositVocab.crew_clause` is the count and the mark. It rides the per-MATERIAL
+detail row rather than this roster row, because a hex carries up to two workings and a roster row has
+exactly one meta and one mark — collapsing a wood crew and a stone crew into one is the very
+distinction the `material` field exists to make. Full spec in `extraction-workings.md` → "THE CREW
+CLAUSE IS THE TILE'S ONLY ACTIVITY INDICATION".
+
+⛔ **THE WORKING'S MARK IS `HudSelectionVocab.SOURCE_CREW_MARK` (`⚒`), A TEXT GLYPH RATHER THAN ART.**
+It lives beside the activity marks because the map's source badge reads the same const
+(`overlay-channels.md`), so one hex cannot say `⚒4` under its marker and nothing on its card. It is
+not an `ACTIVITY_MARKS` entry: those are drawn textures for a roster row's own trailing node, and a
+`Key: value` detail line is BBCode text with no node to swap.
 
 **THE PATCH PATH OWES THE SAME NODE SWAP, and a row crosses the line by doing its job.**
 `_set_row_activity_mark` is `_set_row_icon`'s twin: the mark is a `TextureRect` while a band forages

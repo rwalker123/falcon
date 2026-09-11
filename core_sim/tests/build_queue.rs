@@ -1582,6 +1582,7 @@ fn every_build_job_and_source_kind_is_stated() {
         deposit.names(&LaborTarget::Extract {
             tile: UVec2::new(3, 3),
             material: "stone".to_string(),
+            floor: FOOD_PEAK,
         }),
         "a working IS named by its own row — the one place this arc deliberately does not copy the          route branch, because a quarry you walk away from is a quarry you lost"
     );
@@ -1589,6 +1590,7 @@ fn every_build_job_and_source_kind_is_stated() {
         !deposit.names(&LaborTarget::Extract {
             tile: UVec2::new(3, 3),
             material: "wood".to_string(),
+            floor: FOOD_PEAK,
         }),
         "the MATERIAL is half the key: a felling crew on the same tile is a different source"
     );
