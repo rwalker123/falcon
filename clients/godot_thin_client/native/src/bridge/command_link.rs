@@ -59,6 +59,16 @@
 //! server frees the seat when the old socket closes (`Command::ReleaseSeat` from its own read loop),
 //! and a reconnect can race that release — so a `seat_occupied` refusal is retried a bounded number
 //! of times before it is reported as a real one.
+//!
+//! ## …and the seat's lifetime is one RUN, not the process
+//!
+//! This worker is process-global, so freeing the `Main` scene does not close the socket: a run that
+//! ends has to SAY so, through [`release_seat`], which drops the seat intent and closes the
+//! connection. Until something does, the server still holds the seat against the old socket and the
+//! next run's claim is refused `already_seated` — and the refusal costs more than the message,
+//! because an unseated client is sent no snapshot frames at all (frames are addressed per seat).
+//! [`LinkWorker::on_claim`] releases a seat it still holds for the same reason, so a teardown path
+//! that forgets cannot strand the run after it.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -123,6 +133,8 @@ const QUERY_DETAIL_ENDPOINT_CHANGED: &str = "query endpoint changed before the r
 /// The write half vanished between the connect and the write — reported rather than retried, for the
 /// same reason a command is: a question written twice is a question the sheet did not ask twice.
 const QUERY_DETAIL_NOT_CONNECTED: &str = "command link is not connected";
+/// The run that owned this connection ended, taking the socket the answer was owed on with it.
+const QUERY_DETAIL_RUN_ENDED: &str = "the run ended before the reply arrived";
 
 /// Where the link connects. Carried on every message because the endpoint is resolved by GDScript
 /// (env var → ports file → default) and only the caller knows it.
@@ -149,6 +161,10 @@ enum LinkMessage {
         faction_id: u32,
         request_id: u64,
     },
+    /// The run that claimed the seat has ended. Carries nothing — there is one seated connection,
+    /// and releasing its seat means closing it, since a closed socket is how the server learns the
+    /// seat is free.
+    Release,
     /// One command to write on the seated socket. `ack` carries back whether it reached the wire.
     Send {
         endpoint: Endpoint,
@@ -229,6 +245,16 @@ pub(crate) fn claim_seat(
             request_id,
         })
         .map_err(|err| format!("seat claim dispatch error: {err}"))
+}
+
+/// **Give up the seat this connection holds, because the run that claimed it has ended.**
+///
+/// Closes the command socket, which is the only thing the server watches: it frees a seat when the
+/// connection holding it closes. The next run claims on a new connection.
+pub(crate) fn release_seat() -> Result<(), String> {
+    link_sender()
+        .send(LinkMessage::Release)
+        .map_err(|err| format!("seat release dispatch error: {err}"))
 }
 
 /// **Put one command on the socket it belongs on** — the whole routing rule, stated once. See the
@@ -434,6 +460,7 @@ impl LinkWorker {
                 faction_id,
                 request_id,
             } => self.on_claim(endpoint, faction_id, request_id),
+            LinkMessage::Release => self.on_release(),
             LinkMessage::Send {
                 endpoint,
                 envelope,
@@ -454,6 +481,15 @@ impl LinkWorker {
     }
 
     fn on_claim(&mut self, endpoint: Endpoint, faction_id: u32, request_id: u64) {
+        // **A Claim means a new run is starting, and a run starts on a connection that holds no
+        // seat.** A second `ClaimSeat` written on the still-seated socket of the run that just ended
+        // is refused `already_seated`, which leaves this run unseated and therefore sent no snapshot
+        // frames at all. Releasing here says exactly what `Main._exit_tree` already says
+        // (`CommandClient.release_seat` → [`release_seat`]) — deliberately stated in both places,
+        // because a teardown path that forgets its release must not strand the next run.
+        if self.seat.is_some() {
+            self.on_release();
+        }
         self.retarget(&endpoint);
         self.seat = Some(SeatIntent {
             faction_id,
@@ -475,6 +511,16 @@ impl LinkWorker {
             return;
         }
         self.write_claim();
+    }
+
+    /// **The run that held the seat has ended.** Dropping the intent BEFORE closing is what makes
+    /// this a release rather than a reconnect: [`Self::close_connection`] leaves `reconnect_at`
+    /// unset, so with no seat intent the worker rebuilds nothing and an idle client holds neither a
+    /// socket nor a seat. That is the point — a player sitting on the landing screen must not occupy
+    /// a seat the server's turn gate would then wait `seat_turn_timeout_seconds` on, every turn.
+    fn on_release(&mut self) {
+        self.seat = None;
+        self.close_connection(QUERY_DETAIL_RUN_ENDED);
     }
 
     fn on_send(&mut self, endpoint: Endpoint, envelope: &CommandEnvelope) -> Result<(), String> {
@@ -575,6 +621,26 @@ impl LinkWorker {
         }
     }
 
+    /// **End the live connection so the OTHER END sees it end**, and fail whatever it still owed.
+    ///
+    /// ⛔ **`shutdown`, not a drop of the write half** — that is the whole point of this helper. The
+    /// reader thread holds a `try_clone`d handle to the same socket, so dropping `self.write` leaves
+    /// the underlying file description open and the server never sees the EOF its seat release is
+    /// driven by (`server.rs` → `release_seat_and_settle`). `shutdown` acts on the SOCKET rather than
+    /// on one handle to it, so it ends both directions at once and the reader thread falls out of its
+    /// blocking read.
+    ///
+    /// It clears `reconnect_at`; a caller that wants the link rebuilt re-arms it AFTER calling.
+    fn close_connection(&mut self, detail: &str) {
+        if let Some(stream) = self.write.take() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        self.generation += 1;
+        self.reconnect_at = None;
+        // Whatever was outstanding was owed on the socket that just closed.
+        self.fail_pending(detail, false);
+    }
+
     /// A different endpoint is a different server: drop what we hold rather than writing this
     /// client's seat traffic to whatever answers on the old address.
     fn retarget(&mut self, endpoint: &Endpoint) {
@@ -582,11 +648,8 @@ impl LinkWorker {
             return;
         }
         self.endpoint = Some(endpoint.clone());
-        self.write = None;
-        self.generation += 1;
-        self.reconnect_at = None;
         // Whatever was outstanding was asked of the OLD server and will never be answered here.
-        self.fail_pending(QUERY_DETAIL_ENDPOINT_CHANGED, false);
+        self.close_connection(QUERY_DETAIL_ENDPOINT_CHANGED);
         if let Some(seat) = self.seat.as_mut() {
             seat.state = SeatState::Unclaimed;
             seat.retry_at = None;
@@ -755,13 +818,12 @@ impl LinkWorker {
         if generation != self.generation {
             return;
         }
-        self.write = None;
-        self.generation += 1;
         // The answers were owed on the socket that just died; the reply direction died with it.
-        self.fail_pending(detail, false);
+        self.close_connection(detail);
         if let Some(seat) = self.seat.as_mut() {
             // The seat went with the socket. It is re-claimed on the next connection, which is what
-            // keeps a mid-session server restart from silently unseating the player.
+            // keeps a mid-session server restart from silently unseating the player. The re-arm has
+            // to come AFTER `close_connection`, which clears `reconnect_at`.
             seat.state = SeatState::Unclaimed;
             seat.retry_at = None;
             self.reconnect_at = Some(Instant::now() + RECONNECT_BACKOFF);
@@ -900,5 +962,80 @@ mod tests {
             correlation_id: None,
         };
         assert!(encode(&envelope).is_err());
+    }
+
+    /// **How long a socket read may hang before the test calls it a regression.** Everything under
+    /// test is loopback and in-process, so a healthy step lands immediately; this only exists so a
+    /// release that fails to close the socket FAILS the test instead of hanging it.
+    const TEST_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+    /// Read one framed command off a test connection and return the seat claim's request id, or fail
+    /// the test if what arrived was anything else.
+    fn read_claim_request_id(stream: &mut TcpStream) -> u64 {
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).expect("claim frame length");
+        let mut frame = vec![0u8; u32::from_le_bytes(len_buf) as usize];
+        stream.read_exact(&mut frame).expect("claim frame body");
+        let envelope = CommandEnvelope::decode(&frame).expect("claim decodes");
+        match envelope.payload {
+            CommandPayload::ClaimSeat { request_id, .. } => request_id,
+            other => panic!("expected a seat claim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn releasing_the_seat_closes_the_socket_so_the_next_run_can_claim() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("test listener");
+        let addr = listener.local_addr().expect("listener address");
+        let endpoint = Endpoint {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+        };
+        let (tx, rx) = mpsc::channel::<LinkMessage>();
+        let postbox = tx.clone();
+        // Not joined at the end: the worker owns a clone of its own inbox sender (its postbox), so
+        // the channel never disconnects and `run` never returns. The thread ends with the process.
+        thread::Builder::new()
+            .name("command-link-worker-test".into())
+            .spawn(move || LinkWorker::new(rx, postbox).run())
+            .expect("worker thread");
+
+        // The first run claims its seat on the connection the worker opens for it.
+        tx.send(LinkMessage::Claim {
+            endpoint: endpoint.clone(),
+            faction_id: 0,
+            request_id: 1,
+        })
+        .expect("first claim reaches the worker");
+        let (mut first, _) = listener.accept().expect("the first run connects");
+        first
+            .set_read_timeout(Some(TEST_READ_TIMEOUT))
+            .expect("read timeout on the first connection");
+        assert_eq!(read_claim_request_id(&mut first), 1);
+
+        // The run ends. The server frees a seat when the connection holding it CLOSES, so the
+        // release has to reach EOF here — merely dropping the write half would not.
+        tx.send(LinkMessage::Release)
+            .expect("release reaches the worker");
+        let mut byte = [0u8; 1];
+        assert_eq!(
+            first.read(&mut byte).ok(),
+            Some(0),
+            "the released connection must reach EOF, or the server keeps holding the seat"
+        );
+
+        // The next run therefore claims on a NEW connection — one the server has not seated, so its
+        // claim cannot be refused `already_seated`.
+        tx.send(LinkMessage::Claim {
+            endpoint,
+            faction_id: 0,
+            request_id: 2,
+        })
+        .expect("second claim reaches the worker");
+        let (mut second, _) = listener.accept().expect("the next run connects again");
+        second
+            .set_read_timeout(Some(TEST_READ_TIMEOUT))
+            .expect("read timeout on the second connection");
+        assert_eq!(read_claim_request_id(&mut second), 2);
     }
 }

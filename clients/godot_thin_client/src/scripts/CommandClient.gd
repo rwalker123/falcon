@@ -106,8 +106,9 @@ func send_query(request_id: int, ask: Dictionary) -> bool:
 ##
 ## The server takes the faction a command acts on from the seat the *connection* claimed rather than
 ## from the id on the wire (`.claude/rules/client/command-transport.md`), so until this is granted
-## every band order is refused. **Ask once per session**: the native link re-claims by itself on a
-## reconnect, and a second claim on a live connection is refused (`already_seated`) by design.
+## every band order is refused. **Ask once per RUN**: the native link re-claims by itself on a
+## reconnect, so a second claim within a run is refused (`already_seated`) by design — but a new run
+## asks again, after `release_seat` ended the previous one's connection.
 func claim_seat(faction_id: int, request_id: int) -> bool:
     if _bridge == null:
         return false
@@ -117,6 +118,24 @@ func claim_seat(faction_id: int, request_id: int) -> bool:
     if bool(result.get("ok", false)):
         return true
     push_warning("CommandBridge seat claim error: %s" % result.get("error", "unknown error"))
+    return false
+
+## **GIVE UP THE SEAT, because the run that claimed it has ended.** Returns whether the ask reached
+## the bridge; there is no answer to wait for, since releasing means closing the socket an answer
+## would have arrived on.
+##
+## The native link is process-global and outlives the `Main` scene, so without this the next run's
+## claim lands on the still-seated socket and is refused `already_seated` — and an unseated client is
+## sent no snapshot frames at all. See `.claude/rules/client/command-transport.md`.
+func release_seat() -> bool:
+    if _bridge == null:
+        return false
+    var result: Variant = _bridge.call("release_seat")
+    if typeof(result) != TYPE_DICTIONARY:
+        return false
+    if bool(result.get("ok", false)):
+        return true
+    push_warning("CommandBridge seat release error: %s" % result.get("error", "unknown error"))
     return false
 
 ## Drain the answers that have landed since the last call. **Call it once a frame**: this is the one
