@@ -13,6 +13,13 @@
 //! section left undecoded would read as empty, which is exactly what an unseen section also reads
 //! as; that silence is the failure this layout exists to prevent.
 //!
+//! **The two roots are the exception, and carry their own witness.** `decode_snapshot_table` and
+//! `decode_delta_table` *do* start from `..Default::default()`, because the section decoders fill a
+//! `&mut WorldSnapshot` / `&mut WorldDelta` rather than returning a section struct — so the rule
+//! above would not hold for a field appended to a **root**. `witness_snapshot_is_fully_decoded` /
+//! `witness_delta_is_fully_decoded` restore it: they destructure the root exhaustively, grouped by
+//! the section decoder that fills each field, and are called at the end of each decoder.
+//!
 //! What the decoder gives back is what the encoder was given, with the losses the wire itself
 //! imposes: a delta's `Option` fields come back `None` exactly when the encoder left the slot
 //! absent (or, for the two scalars whose absent encoding *is* `0`, when it wrote `0`), and a
@@ -221,6 +228,7 @@ fn decode_snapshot_table(table: fb::WorldSnapshot<'_>) -> Result<WorldSnapshot, 
         &mut snapshot,
     );
     decode_route_section(required(table.routes(), "RouteSection")?, &mut snapshot);
+    witness_snapshot_is_fully_decoded(&snapshot);
     Ok(snapshot)
 }
 
@@ -256,7 +264,202 @@ fn decode_delta_table(table: fb::WorldDelta<'_>) -> Result<WorldDelta, DecodeErr
         &mut delta,
     );
     decode_route_section_delta(required(table.routes(), "RouteSection")?, &mut delta);
+    witness_delta_is_fully_decoded(&delta);
     Ok(delta)
+}
+
+// -------------------------------------------------------------------------------------------------
+// The roots' forcing function
+// -------------------------------------------------------------------------------------------------
+
+/// ⛔ **EVERY FIELD OF THE ROOT IS NAMED HERE, UNDER THE DECODER THAT FILLS IT.**
+///
+/// The module header's rule — a state struct is rebuilt as an exhaustive literal, so a field
+/// appended to it and its serializer fails to compile until its decoder line exists — is a property
+/// of the **leaf** decoders. It cannot reach the two roots: [`decode_snapshot_table`] and
+/// [`decode_delta_table`] start from `..Default::default()` and the section decoders assign into a
+/// `&mut WorldSnapshot` / `&mut WorldDelta` field by field, so a field appended to a root and wired
+/// into one serializer — and left out of the matching section decoder — compiles, and reads back at
+/// its `Default`. For an `Option` or a vector the fixture cannot saturate, that is silent.
+///
+/// These two functions are the witness. They destructure the root **exhaustively**, so appending a
+/// field to it stops the build here and names it; the fix is to add its line to the section decoder
+/// commented beside the group it belongs to, and then name it in that group. They are called at the
+/// end of each decoder rather than written as a test, so the obligation cannot be satisfied by
+/// deleting a test file.
+fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
+    let WorldSnapshot {
+        // The root's own fields, set in the function above.
+        header: _,
+        capability_flags: _,
+        // No FlatBuffers field at all: captured and diffed in `core_sim`, sent nowhere.
+        start_marker: _,
+        // `decode_map_section`
+        climate_bands: _,
+        elevation_overlay: _,
+        moisture_raster: _,
+        temperature_survivability: _,
+        terrain: _,
+        tiles: _,
+        // `decode_economy_section`
+        faction_inventory: _,
+        // `decode_population_section`
+        demographics: _,
+        generations: _,
+        populations: _,
+        // `decode_subsistence_section`
+        characteristic_bands: _,
+        craft_knowledge: _,
+        default_expedition_kit_id: _,
+        default_forage_kit_id: _,
+        default_hunt_kit_id: _,
+        default_scout_kit_id: _,
+        default_warrior_kit_id: _,
+        equipment_config_json: _,
+        food_modules: _,
+        forage_patches: _,
+        herds: _,
+        intensification_knowledge: _,
+        kits: _,
+        ladder_knowledge: _,
+        materials: _,
+        recipes: _,
+        route_rungs: _,
+        sedentarization: _,
+        // `decode_knowledge_section`
+        discovered_sites: _,
+        discovery_progress: _,
+        great_discoveries: _,
+        great_discovery_definitions: _,
+        great_discovery_progress: _,
+        great_discovery_telemetry: _,
+        knowledge_ledger: _,
+        knowledge_metrics: _,
+        knowledge_timeline: _,
+        // `decode_governance_section`
+        corruption: _,
+        corruption_raster: _,
+        crisis_overlay: _,
+        crisis_telemetry: _,
+        power: _,
+        power_metrics: _,
+        // `decode_culture_section`
+        axis_bias: _,
+        culture_layers: _,
+        culture_raster: _,
+        culture_tensions: _,
+        influencers: _,
+        sentiment: _,
+        sentiment_raster: _,
+        // `decode_vision_section`
+        fog_enabled: _,
+        military_raster: _,
+        visibility_raster: _,
+        // `decode_campaign_section`
+        campaign_profiles: _,
+        command_events: _,
+        command_events_retention_turns: _,
+        opening_loadout: _,
+        pending_forks: _,
+        stance_axes: _,
+        victory: _,
+        voice_medium: _,
+        // `decode_connections_section`
+        connections: _,
+        // `decode_routes_section`
+        routes: _,
+    } = snapshot;
+}
+
+fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
+    let WorldDelta {
+        // The root's own fields, set in the function above.
+        header: _,
+        capability_flags: _,
+        // No FlatBuffers field at all: captured and diffed in `core_sim`, sent nowhere.
+        start_marker: _,
+        // `decode_map_section_delta`
+        climate_bands: _,
+        elevation_overlay: _,
+        moisture_raster: _,
+        removed_tiles: _,
+        temperature_survivability: _,
+        terrain: _,
+        tiles: _,
+        // `decode_economy_section_delta`
+        faction_inventory: _,
+        // `decode_population_section_delta`
+        demographics: _,
+        generations: _,
+        populations: _,
+        removed_generations: _,
+        removed_populations: _,
+        // `decode_subsistence_section_delta`
+        characteristic_bands: _,
+        craft_knowledge: _,
+        default_expedition_kit_id: _,
+        default_forage_kit_id: _,
+        default_hunt_kit_id: _,
+        default_scout_kit_id: _,
+        default_warrior_kit_id: _,
+        equipment_config_json: _,
+        food_modules: _,
+        forage_patches: _,
+        herds: _,
+        intensification_knowledge: _,
+        kits: _,
+        ladder_knowledge: _,
+        materials: _,
+        recipes: _,
+        route_rungs: _,
+        sedentarization: _,
+        // `decode_knowledge_section_delta`
+        discovered_sites: _,
+        discovery_progress: _,
+        great_discoveries: _,
+        great_discovery_definitions: _,
+        great_discovery_progress: _,
+        great_discovery_telemetry: _,
+        knowledge_ledger: _,
+        knowledge_metrics: _,
+        knowledge_timeline: _,
+        removed_knowledge_ledger: _,
+        // `decode_governance_section_delta`
+        corruption: _,
+        corruption_raster: _,
+        crisis_overlay: _,
+        crisis_telemetry: _,
+        power: _,
+        power_metrics: _,
+        removed_power: _,
+        // `decode_culture_section_delta`
+        axis_bias: _,
+        culture_layers: _,
+        culture_raster: _,
+        culture_tensions: _,
+        influencers: _,
+        removed_culture_layers: _,
+        removed_influencers: _,
+        sentiment: _,
+        sentiment_raster: _,
+        // `decode_vision_section_delta`
+        fog_enabled: _,
+        military_raster: _,
+        visibility_raster: _,
+        // `decode_campaign_section_delta`
+        campaign_profiles: _,
+        command_events: _,
+        command_events_retention_turns: _,
+        opening_loadout: _,
+        pending_forks: _,
+        stance_axes: _,
+        victory: _,
+        voice_medium: _,
+        // `decode_connections_section_delta`
+        connections: _,
+        // `decode_routes_section_delta`
+        routes: _,
+    } = delta;
 }
 
 /// The header both roots carry. A delta's `serverBuild` is left absent when empty
@@ -772,6 +975,7 @@ mod round_trip_tests {
     use super::*;
     use crate::fixture::saturated_snapshot;
     use crate::state::campaign::VictorySnapshotState;
+    use crate::state::knowledge::KnowledgeLedgerEntryState;
     use crate::world::{encode_delta_json, encode_snapshot_json, hash_snapshot};
 
     /// A live capability bit and a live retention window, so both `0`-is-absent scalars are
@@ -843,10 +1047,15 @@ mod round_trip_tests {
             great_discovery_progress: world.great_discovery_progress.clone(),
             great_discovery_telemetry: Some(world.great_discovery_telemetry.clone()),
             knowledge_ledger: world.knowledge_ledger.clone(),
+            // **The shipped key, not a bare discovery id.** A ledger row is named by
+            // `knowledge_ledger_wire_key(owner_faction, discovery_id)` — the shape `core_sim`'s
+            // producer and `WorldSnapshot::apply_delta` both use. The codec passes the `u64`
+            // through opaquely, so a bare id would still round trip; it would just not be the
+            // shape the wire carries.
             removed_knowledge_ledger: world
                 .knowledge_ledger
                 .iter()
-                .map(|entry| u64::from(entry.discovery_id))
+                .map(KnowledgeLedgerEntryState::wire_key)
                 .collect(),
             knowledge_metrics: Some(world.knowledge_metrics.clone()),
             victory: Some(world.victory.clone()),

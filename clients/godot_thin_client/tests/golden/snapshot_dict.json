@@ -55,7 +55,6 @@
       "title_loc_key": "campaign_profiles[0].title_loc_key"
     },
     {
-      "id": "campaign_profiles[1].id",
       "inventory": [
         {
           "item": "campaign_profiles[1].inventory[0].item",
@@ -70,8 +69,6 @@
         "campaign_profiles[1].knowledge_tags[0]",
         "campaign_profiles[1].knowledge_tags[1]"
       ],
-      "primary_food_module": "campaign_profiles[1].primary_food_module",
-      "secondary_food_module": "campaign_profiles[1].secondary_food_module",
       "starting_units": [
         {
           "count": 89,
@@ -89,11 +86,7 @@
             "campaign_profiles[1].starting_units[1].tags[1]"
           ]
         }
-      ],
-      "subtitle": "campaign_profiles[1].subtitle",
-      "subtitle_loc_key": "campaign_profiles[1].subtitle_loc_key",
-      "title": "campaign_profiles[1].title",
-      "title_loc_key": "campaign_profiles[1].title_loc_key"
+      ]
     }
   ],
   "characteristic_bands": [
@@ -116,7 +109,6 @@
       "tick": 172
     },
     {
-      "detail": "command_events[1].detail",
       "faction": 52,
       "kind": "command_events[1].kind",
       "label": "command_events[1].label",
@@ -183,7 +175,7 @@
       "craft_id": "weaving",
       "display_name": "craft_knowledge[1].display_name",
       "faction": 24,
-      "known": true,
+      "known": false,
       "progress": 13.58
     },
     {
@@ -411,28 +403,28 @@
       ]
     }
   ],
-  "fog_enabled": true,
+  "fog_enabled": false,
   "food_modules": [
     {
       "kind": "food_modules[0].kind",
       "module": "food_modules[0].module",
       "seasonal_weight": 102.029999,
       "x": 0,
-      "y": 0
+      "y": 1
     },
     {
       "kind": "food_modules[1].kind",
       "module": "food_modules[1].module",
       "seasonal_weight": 16.73,
       "x": 1,
-      "y": 1
+      "y": 2
     }
   ],
   "forage_patches": [
     {
       "biomass": 69.25,
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
-      "build_destination_capacity": -1.0,
+      "build_destination_capacity": 32.709999,
       "build_destination_rung": "forage_patches[0].build_destination_rung",
       "build_kit_id": "forage_patches[0].build_kit_id",
       "build_legs": [
@@ -468,7 +460,7 @@
       "composition": [
         {
           "can_cultivate": true,
-          "can_sow": true,
+          "can_sow": false,
           "cultivate_fodder_payoff": 67.110001,
           "cultivate_material_payoff": [
             {
@@ -515,7 +507,7 @@
           "standing_biomass": 104.809998
         },
         {
-          "can_cultivate": true,
+          "can_cultivate": false,
           "can_sow": true,
           "cultivate_fodder_payoff": 108.559998,
           "cultivate_material_payoff": [
@@ -598,7 +590,7 @@
       "fodder_per_biomass": 74.5,
       "has_neglect_grace": true,
       "has_owner": true,
-      "is_cultivated": true,
+      "is_cultivated": false,
       "is_field": true,
       "material_per_biomass": [
         {
@@ -634,7 +626,7 @@
       "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
       "upkeep_kit_id": "forage_patches[0].upkeep_kit_id",
-      "upkeep_kit_named": true,
+      "upkeep_kit_named": false,
       "upkeep_material_demand": [
         {
           "amount": 64.879997,
@@ -659,7 +651,7 @@
       "upkeep_supplied": 28.360001,
       "upkeep_workers_needed": 99,
       "x": 0,
-      "y": 0
+      "y": 1
     },
     {
       "biomass": 74.910004,
@@ -699,7 +691,7 @@
       "committed_species": "forage_patches[1].committed_species",
       "composition": [
         {
-          "can_cultivate": true,
+          "can_cultivate": false,
           "can_sow": true,
           "cultivate_fodder_payoff": 53.099998,
           "cultivate_material_payoff": [
@@ -748,7 +740,7 @@
         },
         {
           "can_cultivate": true,
-          "can_sow": true,
+          "can_sow": false,
           "cultivate_fodder_payoff": 22.51,
           "cultivate_material_payoff": [
             {
@@ -828,10 +820,10 @@
       "field_work_done": 43.169998,
       "field_yield": 75.790001,
       "fodder_per_biomass": 95.839996,
-      "has_neglect_grace": true,
-      "has_owner": true,
+      "has_neglect_grace": false,
+      "has_owner": false,
       "is_cultivated": true,
-      "is_field": true,
+      "is_field": false,
       "material_per_biomass": [
         {
           "amount": 93.660004,
@@ -844,7 +836,7 @@
       ],
       "meter_rot_per_turn": 51.169998,
       "neglect_grace_remaining": 186,
-      "owner": 21,
+      "owner": 0,
       "per_worker_biomass": 109.980003,
       "per_worker_material": [
         {
@@ -891,7 +883,7 @@
       "upkeep_supplied": 37.41,
       "upkeep_workers_needed": 48,
       "x": 1,
-      "y": 1
+      "y": 2
     }
   ],
   "frame_kind": "snapshot",
@@ -921,7 +913,7 @@
       "faction": 166,
       "field_label": "Physics",
       "id": 87,
-      "publicly_deployed": true,
+      "publicly_deployed": false,
       "tick": 27
     },
     {
@@ -958,8 +950,6 @@
         {
           "discovery_id": 42,
           "minimum_progress": 42.259998,
-          "name": "great_discovery_definitions[0].requirements[1].name",
-          "summary": "great_discovery_definitions[0].requirements[1].summary",
           "weight": 71.089996
         }
       ],
@@ -969,15 +959,12 @@
     },
     {
       "cooldown_ticks": 46,
-      "covert_until_public": true,
+      "covert_until_public": false,
       "effect_flags": 185,
       "effects_summary": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[1].effects_summary[0]", "great_discovery_definitions[1].effects_summary[1]"]},
       "field": "Physics",
-      "freshness_window": 134,
       "id": 25,
-      "leak_profile": "great_discovery_definitions[1].leak_profile",
       "name": "great_discovery_definitions[1].name",
-      "observation_notes": "great_discovery_definitions[1].observation_notes",
       "observation_threshold": 138,
       "requirements": [
         {
@@ -990,19 +977,15 @@
         {
           "discovery_id": 93,
           "minimum_progress": 86.510002,
-          "name": "great_discovery_definitions[1].requirements[1].name",
-          "summary": "great_discovery_definitions[1].requirements[1].summary",
           "weight": 31.530001
         }
       ],
-      "summary": "great_discovery_definitions[1].summary",
-      "tags": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[1].tags[0]", "great_discovery_definitions[1].tags[1]"]},
-      "tier": "great_discovery_definitions[1].tier"
+      "tags": {"__packed": "PackedStringArray", "len": 2, "items": ["great_discovery_definitions[1].tags[0]", "great_discovery_definitions[1].tags[1]"]}
     }
   ],
   "great_discovery_progress": [
     {
-      "covert": true,
+      "covert": false,
       "discovery": 72,
       "eta_ticks": 129,
       "faction": 194,
@@ -1037,7 +1020,7 @@
       "biomass": 109.120003,
       "body_mass": 32.599998,
       "build_blocked_reason": "herds[0].build_blocked_reason",
-      "build_destination_capacity": -1.0,
+      "build_destination_capacity": 79.830002,
       "build_destination_rung": "herds[0].build_destination_rung",
       "build_kit_id": "herds[0].build_kit_id",
       "build_legs": [
@@ -1103,7 +1086,7 @@
       "corral_work_cost": 88.470001,
       "corral_work_done": 70.900002,
       "corral_yield": 50.880001,
-      "corralled": true,
+      "corralled": false,
       "current_rung": "herds[0].current_rung",
       "default_kit_id": "herds[0].default_kit_id",
       "defense": 77.480003,
@@ -1120,7 +1103,7 @@
       "herded_fraction": 57.66,
       "herders_needed": 45,
       "herders_needed_if_managed": 61,
-      "huntable": true,
+      "huntable": false,
       "husbandry_ceiling": "herds[0].husbandry_ceiling",
       "id": "herds[0].id",
       "label": "herds[0].label",
@@ -1216,7 +1199,7 @@
       "upkeep_supplied": 24.889999,
       "upkeep_workers_needed": 156,
       "x": 0,
-      "y": 0
+      "y": 1
     },
     {
       "aggression": 40.509998,
@@ -1303,7 +1286,7 @@
       "fodder_per_biomass": 75.889999,
       "food_per_animal": 45.939999,
       "graze_range_radius": 93,
-      "has_neglect_grace": true,
+      "has_neglect_grace": false,
       "herded_fraction": 76.389999,
       "herders_needed": 64,
       "herders_needed_if_managed": 186,
@@ -1378,7 +1361,7 @@
       "tame_work_done": 10.41,
       "upkeep_demand": 25.92,
       "upkeep_kit_id": "herds[1].upkeep_kit_id",
-      "upkeep_kit_named": true,
+      "upkeep_kit_named": false,
       "upkeep_material_demand": [
         {
           "amount": 87.059998,
@@ -1403,7 +1386,7 @@
       "upkeep_supplied": 47.07,
       "upkeep_workers_needed": 119,
       "x": 1,
-      "y": 1
+      "y": 2
     }
   ],
   "influencers": [
@@ -1454,7 +1437,7 @@
       "support_institutional": 0.000159,
       "support_peer": 0.000088,
       "support_popular": 0.000021,
-      "supported": true,
+      "supported": false,
       "suppress_pressure": 0.000011,
       "suppressed": true,
       "ticks_in_status": 163,
@@ -1512,7 +1495,7 @@
       "support_popular": 0.00015,
       "supported": true,
       "suppress_pressure": 0.00008,
-      "suppressed": true,
+      "suppressed": false,
       "ticks_in_status": 28,
       "weight_humanitarian": 0.000105,
       "weight_institutional": 0.000113,
@@ -1591,21 +1574,21 @@
   "ladder_knowledge": [
     {
       "branch": "plant",
-      "display_name": "cultivation",
+      "display_name": "the knowledge of cultivation",
       "is_step": true,
       "knowledge_id": "cultivation",
       "order": 139
     },
     {
       "branch": "plant",
-      "display_name": "herding",
-      "is_step": true,
+      "display_name": "the knowledge of herding",
+      "is_step": false,
       "knowledge_id": "herding",
       "order": 148
     },
     {
       "branch": "plant",
-      "display_name": "roadbuilding",
+      "display_name": "the knowledge of roadbuilding",
       "is_step": true,
       "knowledge_id": "roadbuilding",
       "order": 65
@@ -1618,7 +1601,7 @@
         "materials[0].axes[1]"
       ],
       "craft": "materials[0].craft",
-      "hand_workable": true,
+      "hand_workable": false,
       "hand_working_quality_ceiling": 43.98,
       "hand_working_rate": 17.02,
       "id": "hide",
@@ -1642,7 +1625,7 @@
         "materials[2].axes[1]"
       ],
       "craft": "materials[2].craft",
-      "hand_workable": true,
+      "hand_workable": false,
       "hand_working_quality_ceiling": 41.970001,
       "hand_working_rate": 16.549999,
       "id": "bone",
@@ -1719,11 +1702,11 @@
         "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [66.360001, 87.410004, 45.709999, 11.71, 37.299999, 99.839996, 48.880001, 101.650002, 72.510002, 2.22, 31.68, 7.16]}
       },
       "hunt_danger": {
-        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0]},
         "description": "How costly the wildlife on this tile is to HUNT — attack × ferocity, the deadliest fighter standing here. A placid grazer reads low even if huge; an aurochs or mammoth reads high. Empty ground reads as none.",
         "label": "Hunt danger",
-        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
-        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [2999.576172, 0.0, 0.0, 0.0, 0.0, 1810.611572, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.603622, 0.0, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.0, 0.0, 0.0, 2999.576172, 0.0, 0.0, 0.0, 0.0, 1810.611572, 0.0, 0.0]}
       },
       "military": {
         "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.050279, 0.284916, 0.027933, 0.083799, 0.977654, 0.564246, 1.0, 0.307263, 0.675978, 1.0, 0.184358, 0.653631]},
@@ -1754,11 +1737,11 @@
         "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000112, 0.000195, 0.000114, 0.000109, 0.000132, 0.000103, 0.000142, 0.000017, 0.00008, 0.000059, 0.000037, 0.000058]}
       },
       "threat": {
-        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.885069, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.885069, 0.0, 0.0]},
         "description": "How much the wildlife on this tile menaces you UNPROVOKED — attack × aggression. A grazer (aggression 0) reads none however dangerous it is to hunt; a predator reads high. Empty ground reads as none.",
         "label": "Threat",
-        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.0, 0.0, 0.0, 0.0, 0.885069, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
-        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [2813.052246, 0.0, 0.0, 0.0, 0.0, 2489.744385, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
+        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.885069, 0.0, 0.0]},
+        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.0, 0.0, 0.0, 2813.052246, 0.0, 0.0, 0.0, 0.0, 2489.744385, 0.0, 0.0]}
       },
       "visibility": {
         "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.918519, 0.303704, 0.133333, 1.0, 0.118519, 0.155556, 0.696296, 0.2, 0.503704, 0.540741, 0.155556, 0.0]},
@@ -1852,7 +1835,7 @@
           "choices": [
             {
               "choice_id": "pending_forks[0].forks[0].choices[0].choice_id",
-              "is_defer": true,
+              "is_defer": false,
               "label": [
                 {
                   "register": "pending_forks[0].forks[0].choices[0].label[0].register",
@@ -1921,7 +1904,7 @@
             },
             {
               "choice_id": "pending_forks[0].forks[1].choices[1].choice_id",
-              "is_defer": true,
+              "is_defer": false,
               "label": [
                 {
                   "register": "pending_forks[0].forks[1].choices[1].label[0].register",
@@ -1981,7 +1964,7 @@
             },
             {
               "choice_id": "pending_forks[1].forks[0].choices[1].choice_id",
-              "is_defer": true,
+              "is_defer": false,
               "label": [
                 {
                   "register": "pending_forks[1].forks[0].choices[1].label[0].register",
@@ -2022,7 +2005,7 @@
           "choices": [
             {
               "choice_id": "pending_forks[1].forks[1].choices[0].choice_id",
-              "is_defer": true,
+              "is_defer": false,
               "label": [
                 {
                   "register": "pending_forks[1].forks[1].choices[0].label[0].register",
@@ -2097,7 +2080,7 @@
         "blocked_reason": "populations[0].bench.blocked_reason",
         "blocked_severity": "populations[0].bench.blocked_severity",
         "display_name": "populations[0].bench.display_name",
-        "drawn": true,
+        "drawn": false,
         "drawn_inputs": [
           {
             "amount": 43.32,
@@ -2149,7 +2132,7 @@
       "children": 97,
       "craft_offers": [
         {
-          "available": true,
+          "available": false,
           "display_name": "populations[0].craft_offers[0].display_name",
           "group": "populations[0].craft_offers[0].group",
           "on_bench": true,
@@ -2180,7 +2163,7 @@
           "available": true,
           "display_name": "populations[0].craft_offers[1].display_name",
           "group": "populations[0].craft_offers[1].group",
-          "on_bench": true,
+          "on_bench": false,
           "output_grade": "populations[0].craft_offers[1].output_grade",
           "output_item_id": "populations[0].craft_offers[1].output_item_id",
           "output_tier_name": "populations[0].craft_offers[1].output_tier_name",
@@ -2205,7 +2188,7 @@
           ]
         },
         {
-          "available": true,
+          "available": false,
           "display_name": "populations[0].craft_offers[2].display_name",
           "group": "populations[0].craft_offers[2].group",
           "on_bench": true,
@@ -2236,7 +2219,7 @@
           "available": true,
           "display_name": "populations[0].craft_offers[3].display_name",
           "group": "populations[0].craft_offers[3].group",
-          "on_bench": true,
+          "on_bench": false,
           "output_grade": "populations[0].craft_offers[3].output_grade",
           "output_item_id": "populations[0].craft_offers[3].output_item_id",
           "output_tier_name": "populations[0].craft_offers[3].output_tier_name",
@@ -2262,7 +2245,7 @@
         }
       ],
       "current_x": 0,
-      "current_y": 0,
+      "current_y": 1,
       "discontent_fraction": 0.00013,
       "elders": 199,
       "entity": 100,
@@ -2384,7 +2367,7 @@
       "hunt_reach": 171,
       "hunter_attack": 45.5,
       "idle_workers": 54,
-      "is_expedition": true,
+      "is_expedition": false,
       "is_traveling": true,
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
@@ -2609,7 +2592,7 @@
               "material_id": "populations[0].labor_assignments[1].material_yield[1].material_id"
             }
           ],
-          "overdraws": true,
+          "overdraws": false,
           "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
@@ -2875,19 +2858,6 @@
       "working_age": 87
     },
     {
-      "accessible_stockpile": {
-        "entries": [
-          {
-            "item": "populations[1].accessible_stockpile.entries[0].item",
-            "quantity": 81
-          },
-          {
-            "item": "populations[1].accessible_stockpile.entries[1].item",
-            "quantity": 184
-          }
-        ],
-        "radius": 102
-      },
       "activity": "populations[1].activity",
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
@@ -2950,7 +2920,7 @@
           "available": true,
           "display_name": "populations[1].craft_offers[0].display_name",
           "group": "populations[1].craft_offers[0].group",
-          "on_bench": true,
+          "on_bench": false,
           "output_grade": "populations[1].craft_offers[0].output_grade",
           "output_item_id": "populations[1].craft_offers[0].output_item_id",
           "output_tier_name": "populations[1].craft_offers[0].output_tier_name",
@@ -2975,7 +2945,7 @@
           ]
         },
         {
-          "available": true,
+          "available": false,
           "display_name": "populations[1].craft_offers[1].display_name",
           "group": "populations[1].craft_offers[1].group",
           "on_bench": true,
@@ -3006,7 +2976,7 @@
           "available": true,
           "display_name": "populations[1].craft_offers[2].display_name",
           "group": "populations[1].craft_offers[2].group",
-          "on_bench": true,
+          "on_bench": false,
           "output_grade": "populations[1].craft_offers[2].output_grade",
           "output_item_id": "populations[1].craft_offers[2].output_item_id",
           "output_tier_name": "populations[1].craft_offers[2].output_tier_name",
@@ -3031,7 +3001,7 @@
           ]
         },
         {
-          "available": true,
+          "available": false,
           "display_name": "populations[1].craft_offers[3].display_name",
           "group": "populations[1].craft_offers[3].group",
           "on_bench": true,
@@ -3060,7 +3030,7 @@
         }
       ],
       "current_x": 1,
-      "current_y": 1,
+      "current_y": 2,
       "discontent_fraction": 0.000061,
       "elders": 58,
       "entity": 101,
@@ -3132,7 +3102,7 @@
       "expedition_per_worker_carry": 96.309998,
       "expedition_phase": "populations[1].expedition_phase",
       "expedition_projected_delivery": 110.099998,
-      "expedition_recurring": true,
+      "expedition_recurring": false,
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
       "expedition_trade_fodder_carry_weight": 12.16,
@@ -3183,7 +3153,7 @@
       "hunter_attack": 43.43,
       "idle_workers": 151,
       "is_expedition": true,
-      "is_traveling": true,
+      "is_traveling": false,
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -3350,7 +3320,7 @@
               "material_id": "populations[1].labor_assignments[0].material_yield[1].material_id"
             }
           ],
-          "overdraws": true,
+          "overdraws": false,
           "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
@@ -3464,7 +3434,7 @@
               "material_id": "populations[1].labor_assignments[2].material_yield[1].material_id"
             }
           ],
-          "overdraws": true,
+          "overdraws": false,
           "priority": "low",
           "realized_yield": 33.75,
           "species": "populations[1].labor_assignments[2].species",
@@ -3482,52 +3452,6 @@
       ],
       "last_emigrated": 24,
       "last_immigrated": 49,
-      "loadout_window": {
-        "kit_budget": 42,
-        "kits": [
-          {
-            "count": 128,
-            "kit_id": "populations[1].loadout_window.kits[0].kit_id"
-          },
-          {
-            "count": 63,
-            "kit_id": "populations[1].loadout_window.kits[1].kit_id"
-          }
-        ],
-        "material_budget": 129,
-        "materials": [
-          {
-            "material_id": "populations[1].loadout_window.materials[0].material_id",
-            "units": 97
-          },
-          {
-            "material_id": "populations[1].loadout_window.materials[1].material_id",
-            "units": 6
-          }
-        ],
-        "open": true,
-        "parent_band_id": 76,
-        "parent_item_supply": [
-          {
-            "id": "spears",
-            "units": 93
-          },
-          {
-            "id": "sled",
-            "units": 26
-          }
-        ],
-        "parent_material_supply": [
-          {
-            "id": "hide",
-            "units": 115
-          },
-          {
-            "id": "fibre",
-            "units": 152
-          }
-        ]
-      },
       "material_batches": [
         {
           "amount": 34.43,
@@ -3611,24 +3535,6 @@
           "material_id": "populations[1].material_upkeep_need[1].material_id"
         }
       ],
-      "migration": {
-        "destination": 119,
-        "eta": 55,
-        "fragments": [
-          {
-            "discovery": 186,
-            "fidelity": 0.000142,
-            "progress": 0.000005,
-            "progress_raw": 5
-          },
-          {
-            "discovery": 103,
-            "fidelity": 0.000027,
-            "progress": 0.000176,
-            "progress_raw": 176
-          }
-        ]
-      },
       "morale": 0.000167,
       "morale_cause": 171,
       "morale_climate": 0.000195,
@@ -3891,7 +3797,7 @@
       "display_name": "route_rungs[1].display_name",
       "earns_knowledge": "route_rungs[1].earns_knowledge",
       "friction_multiplier": 107.57,
-      "grants_sight": true,
+      "grants_sight": false,
       "holds_link_to_tiles": 5,
       "order": 4,
       "requires_rung": "route_rungs[1].requires_rung",
@@ -3910,9 +3816,9 @@
       "build_material_supplied": 106.889999,
       "build_turns_remaining": 170,
       "friction_multiplier": 83.839996,
-      "grants_sight": true,
+      "grants_sight": false,
       "has_keeper": true,
-      "has_neglect_grace": true,
+      "has_neglect_grace": false,
       "holds_link_to_tiles": 83,
       "keeper_band_id": 96,
       "keeper_remoteness": 49.759998,
@@ -3935,7 +3841,7 @@
       "build_turns_remaining": 177,
       "friction_multiplier": 84.18,
       "grants_sight": true,
-      "has_keeper": true,
+      "has_keeper": false,
       "has_neglect_grace": true,
       "holds_link_to_tiles": 76,
       "keeper_band_id": 1,
@@ -4322,7 +4228,7 @@
   "victory": {
     "modes": [
       {
-        "achieved": true,
+        "achieved": false,
         "id": "victory.modes[0].id",
         "kind": "victory.modes[0].kind",
         "kind_label": "Victory Modes[0] Kind",

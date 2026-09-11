@@ -15,11 +15,14 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::measures::{
-    Measures, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX, M_FOOD_STOCK,
-    M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX, M_POPULATION_CHILDREN,
-    M_POPULATION_ELDERS, M_POPULATION_WORKING, M_RECONNECTS, M_STANCE_SWITCHES, M_TURNS_LOST,
-    M_VICTORY_PREFIX,
+    Measures, LIVE, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX, M_FOOD_STOCK,
+    M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX, M_LIVENESS,
+    M_POPULATION_CHILDREN, M_POPULATION_ELDERS, M_POPULATION_WORKING, M_RECONNECTS,
+    M_SPECIALIST_PREFIX, M_STANCE_SWITCHES, M_TURNS_LOST, M_VICTORY_PREFIX, NOT_LIVE,
 };
+use super::SeatSpec;
+use crate::specialists::{DISABLEABLE_SPECIALISTS, SPECIALIST_SCRIPTED};
+use crate::BrainKind;
 
 /// The report file, under `--out`.
 pub const REPORT_FILE: &str = "report.json";
@@ -43,6 +46,30 @@ pub const RATCHETED_MEASURES: [&str; 7] = [
 pub const M_INTENT_DISTANCE_L1: &str = "intent_distance_l1";
 /// The seat specs of a baseline entry are joined by this into the entry's key.
 const BASELINE_KEY_SEPARATOR: &str = " ";
+
+/// ⛔ **A DEAD SEAT IS NOT A QUALITY BAR.** The working-age population a seat has left when it no
+/// longer exists — the number every outcome measure of a dead row collapses to.
+///
+/// A baseline row recorded at this value cannot be ratcheted: `hunger_deaths_total` is
+/// lower-is-better, so a later change that *keeps the band alive* raises it above a dead row's
+/// zero and fails the check — the ratchet would fail the fix. And zero working population as a
+/// higher-is-better floor can never detect a regression, because nothing is below it. So such a
+/// row is marked [`Baselines::degenerate`] and its outcome measures do not gate; what gates is the
+/// precondition below.
+const NO_WORKING_POPULATION: f64 = 0.0;
+/// **The liveness precondition's pseudo-measures.** Neither is read off a run: they name a
+/// violation that is about whether the seat and its specialists *exist* at all, rather than about
+/// one of their numbers.
+///
+/// - [`M_SEAT_ALIVE`]: a baseline row that was alive whose run has no working population left.
+/// - [`M_DEGENERATE_MARKER`]: the file's `degenerate` list disagrees with the row it names — a
+///   dead row nobody marked (a zero that reads as a target), or a mark left on a row that lives.
+pub const M_SEAT_ALIVE: &str = "seat_alive";
+pub const M_DEGENERATE_MARKER: &str = "degenerate_marker";
+/// The note [`Report::as_baselines`] writes on a row it marks degenerate.
+const DEGENERATE_NOTE: &str =
+    "the seat had no working population left when this baseline was recorded: its outcome \
+     measures are what a dead seat reads, not a bar to hold a later run to";
 /// The tolerance a regenerated baseline carries: none, because the replay is exact.
 pub const BASELINE_TOLERANCE: f64 = 0.0;
 
@@ -115,6 +142,21 @@ pub struct Baselines {
     pub measures: RunMeasures,
     /// Measure name → absolute tolerance. Only measures named here are checked.
     pub tolerance: BTreeMap<String, f64>,
+    /// **The rows whose recorded outcome is a dead seat** — see [`NO_WORKING_POPULATION`]. The
+    /// ratchet reads this list: a row named here has its outcome measures left ungated, and a row
+    /// whose deadness and marking disagree is itself a violation ([`M_DEGENERATE_MARKER`]), so a
+    /// zero in this file can never quietly read as a target. Written by
+    /// [`Report::as_baselines`], not by hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degenerate: Vec<DegenerateSeat>,
+}
+
+/// One row of [`Baselines::degenerate`]: the seat, and why its numbers are not a bar.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DegenerateSeat {
+    pub seed: String,
+    pub seat: String,
+    pub note: String,
 }
 
 /// `baselines.json`: one entry per seat set, keyed by the specs joined with a space.
@@ -215,20 +257,58 @@ impl Report {
     }
 
     /// Hold this run against the file's entry for its seat set: every violation, or none.
+    ///
+    /// ⛔ **LIVENESS IS A PRECONDITION, NOT A MEASURE.** Before any tolerance is consulted, three
+    /// rules decide whether the row's numbers mean anything at all:
+    ///
+    /// 1. The file's `degenerate` list must agree with the row it names — a dead row nobody marked
+    ///    is a zero pretending to be a target, and a mark on a living row silently disables the
+    ///    gate. Either way, [`M_DEGENERATE_MARKER`].
+    /// 2. A row recorded dead ([`NO_WORKING_POPULATION`]) **gates nothing**: it is not comparable
+    ///    in either direction, and ratcheting it fails the very change that would fix it.
+    /// 3. A row recorded alive whose run has no working population left is [`M_SEAT_ALIVE`] —
+    ///    asserted in its own right, so it fails even if `population_working` ever leaves the
+    ///    ratcheted set.
+    ///
+    /// Then the tolerances, and then the specialists the seat's brain is supposed to be running:
+    /// one that proposed nothing across the whole run reads as an absent key, and an absent key is
+    /// a failure here rather than a silence ([`Report::specialist_liveness_violations`]).
     pub fn check(&self, file: &BaselinesFile) -> Result<Vec<Violation>, RatchetError> {
         let baselines = file.find(&self.seeds, self.turns, &self.seats)?;
         let mut violations = Vec::new();
         for (seed, seats) in &baselines.measures {
             for (seat, measures) in seats {
+                let actual_seat = self.measures.get(seed).and_then(|seats| seats.get(seat));
+                let baseline_alive = seat_is_alive(measures);
+                let marked = baselines.is_marked_degenerate(seed, seat);
+                if marked == baseline_alive {
+                    violations.push(Violation {
+                        seed: seed.clone(),
+                        seat: seat.clone(),
+                        measure: M_DEGENERATE_MARKER.to_owned(),
+                        baseline: flag(!baseline_alive),
+                        tolerance: BASELINE_TOLERANCE,
+                        actual: flag(marked),
+                    });
+                }
+                if !baseline_alive {
+                    continue;
+                }
+                if actual_seat.is_some_and(|measures| !seat_is_alive(measures)) {
+                    violations.push(Violation {
+                        seed: seed.clone(),
+                        seat: seat.clone(),
+                        measure: M_SEAT_ALIVE.to_owned(),
+                        baseline: flag(true),
+                        tolerance: BASELINE_TOLERANCE,
+                        actual: flag(false),
+                    });
+                }
                 for (measure, tolerance) in &baselines.tolerance {
                     let Some(Some(baseline)) = measures.get(measure) else {
                         continue;
                     };
-                    let Some(Some(actual)) = self
-                        .measures
-                        .get(seed)
-                        .and_then(|seats| seats.get(seat))
-                        .and_then(|measures| measures.get(measure))
+                    let Some(Some(actual)) = actual_seat.and_then(|measures| measures.get(measure))
                     else {
                         continue;
                     };
@@ -248,13 +328,66 @@ impl Report {
                         });
                     }
                 }
+                violations.extend(self.specialist_liveness_violations(seed, seat, actual_seat));
             }
         }
         Ok(violations)
     }
 
-    /// The baseline file this run would be: the ratcheted measures at [`BASELINE_TOLERANCE`].
+    /// **A specialist that proposes nothing is a failure, not an absent key.** For every
+    /// specialist this seat's brain is supposed to be running (its roster minus the `~` ablations),
+    /// `specialist.<name>.liveness` must read [`LIVE`]: an absent key — the shape a specialist that
+    /// made **zero** proposals across the whole run takes, because the measures are built from the
+    /// names the decision log actually carries — reads as [`NOT_LIVE`] and fails here.
+    ///
+    /// This is held against the run alone, not against the baseline: a baseline that recorded a
+    /// dead specialist is not a licence to keep it dead.
+    fn specialist_liveness_violations(
+        &self,
+        seed: &str,
+        seat: &str,
+        actual: Option<&Measures>,
+    ) -> Vec<Violation> {
+        let Some(actual) = actual else {
+            return Vec::new();
+        };
+        let Some(spec) = spec_of_seat(&self.seats, seat) else {
+            return Vec::new();
+        };
+        expected_specialists(spec)
+            .into_iter()
+            .filter_map(|name| {
+                let measure = format!("{M_SPECIALIST_PREFIX}{name}.{M_LIVENESS}");
+                let value = actual.get(&measure).copied().flatten().unwrap_or(NOT_LIVE);
+                (value < LIVE).then(|| Violation {
+                    seed: seed.to_owned(),
+                    seat: seat.to_owned(),
+                    measure,
+                    baseline: LIVE,
+                    tolerance: BASELINE_TOLERANCE,
+                    actual: value,
+                })
+            })
+            .collect()
+    }
+
+    /// The baseline file this run would be: the ratcheted measures at [`BASELINE_TOLERANCE`], and
+    /// every dead seat marked degenerate so the file says out loud which zeros are not targets.
     pub fn as_baselines(&self) -> Baselines {
+        let degenerate = self
+            .measures
+            .iter()
+            .flat_map(|(seed, seats)| {
+                seats
+                    .iter()
+                    .filter(|(_, measures)| !seat_is_alive(measures))
+                    .map(|(seat, _)| DegenerateSeat {
+                        seed: seed.clone(),
+                        seat: seat.clone(),
+                        note: DEGENERATE_NOTE.to_owned(),
+                    })
+            })
+            .collect();
         Baselines {
             seeds: self.seeds.clone(),
             turns: self.turns,
@@ -264,6 +397,7 @@ impl Report {
                 .iter()
                 .map(|measure| ((*measure).to_owned(), BASELINE_TOLERANCE))
                 .collect(),
+            degenerate,
         }
     }
 
@@ -349,6 +483,13 @@ impl Baselines {
     pub fn key(&self) -> String {
         self.seats.join(BASELINE_KEY_SEPARATOR)
     }
+
+    /// Whether this row is on the [`Baselines::degenerate`] list.
+    fn is_marked_degenerate(&self, seed: &str, seat: &str) -> bool {
+        self.degenerate
+            .iter()
+            .any(|row| row.seed == seed && row.seat == seat)
+    }
 }
 
 impl BaselinesFile {
@@ -404,6 +545,50 @@ impl BaselinesFile {
             path: path.display().to_string(),
             source,
         })
+    }
+}
+
+/// Whether a seat still has working-age people — see [`NO_WORKING_POPULATION`]. A run that did
+/// not measure the row at all is not evidence of death, so it reads as alive.
+fn seat_is_alive(measures: &Measures) -> bool {
+    !matches!(
+        measures.get(M_POPULATION_WORKING),
+        Some(Some(working)) if *working <= NO_WORKING_POPULATION
+    )
+}
+
+/// A yes-or-no as a [`Violation`]'s numbers, for the two pseudo-measures whose subject is one.
+fn flag(yes: bool) -> f64 {
+    if yes {
+        LIVE
+    } else {
+        NOT_LIVE
+    }
+}
+
+/// The spec of the seat whose measures are filed under `seat` (its faction).
+fn spec_of_seat<'a>(seats: &'a [String], seat: &str) -> Option<&'a str> {
+    seats
+        .iter()
+        .map(String::as_str)
+        .find(|spec| spec.split_once('=').map_or(*spec, |(faction, _)| faction) == seat)
+}
+
+/// The specialists a seat spec's brain is supposed to be running: `Pass` proposes nothing by
+/// construction, `Scripted` runs the one fixture specialist, and `Utility` runs its whole roster
+/// minus the `~` ablations. A spec that does not parse names none rather than inventing one.
+fn expected_specialists(spec: &str) -> Vec<String> {
+    let Ok(spec) = spec.parse::<SeatSpec>() else {
+        return Vec::new();
+    };
+    match spec.brain {
+        BrainKind::Pass => Vec::new(),
+        BrainKind::Scripted => vec![SPECIALIST_SCRIPTED.to_owned()],
+        BrainKind::Utility => DISABLEABLE_SPECIALISTS
+            .iter()
+            .filter(|id| !spec.disabled.iter().any(|off| off == *id))
+            .map(|id| (*id).to_owned())
+            .collect(),
     }
 }
 
@@ -483,8 +668,14 @@ mod tests {
 
     const SEED: &str = "7";
     const SEAT: &str = "1";
+    const PASS_SEAT_SPEC: &str = "1=pass";
+    const UTILITY_SEAT_SPEC: &str = "1=utility:forager";
 
     fn report_with(measures: &[(&str, Option<f64>)]) -> Report {
+        report_of(PASS_SEAT_SPEC, measures)
+    }
+
+    fn report_of(seat_spec: &str, measures: &[(&str, Option<f64>)]) -> Report {
         let measures: Measures = measures
             .iter()
             .map(|(name, value)| ((*name).to_owned(), *value))
@@ -492,7 +683,7 @@ mod tests {
         Report {
             seeds: vec![7],
             turns: 6,
-            seats: vec!["1=pass".to_owned()],
+            seats: vec![seat_spec.to_owned()],
             wall_seconds: BTreeMap::new(),
             measures: BTreeMap::from([(
                 SEED.to_owned(),
@@ -627,6 +818,13 @@ mod tests {
                 for seat in &seats {
                     let (faction, brain) = seat.split_once('=').unwrap();
                     let measures = &by_seat[faction];
+                    // Every dead row says so out loud, and no living row claims to be dead: the
+                    // check reads this list to decide what gates, so a stale one is a silent gap.
+                    assert_eq!(
+                        baselines.is_marked_degenerate(&seed.to_string(), faction),
+                        !seat_is_alive(measures),
+                        "seed {seed} seat {faction}: the degenerate marker disagrees with the row"
+                    );
                     for measure in RATCHETED_MEASURES {
                         // The orchestrator row is null on a seat with no orchestrator.
                         let pass_seat = brain == "pass" && measure == M_STANCE_SWITCHES;
@@ -638,6 +836,111 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// ⛔ **THE RATCHET MUST NOT FAIL THE FIX.** A baseline row recorded on a seat that died
+    /// carries `hunger_deaths_total 0` — and that measure is lower-is-better, so a later change
+    /// that keeps the band **alive** raises it and fails the check. A dead row gates nothing; what
+    /// it must do is say so, on the file's `degenerate` list.
+    #[test]
+    fn a_dead_baseline_row_gates_nothing_but_must_say_that_it_is_dead() {
+        let dead = &[
+            (M_POPULATION_WORKING, Some(NO_WORKING_POPULATION)),
+            (M_HUNGER_DEATHS_TOTAL, Some(0.0)),
+        ];
+        let mut file = baselines_with(dead, BASELINE_TOLERANCE);
+        assert_eq!(
+            entry(&mut file).degenerate.len(),
+            1,
+            "a regenerated baseline marks its own dead rows"
+        );
+
+        // The fix: the band lives, so it eats and some of it starves on the way.
+        let fixed = report_with(&[
+            (M_POPULATION_WORKING, Some(12.0)),
+            (M_HUNGER_DEATHS_TOTAL, Some(4.0)),
+        ]);
+        assert!(
+            fixed.check(&file).unwrap().is_empty(),
+            "a dead baseline row must not gate the change that revives it"
+        );
+
+        // …and an unmarked dead row is a violation in its own right: a zero that reads as a target.
+        entry(&mut file).degenerate.clear();
+        let violations = fixed.check(&file).unwrap();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].measure, M_DEGENERATE_MARKER);
+
+        // A mark on a row that lives is the same defect the other way up.
+        let mut live = baselines_with(&[(M_POPULATION_WORKING, Some(12.0))], BASELINE_TOLERANCE);
+        entry(&mut live).degenerate.push(DegenerateSeat {
+            seed: SEED.to_owned(),
+            seat: SEAT.to_owned(),
+            note: DEGENERATE_NOTE.to_owned(),
+        });
+        assert!(fixed
+            .check(&live)
+            .unwrap()
+            .iter()
+            .any(|violation| violation.measure == M_DEGENERATE_MARKER));
+    }
+
+    /// The other half of the precondition: a **live** baseline whose seat is gone fails, in its own
+    /// right, so it would fail even if `population_working` left the ratcheted set.
+    #[test]
+    fn a_live_baseline_whose_seat_dies_is_a_violation() {
+        let file = baselines_with(&[(M_POPULATION_WORKING, Some(20.0))], BASELINE_TOLERANCE);
+        let died = report_with(&[(M_POPULATION_WORKING, Some(NO_WORKING_POPULATION))]);
+        let violations = died.check(&file).unwrap();
+        assert!(violations
+            .iter()
+            .any(|violation| violation.measure == M_SEAT_ALIVE));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.measure == M_POPULATION_WORKING),
+            "and the ordinary drop is still reported"
+        );
+    }
+
+    /// ⛔ **A SPECIALIST THAT PROPOSED NOTHING IS A FAILURE, NOT AN ABSENT KEY.** `Land` making
+    /// zero proposals across a whole run leaves no `specialist.land.*` measures at all, which is
+    /// exactly the silence the liveness measure exists to catch.
+    #[test]
+    fn a_specialist_that_proposed_nothing_fails_the_check() {
+        let live = |name: &str| format!("{M_SPECIALIST_PREFIX}{name}.{M_LIVENESS}");
+        let file = baselines_with(&[(M_POPULATION_WORKING, Some(12.0))], BASELINE_TOLERANCE);
+        let mut baselines = file;
+        // The baseline was recorded on a Pass seat; the run under test is the utility forager.
+        entry(&mut baselines).seats = vec![UTILITY_SEAT_SPEC.to_owned()];
+
+        let inert = report_of(
+            UTILITY_SEAT_SPEC,
+            &[
+                (M_POPULATION_WORKING, Some(12.0)),
+                (&live("food"), Some(NOT_LIVE)),
+            ],
+        );
+        let violations = inert.check(&baselines).unwrap();
+        let named: Vec<&str> = violations
+            .iter()
+            .map(|violation| violation.measure.as_str())
+            .collect();
+        assert!(named.contains(&live("food").as_str()), "zero reads as dead");
+        assert!(
+            named.contains(&live("land").as_str()),
+            "an absent key reads as dead too: {named:?}"
+        );
+
+        let alive = report_of(
+            UTILITY_SEAT_SPEC,
+            &[
+                (M_POPULATION_WORKING, Some(12.0)),
+                (&live("food"), Some(LIVE)),
+                (&live("land"), Some(LIVE)),
+            ],
+        );
+        assert!(alive.check(&baselines).unwrap().is_empty());
     }
 
     #[test]

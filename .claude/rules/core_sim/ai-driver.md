@@ -47,8 +47,12 @@ the harness, `measures.rs` the logs → measures, `ratchet.rs` report · compare
 (`factions.md` → Seats); every command goes on it. A dropped command link is rebuilt after
 `RECONNECT_BACKOFF`, re-claimed (a fresh token), and the stream is closed and re-greeted with the new
 token — a stale token is a stream that is silently sent nothing. A dropped *stream* alone is reopened
-with the token the seat still holds. Reader threads are stamped with a connection generation, so a
-stale thread's last words are ignored after either.
+with the token the seat still holds. **The two sockets carry separate generations** — `generation`
+for the command link, `stream_generation` for the stream — and a reader thread is stamped with its
+own, so a stale thread's last words are ignored. `reconnect` bumps both and spawns a new reply
+reader; `reopen_stream` bumps only the stream's and spawns **none**, because the command socket is
+still live and a second `read_exact` on it would split a reply frame between two readers. Exactly one
+reply reader exists per command socket, for that socket's life.
 
 **Claim refusals.** `seat_occupied` is retried `SEAT_CLAIM_ATTEMPTS` (8) times, `SEAT_CLAIM_RETRY_BACKOFF`
 (250 ms) apart — a reconnect races the server's read loop freeing the old socket's seat.
@@ -71,6 +75,17 @@ and it has no `Display`.
 `world_epoch`, `frame_seq`, `tick`; never the token); a delta goes through
 `WorldSnapshot::apply_delta`, and an `ApplyDeltaError` — or a delta before any full frame — marks the
 chain broken: the loop sends `Resync` and every delta is dropped until a full frame lands.
+
+⛔ **`last_acted_tick` does not survive a world rebuild** (`carried_acted_tick`). The turn loop skips
+a tick it has already acted on (`tick <= acted`), so a tick carried across a rebuild silences the
+seat: a New Game or Load from the client's menu leaves the child running and its claim intact
+(`retain_claimed_seats` keeps a faction still in the roster), and the AI resyncs at the new world's
+tick 0. Every turn up to the old world's last-acted tick would then skip both `decide` **and** the
+`Orders{Ready}` send — an occupied, silent seat, so each of those turns burns the full
+`seat_turn_timeout_seconds` (120 s) before the server auto-submits, and `turns_observed` stops
+climbing so `--turns n` never ends. The tick is therefore carried only while the frame's
+`world_epoch` matches **and** its tick is ≥ the one held; anything else clears it. A mid-turn
+recapture at the same epoch keeps it.
 
 ## The turn loop (`main.rs`)
 
@@ -274,10 +289,10 @@ command the *sim* refused; the seat gate's refusals are `command.rejected` log l
 reach the feed).
 
 ⛔ **A `died` event's tick is one behind the frame that first carries it** (`EVENT_TICK_LAG` = 1).
-The population systems run on tick T, then `advance_tick`, then `capture_snapshot` — all inside
-`TurnStage::Snapshot` in that order (`core_sim/src/lib.rs`) — so the row at frame T counts the
-`died` rows stamped T − 1: the turn that produced the frame. Counting at T reads every death as
-zero. The cause vocabulary (`hunger` / `cold` / `heat` / `age`) and the
+The population systems run on tick T in `TurnStage::Population`, then `advance_tick` and
+`capture_snapshot` run in `TurnStage::Snapshot` (`core_sim/src/lib.rs`), in that order — so the row
+at frame T counts the `died` rows stamped T − 1: the turn that produced the frame. Counting at T
+reads every death as zero. The cause vocabulary (`hunger` / `cold` / `heat` / `age`) and the
 `kind` token `died` are restated from `DeathCause::as_str` and `CommandEventKind::as_str`; the
 `count=` token is what is summed, so one row burying three people counts three.
 
@@ -349,6 +364,25 @@ tolerance `BASELINE_TOLERANCE` = 0 on the `RATCHETED_MEASURES` — `population_c
 `population_working`, `population_elders`, `food_stock`, `hunger_deaths_total`,
 `commands_failed_total`, `orchestrator.stance_switches_per_100_turns`.
 
+⛔ **A dead seat is not a bar, and `--check` says so before it compares anything.** A run that
+starves to `population_working` 0 records `hunger_deaths_total` 0 and `food_stock` 0 as well — and
+under lower-is-better at tolerance 0 those zeros would fail *the fix*: reviving the band produces
+deaths where the baseline holds none. So the file carries a first-class `degenerate: [{seed, seat,
+note}]` list, `--write-baselines` marks every row it writes whose `population_working` is
+`NO_WORKING_POPULATION`, and `--check` runs a liveness precondition first:
+
+- the list and the rows must agree — a dead row nobody marked, or a marked row that is alive, is a
+  `degenerate_marker` violation, so the file cannot quietly drift into blessing a corpse;
+- a row recorded dead **gates nothing** — its outcome measures are not comparable;
+- a row recorded *alive* whose run has no working population is a `seat_alive` violation in its own
+  right, which is what still catches a regression into death.
+
+**A specialist that proposes nothing is a violation, not a silence.** `specialist.<name>.liveness`
+must read 1.0 for the roster the seat spec implies (`utility` → `DISABLEABLE_SPECIALISTS` minus its
+`~` ablations, `scripted` → `scripted`, `pass` → none); an **absent** key — the shape a specialist
+that never proposed leaves behind — is a violation, held against the run alone rather than the
+baseline. Without this an inert specialist reads as a passing check.
+
 **`sim_ai/bench/baselines.json`** holds two entries on seeds `11, 23` for 30 turns
 (`BASELINE_SEEDS` / `BASELINE_TURNS` / `BASELINE_SEAT_SETS`; a unit test holds the file to them):
 the all-Pass control `1=pass 2=pass` — a Pass seat assigns nobody, so it starves: 22 hunger deaths
@@ -394,22 +428,31 @@ Both drive the built `server` and the built `sim_ai` over the real sockets and s
 `sim_ai_binary` (the sibling, or the private fallback build into `target/ai_process_fallback`),
 `strip_ansi`, `log_tail`.
 
-`ai_bench.rs` runs the built bench on seed 11 for 6 turns: all-Pass twice, asserting every measure
-identical and every `--compare` delta zero or null; then `1=scripted 2=pass` with the scenario's
-split script, asserting `specialist.scripted.accepted > 0` and that at least one scoreboard measure
-of seat 1 differs from the same seat's under Pass — "acts instead of passing" as a number; then
-`1=utility:forager 2=pass`, asserting `specialist.food.accepted > 0`, `specialist.food.liveness`
-1.0, `commands_failed_total` 0, and no `command.rejected` / `command.split.rejected` line in the
-server log — a proposal the server refuses is a bug in the specialist's command construction, and
-this is where it shows. Seconds, not minutes; the 30-turn baselines are not generated by a test.
+`ai_bench.rs` runs the built bench on seed 11: all-Pass twice over `TURNS` (6), asserting every
+measure identical and every `--compare` delta zero or null; then `1=scripted 2=pass` with the
+scenario's split script, asserting `specialist.scripted.accepted > 0` and that at least one
+scoreboard measure of seat 1 differs from the same seat's under Pass — "acts instead of passing" as
+a number; then `1=utility:forager 2=pass`, asserting `specialist.food.accepted > 0`,
+`specialist.food.liveness` 1.0, `commands_failed_total` 0, and no `command.rejected` /
+`command.split.rejected` line in the server log — a proposal the server refuses is a bug in the
+specialist's command construction, and this is where it shows.
 
-A built `server` and a built `sim_ai --brain scripted --faction 1 --turns 3`, over the real sockets.
-The script's one order is `split_band {faction} {own_band:0} 4` — the `settle.min_founding_workers`
-floor, legal for a 30-person starting band with `parent_min_workers 6` to spare — so the rival's
-resident band count moves by one. Frames are viewer-scoped and fogged, so the rival's world is read
-through **seat 1** both times: before, on a connection released before the AI starts, and after, once
-the AI has exited and released it. The test also asserts the tick advanced by at least three,
+⛔ **The utility leg runs `UTILITY_TURNS`, not `TURNS`, and the test proves its own span first.**
+`liveness` cuts windows of `LIVENESS_WINDOW_TURNS` (10, restated here from `measures.rs`), so over a
+6-tick span there is exactly **one** window and `liveness == 1.0` is arithmetically the same claim as
+`accepted > 0` — which the line above it already makes. `UTILITY_TURNS` is `LIVENESS_WINDOW_TURNS +
+2`, and the test asserts `link.turns_observed > LIVENESS_WINDOW_TURNS` *before* it asserts liveness,
+so the assertion cannot silently decay back into a restatement. Seconds, not minutes; the 30-turn
+baselines are not generated by a test.
+
+`ai_seat_scenario.rs` is a built `server` and a built `sim_ai --brain scripted --faction 1 --turns
+3`, over the real sockets. The script's one order is `split_band {faction} {own_band:0} 4` — the
+`settle.min_founding_workers` floor, legal for a 30-person starting band with `parent_min_workers 6`
+to spare — so the rival's resident band count moves by one. Frames are viewer-scoped and fogged, so
+the rival's world is read through **seat 1** both times: before, on a connection released before the
+AI starts, and after, once the AI has exited and released it. The test also asserts the tick
+advanced by at least three,
 `seat.claimed … faction=1` is in the server log, and no `command.rejected` is. The `sim_ai` binary is
 the server binary's sibling; if a narrower `cargo test` invocation left it unbuilt, the test builds
-it into a private target directory (`target/ai_seat_scenario`), because the outer `cargo test` holds
-the shared target directory's lock for the whole run.
+it into a private target directory (`FALLBACK_TARGET_DIR` = `ai_process_fallback`, as above),
+because the outer `cargo test` holds the shared target directory's lock for the whole run.

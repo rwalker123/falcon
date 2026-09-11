@@ -171,8 +171,17 @@ pub struct Link {
     token: SeatToken,
     inbound: Receiver<Inbound>,
     sender: Sender<Inbound>,
-    /// Bumped on every command reconnect; reader threads carry the value they were spawned with.
+    /// Bumped on every **command** reconnect; the reply reader carries the value it was spawned
+    /// with, so a thread from before a reconnect is ignored.
     generation: u64,
+    /// Bumped on every **stream** reopen — and on a reconnect, which opens a new stream too.
+    ///
+    /// ⛔ **The two generations are separate because there is exactly one reply reader per command
+    /// socket, for its lifetime.** Reopening the stream leaves the command socket untouched, so it
+    /// must not respawn that reader: two `read_exact` calls on one socket split a reply frame
+    /// between them — one takes the 4-byte length prefix, the other the payload — and each reopen
+    /// would leak another blocked thread and fd clone.
+    stream_generation: u64,
     next_request_id: u64,
 }
 
@@ -190,7 +199,8 @@ impl Link {
             &inbound,
             &mut next_request_id,
         )?;
-        let stream = open_stream(endpoints, token, generation, &sender)?;
+        let stream_generation = generation;
+        let stream = open_stream(endpoints, token, stream_generation, &sender)?;
         info!(faction, "seat claimed and stream greeted");
         Ok(Self {
             endpoints,
@@ -201,6 +211,7 @@ impl Link {
             inbound,
             sender,
             generation,
+            stream_generation,
             next_request_id,
         })
     }
@@ -225,14 +236,16 @@ impl Link {
                 Inbound::CommandDropped { generation, detail } if generation == self.generation => {
                     LinkEvent::CommandDropped(detail)
                 }
-                Inbound::Frame { generation, bytes } if generation == self.generation => {
+                Inbound::Frame { generation, bytes } if generation == self.stream_generation => {
                     LinkEvent::Frame(bytes)
                 }
-                Inbound::StreamDropped { generation, detail } if generation == self.generation => {
+                Inbound::StreamDropped { generation, detail }
+                    if generation == self.stream_generation =>
+                {
                     LinkEvent::StreamDropped(detail)
                 }
-                // A thread from before a reconnect: whatever it read belongs to a socket that no
-                // longer holds the seat.
+                // A thread from before a reconnect or a stream reopen: whatever it read belongs to
+                // a socket that no longer holds the seat.
                 _ => continue,
             };
             return Some(event);
@@ -279,8 +292,14 @@ impl Link {
         self.token = token;
         // The old stream's token names nothing now; close it so its reader sees EOF, and open a
         // fresh one greeting with the token this claim minted.
+        self.stream_generation += 1;
         let _ = self.stream.shutdown(Shutdown::Both);
-        self.stream = open_stream(self.endpoints, self.token, self.generation, &self.sender)?;
+        self.stream = open_stream(
+            self.endpoints,
+            self.token,
+            self.stream_generation,
+            &self.sender,
+        )?;
         info!(
             faction = self.faction,
             "seat re-claimed and stream re-greeted"
@@ -289,15 +308,21 @@ impl Link {
     }
 
     /// The stream socket died on its own: reopen it with the token the seat still holds.
+    ///
+    /// Only the **stream** generation moves. The command socket is untouched and its one reply
+    /// reader keeps reading it under the generation it was spawned with — see the
+    /// `stream_generation` field.
     pub fn reopen_stream(&mut self) -> Result<(), LinkError> {
         warn!(faction = self.faction, "stream dropped; reopening");
         thread::sleep(RECONNECT_BACKOFF);
-        self.generation += 1;
+        self.stream_generation += 1;
         let _ = self.stream.shutdown(Shutdown::Both);
-        // The command reader carries the old generation; respawn it on a fresh clone so its
-        // replies keep flowing under the new one.
-        spawn_reply_reader(&self.command, self.generation, &self.sender)?;
-        self.stream = open_stream(self.endpoints, self.token, self.generation, &self.sender)?;
+        self.stream = open_stream(
+            self.endpoints,
+            self.token,
+            self.stream_generation,
+            &self.sender,
+        )?;
         Ok(())
     }
 }

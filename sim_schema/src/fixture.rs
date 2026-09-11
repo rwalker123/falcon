@@ -38,6 +38,9 @@
 //! property of the whole scheme: a decoded value then says, in plain text, which wire field it came
 //! from, so an accessor wired to the wrong field is legible in a diff rather than merely different.
 //!
+//! A **boolean** leaf alternates on the parity of its path, so two flags in one table disagree and
+//! a bool↔bool swap in a decoder moves the bytes.
+//!
 //! Two rules keep saturation type-safe:
 //! - A string leaf is replaced **only when its default is empty**. Rust `String` fields default to
 //!   `""`; a serde-serialized enum defaults to a *variant name*, which is non-empty — so this one
@@ -72,6 +75,21 @@ pub const GRID_CELLS: usize = (GRID_W * GRID_H) as usize;
 /// builder that returns the first element for every row (or reuses one offset) is visible.
 pub const ROWS: usize = 2;
 
+/// ⛔ **A ROW'S X AND Y MUST NEVER BE EQUAL.** The offset the structural fixups give a row's `y`
+/// over its `x`.
+///
+/// Without it the two coordinates are the same number on every row of a two-row section — `i %
+/// GRID_W` and `i % GRID_H` both reduce to `i` for `i` in `{0, 1}` — and a decoder that reads
+/// `y()` into `x` and `x()` into `y` round-trips **byte-identically**: the swap is invisible to
+/// both gates. One is the smallest offset that separates them and still lands inside a 4×3 grid
+/// for every row.
+const ROW_Y_OFFSET: u32 = 1;
+
+/// The start marker's tile — the one located row that is not part of a repeated section, so it
+/// carries its own pair rather than a row index. Distinct for the reason [`ROW_Y_OFFSET`] exists.
+const START_MARKER_X: u32 = 1;
+const START_MARKER_Y: u32 = 2;
+
 /// **THE TWO RANKS A BENCH CAN CARRY HERE — ONE PER COHORT, AND `Normal` IS NOT AMONG THEM.**
 ///
 /// A cohort has exactly **one** bench, so a fixture cannot cycle a bench through the three ranks the
@@ -96,12 +114,30 @@ pub const EVERY_SOURCE_PRIORITY: [SourcePriorityState; 3] = [
     SourcePriorityState::Low,
 ];
 
+/// What a ladder knowledge's `display_name` is built from, so it is never the `knowledge_id`
+/// verbatim — see the roster in `seed_snapshot`.
+const LADDER_DISPLAY_NAME_PREFIX: &str = "the knowledge of ";
+
 /// The length of the seeded `regrowthSamples` curve — the **shipped** sample count
 /// (`core_sim::snapshot::REGROWTH_CURVE_SAMPLES`), restated here rather than imported because
 /// `core_sim` depends on this crate and not the other way round. It only has to be a plausible
 /// non-empty length: saturation overwrites every value, and the guard is about the field being
 /// *present and repeated*.
 const REGROWTH_CURVE_SAMPLES: usize = 11;
+
+/// ⛔ **BOTH READINGS OF AN OPTIONAL FIELD MUST BE ON THE WIRE.** Whether a row seeds its
+/// `Option` fields: the even rows do, the odd rows leave them `None`.
+///
+/// An optional field that is `Some` on **every** row never encodes its absent form, so a decoder
+/// that drops the presence flag — `hasOwner`, `hasFreshnessWindow`, or a `-1` sentinel — round
+/// trips clean while reading every row wrong; one that is `None` on every row leaves the present
+/// form untested the same way (`build_destination_capacity` was `None` everywhere, so
+/// `decode_build_destination_capacity` was only ever handed the sentinel and a body returning
+/// `None` unconditionally passed). With [`ROWS`] = 2, seeding on the even rows puts each optional
+/// field on the wire both ways.
+fn seeded_on(row: usize) -> bool {
+    row.is_multiple_of(2)
+}
 
 /// Seed → saturate → fix up. See the module docs for why it is done in that order.
 pub fn saturated_snapshot() -> Result<WorldSnapshot, Box<dyn Error>> {
@@ -328,7 +364,7 @@ fn seed_snapshot() -> WorldSnapshot {
 
     // --- population ------------------------------------------------------
     s.populations = rows();
-    for cohort in &mut s.populations {
+    for (row, cohort) in s.populations.iter_mut().enumerate() {
         cohort.stores = rows();
         // **The TOE, one row per item.** `rows()` would give every row the same default id, and a
         // list keyed by `item_id` with duplicate keys is not a thing the server can emit — so the
@@ -482,13 +518,14 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();
-        cohort.migration = Some(PendingMigrationState {
+        // The cohort's optional tables, on the even rows only — see [`seeded_on`].
+        cohort.migration = seeded_on(row).then(|| PendingMigrationState {
             fragments: rows(),
             ..Default::default()
         });
-        cohort.harvest_task = Some(HarvestTaskState::default());
-        cohort.scout_task = Some(ScoutTaskState::default());
-        cohort.accessible_stockpile = Some(AccessibleStockpileState {
+        cohort.harvest_task = seeded_on(row).then(HarvestTaskState::default);
+        cohort.scout_task = seeded_on(row).then(ScoutTaskState::default);
+        cohort.accessible_stockpile = seeded_on(row).then(|| AccessibleStockpileState {
             entries: rows(),
             ..Default::default()
         });
@@ -500,7 +537,7 @@ fn seed_snapshot() -> WorldSnapshot {
         // `parent_band_id` is left at its `0` default, which is the GRANT reading — the take arm is
         // covered by the supplies below carrying rows regardless, since the decoder emits both
         // unconditionally and the golden records whichever it wrote.
-        cohort.loadout_window = Some(BandLoadoutWindowState {
+        cohort.loadout_window = seeded_on(row).then(|| BandLoadoutWindowState {
             kits: rows(),
             materials: rows(),
             parent_item_supply: ["spears", "sled"]
@@ -525,7 +562,13 @@ fn seed_snapshot() -> WorldSnapshot {
 
     // --- subsistence -----------------------------------------------------
     s.herds = rows();
-    for herd in &mut s.herds {
+    for (row, herd) in s.herds.iter_mut().enumerate() {
+        // **The `-1` sentinel is only half the field.** `None` crosses as
+        // `NO_BUILD_DESTINATION_CAPACITY`, so a fixture that never seeds this hands
+        // `decode_build_destination_capacity` nothing but the sentinel and a body returning `None`
+        // unconditionally passes. Seeded on the even rows — see [`seeded_on`]; the value is
+        // overwritten by saturation, which never produces the sentinel (its floats are ≥ 1.0).
+        herd.build_destination_capacity = seeded_on(row).then(f32::default);
         // The two pre-launch estimate tables that used to be seeded here are retired: the client
         // asks for a forecast now (`sim_runtime`'s `QueryCommand`) instead of reading a table the
         // capture pre-computed for every herd on every frame.
@@ -599,8 +642,12 @@ fn seed_snapshot() -> WorldSnapshot {
         .collect();
     s.sedentarization = rows();
     s.forage_patches = rows();
-    for patch in &mut s.forage_patches {
-        patch.owner = Some(0);
+    for (row, patch) in s.forage_patches.iter_mut().enumerate() {
+        // The patch's two optional readings, on the even rows only — see [`seeded_on`]. `owner`
+        // rides a `hasOwner` flag and the capacity rides the `-1` sentinel, and a decoder that
+        // dropped either would round trip clean on a fixture that only ever seeds one side.
+        patch.owner = seeded_on(row).then(u32::default);
+        patch.build_destination_capacity = seeded_on(row).then(f32::default);
         let mut composition = rows::<FloraShareInfo>();
         for share in &mut composition {
             // The crop picker's PER-MATERIAL cash quote (arc #527) — a nested repeated field, so it
@@ -654,7 +701,10 @@ fn seed_snapshot() -> WorldSnapshot {
         .iter()
         .map(|knowledge| LadderKnowledgeState {
             knowledge_id: (*knowledge).to_string(),
-            display_name: (*knowledge).to_string(),
+            // **Not the id.** Two string leaves carrying the same literal are one wire path
+            // between them: swapping `knowledgeId` and `displayName` in the decoder would round
+            // trip clean. The prefix keeps them apart while still reading as this row's name.
+            display_name: format!("{LADDER_DISPLAY_NAME_PREFIX}{knowledge}"),
             branch: "plant".to_string(),
             ..Default::default()
         })
@@ -703,27 +753,30 @@ fn seed_snapshot() -> WorldSnapshot {
         entry.countermeasures = rows();
         entry.infiltrations = rows();
         entry.modifiers = rows();
-        for modifier in &mut entry.modifiers {
-            modifier.note_handle = Some(String::new());
+        for (row, modifier) in entry.modifiers.iter_mut().enumerate() {
+            modifier.note_handle = seeded_on(row).then(String::new);
         }
     }
     s.knowledge_timeline = rows();
-    for event in &mut s.knowledge_timeline {
-        event.note_handle = Some(String::new());
+    for (row, event) in s.knowledge_timeline.iter_mut().enumerate() {
+        event.note_handle = seeded_on(row).then(String::new);
     }
     s.great_discovery_definitions = rows();
-    for def in &mut s.great_discovery_definitions {
-        def.tier = Some(String::new());
-        def.summary = Some(String::new());
+    for (row, def) in s.great_discovery_definitions.iter_mut().enumerate() {
+        // The definition's optional half, on the even rows only — see [`seeded_on`].
+        // `freshness_window` rides a `hasFreshnessWindow` flag, so its absent reading is only
+        // decoded because one row leaves it out.
+        def.tier = seeded_on(row).then(String::new);
+        def.summary = seeded_on(row).then(String::new);
         def.tags = vec![String::new(); ROWS];
-        def.freshness_window = Some(0);
+        def.freshness_window = seeded_on(row).then(u16::default);
         def.effects_summary = vec![String::new(); ROWS];
-        def.observation_notes = Some(String::new());
-        def.leak_profile = Some(String::new());
+        def.observation_notes = seeded_on(row).then(String::new);
+        def.leak_profile = seeded_on(row).then(String::new);
         def.requirements = rows();
-        for req in &mut def.requirements {
-            req.name = Some(String::new());
-            req.summary = Some(String::new());
+        for (row, req) in def.requirements.iter_mut().enumerate() {
+            req.name = seeded_on(row).then(String::new);
+            req.summary = seeded_on(row).then(String::new);
         }
     }
     s.great_discoveries = rows();
@@ -765,24 +818,26 @@ fn seed_snapshot() -> WorldSnapshot {
 
     // --- campaign --------------------------------------------------------
     s.campaign_profiles = rows();
-    for profile in &mut s.campaign_profiles {
-        profile.id = Some(String::new());
-        profile.title = Some(String::new());
-        profile.title_loc_key = Some(String::new());
-        profile.subtitle = Some(String::new());
-        profile.subtitle_loc_key = Some(String::new());
+    for (row, profile) in s.campaign_profiles.iter_mut().enumerate() {
+        // Every one of these is optional on the wire, so the even rows carry them and the odd rows
+        // leave them absent — see [`seeded_on`].
+        profile.id = seeded_on(row).then(String::new);
+        profile.title = seeded_on(row).then(String::new);
+        profile.title_loc_key = seeded_on(row).then(String::new);
+        profile.subtitle = seeded_on(row).then(String::new);
+        profile.subtitle_loc_key = seeded_on(row).then(String::new);
         profile.starting_units = rows();
         for unit in &mut profile.starting_units {
             unit.tags = vec![String::new(); ROWS];
         }
         profile.inventory = rows();
         profile.knowledge_tags = vec![String::new(); ROWS];
-        profile.primary_food_module = Some(String::new());
-        profile.secondary_food_module = Some(String::new());
+        profile.primary_food_module = seeded_on(row).then(String::new);
+        profile.secondary_food_module = seeded_on(row).then(String::new);
     }
     s.command_events = rows();
-    for event in &mut s.command_events {
-        event.detail = Some(String::new());
+    for (row, event) in s.command_events.iter_mut().enumerate() {
+        event.detail = seeded_on(row).then(String::new);
     }
     s.pending_forks = rows();
     for entry in &mut s.pending_forks {
@@ -862,16 +917,26 @@ fn saturate(value: &mut serde_json::Value, path: &str) {
             }
         }
         serde_json::Value::Object(fields) => {
+            // The booleans of a table are numbered as they are walked (serde_json's map is
+            // ordered, so the numbering is stable) and alternated — see [`flag_value`].
+            let mut flags = 0usize;
             for (key, field) in fields.iter_mut() {
                 let child = if path.is_empty() {
                     key.clone()
                 } else {
                     format!("{path}.{key}")
                 };
-                saturate(field, &child);
+                if let serde_json::Value::Bool(flag) = field {
+                    *flag = flag_value(path, flags);
+                    flags += 1;
+                } else {
+                    saturate(field, &child);
+                }
             }
         }
-        serde_json::Value::Bool(flag) => *flag = true,
+        // A boolean outside any table — an element of a `[bool]`. Its own path is all there is to
+        // go on, so it alternates on that.
+        serde_json::Value::Bool(flag) => *flag = hash(path).is_multiple_of(2),
         serde_json::Value::String(text) => {
             // Only free text. A non-empty default is a serde-serialized enum variant name, and
             // replacing that with a path would fail to deserialize.
@@ -896,6 +961,26 @@ fn saturate(value: &mut serde_json::Value, path: &str) {
     }
 }
 
+/// ⛔ **NOT `true` EVERYWHERE.** The value of the `ordinal`-th boolean of the table at `path`:
+/// consecutive flags of one table **always disagree**, and the table's own path sets the phase, so
+/// the same field reads differently from one row to the next.
+///
+/// Saturation used to set every boolean `true`, which made a bool↔bool swap inside a table
+/// invisible to both gates: `corralled` and `huntable` carried the same value, so a decoder
+/// reading one into the other round-tripped byte-identically. Alternating by ordinal is what makes
+/// a neighbouring pair legible; FlatBuffers omits a default-valued field, so the `false` half also
+/// puts every boolean's *absent* encoding on the wire.
+///
+/// ⚠ Two rows can only tell so many flags apart. A table's flags 0 and 2 (and 1 and 3) take the
+/// same value in **both** [`ROWS`], because with two rows there are only two patterns that carry
+/// both values; swapping *those* two would still round trip. The alternation covers the
+/// neighbouring pairs, which is what a mis-wired accessor most often is.
+fn flag_value(path: &str, ordinal: usize) -> bool {
+    (hash(path) as usize)
+        .wrapping_add(ordinal)
+        .is_multiple_of(2)
+}
+
 /// FNV-1a over the path. Any stable hash would do; this one keeps the fixture reproducible across
 /// machines and Rust versions (`DefaultHasher` guarantees neither).
 fn hash(path: &str) -> u64 {
@@ -910,6 +995,16 @@ fn hash(path: &str) -> u64 {
 // ---------------------------------------------------------------------------
 // Step 3 — structural fixups
 // ---------------------------------------------------------------------------
+
+/// A row's tile, kept inside the grid and with the two coordinates **different** — see
+/// [`ROW_Y_OFFSET`].
+fn row_x(row: usize) -> u32 {
+    row as u32 % GRID_W
+}
+
+fn row_y(row: usize) -> u32 {
+    (row as u32 + ROW_Y_OFFSET) % GRID_H
+}
 
 /// Restores the fields whose values are *structural* rather than arbitrary: a raster's dimensions
 /// must match its sample count, and a tile's coordinates must land inside the grid, or the decoder
@@ -953,16 +1048,16 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
     }
 
     if let Some(marker) = s.start_marker.as_mut() {
-        marker.x = 1;
-        marker.y = 1;
+        marker.x = START_MARKER_X;
+        marker.y = START_MARKER_Y;
     }
 
     // Keep every located row on the map. A saturated coordinate would sit far outside a 4×3 grid,
     // which is legal on the wire but makes the golden read as nonsense.
     for (i, cohort) in s.populations.iter_mut().enumerate() {
         cohort.entity = 100 + i as u64;
-        cohort.current_x = i as u32 % GRID_W;
-        cohort.current_y = i as u32 % GRID_H;
+        cohort.current_x = row_x(i);
+        cohort.current_y = row_y(i);
         // **THE BENCH'S RANK IS AN ENUM, SO SATURATION LEAVES IT AT ITS DEFAULT** — the same gap the
         // labor rows' `EVERY_SOURCE_PRIORITY` closes (see that const). A cohort carries exactly ONE
         // bench, so with two cohorts the fixture can reach two of the three arms, and these are the
@@ -974,16 +1069,16 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         cohort.bench.priority = BENCHED_SOURCE_PRIORITIES[i % BENCHED_SOURCE_PRIORITIES.len()];
     }
     for (i, herd) in s.herds.iter_mut().enumerate() {
-        herd.x = i as u32 % GRID_W;
-        herd.y = i as u32 % GRID_H;
+        herd.x = row_x(i);
+        herd.y = row_y(i);
     }
     for (i, module) in s.food_modules.iter_mut().enumerate() {
-        module.x = i as u32 % GRID_W;
-        module.y = i as u32 % GRID_H;
+        module.x = row_x(i);
+        module.y = row_y(i);
     }
     for (i, patch) in s.forage_patches.iter_mut().enumerate() {
-        patch.x = i as u32 % GRID_W;
-        patch.y = i as u32 % GRID_H;
+        patch.x = row_x(i);
+        patch.y = row_y(i);
     }
 }
 
@@ -1017,6 +1112,54 @@ mod tests {
         let first = encode_snapshot_flatbuffer(&saturated_snapshot().expect("first build"));
         let second = encode_snapshot_flatbuffer(&saturated_snapshot().expect("second build"));
         assert_eq!(first, second, "fixture encoding is not deterministic");
+    }
+
+    /// ⛔ **NO TABLE MAY CARRY ONE VALUE IN EVERY ONE OF ITS FLAGS.** The fixture used to set every
+    /// boolean `true`, which made a bool↔bool swap inside a table invisible to both decode gates.
+    /// This walks the saturated snapshot and fails on any table whose booleans all agree, naming
+    /// it — the guard on [`flag_value`]'s alternation surviving a future field.
+    #[test]
+    fn saturation_leaves_no_table_with_every_flag_alike() {
+        fn walk(value: &serde_json::Value, path: &str, alike: &mut Vec<String>) {
+            match value {
+                serde_json::Value::Array(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        walk(item, &format!("{path}[{i}]"), alike);
+                    }
+                }
+                serde_json::Value::Object(fields) => {
+                    let flags: Vec<bool> = fields
+                        .values()
+                        .filter_map(|field| match field {
+                            serde_json::Value::Bool(flag) => Some(*flag),
+                            _ => None,
+                        })
+                        .collect();
+                    if flags.len() > 1 && flags.iter().all(|flag| *flag == flags[0]) {
+                        alike.push(format!("{path} ({} flags, all {})", flags.len(), flags[0]));
+                    }
+                    for (key, field) in fields {
+                        let child = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        };
+                        walk(field, &child, alike);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let snapshot = saturated_snapshot().expect("fixture builds");
+        let value = serde_json::to_value(&snapshot).expect("the fixture serialises");
+        let mut alike = Vec::new();
+        walk(&value, "", &mut alike);
+        assert!(
+            alike.is_empty(),
+            "these tables carry one value in every flag, so a bool<->bool swap inside them round \
+             trips clean: {alike:#?}"
+        );
     }
 
     /// The two saturation rules the whole scheme rests on: an enum's variant name must survive

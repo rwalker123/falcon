@@ -19,7 +19,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use sim_runtime::{
     decode_frame_flatbuffer, ApplyDeltaError, CommandPayload, DecodeError, ForagePatchState,
-    FramePayload, LaborAssignmentState, PopulationCohortState, WorldSnapshot, FIXED_POINT_SCALE,
+    FramePayload, LaborAssignmentState, PopulationCohortState, SnapshotHeader, WorldSnapshot,
+    FIXED_POINT_SCALE,
 };
 use tracing::{info, warn};
 
@@ -339,6 +340,24 @@ pub enum FrameOutcome {
     Undecodable(DecodeError),
 }
 
+/// ⛔ **THE TICK ALREADY ACTED ON BELONGS TO ONE WORLD.** What a full frame may keep from the view
+/// it replaces: the held `last_acted_tick`, but only while the incoming frame is the **same
+/// world's** and no older than that tick.
+///
+/// A `new_game` or a load from the client's menu rebuilds the world under a live seat — the
+/// launcher keeps this process (its faction is still in the roster) and `retain_claimed_seats`
+/// keeps the claim — so the next full frame is tick 0 of a **new `world_epoch`**. Carrying the old
+/// world's tick across it makes the turn loop's `tick <= acted` skip both `decide` and the
+/// `Orders { Ready }` that follows it, for every turn up to the old world's last: the seat is
+/// occupied and silent, and each of those turns waits out the server's `seat_turn_timeout_seconds`
+/// before it is auto-submitted. A frame older than the acted tick is the same rebuild seen a
+/// second way (or a rollback), and reads the same.
+fn carried_acted_tick(held: &SeatView, incoming: &SnapshotHeader) -> Option<u64> {
+    let acted = held.last_acted_tick?;
+    let same_world = held.snapshot.header.world_epoch == incoming.world_epoch;
+    (same_world && incoming.tick >= acted).then_some(acted)
+}
+
 /// The view plus the one piece of state the chain needs: whether a full frame is owed.
 #[derive(Default)]
 pub struct Perception {
@@ -372,7 +391,10 @@ impl Perception {
                     tick = snapshot.header.tick,
                     "full frame replaced the view"
                 );
-                let last_acted_tick = self.view.as_ref().and_then(|view| view.last_acted_tick);
+                let last_acted_tick = self
+                    .view
+                    .as_ref()
+                    .and_then(|held| carried_acted_tick(held, &snapshot.header));
                 self.view = Some(SeatView {
                     snapshot,
                     last_acted_tick,
@@ -424,6 +446,15 @@ mod tests {
         encode_snapshot_flatbuffer(&snapshot)
     }
 
+    /// A full frame of the world `epoch`, at `tick`.
+    fn a_full_frame_of(epoch: u32, tick: u64) -> Vec<u8> {
+        let mut snapshot = WorldSnapshot::default();
+        snapshot.header.frame_seq = FIRST_FRAME;
+        snapshot.header.world_epoch = epoch;
+        snapshot.header.tick = tick;
+        encode_snapshot_flatbuffer(&snapshot)
+    }
+
     fn a_delta_on(base: u64) -> Vec<u8> {
         let mut delta = WorldDelta::default();
         delta.header.base_frame_seq = base;
@@ -466,6 +497,49 @@ mod tests {
                 .frame_seq,
             FIRST_FRAME + 1
         );
+    }
+
+    /// ⛔ **A REBUILT WORLD IS NOT A MID-TURN RECAPTURE.** `new_game` and a load rebuild the world
+    /// under a live seat, and the frame that follows is tick 0 of a new epoch. If the tick already
+    /// acted on carried across it, the turn loop would skip `decide` — and the `Orders { Ready }`
+    /// that follows it — for every turn up to the old world's last, and each of them would wait out
+    /// the server's seat turn timeout with the seat occupied and silent.
+    #[test]
+    fn a_rebuilt_world_clears_the_tick_already_acted_on() {
+        const OLD_EPOCH: u32 = 1;
+        const NEW_EPOCH: u32 = 2;
+        const ACTED_TICK: u64 = 40;
+        const REBUILT_TICK: u64 = 0;
+
+        let mut perception = Perception::default();
+        perception.ingest(&a_full_frame_of(OLD_EPOCH, ACTED_TICK));
+        perception.view_mut().expect("a view").last_acted_tick = Some(ACTED_TICK);
+
+        // A mid-turn recapture of the same world: the same tick, already acted on, is not acted on
+        // twice.
+        perception.ingest(&a_full_frame_of(OLD_EPOCH, ACTED_TICK));
+        assert_eq!(
+            perception.view_mut().expect("a view").last_acted_tick,
+            Some(ACTED_TICK)
+        );
+
+        // The rebuild: a new epoch at tick 0. The brain must act on it.
+        perception.ingest(&a_full_frame_of(NEW_EPOCH, REBUILT_TICK));
+        let view = perception.view_mut().expect("a view");
+        assert_eq!(
+            view.last_acted_tick, None,
+            "the new world was never acted on"
+        );
+        // The turn loop's own guard (`main.rs`: `tick <= acted` skips the turn), inverted.
+        assert!(
+            view.last_acted_tick.is_none_or(|acted| view.tick() > acted),
+            "the turn loop would skip this tick"
+        );
+
+        // A rebuild the epoch did not catch: time ran backwards, which reads the same.
+        perception.view_mut().expect("a view").last_acted_tick = Some(ACTED_TICK);
+        perception.ingest(&a_full_frame_of(NEW_EPOCH, REBUILT_TICK));
+        assert_eq!(perception.view_mut().expect("a view").last_acted_tick, None);
     }
 
     #[test]

@@ -69,9 +69,11 @@ pub const M_TURNS_OBSERVED: &str = "link.turns_observed";
 pub const M_TURNS_LOST: &str = "link.turns_lost_to_timeout";
 pub const M_RECONNECTS: &str = "link.reconnects";
 
-/// `true` as a measure.
-const LIVE: f64 = 1.0;
-const NOT_LIVE: f64 = 0.0;
+/// `true` as a measure — a specialist accepted in every window, and the value the ratchet's
+/// liveness precondition holds one to.
+pub const LIVE: f64 = 1.0;
+/// …and `false`: a window with nothing accepted in it.
+pub const NOT_LIVE: f64 = 0.0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MeasureError {

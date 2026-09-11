@@ -120,6 +120,20 @@ const CLIENT_STEM: &str = "ShadowScaleClient";
 /// (crate `sim_ai`; Windows adds the `.exe` suffix below).
 const AI_STEM: &str = "sim_ai";
 
+/// **The brain every rival seat plays on.** `sim_ai`'s own `--brain` default is
+/// `pass`, a seat that assigns no labor and starves, because Pass is the
+/// control the bench measures every other brain against — a default meant for
+/// tests. The shipped game wants rivals that play, so the launcher names the
+/// brain instead of inheriting that one. Contract twin of `BrainKind::as_str`
+/// in `sim_ai/src/main.rs`; the value is passed through verbatim and `sim_ai`
+/// refuses an unknown one.
+const AI_BRAIN_DEFAULT: &str = "utility";
+/// Replaces [`AI_BRAIN_DEFAULT`] for one run — how a developer puts the rivals
+/// back on `pass` (or on `scripted`) without a rebuild, the same way the server's
+/// own levers are set (`core_sim/CLAUDE.md` → Environment Overrides). Empty or
+/// unset is the default.
+const ENV_AI_BRAIN: &str = "SIM_AI_BRAIN";
+
 /// **The human's faction.** Contract twin of `PLAYER_FACTION_ID` in
 /// `clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd`: the seat the
 /// Godot client claims, and therefore the one roster entry that never gets a
@@ -779,6 +793,8 @@ impl Session {
             .arg(ports_file)
             .arg("--faction")
             .arg(faction.to_string())
+            .arg("--brain")
+            .arg(rival_brain())
             .current_dir(data_dir)
             .env(ENV_PORTS_FILE, ports_file)
             .stdin(Stdio::null())
@@ -825,6 +841,20 @@ impl Drop for Session {
         let _ = self.server.wait();
         remove_ports_file(&self.ports_file);
     }
+}
+
+/// The brain a rival is spawned on: `$SIM_AI_BRAIN` when it is set to something,
+/// else [`AI_BRAIN_DEFAULT`].
+fn rival_brain() -> String {
+    brain_from_override(std::env::var(ENV_AI_BRAIN).ok())
+}
+
+/// [`rival_brain`]'s rule, apart from the environment so it can be tested
+/// without one: an override is honoured only when it carries a value.
+fn brain_from_override(override_value: Option<String>) -> String {
+    override_value
+        .filter(|brain| !brain.trim().is_empty())
+        .unwrap_or_else(|| AI_BRAIN_DEFAULT.to_owned())
 }
 
 /// Deletes the handshake file if present, ignoring failure — a stale file is an
@@ -1046,6 +1076,21 @@ mod tests {
     fn the_humans_seat_is_filled_with_the_client() {
         let layout = fake_layout();
         assert_eq!(human_seat(&layout).program, layout.client.as_path());
+    }
+
+    /// ⛔ **A RIVAL PLAYS.** `sim_ai`'s `--brain` default is `pass`, which assigns
+    /// nobody and starves; the shipped game must spawn its rivals on the utility
+    /// brain, and the environment lever is what puts them back on `pass` for a
+    /// comparison.
+    #[test]
+    fn a_rival_spawns_on_the_utility_brain_unless_the_environment_says_otherwise() {
+        assert_eq!(brain_from_override(None), AI_BRAIN_DEFAULT);
+        assert_eq!(brain_from_override(Some(String::new())), AI_BRAIN_DEFAULT);
+        assert_eq!(
+            brain_from_override(Some("   ".to_owned())),
+            AI_BRAIN_DEFAULT
+        );
+        assert_eq!(brain_from_override(Some("pass".to_owned())), "pass");
     }
 
     /// The contract twin of the server's `seats.roster` event: the shape its

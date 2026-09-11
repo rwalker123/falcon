@@ -59,14 +59,24 @@ empty roster, which would reap every rival over a socket hiccup), and forwards e
 `Session::wait_for_human` drains that channel while polling the human's process, and on each event
 `Session::reconcile`: every roster faction other than the human's (`HUMAN_FACTION_ID`, the twin of
 `HudConst.PLAYER_FACTION_ID`) with no *running* child gets a `sim_ai --ports-file <path> --faction
-<id>` (`current_dir` the data dir, stdin null, **adopted into the process group right after the
-spawn** — `fill_seat`'s ordering); every running child whose faction is not named is killed and
+<id> --brain <brain>` (`current_dir` the data dir, stdin null, **adopted into the process group
+right after the spawn** — `fill_seat`'s ordering); every running child whose faction is not named is killed and
 reaped. A child that exited on its own is dropped at the next event and respawned by it if its
 faction is still seated — **one respawn per roster event, never a tight loop**.
 
 **Timing.** The watcher connects **before** `fill_seat` starts the human's client. The boot world is
 idle until that client asks for one, so the first roster the server ever announces comes after the
 reader exists; the server does not re-emit on connection, and needs no second socket.
+
+⛔ **The brain is named on the spawn, because `sim_ai`'s own default is the control.**
+`--brain` defaults to `Pass` *inside `sim_ai`* — the bench's control arm, which assigns no labor and
+starves (22 hunger deaths by turn 30). A rival spawned without the flag is therefore a corpse, so
+`rival_brain()` always passes one: `AI_BRAIN_DEFAULT` (`utility`), or `$SIM_AI_BRAIN` (`ENV_AI_BRAIN`)
+when that is set to something non-blank — how a developer puts the rivals on `pass` or `scripted` for
+one run without a rebuild. `brain_from_override` holds the rule apart from the environment so it can
+be unit-tested without mutating it. Profile and difficulty are **not** launcher levers: `ai_profiles.json`
+is embedded in `sim_ai` and there is no launcher-side profile source, so those stay at `sim_ai`'s
+defaults.
 
 `sim_ai` sits beside the server in the packaged layout (`Layout::ai`, `AI_STEM`), and
 `Layout::resolve` requires it the way it requires the server. The program itself is

@@ -50,7 +50,7 @@ against. Inside this crate, the three shipped brains are configurations of one c
 | Brain | Orchestrator | Specialists | Arbiter |
 |---|---|---|---|
 | `PassBrain` | none | none | emits only `ready` |
-| `ScriptedBrain` | none | one `Scripted` specialist replaying a command list at infinite score | pass-through |
+| `ScriptedBrain` | none | one `Scripted` specialist replaying a command list at a fixed `SCRIPT_SCORE` | pass-through |
 | `UtilityBrain` | `ConstantStance` in v1 | `Food`, `Land` in v1 | the real one |
 
 So `PassBrain` is *the control*, `ScriptedBrain` is *the fixture*, and both are the layered shape with
@@ -98,9 +98,12 @@ shipped publication path (`core_sim/tests/apply_delta_producer.rs`: two seats, 1
 recapture applied twice), not against a hand-written model of it.
 
 The dependency line is `sim_ai → sim_runtime → sim_schema → shadow_scale_flatbuffers`; no `core_sim`,
-no Bevy. Two constants the Link needs live only in `core_sim` — the 8-byte token width and the 2 s
-greeting timeout (`core_sim/src/network.rs`) — and are restated in `sim_ai` with a pointer comment,
-exactly as `SnapshotStream.gd` restates them.
+no Bevy. The constants the Link needs live outside it, and are restated in `sim_ai/src/link.rs` with
+a pointer comment, exactly as `SnapshotStream.gd` restates them: the 8-byte token width
+(`SEAT_TOKEN_BYTES`) from `core_sim/src/network.rs`, and the claim/reconnect retries
+(`SEAT_CLAIM_ATTEMPTS`, `SEAT_CLAIM_RETRY_BACKOFF`, `SEAT_CLAIM_REPLY_TIMEOUT`, `RECONNECT_BACKOFF`)
+from the client's seated link, `clients/godot_thin_client/native/src/bridge/command_link.rs`. Those
+are the two files an audit of "are the restatements still in sync?" has to check.
 
 ### `SeatMemory` — what the frame no longer says
 
@@ -208,10 +211,10 @@ judged on the number it exists to move.
 | `Build` | improvements and their upkeep | `BuildOrder`, `BuildKit`, `UpkeepMode`, `UpkeepKit`, `Abandon`, `Unqueue` | later |
 | `Craft` | the bench | `SetBench`, `BenchCrew`, `BenchPriority` | later |
 | `Contact` | other people | `SendExpedition`, `SendTradeExpedition`, `SendDenialRaid` | later (#231, #369) |
-| `Scripted` | the test fixture | whatever the script says, at infinite score | **yes** |
+| `Scripted` | the test fixture | whatever the script says, at the fixed `SCRIPT_SCORE` | **yes** |
 
-`Food` and `Land` are the food/land loop the issue names. The v1 considerations, so the first
-version is concrete rather than a trait with no body:
+`Food` and `Land` are the food/land loop the issue names. The v1 considerations are these, so the
+first version is concrete rather than a trait with no body:
 
 - **`Food`.** *Idle hands* — `idle_workers > 0` proposes `AssignLabor` to the best-yield source in
   reach. *Runway* — `turns_of_food` below the floor raises the alarm and proposes moving workers from
@@ -317,8 +320,11 @@ what the decision log records:
 
 Every proposal, accepted or not, becomes a `Decision { turn, specialist, intent, score_raw,
 score_final, outcome, reason }` on the decision log (§8). The rng is seeded from
-`(map_seed, faction, turn)`, so the same world and the same profile produce the same commands — the
-bench (§8) relies on that, and it costs nothing because the server already pins `map_seed`.
+`(seed, faction, turn)`, where `seed` is the seat's own `--seed` argument and the default `0` derives
+it from the faction id — so the same seat and the same profile produce the same commands, which is
+what the bench (§8) relies on. The map seed does **not** enter it: the bench pins `map_seed` for the
+*world*, not for the seat's dice, so two bench seeds hand a seat identical rolls unless `--seed` is
+passed as well.
 
 ---
 
@@ -361,8 +367,9 @@ socket.
   silently sent nothing.
 - **Host verbs are never sent.** `Turn` and `Rollback` are refused from a seated connection, and the
   AI has no unseated connection. It submits orders; it does not resolve turns.
-- **A decide has a time budget.** `decide()` runs under `decide_budget_ms`, well inside the 120 s
-  seat timeout; on expiry the Link submits `ready` with whatever the arbiter had accepted. A brain
+- **A decide has a time budget.** `decide()` runs under `DECIDE_BUDGET` (a constant in
+  `sim_ai/src/main.rs`, not a config key), well inside the 120 s seat timeout; on expiry the Link
+  submits `ready` with whatever the arbiter had accepted. A brain
   that blocks — an LLM orchestrator waiting on a network — loses flavour, not the turn.
 - **The token is a secret.** Held in a type with a redacted `Debug` and no `Display`, mirroring
   `core_sim::SeatToken`, so it cannot reach the log by accident.
@@ -430,8 +437,10 @@ is needed** — once every occupied seat has submitted, the server resolves the 
 (`SeatTurnGate` → `TurnWait::Resolve`) — so a bench is exactly N AI processes and a server, and the
 run ends when they reach `--turns`. It collects the two logs per seat and writes a report. The
 subprocess shape is `core_sim/tests/query_seat_gate.rs` (`start_server`, `write_test_config`,
-`await_ports_file`); the bench lives in `integration_tests/` or under `xtask`, because
-`CARGO_BIN_EXE_server` is visible only to `core_sim`'s own tests.
+`await_ports_file`); the bench itself is a subcommand of the AI binary
+(`sim_ai/src/bench/{mod,measures,ratchet}.rs`), and the test that drives it lives in
+`core_sim/tests/ai_bench.rs`, because `CARGO_BIN_EXE_server` is visible only to `core_sim`'s own
+tests.
 
 ### 8.2 What each layer is measured on
 
@@ -456,7 +465,7 @@ the AI exists.
 
 `sim_ai/bench/baselines.json` holds the measures for a pinned set of seeds and a pinned *T*. A bench
 run compares against it and fails on a drop beyond tolerance. The AI is deterministic given
-`(map_seed, faction, turn)`, so the comparison is exact on a replay of the same configuration and a
+`(seed, faction, turn)`, so the comparison is exact on a replay of the same configuration and a
 change in the numbers is a change in the AI, never noise. The baseline is updated in the PR that
 moves it, with the number in the PR body — the same discipline the terrain-preview PNG baselines
 follow.
@@ -537,8 +546,8 @@ Each of these is a procedure with a done-bar, and none of them touches the serve
 | # | Slice | Home | Done when |
 |---|---|---|---|
 | 1 | FlatBuffers → `WorldSnapshot` decoder and `apply_delta` | `sim_schema` | round-trip and hash tests pass for every section; `seat_frames.rs` reads frames through it; the merge matches the producer over real turns |
-| 2 | `sim_ai` crate: Link, `SeatView`, `Brain`, `PassBrain`, `ScriptedBrain`; launcher fills rival seats and adopts the exit rule; scenario test | `sim_ai`, `launcher`, `integration_tests` | a rival seat claimed by `sim_ai` moves a band from a script and the game is won or lost with it seated |
-| 3 | Instruments and bench: scoreboard, decision log, `bench`, baselines | `sim_ai`, `integration_tests` | `PassBrain` vs `PassBrain` reads as zero on every measure; `ScriptedBrain` vs `PassBrain` reads as non-zero |
+| 2 | `sim_ai` crate: Link, `SeatView`, `Brain`, `PassBrain`, `ScriptedBrain`; launcher fills rival seats and adopts the exit rule; scenario test | `sim_ai`, `launcher`, `core_sim/tests` | a rival seat claimed by `sim_ai` moves a band from a script and the game is won or lost with it seated |
+| 3 | Instruments and bench: scoreboard, decision log, `bench`, baselines | `sim_ai`, `core_sim/tests` | `PassBrain` vs `PassBrain` reads as zero on every measure; `ScriptedBrain` vs `PassBrain` reads as non-zero |
 | 4 | `UtilityBrain`: `ConstantStance`, `Food`, `Land`, the arbiter with commitment; `ai_profiles.json` with two profiles; delete `StartProfileOverrides::ai_profile_overrides` | `sim_ai`, `core_sim` | lands with its Pass delta, its two ablations, and its profile-divergence number in the PR body |
 
 | 5 | The run viewer (§8.4) and the bench on shipped presets | `sim_ai` | a 30-turn run can be read turn by turn — bands, reachable tiles with yields, ledger, proposals with reasons, plan, alarms; the baselines are regenerated on a shipped preset |
@@ -571,7 +580,7 @@ sim_ai/
     arbiter.rs          the six steps, Decision records
     profile.rs          AiProfile, Difficulty, the json schema
     instruments/        scoreboard.rs, decisions.rs
-    bench.rs            the harness driver and report
+    bench/              mod.rs (harness driver), measures.rs, ratchet.rs, and the report
 ```
 
 The engineering rationale for what gets built — the as-built notes, the config key tables, the

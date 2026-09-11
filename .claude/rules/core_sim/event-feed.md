@@ -7,6 +7,8 @@ paths:
   - "core_sim/src/snapshot/campaign.rs"
   - "core_sim/tests/demographic_events.rs"
   - "core_sim/tests/delta_streaming.rs"
+  - "core_sim/tests/apply_delta_producer.rs"
+  - "sim_schema/src/apply_delta.rs"
   - "xtask/src/decode_fixture.rs"
 ---
 

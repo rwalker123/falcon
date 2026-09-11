@@ -12,11 +12,12 @@
 //!    least one scoreboard measure at the last tick differs from the same seat under Pass — the
 //!    issue's bar, "acts instead of passing", as a number.
 //!
-//! 3. Utility-vs-Pass: the utility seat's `Food` specialist is live (accepted > 0 in every
-//!    window), and nothing it sent was refused — neither by the seat gate (`command.rejected` in
-//!    the server log) nor by the sim (`commands_failed_total`, the feed's `… failed` rows). A
-//!    proposal the server refuses is a bug in the specialist's command construction, and this is
-//!    where it shows.
+//! 3. Utility-vs-Pass, over a span of **more than one liveness window**: the utility seat's `Food`
+//!    specialist is live (accepted > 0 in every window — which says nothing over a one-window span,
+//!    hence [`UTILITY_TURNS`]), and nothing it sent was refused — neither by the seat gate
+//!    (`command.rejected` in the server log) nor by the sim (`commands_failed_total`, the feed's
+//!    `… failed` rows). A proposal the server refuses is a bug in the specialist's command
+//!    construction, and this is where it shows.
 //!
 //! **Why it lives in `core_sim/tests/`.** The bench needs the built `server`, and
 //! `CARGO_BIN_EXE_server` is only defined for the package owning that bin; `sim_ai` is resolved as
@@ -34,7 +35,19 @@ use common::ai_process::{server_binary, sim_ai_binary, Scratch};
 /// Fixed and non-zero: `seed == 0` asks the server to randomise.
 const MAP_SEED: &str = "11";
 /// Six turns: enough for the scripted split to land and its effect to be captured, seconds in all.
-const TURNS: &str = "6";
+const TURNS: u64 = 6;
+/// **The liveness window**, restated from `LIVENESS_WINDOW_TURNS` in
+/// `sim_ai/src/bench/measures.rs`: a specialist is live when it has an accepted proposal in
+/// **every** window of this many turns over the run's tick span. `sim_ai` is a binary crate, so
+/// this crate cannot import the constant; its is the authority.
+const LIVENESS_WINDOW_TURNS: u64 = 10;
+/// ⛔ **THE UTILITY RUN MUST SPAN MORE THAN ONE LIVENESS WINDOW.** Over a span shorter than
+/// [`LIVENESS_WINDOW_TURNS`] the measure cuts exactly one window, and `liveness` is then
+/// arithmetically identical to `accepted > 0` — which the assertion beside it already makes, so
+/// the property the test names would go untested. Two more turns than the window puts a second
+/// window in the span with ticks in it, so a specialist that falls silent halfway through the run
+/// fails here.
+const UTILITY_TURNS: u64 = LIVENESS_WINDOW_TURNS + 2;
 const RIVAL_SEAT: &str = "1";
 const PASS_SEATS: [&str; 2] = ["1=pass", "2=pass"];
 /// The scenario's one order (`ai_seat_scenario.rs`): a legal split at the founding floor.
@@ -48,20 +61,28 @@ const NON_SCOREBOARD_PREFIXES: [&str; 4] = ["specialist.", "link.", "orchestrato
 const UTILITY_SEAT_SPEC: &str = "1=utility:forager";
 const FOOD_ACCEPTED_MEASURE: &str = "specialist.food.accepted";
 const FOOD_LIVENESS_MEASURE: &str = "specialist.food.liveness";
+/// The distinct scoreboard ticks a seat wrote — the run's span, in turns.
+const TURNS_OBSERVED_MEASURE: &str = "link.turns_observed";
 /// Commands the sim refused, summed over the run (`sim_ai/src/bench/measures.rs`).
 const COMMANDS_FAILED_MEASURE: &str = "commands_failed_total";
 /// The seat gate's refusal markers in the server log (`core_sim/src/bin/server.rs`).
 const REJECTED_MARKERS: [&str; 2] = ["command.rejected", "command.split.rejected"];
 const SERVER_LOG_FILE: &str = "server.log";
 
-/// Run the built bench on [`MAP_SEED`] for [`TURNS`] with `seats`, into `out`, plus `extra` args.
-fn bench(sim_ai: &Path, out: &Path, seats: &[String], extra: &[&str]) -> serde_json::Value {
+/// Run the built bench on [`MAP_SEED`] for `turns` with `seats`, into `out`, plus `extra` args.
+fn bench(
+    sim_ai: &Path,
+    out: &Path,
+    turns: u64,
+    seats: &[String],
+    extra: &[&str],
+) -> serde_json::Value {
     let mut command = Command::new(sim_ai);
     command
         .arg("bench")
         .arg("--server")
         .arg(server_binary())
-        .args(["--seeds", MAP_SEED, "--turns", TURNS])
+        .args(["--seeds", MAP_SEED, "--turns", &turns.to_string()])
         .arg("--out")
         .arg(out);
     for seat in seats {
@@ -100,10 +121,11 @@ fn the_bench_is_exact_on_a_replay_and_reads_a_scripted_seat_as_non_zero() {
     // 1. Pass vs Pass, twice.
     let first_dir = scratch.dir.join("pass_first");
     let second_dir = scratch.dir.join("pass_second");
-    let first = bench(&sim_ai, &first_dir, &pass_seats, &[]);
+    let first = bench(&sim_ai, &first_dir, TURNS, &pass_seats, &[]);
     let second = bench(
         &sim_ai,
         &second_dir,
+        TURNS,
         &pass_seats,
         &["--compare", first_dir.to_str().expect("utf-8 path")],
     );
@@ -124,8 +146,8 @@ fn the_bench_is_exact_on_a_replay_and_reads_a_scripted_seat_as_non_zero() {
         }
         let measures = seat_measures(&second, faction);
         assert_eq!(
-            measures["link.turns_observed"].as_f64(),
-            Some(TURNS.parse::<f64>().unwrap()),
+            measures[TURNS_OBSERVED_MEASURE].as_f64(),
+            Some(TURNS as f64),
             "seat {faction} observed every turn it played"
         );
         assert_eq!(
@@ -147,7 +169,7 @@ fn the_bench_is_exact_on_a_replay_and_reads_a_scripted_seat_as_non_zero() {
         format!("{RIVAL_SEAT}=scripted:{}", script_path.display()),
         PASS_SEATS[1].to_owned(),
     ];
-    let scripted = bench(&sim_ai, &scripted_dir, &scripted_seats, &[]);
+    let scripted = bench(&sim_ai, &scripted_dir, TURNS, &scripted_seats, &[]);
     let acted = seat_measures(&scripted, RIVAL_SEAT);
     let passed = seat_measures(&first, RIVAL_SEAT);
     assert!(
@@ -178,16 +200,25 @@ fn the_utility_seat_is_live_and_nothing_it_sends_is_refused() {
     let sim_ai = sim_ai_binary();
     let out = scratch.dir.join("utility");
     let seats = [UTILITY_SEAT_SPEC.to_owned(), PASS_SEATS[1].to_owned()];
-    let report = bench(&sim_ai, &out, &seats, &[]);
+    let report = bench(&sim_ai, &out, UTILITY_TURNS, &seats, &[]);
     let measures = seat_measures(&report, RIVAL_SEAT);
     assert!(
         measures[FOOD_ACCEPTED_MEASURE].as_f64().unwrap_or(0.0) > 0.0,
         "the Food specialist accepted nothing: {measures:?}"
     );
+    // Liveness only says more than `accepted > 0` when the span is cut into more than one window,
+    // so the span is asserted first: the measure's windows are `[first, first + 10)`, `[first + 10,
+    // …)`, and N consecutive observed ticks span N − 1, so N must exceed the window.
+    let observed = measures[TURNS_OBSERVED_MEASURE].as_f64().unwrap_or(0.0);
+    assert!(
+        observed > LIVENESS_WINDOW_TURNS as f64,
+        "the run spans one liveness window ({observed} turns), so `liveness` is just \
+         `accepted > 0` and the property below is untested"
+    );
     assert_eq!(
         measures[FOOD_LIVENESS_MEASURE].as_f64(),
         Some(1.0),
-        "the Food specialist was not live in every window: {measures:?}"
+        "the Food specialist fell silent for a whole window: {measures:?}"
     );
     assert_eq!(
         measures[COMMANDS_FAILED_MEASURE].as_f64(),

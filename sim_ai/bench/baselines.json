@@ -348,7 +348,14 @@
         "population_children": 0.0,
         "population_elders": 0.0,
         "population_working": 0.0
-      }
+      },
+      "degenerate": [
+        {
+          "seed": "11",
+          "seat": "1",
+          "note": "the seat had no working population left when this baseline was recorded: its outcome measures are what a dead seat reads, not a bar to hold a later run to"
+        }
+      ]
     }
   }
 }
