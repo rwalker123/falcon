@@ -6551,7 +6551,7 @@ func _snapshot_build_arc() -> Dictionary:
 		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
 			"share": 1.0, "can_cultivate": true, "can_sow": false}],
 	}
-	_stamp_patch_owner(rotting, MapView.PLAYER_FACTION_ID)
+	_stamp_patch_owner(rotting, HudConst.PLAYER_FACTION_ID)
 	(snap["forage_patches"] as Array).append(rotting)
 	# **AND THE HEALTHY BUILD GETS A FINITE ESTIMATE, so this frame carries all three faces** — a real
 	# countdown, the rot sentinel above, and a worked source building nothing. It is stamped HERE

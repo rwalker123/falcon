@@ -1881,7 +1881,7 @@ static func format_abandon(payload: Dictionary) -> Dictionary:
 ## (`sim_runtime::command_text`), so the material sits in the same trailing position; and a working's
 ## keeper is known from its `Extract` row, exactly as a patch's is from its forage row.
 static func format_abandon_working(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
