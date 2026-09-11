@@ -112,11 +112,19 @@ rather than reading `min_deposit_capacity` a second time, are in
 `.claude/rules/core_sim/extraction.md`.
 
 **It is inert wherever there is no rung for the ground to refuse** — a lesson that opens nothing on
-its branch, or one that opens a rung stating `site_requirement: null`. That is every rung on the
-plant, animal and route webs and both free floors here, so the shipped ladder states exactly two live
-cases: `extraction:gathering` → quarrying → `extraction:quarry`, and `forestry:felling` →
+its branch, or one that opens a rung stating `site_requirement: null`. On these two branches that is
+`forestry:deadfall`, whose woodcraft opens a `forestry:felling` that asks nothing of the
+ground, and both branch **tops**, which earn nothing at all. So the shipped ladder states exactly two
+live cases: `extraction:gathering` → quarrying → `extraction:quarry`, and `forestry:felling` →
 conservationism → `forestry:coppice`. Both follow from the one sentence — you learn to work rock on
 rock worth quarrying, and to manage a wood on a wood worth managing.
+
+> ⛔ **THE FOOD AND ROUTE WEBS ARE UNTOUCHED BY THE *ARM*, NOT BY THE GROUND.** It is tempting to fold
+> them into the sentence above as more rungs with nothing to refuse, and that reading is **false of
+> the plant web**: the ladder lookup is branch-generic, `plant:wild` earns cultivation, and the
+> `plant:tended` it unlocks demands a gathering site. What keeps those webs out is that the term is
+> composed into the **deposit arm alone** — so wiring it into them later is a real behaviour change
+> there, gating `seed_selection` on fresh water, rather than the no-op the shorter wording promises.
 
 > ⛔ **ON THE STONE BRANCH THE GATE AND THE ESCAPEMENT DIAL ARE NOT INDEPENDENT, and that is the thing
 > to know before moving either number.** Every renewing stone scatter tops out at 70, under
@@ -124,8 +132,6 @@ rock worth quarrying, and to manage a wood on a wood worth managing.
 > gate now credits nothing for, and `intensification::PRACTICE_AT_THE_PLAIN_RATE` is the only pacing
 > `extraction:gathering` ever pays at. Lowering that 100 under 70 does not merely admit more sites; it
 > re-opens a second pacing reading on that rung.
-
----
 
 ---
 
