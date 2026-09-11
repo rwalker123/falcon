@@ -35,10 +35,14 @@ command.client.connected connection=7 client=127.0.0.1:62889
 command.rejected=not_this_connections_seat command="split_band" faction=0 connection=7 claimed_seat=None
 ```
 
-**The rising connection id is the whole symptom.** A healthy session logs `seat.claimed connection=N`
-once and nothing else until `seat.released` at exit.
+**A connection id that rises WITHIN one run is the whole symptom.** A healthy run logs
+`seat.claimed connection=N` once and nothing else on that id until the run ends. **A rising id
+BETWEEN runs is the healthy pattern, not the fault** — the seat's lifetime is one run, so
+abandoning one and starting another logs `seat.claimed connection=1`, `seat.released`,
+`seat.claimed connection=2`, and reading that pair as this regression diagnoses a working client (see
+"…and a connection lasts exactly one RUN" below).
 
-`bridge/command_link.rs` is the fix: one worker thread owning one `TcpStream` for the session, a
+`bridge/command_link.rs` is the fix: one worker thread owning one `TcpStream` per run, a
 reader thread over a `try_clone`d half, and a generation counter so a frame from a socket already
 replaced is recognised as stale. Everything — a command to write, a claim to make, a frame read, a
 socket that died — reaches the worker as one `LinkMessage`, so exactly one thread decides the seat's
@@ -107,7 +111,7 @@ read itself onto the same once-a-frame hop (`CommandBridge.poll_query_replies`),
 sits in `commanding_faction`'s `None` arm, so the server answers a faction-bearing query whatever
 connection it arrives on — which is what makes moving them **behaviour-neutral**: single-player
 forecast sheets, the load menu and the New Game capacity ask are unchanged, and the only observable
-difference is that the server logs one `command.client.connected` per session instead of one more per
+difference is that the server logs one `command.client.connected` per run instead of one more per
 question. A gate that refused before the client routed would break every forecast sheet in the game.
 
 ## Reconnect re-claims, because the alternative is silence
