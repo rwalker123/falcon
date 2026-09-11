@@ -376,17 +376,28 @@ lens: `tick`, `faction`, `radius`, `grid` (`width`, `height`, `wrap_horizontal`)
 `income`, `consumption`, `runway_turns`, `working_age`, `idle_workers`), `bands` (own resident
 bands: `band_id`, `x`, `y`, `size`, `working_age`, `idle_workers`, `turns_of_food`, `food_income`,
 `food_consumption`, `work_range`, `hunt_reach`, `is_traveling`, `assignments` [`job`, `target:
-{x,y} | {herd_id} | null`, `workers`, `actual_yield`, `sustainable_yield`, `hunt_useful_workers`],
-`intent_in_force` — `land:move:<band>` while the memory holds a move target — and `move_target`),
-and `neighborhood`: every **discovered** tile within `radius` hex steps of any own band, sorted
-`(y, x)`, with `terrain` (the `tiles` row's variant name, `null` when the frame carries no row),
-`food_site` (`food::is_food_site`), `forage_biomass`, `carrying_capacity`, `per_worker_yield` (the
-frame's forecast), `rated_per_worker_yield` (`food::patch_per_worker_yield` for the nearest own
-band — the number `Food` and `Land` actually rank on), `owner`, `cultivated`, `field`, `herd`
-(`id`, `species`, `biomass`, `per_worker_yield`, `huntable`, `corralled`; the first herd on the
-tile), `last_seen_tick` (`SeatMemory::last_seen`, undecayed) and `nearest_own_band_distance`. A
-tile the seat has never discovered is **absent**, not null — the specialists filter on
-`is_discovered` before reading anything, and so does the record.
+{x,y} | {herd_id} | null`, `workers`, `actual_yield`, `sustainable_yield`, `hunt_useful_workers`,
+and the readout the client's Forage/Hunt sheets show — `workers_needed`, `wasted_yield`,
+`overdraws`, `kit_id` (null on a band-wide role), `floor`, `species` (the commit crop, null for
+the tile's pick), `take_species` (empty = the whole basket), `improvement` (the declared build
+verb, null when none)], `build_queue` [`job`, `target`] in the band's order, `intent_in_force` —
+`land:move:<band>` while the memory holds a move target — and `move_target`), and `neighborhood`:
+every **discovered** tile within `radius` hex steps of any own band, sorted `(y, x)`, with
+`terrain` (the `tiles` row's variant name, `null` when the frame carries no row), `food_site`
+(`food::is_food_site`), `forage_biomass`, `carrying_capacity`, `per_worker_yield` (the frame's
+forecast), `rated_per_worker_yield` (`food::patch_per_worker_yield` for the nearest own band — the
+number `Food` and `Land` actually rank on), `owner`, `cultivated`, `field`,
+`cultivation_progress`, `field_progress`, `build` (the climb declared on the source —
+`destination_rung`, `queue_position`, `turns_remaining`, `blocked_reason`, `kit_id`; null when no
+rung is named), `upkeep` (`demand`, `supplied`, `shortfall`, `workers_needed`, `kit_id`; null when
+the source demands nothing), `herd` (`id`, `species`, `biomass`, `per_worker_yield`, `huntable`,
+`corralled`, `corral_progress`, and its own `build` / `upkeep`; the first herd on the tile),
+`last_seen_tick` (`SeatMemory::last_seen`, undecayed) and `nearest_own_band_distance`. The
+`ledger` also counts the seat's improved ground over the **whole frame** — `patches_owned`,
+`patches_cultivated`, `patches_field` — because an owned patch may sit outside the radius. A tile
+the seat has never discovered is **absent**, not null — the specialists filter on `is_discovered`
+before reading anything, and so does the record. Every one of these is a field the frame carries;
+the record derives nothing the client would have to (`labor-ui.md` → "THE ⚠ HAS ONE PRODUCER").
 
 `radius` is `observation_radius(horizon)` = `max(OBSERVATION_RADIUS_FLOOR (3), land.horizon_tiles)`
 — wide enough for a band's `work_range` and for everything `Land` looks at.
@@ -568,9 +579,18 @@ sentinel drawn as a gap), hunger deaths per tick — with the current tick marke
 the observation's neighbourhood as odd-r hexes unwrapped around the first own band, outlined by
 `owner` (own / rival / none), with glyphs for cultivated (□) and field (≡), a herd disc sized by
 biomass, band markers labelled `b<band_id> ·<size>` with a dashed ring at `work_range`, and a
-legend that says never-seen tiles are not drawn — tapping a hex lists its record; the **ledger**
-(the six numbers, then a row per band with its worked rows and the intent in force); the **seat
-scoreboard** under it — every `ScoreRow` field for the tick, captioned as the seat's ratchet
+legend that says never-seen tiles are not drawn, and **every hex a band works this tick** (a tile
+target directly, a herd target through the herd's hex) outlined in `--worked` with a badge of the
+workers on it — tapping a hex lists its record and then that tick's worked rows on it, each as the
+client's readout states it (job, band, crew, useful workers on a hunt, "N would do" when
+overstaffed, actual of sustainable per turn, ⚠ overdraws, uncollected yield, kit, floor, take,
+commit, declared build), plus the tile's progress meters, build and upkeep; the **ledger** (the
+six numbers, then a row per band with its worked rows in that same form and the intent in force);
+the **Work** panel under it — per band, workers by every job kind its rows name (so a new role
+appears with no template change) and idle of working-age, then the seat's improved ground
+(owned / cultivated / fields off the ledger), every band's build queue joined to the source's
+declared climb, and every upkeep row in view (owned patches, herds); the **seat scoreboard** under
+that — every `ScoreRow` field for the tick, captioned as the seat's ratchet
 numbers and not a tile score; the **orchestrator** panel — the plan in force (stance, since tick,
 a row per specialist with budget share and priority, and a `goals` column left empty for the slice
 that adds goals), the alarms in force, and this tick's re-plan / alarm / link events; and

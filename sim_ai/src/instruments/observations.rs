@@ -14,7 +14,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use sim_runtime::{LaborAssignmentState, PopulationCohortState};
+use sim_runtime::{
+    BuildQueueEntryState, ForagePatchState, HerdTelemetryState, LaborAssignmentState,
+    PopulationCohortState,
+};
 
 use crate::brain::BrainLens;
 use crate::geometry::Tile;
@@ -70,7 +73,8 @@ pub struct AlarmInForce {
     pub since_tick: u64,
 }
 
-/// The seat's food ledger, in the frame's units — the same sums the `ScoreRow` carries.
+/// The seat's food ledger, in the frame's units — the same sums the `ScoreRow` carries — and its
+/// improved ground, counted over the whole frame (`owner == faction`), not the neighbourhood.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ledger {
     pub stock: f32,
@@ -79,6 +83,39 @@ pub struct Ledger {
     pub runway_turns: f32,
     pub working_age: u32,
     pub idle_workers: u32,
+    pub patches_owned: usize,
+    pub patches_cultivated: usize,
+    pub patches_field: usize,
+}
+
+/// **The climb declared on a source** — the `build_*` fields the patch and the herd row both
+/// publish (`docs/plan_standing_upkeep.md` §2.5: the declaration lives on the source, and every
+/// band holding the source agrees). Absent when the source has no destination rung.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceBuild {
+    pub destination_rung: String,
+    pub queue_position: i32,
+    pub turns_remaining: i32,
+    pub blocked_reason: Option<String>,
+    pub kit_id: Option<String>,
+}
+
+/// **The standing upkeep an improved source charges** — the `upkeep_*` fields the patch and the
+/// herd row both publish. Absent when the source demands nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceUpkeep {
+    pub demand: f32,
+    pub supplied: f32,
+    pub shortfall: f32,
+    pub workers_needed: u32,
+    pub kit_id: Option<String>,
+}
+
+/// One entry of a band's build queue: the web and the source, as the wire names them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildQueueObservation {
+    pub job: String,
+    pub target: Option<AssignmentTarget>,
 }
 
 /// A tile, as an assignment target or a move target.
@@ -96,6 +133,9 @@ pub enum AssignmentTarget {
     Herd { herd_id: String },
 }
 
+/// One worked row, with the readout the client's Forage / Hunt sheets show for it: what it
+/// produced, what it could sustainably, whether the crew is the right size, and what the player
+/// stated on it (kit, floor, plants, the build it is declared for).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssignmentObservation {
     pub job: String,
@@ -105,6 +145,24 @@ pub struct AssignmentObservation {
     pub sustainable_yield: f32,
     /// The sim's crew-take plateau on a hunt row; 0 on every other row.
     pub hunt_useful_workers: u32,
+    /// The fewest workers that would have produced this turn's take (`workers > workers_needed`
+    /// is the overstaffing signal); 0 when the row produced nothing.
+    pub workers_needed: u32,
+    /// What the source offered that the crew could not collect — the understaffing signal.
+    pub wasted_yield: f32,
+    /// The sim's overhunting ⚠: the take draws the source below its floor.
+    pub overdraws: bool,
+    /// The `equipment.json` roster id the crew works under, resolved; `None` on a band-wide role,
+    /// which has no kit axis.
+    pub kit_id: Option<String>,
+    /// The escapement floor, as a fraction of the source's `K` (0 on a band-wide role).
+    pub floor: f32,
+    /// The plant a `Cultivate`/`Sow` on this patch commits to; `None` for the tile's own pick.
+    pub species: Option<String>,
+    /// The take selection — the plants carried home; empty is the whole basket.
+    pub take_species: Vec<String>,
+    /// The build verb declared on this row (`cultivate` / `sow` / …); `None` when none.
+    pub improvement: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,6 +184,8 @@ pub struct BandObservation {
     /// move target for it — the commitment the arbiter will reward this tick.
     pub intent_in_force: Option<String>,
     pub move_target: Option<TilePos>,
+    /// The band's build queue, in the band's order; the declaration itself is on the source row.
+    pub build_queue: Vec<BuildQueueObservation>,
 }
 
 /// A herd standing on a neighbourhood tile.
@@ -137,6 +197,9 @@ pub struct HerdObservation {
     pub per_worker_yield: f32,
     pub huntable: bool,
     pub corralled: bool,
+    pub corral_progress: f32,
+    pub build: Option<SourceBuild>,
+    pub upkeep: Option<SourceUpkeep>,
 }
 
 /// One discovered tile within the radius of an own band.
@@ -160,6 +223,11 @@ pub struct TileObservation {
     pub owner: Option<u32>,
     pub cultivated: bool,
     pub field: bool,
+    /// The two climbs' meters (`cultivation_progress` / `field_progress`); `None` without a patch.
+    pub cultivation_progress: Option<f32>,
+    pub field_progress: Option<f32>,
+    pub build: Option<SourceBuild>,
+    pub upkeep: Option<SourceUpkeep>,
     pub herd: Option<HerdObservation>,
     /// The last tick the seat's memory saw the tile actively (undecayed); `None` without a memory.
     pub last_seen_tick: Option<u64>,
@@ -220,6 +288,11 @@ impl Observation {
                         x: tile.x,
                         y: tile.y,
                     }),
+                    build_queue: band
+                        .build_queue
+                        .iter()
+                        .map(build_queue_observation)
+                        .collect(),
                 }
             })
             .collect();
@@ -250,6 +323,9 @@ impl Observation {
                         per_worker_yield: herd.per_worker_yield,
                         huntable: herd.huntable,
                         corralled: herd.corralled,
+                        corral_progress: herd.corral_progress,
+                        build: herd_build(herd),
+                        upkeep: herd_upkeep(herd),
                     });
                 TileObservation {
                     x: tile.x,
@@ -269,6 +345,10 @@ impl Observation {
                     owner: patch.and_then(|patch| patch.owner),
                     cultivated: patch.is_some_and(|patch| patch.is_cultivated),
                     field: patch.is_some_and(|patch| patch.is_field),
+                    cultivation_progress: patch.map(|patch| patch.cultivation_progress),
+                    field_progress: patch.map(|patch| patch.field_progress),
+                    build: patch.and_then(patch_build),
+                    upkeep: patch.and_then(patch_upkeep),
                     herd,
                     last_seen_tick: lens.memory.and_then(|memory| memory.last_seen(tile)),
                     nearest_own_band_distance: distance,
@@ -308,6 +388,13 @@ impl Observation {
                 runway_turns: row.runway_turns,
                 working_age: own_bands.iter().map(|band| band.working_age).sum(),
                 idle_workers: row.idle_workers,
+                patches_owned: row.patches_owned,
+                patches_cultivated: owned_patches(view, faction)
+                    .filter(|patch| patch.is_cultivated)
+                    .count(),
+                patches_field: owned_patches(view, faction)
+                    .filter(|patch| patch.is_field)
+                    .count(),
             },
             bands,
             neighborhood,
@@ -335,7 +422,121 @@ fn assignment_observation(row: &LaborAssignmentState) -> AssignmentObservation {
         actual_yield: row.actual_yield,
         sustainable_yield: row.sustainable_yield,
         hunt_useful_workers: row.hunt_useful_workers,
+        workers_needed: row.workers_needed,
+        wasted_yield: row.wasted_yield,
+        overdraws: row.overdraws,
+        kit_id: non_empty(&row.kit_id),
+        floor: row.floor,
+        species: non_empty(&row.species),
+        take_species: row.take_species.clone(),
+        improvement: non_empty(&row.improvement),
     }
+}
+
+/// The wire's `""` is "none" on every string it uses as an optional.
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// The patches this faction owns, over the whole frame.
+fn owned_patches(view: &SeatView, faction: u32) -> impl Iterator<Item = &ForagePatchState> {
+    view.snapshot
+        .forage_patches
+        .iter()
+        .filter(move |patch| patch.owner == Some(faction))
+}
+
+fn build_queue_observation(entry: &BuildQueueEntryState) -> BuildQueueObservation {
+    let target = if !entry.fauna_id.is_empty() {
+        Some(AssignmentTarget::Herd {
+            herd_id: entry.fauna_id.clone(),
+        })
+    } else if entry.kind == ROLE_HUNT {
+        None
+    } else {
+        Some(AssignmentTarget::Tile(TilePos {
+            x: entry.target_x,
+            y: entry.target_y,
+        }))
+    };
+    BuildQueueObservation {
+        job: entry.kind.clone(),
+        target,
+    }
+}
+
+/// The declared climb on a patch: present iff a destination rung is named.
+fn patch_build(patch: &ForagePatchState) -> Option<SourceBuild> {
+    source_build(
+        &patch.build_destination_rung,
+        patch.build_queue_position,
+        patch.build_turns_remaining,
+        &patch.build_blocked_reason,
+        &patch.build_kit_id,
+    )
+}
+
+fn herd_build(herd: &HerdTelemetryState) -> Option<SourceBuild> {
+    source_build(
+        &herd.build_destination_rung,
+        herd.build_queue_position,
+        herd.build_turns_remaining,
+        &herd.build_blocked_reason,
+        &herd.build_kit_id,
+    )
+}
+
+fn source_build(
+    destination_rung: &str,
+    queue_position: i32,
+    turns_remaining: i32,
+    blocked_reason: &str,
+    kit_id: &str,
+) -> Option<SourceBuild> {
+    non_empty(destination_rung).map(|destination_rung| SourceBuild {
+        destination_rung,
+        queue_position,
+        turns_remaining,
+        blocked_reason: non_empty(blocked_reason),
+        kit_id: non_empty(kit_id),
+    })
+}
+
+/// The standing upkeep on a patch: present iff it demands anything.
+fn patch_upkeep(patch: &ForagePatchState) -> Option<SourceUpkeep> {
+    source_upkeep(
+        patch.upkeep_demand,
+        patch.upkeep_supplied,
+        patch.upkeep_shortfall,
+        patch.upkeep_workers_needed,
+        &patch.upkeep_kit_id,
+    )
+}
+
+fn herd_upkeep(herd: &HerdTelemetryState) -> Option<SourceUpkeep> {
+    source_upkeep(
+        herd.upkeep_demand,
+        herd.upkeep_supplied,
+        herd.upkeep_shortfall,
+        herd.upkeep_workers_needed,
+        &herd.upkeep_kit_id,
+    )
+}
+
+fn source_upkeep(
+    demand: f32,
+    supplied: f32,
+    shortfall: f32,
+    workers_needed: u32,
+    kit_id: &str,
+) -> Option<SourceUpkeep> {
+    (demand > 0.0).then(|| SourceUpkeep {
+        demand,
+        supplied,
+        shortfall,
+        workers_needed,
+        kit_id: non_empty(kit_id),
+    })
 }
 
 /// A row whose target coordinates mean nothing: the standing roles and the maintenance pools
@@ -364,7 +565,7 @@ mod tests {
     use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, TICK};
     use crate::specialists::SPECIALIST_FOOD;
     use crate::view::VISIBILITY_ACTIVE;
-    use sim_runtime::{LaborAssignmentState, PopulationCohortState};
+    use sim_runtime::{BuildQueueEntryState, LaborAssignmentState, PopulationCohortState};
 
     const HORIZON: u32 = 3;
     const FOREIGN_FACTION: u32 = FACTION + 1;
@@ -398,8 +599,36 @@ mod tests {
             workers: 3,
             actual_yield: 0.6,
             sustainable_yield: 0.9,
+            workers_needed: 2,
+            wasted_yield: 0.1,
+            kit_id: "basket".into(),
+            floor: 0.5,
+            take_species: vec!["wild_emmer".into()],
+            improvement: "cultivate".into(),
             ..Default::default()
         }];
+        view.snapshot.populations[0].build_queue = vec![BuildQueueEntryState {
+            kind: "forage".into(),
+            target_x: 4,
+            target_y: 2,
+            fauna_id: String::new(),
+        }];
+        if let Some(patch) = view
+            .snapshot
+            .forage_patches
+            .iter_mut()
+            .find(|patch| patch.x == 4 && patch.y == 2)
+        {
+            patch.owner = Some(FACTION);
+            patch.cultivation_progress = 0.25;
+            patch.build_destination_rung = "tended".into();
+            patch.build_turns_remaining = 3;
+            patch.build_kit_id = "digging_stick".into();
+            patch.upkeep_demand = 1.5;
+            patch.upkeep_supplied = 1.0;
+            patch.upkeep_shortfall = 0.5;
+            patch.upkeep_workers_needed = 2;
+        }
         let index = view.grid().index(NEVER_SEEN).expect("on the grid");
         view.snapshot.visibility_raster.samples[index] = 0;
         view
@@ -597,6 +826,56 @@ mod tests {
         assert_eq!(value["kind"], "observation");
         let back: ObservationRecord = serde_json::from_str(&line).expect("parses");
         assert_eq!(back, record);
+    }
+
+    /// The worked row carries the client's Forage/Hunt readout — staffing signals, kit, floor,
+    /// take selection, the declared build — and the source it works carries the declared climb
+    /// and its upkeep; the band's build queue names the source; the ledger counts the seat's
+    /// improved ground over the whole frame.
+    #[test]
+    fn the_worked_row_and_its_source_carry_the_readout_fields() {
+        let view = a_view_with_a_rival();
+        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY));
+        let band = &observation.bands[0];
+        let row = &band.assignments[0];
+        assert_eq!(row.workers_needed, 2);
+        assert_eq!(row.wasted_yield, 0.1);
+        assert!(!row.overdraws);
+        assert_eq!(row.kit_id.as_deref(), Some("basket"));
+        assert_eq!(row.floor, 0.5);
+        assert_eq!(row.species, None, "the tile's own pick");
+        assert_eq!(row.take_species, vec!["wild_emmer"]);
+        assert_eq!(row.improvement.as_deref(), Some("cultivate"));
+        assert_eq!(band.build_queue.len(), 1);
+        assert_eq!(
+            band.build_queue[0].target,
+            Some(AssignmentTarget::Tile(TilePos { x: 4, y: 2 }))
+        );
+        let worked = observation
+            .neighborhood
+            .iter()
+            .find(|tile| tile.x == 4 && tile.y == 2)
+            .expect("the worked tile is in the neighbourhood");
+        assert_eq!(worked.cultivation_progress, Some(0.25));
+        let build = worked.build.as_ref().expect("a climb is declared");
+        assert_eq!(build.destination_rung, "tended");
+        assert_eq!(build.turns_remaining, 3);
+        assert_eq!(build.kit_id.as_deref(), Some("digging_stick"));
+        assert_eq!(build.blocked_reason, None);
+        let upkeep = worked.upkeep.as_ref().expect("the source charges upkeep");
+        assert_eq!(upkeep.shortfall, 0.5);
+        assert_eq!(upkeep.workers_needed, 2);
+        assert_eq!(upkeep.kit_id, None);
+        let unworked = observation
+            .neighborhood
+            .iter()
+            .find(|tile| tile.x == FOREIGN_PATCH.x && tile.y == FOREIGN_PATCH.y)
+            .expect("the rival's patch");
+        assert!(unworked.build.is_none() && unworked.upkeep.is_none());
+        assert_eq!(unworked.cultivation_progress, Some(0.0));
+        assert_eq!(observation.ledger.patches_owned, 1);
+        assert_eq!(observation.ledger.patches_cultivated, 0);
+        assert_eq!(observation.ledger.patches_field, 0);
     }
 
     #[test]

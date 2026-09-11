@@ -10,7 +10,7 @@
   --bg: #fbfaf6; --fg: #1d1d1b; --muted: #6b6a64; --panel: #ffffff; --line: #d9d6cc;
   --own: #2f6fdd; --foreign: #d0342c; --accept: #1f8a4c; --reject: #a34f00; --mark: #d0342c;
   --ramp0: #efe9d2; --ramp1: #1f6f3a; --nopatch: #cfcbc0; --land: #e6e1d3; --herd: #7a4b1e; --band: #1d1d1b;
-  --site: #2f6f3a; --focus: #e0a800;
+  --site: #2f6f3a; --focus: #e0a800; --worked: #7a1fa2;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -19,7 +19,7 @@
     --bg: #15161a; --fg: #e8e6df; --muted: #9a988f; --panel: #1e2027; --line: #34363f;
     --own: #6ea0ff; --foreign: #ff6b62; --accept: #55c983; --reject: #f0a04b; --mark: #ff6b62;
     --ramp0: #3a3a2f; --ramp1: #4fc46f; --nopatch: #44464d; --land: #2c2e35; --herd: #d9a066; --band: #f2f0e8;
-    --site: #7fd99a; --focus: #ffd45c;
+    --site: #7fd99a; --focus: #ffd45c; --worked: #d08cff;
   }
 }
 * { box-sizing: border-box; }
@@ -39,13 +39,17 @@ h3 { font-size: .9rem; margin: .6rem 0 .3rem; }
 .spark .label { font-size: .7rem; color: var(--muted); display: flex; justify-content: space-between; }
 .spark svg { width: 100%; height: 34px; display: block; }
 .spark .a { stroke: var(--own); } .spark .b { stroke: var(--foreign); } .spark .m { stroke: var(--mark); stroke-dasharray: 2 2; }
-main { display: grid; grid-template-columns: 1fr; grid-template-areas: "map" "ledger" "score" "orch" "dec"; gap: .75rem; padding: .75rem; align-items: start; }
-@media (min-width: 700px) { main { grid-template-columns: 1fr 1fr; grid-template-areas: "map orch" "ledger dec" "score dec"; } }
+main { display: grid; grid-template-columns: 1fr; grid-template-areas: "map" "ledger" "work" "score" "orch" "dec"; gap: .75rem; padding: .75rem; align-items: start; }
+@media (min-width: 700px) { main { grid-template-columns: 1fr 1fr; grid-template-areas: "map orch" "ledger dec" "work dec" "score dec"; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: .75rem; min-width: 0; }
-#map { grid-area: map; } #ledger { grid-area: ledger; } #score { grid-area: score; } #orchestrator { grid-area: orch; } #decisions { grid-area: dec; }
+#map { grid-area: map; } #ledger { grid-area: ledger; } #work { grid-area: work; } #score { grid-area: score; } #orchestrator { grid-area: orch; } #decisions { grid-area: dec; }
 #hexmap { width: 100%; height: auto; display: block; touch-action: manipulation; }
 #hexmap polygon { stroke-width: 1.2; cursor: pointer; }
 #hexmap polygon.sel { stroke-width: 3; }
+#hexmap polygon.worked { stroke: var(--worked); stroke-width: 2.4; stroke-dasharray: 3 1.5; }
+#hexmap polygon.worked.sel { stroke-width: 3.5; }
+#hexmap .badge { fill: var(--worked); pointer-events: none; }
+#hexmap .badge-text { font-size: 7.5px; fill: var(--bg); font-weight: 700; text-anchor: middle; pointer-events: none; }
 #hexmap text { font-family: var(--mono); font-size: 9px; pointer-events: none; fill: var(--band); }
 #hexmap .herd { fill: var(--herd); opacity: .85; pointer-events: none; }
 #hexmap .site { fill: var(--site); pointer-events: none; }
@@ -109,11 +113,17 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
       <span><span class="sw" style="border-color: var(--line)"></span>unowned</span>
       <span><span class="dot" style="background: var(--site)"></span>food site &nbsp; <span class="dot" style="background: var(--herd)"></span>herd (size by biomass)</span>
       <span>&#9633; cultivated &nbsp; &#8801; field &nbsp; &#9673; band (id · size, tap to focus) &nbsp; dashed ring = work range</span>
+      <span><span class="sw" style="border-color: var(--worked); border-style: dashed"></span>worked this tick, badge = workers on it (tap for the rows)</span>
       <span class="note">Tiles the seat has never seen are not drawn. Tap a hex for its record.</span>
     </div>
     <div id="tile-detail" class="empty">No hex selected.</div>
   </section>
   <section id="ledger"><h2>Ledger</h2><div id="ledger-body"></div></section>
+  <section id="work">
+    <h2>Work</h2>
+    <p class="caption">Workers by job per band, then the seat's improved ground and the build and upkeep rows the frame carries.</p>
+    <div id="work-body"></div>
+  </section>
   <section id="score">
     <h2>Seat scoreboard</h2>
     <p class="caption">The seat's <span class="mono">ScoreRow</span> for this tick — the numbers the bench ratchets — not a tile score.</p>
@@ -142,6 +152,8 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
   var HERD_R_MIN = 1.5, HERD_R_MAX = 6;
   var SITE_R = 1.8;         // the food-site dot at the hex centre
   var BAND_R = 4;
+  var BADGE_R = 3.6;        // the worker-count badge on a worked hex, at its lower-right
+  var BADGE_DX = 0.45, BADGE_DY = 0.5;   // badge centre, as a fraction of HEX from the hex centre
   var ALL_TAB = "all";      // the tab showing every specialist's proposals
   // The text-grammar verbs whose third token is the band id (`sim_runtime::command_text`).
   var BAND_VERBS = { assign_labor: true, move_band: true, split_band: true };
@@ -268,6 +280,24 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
     var t = biomassMax > 0 ? Math.max(0, Math.min(1, h.forage_biomass / biomassMax)) : 0;
     return lerpColor(cssVar("--ramp0"), cssVar("--ramp1"), t);
   }
+  // Every row the seat's bands work this tick, keyed by the hex it is on: a tile target directly,
+  // a herd target through the herd's hex in the neighbourhood. A role with no target marks nothing.
+  function workedIndex(obs) {
+    var byKey = {};
+    if (!obs) return byKey;
+    var herdTile = {};
+    obs.neighborhood.forEach(function (h) { if (h.herd) herdTile[h.herd.id] = h.x + "," + h.y; });
+    obs.bands.forEach(function (b) {
+      b.assignments.forEach(function (a) {
+        var key = null;
+        if (a.target && a.target.herd_id != null) key = herdTile[a.target.herd_id] || null;
+        else if (a.target) key = a.target.x + "," + a.target.y;
+        if (key == null) return;
+        (byKey[key] = byKey[key] || []).push({ band: b, a: a });
+      });
+    });
+    return byKey;
+  }
   function tileStroke(h) {
     if (h.owner == null) return cssVar("--line");
     return h.owner === MODEL.faction ? cssVar("--own") : cssVar("--foreign");
@@ -289,9 +319,17 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
     });
     svg.setAttribute("viewBox", [minX - HEX - 2, minY - HEX - 2, maxX - minX + 2 * HEX + 4, maxY - minY + 2 * HEX + 4].join(" "));
     var html = "";
+    var worked = workedIndex(obs);
     placed.forEach(function (p) {
       var sel = selectedTile && selectedTile.x === p.h.x && selectedTile.y === p.h.y;
-      html += tag("polygon", { points: hexPoints(p.c), fill: tileFill(p.h), stroke: tileStroke(p.h), "class": sel ? "sel" : "", "data-x": p.h.x, "data-y": p.h.y });
+      var rows = worked[p.h.x + "," + p.h.y];
+      html += tag("polygon", { points: hexPoints(p.c), fill: tileFill(p.h), stroke: tileStroke(p.h), "class": (sel ? "sel" : "") + (rows ? " worked" : ""), "data-x": p.h.x, "data-y": p.h.y });
+      if (rows) {
+        var crew = rows.reduce(function (n, r) { return n + r.a.workers; }, 0);
+        var bx = p.c.x + HEX * BADGE_DX, by = p.c.y + HEX * BADGE_DY;
+        html += tag("circle", { cx: bx, cy: by, r: BADGE_R, "class": "badge" });
+        html += tag("text", { x: bx, y: by + 2.6, "class": "badge-text" }, esc(crew));
+      }
       if (p.h.food_site) html += tag("circle", { cx: p.c.x, cy: p.c.y, r: SITE_R, "class": "site" });
       if (p.h.cultivated) html += tag("rect", { x: p.c.x - 3, y: p.c.y + 3, width: 6, height: 5, "class": "glyph" });
       if (p.h.field) html += tag("path", { d: "M" + (p.c.x - 5) + " " + (p.c.y + 5) + " h10 M" + (p.c.x - 5) + " " + (p.c.y + 8) + " h10", "class": "glyph" });
@@ -346,9 +384,89 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
       ["owner", h.owner == null ? "none" : (h.owner === MODEL.faction ? "this seat (" + h.owner + ")" : "rival " + h.owner)],
       ["cultivated", h.cultivated], ["field", h.field],
       ["herd", h.herd ? h.herd.id + " " + h.herd.species + " biomass " + num(h.herd.biomass) + " rate " + num(h.herd.per_worker_yield, 3) + (h.herd.huntable ? " huntable" : "") + (h.herd.corralled ? " corralled" : "") : "none"],
+      ["cultivation progress", h.cultivation_progress == null ? "—" : num(h.cultivation_progress, 2)],
+      ["field progress", h.field_progress == null ? "—" : num(h.field_progress, 2)],
+      ["build", buildText(h.build)], ["upkeep", upkeepText(h.upkeep)],
       ["last seen tick", h.last_seen_tick == null ? "—" : h.last_seen_tick], ["distance to nearest own band", h.nearest_own_band_distance]
     ];
-    host.innerHTML = "<dl>" + rows.map(function (r) { return "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1] == null ? "—" : r[1]) + "</dd>"; }).join("") + "</dl>";
+    var html = "<dl>" + rows.map(function (r) { return "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1] == null ? "—" : r[1]) + "</dd>"; }).join("") + "</dl>";
+    var on = workedIndex(obs)[h.x + "," + h.y] || [];
+    html += "<h3>Worked this tick" + (on.length ? " (" + on.length + " row" + (on.length === 1 ? "" : "s") + ")" : "") + "</h3>";
+    if (!on.length) html += "<p class=\"empty\">no crew on this hex</p>";
+    on.forEach(function (r) { html += assignmentRow(r.band, r.a); });
+    host.innerHTML = html;
+  }
+  function buildText(b) {
+    if (!b) return "none";
+    return "→ " + b.destination_rung + (b.turns_remaining >= 0 ? ", " + b.turns_remaining + " turn" + (b.turns_remaining === 1 ? "" : "s") + " left" : "") + (b.queue_position >= 0 ? ", queue #" + b.queue_position : "") + (b.kit_id ? ", kit " + b.kit_id : "") + (b.blocked_reason ? " — blocked: " + b.blocked_reason : "");
+  }
+  function upkeepText(u) {
+    if (!u) return "none";
+    return num(u.supplied) + " of " + num(u.demand) + " supplied" + (u.shortfall > 0 ? ", short " + num(u.shortfall) : "") + ", needs " + u.workers_needed + " worker" + (u.workers_needed === 1 ? "" : "s") + (u.kit_id ? ", kit " + u.kit_id : "");
+  }
+  // One worked row, as the client's Forage / Hunt readout states it: crew, yields, staffing
+  // signals, and what the player stated on it. A line is shown only when the frame carries it.
+  function assignmentRow(b, a) {
+    var head = esc(a.job) + " " + esc(targetText(a)) + " · b" + b.band_id + " ×" + a.workers;
+    if (a.hunt_useful_workers) head += " (useful " + a.hunt_useful_workers + ")";
+    if (a.workers_needed && a.workers > a.workers_needed) head += " (" + a.workers_needed + " would do)";
+    var lines = [];
+    lines.push(num(a.actual_yield) + " of " + num(a.sustainable_yield) + " sustainable per turn" + (a.overdraws ? " ⚠ overdraws" : "") + (a.wasted_yield > 0 ? ", " + num(a.wasted_yield) + " uncollected" : ""));
+    var stated = [];
+    if (a.kit_id) stated.push("kit " + a.kit_id);
+    if (a.target) stated.push("floor " + num(a.floor, 2));
+    if (a.take_species && a.take_species.length) stated.push("take " + a.take_species.join(","));
+    if (a.species) stated.push("commit " + a.species);
+    if (a.improvement) stated.push("build " + a.improvement);
+    if (stated.length) lines.push(stated.join(" · "));
+    return "<div class=\"assign\">" + head + "<br>" + lines.map(esc).join("<br>") + "</div>";
+  }
+  // The Work panel: per band, workers by every job kind its rows name, then idle; per seat, the
+  // improved ground and every build / upkeep row in view.
+  function drawWork(obs) {
+    var host = el("work-body");
+    if (!obs) { host.innerHTML = "<p class=\"empty\">No observation for this tick.</p>"; return; }
+    var jobs = {};
+    obs.bands.forEach(function (b) { b.assignments.forEach(function (a) { jobs[a.job] = true; }); });
+    var jobNames = Object.keys(jobs).sort();
+    var html = "";
+    if (!obs.bands.length) html += "<p class=\"empty\">No own band in view.</p>";
+    else {
+      html += "<table><tr><th>band</th>" + jobNames.map(function (j) { return "<th class=\"n\">" + esc(j) + "</th>"; }).join("") + "<th class=\"n\">idle</th><th class=\"n\">of</th></tr>";
+      obs.bands.forEach(function (b) {
+        var byJob = {};
+        b.assignments.forEach(function (a) { byJob[a.job] = (byJob[a.job] || 0) + a.workers; });
+        var focus = focusBand != null && focusBand === b.band_id ? " focus" : "";
+        html += "<tr class=\"band-row" + focus + "\" data-band=\"" + b.band_id + "\"><td>b" + b.band_id + "</td>" + jobNames.map(function (j) { return "<td class=\"n\">" + (byJob[j] || 0) + "</td>"; }).join("") + "<td class=\"n\">" + b.idle_workers + "</td><td class=\"n\">" + b.working_age + "</td></tr>";
+      });
+      html += "</table>";
+    }
+    var L = obs.ledger;
+    html += "<h3>Improved ground</h3><dl><dt>patches owned</dt><dd>" + L.patches_owned + "</dd><dt>cultivated</dt><dd>" + L.patches_cultivated + "</dd><dt>fields</dt><dd>" + L.patches_field + "</dd></dl>";
+    var byKey = {}, herdByKey = {};
+    obs.neighborhood.forEach(function (h) { byKey[h.x + "," + h.y] = h; if (h.herd) herdByKey[h.herd.id] = h.herd; });
+    var builds = [];
+    obs.bands.forEach(function (b) {
+      b.build_queue.forEach(function (q) {
+        var src = q.target && q.target.herd_id != null ? herdByKey[q.target.herd_id] : (q.target ? byKey[q.target.x + "," + q.target.y] : null);
+        builds.push("b" + b.band_id + " " + q.job + " " + targetText(q) + ": " + buildText(src ? src.build : null));
+      });
+    });
+    html += "<h3>Build queue</h3>";
+    if (!builds.length) html += "<p class=\"empty\">nothing queued</p>";
+    else builds.forEach(function (line) { html += "<div class=\"assign\">" + esc(line) + "</div>"; });
+    var upkeep = [];
+    obs.neighborhood.forEach(function (h) {
+      if (h.upkeep && h.owner === MODEL.faction) upkeep.push(h.x + "," + h.y + (h.cultivated ? " cultivated" : "") + (h.field ? " field" : "") + ": " + upkeepText(h.upkeep));
+      if (h.herd && h.herd.upkeep) upkeep.push(h.herd.id + " " + h.herd.species + (h.herd.corralled ? " corralled" : "") + ": " + upkeepText(h.herd.upkeep));
+    });
+    html += "<h3>Upkeep</h3>";
+    if (!upkeep.length) html += "<p class=\"empty\">no source in view charges upkeep</p>";
+    else upkeep.forEach(function (line) { html += "<div class=\"assign\">" + esc(line) + "</div>"; });
+    host.innerHTML = html;
+    Array.prototype.forEach.call(host.querySelectorAll("tr.band-row"), function (row) {
+      row.addEventListener("click", function () { toggleFocus(parseInt(row.getAttribute("data-band"), 10)); });
+    });
   }
 
   // ---------------------------------------------------------------- band focus
@@ -388,9 +506,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
       html += "<tr class=\"band-row" + focus + "\" data-band=\"" + b.band_id + "\" title=\"tap to focus the decisions on this band\"><td>b" + b.band_id + " <span class=\"muted mono\">@" + b.x + "," + b.y + (b.is_traveling ? " travelling" : "") + "</span></td><td class=\"n\">" + b.size + "</td><td class=\"n\">" + b.idle_workers + "/" + b.working_age +
         "</td><td class=\"n\">" + (b.turns_of_food >= NOT_FOOD_LIMITED ? "∞" : num(b.turns_of_food, 1)) + "</td><td class=\"n\">" + num(b.food_income) + "</td><td class=\"n\">" + num(b.food_consumption) + "</td></tr>";
       var extra = "";
-      b.assignments.forEach(function (a) {
-        extra += "<div class=\"assign\">" + esc(a.job) + " " + esc(targetText(a)) + " ×" + a.workers + (a.hunt_useful_workers ? " (useful " + a.hunt_useful_workers + ")" : "") + " → " + num(a.actual_yield) + " of " + num(a.sustainable_yield) + " sustainable</div>";
-      });
+      b.assignments.forEach(function (a) { extra += assignmentRow(b, a); });
       if (!b.assignments.length) extra += "<div class=\"assign muted\">no worked rows</div>";
       if (b.intent_in_force) extra += "<div class=\"assign\">intent in force: " + esc(b.intent_in_force) + (b.move_target ? " → " + b.move_target.x + "," + b.move_target.y : "") + "</div>";
       html += "<tr><td colspan=\"6\">" + extra + "</td></tr>";
@@ -512,6 +628,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
     drawMap(obs);
     drawTileDetail(obs);
     drawLedger(obs);
+    drawWork(obs);
     drawScore(turn ? turn.score : null);
     drawTabs();
     if (turn) { drawOrchestrator(turn); drawDecisions(turn); }
