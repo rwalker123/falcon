@@ -1460,10 +1460,23 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     # one hex overwrite each other. It is read on that kind ALONE: on a forage row the same token is
     # the CROP COMMIT, which is not part of that row's identity and must not enter its key.
     var material := species if kind == HudConst.LABOR_KIND_EXTRACT else ""
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement,
-        kit_id, material)
+    # ⛔ **A SHEET THAT OFFERED NO DIAL NAMES NO FLOOR, AND THE COMMAND THEN CARRIES NO TOKEN**
+    # (issue #650). `SourceForecast.FLOOR_UNNAMED` arrives from the deposit sheet's finite arm and from
+    # nowhere else; what an omitted token MEANS is the sim's to answer, and on ground that never renews
+    # it answers `STRIP_IT_BARE` rather than the shared default — so substituting the default here is
+    # exactly the conservation choice nobody made.
+    #
+    # **THE PENDING OVERLAY STILL NEEDS A NUMBER, and it records the sim's own answer to silence.**
+    # `FLOOR_MIN` is that answer on the only ground this sentinel can reach; every deposit reader
+    # discards a crew floor on finite ground anyway (`HudDepositVocab.composed_floor`), so this is what
+    # the row will read AS rather than a figure any surface renders.
+    var names_floor := not is_equal_approx(floor, SourceForecast.FLOOR_UNNAMED)
+    var recorded_floor := SourceForecast.clamp_floor(floor) if names_floor \
+        else SourceForecast.FLOOR_MIN
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, recorded_floor,
+        improvement, kit_id, material)
     _after_pending_change()
-    emit_signal("assign_labor_requested", {
+    var payload := {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": band_id,
         "kind": kind,
@@ -1474,8 +1487,10 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity — the whole of the
         # harvest axis since the four stances were deleted. `Main` renders it as the optional numeric
         # token `assign_labor` takes; the sim REJECTS the four stance words by name, so a stale
-        # emitter fails loudly rather than being silently reinterpreted.
-        "floor": SourceForecast.clamp_floor(floor),
+        # emitter fails loudly rather than being silently reinterpreted. **ERASED BELOW where the
+        # sheet offered no dial** — absence is the whole of what a builder can say for a player who
+        # was never asked.
+        "floor": recorded_floor,
         "species": species,
         # **WHICH PLANTS THIS FORAGE CREW CARRIES HOME** (the selective gather) — the FULL selection,
         # every commit, never a delta: the sim reads an omitted `take:` token as *"the whole basket"*
@@ -1505,7 +1520,12 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # client-local `entity`, never by `band_id` (see the two handles above). No `format_*` builder
         # reads this key; `Main._on_hud_assign_labor` hands it straight back to `drop_pending_assign`.
         "pending_entity": entity,
-    })
+    }
+    # **THE KEY IS ERASED RATHER THAN SET TO A SENTINEL**, so `Main`'s builders test `has()` — the same
+    # question the sim's parser asks of the line — instead of every one of them learning a magic value.
+    if not names_floor:
+        payload.erase("floor")
+    emit_signal("assign_labor_requested", payload)
 
 ## **A DECLARATION FROM THE WORK ROW'S `⌃`, AND ITS OPTIMISTIC HALF**
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). The verb goes on the wire; the declaration is ALSO

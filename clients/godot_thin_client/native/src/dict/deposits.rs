@@ -94,11 +94,17 @@ pub(crate) fn deposits_to_array(
         // are both read out of. Published so a ladder card can place the working on the WHOLE
         // branch rather than only within its current rung.
         let _ = dict.insert("ladder_position", f64::from(deposit.ladderPosition()));
-        // **THE OVER-CUT PAIR** — what a crew could take EVERY TURN AT THIS STOCK and leave the
-        // working where it stands, against what it actually paid out last turn summed over every
-        // band cutting it. This is the EXISTING intensification income breakdown pointed at a new
-        // source, not a new readout: actual above sustainable is over-cutting, which is possible on
-        // purpose and warned about rather than refused.
+        // **THE OVER-CUT PAIR** — what a crew could take EVERY TURN FOR EVER and still have a wood,
+        // against what it actually paid out last turn summed over every band cutting it. This is the
+        // EXISTING intensification income breakdown pointed at a new source, not a new readout:
+        // actual above sustainable is over-cutting, which is possible on purpose and warned about
+        // rather than refused.
+        //
+        // **`sustainable_take` IS THE DEPOSIT'S MSY — the growth term read at the PEAK of its curve
+        // (`MSY_BIOMASS_FRACTION × capacity`), NOT the growth at today's stock.** Reading it the
+        // other way mis-fired on correct play (issue #650): a mature wood stands at `K`, where
+        // `(1 − S/K)` is zero, so the first cut read as over-drawing and never cleared, the stock
+        // converging on the take from above. The comparison is only meaningful against the MSY.
         //
         // **`sustainable_take` IS `0` ON A FINITE DEPOSIT, and that is the honest answer rather than
         // a gap.** Rock's rate is zero, so there is no take a quarry can sustain — what a finite
@@ -193,18 +199,15 @@ pub(crate) fn deposits_to_array(
         let _ = dict.insert("upkeep_kit_id", deposit.upkeepKitId().unwrap_or_default());
         let _ = dict.insert("upkeep_kit_named", deposit.upkeepKitNamed());
         // --- THE ESCAPEMENT FLOOR AND THE CURVE IT IS DRAGGED ON (issue #650) -------------------
-        // WHERE THIS TURN'S CREWS STOPPED, as a fraction of `capacity` — the working's own reading
-        // of the dial, kept at the DEEPEST floor any band cutting it named. `0` where nobody cut it,
-        // which is the identity of the max below rather than a strip order.
-        //
-        // ⛔ **NOTHING ON THE SHEET SEEDS FROM IT.** A compose sheet states what ONE band is asking
-        // for, and that is `LaborAssignment.floor` on that band's own `extract` row
-        // (`HudBandLaborState.floor_for_extract`); this is the SOURCE-level minimum across every band
-        // on the working, so seeding a dial from it would silently adopt another band's deeper floor.
-        // Its consequence is already `reachable` above, which the sim composes at exactly this value.
-        let _ = dict.insert("floor", f64::from(deposit.floor()));
-        // THE RUNG'S OWN FLOOR, IN THE SAME UNITS — `1 - recovery_fraction`, what this rung's reach
-        // cannot get at. `extraction:gathering` recovers 0.15, so it strands 85% of a rock body and
+        // ⛔ **THE SOURCE-LEVEL `floor` IS GONE FROM THE WIRE, AND NOTHING HERE MAY RE-DERIVE ONE.**
+        // It published where this turn's crews stopped, deepest-first across the bands cutting the
+        // working, and no surface ever read it: a compose sheet states what ONE band is asking for,
+        // which is `LaborAssignment.floor` on that band's own `extract` row
+        // (`HudBandLaborState.floor_for_extract`), and seeding a dial from a source-level minimum
+        // would silently adopt another band's deeper floor. Its consequence is already `reachable`
+        // above, which the sim composes at exactly that value.
+        // THE RUNG'S OWN FLOOR, as a fraction of `capacity` — `1 - recovery_fraction`, what this
+        // rung's reach cannot get at. `extraction:gathering` recovers 0.15, so it strands 85% of a rock body and
         // this reads 0.85; every FORESTRY rung recovers 1.0, so this reads 0.
         //
         // ⛔ **COMPOSE IT WITH THE PLAYER'S FLOOR AS A MAXIMUM, NEVER AS A SUM.** Both are the same

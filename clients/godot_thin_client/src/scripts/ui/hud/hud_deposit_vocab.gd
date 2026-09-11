@@ -324,9 +324,18 @@ static func build_fraction_of(deposit: Dictionary) -> float:
 static func ladder_position_of(deposit: Dictionary) -> float:
 	return float(deposit.get("ladder_position", LADDER_UNSTARTED))
 
-## **THE OVER-CUT PAIR, first half** — what a crew could take EVERY TURN AT THIS STOCK and leave the
-## working where it stands. `0` on a finite working by arithmetic (rock's rate is zero, so the
-## difference is exactly zero), which is why `renews()` and not this field is the fork.
+## **THE OVER-CUT PAIR, first half** — what a crew could take EVERY TURN FOR EVER and still have a
+## wood: the working's MSY, the growth term read at the PEAK of its curve
+## (`MSY_BIOMASS_FRACTION × capacity`), which is `fauna::sustainable_yield`'s own expression with the
+## deposit's curve substituted in.
+##
+## ⛔ **IT IS NOT THE GROWTH AT TODAY'S STOCK, AND READING IT THAT WAY MIS-FIRED ON CORRECT PLAY**
+## (issue #650). A mature wood stands at `K`, where `(1 − S/K)` is zero — so under the at-this-stock
+## reading the very first cut showed as over-drawing and never cleared, the stock converging on the
+## take from above. `actual_take > sustainable_take` is only meaningful against the MSY reading.
+##
+## `0` on a finite working by arithmetic (rock's rate is zero, so the growth term is zero wherever it
+## is read), which is why `renews()` and not this field is the fork.
 static func sustainable_take_of(deposit: Dictionary) -> float:
 	return float(deposit.get("sustainable_take", 0.0))
 
@@ -689,8 +698,13 @@ const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take i
 ## a road is not worked, a working is, and this stepper is the TAKE crew. It says so because a player
 ## who staffed it expecting the bill to be met would watch the working go back anyway; the hands that
 ## HOLD a working are the band-wide `Workings` pool, whose only control is the roster head's stepper.
-const CARD_CREW_HINT := "Hands taking material out of this ground. The hands that HOLD it are the " \
-	+ "band's Groundwork pool, on the Work tab."
+##
+## ⛔ **THE POOL NAMES ITSELF THROUGH `%s`, like the other two strings that name it**
+## (`DEPOSIT_IDLE_TIP_FORMAT`, `WORKING_ABANDON_WHY_FORMAT`). `HudWorkVocab.ROLE_NAME_QUARRYWORK` has
+## already been renamed once on Ray's instruction, and a hardcoded third copy is a rename that leaves
+## both compose sheets' crew hovers naming a pool no other surface calls by that word.
+const CARD_CREW_HINT_FORMAT := "Hands taking material out of this ground. The hands that HOLD it " \
+	+ "are the band's %s pool, on the Work tab."
 
 ## The bill's face: what the working owes a turn and how many keepers that is.
 const CARD_UPKEEP_FORMAT := "%s work a turn · %d keeper%s"
@@ -811,12 +825,6 @@ const RUNG_CATALOG_UPKEEP := "upkeep_work_per_turn"
 const RUNG_CATALOG_MATERIAL_COST := "build_material_cost"
 const RUNG_CATALOG_MATERIAL_ID := "build_material_id"
 
-## ⛔ **THE SIM'S OWN BARE WORKER OUTPUT, IDENTICAL ON EVERY ROW.** It rides the catalog because the
-## catalog is exactly the set of numbers that are the same for every working in the world, and it is
-## READ rather than transcribed: the sim writes worker output as a sum of terms, so a client copy goes
-## stale in silence the day a second term lands.
-const RUNG_CATALOG_BUILD_PER_WORKER_TURN := "build_work_per_worker_turn"
-
 ## What ONE cutter takes in a turn at this rung, before the reachable stock caps it. **Both free
 ## floors carry a real bare-handed rate** — the whole material economy bootstraps through them.
 const RUNG_CATALOG_YIELD_PER_WORKER_TURN := "yield_per_worker_turn"
@@ -847,11 +855,10 @@ const RUNG_CATALOG_NO_ORDER := -1
 ## gated on, not a rounding tolerance: `0 work` would read as a defect on a row with no price to state.
 const RUNG_CATALOG_NO_WORK_COST := 0.0
 
-## The rate a catalog this client has not been sent reads. **A measured nothing, not a sentinel**: it
-## flows into the readers as *there is no rate*, which each answers by stating nothing.
-const RUNG_CATALOG_NO_BUILD_RATE := 0.0
-
-## …and the take rate's own version of that, for the identical reason.
+## The rate a catalog this client has not been sent reads — **a measured nothing, not a sentinel**: it
+## flows into the readers as *there is no rate*, which each answers by stating nothing. The BUILD
+## rate's copy of this went with the accessor that was its only reader (see
+## `catalog_yield_per_worker_turn`'s neighbours); `HudRouteVocab` owns the surviving pair.
 const RUNG_CATALOG_NO_YIELD := 0.0
 
 ## A rung that asks nothing of the ground — every shipped rung but `extraction:quarry`. The SITE gate
@@ -926,8 +933,11 @@ static func catalog_material_pile(entry: Dictionary) -> Dictionary:
 		SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: wanted,
 	}
 
-static func catalog_build_work_per_worker_turn(entry: Dictionary) -> float:
-	return float(entry.get(RUNG_CATALOG_BUILD_PER_WORKER_TURN, RUNG_CATALOG_NO_BUILD_RATE))
+## ⛔ **THE BARE WORKER OUTPUT IS READ THROUGH `HudRouteVocab.catalog_build_work_per_worker_turn`,
+## AND A DEPOSIT COPY OF IT IS GONE.** That figure is the sim's own, identical on every catalog row of
+## every branch, and the key string is the same one — so `RungLadder` asks the route accessor for a
+## deposit rung exactly as it does for a road rung. A second reader here had no call site and was
+## one more thing to keep in step.
 
 static func catalog_yield_per_worker_turn(entry: Dictionary) -> float:
 	return float(entry.get(RUNG_CATALOG_YIELD_PER_WORKER_TURN, RUNG_CATALOG_NO_YIELD))
@@ -1004,6 +1014,14 @@ static func branch_floor_entry(ladder: Array[Dictionary], branch: String) -> Dic
 static func ladder_next_entry(ladder: Array[Dictionary], deposit: Dictionary) -> Dictionary:
 	var rows := working_ladder(ladder, deposit)
 	var standing := ladder_order_of(rows, rung_of(deposit))
+	# ⛔ **A RUNG THE CATALOG DOES NOT CARRY HAS NO RUNG ABOVE IT, and `RUNG_CATALOG_NO_ORDER` sorts
+	# BELOW THE FLOOR.** Walking on would match the branch's lowest row — so a working whose standing
+	# rung is missing (config drift, a catalog this client was sent only part of) would be offered a
+	# rung it is already ABOVE: `progress_clause` reads *42% to deadfall* and `deposit_verdict` prices
+	# the climb it has already made. `{}` is the documented answer and it is the honest one; falling
+	# back to the free floor would be this client inventing a position for a rung it cannot place.
+	if standing == RUNG_CATALOG_NO_ORDER:
+		return {}
 	for entry in rows:
 		if catalog_order(entry) > standing:
 			return entry
@@ -1622,11 +1640,23 @@ const CUTTERS_UNCAPPED := -1
 ## rather than a measured nothing. The CREW gate forks on it; see `GATE_KIND_CREW`.
 const CUTTERS_NONE := 0
 
+## ⛔ **A WORKING WITH NO ROOM LEFT CAPS THE STEPPER AT ONE, NOT AT NONE** — the food webs'
+## `SourceForecast.MAX_USEFUL_BARREN`, and its argument arrives here unchanged: *we know what this
+## ground pays, and right now it is nothing, so the honest ceiling is one worker.*
+##
+## **THE SHEET'S CAP ANSWERS *may I open this at all*, WHICH IS NEVER *no*.** A finite seam worked
+## down to `stock == rung floor × capacity` has `room_next_turn == 0`, so the quotient below is `0`
+## — and a cap of nobody pins the stepper at zero, kills the `+` and disables the commit under *Put
+## diggers on it to open this ground*. The row then LAPSES (free floor, no crew, nothing queued) and
+## the rung ladder lapses with it, which strands the other ~85% of a rate-0 rock body for good: the
+## ground the player must crew to climb out is the one ground the cap refused to let them crew.
+const CUTTERS_BARREN := 1
+
 static func max_useful_cutters(deposit: Dictionary, floor: float) -> int:
 	var rate := per_worker_biomass_of(deposit)
 	if not SourceForecast.can_price_crew(rate):
 		return CUTTERS_UNCAPPED
-	return int(ceil(room_next_turn(deposit, floor) / rate))
+	return maxi(int(ceil(room_next_turn(deposit, floor) / rate)), CUTTERS_BARREN)
 
 ## The dead commit button's explanation — a crew of zero on a working nobody holds, where the command
 ## would do nothing at all. **A dead button is always explained**, the `+` stepper's cap note being

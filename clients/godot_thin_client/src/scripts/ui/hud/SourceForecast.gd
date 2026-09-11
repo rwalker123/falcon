@@ -56,6 +56,14 @@ const FLOOR_MAX := 1.0
 # other floor is read against. It is also what the sim assumes when a command carries no floor token.
 const FLOOR_FOOD_PEAK := 0.5
 const DEFAULT_HARVEST_FLOOR := FLOOR_FOOD_PEAK
+# ⛔ **THE PLAYER WAS NEVER ASKED FOR A FLOOR — a sentinel, and deliberately OUTSIDE `0..1`** so it can
+# never be confused with a dial the player really did set (`FLOOR_MIN` is *strip it bare*, a real and
+# common choice). It travels from a compose sheet that offers NO dial to `Main`'s command builder,
+# which then omits the optional floor token entirely rather than substituting this default — because
+# what an omitted token means is the SIM's to decide, and on ground that never renews it answers
+# `STRIP_IT_BARE` rather than the shared default (issue #650, `server::unnamed_deposit_floor`).
+# Storing 0.5 there wrote a conservation choice onto a row where nobody made one.
+const FLOOR_UNNAMED := -1.0
 # THE THREE INTENT PRESETS — marks on the dial, deliberately NOT a set of options. They exist so the
 # three decisions a player actually makes are one click each; every value between them is reachable
 # through the slider beside them, and the sim accepts any of them.

@@ -304,9 +304,6 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&assignment.kit_id))
                         };
-                        // The plants this crew carries home. **Absent rather than an empty vector**
-                        // when the crew named none, the `species`/`faunaId` convention: an absent
-                        // vector reads as empty, and empty *is* "the whole basket".
                         // The deposit this crew is on — `None` on every row that is not
                         // `extract`, the `fauna_id` convention: an absent string is "no selection".
                         let material = if assignment.material.is_empty() {
@@ -314,6 +311,9 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&assignment.material))
                         };
+                        // The plants this crew carries home. **Absent rather than an empty vector**
+                        // when the crew named none, the `species`/`faunaId` convention: an absent
+                        // vector reads as empty, and empty *is* "the whole basket".
                         let take_species = if assignment.take_species.is_empty() {
                             None
                         } else {

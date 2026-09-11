@@ -2779,22 +2779,26 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Nine frames and one hundred and four checkpoints**, `EXPECTED_CHECKPOINTS` **104** — RE-MEASURED by
-raising the const to an impossible number and reading `reached` back, as this file's own rule says,
-and the read is why **twice over**: the declared 43 was already four under the chapter's real count
-before the two ORDER frames below added six and the stacked-button frame added six more, and the const
-had since drifted to a declared 91 against a real 95, so the nine checkpoints the quarry-reach block
-adds land on **104** rather than on the 100 a delta would have computed. A delta applied to either
-stale figure would have set a floor the chapter could fall through. The chapter's subject is
+**Nineteen frames and one hundred and eighteen checkpoints**, `EXPECTED_CHECKPOINTS` **118** —
+RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this file's
+own rule says. **The const in `chapters/workings.gd` is the authority and this paragraph is the
+description**: a figure here that disagrees with it is this file being stale, never a licence to lower
+the const to match. The chapter has been re-measured that way repeatedly — a declared 43 against a
+real 47, then a declared 91 against a real 95 — which is why a DELTA is never applied to the figure
+written down: a delta on a stale count sets a floor the chapter can fall through. The chapter's subject is
 `extraction-workings.md`'s; what belongs here is the shape of the drive and the three things it cost.
 
 **FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
 `workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
 against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
-branch says those things now. `workings_unopened` kept its name and its subject, and the new set is
+branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is nineteen** —
 `workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
-`workings_extraction_sheet` / `workings_unopened`, plus the two ORDER frames and
-`workings_worked_buttons` below.
+`workings_extraction_sheet` / `workings_unopened`, the two ORDER frames
+(`workings_road_last` / `workings_road_remembered`), `workings_worked_buttons` and
+`workings_just_assigned` below, the THREE `workings_floor_*` frames the preset loop emits
+(`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
+`workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
+`workings_out_of_range`, and the pair `workings_tile_crews` / `workings_tile_crews_other_band`.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 
@@ -2864,10 +2868,10 @@ keys and against a ladder with no rows on it.
 
 ⛔ **AND THE LADDER IS ASSERTED OVER ITS PRODUCER, WITH NO FRAME OF ITS OWN.** The track is opened
 from the WORK BOARD's workings roster and this harness stands up no Band panel, so the rendered frame
-is `band_panel_preview`'s (`band_panel_workings_track`). What is asserted here is the four ROW STATES
+is `band_panel_preview`'s (`band_panel_workings_track`). What is asserted here is the five ROW STATES
 the branch can reach — the new SITE gate, the CRAFT gate and its looked-up remedy, the free floor as
 a FACT, a priced row leading with its pile and quoting no turns, and a row mid-build quoting the sim's
-own countdown — because a frame can show one of them and the branch has four.
+own countdown — because a frame can show one of them and the branch has five.
 
 **Two claims are structural rather than textual, and each is the only thing that can see its
 failure.** The payoff row's key is a BLANK rather than absent, so the claim is that the rendered

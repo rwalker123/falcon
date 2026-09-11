@@ -111,7 +111,8 @@ const LABOR_KIND_ROADWORK := "roadwork"
 # ⛔ **THE TOKEN IS THE SIM'S GRAMMAR AND THE PLAYER NEVER SEES IT.** `Quarry` is ONE RUNG of ONE of
 # the two branches this pool holds — a coppice and a flint scatter are neither quarries nor
 # quarrywork — so every player-facing string for this pool, its roster and its cards says
-# **Workings**, which is the sim's own word for the thing being held. See
+# **Groundwork**. `Workings` held that slot for an arc and was overruled: *working* is the SIM's
+# own noun for an opened deposit, not a word the player brought. See
 # `HudWorkVocab.ROLE_NAME_QUARRYWORK`.
 #
 # **ONE ROLE FOR BOTH BRANCHES.** Forestry and extraction split on KNOWLEDGE and on nothing a keeper

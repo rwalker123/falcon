@@ -279,8 +279,13 @@ own parse down with it, leaving the root scriptless and the process idling forev
 reports progress and `_finish()` disarms the guard, and its 60 frames are byte-identical with the
 guard in place.
 
-**A clean run exits 0 and prints 382 `assert OK` lines, 589 `: PASS` ones and ZERO `FAIL` ones, over
-116 frames.** (It was 379 / 570 / 115 before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
+**THE HARNESS'S TALLY IS THE ONE AT THE TOP OF THIS FILE AND IS DELIBERATELY NOT RESTATED HERE** — a
+second tally is a second thing to forget, which is the rule that line states about itself. A clean run
+still exits 0 with ZERO `FAIL` lines; for how many frames and claims that is, read the tally above.
+**What follows is the DELTA HISTORY** — kept for what each step COST, never for the absolutes it
+quotes: every figure in it is frozen at the moment that step landed, several were already behind the
+harness when written, and summing them gives a wrong answer by construction. (It was 379 / 570 / 115
+before the WORK TAB READ THE LEG IN FLIGHT — `band-city-panel.md`
 → "THE PERCENTAGE IS THE LEG IN FLIGHT'S". That step is **+1 frame and +17 `: PASS`**:
 `band_panel_queue_leg_animal` and the four-state block below, whose remaining two `assert OK`s are
 that frame's own bounds/content-fits pair. The `assert OK` delta reads +3 rather than +2 and the

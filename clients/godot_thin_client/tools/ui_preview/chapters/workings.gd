@@ -180,11 +180,6 @@ const COPPICE_PER_WORKER := 2.5
 const GATHERING_PER_WORKER := 0.4
 const QUARRY_PER_WORKER := 2.2
 
-## **WHERE THIS TURN'S CREWS STOPPED** — `0` on every fixture here, which is the identity of the
-## composition's `max` and the reading for a working nobody cut. It is NOT a strip order, and nothing
-## on the sheet seeds a dial from it.
-const NOBODY_CUT_FLOOR := 0.0
-
 ## `extraction.json`'s `seed_fraction` and the wire's curve resolution — the two terms the sampled
 ## curve below is built from, so a fixture curve is the sim's own arithmetic rather than a shape.
 const DEPOSIT_SEED_FRACTION := 0.02
@@ -1587,7 +1582,6 @@ func _wood_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
-		"floor": NOBODY_CUT_FLOOR,
 		"rung_floor_fraction": FORESTRY_RUNG_FLOOR,
 		"per_worker_biomass": FELLING_PER_WORKER,
 		"regrowth_samples": _deposit_regrowth_samples(WOOD_CAPACITY, WOOD_REGROWTH),
@@ -1636,7 +1630,6 @@ func _stone_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
-		"floor": NOBODY_CUT_FLOOR,
 		"rung_floor_fraction": GATHERING_RUNG_FLOOR,
 		"per_worker_biomass": GATHERING_PER_WORKER,
 		# **ALL ZEROS, AND THAT IS A READING RATHER THAN AN ABSENCE.** Rock's rate is zero, so every
@@ -1764,14 +1757,14 @@ func _over_cut_standing_wood() -> Dictionary:
 	return working
 
 ## **THE SAME WOOD STANDING EXACTLY AT THE FOOD PEAK** — `floor × capacity` of stock, which is the
-## steady state a Sustain dial produces and the one the `now → after` pair collapses at. Its floor
-## field states where this turn's crews stopped, which on a working actually held there is the dial's
-## own value rather than the `0` an uncut seam publishes.
+## steady state a Sustain dial produces and the one the `now → after` pair collapses at. The stand is
+## stated as a STOCK and not as a floor field: `DepositState` publishes none (PR #651 review — no
+## GDScript was allowed to read one, so it left the wire), and where this sheet composes at is the
+## BAND's own `extract` row.
 func _wood_at_its_floor() -> Dictionary:
 	var working := _wood_working(WOOD_SUSTAINABLE)
 	working["stock"] = SourceForecast.FLOOR_FOOD_PEAK * WOOD_CAPACITY
 	working["reachable"] = 0.0
-	working["floor"] = SourceForecast.FLOOR_FOOD_PEAK
 	return working
 
 ## **A BAND THAT HAS JUST PUT DIGGERS ON THE ROCK AND CUT NOTHING YET** — the `extract` row carries

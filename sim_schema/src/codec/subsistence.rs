@@ -1120,8 +1120,15 @@ fn create_food_modules<'a>(
     builder.create_vector(&entries)
 }
 
-/// **The live workings on deposits** — one row per `(tile, material)`, in the registry's own key
-/// order so the section is stable frame to frame and diffs out when nothing moved.
+/// **The deposits under the viewer's eye** — one row per `(tile, material)` on a discovered,
+/// deposit-bearing tile, built by `core_sim::snapshot::deposits::deposit_states` off the capture's
+/// tile sweep rather than off the registry, and handed here already sorted **`(tile_y, tile_x,
+/// material)`** — `snapshot_forage_patches`' own row order, so the section is stable frame to frame
+/// and diffs out when nothing moved.
+///
+/// ⛔ **IT IS NOT THE REGISTRY'S KEY ORDER**, which is `(x, y, material)`: the rows come from the
+/// sweep, and a working the registry holds is merged into the sweep's row rather than the other way
+/// round. This function's only job is preserving the order it was given.
 fn create_deposits<'a>(
     builder: &mut FbBuilder<'a>,
     deposits: &[DepositState],
@@ -1156,7 +1163,6 @@ fn create_deposits<'a>(
                     stock: deposit.stock,
                     capacity: deposit.capacity,
                     reachable: deposit.reachable,
-                    floor: deposit.floor,
                     rungFloorFraction: deposit.rung_floor_fraction,
                     perWorkerBiomass: deposit.per_worker_biomass,
                     regrowthSamples: regrowth_samples,

@@ -1758,17 +1758,26 @@ pub const DEPOSIT_RUNWAY_NOT_APPLICABLE: i32 = -1;
 /// at.
 pub const DEPOSIT_RUNWAY_NO_TAKE: i32 = -2;
 
-/// **ONE LIVE WORKING ON A DEPOSIT** — the wire row of `extraction::DepositSource`, keyed by
+/// **ONE ROW PER DEPOSIT-BEARING TILE** — the wire row of `extraction::DepositSource`, keyed by
 /// `(tile, material)` because **one tile can hold two**: a wooded highland holds timber *and* rock,
 /// and working one is not working the other.
 ///
-/// **The registry is sparse and lazy** — a working opens the first turn a band puts a crew on it —
-/// so the absence of a row is *"nobody has worked this ground"* and never *"there is no deposit
-/// here"*. What a tile **holds** is a pure function of its terrain and is not on this table.
+/// **A row describes the GROUND, and the working is its state** — the forage patch row's shape. The
+/// capture sweeps every **discovered** tile and publishes a row for each `(tile, material)` whose
+/// capacity is above nothing; where a band has opened a working the registry's live source is
+/// merged in, and where none stands the row is **derived** from the branch's opening state (full
+/// stock, the free floor, no upkeep, no take) without seeding the registry.
 ///
-/// Published for the workings the viewing faction has **explored** (the road row's `Discovered`
-/// gate rather than the herd row's `Active`): a working does not wander off, so remembering one is
-/// remembering something true.
+/// ⛔ **So the absence of a row means *"this ground holds none of this material"***, or the viewer
+/// has not explored the tile — **never** *"nobody has worked it"*. And the presence of one implies
+/// nothing about a crew: it does not say the ground has ever been cut, that the working stands
+/// above its free floor, or that any working's keeping bill was met. Those are
+/// [`Self::ladder_position`], [`Self::rung`], [`Self::build_fraction`] and the upkeep fields, each
+/// of which reads its opening default on untouched ground.
+///
+/// Published for the tiles the viewing faction has **explored** (the road row's `Discovered` gate
+/// rather than the herd row's `Active`): a deposit does not wander off, so remembering one is
+/// remembering something true, and the whole row passes the gate or none of it does.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DepositState {
     /// **The row's identity, both halves.** `tile_x`/`tile_y` alone cannot join this row to the crew
@@ -1801,23 +1810,20 @@ pub struct DepositState {
     /// `max(rung_floor_fraction, floor) × capacity`, a **maximum** and never a sum. See
     /// [`Self::rung_floor_fraction`].
     pub reachable: f32,
-    /// **WHERE THIS TURN'S CREWS STOPPED**, as a fraction of [`Self::capacity`] — the working's own
-    /// reading of the escapement dial, kept at the **deepest** floor any band cutting it named
-    /// (`extraction::DepositSource::last_floor`).
-    ///
-    /// It is not a restatement of [`crate::state::population::LaborAssignmentState::floor`], which is
-    /// per **band row**: that says what one band asked for, this says where the stock actually came
-    /// to rest. A working nobody cut this turn reads `0` — the identity of the max below, so its
-    /// [`Self::reachable`] is exactly the rung's own reach.
-    pub floor: f32,
-    /// **THE RUNG'S OWN FLOOR, IN THE SAME UNITS** — `1 − recovery_fraction`, what this rung's reach
-    /// cannot get at (`extraction::deposit_floor_fraction`). Gathering recovers `0.15`, so it
-    /// strands 85% of a rock body and this reads `0.85`.
+    /// **THE RUNG'S OWN FLOOR**, as a fraction of [`Self::capacity`] — `1 − recovery_fraction`, what
+    /// this rung's reach cannot get at (`extraction::deposit_floor_fraction`). Gathering recovers
+    /// `0.15`, so it strands 85% of a rock body and this reads `0.85`.
     ///
     /// ⛔ **COMPOSE IT WITH THE PLAYER'S FLOOR AS A MAXIMUM, NEVER AS A SUM AND NEVER AS TWO
     /// CLAMPS.** Both are the same kind of quantity — *an amount left standing* — so a crew stops at
     /// whichever is greater. A chart that added them would draw a gathering crew stopping 85% of a
     /// seam short of where it really stops, on every rung.
+    ///
+    /// **The player's half of that max is not on this row**: it is
+    /// [`crate::state::population::LaborAssignmentState::floor`], per **band row**, on the band's own
+    /// `extract` row. A source-level restatement of where the stock came to rest rode here for one
+    /// arc and was read by nobody; [`Self::reachable`] is the sim's own answer at the composed floor
+    /// and is what a readout quotes instead.
     ///
     /// It is published because the escapement chart's whole axis is fractions of capacity and this
     /// is the **second** line on it: without it a client's projection would walk the stock down to
@@ -1958,9 +1964,6 @@ impl Default for DepositState {
             stock: 0.0,
             capacity: 0.0,
             reachable: 0.0,
-            // **`0` is the identity of the composed floor's `max`**, not a policy: a defaulted row
-            // says nothing was asked of the crew, so the rung's own reach is the whole of it.
-            floor: 0.0,
             rung_floor_fraction: 0.0,
             per_worker_biomass: 0.0,
             regrowth_samples: Vec::new(),
@@ -2424,7 +2427,7 @@ pub struct RouteRungState {
 ///
 /// **It rides the section and not the working's row.** These are properties of the *branch*,
 /// identical for every wood and every rock body in the world.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DepositRungState {
     /// The rung's name on the wire, `"<branch>:<id>"` (`"forestry:coppice"`) — the same spelling
     /// `DepositState::rung` carries, so a working's standing joins to its row here.
@@ -2539,6 +2542,42 @@ pub struct DepositRungState {
     /// client-side would be a second authority over a placement rule the config owns.
     #[serde(default)]
     pub min_deposit_capacity: f32,
+}
+
+/// **"THIS RUNG LEAVES THE GROUND GROWING AS IT WAS"** — the wire default of
+/// [`DepositRungState::regrowth_multiplier`] (`snapshot.fbs` declares `regrowthMultiplier:float = 1`)
+/// and the value every **extraction** rung declares, since a finite deposit has no regrowth for a
+/// rung to raise. It is `core_sim::intensification::REGROWTH_UNCHANGED` read from the wire's side of
+/// the contract; the schema cannot depend on the sim, so the two are stated once each and the
+/// catalog's own round trip is what holds them together.
+pub const DEPOSIT_RUNG_REGROWTH_UNCHANGED: f32 = 1.0;
+
+impl Default for DepositRungState {
+    fn default() -> Self {
+        Self {
+            rung_key: String::new(),
+            branch: String::new(),
+            order: 0,
+            display_name: String::new(),
+            verb: String::new(),
+            unlock_knowledge: String::new(),
+            requires_rung: String::new(),
+            earns_knowledge: String::new(),
+            work_cost: 0.0,
+            upkeep_work_per_turn: 0.0,
+            build_material_cost: 0.0,
+            build_material_id: String::new(),
+            build_work_per_worker_turn: 0.0,
+            yield_per_worker_turn: 0.0,
+            recovery_fraction: 0.0,
+            // **The wire's own default, not `0`** — [`DepositState`]'s `turns_remaining` rule one
+            // table over. A zero here is the one value that means *this rung stops the ground
+            // growing*, which is a claim no rung on either shipped branch makes and which a
+            // defaulted row must not make for it.
+            regrowth_multiplier: DEPOSIT_RUNG_REGROWTH_UNCHANGED,
+            min_deposit_capacity: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

@@ -3578,7 +3578,7 @@ all in this mode, exactly as it is not for the queue's.
 arithmetic**, and `build_queue_expanded_scroll_height` is a one-line caller passing `ZONE_HEAD_HEIGHT`.
 ⛔ **The head height is the only term that differs, which is exactly why it is the parameter**: the
 queue's head and the road roster's are bare title rows, while the workings roster's mounts the
-`quarrywork` stepper and reserves `WORKINGS_ROSTER_HEAD_HEIGHT` (21). Everything above the list is the
+`quarrywork` stepper and reserves `WORKINGS_ROSTER_HEAD_HEIGHT` (22.0). Everything above the list is the
 same for all three, and a second expression of it is how one mode comes to declare a viewport the
 other's dock cannot hold. ⛔ **It is NOT clamped up to a floor** — a dock too short must FAIL the
 zone-fit assertion loudly, the zone being `clip_contents`.
@@ -5527,8 +5527,10 @@ green food pip is a haul cue, and a denial party's haul is a rounding error it s
 
 The dock's parties-zone hunt sheet (`BandPanelController._fill_hunt_compose_sheet`) and the herd
 drawer's expedition branch (`DrawerComposeController._build_herd_assign_controls`) compose the same
-raid. They had drifted into two shapes; they now read as one stack — **Quarry / Policy + chart /
-Party / Kit / forecast / Send** — off the same builders.
+raid. They had drifted into two shapes; they now read as one stack — **Prey / Policy + chart /
+Party / Kit / forecast / Send** — off the same builders. (The builder is still named
+`_build_quarry_row`; the FIELD it mounts is `HudComposeVocab.COMPOSE_FIELD_PREY`, the word having moved
+to the deposit branch's own rung — `labor-ui.md` → "The compose sheet's FIELD ROWS are one family".)
 
 - **The dock sheet gained the FLOOR CHART and its draggable floor**, from `HudWidgets.build_floor_chart`
   against `SourceForecast.floor_chart_model` — the drawer's own builder and model, never a second

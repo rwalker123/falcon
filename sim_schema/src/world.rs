@@ -187,9 +187,11 @@ pub struct WorldSnapshot {
     /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
     #[serde(default)]
     pub forage_patches: Vec<ForagePatchState>,
-    /// **The live workings on deposits** — one row per `(tile, material)` the viewer has explored.
-    /// The registry is sparse and lazy (a working opens the first turn a crew stands on it), so an
-    /// untouched map publishes none. Diffed as a whole vector like [`Self::forage_patches`].
+    /// **The deposits under the viewer's eye** — one row per `(tile, material)` on a **discovered**
+    /// tile whose ground holds that material, with the registry's live working merged in where one
+    /// stands and an opening state derived where none does. So a row says *the land holds this*,
+    /// never *somebody has worked it* — see [`DepositState`]. Diffed as a whole vector like
+    /// [`Self::forage_patches`].
     #[serde(default)]
     pub deposits: Vec<DepositState>,
     /// Per-faction progress on every ladder knowledge, `0..1`. Sparse in FACTIONS (a faction that

@@ -6839,6 +6839,9 @@ pub fn advance_labor_allocation(
                     let Some(working) = deposits.source_mut(*tile, material) else {
                         continue;
                     };
+                    // **The stock this turn's crew is FACING** — read before the take, the term the
+                    // ⚠ below is answered at, exactly as the two food webs' `biomass_before` is.
+                    let stock_before = working.stock;
                     let outcome = crate::extraction::take_from_deposit(
                         working,
                         workers,
@@ -6883,6 +6886,22 @@ pub fn advance_labor_allocation(
                             amount: outcome.taken,
                         }];
                     }
+                    // **The ⚠ — intent AND ability**, through the deposit web's one producer
+                    // ([`crate::extraction::deposit_take_overdraws`]), beside the Forage and Hunt
+                    // arms' own. A composed floor below the food peak is only an overdraw if these
+                    // cutters can actually get the stand down to it; a crew whose take settles above
+                    // the peak and holds there is drawing nothing below what the wood sustains,
+                    // whatever the dial says. **A working at `NEVER_RENEWS` never lights it** — §7's
+                    // fork: a finite working warns with its runway instead.
+                    yields[idx].overdraws = crate::extraction::deposit_take_overdraws(
+                        working,
+                        workers,
+                        stock_before,
+                        *floor,
+                        ground,
+                        &extraction_cfg,
+                        &ladder,
+                    );
                     // **THE LESSON, on the rung the working STANDS on** — `deadfall` teaches
                     // woodcraft, `felling` conservationism, `gathering` quarrying. Credited once per
                     // source per turn and never per worker, the ladder's own rule.

@@ -701,15 +701,26 @@ the peak included), and it is untouched here: at or above the peak the intent co
 the peak still to cross. A crew that merely out-takes *today's* regrowth can settle **at** the peak
 and hold there for ever — which is the case the client's own gate got wrong before this landed.
 
-**Two producers, one per web, because there are two growth curves** — the same split
+**One producer per web, because each web has its own growth curve** — the same split
 `snapshot::patch_regrowth_samples` / `herd_regrowth_samples` already makes:
 
 | web | producer | crew throughput | curve |
 |---|---|---|---|
 | plant | `forage::forage_take_overdraws` | `workers × forage_per_worker_biomass` (no engagement stage) | `fauna::reseeding_logistic_regrowth` at the patch's own `patch_ecology` |
 | animal | `fauna::hunt_take_overdraws` | `min(carry, animals_engaged × stay_fraction × body_mass)` | `fauna::regrowth_delta_at` at the herd's own `herd_ecology` — **the seam that picks the curve**, logistic for a domesticated herd and `net_biomass_delta` otherwise, so the ⚠ samples what `regrow_biomass` will actually pay. Sampling the wild curve under a managed herd standing below its collapse fraction reads a *negative* regrowth where the real one is positive, and the ability conjunct then passes on a crew that cannot draw the herd down |
+| deposit | `extraction::deposit_take_overdraws` | `workers × yield_per_worker_turn` at the standing rung (no engagement stage and no take kit on either branch) | `extraction::deposit_regrowth` at the ground's rate **scaled by the rung's `regrowth_multiplier`** — `renew_deposit`'s own terms, so the ⚠ is answered against the growth the next Logistics pass will apply |
 
-Both call `fauna::peak_regrowth_between` over `fauna::floor_reach_band`, and both feed the one
+**The deposit web's floor is the COMPOSED one, and a finite working never lights the ⚠.** The intent
+conjunct reads `deposit_effective_floor ÷ capacity` rather than the row's raw dial: a crew stops at
+the greater of the rung's unreachable remainder and the player's floor, and a gathering crew leaving
+85% of a seam standing is over-cutting nothing whatever its dial says. And a working at
+`NEVER_RENEWS` returns `false` outright — rock's growth term is exactly `0` at every reading point,
+so the ability conjunct would be true of any take at all and every quarry crew in the game would
+carry a permanent mark. What a finite working warns with instead is its **runway**
+(`docs/plan_extraction.md` §7). That fork is the one place this web parts company with the two food
+webs, whose sources all regrow.
+
+All three call `fauna::peak_regrowth_between` over `fauna::floor_reach_band`, and all three feed the one
 `take_overdraws`. The band is **anchored at `floor·K`, never below it**: a source already under its
 floor hands over nothing, and what decides whether the crew holds it there is the regrowth at the
 floor itself. `fauna::forecast_source_yield` no longer derives the flag — it is handed the answer and

@@ -85,7 +85,7 @@ worked working is **not promoted** past a herd for the same reason a ready sourc
 "A ready source is deliberately NOT promoted into a visible slot" in the slot-lookup section.
 
 **THE MARKER'S PRESENCE IS THE "AND IT BEING WORKED" — AND IT WEARS THE FULL MARK SET ON TOP OF
-IT.** A worked working takes the ring, the tile outline, the band link and the rate pill a worked
+IT.** A worked working takes the ring, the tile outline and the band link a worked
 patch and a hunted herd take, through the same routines, in its own quarried slate
 (`BandOverlayRenderer.EXTRACT_WORKED_COLOR`); the whole grammar is
 `overlay-channels.md` → "A WORKED WORKING WEARS EVERY PART A HUNTED HERD WEARS", including the

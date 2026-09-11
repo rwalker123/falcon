@@ -100,7 +100,13 @@ Population — once per BAND ROW on it (the `Extract` arm)
 
 - **OVER-CUTTING IS POSSIBLE AND MUST STAY SO.** The take is not clamped to the sustainable rate —
   the whole point of the renewable half is that you can ruin a wood. The warning is a readout, not a
-  guard.
+  guard: the row's `SourceYield::overdraws` ⚠, through this branch's one producer
+  `extraction::deposit_take_overdraws`, beside the two food webs' own (`yield-forecast.md` → "THE ⚠
+  IS INTENT **AND** ABILITY"). It is **intent and ability** like theirs — a *composed* floor below
+  the food peak, and a crew whose throughput can actually get the stand down to it — and it is
+  `false` on any working at `NEVER_RENEWS`, which warns with its runway instead (§7's fork). The
+  `Extract` arm wrote the field on no row at all for a whole arc, so a working the tile card marked
+  as over-cut sat green and unsorted in the band's own source list.
 - **These sources pay NO FOOD AND NO FODDER.** Not a zero-valued food term; no food term at all, and
   `seed_source_yield` returns rather than seeding a permanent `+0.00` line. What wood costs is **the
   food those hands did not bring home**: every hand on an `extract` row comes out of the same finite
@@ -631,8 +637,10 @@ predicate is false and watching teaches nothing either.
 at `NEVER_RENEWS` passes. The escapement is offered only where a deposit renews — the same condition
 `deposit_effective_floor` carries — so on a rock body the row's floor is **stored, published and
 inert**, and pricing the lesson off it would pay a crew a learning bonus calibrated to a choice
-nobody made: the client omits the token there, the sim resolves the omission to
-`DEFAULT_ESCAPEMENT_FLOOR` (0.5), and that lands on the row. Where it bites is
+nobody made: the client omits the token there and `server::unnamed_deposit_floor` resolves the
+omission to `STRIP_IT_BARE` on ground at `NEVER_RENEWS` — **not** to the `DEFAULT_ESCAPEMENT_FLOOR`
+(0.5) every other row's omission resolves to — and that lands on the row (§ above, on
+`handle_assign_labor`). Where it bites is
 `extraction:gathering`, which earns `quarrying` and is a live teaching rung on a body that is finite.
 
 `extraction::deposit_lesson_floor` is the only place the fork lives — the crew's own dial where the
@@ -730,15 +738,22 @@ ground.
 
 ### The floor and the chart the client draws it on
 
-Four fields ride the row for the escapement instrument, and three of them are **named after their
+Three fields ride the row for the escapement instrument, two of them **named after their
 `ForagePatchState` twins** so the client's chart builder is reused rather than forked:
 
 | field | what it is |
 |---|---|
-| `floor` | where **this turn's crews** stopped, as a fraction of `capacity` — `DepositSource::last_floor`, deepest-first across the bands cutting it. Not a restatement of `LaborAssignment.floor`, which is per **band row**: that says what one band asked for, this says where the stock came to rest. On a working at `NEVER_RENEWS` it is what the crews asked for and nothing more: the sim drops it, so the stock came to rest on the rung's floor |
 | `rungFloorFraction` | the **rung's own** floor in the same units, `1 − recovery_fraction`. ⛔ **Compose the two as a MAXIMUM, and only where `regrowthRate > 0`** — a chart that added them would draw a gathering crew stopping 85% of a seam short of where it really stops, and one that took the maximum on a quarry would draw it stopping at the dial the sim ignores there |
 | `perWorkerBiomass` | what ONE cutter moves per turn at the standing rung, in the material's own units. No seasonal weight and no take kit on either branch, so unlike a patch's it is the rung's rate flat and is never `0` on a live rung |
 | `regrowthSamples` | the deposit's own growth curve, sampled on the **same implicit x-axis** as the patch and herd curves (`snapshot::subsistence::regrowth_sample_fraction`), through `deposit_regrowth` — the seam `renew_deposit` advances the stock with, at the rung's scaled rate |
+
+⛔ **THE PLAYER'S HALF OF THAT MAXIMUM IS NOT ON THIS ROW, AND A SOURCE-LEVEL ONE WAS DELETED.** A
+`floor` field published `DepositSource::last_floor` — where this turn's crews stopped, deepest-first
+across the bands cutting the working — and **no surface ever read it**: a compose sheet states what
+*one* band is asking for, which is `LaborAssignment.floor` on that band's own `extract` row, and
+seeding a dial from a source-level minimum would silently adopt another band's deeper floor. Its
+only consequence, `reachable`, is already published at the composed floor. `DepositSource::last_floor`
+itself **stays** — it is what `reachable` is composed at.
 
 ⛔ **A QUARRY'S CURVE IS ALL ZEROS AND IS STILL PUBLISHED.** Rock's rate is `NEVER_RENEWS`, so the
 delta is exactly `0` at every reading point — *this does not grow*. An **empty** vector is the

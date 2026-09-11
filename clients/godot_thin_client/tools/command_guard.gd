@@ -459,13 +459,23 @@ func _drive_assign_labor_kits() -> void:
 	# tile names neither of them.
 	#
 	# **THE FLOOR ARRIVED WITH THE ESCAPEMENT DIAL** (issue #650) and rides forage's own position after
-	# the material, a validated NUMBER the retired stance words are refused by name against. The client
-	# sends it on BOTH branches — a finite seam has no dial, so it sends the sheet's default, which is
-	# what an omitted token resolves to sim-side. It still carries no kit (`default_kits.extract` is
-	# the bare `none` kit and the working card mounts no picker), so the tail is closed after the
-	# worker count and this is the exact line the sheet's commit emits.
+	# the material, a validated NUMBER the retired stance words are refused by name against. It still
+	# carries no kit (`default_kits.extract` is the bare `none` kit and the working card mounts no
+	# picker), so the tail is closed after the worker count and this is the exact line a RENEWING
+	# working's sheet — the one branch that offers a dial — emits.
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
+		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
+	await _settle()
+	# ⛔ **…AND THE SAME GRAMMAR WITH THE FLOOR OMITTED, which is what a FINITE working sends** (PR
+	# #651 review). The sheet offers no dial there, so the player named no floor and the token is
+	# dropped rather than filled with the sheet's default — the sim answers what silence means, and on
+	# ground that never renews it answers `STRIP_IT_BARE`. **Both forms are driven because they are two
+	# LINES**: the parser reads `<material> [floor] <workers>` positionally, so an emitter that dropped
+	# the token where a floor WAS named would put the floor in the worker slot, and one that kept it
+	# where none was named would parse perfectly and store a choice nobody made.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, EXTRACT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
 	await _settle()
 	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
@@ -989,21 +999,22 @@ const EXTRACT_MATERIAL := "wood"
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 
-## The FOUR TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
-## map's quick-hunt, hunt + forage with a `kit <id>` tail, and the deposit branches' `extract`.
+## The FIVE TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
+## map's quick-hunt, hunt + forage with a `kit <id>` tail, and the deposit branches' `extract` in BOTH
+## of its shapes — with the floor token and without it.
 ##
 ## ⛔ **`extract` IS A TARGETED GRAMMAR AND NOT A ROLE, so the sweep below cannot reach it** — it names
-## a tile, a material AND a floor, where every role in that list takes a bare worker count. It is driven here
-## for the reason the whole sweep exists: a grammar the server's dispatch takes and
+## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
+## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 4
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 5
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits.
 const ASSIGN_LABOR_BARE_DRIVES := 1
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 12
+const ASSIGN_LABOR_EXPECTED := 13
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##

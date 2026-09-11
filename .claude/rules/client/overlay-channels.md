@@ -898,8 +898,8 @@ a real zone belonging to a floor it never chose. What a finite working's warning
 RUNWAY, which the tile card and the roster state and a hex-sized pill has never had room for.
 
 **The same fork reaches the drawer's standing summary** (`DrawerComposeController._standing_summary_model`
-takes the `deposits` row on its `extract` calls), so `Assign diggers ▸`'s second line and the map pill
-cannot answer differently about one working. An `extract` row arriving without a row answers the finite
+takes the `deposits` row on its `extract` calls), so `Assign diggers ▸`'s second line and the working's
+row in `BandSourceList` cannot answer differently about one working. An `extract` row arriving without a row answers the finite
 reading, which is the safe way round: the failure being forbidden is a quarry claiming `♻`.
 
 Frames: `map_working_pills` (a renewing wood, a rate-0 rock and a forage patch at one zoom — one mark
@@ -966,17 +966,21 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   is the two-surface disagreement that shared producer exists to stop. The autopsy is
   `band-city-panel.md` → "THE PERCENTAGE IS THE LEG IN FLIGHT'S".
 - **The badge shows a rung ON OFFER or a rung UNDER WAY, never both** — one axis in two states,
-  mutually exclusive by construction. Under way renders `<verb glyph><percent>%` in
-  `HudStyle.SIGNAL_DEEP` with **no chevron** (`⌃` offers; this reports); on offer renders `⌃<glyph>` in
-  `HudStyle.SIGNAL`. The first cut shipped only the offer, which left a patch you were actively
+  mutually exclusive by construction. Under way renders the verb GLYPH ALONE in
+  `HudStyle.SIGNAL_DEEP` (`BADGE_BUILDING_FORMAT`) with **no chevron** (`⌃` offers; this reports); on
+  offer renders `⌃<glyph>` in `HudStyle.SIGNAL`. **The percent left the badge** — the progress figure
+  is the ARC `_draw_build_arc` draws around the marker, so the meter is geometry and the badge is one
+  glyph. The first cut shipped only the offer, which left a patch you were actively
   cultivating looking emptier than the untouched one beside it — the state the player is *waiting on*
   had no mark. `rung_in_progress` keys on the POLICY, not on a non-zero meter: a half-built source
   nobody works is a standing rung, which the rung glyph already reports.
 - **CREW IS AGGREGATED PER SOURCE, NOT PER BAND** — two bands can work one patch, and two plates on
   one marker would be a lie about a single number.
 - **A WORKED WORKING WEARS EVERY PART A HUNTED HERD WEARS** (issue #650) — the ring, the tile
-  outline, the band link and the rate pill, through the SAME routines, differing only in the colour
-  the ring already states. The wood and stone workings are a THIRD kind of worked source and they
+  outline and the band link, through the SAME routines, differing only in the colour
+  the ring already states. **The RATE is not among them and has not been since the same issue** — it
+  is a row in `BandSourceList` joined to its hex by a leader line; see the boxed note at the head of
+  "A worked source's RATE carries ONE component" above. The wood and stone workings are a THIRD kind of worked source and they
   arrive at this pass differently from the two food webs, in ways worth keeping straight:
   - **The set is resolved in a pass of its own, `compute_worked_workings`, which `MapView._draw` runs
     BEFORE `SecondaryMarkerRenderer.compute_slots`.** A working's marker exists only where a crew is

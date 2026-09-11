@@ -362,6 +362,14 @@ func compute_worked_workings() -> Dictionary:
 				# band, thin for any other — exactly as `selected` does on the two food arms.
 				"selected": bool(known.get("selected", false))
 					or int(band.get("entity", -1)) == _view.selected_unit_id,
+				# **IS ANY CUTTER OVER-CUTTING IT** — the same OR across the bands summed above, and
+				# it rides here for `selected`'s reason: the mark pass walks SOURCES and has no
+				# entry in hand to read the flag off. The sim writes `overdraws` on an Extract row
+				# now (it was a structural `false` when this walk was written), so the `+N` overflow
+				# chip's warn state can be answered for a working the marker cap hid — which the two
+				# food webs have always answered for their own hidden rows.
+				"overdraws": bool(known.get("overdraws", false))
+					or yield_label_overdraw(entry),
 			}
 	return _worked_workings
 
@@ -555,7 +563,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		_draw_worked_mark(wcenter, key, EXTRACT_WORKED_COLOR,
 			bool(working.get("selected", false)), radius)
 		_note_if_hidden(key, wtile, HudConst.LABOR_KIND_EXTRACT, {},
-			SourceForecast.IMPROVEMENT_NONE, false)
+			SourceForecast.IMPROVEMENT_NONE, bool(working.get("overdraws", false)))
 
 ## Fold a worked source the marker cap HID into its tile's roll-up, so the `+N` chip can report it.
 ## A source with a visible slot returns immediately — its own badge already says everything.
@@ -1013,7 +1021,12 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 		if kind == LABOR_KIND_FORAGE:
 			var tx := int(entry.get("target_x", -1))
 			var trow := int(entry.get("target_y", -1))
-			if trow < 0 or trow >= _view.grid_height:
+			# **THE COLUMN IS GUARDED WITH THE ROW, the shape both siblings use** — the hunt arm
+			# below and `draw_worked_source_marks`' own forage arm. A row with `target_x == -1` is
+			# keyed on tile `(-1, y)` and hangs its leader line off an anchor resolved from a
+			# negative column: the row's CLICK is refused one layer out (`BandSourceList`), the LINE
+			# is not, so the drop belongs here where the row is made.
+			if tx < 0 or trow < 0 or trow >= _view.grid_height:
 				continue
 			# The two food arms keep their `has()` gates: a row the wire never described a take for
 			# has no rate to state, exactly as the retired pill required.
@@ -1037,7 +1050,8 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# **THE TWO FOOD WEBS NEVER DROP A MATERIAL'S NOUN.** A deer's icon says nothing
 				# about `hide`, so the noun is the only thing naming that account.
 				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
-				_food_attention_text(patch, SourceForecast.SOURCE_KIND_FORAGE))
+				_food_attention_text(patch, SourceForecast.SOURCE_KIND_FORAGE),
+				food)
 		elif kind == LABOR_KIND_HUNT:
 			# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
 			# target is only the fallback for a herd that left the visible fauna set.
@@ -1068,7 +1082,8 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# is harvested for feed, so a hunt row's fodder is a structural zero.
 				HUNT_WORKED_COLOR, entry, hunt_rate, 0.0, materials, zero_account,
 				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
-				_food_attention_text(herd, SourceForecast.SOURCE_KIND_HERD))
+				_food_attention_text(herd, SourceForecast.SOURCE_KIND_HERD),
+				hunt_rate)
 		elif kind == HudConst.LABOR_KIND_EXTRACT:
 			var material := String(entry.get("material", "")).strip_edges()
 			var wtile := Vector2i(int(entry.get("target_x", -1)), int(entry.get("target_y", -1)))
@@ -1102,7 +1117,10 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# finite seam is offered no dial, so `♻` over a quarry would claim a renewal the rock
 				# cannot make.
 				HudDepositVocab.floor_mark(deposit, _entry_floor(entry)),
-				HudDepositVocab.hazard_clause(deposit))
+				HudDepositVocab.hazard_clause(deposit),
+				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is
+				# a structural zero here (see the sort key's own note on `_source_row`).
+				_entry_material_rate(entry, material))
 		if row.is_empty():
 			continue
 		rows.append(row)
@@ -1118,7 +1136,8 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 ## arms differ only in the facts that genuinely differ between webs.
 func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary, color: Color,
 		entry: Dictionary, food: float, fodder: float, materials: Array, zero_account: String,
-		names_material: bool, floor_glyph: String, attention_text: String) -> Dictionary:
+		names_material: bool, floor_glyph: String, attention_text: String,
+		sort_yield: float) -> Dictionary:
 	var badge := _badge_entry_for(key)
 	var overdraw := yield_label_overdraw(entry)
 	# Composed EXACTLY as the retired pill composed it, through the same function: the rate, then the
@@ -1156,12 +1175,24 @@ func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary,
 		"attention": attention,
 		"attention_text": attention_text,
 		# **THE SORT KEY IS THE FIGURE THE ROW HEADLINES, not a second reading of the entry.** It was
-		# `_entry_realized_yield` — which is the headline on a forage and a working row but NOT on a
-		# HUNT one, where the headline falls back to `sustainable_yield` when the wire published no
-		# realized average. A deer showing `+0.20` then sorted on its `actual_yield` of 0.46 and
-		# landed ABOVE a patch showing `+0.27`: a list that states it is ordered by yield, printing
-		# its numbers out of order. One number, read once, and the order is the one on screen.
-		"sort_yield": food,
+		# `_entry_realized_yield` — which is the headline on a forage row but NOT on a HUNT one,
+		# where the headline falls back to `sustainable_yield` when the wire published no realized
+		# average. A deer showing `+0.20` then sorted on its `actual_yield` of 0.46 and landed ABOVE
+		# a patch showing `+0.27`: a list that states it is ordered by yield, printing its numbers
+		# out of order. One number, read once, and the order is the one on screen — **which is why
+		# the ARM supplies it** rather than this composer picking a field.
+		#
+		# ⛔ **AND A WORKING'S HEADLINE IS ITS MATERIAL RATE, NOT ITS FOOD.** `systems::labor`'s
+		# `Extract` arm leaves `SourceYield::ZERO` on the row by design — a deposit must not pollute
+		# `food_income` — so a working paying `+3.00 wood` sorted at zero, below every patch paying
+		# `+0.01 /turn` and tied with every other working. **The key is therefore a PER-TURN RATE in
+		# the row's own account, and it orders three webs that do not share a unit**: it says *how
+		# much this source pays per turn as the row states it*, and NEVER that a unit of wood is
+		# worth a unit of food. There is no conversion to make — the trade axis this client could
+		# have asked one from is retired (arc #527) — so the honest reading of the order is *the
+		# sources each web pays most from, interleaved*, which is what a single list of three webs
+		# can mean at all.
+		"sort_yield": sort_yield,
 	}
 
 ## **IS THIS FOOD SOURCE SHORT OF KEEPERS, AND IN WHICH WEB'S WORDS** — `⚠ slipping` on the plant web,
@@ -1483,6 +1514,22 @@ func _entry_fodder(entry: Dictionary) -> float:
 ## INEDIBLE quarry pays, and the reason a hunted wolf pack stops reading `+0.00` on the map.
 func _entry_materials(entry: Dictionary) -> Array:
 	return SourceForecast.material_rows_of(entry)
+
+## **WHAT ONE MATERIAL OF THAT VECTOR PAYS PER TURN** — the working's OWN account, picked out by id.
+##
+## ⛔ **NEVER A SUM ACROSS THE ROWS.** One materials/turn figure is the retired trade axis under a new
+## name (`SourceForecast.signed_material_components`' own ⛔), so this reads the ONE id the row is
+## about — a working takes one material by construction, that pair being its identity — and asks
+## nothing about the others. `MATERIAL_RATE_NONE` where the vector carries no row for it, which is a
+## crew that has cut nothing yet and is exactly what the row headlines there (`+0.00 wood`).
+static func _entry_material_rate(entry: Dictionary, material: String) -> float:
+	for row in SourceForecast.material_rows_of(entry):
+		if String(row[SourceForecast.MATERIAL_PAYOFF_ID_KEY]) == material:
+			return float(row[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY])
+	return MATERIAL_RATE_NONE
+
+## Nothing has come out of this working yet — a measured zero, not a sentinel.
+const MATERIAL_RATE_NONE := 0.0
 
 ## The assignment's harvest MARK — its floor's zone glyph, the same one the Band panel's work row
 ## draws, so a worked source reads alike on the map and in the panel. `assign_labor` always carries a

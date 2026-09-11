@@ -1826,7 +1826,6 @@ mod wire {
         stock: f32,
         capacity: f32,
         reachable: f32,
-        floor: f32,
         rung_floor_fraction: f32,
         per_worker_biomass: f32,
         regrowth_samples: Vec<f32>,
@@ -1859,6 +1858,9 @@ mod wire {
     struct PublishedExtractRow {
         tile: UVec2,
         material: String,
+        /// The row's ⚠ — `LaborAssignment.overdraws`, the flag the band's source list sorts and
+        /// colours on. See `a_crew_that_out_cuts_a_wood_carries_the_warning_on_its_own_row`.
+        overdraws: bool,
     }
 
     fn encoded(app: &App) -> Vec<u8> {
@@ -1898,7 +1900,6 @@ mod wire {
                 stock: row.stock(),
                 capacity: row.capacity(),
                 reachable: row.reachable(),
-                floor: row.floor(),
                 rung_floor_fraction: row.rungFloorFraction(),
                 per_worker_biomass: row.perWorkerBiomass(),
                 regrowth_samples: row
@@ -1970,6 +1971,7 @@ mod wire {
                     .material()
                     .expect("an extract row publishes its material")
                     .to_string(),
+                overdraws: assignment.overdraws(),
             })
             .collect();
         (
@@ -2224,6 +2226,165 @@ mod wire {
     /// working-age pool to actually field.
     const A_CREW_THAT_OUT_CUTS_A_WOOD: u32 = 3;
 
+    /// ⛔ **AND THE ⚠ RIDES THE BAND'S OWN ROW, NOT ONLY THE TILE CARD** — the `Extract` arm wrote
+    /// `SourceYield::overdraws` on no row at all for a whole arc, so a working whose tile card and
+    /// roster showed the over-cut warning sat green in the band's source list, took
+    /// `ATTENTION_NONE`, and was not sorted attention-first. It is one of the three shipped
+    /// attention predicates, so the row is the surface that matters.
+    ///
+    /// Three assertions in one run, because the flag is **intent AND ability** and either conjunct
+    /// alone passes a single-case test: the same ground and rung at the free dial warns, the same
+    /// crew told to leave the whole stand does not (the floor is above the food peak), and a crew on
+    /// a **finite** working never warns however it is dialled — §7's fork, where the runway is the
+    /// warning instead.
+    #[test]
+    fn a_crew_that_out_cuts_a_wood_carries_the_warning_on_its_own_row() {
+        let overdraws_at = |floor: f32| {
+            let mut app = build_test_app();
+            app.update();
+            let (band, home, working) = first_band(&mut app);
+            reground(&mut app, home, RENEWING_GROUND);
+            seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+            staff_at_floor(
+                &mut app,
+                band,
+                &[(home, WOOD)],
+                working,
+                A_CREW_THAT_OUT_CUTS_A_WOOD,
+                TOO_FEW_KEEPERS,
+                floor,
+            );
+            app.update();
+            let (_, rows) = published_band(&app);
+            rows.into_iter()
+                .find(|row| row.tile == home && row.material == WOOD)
+                .expect("the band publishes its wood row")
+        };
+
+        let cutting = overdraws_at(core_sim::STRIP_IT_BARE);
+        assert!(
+            cutting.overdraws,
+            "three fellers out-cut mixed woodland's MSY, so their own row must carry the ⚠: \
+             {cutting:?}"
+        );
+
+        let holding = overdraws_at(LEAVE_THE_WHOLE_STAND);
+        assert!(
+            !holding.overdraws,
+            "…and the same crew told to leave the stand standing is drawing nothing below what the \
+             wood sustains: {holding:?}"
+        );
+
+        // **THE FINITE ARM** — a rock body's growth term is exactly zero at every reading point, so
+        // an ability half read off it is true of any take at all. A quarry crew must never carry
+        // this ⚠; what a finite working warns with is its runway.
+        let mut app = build_test_app();
+        app.update();
+        let (band, home, working) = first_band(&mut app);
+        reground(&mut app, home, FINITE_GROUND);
+        seat_working(&mut app, home, STONE, RungKey::ExtractionQuarry);
+        staff_at_floor(
+            &mut app,
+            band,
+            &[(home, STONE)],
+            working,
+            A_CREW_THAT_OUT_CUTS_A_WOOD,
+            TOO_FEW_KEEPERS,
+            core_sim::STRIP_IT_BARE,
+        );
+        app.update();
+        let working_row = published_working(&app, home, STONE);
+        assert!(
+            working_row.actual_take > 0.0,
+            "**LIVENESS**: the quarry crew must actually have cut, or the ⚠ below is absent because \
+             nothing happened rather than because the fork held: {working_row:?}"
+        );
+        let (_, rows) = published_band(&app);
+        let rock = rows
+            .into_iter()
+            .find(|row| row.tile == home && row.material == STONE)
+            .expect("the band publishes its stone row");
+        assert!(
+            !rock.overdraws,
+            "a working that never renews has no sustainable take to out-cut, so it warns with its \
+             runway and never with the ⚠: {rock:?}"
+        );
+    }
+
+    /// ⛔ **A HELD BUT IDLE WORKING STAMPS NO FLOOR** — `DepositSource::last_floor`'s own contract,
+    /// which the take seam broke for every unstaffed holding.
+    ///
+    /// A working raised above its free floor keeps its row through an unstaffing
+    /// (`source_has_a_meter_at_risk`), so `take_from_deposit` runs for it every turn with a crew of
+    /// **nobody** — and it stamped the row's dial anyway. `last_floor`'s `None` is *"nobody cut this
+    /// working this turn"* and answers `STRIP_IT_BARE`, the identity of the composed floor's `max`,
+    /// so an unworked deposit is supposed to publish exactly the rung's own reach; instead it
+    /// published a floor no crew ever made and a `reachable` reduced by it.
+    ///
+    /// **Asserted through `reachable`**, which is the only place the composed floor reaches the
+    /// wire: `forestry:felling` recovers the whole wood, so the rung's floor is nothing and the
+    /// idle turn's reach must be the **whole stock**. Against the defect it read the stock less
+    /// nine tenths of the capacity.
+    #[test]
+    fn a_working_nobody_is_cutting_stamps_no_floor_on_its_idle_turn() {
+        /// Deep enough that a stamp of it is unmissable in the reach, and far from both the rung's
+        /// own floor (`felling` recovers everything) and the shipped default.
+        const A_DEEP_FLOOR: f32 = 0.9;
+
+        let mut app = build_test_app();
+        app.update();
+        let (band, home, working) = first_band(&mut app);
+        reground(&mut app, home, RENEWING_GROUND);
+        seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+        staff_at_floor(
+            &mut app,
+            band,
+            &[(home, WOOD)],
+            working,
+            A_CREW_THAT_OUT_CUTS_A_WOOD,
+            TOO_FEW_KEEPERS,
+            A_DEEP_FLOOR,
+        );
+        app.update();
+        let cutting = published_working(&app, home, WOOD);
+        assert!(
+            cutting.reachable < cutting.stock,
+            "**LIVENESS**: while the crew is on it the dial really does bind, or the idle reading \
+             below is the same number for a reason that is not the fix: {cutting:?}"
+        );
+
+        // **THE HANDS COME OFF, THE WORKING STAYS** — `assign_labor … extract … 0` on a raised
+        // working, which keeps the row (`LaborAllocation::set_assignment`'s `keep_holding`).
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the band carries its allocation");
+            allocation.set_assignment(
+                LaborTarget::Extract {
+                    tile: home,
+                    material: WOOD.to_string(),
+                    floor: A_DEEP_FLOOR,
+                },
+                NO_CREW_AT_ALL,
+                working,
+                None,
+            );
+        }
+        app.update();
+
+        let idle = published_working(&app, home, WOOD);
+        assert!(
+            (idle.reachable - idle.stock).abs() < A_CLOSE_ENOUGH_BODY,
+            "a working nobody cut reaches everything its rung recovers — `forestry:felling` \
+             recovers the whole wood, so that is the whole stock: {idle:?}"
+        );
+    }
+
+    /// The crew size an unstaffed holding carries. Named because `0` here is the *state* the row
+    /// survives in, not an absence of one.
+    const NO_CREW_AT_ALL: u32 = 0;
+
     /// ⛔ **THE LEVER ACTUALLY WORKS: RAISING THE FLOOR CLEARS THE OVER-CUT WARNING** (issue #650).
     ///
     /// This is the whole point of giving the deposit branches an escapement dial. Before it, the sim
@@ -2263,12 +2424,9 @@ mod wire {
              it standing: {wood:?}"
         );
         assert_eq!(
-            wood.floor, LEAVE_THE_WHOLE_STAND,
-            "…and the working publishes the floor its crews worked to: {wood:?}"
-        );
-        assert_eq!(
             wood.reachable, 0.0,
-            "which leaves nothing above it for anyone to reach: {wood:?}"
+            "…and the floor the crews worked to leaves nothing above it for anyone to \
+             reach, which is where the composed floor reaches the wire at all: {wood:?}"
         );
     }
 
@@ -2283,10 +2441,11 @@ mod wire {
     ///
     /// ⛔ **PLUS ONE A PATCH DOES NOT HAVE — `rungFloorFraction`.** A deposit has a *second* floor,
     /// and a projection that walked the stock down to the player's alone would draw a crew reaching
-    /// past ground its rung cannot touch. It is published in the **same units** as the floor beside
-    /// it precisely so the client composes them as a maximum.
+    /// past ground its rung cannot touch. It is published in the **same units** as the player's own
+    /// floor — `LaborAssignment.floor`, which rides the band's row rather than this one — precisely
+    /// so the client composes them as a maximum.
     #[test]
-    fn a_deposit_row_carries_the_floor_and_the_terms_the_chart_is_drawn_from() {
+    fn a_deposit_row_carries_the_rung_floor_and_the_terms_the_chart_is_drawn_from() {
         let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
 
         let wood = published_working(&app, wood_tile, WOOD);
@@ -2310,10 +2469,12 @@ mod wire {
         // reason both are on the wire, and the arithmetic a client's projection has to reproduce.
         assert!(
             (wood.reachable
-                - (wood.stock - wood.rung_floor_fraction.max(wood.floor) * wood.capacity))
+                - (wood.stock
+                    - wood.rung_floor_fraction.max(A_FRESH_ASSIGNMENTS_FLOOR) * wood.capacity))
                 .abs()
                 < A_CLOSE_ENOUGH_TAKE,
-            "the published reach is the stock above `max(rung floor, crew floor)`: {wood:?}"
+            "the published reach is the stock above `max(rung floor, crew floor)`, the crew's half \
+             being the floor the fixture's rows were sent with: {wood:?}"
         );
 
         // ⛔ **A QUARRY'S CURVE IS ALL ZEROS AND IS STILL PUBLISHED** — *"this does not grow"* is a
@@ -2328,12 +2489,12 @@ mod wire {
             rock.regrowth_samples.iter().all(|delta| *delta == 0.0),
             "rock's rate is zero, so its curve is flat at zero rather than absent: {rock:?}"
         );
-        // ⛔ **AND ON THE ROCK ROW THE CREW'S FLOOR IS PUBLISHED AND DOES NOT BIND** (issue #650).
-        // A floor protects regrowth and rock has none, so `extraction:quarry`'s own remainder is the
-        // only floor a quarry has — even though the row carries the shipped default of 0.5, which is
-        // the *deeper* of the two and would bind on any renewing ground.
+        // ⛔ **AND ON THE ROCK ROW THE CREW'S FLOOR DOES NOT BIND** (issue #650). A floor protects
+        // regrowth and rock has none, so `extraction:quarry`'s own remainder is the only floor a
+        // quarry has — even though the crews were sent the shipped default of 0.5, which is the
+        // *deeper* of the two and would bind on any renewing ground.
         assert!(
-            rock.rung_floor_fraction > 0.0 && rock.floor > rock.rung_floor_fraction,
+            rock.rung_floor_fraction > 0.0 && A_FRESH_ASSIGNMENTS_FLOOR > rock.rung_floor_fraction,
             "fixture: the crew's floor must be the DEEPER of the two here, or this asserts nothing \
              about which one was dropped: {rock:?}"
         );
@@ -2343,7 +2504,7 @@ mod wire {
             "a finite working reaches everything above its RUNG's floor: {rock:?}"
         );
         assert!(
-            rock.reachable > rock.stock - rock.floor * rock.capacity,
+            rock.reachable > rock.stock - A_FRESH_ASSIGNMENTS_FLOOR * rock.capacity,
             "…and strictly more than the crew's floor would have left it: {rock:?}"
         );
     }
@@ -2365,15 +2526,11 @@ mod wire {
         let (app, _wood, rock_tile) = a_wood_and_a_quarry();
         let rock = published_working(&app, rock_tile, STONE);
 
-        assert_eq!(
-            rock.floor, A_FRESH_ASSIGNMENTS_FLOOR,
-            "fixture: the row carries the default the grammar supplies — stored and published on a \
-             finite working, and inert: {rock:?}"
-        );
         assert!(
-            rock.floor > rock.rung_floor_fraction,
-            "fixture: and it is the DEEPER of the two, or the maximum would never have bound: \
-             {rock:?}"
+            A_FRESH_ASSIGNMENTS_FLOOR > rock.rung_floor_fraction,
+            "fixture: the crews carry the default the grammar supplies — stored on the band's row, \
+             inert on a finite working — and it is the DEEPER of the two, or the maximum would \
+             never have bound: {rock:?}"
         );
         assert!(
             rock.actual_take > 0.0,
@@ -2389,7 +2546,7 @@ mod wire {
             rock.reachable + rock.actual_take
         );
         assert!(
-            rock.reachable > rock.stock - rock.floor * rock.capacity,
+            rock.reachable > rock.stock - A_FRESH_ASSIGNMENTS_FLOOR * rock.capacity,
             "…which is strictly more than the sent floor would have left it: {rock:?}"
         );
         assert_eq!(

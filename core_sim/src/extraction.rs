@@ -197,6 +197,12 @@ pub struct DepositSource {
     /// over — and [`Self::escapement_floor`] answers it as [`crate::components::STRIP_IT_BARE`],
     /// which is the **identity** of the `max` in [`deposit_effective_floor`]: an unworked deposit
     /// therefore publishes exactly the rung's own reach, as it did before this field existed.
+    ///
+    /// ⛔ **WHAT DECIDES THAT IS THE CREW, NOT THE TAKE** ([`take_from_deposit`]). A working raised
+    /// above its free floor keeps its row through an unstaffing, so the take seam runs every turn on
+    /// a **held but idle** working and stamping there would publish a floor no crew ever made. A
+    /// crew told to leave the whole stand, on the other hand, takes nothing and *is* working the
+    /// deposit at its own floor, and stamps.
     #[serde(default)]
     pub last_floor: Option<f32>,
     /// **WHY THE POOL IS STUCK ON THIS WORKING** — [`BuildGate::Open`] when it is not stuck, which
@@ -846,6 +852,68 @@ pub fn deposit_sustainable_take(
         .max(DEPOSIT_EMPTY)
 }
 
+/// **Can a crew of `workers` cutters draw THIS working to its floor, and is that floor below the
+/// food peak?** — the deposit web's producer of [`crate::components::SourceYield::overdraws`], and
+/// the only thing the `Extract` arm publishes that flag through. The twins are
+/// [`crate::forage::forage_take_overdraws`] and [`crate::fauna::hunt_take_overdraws`]; the predicate
+/// all three share is [`crate::components::take_overdraws`].
+///
+/// `stock` is the working's **pre-take** stock — what this turn's crew is facing, the same term
+/// [`deposit_sustainable_take`] on the row beside it is computed at.
+///
+/// **The floor it asks about is the COMPOSED one** ([`deposit_effective_floor`]), as a fraction of
+/// capacity: the crew stops at whichever of the rung's reach and the player's dial is higher, so
+/// that — not the row's raw `escapement` — is the floor the intent half is a question about. A
+/// gathering crew strands 85% of a seam whatever its dial says, and is not over-cutting anything.
+///
+/// **The crew's throughput is the unclamped `workers × yield_per_worker_turn`**, the "what the hands
+/// can lift" half of [`deposit_take`] — the plant web's `crew_biomass_per_turn` exactly, and
+/// deliberately not the take the turn landed: a first cut of a stocked working is its accumulated
+/// stock and exceeds one turn's regrowth under every floor, which is the mis-fire
+/// [`crate::components::floor_overdraws`] records.
+///
+/// ⛔ **A WORKING AT [`NEVER_RENEWS`] NEVER PUBLISHES THE ⚠, AND THAT IS §7's FORK** — the one place
+/// this predicate parts company with the two food webs, whose sources all regrow. Rock's growth term
+/// is exactly `0` at every reading point, so the ability half would be true of *any* take and every
+/// quarry crew in the game would carry a permanent over-cut mark; what a finite working warns with
+/// instead is [`deposit_runway`]. It is the ground's rate, un-scaled by
+/// [`RungExtractionPayoff::regrowth_multiplier`], [`deposit_effective_floor`]'s own reading: a rung
+/// scales a rate, it does not make the ground finite.
+pub fn deposit_take_overdraws(
+    source: &DepositSource,
+    workers: u32,
+    stock: f32,
+    escapement: f32,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+) -> bool {
+    let capacity = tile_deposit_capacity(config, &source.material, ground);
+    if capacity <= NO_DEPOSIT {
+        return false;
+    }
+    let regrowth_rate = tile_deposit_regrowth(config, &source.material, ground);
+    if regrowth_rate <= NEVER_RENEWS {
+        return false;
+    }
+    let payoff = deposit_payoff(&source.standing, ladder);
+    // The composed floor as a **fraction**, which is the unit `take_overdraws`' intent half and
+    // `floor_reach_band` both read (`components::floor_is_valid`'s `0.0..=1.0`).
+    let floor = deposit_effective_floor(capacity, regrowth_rate, &payoff, escapement) / capacity;
+    let rate = regrowth_rate * payoff.regrowth_multiplier;
+    let (low, high) = crate::fauna::floor_reach_band(floor, stock, capacity);
+    crate::components::take_overdraws(
+        floor,
+        workers as f32 * payoff.yield_per_worker_turn,
+        // **THE WORKING'S OWN CURVE** — the rung's scaled rate at the seeded reading, which is the
+        // seam [`renew_deposit`] grows the stock with, so the ⚠ is answered against the growth the
+        // next Logistics pass will really apply.
+        crate::fauna::peak_regrowth_between(capacity, low, high, |stock| {
+            deposit_regrowth(stock, capacity, rate, config.seed_fraction) - stock
+        }),
+    )
+}
+
 /// **HOW MANY TURNS THIS WORKING LASTS AT THE CURRENT TAKE** — `floor(reachable / take)`, and the
 /// other half of the §7 fork.
 ///
@@ -1028,7 +1096,20 @@ pub fn take_from_deposit(
     // **The floor this row worked to, kept at the deepest across the bands cutting this working** —
     // stamped here rather than by the caller so the take and the reading every readout is composed
     // at can never come from different floors.
-    source.note_escapement_floor(escapement);
+    //
+    // ⛔ **A CREW OF NOBODY STAMPS NOTHING.** [`DepositSource::last_floor`]'s `None` means *"nobody
+    // cut this working this turn"*, and a working raised above its free floor keeps its row through
+    // an unstaffing (`source_has_a_meter_at_risk`) — so this seam is reached every turn for a
+    // **held but idle** working. Stamping there published a floor no crew ever made, and a
+    // `reachable` reduced by it, on a row the player has taken the hands off.
+    //
+    // **The test is the CREW, not the take.** A crew told to leave the whole stand takes exactly
+    // nothing and is nonetheless working the deposit at the floor it was sent with — that is the
+    // dial doing its job — so a `taken > 0` guard would drop the one stamp the escapement lever
+    // exists to make.
+    if workers > NO_CREW_ON_THE_DEPOSIT {
+        source.note_escapement_floor(escapement);
+    }
     // **The turn's take, accumulated across the bands cutting this working** — the wire's
     // `actualTake` and the denominator of its runway. `+=` for `upkeep_supplied`'s reason: a shared
     // working is drawn down sequentially, so this is the only place the total exists.

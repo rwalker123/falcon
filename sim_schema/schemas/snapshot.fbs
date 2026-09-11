@@ -6136,18 +6136,29 @@ table ConnectionSection {
 }
 
 // --- Workings: the deposits under a crew (arc #583, docs/plan_extraction.md 7) ------------------
-// ONE ROW PER LIVE WORKING, keyed by (tile, material). A working is a per-TILE improvement like a
-// road, but it belongs to a CAMP like a patch: a road follows nobody and is free to leave, and a
-// quarry you walk away from is a quarry you lost.
+// ONE ROW PER DEPOSIT-BEARING TILE, keyed by (tile, material). A working is a per-TILE improvement
+// like a road, but it belongs to a CAMP like a patch: a road follows nobody and is free to leave,
+// and a quarry you walk away from is a quarry you lost.
 //
-// *** THE REGISTRY IS SPARSE AND LAZY. *** A working opens the first turn a band puts a crew on it,
-// so an untouched map publishes no rows at all - the absence of a row is "nobody has worked this
-// ground", NEVER "there is no deposit here". What a tile HOLDS is a pure function of its terrain
-// and is not on this table.
+// *** A ROW DESCRIBES THE GROUND; THE WORKING IS ITS STATE. *** The capture sweeps every DISCOVERED
+// tile and publishes a row for each (tile, material) whose capacity is above nothing - the forage
+// patch row's shape, and for its reason: what the row is ABOUT is the land. Where a band has opened
+// a working the registry's live source is merged in; where none stands, the row is DERIVED from the
+// branch's opening state (full stock, the free floor, no upkeep, no take) and the registry is not
+// seeded to produce it.
 //
-// Published for the workings the VIEWING FACTION CAN SEE: one whose tile the faction has explored
-// (Discovered or Active), the road row's gate rather than the herd row's - a working does not
-// wander off, so remembering one is remembering something true.
+// So the absence of a row means "THIS GROUND HOLDS NONE OF THIS MATERIAL", or the viewer has not
+// explored the tile - NEVER "nobody has worked it". And the presence of one implies NOTHING about a
+// crew: it does not say the ground has ever been cut, that a working stands above its free floor,
+// or that any working's keeping bill was met. Those are ladderPosition, rung, buildFraction and the
+// upkeep fields on the row, each of which reads its opening default on untouched ground. Publishing
+// only the opened set made the whole feature unreachable (issue #650): a fresh world published zero
+// rows, so the client's "Workings" affordance appeared only where a working already stood and
+// nothing could create the first one.
+//
+// Published for the tiles the VIEWING FACTION CAN SEE: one it has explored (Discovered or Active),
+// the road row's gate rather than the herd row's - a deposit does not wander off, so remembering
+// one is remembering something true. The whole row passes the gate or none of it does.
 table DepositState {
   // THE ROW'S IDENTITY - the tile AND the material, because ONE TILE CAN HOLD TWO. A wooded
   // highland holds timber and rock, and working one is not working the other; tileX/tileY alone
@@ -6316,22 +6327,21 @@ table DepositState {
   upkeepKitNamed:bool = false;
 
   // --- THE ESCAPEMENT FLOOR AND THE CHART IT IS DRAGGED ON (appended, issue #650) ---------------
-  // WHERE THIS TURN'S CREWS STOPPED, as a fraction of `capacity` - the working's own reading of the
-  // dial, kept at the DEEPEST floor any band cutting it named (`DepositSource::last_floor`).
-  //
-  // It is NOT a restatement of LaborAssignment.floor, which is per BAND ROW: that says what one band
-  // asked for, this says where the stock actually came to rest. A working nobody cut this turn reads
-  // 0 - the identity of the max below, so its `reachable` is exactly the rung's own reach.
-  floor:float = 0;
-  // THE RUNG'S OWN FLOOR, IN THE SAME UNITS - `1 - recovery_fraction`, what this rung's reach cannot
-  // get at. Gathering recovers 0.15, so it strands 85% of a rock body and this reads 0.85.
+  // THE RUNG'S OWN FLOOR, as a fraction of `capacity` - `1 - recovery_fraction`, what this rung's
+  // reach cannot get at. Gathering recovers 0.15, so it strands 85% of a rock body and this reads
+  // 0.85.
   //
   // *** COMPOSE IT WITH THE PLAYER'S FLOOR AS A MAXIMUM, NEVER AS A SUM AND NEVER AS TWO CLAMPS. ***
   // Both are the same kind of quantity - an amount left standing - so a crew stops at whichever is
   // greater:
   //
-  //   effectiveFloor = max(rungFloorFraction, floor) x capacity
+  //   effectiveFloor = max(rungFloorFraction, playerFloor) x capacity
   //   reachable      = max(0, stock - effectiveFloor)
+  //
+  // The player's half of that max is NOT on this row: it is LaborAssignment.floor, per BAND ROW, on
+  // the band's own `extract` row - what one band asked for. A source-level restatement of where the
+  // stock came to rest was published here and read by nobody, so it is gone; `reachable` beside it
+  // is the sim's own answer at the composed floor and is what a readout should quote.
   //
   // A chart that ADDED them would draw a gathering crew stopping 85% of a seam short of where it
   // really stops, on every rung. It is published because the escapement chart's whole axis is

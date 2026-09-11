@@ -5188,6 +5188,15 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var offers_floor := HudDepositVocab.renews(deposit)
     var floor_value := _compose.deposit_floor() if offers_floor \
         else SourceForecast.DEFAULT_HARVEST_FLOOR
+    # ⛔ **THE FLOOR THE COMMAND CARRIES IS A DIFFERENT ANSWER FROM THE ONE THIS SHEET COMPOSES AT**
+    # (issue #650). Every reading above is struck at `floor_value`, which on a finite working is the
+    # food peak standing in for a dial nobody was offered — inert, because `composed_floor` discards a
+    # crew floor on ground that never renews. What may NOT be inert is the wire: sending the default
+    # makes `handle_assign_labor` see a floor the player NAMED, so `unnamed_deposit_floor` — the whole
+    # sim-side fork for this case — never fires and the row stores a conservation choice nobody made.
+    # `FLOOR_UNNAMED` is the sentinel for *the sheet offered no dial*, and `offers_floor` is the ONE
+    # reading of that fact on this sheet.
+    var named_floor := _compose.deposit_floor() if offers_floor else SourceForecast.FLOOR_UNNAMED
     # ⛔ **THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE, AND IT IS RESOLVED
     # BEFORE THE CHART — the order is load-bearing** (the forage sheet's own finding). A crew takes
     # `min(crew × rate, the room above the composed floor)` in a turn, so a hand beyond that quotient
@@ -5251,7 +5260,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         func(count: int) -> void:
             _compose.set_deposit_count(clampi(count, 0, cap))
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        HudDepositVocab.CARD_CREW_HINT)
+        HudDepositVocab.CARD_CREW_HINT_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK)
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
@@ -5318,13 +5327,13 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # the optimistic overlay's key — and the FLOOR is a validated number in forage's own position and
     # forage's own decimal precision, the stance words being refused by name at parse.
     #
-    # **A FINITE WORKING SENDS THE DEFAULT, because it was never asked**: it has no dial, so
-    # `floor_value` is the food peak above and the sim composes it with the rung's own floor as a
-    # maximum exactly as it would an omitted token. **Still no kit token** — the shipped roster
-    # declares no take gear on either branch.
+    # **A FINITE WORKING SENDS NO FLOOR AT ALL, because it was never asked** — `named_floor` is
+    # `FLOOR_UNNAMED` there and `Main`'s extract arm drops the token, leaving the sim to answer what
+    # silence means on ground that never renews. A renewing working rides the player's own dial.
+    # **Still no kit token** — the shipped roster declares no take gear on either branch.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
-            tile.x, tile.y, "", floor_value, material)
+            tile.x, tile.y, "", named_floor, material)
         close_compose_sheet())
     target.add_child(assign_btn)
 

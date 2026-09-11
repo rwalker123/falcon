@@ -224,13 +224,12 @@ fn deposit_row(
             &payoff,
             source.escapement_floor(),
         ),
-        // **THE FLOOR THIS TURN'S CREWS WORKED TO**, deepest-first across the bands cutting it —
-        // the working's own reading of `LaborAssignmentState::floor`, which is per BAND ROW. Both
-        // ship: a row says what one band asked for, this says where the stock actually came to rest.
-        floor: source.escapement_floor(),
-        // …and **THE RUNG'S OWN FLOOR, IN THE SAME UNITS**, so a client can compose the two exactly
-        // as the sim does. ⛔ **THEY ARE A MAXIMUM, NEVER A SUM**: a chart that added them would
-        // draw a crew stopping 85% of a seam short of where it really stops on the gathering rung.
+        // **THE RUNG'S OWN FLOOR, AS A FRACTION OF CAPACITY**, so a client can compose it with the
+        // player's exactly as the sim does. ⛔ **THEY ARE A MAXIMUM, NEVER A SUM**: a chart that
+        // added them would draw a crew stopping 85% of a seam short of where it really stops on the
+        // gathering rung. **The player's half is not on this row** — it is `LaborAssignmentState::
+        // floor`, per band row; the source-level restatement of where the stock came to rest was
+        // published here and read by nobody, and `reachable` above already composes the pair.
         rung_floor_fraction: deposit_floor_fraction(&payoff),
         // **WHAT ONE CUTTER MOVES PER TURN AT THIS RUNG**, in the material's own units — the deposit
         // twin of `ForagePatchState::per_worker_biomass` and named after it, because the client's
