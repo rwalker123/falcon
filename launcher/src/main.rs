@@ -48,7 +48,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // ---------------------------------------------------------------------------
 // Contract constants
@@ -141,6 +141,38 @@ const AI_BRAIN_NAMES: [&str; 3] = ["pass", "scripted", "utility"];
 /// unset is the default.
 const ENV_AI_BRAIN: &str = "SIM_AI_BRAIN";
 
+// ---------------------------------------------------------------------------
+// The run directory: what a played game leaves behind for the viewer
+// ---------------------------------------------------------------------------
+
+/// Under the app-data root: one directory per launcher session, so a game just played can be
+/// opened in `sim_ai viewer` afterwards — the rivals' own logs and the server's record of every
+/// seat, the human's included (`.claude/rules/core_sim/ai-driver.md` → the run viewer).
+const RUNS_DIR: &str = "runs";
+/// A run id's prefix; the rest is the launcher's start time in Unix seconds and its pid, so ids
+/// sort by time and two launchers started in the same second do not share one.
+const RUN_ID_PREFIX: &str = "run-";
+/// How many run directories survive a launcher start, this session's included. Older ones are
+/// removed, oldest first: a run holds every frame of every seat, and a machine that plays daily
+/// would otherwise fill up with games nobody will look at again.
+const KEPT_RUNS: usize = 5;
+/// The server's record under a run directory. Contract twin of `RECORD_DIR` in
+/// `sim_ai/src/viewer/mod.rs`, which is what finds it again.
+const RECORD_DIR: &str = "record";
+/// The environment variable the server records under when set. Contract twin of
+/// `core_sim::record::RECORD_DIR_ENV`.
+const ENV_RECORD_DIR: &str = "SIM_RECORD_DIR";
+/// A rival's `--log-dir` under the run directory: `seat_<faction>`, the prefix the bench, the
+/// record and the viewer all use for a seat.
+const SEAT_LOG_DIR_PREFIX: &str = "seat_";
+/// `sim_ai`'s viewer subcommand (`VIEWER_SUBCOMMAND` in `sim_ai/src/main.rs`) and the page each
+/// printed line writes beside the seat's directory: `<run dir>/seat_<f>.html`.
+const VIEWER_SUBCOMMAND: &str = "viewer";
+const VIEWER_PAGE_EXTENSION: &str = ".html";
+/// How the printed viewer lines are introduced, at start and at exit.
+const VIEWER_LINES_LABEL_START: &str = "after quitting, open this run with:";
+const VIEWER_LINES_LABEL_EXIT: &str = "open this run with:";
+
 /// **The human's faction.** Contract twin of `PLAYER_FACTION_ID` in
 /// `clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd`: the seat the
 /// Godot client claims, and therefore the one roster entry that never gets a
@@ -221,9 +253,22 @@ fn run() -> Result<(), String> {
 
     let group = ProcessGroup::kill_on_close()?;
 
+    // This session's run directory, pruned so only the last few games are kept. Its path is the
+    // one thing a player needs to open the game they just played in the viewer, so it is printed
+    // at start and again at exit.
+    let run_dir = create_run_dir(&data_dir.join(RUNS_DIR), &mint_run_id())?;
+    report_info(&format!("run directory: {}", run_dir.display()));
+    // The human's line is known before anything runs; a rival's is printed the moment the
+    // supervisor starts it, so a crash still leaves the whole recipe in the log.
+    report_viewer_lines(
+        VIEWER_LINES_LABEL_START,
+        &viewer_lines(&layout.ai, &run_dir, &[HUMAN_FACTION_ID]),
+    );
+
     let server = Command::new(&layout.server)
         .current_dir(&data_dir)
         .env(ENV_PORTS_FILE, &ports_file)
+        .env(ENV_RECORD_DIR, run_dir.join(RECORD_DIR))
         .spawn()
         .map_err(|err| {
             format!(
@@ -234,7 +279,7 @@ fn run() -> Result<(), String> {
 
     // From here on every exit path must reap every child, so ownership moves
     // into a guard rather than being cleaned up at each `return`.
-    let mut session = Session::new(server, ports_file.clone(), rival_brain);
+    let mut session = Session::new(server, ports_file.clone(), rival_brain, run_dir.clone());
     group.adopt(session.server(), SERVER_LABEL)?;
 
     wait_for_ready(&mut session, &ports_file)?;
@@ -249,7 +294,86 @@ fn run() -> Result<(), String> {
     // players would only work locally.
     session.fill_seat(&human_seat(&layout), &data_dir, &ports_file, &group)?;
 
-    session.wait_for_human(&roster_events, &layout.ai, &data_dir, &ports_file, &group)
+    let outcome =
+        session.wait_for_human(&roster_events, &layout.ai, &data_dir, &ports_file, &group);
+    report_info(&format!("run directory: {}", run_dir.display()));
+    report_viewer_lines(
+        VIEWER_LINES_LABEL_EXIT,
+        &viewer_lines(&layout.ai, &run_dir, &session.seats_of_run()),
+    );
+    outcome
+}
+
+/// **One paste-ready viewer command per seat**: `<sim_ai> viewer <run dir> --seat <f> --out
+/// <run dir>/seat_<f>.html`, with the `sim_ai` the layout resolved for spawning rivals and the
+/// run directory as created — both absolute — so a player copies a line and gets the page.
+fn viewer_lines(sim_ai: &Path, run_dir: &Path, seats: &[u32]) -> Vec<String> {
+    seats
+        .iter()
+        .map(|seat| {
+            format!(
+                "{} {VIEWER_SUBCOMMAND} {} --seat {seat} --out {}",
+                sim_ai.display(),
+                run_dir.display(),
+                run_dir
+                    .join(format!(
+                        "{SEAT_LOG_DIR_PREFIX}{seat}{VIEWER_PAGE_EXTENSION}"
+                    ))
+                    .display()
+            )
+        })
+        .collect()
+}
+
+/// Print the viewer lines under `label`, one per line, at the launcher's ordinary verbosity.
+fn report_viewer_lines(label: &str, lines: &[String]) {
+    report_info(label);
+    for line in lines {
+        eprintln!("  {line}");
+    }
+}
+
+/// This launcher session's run id: [`RUN_ID_PREFIX`], the start time in Unix seconds, the pid.
+fn mint_run_id() -> String {
+    let started = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or_default();
+    format!("{RUN_ID_PREFIX}{started}-{}", std::process::id())
+}
+
+/// Create `<runs_dir>/<run_id>` and prune the runs directory to [`KEPT_RUNS`] entries, the new
+/// one included. Pruning is best-effort: a run that cannot be removed is left, never reported.
+fn create_run_dir(runs_dir: &Path, run_id: &str) -> Result<PathBuf, String> {
+    let run_dir = runs_dir.join(run_id);
+    fs::create_dir_all(&run_dir)
+        .map_err(|err| format!("Could not create {}: {err}", run_dir.display()))?;
+    prune_runs(runs_dir, KEPT_RUNS);
+    Ok(run_dir)
+}
+
+/// Remove every run directory under `runs_dir` but the newest `keep`, by name — a run id sorts by
+/// its start time. Only directories carrying [`RUN_ID_PREFIX`] are touched.
+fn prune_runs(runs_dir: &Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(runs_dir) else {
+        return;
+    };
+    let mut runs: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(RUN_ID_PREFIX))
+        })
+        .collect();
+    runs.sort();
+    let stale = runs.len().saturating_sub(keep);
+    for run in runs.into_iter().take(stale) {
+        let _ = fs::remove_dir_all(run);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,17 +839,36 @@ struct Session {
     /// The `--brain` every rival is spawned on, resolved and **validated** before
     /// this session existed ([`rival_brain`]).
     rival_brain: String,
+    /// This session's run directory: every rival's `--log-dir` is `seat_<faction>` under it.
+    run_dir: PathBuf,
+    /// Every rival faction the supervisor ever started this session, in first-start order —
+    /// the seats whose pages the exit lines name, whether or not the child is still running.
+    started_rivals: Vec<u32>,
 }
 
 impl Session {
-    fn new(server: Child, ports_file: PathBuf, rival_brain: String) -> Self {
+    fn new(server: Child, ports_file: PathBuf, rival_brain: String, run_dir: PathBuf) -> Self {
         Self {
             server,
             players: Vec::new(),
             rivals: Vec::new(),
             ports_file,
             rival_brain,
+            run_dir,
+            started_rivals: Vec::new(),
         }
+    }
+
+    /// The seats this run can be viewed for: the human's, then every rival ever started.
+    fn seats_of_run(&self) -> Vec<u32> {
+        let mut seats = vec![HUMAN_FACTION_ID];
+        seats.extend(self.started_rivals.iter().copied());
+        seats
+    }
+
+    /// Where a rival's instruments go: `<run_dir>/seat_<faction>`.
+    fn rival_log_dir(&self, faction: u32) -> PathBuf {
+        self.run_dir.join(format!("{SEAT_LOG_DIR_PREFIX}{faction}"))
     }
 
     fn server(&mut self) -> &mut Child {
@@ -881,6 +1024,8 @@ impl Session {
             .arg(faction.to_string())
             .arg("--brain")
             .arg(&self.rival_brain)
+            .arg("--log-dir")
+            .arg(self.rival_log_dir(faction))
             .current_dir(data_dir)
             .env(ENV_PORTS_FILE, ports_file)
             .stdin(Stdio::null())
@@ -892,6 +1037,13 @@ impl Session {
                 )
             })?;
         self.rivals.push((faction, child));
+        if !self.started_rivals.contains(&faction) {
+            self.started_rivals.push(faction);
+            report_viewer_lines(
+                VIEWER_LINES_LABEL_START,
+                &viewer_lines(ai_program, &self.run_dir, &[faction]),
+            );
+        }
         let (_, child) = self
             .rivals
             .last_mut()
@@ -1104,6 +1256,13 @@ fn report_error(message: &str) {
 /// has no console at all, which is exactly why the swallowing was invisible.
 fn report_warning(message: &str) {
     eprintln!("{ERROR_DIALOG_TITLE}: warning: {message}");
+}
+
+/// A line for the launcher's own log — where the run directory is, at start and at exit. Stderr,
+/// like the warnings: there is no console on the packaged Windows build, and a dialog for a path
+/// would be worse than none.
+fn report_info(message: &str) {
+    eprintln!("{ERROR_DIALOG_TITLE}: {message}");
 }
 
 #[cfg(windows)]
@@ -1345,6 +1504,7 @@ mod tests {
             spawn_sleeper(),
             ports_file.clone(),
             AI_BRAIN_DEFAULT.to_owned(),
+            data_dir.join(format!("{RUN_ID_PREFIX}reconcile-{}", std::process::id())),
         );
 
         // `sleep` needs a duration; the stand-in program gets the faction as its
@@ -1377,6 +1537,11 @@ mod tests {
             )
             .expect("reconcile reaps");
         assert_eq!(session.rival_factions(), vec![1]);
+        assert_eq!(
+            session.seats_of_run(),
+            vec![HUMAN_FACTION_ID, 1, 2],
+            "a reaped rival still has a page to open"
+        );
         assert!(
             !process_is_alive(departed),
             "a rival whose faction left the roster must be reaped"
@@ -1392,6 +1557,11 @@ mod tests {
             )
             .expect("reconcile respawns");
         assert_eq!(session.rival_factions(), vec![1, 2]);
+        assert_eq!(
+            session.seats_of_run(),
+            vec![HUMAN_FACTION_ID, 1, 2],
+            "a respawned rival is not listed twice"
+        );
 
         drop(session);
         let _ = fs::remove_file(&ports_file);
@@ -1424,6 +1594,7 @@ mod tests {
             spawn_sleeper(),
             ports_file.clone(),
             AI_BRAIN_DEFAULT.to_owned(),
+            std::env::temp_dir().join(format!("{RUN_ID_PREFIX}drop-{}", std::process::id())),
         );
         let mut pids = vec![session.server().id()];
         for _ in 0..PLAYER_COUNT {
@@ -1442,6 +1613,72 @@ mod tests {
             !ports_file.exists(),
             "the handshake file outlived the session"
         );
+    }
+
+    /// One line per seat, each a complete command a player can paste: the resolved `sim_ai`,
+    /// the run directory, the seat, and the page beside that seat's directory.
+    #[test]
+    fn a_viewer_line_per_seat_names_the_program_the_run_and_the_page() {
+        let sim_ai = Path::new("/pkg/Contents/Helpers/sim_ai");
+        let run_dir = Path::new("/data/ShadowScale/runs/run-1757600000-42");
+        let lines = viewer_lines(sim_ai, run_dir, &[HUMAN_FACTION_ID, 1, 2]);
+        assert_eq!(
+            lines,
+            vec![
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 0 --out /data/ShadowScale/runs/run-1757600000-42/seat_0.html",
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 1 --out /data/ShadowScale/runs/run-1757600000-42/seat_1.html",
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 2 --out /data/ShadowScale/runs/run-1757600000-42/seat_2.html",
+            ]
+        );
+        assert!(viewer_lines(sim_ai, run_dir, &[]).is_empty());
+    }
+
+    /// A run id sorts by its start time, which is what pruning by name relies on.
+    #[test]
+    fn a_run_id_carries_the_prefix_and_the_start_time() {
+        let id = mint_run_id();
+        let rest = id.strip_prefix(RUN_ID_PREFIX).expect("the prefix");
+        let (secs, pid) = rest.split_once('-').expect("time and pid");
+        assert!(secs.parse::<u64>().expect("seconds") > 0);
+        assert_eq!(pid.parse::<u32>().expect("pid"), std::process::id());
+    }
+
+    /// Creating a run keeps the newest [`KEPT_RUNS`] directories, the new one included, and
+    /// leaves anything that is not a run alone.
+    #[test]
+    fn creating_a_run_prunes_the_oldest_beyond_the_kept_count() {
+        let runs = std::env::temp_dir().join(format!("shadowscale_runs_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&runs);
+        for n in 0..KEPT_RUNS + 2 {
+            fs::create_dir_all(runs.join(format!("{RUN_ID_PREFIX}{:010}-1", n)))
+                .expect("an old run");
+        }
+        fs::create_dir_all(runs.join("not-a-run")).expect("a bystander");
+        let newest = format!("{RUN_ID_PREFIX}{:010}-1", KEPT_RUNS + 10);
+        let created = create_run_dir(&runs, &newest).expect("the run directory");
+        assert!(created.is_dir());
+        let mut kept: Vec<String> = fs::read_dir(&runs)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(RUN_ID_PREFIX))
+            .collect();
+        kept.sort();
+        assert_eq!(
+            kept.len(),
+            KEPT_RUNS,
+            "the newest {KEPT_RUNS} survive: {kept:?}"
+        );
+        assert_eq!(kept.last(), Some(&newest));
+        assert!(
+            !kept.contains(&format!("{RUN_ID_PREFIX}{:010}-1", 0)),
+            "the oldest was pruned"
+        );
+        assert!(runs.join("not-a-run").is_dir(), "a bystander is untouched");
+        let _ = fs::remove_dir_all(&runs);
     }
 
     /// How long a stand-in child would live if nothing killed it. Long enough

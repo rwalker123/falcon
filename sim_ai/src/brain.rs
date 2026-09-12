@@ -22,7 +22,7 @@ use crate::arbiter::{Arbiter, Offered};
 use crate::instruments::decisions::{AlarmRecord, DecisionRecord, DecisionSink, PlanRecord};
 use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG};
 use crate::orchestrator::constant::ConstantStance;
-use crate::orchestrator::{Orchestrator, Plan};
+use crate::orchestrator::{Alarm, Orchestrator, Plan};
 use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError};
 use crate::specialists::food::Food;
 use crate::specialists::land::Land;
@@ -50,6 +50,27 @@ pub trait Brain {
     /// A full frame at `tick` replaced the view (a resync, a rollback): memory stamped later than
     /// it is for a world that no longer exists.
     fn on_full_frame(&mut self, _tick: u64) {}
+
+    /// What this brain holds that the frame does not — the plan and alarms in force and its
+    /// memory — so the observation record (`instruments::observations`) can say what the brain
+    /// was looking at. A brain with none of it (`PassBrain`) answers the empty lens.
+    fn lens(&self) -> BrainLens<'_> {
+        BrainLens::default()
+    }
+}
+
+/// A read-only window into a brain's state at the moment before it decides
+/// (`docs/plan_ai_driver.md` §8.4). Every field is optional because the pass and scripted brains
+/// hold none of it.
+#[derive(Default, Clone, Copy)]
+pub struct BrainLens<'a> {
+    /// The plan in force — adopted on an earlier tick; this tick's `decide` may replace it.
+    pub plan: Option<&'a Plan>,
+    /// The alarms raised since that plan, which the next plan will weigh.
+    pub alarms: &'a [Alarm],
+    pub memory: Option<&'a SeatMemory>,
+    /// The profile's `land.horizon_tiles`: how far `Land` looks, and the observation's radius floor.
+    pub horizon_tiles: u32,
 }
 
 /// Submits end-turn and nothing else.
@@ -205,6 +226,15 @@ impl Brain for Composite {
         self.memory.record_choices(tick, intents, commands.iter());
         self.memory.remember_runways(view, self.faction);
         commands
+    }
+
+    fn lens(&self) -> BrainLens<'_> {
+        BrainLens {
+            plan: self.plan.as_ref(),
+            alarms: self.memory.pending_alarms(),
+            memory: Some(&self.memory),
+            horizon_tiles: self.profile.land.horizon_tiles,
+        }
     }
 
     fn on_full_frame(&mut self, tick: u64) {

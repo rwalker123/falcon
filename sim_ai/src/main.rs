@@ -9,19 +9,24 @@
 //! the same tick and is never acted on twice.
 //!
 //! The same binary is the bench harness: `sim_ai bench …` (`bench/`) starts a server and one
-//! player process per seat, and measures them from their logs. Without that first word the
-//! process plays — the launcher's invocation (`sim_ai --ports-file … --faction N`) is unchanged.
+//! player process per seat, and measures them from their logs; the run viewer: `sim_ai viewer …`
+//! (`viewer/`) joins one seat's logs into a page; and the record importer: `sim_ai import-record …`
+//! (`import_record`) turns a server's run record into such logs for any seat, the human's included.
+//! Without any of those first words the process plays — the launcher's invocation (`sim_ai
+//! --ports-file … --faction N`) is unchanged.
 
 mod arbiter;
 mod bench;
 mod brain;
 mod geometry;
+mod import_record;
 mod instruments;
 mod link;
 mod orchestrator;
 mod profile;
 mod specialists;
 mod view;
+mod viewer;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -37,6 +42,7 @@ use brain::{Brain, PassBrain, ScriptedBrain, UtilityBrain};
 use instruments::decisions::{
     DecisionRecord, DecisionSink, LinkEventKind, LinkRecord, NullSink, ReadyRecord,
 };
+use instruments::observations::{Observation, ObservationRecord};
 use instruments::scoreboard::ScoreRow;
 use instruments::Instruments;
 use link::{Endpoints, Link, LinkEvent};
@@ -62,6 +68,10 @@ const DERIVE_SEED_FROM_FACTION: u64 = 0;
 
 /// The first argument that selects the bench harness; anything else is the player.
 const BENCH_SUBCOMMAND: &str = "bench";
+/// The first argument that selects the run viewer (`viewer/`).
+const VIEWER_SUBCOMMAND: &str = "viewer";
+/// The first argument that turns a server record into a seat log directory (`import_record`).
+const IMPORT_RECORD_SUBCOMMAND: &str = "import-record";
 /// The player's own subcommand name, accepted so `sim_ai play …` reads as the pair of `bench`.
 const PLAY_SUBCOMMAND: &str = "play";
 
@@ -125,7 +135,8 @@ struct Args {
     /// Exit 0 after this many resolved turns (advances of the frame's tick).
     #[arg(long)]
     turns: Option<u64>,
-    /// Where the instruments write `scoreboard.jsonl` and `decisions.jsonl`. Absent: no instruments.
+    /// Where the instruments write `scoreboard.jsonl`, `decisions.jsonl` and
+    /// `observations.jsonl`. Absent: no instruments.
     #[arg(long)]
     log_dir: Option<PathBuf>,
 }
@@ -165,6 +176,15 @@ fn main() {
         Some(BENCH_SUBCOMMAND) => {
             argv.remove(1);
             bench::run(bench::BenchArgs::parse_from(argv)).map_err(|err| err.to_string())
+        }
+        Some(VIEWER_SUBCOMMAND) => {
+            argv.remove(1);
+            viewer::run(viewer::ViewerArgs::parse_from(argv)).map_err(|err| err.to_string())
+        }
+        Some(IMPORT_RECORD_SUBCOMMAND) => {
+            argv.remove(1);
+            import_record::run(import_record::ImportArgs::parse_from(argv))
+                .map_err(|err| err.to_string())
         }
         first => {
             if first == Some(PLAY_SUBCOMMAND) {
@@ -319,11 +339,18 @@ fn run(args: Args) -> Result<(), RunError> {
             continue;
         }
 
-        // The row first, so a process that dies mid-turn still leaves the tick it saw behind.
+        // The row first, so a process that dies mid-turn still leaves the tick it saw behind —
+        // and the observation beside it, read off the same view before `decide` touches anything.
         if let Some(instruments) = instruments.as_mut() {
             let row = ScoreRow::from_snapshot(&view.snapshot, faction);
             if let Err(err) = instruments.record_score(&row) {
                 error!(%err, tick, "the scoreboard could not be written");
+            }
+            let observation = Observation::capture(view, &row, &brain.lens());
+            if let Err(err) =
+                instruments.record_observation(&ObservationRecord::Observation(observation))
+            {
+                error!(%err, tick, "the observation log could not be written");
             }
         }
         let sink: &mut dyn DecisionSink = match instruments.as_mut() {

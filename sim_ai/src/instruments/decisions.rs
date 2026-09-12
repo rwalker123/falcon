@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sim_runtime::{render_command_line, CommandPayload};
 
 /// The file the records go to, under `--log-dir`.
 pub const DECISIONS_FILE: &str = "decisions.jsonl";
@@ -40,6 +41,21 @@ pub struct Decision {
     pub reason: String,
     /// How many commands the proposal carried (0 for a rejected one that emitted nothing).
     pub commands: usize,
+    /// The same commands, one readable line each ([`command_text`]) — what the viewer shows.
+    ///
+    /// `default` (the empty list) so a log written before this field existed still deserializes:
+    /// `bench::measures::read_jsonl` collects into a `Result`, so one unreadable line
+    /// would fail the whole run rather than that record.
+    #[serde(default)]
+    pub commands_text: Vec<String>,
+}
+
+/// **A command as a line of the text grammar** — `sim_runtime::render_command_line`, the one
+/// renderer both sides of the wire share (the server's run record writes the same lines), so a
+/// `commands_text` line reads exactly as an operator would type it and parses back through
+/// `parse_command_line`.
+pub fn command_text(payload: &CommandPayload) -> String {
+    render_command_line(payload)
 }
 
 /// A plan adopted by the orchestrator (§3).
@@ -138,6 +154,7 @@ mod tests {
                 outcome: Outcome::Accepted,
                 reason: "runway short".into(),
                 commands: 1,
+                commands_text: vec!["assign_labor 1 7 forage 3 4 5".into()],
             }),
             DecisionRecord::Decision(Decision {
                 tick: A_TICK,
@@ -150,6 +167,7 @@ mod tests {
                 },
                 reason: "patch free".into(),
                 commands: 0,
+                commands_text: Vec::new(),
             }),
             DecisionRecord::Plan(PlanRecord {
                 tick: A_TICK,
@@ -179,6 +197,39 @@ mod tests {
             let back: DecisionRecord = serde_json::from_str(&line).expect("parses");
             assert_eq!(back, record);
         }
+    }
+
+    /// ⛔ **A log written before `commands_text` existed still reads.** `read_jsonl` collects into
+    /// a `Result`, so one line that will not deserialize fails the whole viewer page rather than
+    /// that record.
+    #[test]
+    fn a_decision_line_without_commands_text_parses_with_none() {
+        let line = r#"{"kind":"decision","tick":7,"specialist":"food","intent":"food:assign:2",
+            "score_raw":0.5,"score_final":0.75,"outcome":"accepted","reason":"idle hands",
+            "commands":1}"#;
+        let record: DecisionRecord = serde_json::from_str(line).expect("parses without the field");
+        match record {
+            DecisionRecord::Decision(decision) => {
+                assert!(decision.commands_text.is_empty());
+                assert_eq!(decision.commands, 1);
+            }
+            other => panic!("expected a decision, got {other:?}"),
+        }
+    }
+
+    /// The line is the shared renderer's (`sim_runtime::render_command_line`, tested there): it
+    /// parses back through the grammar.
+    #[test]
+    fn a_rendered_command_parses_back_to_itself() {
+        use sim_runtime::parse_command_line;
+        let payload = CommandPayload::SplitBand {
+            faction_id: 1,
+            band_id: Some(7001),
+            workers: 4,
+        };
+        let line = command_text(&payload);
+        assert_eq!(line, "split_band 1 7001 4");
+        assert_eq!(parse_command_line(&line).expect("parses"), payload);
     }
 
     #[test]

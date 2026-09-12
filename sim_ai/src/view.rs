@@ -251,6 +251,17 @@ impl SeatMemory {
         });
     }
 
+    /// The last tick `tile` was in active sight (or was first known of), undecayed — what the
+    /// observation record reports so a viewer can say how stale a tile's reading is.
+    pub fn last_seen(&self, tile: Tile) -> Option<u64> {
+        self.last_seen.get(&tile).copied()
+    }
+
+    /// The alarms raised since the orchestrator last planned — what the next plan will weigh.
+    pub fn pending_alarms(&self) -> &[Alarm] {
+        &self.alarms
+    }
+
     /// Whether `tile` counts as known at `now`: seen, and not longer ago than the horizon.
     pub fn is_known(&self, tile: Tile, now: u64) -> bool {
         match self.last_seen.get(&tile) {

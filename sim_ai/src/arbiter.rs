@@ -22,7 +22,9 @@ use rand::rngs::StdRng;
 use rand::Rng;
 use sim_runtime::CommandPayload;
 
-use crate::instruments::decisions::{Decision, DecisionRecord, DecisionSink, Outcome};
+use crate::instruments::decisions::{
+    command_text, Decision, DecisionRecord, DecisionSink, Outcome,
+};
 use crate::orchestrator::Plan;
 use crate::profile::{AiProfile, Difficulty, ARGMAX_TOP_K};
 use crate::specialists::{
@@ -238,6 +240,7 @@ fn record(
         outcome,
         reason: offered.proposal.reason.clone(),
         commands: offered.proposal.commands.len(),
+        commands_text: offered.proposal.commands.iter().map(command_text).collect(),
     }));
 }
 

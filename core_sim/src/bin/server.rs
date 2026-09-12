@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
+use core_sim::record::{CommandRecord, RecordingSink, RunInfo, RunRecorder, RECORD_DIR_ENV};
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
@@ -66,14 +67,16 @@ use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
 };
 use sim_runtime::{
+    command_line_verb,
     commands::{
         query_error, save_error, ConfigOverrideKind,
         EspionageGeneratorUpdate as CommandGeneratorUpdate, FactionCapacityReply, QueryPayload,
         QueryReply, QueryReplyEnvelope, ReloadConfigKind, SaveOpReply, SeatClaimReply,
         AUTOSAVE_SLOT, BENCH_CREW_UNSPECIFIED, MAX_PROTO_FRAME,
     },
-    CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
-    OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags, TradeCargoItem,
+    render_command_line, CancelScope, CommandEnvelope as ProtoCommandEnvelope,
+    CommandPayload as ProtoCommandPayload, OrdersDirective as ProtoOrdersDirective,
+    SecurityPolicyKind, TerrainTags, TradeCargoItem,
 };
 use sim_schema::{encode_map_export_json, MapExport};
 
@@ -122,6 +125,95 @@ where
     env_filter.or(tracing_subscriber::filter::filter_fn(|metadata| {
         metadata.target() == LOG_FORWARD_ALWAYS_TARGET && *metadata.level() <= tracing::Level::INFO
     }))
+}
+
+/// **The run recorder, when `SIM_RECORD_DIR` names a directory** (`core_sim::record`). Process-wide
+/// and set once at boot from the environment, exactly as the save directory is: recording is a
+/// property of this server process, not of a world. It is read from the three places a frame or a
+/// command passes — the sink a world's publisher is attached to ([`frame_sink`]), the two frames
+/// the command loop delivers itself ([`deliver_frame`]), and the dispatch log
+/// ([`record_dispatched_command`]). Unset, every one of them is the code that was there before.
+static RUN_RECORDER: OnceLock<Arc<RunRecorder>> = OnceLock::new();
+
+fn run_recorder() -> Option<&'static Arc<RunRecorder>> {
+    RUN_RECORDER.get()
+}
+
+/// Open the recorder if the environment asks for one. A directory that cannot be created is a
+/// warning and no recorder — the game runs unrecorded rather than not at all.
+fn open_run_recorder_from_env() {
+    let Some(dir) = std::env::var_os(RECORD_DIR_ENV) else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    match RunRecorder::open(&dir) {
+        Ok(recorder) => {
+            let _ = RUN_RECORDER.set(Arc::new(recorder));
+            info!(
+                target: "shadow_scale::server",
+                record_dir = %dir.display(),
+                "record.open"
+            );
+        }
+        Err(err) => warn!(
+            target: "shadow_scale::server",
+            record_dir = %dir.display(),
+            %err,
+            "record.open_failed=the game runs unrecorded"
+        ),
+    }
+}
+
+/// The sink a world's publisher is attached to: the stream socket, wrapped to record every frame
+/// it delivers when a recorder is open.
+fn frame_sink(socket: &Arc<SnapshotServer>) -> Arc<dyn FrameSink> {
+    let socket: Arc<dyn FrameSink> = Arc::clone(socket) as Arc<dyn FrameSink>;
+    match run_recorder() {
+        Some(recorder) => Arc::new(RecordingSink::new(socket, Arc::clone(recorder))),
+        None => socket,
+    }
+}
+
+/// **A frame the command loop delivers itself** — a resync's or a rollback's full frame, which
+/// bypasses the publisher — goes to the socket and to the record, exactly as a published frame
+/// does through the sink. Without this the record would lack the very full frame the seat's
+/// delta chain is based on, and `import-record` could apply nothing.
+fn deliver_frame(socket: &SnapshotServer, seat: FactionId, frame: &Arc<Vec<u8>>) {
+    socket.deliver(seat, frame);
+    if let Some(recorder) = run_recorder() {
+        recorder.record_frame(seat, frame);
+    }
+}
+
+/// **One line of the run record per LOGGED command** — the same exclusion policy as
+/// [`log_dispatched_command`] ([`is_replayable`]), applied at the same site, so the record holds
+/// exactly the timeline and never a query, a claim, a save or a resync. `wire_line` is the
+/// command as the reader thread rendered it off the wire payload (`render_command_line`); the
+/// server's own senders carry none and are not recorded. The faction is the seat the connection
+/// holds, `None` for an unseated one; the token is never written.
+fn record_dispatched_command(
+    app: &bevy::prelude::App,
+    connection: ConnectionId,
+    seats: &SeatRegistry,
+    command: &Command,
+    wire_line: Option<&str>,
+) {
+    let Some(recorder) = run_recorder() else {
+        return;
+    };
+    if !is_replayable(command) {
+        return;
+    }
+    let Some(line) = wire_line else {
+        return;
+    };
+    recorder.record_command(CommandRecord {
+        tick: app.world.resource::<SimulationTick>().0,
+        faction: seats.seat_of(connection).map(|seat| seat.0),
+        connection: connection.0,
+        verb: command_line_verb(line).to_owned(),
+        command: line.to_owned(),
+    });
 }
 
 fn main() {
@@ -194,6 +286,10 @@ fn main() {
     if !log_stream_enabled {
         warn!(target: "shadow_scale::server", "log_stream.start_failed");
     }
+
+    // Before the first world and the command listener, so every frame and every command of the
+    // session is in the record.
+    open_run_recorder_from_env();
 
     // Shared, because the publisher thread of every world holds a handle to it as its
     // `FrameSink` while the command loop keeps writing rollback / resync / feed frames to it.
@@ -318,8 +414,8 @@ fn main() {
 
     loop {
         let flat_server: &SnapshotServer = &snapshot_flat_server;
-        let (connection, command) = match wait_for_command(&command_rx, &turn_gate) {
-            LoopWake::Delivered(connection, command) => (connection, command),
+        let (connection, command, wire_line) = match wait_for_command(&command_rx, &turn_gate) {
+            LoopWake::Delivered(connection, command, wire_line) => (connection, command, wire_line),
             LoopWake::TurnDeadline => {
                 // The open turn's wait ran out. `settle_open_turn` re-reads the queue rather than
                 // trusting the wake, so a deadline that raced the last submission still resolves the
@@ -599,6 +695,7 @@ fn main() {
                     &seats,
                     &mut command_log,
                     flat_server,
+                    wire_line.as_deref(),
                 );
             }
         }
@@ -621,8 +718,8 @@ fn main() {
 
 /// Why the command loop woke up.
 enum LoopWake {
-    /// A command arrived, from this connection.
-    Delivered(ConnectionId, Command),
+    /// A command arrived, from this connection, with its wire form when a recorder is open.
+    Delivered(ConnectionId, Command, WireLine),
     /// The open turn's wait ran out before anything arrived.
     TurnDeadline,
     /// Every sender is gone.
@@ -640,7 +737,7 @@ fn wait_for_command(commands: &Receiver<CommandDelivery>, turn_gate: &SeatTurnGa
         None => commands.recv().map_err(|_| RecvTimeoutError::Disconnected),
     };
     match received {
-        Ok((connection, command)) => LoopWake::Delivered(connection, command),
+        Ok((connection, command, wire_line)) => LoopWake::Delivered(connection, command, wire_line),
         Err(RecvTimeoutError::Timeout) => LoopWake::TurnDeadline,
         Err(RecvTimeoutError::Disconnected) => LoopWake::Closed,
     }
@@ -664,6 +761,7 @@ fn dispatch_connection_command(
     seats: &SeatRegistry,
     command_log: &mut Option<CommandLog>,
     flat_server: &SnapshotServer,
+    wire_line: Option<&str>,
 ) {
     if !seat_authorizes(seats, connection, &command) {
         return;
@@ -678,6 +776,7 @@ fn dispatch_connection_command(
     if let Some(log) = command_log.as_mut() {
         log_dispatched_command(log, &command);
     }
+    record_dispatched_command(app, connection, seats, &command, wire_line);
     if let Command::Resync = command {
         handle_resync(app, seats.seat_of(connection), connection, flat_server);
     } else if let Command::Rollback { tick } = command {
@@ -980,7 +1079,22 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
         );
     }
     let faction_ids: Vec<u32> = roster.iter().map(|faction| faction.0).collect();
-    core_sim::log_stream::emit_seats_roster(&faction_ids, app.world.resource::<WorldEpoch>().0);
+    let world_epoch = app.world.resource::<WorldEpoch>().0;
+    core_sim::log_stream::emit_seats_roster(&faction_ids, world_epoch);
+    // The record's world description, at the same moment: the run is self-describing from the
+    // build on, in the New Game menu's own terms.
+    if let Some(recorder) = run_recorder() {
+        let config = app.world.resource::<SimulationConfig>();
+        recorder.record_run(RunInfo {
+            map_preset_id: config.map_preset_id.clone(),
+            width: config.grid_size.x,
+            height: config.grid_size.y,
+            map_seed: config.map_seed,
+            start_profile_id: config.start_profile_id.clone(),
+            roster: faction_ids,
+            world_epoch,
+        });
+    }
 }
 
 /// **Publish the seat roster to the two places delivery depends on**, in one call so they cannot
@@ -1511,7 +1625,12 @@ enum Command {
 /// (`docs/plan_multiplayer_seats.md` §4.1). The connection id is what the seat gate compares against
 /// [`SeatRegistry`]; the server's own senders — the config watchers, the in-process
 /// [`CommandSenderResource`] — speak as [`ConnectionId::INTERNAL`], which holds no seat.
-type CommandDelivery = (ConnectionId, Command);
+type CommandDelivery = (ConnectionId, Command, WireLine);
+
+/// **The command as the wire carried it, rendered to one line of the text grammar** by the reader
+/// thread (`sim_runtime::render_command_line`) — the form the run record writes. Rendered only
+/// while a recorder is open, and `None` from the server's own senders, which have no wire form.
+type WireLine = Option<String>;
 
 #[derive(Resource, Clone)]
 struct CommandSenderResource(Sender<CommandDelivery>);
@@ -1882,8 +2001,9 @@ fn handle_proto_client(
         }
         match ProtoCommandEnvelope::decode(&payload) {
             Ok(envelope) => {
+                let wire_line = run_recorder().map(|_| render_command_line(&envelope.payload));
                 if let Some(cmd) = command_from_payload(envelope.payload, &reply_tx) {
-                    if sender.send((connection, cmd)).is_err() {
+                    if sender.send((connection, cmd, wire_line)).is_err() {
                         break;
                     }
                 }
@@ -1897,7 +2017,7 @@ fn handle_proto_client(
     // **The seat this connection held goes back on the way out.** Sent rather than done here because
     // the registry belongs to the main loop; it is not a wire payload, so no client can forge it, and
     // it carries this loop's own connection id like every other delivery.
-    let _ = sender.send((connection, Command::ReleaseSeat));
+    let _ = sender.send((connection, Command::ReleaseSeat, None));
 }
 
 /// **The idle-boot gate on a query.**
@@ -2076,6 +2196,7 @@ fn watch_config(
                         .send((
                             ConnectionId::INTERNAL,
                             Command::ReloadConfig { kind, path: None },
+                            None,
                         ))
                         .is_err()
                     {
@@ -2386,7 +2507,7 @@ fn rebuild_world_from_config(
     new_app
         .world
         .resource::<SnapshotHistory>()
-        .attach_sink(Arc::clone(snapshot_server_flat) as Arc<dyn FrameSink>);
+        .attach_sink(frame_sink(snapshot_server_flat));
 
     // Apply any caller-supplied configuration (e.g. the start profile) before Startup worldgen runs.
     configure(&mut new_app);
@@ -2735,7 +2856,7 @@ fn handle_load_game(
     new_app
         .world
         .resource::<SnapshotHistory>()
-        .attach_sink(Arc::clone(snapshot_server_flat) as Arc<dyn FrameSink>);
+        .attach_sink(frame_sink(snapshot_server_flat));
 
     core_sim::save::apply_save(&mut new_app.world, &header, &payload);
     publish_loaded_world(&mut new_app);
@@ -12149,7 +12270,7 @@ fn handle_resync(
     let tick = history.latest_entry_for(seat).map(|entry| entry.tick);
     match (history.publish_full_frame_for(seat), tick) {
         (Some(bytes), Some(tick)) => {
-            flat_server.deliver(seat, &bytes);
+            deliver_frame(flat_server, seat, &bytes);
             info!(
                 target: "shadow_scale::server",
                 tick,
@@ -12263,7 +12384,7 @@ fn handle_rollback(
     // answers. The full frame published here IS that answer, now addressed to each seat's own stream
     // clients rather than broadcast to everyone.
     for (seat, frame) in &flat_frames {
-        snapshot_server_flat.deliver(*seat, frame);
+        deliver_frame(snapshot_server_flat, *seat, frame);
         warn!(
             target: "shadow_scale::server",
             tick,
@@ -19694,7 +19815,7 @@ mod tests {
         );
 
         // The loop's side: the decoded command carries the request id AND a way back.
-        let (connection, command) = command_rx
+        let (connection, command, _) = command_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the query reaches the command channel");
         let Command::Query {
@@ -19766,7 +19887,7 @@ mod tests {
 
         let mut pending = Vec::new();
         for _ in 0..2 {
-            let (_, command) = command_rx
+            let (_, command, _) = command_rx
                 .recv_timeout(Duration::from_secs(5))
                 .expect("both queries arrive");
             let Command::Query {
@@ -22826,6 +22947,7 @@ mod tests {
                 &seats,
                 &mut log,
                 &loopback_snapshot_server(),
+                None,
             );
             assert_eq!(
                 keeper_of(&app, COORD),
@@ -22849,6 +22971,7 @@ mod tests {
             &seats,
             &mut log,
             &loopback_snapshot_server(),
+            None,
         );
         assert_eq!(
             keeper_of(&app, COORD),
@@ -22900,6 +23023,7 @@ mod tests {
             &seats,
             &mut log,
             &loopback_snapshot_server(),
+            None,
         );
         assert_eq!(
             tick_of(&app),
@@ -22922,6 +23046,7 @@ mod tests {
             &seats,
             &mut log,
             &loopback_snapshot_server(),
+            None,
         );
         assert_eq!(
             tick_of(&app),
@@ -23074,6 +23199,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
         assert_eq!(
@@ -23093,6 +23219,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
         assert_eq!(
@@ -23146,6 +23273,7 @@ mod tests {
             &seats,
             &mut log,
             &loopback_snapshot_server(),
+            None,
         );
         settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
         assert_eq!(tick_of(&app), opening_tick, "the wait starts, not the turn");
@@ -23191,6 +23319,7 @@ mod tests {
             &seats,
             &mut log,
             &loopback_snapshot_server(),
+            None,
         );
         settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
 
@@ -23274,6 +23403,7 @@ mod tests {
                 &seats,
                 &mut log,
                 &flat,
+                None,
             );
             settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
         }
@@ -23286,6 +23416,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
         std::thread::sleep(SLEEP_PAST_TIMEOUT);
@@ -23393,7 +23524,7 @@ mod tests {
                     .encode_to_vec()
                     .expect("the claim envelope encodes"),
             );
-            let (connection, command) = command_rx
+            let (connection, command, _) = command_rx
                 .recv_timeout(Duration::from_secs(5))
                 .expect("the claim reaches the command channel");
             assert_eq!(
@@ -23474,7 +23605,7 @@ mod tests {
 
         // The first client goes away: its read loop delivers the release, and the seat frees.
         drop(first_client);
-        let (released_connection, command) = command_rx
+        let (released_connection, command, _) = command_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("a closing connection delivers its release");
         assert!(matches!(command, Command::ReleaseSeat));
@@ -23525,6 +23656,7 @@ mod tests {
                 &seats,
                 &mut log,
                 &flat,
+                None,
             );
             assert_eq!(
                 fog_of(&app),
@@ -23557,6 +23689,7 @@ mod tests {
                 &seats,
                 &mut log,
                 &flat,
+                None,
             );
             assert!(
                 fog_of(&app),
@@ -23580,6 +23713,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         assert!(
             !fog_of(&app),
@@ -23708,6 +23842,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         assert!(
             log.as_ref().expect("the log").entries.is_empty(),
@@ -23723,6 +23858,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         assert_eq!(
             log.as_ref().expect("the log").entries.len(),
@@ -23764,6 +23900,7 @@ mod tests {
             &seats,
             &mut log,
             &flat,
+            None,
         );
         settle_open_turn(&mut app, &mut log, &seats, &mut turn_gate);
         assert_eq!(

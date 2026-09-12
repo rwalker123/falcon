@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>sim_ai run viewer</title>
+<style>
+:root {
+  --bg: #fbfaf6; --fg: #1d1d1b; --muted: #6b6a64; --panel: #ffffff; --line: #d9d6cc;
+  --own: #2f6fdd; --foreign: #d0342c; --accept: #1f8a4c; --reject: #a34f00; --mark: #d0342c;
+  --ramp0: #efe9d2; --ramp1: #1f6f3a; --nopatch: #cfcbc0; --land: #e6e1d3; --herd: #7a4b1e; --band: #1d1d1b;
+  --site: #2f6f3a; --focus: #e0a800; --worked: #7a1fa2;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* The map never grows past this, however wide the window: a wider page shows MORE panels, not
+     a bigger map. The page itself stops widening at --page-max-width and centres. Breakpoints
+     (700 px two columns, 1200 px three) are literals in the @media rules below, which cannot read
+     custom properties. */
+  --map-max-height: min(60vh, 560px);
+  --page-max-width: 1700px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15161a; --fg: #e8e6df; --muted: #9a988f; --panel: #1e2027; --line: #34363f;
+    --own: #6ea0ff; --foreign: #ff6b62; --accept: #55c983; --reject: #f0a04b; --mark: #ff6b62;
+    --ramp0: #3a3a2f; --ramp1: #4fc46f; --nopatch: #44464d; --land: #2c2e35; --herd: #d9a066; --band: #f2f0e8;
+    --site: #7fd99a; --focus: #ffd45c; --worked: #d08cff;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; }
+header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: .5rem .75rem; z-index: 2; min-width: 0; overflow: hidden; }
+h1 { font-size: 1rem; margin: 0 0 .35rem; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+h1 span { color: var(--muted); font-weight: 400; }
+h1 .path { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+h2 { font-size: .95rem; margin: 0 0 .5rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+h3 { font-size: .9rem; margin: .6rem 0 .3rem; }
+.caption { font-size: .78rem; color: var(--muted); margin: -.3rem 0 .5rem; }
+.scrub { display: flex; align-items: center; gap: .5rem; }
+.scrub button, .tabs button, .focus-bar button { font: inherit; padding: .25rem .6rem; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: .4rem; cursor: pointer; }
+.scrub input[type=range] { flex: 1; min-width: 0; }
+.scrub .tick { font-family: var(--mono); min-width: 4.5rem; text-align: right; }
+.sparks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .4rem; margin-top: .4rem; }
+.spark { background: var(--panel); border: 1px solid var(--line); border-radius: .4rem; padding: .25rem .35rem; }
+.spark .label { font-size: .7rem; color: var(--muted); display: flex; justify-content: space-between; }
+.spark svg { width: 100%; height: 34px; display: block; }
+.spark .a { stroke: var(--own); } .spark .b { stroke: var(--foreign); } .spark .m { stroke: var(--mark); stroke-dasharray: 2 2; }
+main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "map" "ledger" "work" "score" "orch" "dec"; gap: .75rem; padding: .75rem; align-items: start; max-width: var(--page-max-width); margin: 0 auto; }
+@media (min-width: 700px) { main { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "map orch" "ledger dec" "work dec" "score dec"; } }
+@media (min-width: 1200px) { main { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: "map ledger orch" "map work dec" "map score dec"; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: .75rem; min-width: 0; }
+#map { grid-area: map; } #ledger { grid-area: ledger; } #work { grid-area: work; } #score { grid-area: score; } #orchestrator { grid-area: orch; } #decisions { grid-area: dec; }
+#hexmap { width: auto; height: auto; max-width: 100%; max-height: var(--map-max-height); display: block; margin: 0 auto; touch-action: manipulation; }
+#hexmap polygon { stroke-width: 1.2; cursor: pointer; }
+#hexmap polygon.sel { stroke-width: 3; }
+#hexmap polygon.worked { stroke: var(--worked); stroke-width: 2.4; stroke-dasharray: 3 1.5; }
+#hexmap polygon.worked.sel { stroke-width: 3.5; }
+#hexmap .badge { fill: var(--worked); pointer-events: none; }
+#hexmap .badge-text { font-size: 7.5px; fill: var(--bg); font-weight: 700; text-anchor: middle; pointer-events: none; }
+#hexmap text { font-family: var(--mono); font-size: 9px; pointer-events: none; fill: var(--band); }
+#hexmap .herd { fill: var(--herd); opacity: .85; pointer-events: none; }
+#hexmap .site { fill: var(--site); pointer-events: none; }
+#hexmap .band { fill: var(--band); stroke: var(--bg); stroke-width: 1.5; cursor: pointer; }
+#hexmap .band.focus { fill: var(--focus); stroke: var(--fg); }
+#hexmap .reach { fill: none; stroke: var(--band); stroke-dasharray: 4 3; stroke-width: 1; pointer-events: none; }
+#hexmap .reach.focus { stroke: var(--focus); stroke-width: 2; }
+#hexmap .glyph { fill: none; stroke: var(--fg); stroke-width: 1.2; pointer-events: none; }
+.legend { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: .5rem .9rem; margin-top: .4rem; }
+.legend .ramp { display: inline-block; width: 4rem; height: .7rem; vertical-align: middle; background: linear-gradient(90deg, var(--ramp0), var(--ramp1)); border: 1px solid var(--line); }
+.legend .sw { display: inline-block; width: .8rem; height: .8rem; vertical-align: middle; border: 2px solid; margin-right: .2rem; border-radius: 2px; }
+.legend .fill { display: inline-block; width: .8rem; height: .8rem; vertical-align: middle; border: 1px solid var(--line); margin-right: .2rem; border-radius: 2px; }
+.legend .dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; vertical-align: middle; margin-right: .2rem; }
+.legend .note { flex-basis: 100%; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .6rem; margin: 0; font-size: .85rem; }
+dt { color: var(--muted); } dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+th, td { text-align: left; padding: .25rem .3rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+td.n, th.n { text-align: right; font-family: var(--mono); white-space: nowrap; }
+tr.band-row { cursor: pointer; }
+tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transparent); }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); }
+.pill { display: inline-block; font-size: .72rem; padding: .05rem .4rem; border-radius: 1rem; border: 1px solid var(--line); margin-right: .3rem; }
+.pill.ok { color: var(--accept); border-color: var(--accept); }
+.pill.no { color: var(--reject); border-color: var(--reject); }
+.dec { border-left: 3px solid var(--line); padding: .3rem .5rem; margin: .35rem 0; font-size: .85rem; }
+.dec.ok { border-color: var(--accept); } .dec.no { border-color: var(--reject); }
+.dec .head { display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+.dec .cmd { font-family: var(--mono); font-size: .8rem; margin: .15rem 0 0 .2rem; white-space: pre-wrap; }
+.empty { color: var(--muted); font-style: italic; font-size: .85rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .4rem; }
+.tabs button.on { border-color: var(--fg); font-weight: 600; }
+.focus-bar { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; font-size: .8rem; color: var(--muted); margin: .3rem 0 .5rem; }
+#tile-detail { margin-top: .5rem; font-size: .85rem; }
+.assign { margin: .15rem 0 .15rem 1rem; font-size: .8rem; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">sim_ai run viewer</h1>
+  <div class="scrub">
+    <button id="prev" title="previous turn (←)">&#9664;</button>
+    <input type="range" id="scrub" min="0" max="0" value="0" step="1">
+    <button id="next" title="next turn (→)">&#9654;</button>
+    <span class="tick" id="tick-label">tick —</span>
+  </div>
+  <div class="sparks" id="sparks"></div>
+</header>
+<main>
+  <section id="map">
+    <h2>Local map</h2>
+    <svg id="hexmap" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" role="img" aria-label="the seat's neighbourhood"></svg>
+    <div class="legend" id="legend">
+      <span><span class="ramp"></span> food site: forage biomass (low → high)</span>
+      <span><span class="fill" style="background: var(--land)"></span>land the band cannot gather from</span>
+      <span><span class="fill" style="background: var(--nopatch)"></span>no forage patch (water, bare ground)</span>
+      <span><span class="sw" style="border-color: var(--own)"></span>owned by this seat</span>
+      <span><span class="sw" style="border-color: var(--foreign)"></span>owned by a rival</span>
+      <span><span class="sw" style="border-color: var(--line)"></span>unowned</span>
+      <span><span class="dot" style="background: var(--site)"></span>food site &nbsp; <span class="dot" style="background: var(--herd)"></span>herd (size by biomass)</span>
+      <span>&#9633; cultivated &nbsp; &#8801; field &nbsp; &#9673; band (id · size, tap to focus) &nbsp; dashed ring = work range</span>
+      <span><span class="sw" style="border-color: var(--worked); border-style: dashed"></span>worked this tick, badge = workers on it (tap for the rows)</span>
+      <span class="note">Tiles the seat has never seen are not drawn. Tap a hex for its record.</span>
+    </div>
+    <div id="tile-detail" class="empty">No hex selected.</div>
+  </section>
+  <section id="ledger"><h2>Ledger</h2><div id="ledger-body"></div></section>
+  <section id="work">
+    <h2>Work</h2>
+    <p class="caption">Workers by job per band, then the seat's improved ground and the build and upkeep rows the frame carries.</p>
+    <div id="work-body"></div>
+  </section>
+  <section id="score">
+    <h2>Seat scoreboard</h2>
+    <p class="caption">The seat's <span class="mono">ScoreRow</span> for this tick — the numbers the bench ratchets — not a tile score.</p>
+    <div id="score-body"></div>
+  </section>
+  <section id="orchestrator"><h2>Orchestrator</h2><div id="orchestrator-body"></div></section>
+  <section id="decisions">
+    <h2>Decisions</h2>
+    <div class="tabs" id="tabs"></div>
+    <div class="focus-bar" id="focus-bar"></div>
+    <div id="decisions-body"></div>
+  </section>
+</main>
+<script id="run-model" type="application/json">__RUN_MODEL_JSON__</script>
+<script>
+(function () {
+  "use strict";
+  var MODEL = JSON.parse(document.getElementById("run-model").textContent);
+  var TURNS = MODEL.turns;
+  var SPECIALISTS = MODEL.specialists || [];
+  // The scoreboard's "not food-limited" sentinel (sim_ai NOT_FOOD_LIMITED_TURNS); drawn as a gap.
+  var NOT_FOOD_LIMITED = 999;
+  var HEX = 14;             // hex circumradius in SVG units
+  var SQRT3 = Math.sqrt(3);
+  var SPARK_W = 100, SPARK_H = 34, SPARK_PAD = 2;
+  var HERD_R_MIN = 1.5, HERD_R_MAX = 6;
+  var SITE_R = 1.8;         // the food-site dot at the hex centre
+  var BAND_R = 4;
+  var BADGE_R = 3.6;        // the worker-count badge on a worked hex, at its lower-right
+  var BADGE_DX = 0.45, BADGE_DY = 0.5;   // badge centre, as a fraction of HEX from the hex centre
+  var ALL_TAB = "all";      // the tab showing every specialist's proposals
+  // The text-grammar verbs whose third token is the band id (`sim_runtime::command_text`).
+  var BAND_VERBS = { assign_labor: true, move_band: true, split_band: true };
+  var BAND_TOKEN_INDEX = 2;
+  var current = 0;
+  var selectedTile = null;
+  var activeTab = ALL_TAB;
+  var focusBand = null;     // a band id, or null for "all bands"
+  var biomassMax = 0;
+  TURNS.forEach(function (t) {
+    if (!t.observation) return;
+    t.observation.neighborhood.forEach(function (h) {
+      if (h.food_site && h.forage_biomass != null && h.forage_biomass > biomassMax) biomassMax = h.forage_biomass;
+    });
+  });
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c];
+    });
+  }
+  function num(v, d) {
+    if (v == null) return "—";
+    if (typeof v !== "number") return esc(v);
+    if (Number.isInteger(v)) return String(v);
+    return v.toFixed(d == null ? 2 : d);
+  }
+  function el(id) { return document.getElementById(id); }
+  // SVG is built as markup and parsed inside an <svg> element, which gives it the SVG namespace
+  // without naming it: this page names no URL of any kind.
+  function tag(name, attrs, inner) {
+    var s = "<" + name;
+    for (var k in attrs) s += " " + k + "=\"" + esc(attrs[k]) + "\"";
+    return s + ">" + (inner || "") + "</" + name + ">";
+  }
+  function lerpColor(a, b, t) {
+    function parse(c) { c = c.trim(); var n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+    var ca = parse(a), cb = parse(b), r = [];
+    for (var i = 0; i < 3; i++) r.push(Math.round(ca[i] + (cb[i] - ca[i]) * t));
+    return "rgb(" + r.join(",") + ")";
+  }
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name); }
+
+  // ---------------------------------------------------------------- sparklines
+  function seriesOf(pick) { return TURNS.map(function (t) { return t.score ? pick(t.score) : null; }); }
+  function sparkPath(values, lo, hi) {
+    var n = values.length, pts = [], w = SPARK_W - 2 * SPARK_PAD, h = SPARK_H - 2 * SPARK_PAD;
+    var span = hi - lo || 1;
+    for (var i = 0; i < n; i++) {
+      var v = values[i];
+      if (v == null) { pts.push(null); continue; }
+      var x = SPARK_PAD + (n > 1 ? i / (n - 1) : 0.5) * w;
+      var y = SPARK_PAD + h - (v - lo) / span * h;
+      pts.push(x.toFixed(1) + "," + y.toFixed(1));
+    }
+    var d = "", pen = false;
+    pts.forEach(function (p) {
+      if (p == null) { pen = false; return; }
+      d += (pen ? " L" : " M") + p; pen = true;
+    });
+    return d.trim();
+  }
+  function range(arrays) {
+    var lo = Infinity, hi = -Infinity;
+    arrays.forEach(function (a) { a.forEach(function (v) { if (v == null) return; if (v < lo) lo = v; if (v > hi) hi = v; }); });
+    if (lo === Infinity) { lo = 0; hi = 1; }
+    if (lo > 0) lo = 0;
+    return [lo, hi];
+  }
+  var SPARKS = [
+    { label: "stock", series: [seriesOf(function (s) { return s.food_stock; })] },
+    { label: "income / consumption", series: [seriesOf(function (s) { return s.food_income; }), seriesOf(function (s) { return s.food_consumption; })] },
+    { label: "runway (turns)", series: [seriesOf(function (s) { return s.runway_turns >= NOT_FOOD_LIMITED ? null : s.runway_turns; })] },
+    { label: "hunger deaths", series: [seriesOf(function (s) { return (s.deaths_by_cause && s.deaths_by_cause.hunger) || 0; })] }
+  ];
+  function buildSparks() {
+    var html = "";
+    SPARKS.forEach(function (sp, i) {
+      var r = range(sp.series), paths = "";
+      sp.series.forEach(function (s, j) {
+        paths += tag("path", { d: sparkPath(s, r[0], r[1]), fill: "none", "stroke-width": 1.2, "class": j === 0 ? "a" : "b", "vector-effect": "non-scaling-stroke" });
+      });
+      paths += tag("line", { id: "spark-mark-" + i, x1: 0, x2: 0, y1: 0, y2: SPARK_H, "class": "m", "stroke-width": 1, "vector-effect": "non-scaling-stroke" });
+      html += "<div class=\"spark\"><div class=\"label\"><span>" + esc(sp.label) + "</span><span id=\"spark-val-" + i + "\"></span></div>" +
+        tag("svg", { viewBox: "0 0 " + SPARK_W + " " + SPARK_H, preserveAspectRatio: "none" }, paths) + "</div>";
+    });
+    el("sparks").innerHTML = html;
+  }
+  function updateSparks() {
+    var n = TURNS.length, w = SPARK_W - 2 * SPARK_PAD;
+    var x = SPARK_PAD + (n > 1 ? current / (n - 1) : 0.5) * w;
+    SPARKS.forEach(function (sp, i) {
+      var m = el("spark-mark-" + i);
+      m.setAttribute("x1", x); m.setAttribute("x2", x);
+      var vals = sp.series.map(function (s) { return num(s[current]); });
+      el("spark-val-" + i).textContent = vals.join(" / ");
+    });
+  }
+
+  // ---------------------------------------------------------------- hex map
+  function hexCenter(ux, y) {
+    return { x: HEX * SQRT3 * (ux + 0.5 * (y & 1)), y: HEX * 1.5 * y };
+  }
+  function hexPoints(c) {
+    var pts = [];
+    for (var i = 0; i < 6; i++) {
+      var a = Math.PI / 180 * (60 * i - 30);
+      pts.push((c.x + HEX * Math.cos(a)).toFixed(2) + "," + (c.y + HEX * Math.sin(a)).toFixed(2));
+    }
+    return pts.join(" ");
+  }
+  function unwrapX(x, cx, grid) {
+    if (!grid.wrap_horizontal) return x;
+    var d = x - cx, w = grid.width;
+    if (d > w / 2) d -= w; else if (d < -w / 2) d += w;
+    return cx + d;
+  }
+  // Only a food site — ground `assign_labor … forage` is accepted on — takes the biomass ramp.
+  // Land with a patch row the band cannot gather from is one neutral fill, so it never reads as
+  // rich as a site; a tile with no patch row (water, bare ground) keeps its own grey.
+  function tileFill(h) {
+    if (h.forage_biomass == null) return cssVar("--nopatch");
+    if (!h.food_site) return cssVar("--land");
+    var t = biomassMax > 0 ? Math.max(0, Math.min(1, h.forage_biomass / biomassMax)) : 0;
+    return lerpColor(cssVar("--ramp0"), cssVar("--ramp1"), t);
+  }
+  // Every row the seat's bands work this tick, keyed by the hex it is on: a tile target directly,
+  // a herd target through the herd's hex in the neighbourhood. A role with no target marks nothing.
+  function workedIndex(obs) {
+    var byKey = {};
+    if (!obs) return byKey;
+    var herdTile = {};
+    obs.neighborhood.forEach(function (h) { if (h.herd) herdTile[h.herd.id] = h.x + "," + h.y; });
+    obs.bands.forEach(function (b) {
+      b.assignments.forEach(function (a) {
+        var key = null;
+        if (a.target && a.target.herd_id != null) key = herdTile[a.target.herd_id] || null;
+        else if (a.target) key = a.target.x + "," + a.target.y;
+        if (key == null) return;
+        (byKey[key] = byKey[key] || []).push({ band: b, a: a });
+      });
+    });
+    return byKey;
+  }
+  function tileStroke(h) {
+    if (h.owner == null) return cssVar("--line");
+    return h.owner === MODEL.faction ? cssVar("--own") : cssVar("--foreign");
+  }
+  function drawMap(obs) {
+    var svg = el("hexmap");
+    if (!obs || !obs.neighborhood.length) {
+      svg.setAttribute("viewBox", "0 0 100 20");
+      svg.innerHTML = tag("text", { x: 2, y: 12 }, esc(obs ? "no neighbourhood: the seat holds no band" : "no observation for this tick"));
+      return;
+    }
+    var grid = obs.grid;
+    var cx = obs.bands.length ? obs.bands[0].x : obs.neighborhood[0].x;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    var placed = obs.neighborhood.map(function (h) {
+      var c = hexCenter(unwrapX(h.x, cx, grid), h.y);
+      minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x); minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
+      return { h: h, c: c };
+    });
+    svg.setAttribute("viewBox", [minX - HEX - 2, minY - HEX - 2, maxX - minX + 2 * HEX + 4, maxY - minY + 2 * HEX + 4].join(" "));
+    var html = "";
+    var worked = workedIndex(obs);
+    placed.forEach(function (p) {
+      var sel = selectedTile && selectedTile.x === p.h.x && selectedTile.y === p.h.y;
+      var rows = worked[p.h.x + "," + p.h.y];
+      html += tag("polygon", { points: hexPoints(p.c), fill: tileFill(p.h), stroke: tileStroke(p.h), "class": (sel ? "sel" : "") + (rows ? " worked" : ""), "data-x": p.h.x, "data-y": p.h.y });
+      if (rows) {
+        var crew = rows.reduce(function (n, r) { return n + r.a.workers; }, 0);
+        var bx = p.c.x + HEX * BADGE_DX, by = p.c.y + HEX * BADGE_DY;
+        html += tag("circle", { cx: bx, cy: by, r: BADGE_R, "class": "badge" });
+        html += tag("text", { x: bx, y: by + 2.6, "class": "badge-text" }, esc(crew));
+      }
+      if (p.h.food_site) html += tag("circle", { cx: p.c.x, cy: p.c.y, r: SITE_R, "class": "site" });
+      if (p.h.cultivated) html += tag("rect", { x: p.c.x - 3, y: p.c.y + 3, width: 6, height: 5, "class": "glyph" });
+      if (p.h.field) html += tag("path", { d: "M" + (p.c.x - 5) + " " + (p.c.y + 5) + " h10 M" + (p.c.x - 5) + " " + (p.c.y + 8) + " h10", "class": "glyph" });
+      if (p.h.herd) {
+        var hb = p.h.herd.biomass || 0;
+        var r = HERD_R_MIN + (biomassMaxHerd() > 0 ? Math.sqrt(hb / biomassMaxHerd()) : 0) * (HERD_R_MAX - HERD_R_MIN);
+        html += tag("circle", { cx: p.c.x + 4, cy: p.c.y - 4, r: r.toFixed(1), "class": "herd" });
+      }
+    });
+    obs.bands.forEach(function (b) {
+      var c = hexCenter(unwrapX(b.x, cx, grid), b.y);
+      var focus = focusBand != null && focusBand === b.band_id ? " focus" : "";
+      html += tag("circle", { cx: c.x, cy: c.y, r: (b.work_range + 0.5) * HEX * SQRT3, "class": "reach" + focus });
+      html += tag("circle", { cx: c.x, cy: c.y, r: BAND_R, "class": "band" + focus, "data-band": b.band_id });
+      html += tag("text", { x: c.x, y: c.y - 6, "text-anchor": "middle" }, esc("b" + b.band_id + " ·" + b.size));
+    });
+    svg.innerHTML = html;
+    Array.prototype.forEach.call(svg.querySelectorAll("polygon[data-x]"), function (poly) {
+      poly.addEventListener("click", function () {
+        selectedTile = { x: parseInt(poly.getAttribute("data-x"), 10), y: parseInt(poly.getAttribute("data-y"), 10) };
+        render();
+      });
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll("circle[data-band]"), function (marker) {
+      marker.addEventListener("click", function (e) {
+        e.stopPropagation();
+        toggleFocus(parseInt(marker.getAttribute("data-band"), 10));
+      });
+    });
+  }
+  var herdMaxCache = null;
+  function biomassMaxHerd() {
+    if (herdMaxCache != null) return herdMaxCache;
+    herdMaxCache = 0;
+    TURNS.forEach(function (t) {
+      if (!t.observation) return;
+      t.observation.neighborhood.forEach(function (h) { if (h.herd && h.herd.biomass > herdMaxCache) herdMaxCache = h.herd.biomass; });
+    });
+    return herdMaxCache;
+  }
+  function drawTileDetail(obs) {
+    var host = el("tile-detail");
+    if (!selectedTile || !obs) { host.className = "empty"; host.textContent = "No hex selected."; return; }
+    var h = null;
+    obs.neighborhood.forEach(function (x) { if (x.x === selectedTile.x && x.y === selectedTile.y) h = x; });
+    if (!h) { host.className = "empty"; host.textContent = "Hex (" + selectedTile.x + "," + selectedTile.y + ") is not in this tick's neighbourhood."; return; }
+    host.className = "";
+    var rows = [
+      ["tile", h.x + "," + h.y], ["terrain", h.terrain], ["food site", h.food_site],
+      ["forage biomass", num(h.forage_biomass)], ["carrying capacity", num(h.carrying_capacity)],
+      ["per-worker yield (frame)", num(h.per_worker_yield, 3)], ["rated per worker (brain)", num(h.rated_per_worker_yield, 3)],
+      ["owner", h.owner == null ? "none" : (h.owner === MODEL.faction ? "this seat (" + h.owner + ")" : "rival " + h.owner)],
+      ["cultivated", h.cultivated], ["field", h.field],
+      ["herd", h.herd ? h.herd.id + " " + h.herd.species + " biomass " + num(h.herd.biomass) + " rate " + num(h.herd.per_worker_yield, 3) + (h.herd.huntable ? " huntable" : "") + (h.herd.corralled ? " corralled" : "") : "none"],
+      ["cultivation progress", h.cultivation_progress == null ? "—" : num(h.cultivation_progress, 2)],
+      ["field progress", h.field_progress == null ? "—" : num(h.field_progress, 2)],
+      ["build", buildText(h.build)], ["upkeep", upkeepText(h.upkeep)],
+      ["last seen tick", h.last_seen_tick == null ? "—" : h.last_seen_tick], ["distance to nearest own band", h.nearest_own_band_distance]
+    ];
+    var html = "<dl>" + rows.map(function (r) { return "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1] == null ? "—" : r[1]) + "</dd>"; }).join("") + "</dl>";
+    var on = workedIndex(obs)[h.x + "," + h.y] || [];
+    html += "<h3>Worked this tick" + (on.length ? " (" + on.length + " row" + (on.length === 1 ? "" : "s") + ")" : "") + "</h3>";
+    if (!on.length) html += "<p class=\"empty\">no crew on this hex</p>";
+    on.forEach(function (r) { html += assignmentRow(r.band, r.a); });
+    host.innerHTML = html;
+  }
+  function buildText(b) {
+    if (!b) return "none";
+    return "→ " + b.destination_rung + (b.turns_remaining >= 0 ? ", " + b.turns_remaining + " turn" + (b.turns_remaining === 1 ? "" : "s") + " left" : "") + (b.queue_position >= 0 ? ", queue #" + b.queue_position : "") + (b.kit_id ? ", kit " + b.kit_id : "") + (b.blocked_reason ? " — blocked: " + b.blocked_reason : "");
+  }
+  function upkeepText(u) {
+    if (!u) return "none";
+    return num(u.supplied) + " of " + num(u.demand) + " supplied" + (u.shortfall > 0 ? ", short " + num(u.shortfall) : "") + ", needs " + u.workers_needed + " worker" + (u.workers_needed === 1 ? "" : "s") + (u.kit_id ? ", kit " + u.kit_id : "");
+  }
+  // One worked row, as the client's Forage / Hunt readout states it: crew, yields, staffing
+  // signals, and what the player stated on it. A line is shown only when the frame carries it.
+  function assignmentRow(b, a) {
+    var head = esc(a.job) + " " + esc(targetText(a)) + " · b" + b.band_id + " ×" + a.workers;
+    if (a.hunt_useful_workers) head += " (useful " + a.hunt_useful_workers + ")";
+    if (a.workers_needed && a.workers > a.workers_needed) head += " (" + a.workers_needed + " would do)";
+    var lines = [];
+    lines.push(num(a.actual_yield) + " of " + num(a.sustainable_yield) + " sustainable per turn" + (a.overdraws ? " ⚠ overdraws" : "") + (a.wasted_yield > 0 ? ", " + num(a.wasted_yield) + " uncollected" : ""));
+    var stated = [];
+    if (a.kit_id) stated.push("kit " + a.kit_id);
+    if (a.target) stated.push("floor " + num(a.floor, 2));
+    if (a.take_species && a.take_species.length) stated.push("take " + a.take_species.join(","));
+    if (a.species) stated.push("commit " + a.species);
+    if (a.improvement) stated.push("build " + a.improvement);
+    if (stated.length) lines.push(stated.join(" · "));
+    return "<div class=\"assign\">" + head + "<br>" + lines.map(esc).join("<br>") + "</div>";
+  }
+  // The Work panel: per band, workers by every job kind its rows name, then idle; per seat, the
+  // improved ground and every build / upkeep row in view.
+  function drawWork(obs) {
+    var host = el("work-body");
+    if (!obs) { host.innerHTML = "<p class=\"empty\">No observation for this tick.</p>"; return; }
+    var jobs = {};
+    obs.bands.forEach(function (b) { b.assignments.forEach(function (a) { jobs[a.job] = true; }); });
+    var jobNames = Object.keys(jobs).sort();
+    var html = "";
+    if (!obs.bands.length) html += "<p class=\"empty\">No own band in view.</p>";
+    else {
+      html += "<table><tr><th>band</th>" + jobNames.map(function (j) { return "<th class=\"n\">" + esc(j) + "</th>"; }).join("") + "<th class=\"n\">idle</th><th class=\"n\">of</th></tr>";
+      obs.bands.forEach(function (b) {
+        var byJob = {};
+        b.assignments.forEach(function (a) { byJob[a.job] = (byJob[a.job] || 0) + a.workers; });
+        var focus = focusBand != null && focusBand === b.band_id ? " focus" : "";
+        html += "<tr class=\"band-row" + focus + "\" data-band=\"" + b.band_id + "\"><td>b" + b.band_id + "</td>" + jobNames.map(function (j) { return "<td class=\"n\">" + (byJob[j] || 0) + "</td>"; }).join("") + "<td class=\"n\">" + b.idle_workers + "</td><td class=\"n\">" + b.working_age + "</td></tr>";
+      });
+      html += "</table>";
+    }
+    var L = obs.ledger;
+    html += "<h3>Improved ground</h3><dl><dt>patches owned</dt><dd>" + L.patches_owned + "</dd><dt>cultivated</dt><dd>" + L.patches_cultivated + "</dd><dt>fields</dt><dd>" + L.patches_field + "</dd></dl>";
+    var byKey = {}, herdByKey = {};
+    obs.neighborhood.forEach(function (h) { byKey[h.x + "," + h.y] = h; if (h.herd) herdByKey[h.herd.id] = h.herd; });
+    var builds = [];
+    obs.bands.forEach(function (b) {
+      b.build_queue.forEach(function (q) {
+        var src = q.target && q.target.herd_id != null ? herdByKey[q.target.herd_id] : (q.target ? byKey[q.target.x + "," + q.target.y] : null);
+        builds.push("b" + b.band_id + " " + q.job + " " + targetText(q) + ": " + buildText(src ? src.build : null));
+      });
+    });
+    html += "<h3>Build queue</h3>";
+    if (!builds.length) html += "<p class=\"empty\">nothing queued</p>";
+    else builds.forEach(function (line) { html += "<div class=\"assign\">" + esc(line) + "</div>"; });
+    var upkeep = [];
+    obs.neighborhood.forEach(function (h) {
+      if (h.upkeep && h.owner === MODEL.faction) upkeep.push(h.x + "," + h.y + (h.cultivated ? " cultivated" : "") + (h.field ? " field" : "") + ": " + upkeepText(h.upkeep));
+      if (h.herd && h.herd.upkeep) upkeep.push(h.herd.id + " " + h.herd.species + (h.herd.corralled ? " corralled" : "") + ": " + upkeepText(h.herd.upkeep));
+    });
+    html += "<h3>Upkeep</h3>";
+    if (!upkeep.length) html += "<p class=\"empty\">no source in view charges upkeep</p>";
+    else upkeep.forEach(function (line) { html += "<div class=\"assign\">" + esc(line) + "</div>"; });
+    host.innerHTML = html;
+    Array.prototype.forEach.call(host.querySelectorAll("tr.band-row"), function (row) {
+      row.addEventListener("click", function () { toggleFocus(parseInt(row.getAttribute("data-band"), 10)); });
+    });
+  }
+
+  // ---------------------------------------------------------------- band focus
+  function toggleFocus(bandId) {
+    focusBand = focusBand === bandId ? null : bandId;
+    render();
+  }
+  // Whether a proposal names the band: its intent's subject token, or the band token of a command
+  // line in the text grammar (any token, for a verb whose shape the page does not know).
+  function namesBand(d, bandId) {
+    var id = String(bandId);
+    var parts = String(d.intent || "").split(":");
+    if (parts[parts.length - 1] === id) return true;
+    return (d.commands_text || []).some(function (line) {
+      var tokens = line.trim().split(/\s+/);
+      if (BAND_VERBS[tokens[0]]) return tokens[BAND_TOKEN_INDEX] === id;
+      return tokens.indexOf(id) >= 0;
+    });
+  }
+
+  // ---------------------------------------------------------------- panels
+  function targetText(a) {
+    if (!a.target) return "";
+    if (a.target.herd_id != null) return a.target.herd_id;
+    return a.target.x + "," + a.target.y;
+  }
+  function drawLedger(obs) {
+    var host = el("ledger-body");
+    if (!obs) { host.innerHTML = "<p class=\"empty\">No observation for this tick.</p>"; return; }
+    var L = obs.ledger;
+    var html = "<dl><dt>stock</dt><dd>" + num(L.stock) + "</dd><dt>income</dt><dd>" + num(L.income) + "</dd><dt>consumption</dt><dd>" + num(L.consumption) +
+      "</dd><dt>runway</dt><dd>" + (L.runway_turns >= NOT_FOOD_LIMITED ? "not food-limited" : num(L.runway_turns, 1)) + " turns</dd><dt>working age</dt><dd>" + L.working_age + "</dd><dt>idle</dt><dd>" + L.idle_workers + "</dd></dl>";
+    if (!obs.bands.length) { host.innerHTML = html + "<p class=\"empty\">No own band in view.</p>"; return; }
+    html += "<table><tr><th>band</th><th class=\"n\">size</th><th class=\"n\">idle</th><th class=\"n\">runway</th><th class=\"n\">income</th><th class=\"n\">eats</th></tr>";
+    obs.bands.forEach(function (b) {
+      var focus = focusBand != null && focusBand === b.band_id ? " focus" : "";
+      html += "<tr class=\"band-row" + focus + "\" data-band=\"" + b.band_id + "\" title=\"tap to focus the decisions on this band\"><td>b" + b.band_id + " <span class=\"muted mono\">@" + b.x + "," + b.y + (b.is_traveling ? " travelling" : "") + "</span></td><td class=\"n\">" + b.size + "</td><td class=\"n\">" + b.idle_workers + "/" + b.working_age +
+        "</td><td class=\"n\">" + (b.turns_of_food >= NOT_FOOD_LIMITED ? "∞" : num(b.turns_of_food, 1)) + "</td><td class=\"n\">" + num(b.food_income) + "</td><td class=\"n\">" + num(b.food_consumption) + "</td></tr>";
+      var extra = "";
+      b.assignments.forEach(function (a) { extra += assignmentRow(b, a); });
+      if (!b.assignments.length) extra += "<div class=\"assign muted\">no worked rows</div>";
+      if (b.intent_in_force) extra += "<div class=\"assign\">intent in force: " + esc(b.intent_in_force) + (b.move_target ? " → " + b.move_target.x + "," + b.move_target.y : "") + "</div>";
+      html += "<tr><td colspan=\"6\">" + extra + "</td></tr>";
+    });
+    host.innerHTML = html + "</table>";
+    Array.prototype.forEach.call(host.querySelectorAll("tr.band-row"), function (row) {
+      row.addEventListener("click", function () { toggleFocus(parseInt(row.getAttribute("data-band"), 10)); });
+    });
+  }
+  function mapText(m) {
+    if (!m) return "—";
+    return Object.keys(m).map(function (k) { return k + " " + num(m[k]); }).join(", ") || "—";
+  }
+  // The plan in force is resolved by the writer (`viewer::resolve_in_force`): this tick's plan
+  // record, else the observation's plan, else the last one — so tick 1, whose observation was
+  // written before the first plan was adopted, still shows the plan it was played under.
+  function drawOrchestrator(turn) {
+    var host = el("orchestrator-body"), html = "";
+    var plan = turn.plan_in_force;
+    if (!plan) {
+      html += "<p class=\"empty\">No orchestrator: this run adopted no plan.</p>";
+    } else {
+      html += "<dl><dt>stance</dt><dd>" + esc(plan.stance) + " <span class=\"muted\">since tick " + plan.since_tick + "</span></dd></dl>";
+      var names = {};
+      Object.keys(plan.budgets || {}).forEach(function (k) { names[k] = true; });
+      Object.keys(plan.priorities || {}).forEach(function (k) { names[k] = true; });
+      var rows = Object.keys(names).sort();
+      html += "<table><tr><th>specialist</th><th class=\"n\">budget share</th><th class=\"n\">priority</th><th>goals</th></tr>";
+      if (!rows.length) html += "<tr><td colspan=\"4\" class=\"empty\">the plan funds no specialist</td></tr>";
+      rows.forEach(function (name) {
+        html += "<tr><td>" + esc(name) + "</td><td class=\"n\">" + num(plan.budgets && plan.budgets[name], 2) + "</td><td class=\"n\">" + num(plan.priorities && plan.priorities[name], 2) + "</td><td class=\"muted\">—</td></tr>";
+      });
+      html += "</table>";
+    }
+    html += "<h3>Alarms in force</h3>";
+    if (turn.alarms_in_force && turn.alarms_in_force.length) {
+      html += "<ul style=\"margin:0;padding-left:1.2rem;font-size:.85rem\">" + turn.alarms_in_force.map(function (a) { return "<li><span class=\"mono\">" + esc(a.specialist + ":" + a.alarm) + "</span> <span class=\"muted\">since tick " + a.since_tick + "</span></li>"; }).join("") + "</ul>";
+    } else {
+      html += "<p class=\"empty\">none</p>";
+    }
+    html += "<h3>This tick</h3>";
+    var events = [];
+    if (turn.plan) events.push("re-planned: " + turn.plan.stance + ", budgets " + mapText(turn.plan.budgets) + ", priorities " + mapText(turn.plan.priorities));
+    (turn.alarms || []).forEach(function (a) { events.push("alarm raised: " + a.specialist + ":" + a.alarm); });
+    (turn.link_events || []).forEach(function (l) { events.push("link: " + l.event); });
+    if (!events.length) html += "<p class=\"empty\">no re-plan, no alarm</p>";
+    else html += "<ul style=\"margin:0;padding-left:1.2rem;font-size:.85rem\">" + events.map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("") + "</ul>";
+    host.innerHTML = html;
+  }
+  function drawTabs() {
+    var host = el("tabs"), html = "";
+    var tabs = [ALL_TAB].concat(SPECIALISTS);
+    tabs.forEach(function (name) {
+      html += "<button data-tab=\"" + esc(name) + "\" class=\"" + (activeTab === name ? "on" : "") + "\">" + esc(name === ALL_TAB ? "All" : name) + "</button>";
+    });
+    if (!SPECIALISTS.length) html += "<span class=\"muted\" style=\"font-size:.8rem;align-self:center\">the log names no specialist</span>";
+    host.innerHTML = html;
+    Array.prototype.forEach.call(host.querySelectorAll("button[data-tab]"), function (button) {
+      button.addEventListener("click", function () { activeTab = button.getAttribute("data-tab"); render(); });
+    });
+    var bar = el("focus-bar");
+    if (focusBand == null) {
+      bar.innerHTML = "<span>all bands</span><span class=\"muted\">· tap a band in the ledger or on the map to focus</span>";
+    } else {
+      bar.innerHTML = "<span>focused on band <span class=\"mono\">b" + esc(focusBand) + "</span></span><button id=\"focus-clear\">all bands</button>";
+      el("focus-clear").addEventListener("click", function () { focusBand = null; render(); });
+    }
+  }
+  function drawDecisions(turn) {
+    var host = el("decisions-body"), html = "";
+    var shown = turn.decisions.filter(function (d) {
+      if (activeTab !== ALL_TAB && d.specialist !== activeTab) return false;
+      if (focusBand != null && !namesBand(d, focusBand)) return false;
+      return true;
+    });
+    var accepted = shown.filter(function (d) { return d.outcome === "accepted"; });
+    var rejected = shown.filter(function (d) { return d.outcome !== "accepted"; });
+    if (!shown.length) {
+      html += "<p class=\"empty\">no proposals" + (activeTab !== ALL_TAB ? " from " + esc(activeTab) : "") + (focusBand != null ? " naming b" + esc(focusBand) : "") + " this tick</p>";
+    } else {
+      html += "<h3>Accepted (" + accepted.length + ")</h3>";
+      if (!accepted.length) html += "<p class=\"empty\">nothing accepted</p>";
+      accepted.forEach(function (d) { html += decisionRow(d, "ok"); });
+      var groups = {};
+      rejected.forEach(function (d) { (groups[d.rejected_by] = groups[d.rejected_by] || []).push(d); });
+      Object.keys(groups).sort().forEach(function (why) {
+        html += "<h3>Rejected: " + esc(why) + " (" + groups[why].length + ")</h3>";
+        groups[why].forEach(function (d) { html += decisionRow(d, "no"); });
+      });
+    }
+    html += "<p class=\"muted\">" + (turn.ready ? "ready submitted" : "no ready record") + "</p>";
+    host.innerHTML = html;
+  }
+  function decisionRow(d, cls) {
+    var h = "<div class=\"dec " + cls + "\"><div class=\"head\"><span class=\"pill " + cls + "\">" + esc(d.specialist) + "</span><span class=\"mono\">" + esc(d.intent) + "</span><span class=\"muted\">" + esc(d.reason) + "</span><span class=\"mono muted\">" + num(d.score_raw, 3) + " → " + num(d.score_final, 3) + "</span></div>";
+    (d.commands_text || []).forEach(function (c) { h += "<div class=\"cmd\">" + esc(c) + "</div>"; });
+    if (!d.commands_text || !d.commands_text.length) h += "<div class=\"cmd muted\">(" + d.commands + " command" + (d.commands === 1 ? "" : "s") + ")</div>";
+    return h + "</div>";
+  }
+  function drawScore(score) {
+    var host = el("score-body");
+    if (!score) { host.innerHTML = "<p class=\"empty\">No scoreboard row for this tick.</p>"; return; }
+    var html = "<dl>";
+    Object.keys(score).forEach(function (k) {
+      var v = score[k];
+      if (v && typeof v === "object") v = mapText(v);
+      html += "<dt>" + esc(k) + "</dt><dd>" + esc(num(v, 3)) + "</dd>";
+    });
+    host.innerHTML = html + "</dl>";
+  }
+
+  // ---------------------------------------------------------------- render
+  function render() {
+    var turn = TURNS[current];
+    el("scrub").value = current;
+    el("tick-label").textContent = turn ? "tick " + turn.tick : "tick —";
+    updateSparks();
+    var obs = turn ? turn.observation : null;
+    drawMap(obs);
+    drawTileDetail(obs);
+    drawLedger(obs);
+    drawWork(obs);
+    drawScore(turn ? turn.score : null);
+    drawTabs();
+    if (turn) { drawOrchestrator(turn); drawDecisions(turn); }
+  }
+  function go(i) { if (!TURNS.length) return; current = Math.max(0, Math.min(TURNS.length - 1, i)); render(); }
+
+  el("title").innerHTML = "seat " + esc(MODEL.faction) + " <span>· run " + esc(MODEL.seed) + " · " + TURNS.length + " turns · <span class=\"path\" title=\"" + esc(MODEL.seat_dir) + "\">" + esc(MODEL.seat_dir) + "</span></span>";
+  el("scrub").max = Math.max(0, TURNS.length - 1);
+  el("scrub").addEventListener("input", function (e) { go(parseInt(e.target.value, 10)); });
+  el("prev").addEventListener("click", function () { go(current - 1); });
+  el("next").addEventListener("click", function () { go(current + 1); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft") { go(current - 1); e.preventDefault(); }
+    else if (e.key === "ArrowRight") { go(current + 1); e.preventDefault(); }
+  });
+  buildSparks();
+  render();
+})();
+</script>
+</body>
+</html>

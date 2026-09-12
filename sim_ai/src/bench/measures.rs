@@ -1,4 +1,4 @@
-//! **From the two logs to a number per layer** (`docs/plan_ai_driver.md` §8.2).
+//! **From the two measured logs to a number per layer** (`docs/plan_ai_driver.md` §8.2).
 //!
 //! A seat's measures are computed from its `scoreboard.jsonl` and `decisions.jsonl` alone. They
 //! are a flat map of measure name → value, `None` where the record that would answer it is not
@@ -95,14 +95,16 @@ pub enum MeasureError {
     },
 }
 
-/// Read one seat's two logs from `log_dir` and compute its measures.
+/// Read one seat's two measured logs from `log_dir` and compute its measures.
 pub fn measures_for_seat(log_dir: &Path) -> Result<Measures, MeasureError> {
     let rows: Vec<ScoreRow> = read_jsonl(&log_dir.join(SCOREBOARD_FILE))?;
     let records: Vec<DecisionRecord> = read_jsonl(&log_dir.join(DECISIONS_FILE))?;
     Ok(compute(&rows, &records))
 }
 
-fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec<T>, MeasureError> {
+pub(crate) fn read_jsonl<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> Result<Vec<T>, MeasureError> {
     let text = fs::read_to_string(path).map_err(|source| MeasureError::Read {
         path: path.display().to_string(),
         source,
@@ -459,6 +461,7 @@ mod tests {
             outcome,
             reason: String::new(),
             commands: 1,
+            commands_text: Vec::new(),
         })
     }
 

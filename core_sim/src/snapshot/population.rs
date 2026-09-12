@@ -151,7 +151,7 @@ pub(crate) fn labor_assignment_to_state(
             // `DepositState::rung_floor_fraction` rides the working's row beside it.
             state.floor = *floor;
         }
-        // The six band-wide roles carry no source and no floor: their whole content is the head
+        // The seven band-wide roles carry no source and no floor: their whole content is the head
         // count already on the row.
         LaborTarget::Scout
         | LaborTarget::Warrior

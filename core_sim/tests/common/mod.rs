@@ -38,6 +38,9 @@ pub mod reference_basket;
 /// The player-process helpers the tests that drive a built `sim_ai` share — see its own docs.
 pub mod ai_process;
 
+/// The seated-connection harness — server, world and `Link` — those tests share, see its docs.
+pub mod seat_harness;
+
 use ciborium::value::Value;
 
 /// Encode with CBOR and parse back into a tree with every map in canonical key order.

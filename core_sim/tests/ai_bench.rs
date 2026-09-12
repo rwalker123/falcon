@@ -12,12 +12,16 @@
 //!    least one scoreboard measure at the last tick differs from the same seat under Pass — the
 //!    issue's bar, "acts instead of passing", as a number.
 //!
-//! 3. Utility-vs-Pass, over a span of **more than one liveness window**: the utility seat's `Food`
-//!    specialist is live (accepted > 0 in every window — which says nothing over a one-window span,
-//!    hence [`UTILITY_TURNS`]), and nothing it sent was refused — neither by the seat gate
+//! 3. Utility-vs-Pass, over a span of **more than one liveness window**: `Food` is accepted at
+//!    least once, the **seat** is live (some specialist's proposal won in every window — which
+//!    says nothing over a one-window span, hence [`UTILITY_TURNS`]; and not `Food`'s own
+//!    `liveness`, which a one-band seat loses to ordinary arbitration whenever `Land` takes the
+//!    band's one order twice in a window), and nothing it sent was refused — neither by the seat gate
 //!    (`command.rejected` in the server log) nor by the sim (`commands_failed_total`, the feed's
 //!    `… failed` rows). A proposal the server refuses is a bug in the specialist's command
 //!    construction, and this is where it shows.
+//! 4. `sim_ai viewer` on that run: the page exists, inlines one turn per acted tick with its
+//!    observation, and names no URL — it is published where every external host is blocked.
 //!
 //! **Why it lives in `core_sim/tests/`.** The bench needs the built `server`, and
 //! `CARGO_BIN_EXE_server` is only defined for the package owning that bin; `sim_ai` is resolved as
@@ -42,10 +46,10 @@ const TURNS: u64 = 6;
 /// this crate cannot import the constant; its is the authority.
 const LIVENESS_WINDOW_TURNS: u64 = 10;
 /// ⛔ **THE UTILITY RUN MUST SPAN MORE THAN ONE LIVENESS WINDOW.** Over a span shorter than
-/// [`LIVENESS_WINDOW_TURNS`] the measure cuts exactly one window, and `liveness` is then
+/// [`LIVENESS_WINDOW_TURNS`] there is exactly one window, and "won in every window" is then
 /// arithmetically identical to `accepted > 0` — which the assertion beside it already makes, so
 /// the property the test names would go untested. Two more turns than the window puts a second
-/// window in the span with ticks in it, so a specialist that falls silent halfway through the run
+/// window in the span with ticks in it, so a seat that falls silent halfway through the run
 /// fails here.
 const UTILITY_TURNS: u64 = LIVENESS_WINDOW_TURNS + 2;
 const RIVAL_SEAT: &str = "1";
@@ -60,7 +64,9 @@ const NON_SCOREBOARD_PREFIXES: [&str; 4] = ["specialist.", "link.", "orchestrato
 /// The utility seat under test, and the measures the bench gives its Food specialist.
 const UTILITY_SEAT_SPEC: &str = "1=utility:forager";
 const FOOD_ACCEPTED_MEASURE: &str = "specialist.food.accepted";
-const FOOD_LIVENESS_MEASURE: &str = "specialist.food.liveness";
+/// The seat's logs (`sim_ai/src/instruments/`), read for the seat-level liveness gate.
+const SCOREBOARD_FILE: &str = "scoreboard.jsonl";
+const DECISIONS_FILE: &str = "decisions.jsonl";
 /// The distinct scoreboard ticks a seat wrote — the run's span, in turns.
 const TURNS_OBSERVED_MEASURE: &str = "link.turns_observed";
 /// Commands the sim refused, summed over the run (`sim_ai/src/bench/measures.rs`).
@@ -68,6 +74,13 @@ const COMMANDS_FAILED_MEASURE: &str = "commands_failed_total";
 /// The seat gate's refusal markers in the server log (`core_sim/src/bin/server.rs`).
 const REJECTED_MARKERS: [&str; 2] = ["command.rejected", "command.split.rejected"];
 const SERVER_LOG_FILE: &str = "server.log";
+/// The viewer's page, and how its inlined model is found (`sim_ai/src/viewer/page.html`).
+const VIEWER_PAGE: &str = "viewer.html";
+const MODEL_ELEMENT_OPEN: &str = "<script id=\"run-model\"";
+const MODEL_ELEMENT_CLOSE: &str = "</script>";
+/// What a self-contained page never contains (`sim_ai/src/viewer/mod.rs`,
+/// `EXTERNAL_RESOURCE_MARKERS`).
+const EXTERNAL_RESOURCE_MARKERS: [&str; 3] = ["http://", "https://", "src="];
 
 /// Run the built bench on [`MAP_SEED`] for `turns` with `seats`, into `out`, plus `extra` args.
 fn bench(
@@ -99,6 +112,16 @@ fn bench(
     );
     let report = fs::read_to_string(out.join(REPORT_FILE)).expect("the report was written");
     serde_json::from_str(&report).expect("the report is JSON")
+}
+
+/// Every line of a JSON-lines log, as values.
+fn jsonl(path: &Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("{} reads: {err}", path.display()))
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("a JSON line"))
+        .collect()
 }
 
 /// The measures of `seat` on [`MAP_SEED`] in `report`.
@@ -215,11 +238,33 @@ fn the_utility_seat_is_live_and_nothing_it_sends_is_refused() {
         "the run spans one liveness window ({observed} turns), so `liveness` is just \
          `accepted > 0` and the property below is untested"
     );
-    assert_eq!(
-        measures[FOOD_LIVENESS_MEASURE].as_f64(),
-        Some(1.0),
-        "the Food specialist fell silent for a whole window: {measures:?}"
+    // ⛔ **THE SEAT IS LIVE, NOT ONE SPECIALIST.** A seat with one band takes one order a turn, so
+    // a window `Land` wins twice is a window `Food` lost to ordinary arbitration, not a specialist
+    // that fell silent — on the Tiny world's seed 11 that is exactly the second window of this
+    // run, and `specialist.food.liveness` reads 0 while the seat is plainly playing. So the gate
+    // is the seat's: some specialist's proposal won in every window (the same reason the ratchet
+    // gates on "never wins" and not on `liveness`, `sim_ai/src/bench/ratchet.rs`).
+    let seat_dir = out.join(MAP_SEED).join(format!("seat_{RIVAL_SEAT}"));
+    let ticks: Vec<u64> = jsonl(&seat_dir.join(SCOREBOARD_FILE))
+        .iter()
+        .filter_map(|row| row["tick"].as_u64())
+        .collect();
+    let accepted: Vec<u64> = jsonl(&seat_dir.join(DECISIONS_FILE))
+        .iter()
+        .filter(|record| record["kind"] == "decision" && record["outcome"] == "accepted")
+        .filter_map(|record| record["tick"].as_u64())
+        .collect();
+    let (first, last) = (
+        *ticks.iter().min().expect("an acted tick"),
+        *ticks.iter().max().expect("an acted tick"),
     );
+    for start in (first..=last).step_by(LIVENESS_WINDOW_TURNS as usize) {
+        let end = start + LIVENESS_WINDOW_TURNS;
+        assert!(
+            accepted.iter().any(|tick| (start..end).contains(tick)),
+            "the utility seat won nothing in ticks {start}..{end}: {measures:?}"
+        );
+    }
     assert_eq!(
         measures[COMMANDS_FAILED_MEASURE].as_f64(),
         Some(0.0),
@@ -236,4 +281,62 @@ fn the_utility_seat_is_live_and_nothing_it_sends_is_refused() {
             common::ai_process::log_tail(&out.join(MAP_SEED).join(SERVER_LOG_FILE))
         );
     }
+
+    // 4. The viewer on that run: one self-contained page carrying every acted tick.
+    let page_path = scratch.dir.join(VIEWER_PAGE);
+    let viewer = Command::new(&sim_ai)
+        .arg("viewer")
+        .arg(&out)
+        .args(["--seed", MAP_SEED, "--seat", RIVAL_SEAT])
+        .arg("--out")
+        .arg(&page_path)
+        .output()
+        .expect("the built sim_ai runs");
+    assert!(
+        viewer.status.success(),
+        "sim_ai viewer exited {}\n{}",
+        viewer.status,
+        String::from_utf8_lossy(&viewer.stderr)
+    );
+    let page = fs::read_to_string(&page_path).expect("the page was written");
+    assert!(!page.is_empty());
+    for marker in EXTERNAL_RESOURCE_MARKERS {
+        assert!(
+            !page.contains(marker),
+            "the page fetches something by URL: `{marker}`"
+        );
+    }
+    let model = inlined_model(&page);
+    assert_eq!(model["faction"], RIVAL_SEAT.parse::<u32>().unwrap());
+    let turns = model["turns"].as_array().expect("the model carries turns");
+    assert_eq!(
+        turns.len(),
+        UTILITY_TURNS as usize,
+        "one turn per acted tick"
+    );
+    assert!(
+        turns.iter().all(|turn| !turn["observation"].is_null()
+            && !turn["score"].is_null()
+            && turn["ready"] == true),
+        "every turn carries its observation, its score row and its ready"
+    );
+    assert!(
+        turns
+            .iter()
+            .any(|turn| !turn["decisions"].as_array().unwrap().is_empty()),
+        "the utility seat proposed something"
+    );
+}
+
+/// The model the viewer inlined: the JSON between the `run-model` element's tags.
+fn inlined_model(page: &str) -> serde_json::Value {
+    let start = page
+        .find(MODEL_ELEMENT_OPEN)
+        .expect("the page carries the model element");
+    let json_start = page[start..].find('>').expect("the tag closes") + start + 1;
+    let json_end = page[json_start..]
+        .find(MODEL_ELEMENT_CLOSE)
+        .expect("the element closes")
+        + json_start;
+    serde_json::from_str(&page[json_start..json_end]).expect("the inlined model is JSON")
 }
