@@ -12,21 +12,22 @@
 //!
 //! [`SeatMemory`] is what the frame no longer says: the last tick each tile was seen (decayed by
 //! the difficulty's horizon), last turn's chosen intents (the commitment key), the alarms raised,
-//! the move targets a band is still walking toward, and last turn's runway per band. A full frame
-//! (resync, rollback) drops every entry stamped later than the new tick — nothing is patched.
+//! the move targets a band is still walking toward, the splits ordered and the children they
+//! produced, and last turn's runway per band. A full frame (resync, rollback) drops every entry
+//! stamped later than the new tick — nothing is patched.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use sim_runtime::{
-    decode_frame_flatbuffer, ApplyDeltaError, CommandPayload, DecodeError, ForagePatchState,
-    FramePayload, LaborAssignmentState, PopulationCohortState, SnapshotHeader, WorldSnapshot,
-    FIXED_POINT_SCALE,
+    decode_frame_flatbuffer, ApplyDeltaError, DecodeError, ForagePatchState, FramePayload,
+    LaborAssignmentState, PopulationCohortState, SnapshotHeader, WorldSnapshot, FIXED_POINT_SCALE,
 };
 use tracing::{info, warn};
 
 use crate::geometry::{Grid, Tile};
 use crate::orchestrator::Alarm;
 use crate::profile::NO_MEMORY_DECAY;
+use crate::specialists::Memo;
 
 /// **The visibility raster's values.** Restated from `core_sim::visibility::VisibilityState`
 /// (`Unexplored = 0`, `Discovered = 1`, `Active = 2`), **published fixed-point** by
@@ -158,11 +159,32 @@ pub struct Realized {
     pub worked_turns: u32,
 }
 
+/// **A split ordered and not yet seen to happen**: the parent band, the site the child is for,
+/// and the crew asked for. The sim spawns the child on the parent's tile next turn
+/// (`split_band_from_parent`, `core_sim/src/systems/fission.rs`); an entry the next frames never
+/// match is a split the sim refused, and it is dropped after the profile's `split_settle_turns`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitPending {
+    pub tick: u64,
+    pub target: Tile,
+    pub workers: u32,
+}
+
+/// **A band this seat split off**, and the site it was split toward — dropped when it arrives
+/// there, or when the memory horizon passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitBirth {
+    pub tick: u64,
+    pub target: Tile,
+}
+
 /// What the frame no longer says (module docs).
 #[derive(Debug, Default)]
 pub struct SeatMemory {
     /// The difficulty's `memory_horizon_turns`; [`NO_MEMORY_DECAY`] never forgets.
     horizon: u64,
+    /// The profile's `food.split_settle_turns`: how long a pending split waits for its child.
+    split_settle_turns: u32,
     /// The intents chosen on the last acted tick, and that tick.
     chosen: Option<(u64, BTreeSet<String>)>,
     /// The last tick each tile was in active sight — or first known of, for ground discovered
@@ -170,8 +192,25 @@ pub struct SeatMemory {
     last_seen: HashMap<Tile, u64>,
     /// Alarms raised since the orchestrator last planned.
     alarms: Vec<Alarm>,
-    /// Bands still walking toward a `land:move` target.
-    move_targets: BTreeMap<u64, Tile>,
+    /// Bands still walking toward a move target, and the intent the move was accepted under —
+    /// whichever specialist proposed it ([`Memo::Move`]).
+    move_targets: BTreeMap<u64, (Tile, String)>,
+    /// The own bands the last observed frame carried, so a band not among them is *new*.
+    known_bands: BTreeSet<u64>,
+    /// Splits accepted and not yet matched to a child, by parent band.
+    pending_splits: BTreeMap<u64, SplitPending>,
+    /// Children this seat split off and their sites, by child band.
+    born_by_split: BTreeMap<u64, SplitBirth>,
+    /// **The working-age a band had when the sim refused to split it.** The sim's floors
+    /// (`founding_min_workers`, `founding_parent_min_workers`) are on every cohort, and *split to
+    /// feed* sizes its crew by them; this is the belt behind them — a split can be refused for a
+    /// reason the floors do not state, and what the frame then teaches is that a band of *this*
+    /// size cannot split, so a split is asked for again only once the band has grown. Kept across
+    /// the horizon: a refusal is a fact about the sim, not a sighting.
+    split_refused: BTreeMap<u64, u32>,
+    /// **Per band, the tile it last departed from on an accepted move, and when.** *Better
+    /// ground* will not walk a band back onto it while it is remembered (decayed by the horizon).
+    left_from: BTreeMap<u64, (Tile, u64)>,
     /// Last turn's `turns_of_food` per band, so "falling" is answerable.
     previous_runway: BTreeMap<u64, f32>,
     /// What each worked row ([`row_key`]) has realized.
@@ -183,16 +222,22 @@ pub struct SeatMemory {
 }
 
 impl SeatMemory {
-    pub fn new(horizon: u64) -> Self {
+    /// `horizon` is the difficulty's `memory_horizon_turns`; `split_settle_turns` the profile's
+    /// `food.split_settle_turns` — passed here rather than to every `observe`, because it is a
+    /// fact about this seat and not about a frame.
+    pub fn new(horizon: u64, split_settle_turns: u32) -> Self {
         Self {
             horizon,
+            split_settle_turns,
             ..Default::default()
         }
     }
 
-    /// Fold one frame in: sightings, arrivals at move targets, and `faction`'s rows that paid.
+    /// Fold one frame in: sightings, arrivals at move targets, the children of accepted splits,
+    /// and `faction`'s rows that paid.
     pub fn observe(&mut self, view: &SeatView, faction: u32) {
         let tick = view.tick();
+        self.observe_births(view, faction, tick);
         for band in view.own_bands(faction) {
             for row in band.labor_assignments.iter().filter(|row| row.workers > 0) {
                 let key = key_of_row(band.band_id, row);
@@ -245,10 +290,86 @@ impl SeatMemory {
                 self.last_seen.entry(tile).or_insert(tick);
             }
         }
-        self.move_targets.retain(|band_id, target| {
+        self.move_targets.retain(|band_id, (target, _)| {
             view.band(*band_id)
                 .is_some_and(|cohort| band_tile(cohort) != *target)
         });
+    }
+
+    /// **A new own band standing where a parent with a pending split stands is that split's
+    /// child.** The sim spawns it on the parent's tile the turn after the order
+    /// (`split_band_from_parent`); a pending entry no child has matched within
+    /// `split_settle_turns` is a refused split and is dropped. A child is remembered until it
+    /// reaches its site, or the horizon passes.
+    fn observe_births(&mut self, view: &SeatView, faction: u32, tick: u64) {
+        let own: Vec<&PopulationCohortState> = view.own_bands(faction).collect();
+        for child in own
+            .iter()
+            .filter(|band| !self.known_bands.contains(&band.band_id))
+        {
+            let parent = self.pending_splits.iter().find(|(parent_id, _)| {
+                view.band(**parent_id)
+                    .is_some_and(|parent| band_tile(parent) == band_tile(child))
+            });
+            if let Some((parent_id, pending)) = parent.map(|(id, pending)| (*id, *pending)) {
+                self.pending_splits.remove(&parent_id);
+                self.born_by_split.insert(
+                    child.band_id,
+                    SplitBirth {
+                        tick,
+                        target: pending.target,
+                    },
+                );
+            }
+        }
+        let settle = u64::from(self.split_settle_turns);
+        let expired: Vec<u64> = self
+            .pending_splits
+            .iter()
+            .filter(|(_, pending)| tick.saturating_sub(pending.tick) > settle)
+            .map(|(parent, _)| *parent)
+            .collect();
+        for parent in expired {
+            self.pending_splits.remove(&parent);
+            // No child came: the sim refused the split. What it refused is a band of *this*
+            // size, so the size is what is remembered.
+            if let Some(band) = view.band(parent) {
+                self.split_refused.insert(parent, band.working_age);
+            }
+        }
+        let horizon = self.horizon;
+        self.left_from.retain(|_, (_, left_at)| {
+            horizon == NO_MEMORY_DECAY || tick.saturating_sub(*left_at) <= horizon
+        });
+        self.born_by_split.retain(|band_id, birth| {
+            let unexpired =
+                horizon == NO_MEMORY_DECAY || tick.saturating_sub(birth.tick) <= horizon;
+            unexpired
+                && view
+                    .band(*band_id)
+                    .is_some_and(|child| band_tile(child) != birth.target)
+        });
+        self.known_bands = own.iter().map(|band| band.band_id).collect();
+    }
+
+    /// The split accepted on `band_id` that no child has yet appeared for.
+    pub fn pending_split(&self, band_id: u64) -> Option<&SplitPending> {
+        self.pending_splits.get(&band_id)
+    }
+
+    /// The birth record of `band_id`, if this seat split it off and it has not reached its site.
+    pub fn born_by_split(&self, band_id: u64) -> Option<&SplitBirth> {
+        self.born_by_split.get(&band_id)
+    }
+
+    /// The working-age `band_id` had when the sim last refused to split it, if it ever did.
+    pub fn split_refused_at(&self, band_id: u64) -> Option<u32> {
+        self.split_refused.get(&band_id).copied()
+    }
+
+    /// The tile `band_id` most recently departed on an accepted move, while remembered.
+    pub fn left_from(&self, band_id: u64) -> Option<Tile> {
+        self.left_from.get(&band_id).map(|(tile, _)| *tile)
     }
 
     /// The last tick `tile` was in active sight (or was first known of), undecayed — what the
@@ -293,24 +414,37 @@ impl SeatMemory {
             .is_some_and(|(_, intents)| intents.contains(intent))
     }
 
-    /// Record this turn's accepted intents and learn the move targets their commands carry.
-    pub fn record_choices<'a>(
+    /// Record this turn's accepted intents and what their memos say to remember: a move target
+    /// (under the intent it was accepted with), or a split awaiting its child.
+    pub fn record_choices(
         &mut self,
         tick: u64,
-        intents: BTreeSet<String>,
-        commands: impl Iterator<Item = &'a CommandPayload>,
+        choices: impl Iterator<Item = (String, Option<Memo>)>,
     ) {
-        for command in commands {
-            if let CommandPayload::MoveBand {
-                band_id: Some(band_id),
-                target_x,
-                target_y,
-                ..
-            } = command
-            {
-                self.move_targets
-                    .insert(*band_id, Tile::new(*target_x, *target_y));
+        let mut intents = BTreeSet::new();
+        for (intent, memo) in choices {
+            match memo {
+                Some(Memo::Move { band, target, from }) => {
+                    self.move_targets.insert(band, (target, intent.clone()));
+                    self.left_from.insert(band, (from, tick));
+                }
+                Some(Memo::Split {
+                    band,
+                    target,
+                    workers,
+                }) => {
+                    self.pending_splits.insert(
+                        band,
+                        SplitPending {
+                            tick,
+                            target,
+                            workers,
+                        },
+                    );
+                }
+                None => {}
             }
+            intents.insert(intent);
         }
         self.chosen = Some((tick, intents));
     }
@@ -332,7 +466,15 @@ impl SeatMemory {
     }
 
     pub fn move_target(&self, band_id: u64) -> Option<Tile> {
-        self.move_targets.get(&band_id).copied()
+        self.move_targets.get(&band_id).map(|(target, _)| *target)
+    }
+
+    /// The intent the band's standing move was accepted under (`land:move:<band>`,
+    /// `food:settle:<band>`) — the commitment the arbiter will reward while it walks.
+    pub fn move_intent(&self, band_id: u64) -> Option<&str> {
+        self.move_targets
+            .get(&band_id)
+            .map(|(_, intent)| intent.as_str())
     }
 
     /// Whether `band`'s runway is below what it was last turn.
@@ -371,6 +513,12 @@ impl SeatMemory {
         self.previous_runway.clear();
         self.realized.clear();
         self.realized_by_kind.clear();
+        self.pending_splits
+            .retain(|_, pending| pending.tick <= tick);
+        self.born_by_split.retain(|_, birth| birth.tick <= tick);
+        self.known_bands.clear();
+        self.split_refused.clear();
+        self.left_from.clear();
     }
 }
 
@@ -489,6 +637,8 @@ mod tests {
     const WIDTH: u32 = 4;
     const HEIGHT: u32 = 3;
     const HORIZON: u64 = 2;
+    /// The turns a pending split waits for its child in these tests.
+    const SETTLE: u32 = 3;
 
     fn a_full_frame() -> Vec<u8> {
         let mut snapshot = WorldSnapshot::default();
@@ -623,7 +773,7 @@ mod tests {
 
     #[test]
     fn sightings_decay_past_the_horizon_unless_it_is_zero() {
-        let mut memory = SeatMemory::new(HORIZON);
+        let mut memory = SeatMemory::new(HORIZON, SETTLE);
         memory.observe(&a_view_at(10), 1);
         let active = Tile::new(1, 0);
         let discovered = Tile::new(2, 0);
@@ -643,25 +793,37 @@ mod tests {
             memory.known_tiles_within(&a_view_at(10), Tile::new(1, 0), 1, 10),
             2
         );
-        let mut forever = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut forever = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         forever.observe(&a_view_at(10), 1);
         assert!(forever.is_known(active, 10_000));
     }
 
     #[test]
     fn a_full_frame_forgets_what_was_stamped_after_it() {
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         memory.observe(&a_view_at(10), 1);
         memory.record_choices(
             10,
-            BTreeSet::from(["food:assign:1".to_owned()]),
-            [CommandPayload::MoveBand {
-                faction_id: 1,
-                band_id: Some(7),
-                target_x: 2,
-                target_y: 2,
-            }]
-            .iter(),
+            [
+                ("food:assign:1".to_owned(), None),
+                (
+                    "land:move:7".to_owned(),
+                    Some(Memo::Move {
+                        band: 7,
+                        target: Tile::new(2, 2),
+                        from: Tile::new(1, 1),
+                    }),
+                ),
+                (
+                    "food:split:8".to_owned(),
+                    Some(Memo::Split {
+                        band: 8,
+                        target: Tile::new(3, 1),
+                        workers: 5,
+                    }),
+                ),
+            ]
+            .into_iter(),
         );
         memory.push_alarm(Alarm {
             specialist: SPECIALIST_FOOD,
@@ -670,18 +832,172 @@ mod tests {
         });
         assert!(memory.chosen_last_turn("food:assign:1"));
         assert_eq!(memory.move_target(7), Some(Tile::new(2, 2)));
+        assert_eq!(memory.move_intent(7), Some("land:move:7"));
+        assert!(memory.pending_split(8).is_some());
         memory.forget_after(9);
         assert!(!memory.is_known(Tile::new(1, 0), 9));
         assert!(!memory.chosen_last_turn("food:assign:1"));
         assert_eq!(memory.move_target(7), None);
+        assert_eq!(memory.pending_split(8), None);
         assert!(memory.take_alarms().is_empty());
+    }
+
+    /// The split bookkeeping: an accepted `food:split` is pending on the parent; the next frame's
+    /// new own band on the parent's tile is its child, remembered with the site until it arrives;
+    /// a pending entry no child answers within `split_settle_turns` is a refused split, dropped.
+    #[test]
+    fn a_pending_split_becomes_a_birth_on_the_next_frames_new_band_and_expires_unanswered() {
+        const FACTION: u32 = 1;
+        const PARENT: u64 = 7;
+        const CHILD: u64 = 8;
+        let site = Tile::new(3, 1);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: PARENT,
+            current_x: 1,
+            current_y: 1,
+            ..Default::default()
+        });
+        memory.observe(&view, FACTION);
+        memory.record_choices(
+            10,
+            [(
+                "food:split:7".to_owned(),
+                Some(Memo::Split {
+                    band: PARENT,
+                    target: site,
+                    workers: 5,
+                }),
+            )]
+            .into_iter(),
+        );
+        assert_eq!(
+            memory.pending_split(PARENT),
+            Some(&SplitPending {
+                tick: 10,
+                target: site,
+                workers: 5
+            })
+        );
+        // Next frame: the child stands on the parent's tile.
+        view.snapshot.header.tick = 11;
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: CHILD,
+            current_x: 1,
+            current_y: 1,
+            ..Default::default()
+        });
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.pending_split(PARENT), None, "answered");
+        assert_eq!(
+            memory.born_by_split(CHILD),
+            Some(&SplitBirth {
+                tick: 11,
+                target: site
+            })
+        );
+        assert_eq!(memory.born_by_split(PARENT), None);
+        // The child arrives at its site: the birth record is done.
+        view.snapshot.header.tick = 14;
+        let child = &mut view.snapshot.populations[1];
+        child.current_x = site.x;
+        child.current_y = site.y;
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.born_by_split(CHILD), None, "arrived");
+
+        // A split the sim refused: no new band ever appears, and the entry expires.
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut view = a_view_at(20);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: PARENT,
+            working_age: 10,
+            ..Default::default()
+        });
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.split_refused_at(PARENT), None);
+        memory.record_choices(
+            20,
+            [(
+                "food:split:7".to_owned(),
+                Some(Memo::Split {
+                    band: PARENT,
+                    target: site,
+                    workers: 5,
+                }),
+            )]
+            .into_iter(),
+        );
+        view.snapshot.header.tick = 20 + u64::from(SETTLE);
+        memory.observe(&view, FACTION);
+        assert!(memory.pending_split(PARENT).is_some(), "still waiting");
+        view.snapshot.header.tick = 20 + u64::from(SETTLE) + 1;
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.pending_split(PARENT), None, "refused, forgotten");
+        // …and what was refused — a band of ten — is remembered, across the horizon.
+        assert_eq!(memory.split_refused_at(PARENT), Some(10));
+        view.snapshot.header.tick = 200;
+        memory.observe(&view, FACTION);
+        assert_eq!(
+            memory.split_refused_at(PARENT),
+            Some(10),
+            "a fact, not a sighting"
+        );
+        memory.forget_after(19);
+        assert_eq!(memory.split_refused_at(PARENT), None);
+    }
+
+    /// The tile a band departed on an accepted move is remembered for the horizon, so *better
+    /// ground* cannot walk it straight back; a full frame forgets it.
+    #[test]
+    fn the_tile_a_band_left_is_remembered_for_the_horizon_and_forgotten_by_a_full_frame() {
+        const BAND: u64 = 7;
+        let from = Tile::new(1, 1);
+        let mut memory = SeatMemory::new(HORIZON, SETTLE);
+        memory.record_choices(
+            10,
+            [(
+                "land:move:7".to_owned(),
+                Some(Memo::Move {
+                    band: BAND,
+                    target: Tile::new(2, 2),
+                    from,
+                }),
+            )]
+            .into_iter(),
+        );
+        assert_eq!(memory.left_from(BAND), Some(from));
+        memory.observe(&a_view_at(10 + HORIZON), 1);
+        assert_eq!(memory.left_from(BAND), Some(from), "within the horizon");
+        memory.observe(&a_view_at(10 + HORIZON + 1), 1);
+        assert_eq!(memory.left_from(BAND), None, "older than the horizon");
+        let mut forever = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        forever.record_choices(
+            10,
+            [(
+                "land:move:7".to_owned(),
+                Some(Memo::Move {
+                    band: BAND,
+                    target: Tile::new(2, 2),
+                    from,
+                }),
+            )]
+            .into_iter(),
+        );
+        forever.observe(&a_view_at(10_000), 1);
+        assert_eq!(forever.left_from(BAND), Some(from));
+        forever.forget_after(9);
+        assert_eq!(forever.left_from(BAND), None);
     }
 
     #[test]
     fn a_runway_is_falling_only_against_a_remembered_one_and_a_target_clears_on_arrival() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         assert!(!memory.runway_falling(BAND, 5.0), "nothing remembered yet");
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
@@ -697,14 +1013,15 @@ mod tests {
         assert!(!memory.runway_falling(BAND, 8.0));
         memory.record_choices(
             10,
-            BTreeSet::new(),
-            [CommandPayload::MoveBand {
-                faction_id: FACTION,
-                band_id: Some(BAND),
-                target_x: 2,
-                target_y: 2,
-            }]
-            .iter(),
+            [(
+                "land:move:7".to_owned(),
+                Some(Memo::Move {
+                    band: BAND,
+                    target: Tile::new(2, 2),
+                    from: Tile::new(2, 2),
+                }),
+            )]
+            .into_iter(),
         );
         memory.observe(&view, FACTION);
         assert_eq!(
@@ -718,7 +1035,7 @@ mod tests {
     fn a_worked_row_is_measured_and_a_useless_hunt_crew_is_dead_at_once() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -793,7 +1110,7 @@ mod tests {
     fn a_useless_hunt_row_is_no_evidence_about_the_web_it_belongs_to() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -838,7 +1155,7 @@ mod tests {
         const ASSIGNED: u32 = 12;
         const PLATEAU: u32 = 2;
         const TAKE: f32 = 3.0;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -875,7 +1192,7 @@ mod tests {
     fn a_row_the_sim_reports_a_useful_crew_on_again_is_no_longer_dead() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,

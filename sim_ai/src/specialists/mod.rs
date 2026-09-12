@@ -18,6 +18,8 @@ use std::fmt::Display;
 
 use sim_runtime::CommandPayload;
 
+use crate::board::Demand;
+use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, Plan};
 use crate::view::{SeatMemory, SeatView};
 
@@ -56,6 +58,22 @@ pub struct Cost {
     pub bands: Vec<u64>,
 }
 
+/// **What the memory should remember if this proposal is accepted** — stated by the specialist,
+/// not parsed back out of its commands, so `SeatMemory::record_choices` never has to know a
+/// verb's shape. A `Move` is the target a band is walking to (any specialist's `move_band`); a
+/// `Split` is the site the child band the sim will spawn next turn is meant for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Memo {
+    /// `from` is where the band stands as the move is accepted — the tile it departs, which
+    /// *better ground* will not walk it back onto while the memory holds it.
+    Move { band: u64, target: Tile, from: Tile },
+    Split {
+        band: u64,
+        target: Tile,
+        workers: u32,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Proposal {
     /// The wire actions, already faction-tagged.
@@ -67,12 +85,17 @@ pub struct Proposal {
     pub cost: Cost,
     /// The consideration that produced it — the decision log's why.
     pub reason: String,
+    /// What to remember on acceptance, if anything.
+    pub memo: Option<Memo>,
 }
 
 #[derive(Debug, Default)]
 pub struct Proposals {
     pub proposals: Vec<Proposal>,
     pub alarm: Option<Alarm>,
+    /// What this specialist asks the board for this turn (`board.rs`) — a kit or a material for
+    /// a band whose outfitting window is open. Empty for a specialist with nothing to ask.
+    pub demands: Vec<Demand>,
 }
 
 pub trait Specialist {

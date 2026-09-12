@@ -11,26 +11,35 @@
 //! | [`ScriptedBrain`] | none | `Scripted` | pass-through — the **fixture** |
 //! | [`UtilityBrain`] | `ConstantStance` | `Food`, `Land` | the six steps — the opponent |
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use rand::rngs::StdRng;
 use sim_runtime::CommandPayload;
 use tracing::{info, warn};
 
+use sim_runtime::{render_command_line, StartingKitAllocation, StartingMaterialAllocation};
+
 use crate::arbiter::{Arbiter, Offered};
-use crate::instruments::decisions::{AlarmRecord, DecisionRecord, DecisionSink, PlanRecord};
+use crate::board::{Board, Entry, Resource};
+use crate::instruments::decisions::{
+    AlarmRecord, Decision, DecisionRecord, DecisionSink, Outcome, PlanRecord,
+};
 use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG};
 use crate::orchestrator::constant::ConstantStance;
-use crate::orchestrator::{Alarm, Orchestrator, Plan};
+use crate::orchestrator::{Alarm, Orchestrator, Plan, INTENT_OUTFIT, ORCHESTRATOR_ID};
 use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError};
 use crate::specialists::food::Food;
 use crate::specialists::land::Land;
 use crate::specialists::scripted::{ScriptError, Scripted};
 use crate::specialists::{
-    Specialist, SpecialistId, DISABLEABLE_SPECIALISTS, SPECIALIST_FOOD, SPECIALIST_LAND,
+    intent_key, Specialist, SpecialistId, DISABLEABLE_SPECIALISTS, SPECIALIST_FOOD, SPECIALIST_LAND,
 };
 use crate::view::{SeatMemory, SeatView};
+
+/// **A loadout's score on the decision log**: it passes no arbiter step — it spends no worker
+/// budget and no band order — so it is recorded accepted at a score that means "not weighed",
+/// as the scripted fixture's `SCRIPT_SCORE` does.
+pub const OUTFIT_SCORE: f32 = 1.0;
 
 /// The plug. An external program in another language implements the same contract over the
 /// socket; inside this crate it is this trait.
@@ -98,7 +107,7 @@ pub enum BrainError {
     NoSuchSpecialist(String),
 }
 
-/// The layered shape: orchestrator → specialists → arbiter, over one memory.
+/// The layered shape: orchestrator → specialists → arbiter, over one memory and one board.
 pub struct Composite {
     faction: u32,
     profile: AiProfile,
@@ -108,6 +117,9 @@ pub struct Composite {
     arbiter: Arbiter,
     memory: SeatMemory,
     plan: Option<Plan>,
+    /// The demand board (`board.rs`): nothing but this composite and the orchestrator touch it,
+    /// and a specialist never sees it.
+    board: Board,
 }
 
 impl Composite {
@@ -119,6 +131,10 @@ impl Composite {
         specialists: Vec<Box<dyn Specialist>>,
         arbiter: Arbiter,
     ) -> Self {
+        let memory = SeatMemory::new(
+            difficulty.memory_horizon_turns,
+            profile.food.split_settle_turns,
+        );
         Self {
             faction,
             profile,
@@ -126,9 +142,96 @@ impl Composite {
             orchestrator,
             specialists,
             arbiter,
-            memory: SeatMemory::new(difficulty.memory_horizon_turns),
+            memory,
             plan: None,
+            board: Board::default(),
         }
+    }
+
+    /// **The loadouts for every own band whose window is open**, one `set_starting_loadout`
+    /// each, resolved by the orchestrator from the board's open demands and recorded as an
+    /// accepted decision under `orchestrator:outfit:<band>`. A window with nothing to send gets
+    /// no order: an empty order on a splinter's take *"would hand the whole dowry back"*
+    /// (`BandLoadoutWindowState::kits`).
+    fn outfit_windows(
+        &mut self,
+        view: &SeatView,
+        tick: u64,
+        sink: &mut dyn DecisionSink,
+    ) -> Vec<CommandPayload> {
+        let mut commands = Vec::new();
+        let Some(orchestrator) = self.orchestrator.as_mut() else {
+            return commands;
+        };
+        let roster: Vec<SpecialistId> = self.specialists.iter().map(|s| s.id()).collect();
+        for band in view.own_bands(self.faction) {
+            let Some(window) = band.loadout_window.as_ref().filter(|window| window.open) else {
+                continue;
+            };
+            let entries: Vec<Entry> = self.board.open_for(band.band_id, tick).cloned().collect();
+            let borrowed: Vec<&Entry> = entries.iter().collect();
+            let outfit = orchestrator.outfit(view, &self.profile, band, window, &borrowed);
+            self.board.plan(tick, band.band_id, &outfit.grants, sink);
+            if outfit.kits.is_empty() && outfit.materials.is_empty() {
+                continue;
+            }
+            let command = CommandPayload::SetStartingLoadout {
+                faction_id: self.faction,
+                band_id: band.band_id,
+                kits: outfit
+                    .kits
+                    .iter()
+                    .map(|(kit_id, count)| StartingKitAllocation {
+                        kit_id: kit_id.clone(),
+                        count: *count,
+                    })
+                    .collect(),
+                materials: outfit
+                    .materials
+                    .iter()
+                    .map(|(material_id, units)| StartingMaterialAllocation {
+                        material_id: material_id.clone(),
+                        units: *units,
+                    })
+                    .collect(),
+            };
+            let sent: Vec<String> = outfit
+                .kits
+                .iter()
+                .map(|(kit, count)| format!("{kit} {count}"))
+                .chain(
+                    outfit
+                        .materials
+                        .iter()
+                        .map(|(material, units)| format!("{material} {units}")),
+                )
+                .collect();
+            let asked: Vec<String> = roster
+                .iter()
+                .map(|specialist| {
+                    let kits: u32 = entries
+                        .iter()
+                        .filter(|entry| entry.demand.requester == *specialist)
+                        .filter(|entry| matches!(entry.demand.resource, Resource::Kit(_)))
+                        .map(|entry| entry.demand.amount)
+                        .sum();
+                    format!("{specialist} {kits} asked")
+                })
+                .collect();
+            sink.record(DecisionRecord::Decision(Decision {
+                tick,
+                specialist: ORCHESTRATOR_ID.to_owned(),
+                intent: intent_key(ORCHESTRATOR_ID, INTENT_OUTFIT, band.band_id),
+                score_raw: OUTFIT_SCORE,
+                score_final: OUTFIT_SCORE,
+                outcome: Outcome::Accepted,
+                reason: format!("outfit: {} [{}]", sent.join(", "), asked.join(", ")),
+                commands: 1,
+                commands_text: vec![render_command_line(&command)],
+            }));
+            commands.push(command);
+        }
+        commands
     }
 
     #[cfg(test)]
@@ -149,6 +252,7 @@ impl Composite {
                     since_tick: plan.since_turn,
                     budgets: plan.budgets_record(),
                     priorities: plan.priorities_record(),
+                    goals: plan.goals_record(),
                 }));
                 self.plan = Some(plan);
             }
@@ -183,9 +287,13 @@ impl Brain for Composite {
                 "the server refused a command"
             );
         }
+        // The board settles on the frame before anything is asked of it: a grant the last frame
+        // carried is fulfilled, one it did not is expired.
+        self.board.settle(tick, view, sink);
         let plan = self.plan_for(view, sink);
 
         let mut offered = Vec::new();
+        let mut demands = Vec::new();
         for specialist in &mut self.specialists {
             let id = specialist.id();
             let proposals = specialist.propose(view, &plan, &self.memory);
@@ -197,11 +305,16 @@ impl Brain for Composite {
                 }));
                 self.memory.push_alarm(alarm);
             }
+            demands.extend(proposals.demands);
             offered.extend(proposals.proposals.into_iter().map(|proposal| Offered {
                 specialist: id,
                 proposal,
             }));
         }
+        self.board.post(tick, demands, sink);
+        // The loadouts go first, and they do not pass the arbiter: they spend no worker budget
+        // and no band order (`arbiter.rs`).
+        let loadouts = self.outfit_windows(view, tick, sink);
 
         let working_age_total: u32 = view
             .own_bands(self.faction)
@@ -218,12 +331,16 @@ impl Brain for Composite {
             rng,
             sink,
         );
-        let intents: BTreeSet<String> = accepted.iter().map(|a| a.intent.clone()).collect();
-        let commands: Vec<CommandPayload> = accepted
+        self.memory.record_choices(
+            tick,
+            accepted
+                .iter()
+                .map(|accepted| (accepted.intent.clone(), accepted.memo)),
+        );
+        let commands: Vec<CommandPayload> = loadouts
             .into_iter()
-            .flat_map(|accepted| accepted.commands)
+            .chain(accepted.into_iter().flat_map(|accepted| accepted.commands))
             .collect();
-        self.memory.record_choices(tick, intents, commands.iter());
         self.memory.remember_runways(view, self.faction);
         commands
     }
@@ -239,6 +356,7 @@ impl Brain for Composite {
 
     fn on_full_frame(&mut self, tick: u64) {
         self.memory.forget_after(tick);
+        self.board.forget_after(tick);
         // The orchestrator forgets with the plan: a stale `since_turn` is what would leave the seat
         // on `Plan::pass_through` — no budget, no priority, no orders — for a whole cadence after a
         // rebuild (`Orchestrator::forget_after`).
@@ -484,6 +602,81 @@ mod tests {
             UtilityBrain::build(FACTION, &profiles, "warlord", "hard", &[]),
             Err(BrainError::Profile(_))
         ));
+    }
+
+    /// A band whose outfitting window is open: the specialists post, the orchestrator resolves,
+    /// the loadout is the first command and is recorded under `orchestrator:outfit:<band>`, and
+    /// the board records the round trip — posted and planned on the tick, fulfilled on the next
+    /// frame that carries the kit.
+    #[test]
+    fn an_open_window_is_outfitted_first_from_the_specialists_demands_and_the_board_records_it() {
+        use crate::instruments::decisions::DemandRecord;
+        use sim_runtime::BandLoadoutWindowState;
+        let profiles = AiProfiles::builtin();
+        let mut brain = UtilityBrain::build(FACTION, &profiles, "forager", "hard", &[]).unwrap();
+        let mut view = a_view();
+        let working_age = view.snapshot.populations[0].working_age;
+        view.snapshot.populations[0].loadout_window = Some(BandLoadoutWindowState {
+            open: true,
+            kit_budget: working_age,
+            material_budget: 0,
+            ..Default::default()
+        });
+        let mut sink = VecSink::default();
+        let commands = brain.decide(&view, &mut rng(), &mut sink);
+        let CommandPayload::SetStartingLoadout { band_id, kits, .. } = &commands[0] else {
+            panic!("the loadout goes first: {:?}", commands[0]);
+        };
+        assert_eq!(*band_id, 7001);
+        assert_eq!(
+            kits.iter().map(|kit| kit.count).sum::<u32>(),
+            working_age,
+            "one kit per hand: {kits:?}"
+        );
+        let outfit = decisions(VecSink(sink.0.clone()))
+            .into_iter()
+            .find(|d| d.intent == "orchestrator:outfit:7001")
+            .expect("the loadout is recorded");
+        assert_eq!(outfit.specialist, "orchestrator");
+        assert_eq!(outfit.outcome, Outcome::Accepted);
+        assert!(
+            outfit.commands_text[0].starts_with("set_starting_loadout 3 7001 kit "),
+            "{}",
+            outfit.commands_text[0]
+        );
+        assert!(outfit.reason.starts_with("outfit: "), "{}", outfit.reason);
+        let states = |sink: &VecSink| -> Vec<(String, String)> {
+            sink.0
+                .iter()
+                .filter_map(|record| match record {
+                    DecisionRecord::Demand(DemandRecord {
+                        resource, state, ..
+                    }) => Some((resource.clone(), state.clone())),
+                    _ => None,
+                })
+                .collect()
+        };
+        let recorded = states(&sink);
+        assert!(
+            recorded.contains(&("kit:gathering".to_owned(), "posted".to_owned()))
+                && recorded.contains(&("kit:gathering".to_owned(), "planned".to_owned())),
+            "{recorded:?}"
+        );
+        // The next frame carries the baskets: the demand is fulfilled.
+        let mut next = a_view();
+        next.snapshot.header.tick += 1;
+        for tier in &mut next.snapshot.populations[0].kit_tiers {
+            if tier.kit_id == "gathering" {
+                tier.forage_carry_per_worker_biomass = 8.0;
+            }
+        }
+        let mut sink = VecSink::default();
+        brain.decide(&next, &mut rng(), &mut sink);
+        assert!(
+            states(&sink).contains(&("kit:gathering".to_owned(), "fulfilled".to_owned())),
+            "{:?}",
+            states(&sink)
+        );
     }
 
     /// ⛔ **A REBUILT WORLD PLAYS ON ITS FIRST TICK.** Dropping the plan is half the job: the

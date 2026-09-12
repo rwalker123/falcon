@@ -32,7 +32,7 @@ use tracing::info;
 use crate::bench::measures::{read_jsonl, MeasureError};
 use crate::import_record::{self, ImportError};
 use crate::instruments::decisions::{
-    AlarmRecord, Decision, DecisionRecord, LinkRecord, PlanRecord, DECISIONS_FILE,
+    AlarmRecord, Decision, DecisionRecord, DemandRecord, LinkRecord, PlanRecord, DECISIONS_FILE,
 };
 use crate::instruments::observations::{
     AlarmInForce, Observation, ObservationRecord, PlanInForce, OBSERVATIONS_FILE,
@@ -106,6 +106,8 @@ pub struct Turn {
     pub alarms: Vec<AlarmRecord>,
     pub ready: bool,
     pub link_events: Vec<LinkRecord>,
+    /// Every demand transition recorded this tick — the page's demand board block.
+    pub demands: Vec<DemandRecord>,
     /// **The plan in force on this tick**, resolved by [`resolve_in_force`]: this tick's `plan`
     /// record, else the observation's plan, else the plan in force on the previous turn. `None`
     /// only while the run has shown no plan at all.
@@ -309,6 +311,7 @@ pub fn join(
                 Some(tick) => turn_at(&mut turns, tick).link_events.push(link),
                 None => untimed_links.push(link),
             },
+            DecisionRecord::Demand(demand) => turn_at(&mut turns, demand.tick).demands.push(demand),
         }
     }
     if let Some(first) = turns.values_mut().next() {
@@ -336,6 +339,7 @@ pub fn resolve_in_force(turns: &mut [Turn]) {
                 since_tick: record.since_tick,
                 budgets: record.budgets.clone(),
                 priorities: record.priorities.clone(),
+                goals: record.goals.clone(),
             });
         } else if let Some(observed) = turn.observation.as_ref().and_then(|o| o.plan.as_ref()) {
             plan = Some(observed.clone());
@@ -369,6 +373,7 @@ fn turn_at(turns: &mut BTreeMap<u64, Turn>, tick: u64) -> &mut Turn {
         alarms: Vec::new(),
         ready: false,
         link_events: Vec::new(),
+        demands: Vec::new(),
         plan_in_force: None,
         alarms_in_force: Vec::new(),
     })
@@ -403,7 +408,7 @@ pub fn assert_self_contained(page: &str) -> Result<(), ViewerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruments::decisions::{LinkEventKind, Outcome, ReadyRecord};
+    use crate::instruments::decisions::{GoalsRecord, LinkEventKind, Outcome, ReadyRecord};
 
     const FACTION: u32 = 1;
     const TICKS: [u64; 3] = [4, 5, 6];
@@ -460,6 +465,14 @@ mod tests {
                 since_tick: TICKS[0],
                 budgets: BTreeMap::from([("food".to_owned(), 1.0)]),
                 priorities: BTreeMap::new(),
+                goals: BTreeMap::from([(
+                    "food".to_owned(),
+                    GoalsRecord {
+                        net_income_per_turn: 1.0,
+                        runway_turns: 12.0,
+                        ground_rung: "field".to_owned(),
+                    },
+                )]),
             }),
             a_decision(TICKS[0], Outcome::Accepted),
             DecisionRecord::Ready(ReadyRecord { tick: TICKS[0] }),

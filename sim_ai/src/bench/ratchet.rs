@@ -85,18 +85,20 @@ const DEGENERATE_NOTE: &str =
 /// The tolerance a regenerated baseline carries: none, because the replay is exact.
 pub const BASELINE_TOLERANCE: f64 = 0.0;
 
-/// **The shipped baselines** (`sim_ai/bench/baselines.json`): the all-Pass control and the
-/// utility forager on these two seeds for this many turns — the runs every later brain is compared
-/// to. Regenerated with `sim_ai bench --seeds 11,23 --turns 30 --seats <one of the sets below>
-/// --write-baselines sim_ai/bench/baselines.json` (one run per set; the file merges), in the PR
-/// that moves it, with the numbers in the PR body.
+/// **The shipped baselines** (`sim_ai/bench/baselines.json`): the utility forager at `hard` —
+/// argmax, so the ratchet measures the rules and not the seeded top-k draw — beside a Pass seat,
+/// on the bench's default seeds for its default turns; the run every later brain is compared to.
+/// Regenerated with `sim_ai bench --seats 1=utility:forager@hard --seats 2=pass --write-baselines
+/// sim_ai/bench/baselines.json` (the defaults are the seeds and turns), in the PR that moves it,
+/// with the numbers in the PR body. The all-Pass control was dropped with seed 11: a Pass seat
+/// starves on every seed alike and measured nothing the forager's own `hunger_deaths_total` does
+/// not.
 #[cfg(test)]
-pub const BASELINE_SEEDS: [u64; 2] = [11, 23];
+pub const BASELINE_SEEDS: [u64; 2] = [23, 47];
 #[cfg(test)]
-pub const BASELINE_TURNS: u64 = 30;
+pub const BASELINE_TURNS: u64 = 60;
 #[cfg(test)]
-pub const BASELINE_SEAT_SETS: [[&str; 2]; 2] =
-    [["1=pass", "2=pass"], ["1=utility:forager", "2=pass"]];
+pub const BASELINE_SEAT_SETS: [[&str; 2]; 1] = [["1=utility:forager@hard", "2=pass"]];
 /// The shipped file, embedded so a test can hold it to the constants above without a path.
 #[cfg(test)]
 const SHIPPED_BASELINES: &str = include_str!("../../bench/baselines.json");

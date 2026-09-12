@@ -229,6 +229,15 @@ first version is concrete rather than a trait with no body:
 Those three are the placeholders the first version shipped with. They prove the seam; they are not
 the specialist. The specialist is the rule set below.
 
+**`Land` positions by the cluster, not the patch.** A human start taught the reading: forage pays
+first, so the opening move is to stand where *several* forage sites are in work range — four sites
+at the Best floor took eight hands on seed 23 and left the rest free for hunting on the way. So
+*better ground* ranks a candidate standing tile by the food the band could take from **every**
+workable site within `work_range` of it (the crew take summed over the sites, hands dealt to the
+best rate first), against the same reading of the tile it stands on, and moves only when the
+cluster clears the profile's margin. One rich patch two tiles from three poor ones loses to a
+tile that reaches all four. *Feed while moving* covers the hunting on the way.
+
 ### Rules read the surroundings; recipes do not
 
 ⛔ **A specialist is a set of rules over what the frame shows, never an opening.** "Always split the
@@ -241,11 +250,14 @@ proposal whose `reason` names the rule and its subject:
 
 | Rule | Reads | Proposes |
 |---|---|---|
-| **Negative income** | income below consumption | reassign to the tiles with the highest food per worker-turn, preferring the balanced take policy |
+| **No kit, no hunt** | the band's `equipment_batches` against the kit roster's `jobs` | nothing — a herd is not a source for a band holding no hunting kit. `equipment.json`: *"hunting yields nothing at any crew size until a spear is crafted"*, and the frame says so per row as `hunt_useful_workers == 0`. Without this gate a bare-handed band chased a fresh herd every turn for thirteen turns on three seeds, because a row nobody was useful on is deliberately not evidence about the web |
+| **Negative income** | income below consumption | reassign to the tiles with the highest food per worker-turn at the **Best** floor — `0.5`, the food peak, the wire's default — which is the balanced take |
 | **Feed while moving** | a band with a movement intent in force | forage or hunt what will fall *outside* the new range on the way — not for a freshly split band, which must not strip the parent's ground |
-| **Split to feed** | after assignment the start band is still short; reachable food within three tiles that a smaller band could work | split a band toward it, since small bands are easier to feed; the split rule lives here because feeding is its reason |
+| **Split to feed** | after assignment the start band is still short; reachable food within three tiles that a smaller band could work; the sim's two split floors, which every cohort row carries (`founding_min_workers`, `founding_parent_min_workers`) | split the largest crew the floors allow, up to the profile's crew, toward it — small bands are easier to feed; a band still short after one split splits again, so the start band becomes three from one |
 | **Spare hands into hunts** | income positive or near it | put the surplus into hunts, which is what opens penning |
+| **Hold the ground** | an owned patch whose `upkeep` row reads a shortfall | staff the upkeep role the row names (`agriculture`, `workers_needed` hands) on the band that worked it — a rung is a standing bill, not a purchase: on seed 23 a Cultivate completed at turn 44 and read un-cultivated at turn 45, decaying a hundredth a turn, because nobody paid it. Holding what is built comes before declaring the next |
 | **Upgrade the ground** | a worked forage site, the cultivation rung known | cultivate, then sow, drawing workers from hunts and poor tiles; a field and a tended patch feed a population in the tens, after which food stops being the constraint and herding becomes the work |
+| **Draw down to survive** | the ledger's projection of the plan in force troughs below zero before the upgrade pays | lower the harvest floor on a worked patch below Best, as far as the profile's `survival_floor` (the forager's is `0`), to the highest floor whose projection stays above zero — and when no floor does, to the floor whose projection troughs highest: *survival outranks the peak* means "die last", never "strip the stand"; a floor the ledger prices as closing no goal gap is not proposed at all. The reason names the floor and the turn the drawn-down patch is expected to be spent. The goal floor stays Best; this is the dial a starving band turns, and it turns back once the projection clears at Best **and** the band's runway has reached the plan's `runway_turns` — the hysteresis that stops a drawdown and its restore alternating |
 
 **The projection ledger** is what makes the last rule safe to fire. Learning cultivation costs
 income now for income later; a per-turn score cannot see that trade. So `Food` keeps a small what-if
@@ -256,6 +268,13 @@ the projected payoff**, and the proposal's `reason` carries the turn it goes pos
 the forward-projection discipline the food-arrivals arc already uses on the server side, applied to
 the seat's own view. The ledger is also how the specialist answers the goals it was handed: the gap
 between projected runway and the target is the score.
+
+**The ledger models the patch, not only the band**, once *draw down to survive* exists. A flat
+income line cannot price a lowered floor: taking below Best draws the standing biomass down now and
+pays the lower regrowth after. So a projected reassignment carries, per patch, the frame's
+`biomass`, `carrying_capacity`, `provisions_per_biomass` and regrowth, and the stock walk takes the
+draw-down first and the floor's regrowth after — the same `r · fK · (1 − f)` the harvest-floor arc
+derives server-side. That is what lets the rule name the turn the patch is spent.
 
 ### The demand board — specialists never talk to each other
 
@@ -285,6 +304,30 @@ Three consequences: specialists stay pure functions of `(view, plan slice, own m
 unit-testable alone; the web of relationships is a star with the orchestrator at its centre; and the
 board is measurable — fulfilment rate and latency per requester/supplier pair, and the demands a
 personality lets expire. ⛔ **No specialist that needs another lands before the board does.**
+
+**The board's first customer is outfitting.** A spawning band owns nothing: the sim opens an
+outfitting window per band — on turn one, and again for every splinter — with a kit budget of one
+kit per working-age hand and a material budget from the start profile, and closes it on the turn
+advance with **no default applied** (`starting_loadout::close_opening_window`). The human sees a
+pre-fill the client seeds and sends only when they press commit; a rival that never sends
+`set_starting_loadout` plays the whole game bare-handed, and bare-handed hunting yields nothing.
+The frame carries everything a seat needs to compose one: the window (`loadout_window`: open flag,
+`kit_budget`, `material_budget`, the accepted rows, a splinter's per-item cap), the kit roster with
+each kit's `jobs`, the campaign pre-fills and the pick list.
+
+Kits serve more than food — a warrior's, a scout's, a builder's — so no single specialist may own
+the loadout. **Each specialist posts `Demand`s in the loadout vocabulary** (a kit by roster id with
+a count; a material by id with points) sized from the ground in view: `Food` asks for gathering
+kits for the hands its forage sites in reach can use at the Best floor and hunting kits for the
+herds in hunt reach, sized by what its own rules would staff; `Land` asks for scout kits when the
+band is blind; later `Build` asks for the builders' kits and the materials a rung swallows. **The
+orchestrator resolves the posts against the window's two budgets** by its goals and personality —
+a raider funds hunting kits the forager would not — and writes one `set_starting_loadout` per
+open window, the first command of the turn. The board records each post as `planned` with the
+count granted and `fulfilled` when the accepted rows in the next frame carry it, so the outfitting
+of every band is measurable, and a specialist reads its plan slice for what it was granted, never
+the board. Nobody else sends a loadout, and a rule that would staff a job the band holds no kit
+for — *no kit, no hunt* — reads the band's `equipment_batches`, not the board.
 
 ### Budgets and costs share one vocabulary
 
@@ -553,14 +596,19 @@ Each of these is a procedure with a done-bar, and none of them touches the serve
 
 | 5 | The run viewer (§8.4) and the bench on shipped presets | `sim_ai` | a 30-turn run can be read turn by turn — bands, reachable tiles with yields, ledger, proposals with reasons, plan, alarms; the baselines are regenerated on a shipped preset |
 | 6 | Goals in the `Plan`, the projection ledger, the `Food` rule set replacing the v1 considerations | `sim_ai` | every rule has a fixture test and a viewer-visible firing; the forager reaches the cultivation rung on the bench with zero hunger deaths, or the viewer shows why the ground could not carry it |
-| 7 | The demand board and its measures | `sim_ai` | one demand round-trips posted → planned → fulfilled in a scenario test; fulfilment rate and latency read on the bench |
+| 6b | What a human start taught: *no kit, no hunt*; the split floors read off the wire; `Land` positions by the **cluster** of sites a tile can work, not by one patch; *draw down to survive* and the ledger modelling the patch; the bench at 60 turns on seeds 23 and 47 (11 dropped — a human cannot feed the start band there) | `sim_ai` | on seeds 23 and 47 the forager settles where several sites are in work range, declares an upgrade inside the window, and the ledger's projection of the plan in force never troughs below zero — or the viewer shows the turn it could not |
+| 7 | The demand board, with outfitting as its first customer, and its measures | `sim_ai` | every rival band commits a loadout composed from specialists' demands on turn one and on every split; a hunt row on the bench shows a useful crew; one demand round-trips posted → planned → fulfilled in a scenario test; fulfilment rate and latency read on the bench; the baselines are rewritten on 23 and 47 |
 
 Slice 1 is the one the issue did not anticipate — "there is nothing to build in `core_sim`" is still
 true, but there was something to build in `sim_schema`, and it is the largest of the four. Slice 3
 comes before 4 deliberately: the real brain lands measured, on a harness already proven to read zero
 where zero is correct. Slices 5–7 are the order the first bench taught: see first, then give the
 specialist goals and rules worth seeing, then let specialists need each other — and no second
-specialist that needs a first lands before 7.
+specialist that needs a first lands before 7. Slice 6b is what a human playing the bench seeds
+taught: forage pays first, so the band goes where several sites are in reach; a bare-handed band
+cannot hunt at all; and survival outranks the food peak. Outfitting lands with the board rather
+than before it because kits serve every specialist, and the first thing two specialists want from
+one budget is exactly the conflict the board exists to decide.
 
 ---
 
