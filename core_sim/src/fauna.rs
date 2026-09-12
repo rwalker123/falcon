@@ -8865,6 +8865,21 @@ pub struct HuntCrewCurveInputs<'a> {
     /// term of the curve rather than an accident: five spears stretch differently over four hunters
     /// than over twelve.
     pub wear: &'a crate::components::BandEquipment,
+    /// **THE BAND'S OTHER WORK ROWS** — every assignment except any already standing on this quarry,
+    /// as `(resolved kit, head count)`. The crew a curve prices is a **prospective** row, and it
+    /// competes for the band's gear exactly as a committed one does, so each row is armed from its
+    /// share of the ledger rather than from all of it
+    /// ([`crate::equipment_config::BandItemBudget::with_prospective_row`], built by
+    /// [`crate::components::LaborAllocation::rows_excluding_source`]).
+    ///
+    /// ⛔ **The rows travel here rather than a ready-made budget, because the budget is a function
+    /// of the crew size.** At crew `w` this row's share of an item is
+    /// `live × w ÷ (other demand + w)`, and `w` moves on every row of the curve — a budget struck
+    /// once at one crew would misprice every other.
+    ///
+    /// **Empty is the ordinary case**: a band with nothing else reaching for the kit's items falls
+    /// through to the whole live stock, which is what a ledger-wide coverage always gave it.
+    pub other_rows: &'a [(crate::equipment_config::KitChoice, f32)],
     /// The `person` roster row — what a hunter is before any gear.
     pub intrinsic: CombatStats,
     /// The severity dials the fight resolves at. **A resident band hunting its own range passes the
@@ -8980,6 +8995,33 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 /// (`regrow` → read the room → take) stopped after its first turn — and that is why the work board,
 /// which reads that projection, was right about this herd for the whole life of the discrepancy.
 /// The clone is what keeps *"nothing here touches the herd"* true.
+/// **THE CREWS A BAND ACTUALLY FIELDS AT `workers` ON THIS ROW** — [`HuntCrewCurveInputs`]'s
+/// coverage, resolved over the crew's **share** of the band's gear rather than over all of it.
+///
+/// One expression, because [`hunt_crew_take_curve`] and [`hunt_armed_crew`] must describe the same
+/// party: the curve's plateau and the count that explains it are read at the same crew size off the
+/// same ledger, and a second spelling here is exactly how *"max N workers useful"* comes to name a
+/// number no row of the curve was built from.
+///
+/// The share is struck per crew size — see [`HuntCrewCurveInputs::other_rows`] for why that cannot
+/// be hoisted out of the loop.
+fn curve_coverage(
+    inputs: &HuntCrewCurveInputs<'_>,
+    workers: f32,
+) -> crate::equipment_config::KitCoverage {
+    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+        inputs.other_rows.iter().map(|(kit, held)| (kit, *held)),
+        inputs.kit,
+        workers,
+    );
+    inputs.equipment.coverage_from_units(
+        inputs.kit,
+        workers,
+        inputs.wear,
+        budget.share_for(workers, inputs.wear, inputs.equipment),
+    )
+}
+
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
     let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     let sigmas = inputs.range_sigmas.abs();
@@ -9005,9 +9047,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             .is_infinite();
     (1..=inputs.max_workers)
         .map(|workers| {
-            let coverage = inputs
-                .equipment
-                .coverage(inputs.kit, workers as f32, inputs.wear);
+            let coverage = curve_coverage(inputs, workers as f32);
             let party = PartyResolution {
                 equipment: inputs.equipment,
                 coverage: &coverage,
@@ -9129,9 +9169,11 @@ fn crew_can_wound(hunter: &CombatStats, quarry: &CombatStats) -> bool {
 ///
 /// # It is the CURVE'S OWN last row, re-read
 ///
-/// The coverage is resolved at `max_workers` off the same ledger, and the party against the same
+/// The coverage is resolved at `max_workers` through [`curve_coverage`] — the same share of the
+/// same ledger, cut against the same competing rows — and the party against the same
 /// [`next_turns_quarry`], so the crews counted here are literally the crews the curve's top row was
-/// built from — the count and the plateau it explains cannot describe two different parties.
+/// built from. The count and the plateau it explains cannot describe two different parties, and a
+/// band short because the row beside it holds the traps is counted short here too.
 ///
 /// # A PEN arms everybody, because a slaughter has no gate
 ///
@@ -9151,9 +9193,7 @@ pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
     let Some(fight) = herd_fight_stage(&quarry, inputs.fauna) else {
         return inputs.max_workers;
     };
-    let coverage = inputs
-        .equipment
-        .coverage(inputs.kit, inputs.max_workers as f32, inputs.wear);
+    let coverage = curve_coverage(inputs, inputs.max_workers as f32);
     let party = PartyResolution {
         equipment: inputs.equipment,
         coverage: &coverage,

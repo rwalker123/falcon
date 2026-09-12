@@ -550,6 +550,30 @@ static func kit_condition_rows(spears_holding: float = KIT_HUNT_HEADCOUNT,
 			KIT_WARRIOR_HEADCOUNT),
 	]
 
+## **THE SAME LEDGER WITH NOTHING OUT ON A CREW** — every row's `workersHolding` and
+## `workersOnQuotedJob` zeroed, `count` and `remaining` untouched.
+##
+## **IT IS THE SHAPE A PRE-COMMIT SHEET IS MEASURED AGAINST.** `KitRoster.shortfall_line` counts the
+## FREE store against the crew being composed — `count − workersHolding`, clamped — because a party
+## cannot be handed the traps another row already walked out with. `kit_condition_row` makes `count`
+## follow `workersHolding` by default, which is a band whose every unit is in somebody's hands: a real
+## shape, and one with nothing free, so a sheet built on it honestly reads `0 of N` however deep the
+## ledger. The assertions about that arithmetic need a band with gear IN THE TENT, and this is it.
+##
+## ⛔ **THE DENOMINATOR GOES WITH THE NUMERATOR, because the pair is ONE SENTENCE.** Leaving
+## `workersOnQuotedJob` standing would publish *"four are staffed on this item and none holds it"* on
+## a ledger that has just said nobody is staffed — the shape `snapshot.fbs` calls a real shortfall,
+## asserted of a band that has no such crew.
+static func with_kit_in_the_store(band: Dictionary) -> Dictionary:
+	var rows: Array = []
+	for row_variant in band.get("kit_item_conditions", []):
+		var row: Dictionary = (row_variant as Dictionary).duplicate()
+		row["workers_holding"] = KIT_UNSTAFFED_HEADCOUNT
+		row["workers_on_quoted_job"] = KIT_UNSTAFFED_HEADCOUNT
+		rows.append(row)
+	band["kit_item_conditions"] = rows
+	return band
+
 ## **A UNIFORMLY-EQUIPPED BAND PUBLISHES EXACTLY ONE CREW, NEVER AN EMPTY LIST.** The sim's own rule,
 ## and the reason no client reader needs a "no crews" branch — so a fixture that omitted the field
 ## would be a band no server can produce, and would leave every uniform case untested.

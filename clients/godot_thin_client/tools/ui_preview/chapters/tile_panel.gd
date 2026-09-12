@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 123
+const EXPECTED_CHECKPOINTS := 120
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -106,11 +106,9 @@ const OCCUPANTS_HUNT_LOCAL_WORKERS := 4
 
 const OCCUPANTS_HUNT_PARTY_WORKERS := 6
 
-# The quick-hunt axis guard's herd, and idle workers for the shortcut to have something to send (the
-# `quick_hunt_note` state beside it deliberately runs at 0, which is the no-op case).
-const QUICK_HUNT_HERD_ID := "game_aurochs_quickhunt"
-
-const QUICK_HUNT_IDLE_WORKERS := 3
+# ⛔ **RETIRED WITH THE SHORTCUT THEY STAGED**: `QUICK_HUNT_HERD_ID` and `QUICK_HUNT_IDLE_WORKERS`,
+# *"the quick-hunt axis guard's herd, and idle workers for the shortcut to have something to send."*
+# The map's double-click quick-hunt is gone; see the retirement note where states 5 / 5a stood.
 
 ## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
 ## harness has no OS input, so this is how a click/wheel gesture is put through the shipped code path
@@ -1494,51 +1492,23 @@ func run(harness) -> void:
 	# band-panel launch flow now picks the quarry FIRST, inside the compose sheet, so the forecast
 	# lives in the form with the real party size and policy (band_panel_preview `band_panel_compose_hunt`).
 
-	# State 5 — quick-hunt convenience (map double-click a herd): with idle workers it
-	# assigns them to hunt; with none it posts a command-feed note instead of silently
-	# no-opping. Seed a fully-staffed band (0 idle) so the note renders in the Command Feed.
-	var staffed_band := BandFx.band_fixture()
-	staffed_band["idle_workers"] = 0
-	h._hud._band_labor._player_band = staffed_band
-	h._show_tile(BaseFx.food_tile_fixture())
-	h._hud.quick_assign_hunters("game_bison_02")
-	await h._settle()
-	await h._save("quick_hunt_note")
-
-	# State 5a — PNG-LESS companion: **the shortcut must not blank the improvement axis** (issue #442).
-	# `assign_labor` deliberately does not carry the second axis, so between the double-click and the
-	# next snapshot the OPTIMISTIC PENDING overlay is the only thing holding it — and an emit that lets
-	# it default to `IMPROVEMENT_NONE` flashes a running pen off the work board (and drops the herding
-	# crew floor from the would-be count to the ownership-gated one) for the whole turn. No frame:
-	# a board rendered from a blanked axis looks like a perfectly ordinary board, so only the overlay
-	# can testify. The band hunts ONE herd and is already building its pen; the precondition assertion
-	# is what stops the second one passing on a band that had nothing to keep.
-	# `Hud._resolve_assign_band` prefers the SELECTED player unit over `player_band()`, and an earlier
-	# state left one selected — so clear it, or the shortcut resolves to a band that is building nothing
-	# and the assertion below judges the wrong band. (The next state clears it too; this is not restored.)
-	h._hud.clear_selection()
-	# `BandFx.band_fixture` stamps its own `band_id`, and `Hud._emit_assign_labor` REFUSES a band
-	# without one — so the shortcut would no-op silently and the guard would pass on nothing.
-	var quick_hunt_band := BandFx.band_fixture()
-	quick_hunt_band["idle_workers"] = QUICK_HUNT_IDLE_WORKERS
-	quick_hunt_band["labor_assignments"] = [{
-		"kind": "hunt", "workers": 2, "floor": 0.5,
-		"improvement": SourceForecast.IMPROVEMENT_CORRAL,
-		"fauna_id": QUICK_HUNT_HERD_ID, "target_x": 66, "target_y": 10,
-	}]
-	h._hud._band_labor._player_band = quick_hunt_band
-	h._assert_hud("precondition: the quick-hunt band really is building a pen on that herd",
-		h._hud._band_labor.improvement_for_hunt(quick_hunt_band, QUICK_HUNT_HERD_ID)
-			== SourceForecast.IMPROVEMENT_CORRAL)
-	h._hud.quick_assign_hunters(QUICK_HUNT_HERD_ID)
-	var quick_hunt_pending: Dictionary = h._hud._band_labor.pending_assigns_for(
-		int(quick_hunt_band.get("entity", -1))).get(
-			h._hud._band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, QUICK_HUNT_HERD_ID), {})
-	h._assert_hud("a quick-hunt keeps the pen the band is already building on that herd",
-		String(quick_hunt_pending.get("improvement", "")) == SourceForecast.IMPROVEMENT_CORRAL)
-	# Leave the overlay as it was found — a snapshot with a NEWER turn is what confirms a pending edit.
-	h._hud._band_labor.reconcile_pending(h._hud._band_labor.current_turn() + 1)
-	h._hud._band_labor._player_band = BandFx.band_fixture()
+	# ⛔ **RETIRED — STATES 5 AND 5a, THE MAP'S DOUBLE-CLICK QUICK-HUNT.** `quick_hunt_note` rendered
+	# the shortcut's no-op note (*"with idle workers it assigns them to hunt; with none it posts a
+	# command-feed note instead of silently no-opping"*), and its PNG-less companion pinned the axis
+	# claim: **"the shortcut must not blank the improvement axis" (issue #442)** — *"`assign_labor`
+	# deliberately does not carry the second axis, so between the double-click and the next snapshot the
+	# OPTIMISTIC PENDING overlay is the only thing holding it — and an emit that lets it default to
+	# `IMPROVEMENT_NONE` flashes a running pen off the work board for the whole turn."*
+	#
+	# The shortcut is gone: it fired on the gesture a player uses to INSPECT a herd and committed the
+	# band's entire idle pool with no confirmation and no useful-crew cap. **The axis rule it pinned is
+	# not gone and is not left untested** — it is a property of `Hud._emit_assign_labor`, whose kit and
+	# improvement both ride `record_pending_assign`, and the herd compose sheet carries its own
+	# `composed_improvement` through the same seam (`chapters/hunt.gd`'s compose states drive it).
+	# `HudBandLaborState.improvement_for_hunt` keeps live callers there, which is why it survives the
+	# shortcut that first needed it.
+	#
+	# `EXPECTED_CHECKPOINTS` came down by three with them — one frame and two assertions.
 
 	# ---- LETHAL GROUND (issue #614) ------------------------------------------------------------
 	# The model is live from the prologue (see the block above the fixtures); these are the states

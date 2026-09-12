@@ -316,10 +316,30 @@ func _outfitting_band_fixture() -> Dictionary:
 	}
 	return band
 
-## `assign_labor` — the map's double-click quick-hunt, which is fully public and resolves the band
-## itself, so this is the whole chain: snapshot roster → `_resolve_assign_band` → `_emit_assign_labor`.
+## `assign_labor` — **THE TARGETED HUNT GRAMMAR WITH NO `kit` TAIL**, which is the line a player who
+## has never touched a kit picker emits and the byte-identical twin of every `assign_labor` sent
+## before the picker existed. `_drive_assign_labor_kits` below emits the TAILED forms; this is the
+## other parse, and the two are not the same line in front of the real parser.
+##
+## ⛔ **IT USED TO BE DRIVEN THROUGH `Hud.quick_assign_hunters`, THE MAP'S DOUBLE-CLICK QUICK-HUNT**,
+## *"which is fully public and resolves the band itself, so this is the whole chain: snapshot roster
+## → `_resolve_assign_band` → `_emit_assign_labor`."* That shortcut is retired — it fired on the
+## INSPECT gesture and committed the band's whole idle pool with no confirmation and no useful-crew
+## cap — and the wire coverage is re-pointed here rather than dropped with it. `_drive_move_band`
+## still drives `_resolve_assign_band`, and does it the harder way (off the map marker).
+##
+## ⛔ **AND IT IS NOT DRIVEN THROUGH THE COMPOSE SHEET AT THE JOB DEFAULT**, which is the other way
+## to reach an untailed line: `_record` FAILS a drive that composes the default outright — *"the
+## token is legitimately omitted and the assertion could never fail; that is a fixture error"* — so
+## that route cannot produce this line under this guard by construction. An EMPTY selection is the
+## honest driver: `Main._kit_token` omits on `kit_id == ""` as well, and `_record` skips its
+## job-default check on an empty expectation rather than being satisfied by one.
 func _drive_assign_labor() -> void:
-	_hud.quick_assign_hunters(NEAR_HERD_ID)
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, PARTY_WORKERS,
+		int(band.get("current_x", 0)), int(band.get("current_y", 0)), NEAR_HERD_ID,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+		KitRoster.NO_KIT_ID)
 	await _settle()
 
 ## `cancel_order` — the Work zone's "Unassign all work". The HUD relays the BAND DICT itself here
@@ -432,9 +452,9 @@ func _drive_send_hunt_expedition_from_herd_drawer() -> void:
 	_press_send_hunt_confirm(_hud, "herd drawer compose")
 	await _settle()
 
-## `assign_labor` with the KIT TAIL, on ALL THREE grammars (`docs/plan_denial_raid.md`). The
-## quick-hunt drive above emits the untailed line (it names no kit, so the job default stands and the
-## token is omitted); this one emits the tailed twin of each, which is what puts `kit <id>` in front
+## `assign_labor` with the KIT TAIL, on ALL THREE grammars (`docs/plan_denial_raid.md`). The drive
+## above emits the untailed line (it names no kit, so the job default stands and the token is
+## omitted); this one emits the tailed twin of each, which is what puts `kit <id>` in front
 ## of the real parser on the forage grammar's two optional positionals, on the hunt grammar, and on a
 ## BAND-WIDE role's otherwise closed four-token tail.
 ##
@@ -999,9 +1019,10 @@ const EXTRACT_MATERIAL := "wood"
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 
-## The FIVE TARGETED/untailed drives `_drive_assign_labor_kits` makes before the role sweep: the
-## map's quick-hunt, hunt + forage with a `kit <id>` tail, and the deposit branches' `extract` in BOTH
-## of its shapes — with the floor token and without it.
+## The FIVE TARGETED/untailed drives made before the role sweep: the untailed hunt line
+## (`_drive_assign_labor`, which named the map's quick-hunt until that shortcut was retired), hunt +
+## forage with a `kit <id>` tail, and the deposit branches' `extract` in BOTH of its shapes — with the
+## floor token and without it.
 ##
 ## ⛔ **`extract` IS A TARGETED GRAMMAR AND NOT A ROLE, so the sweep below cannot reach it** — it names
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
@@ -1062,8 +1083,9 @@ func _assert_every_role_is_emittable() -> void:
 		% ASSIGN_LABOR_ROLES.size())
 
 const EXPECTED_KINDS := {
-	# The map's quick-hunt (which names no kit, so the line is the untailed one), the two TARGETED
-	# grammars from `_drive_assign_labor_kits` (hunt and forage, both with `kit <id>` on a tail that
+	# The untailed hunt line (`_drive_assign_labor`, which names no kit, so the token is omitted — it
+	# was the map's quick-hunt until that shortcut was retired), the two TARGETED grammars from
+	# `_drive_assign_labor_kits` (hunt and forage, both with `kit <id>` on a tail that
 	# had never been parsed with the token), then EVERY band-wide role once with that token — and
 	# `builders` a second time BARE, which is the exact line the pool's `+` emits and the exact line
 	# the text grammar refused for a slice.

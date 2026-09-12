@@ -2219,3 +2219,377 @@ fn the_published_roster_names_which_rung_each_road_kit_serves() {
          nothing and both assertions above are one assertion"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// ONE BAND, ONE SET OF GEAR — two rows cannot each arm a full crew off one stock
+// ---------------------------------------------------------------------------------------------
+
+/// The crew on **each** of the two rows every fixture in this section staffs.
+const ROW_CREW: u32 = 4;
+
+/// Both rows' crews together — the band's whole working head count, so no hand is idle and both
+/// rows are genuinely competing for the same ledger.
+const TWO_ROW_CREW: u32 = ROW_CREW * 2;
+
+/// **Four traps for eight hunters** — the reported shape. Each row can arm half its crew and no
+/// more, whichever row is resolved first.
+const TRAPS_FOR_HALF_THE_BAND: u32 = ROW_CREW;
+
+/// The control stock: one trap per hunter, so neither row is short and the pro-rata share every row
+/// gets still exceeds what its own people can hold.
+const TRAPS_FOR_THE_WHOLE_BAND: u32 = TWO_ROW_CREW;
+
+/// The item `trapping` puts in a hunter's hands, named once.
+const TRAPS: &str = "traps";
+
+/// The item **both** hunt kits carry — which is why the band's budget is per ITEM and not per kit
+/// id: two rows naming different kits still reach for this one stock.
+const SLED: &str = "sled";
+
+/// The id the second fixture herd is pinned under — the Wild Fowl row of the reported band, one
+/// herd over so the two rows are comparable.
+const SECOND_HERD_ID: &str = "kit_fixture_herd_two";
+
+/// A second stationary herd, re-badged and moved onto `at`, so one band can staff two hunt rows
+/// without either herd wandering off. Same species, body and stock as [`pin_herd`]'s, because the
+/// two rows are only comparable to each other if their quarry is identical.
+fn pin_second_herd(app: &mut App, at: UVec2, id: &str) -> String {
+    let picked = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id != PINNED_HERD_ID && h.id.starts_with("game_") && h.route_length() == 1)
+            .map(|h| h.id.clone())
+            .expect("the campaign map seeds more than one stationary game group")
+    };
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == picked).unwrap();
+        herd.id = id.to_string();
+        herd.current_pos = at;
+        herd.route = vec![at];
+        herd.step_index = 0;
+        herd.species = HARMLESS_QUARRY.to_string();
+        herd.body_mass = HERD_BODY_MASS;
+        herd.carrying_capacity = HERD_CAPACITY;
+        herd.biomass = HERD_CAPACITY;
+        herd.regrowth_rate = 0.10;
+        herd.fodder_per_biomass = 0.0;
+    }
+    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    app.world.resource_mut::<HerdTelemetry>().entries = entries;
+    id.to_string()
+}
+
+/// The fresh tier a fixture stocks an item at, off the shipped roster.
+fn fresh_tier(item: &str) -> String {
+    EquipmentConfig::builtin()
+        .item(item)
+        .unwrap_or_else(|| panic!("the roster ships '{item}'"))
+        .default_tier()
+        .id
+        .clone()
+}
+
+/// **A resident band standing on the herds' tile, staffed onto one hunt row per entry in `rows`.**
+///
+/// `stock` replaces the start-stocked count of the items it names, which is how a fixture states
+/// *"this band owns four traps"* without inheriting the outfitted ledger's reserve.
+fn spawn_band_hunting(
+    app: &mut App,
+    pos: UVec2,
+    rows: &[(&str, &str)],
+    stock: &[(&str, u32)],
+) -> bevy::prelude::Entity {
+    let tile = tile_at(app, pos);
+    let crew = ROW_CREW * rows.len() as u32;
+    let mut wear =
+        BandEquipment::start_stocked_for(&EquipmentConfig::for_a_stocked_fixture(), crew as f32);
+    for (item, count) in stock {
+        wear.restore_batches(item, Vec::new());
+        wear.stock(item, *count, &fresh_tier(item), None);
+    }
+    let assignments = rows
+        .iter()
+        .map(|(herd, kit_id)| LaborAssignment {
+            target: LaborTarget::Hunt {
+                fauna_id: (*herd).to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            workers: ROW_CREW,
+            kit: EquipmentConfig::builtin().kit(kit_id),
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        })
+        .collect();
+    app.world
+        .spawn((
+            cohort(tile, crew),
+            ResidentBand,
+            wear,
+            LaborAllocation {
+                assignments,
+                ..Default::default()
+            },
+        ))
+        .id()
+}
+
+/// This band's per-row `(workers, kitWorkersHolding)` pairs, off the **encoded** envelope and in
+/// assignment order — a field that never reached the codec still satisfies an in-process assertion.
+fn published_row_coverage(app: &App, band: bevy::prelude::Entity) -> Vec<(u32, f32)> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .laborAssignments()
+        .expect("a staffed band publishes its work rows")
+        .iter()
+        .map(|row| (row.workers(), row.kitWorkersHolding()))
+        .collect()
+}
+
+/// Σ of this band's per-row takes, off the retained telemetry.
+fn total_take(app: &App, band: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture spawned an allocation")
+        .last_yields
+        .iter()
+        .map(|row| row.actual)
+        .sum()
+}
+
+/// **⛔ TWO HUNT ROWS NAMING ONE KIT SHARE ITS SCARCITY — they do not each get a full set of it.**
+///
+/// The direct analogue of
+/// `forage_cultivation::two_sites_naming_one_kit_cannot_arm_more_keepers_than_the_band_owns`, one
+/// web over. `EquipmentConfig::coverage` answers *"of these workers, how many carry the kit's items,
+/// given what the band owns"*; asked per row against the band's **whole** ledger it double-counts,
+/// so four traps armed four hunters on a Rabbit Warren row and the same four armed four more on the
+/// Wild Fowl row beside it — eight equipped hunters off four traps, with nothing anywhere saying the
+/// band was short.
+///
+/// Both halves are asserted in the same run: the **take** falls (the crews really are half bare) and
+/// the **published** reach says so, two of four on each row.
+#[test]
+fn two_hunt_rows_naming_one_kit_cannot_arm_more_hunters_than_the_band_owns() {
+    let run = |traps: u32| {
+        let mut app = placid_world();
+        let (first, pos) = pin_herd(&mut app);
+        let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+        let band = spawn_band_hunting(
+            &mut app,
+            pos,
+            &[(&first, TRAPPING_KIT), (&second, TRAPPING_KIT)],
+            &[(TRAPS, traps)],
+        );
+        drive_local_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+        (total_take(&app, band), published_row_coverage(&app, band))
+    };
+
+    let (shared_take, shared_rows) = run(TRAPS_FOR_HALF_THE_BAND);
+    let (stocked_take, stocked_rows) = run(TRAPS_FOR_THE_WHOLE_BAND);
+
+    assert_eq!(
+        shared_rows.iter().map(|(_, held)| *held).sum::<f32>(),
+        TRAPS_FOR_HALF_THE_BAND as f32,
+        "the two rows between them cannot outfit more hunters than the band owns traps: \
+         {shared_rows:?}"
+    );
+    for (workers, held) in &shared_rows {
+        assert_eq!(
+            (*workers, *held),
+            (ROW_CREW, (TRAPS_FOR_HALF_THE_BAND / 2) as f32),
+            "…and the short stock is split pro-rata, so each row reads '2 of 4': {shared_rows:?}"
+        );
+    }
+    assert!(
+        shared_take < stocked_take,
+        "half the hunters are bare-handed, so the band brings home less than the same two rows \
+         fully trapped: {shared_take} against {stocked_take}"
+    );
+    assert!(
+        shared_take > 0.0,
+        "liveness: the fixture must actually hunt, or the comparison above is two zeros"
+    );
+    for (workers, held) in &stocked_rows {
+        assert_eq!(
+            (*workers, *held),
+            (ROW_CREW, ROW_CREW as f32),
+            "…and the control arm really is unshort — every hunter on both rows is armed: \
+             {stocked_rows:?}"
+        );
+    }
+}
+
+/// **⛔ AND THE BUDGET IS PER ITEM, so two DIFFERENT kits sharing one cannot each carry a full set.**
+///
+/// The upkeep side groups its claims by **kit id** (`systems::labor::keeping_rates`), which is
+/// enough there because no two kits on one web share an item. The hunt roster is not so lucky:
+/// `big_game` and `trapping` both carry the sled, so a kit-id grouping would sled four hunters on
+/// the stalking row and four more on the trapping row off one stock of four.
+#[test]
+fn two_rows_on_different_kits_cannot_each_sled_a_full_crew() {
+    /// Four sleds for eight hunters, held across two rows that named different kits.
+    const SLEDS_FOR_HALF_THE_BAND: u32 = ROW_CREW;
+
+    let mut app = placid_world();
+    let (first, pos) = pin_herd(&mut app);
+    let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+    let band = spawn_band_hunting(
+        &mut app,
+        pos,
+        &[(&first, SLED_KIT), (&second, TRAPPING_KIT)],
+        &[(SLED, SLEDS_FOR_HALF_THE_BAND)],
+    );
+    drive_local_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let (sledded, on_rows) = published_gear_pair(&app, band, SLED);
+    assert_eq!(
+        (sledded, on_rows),
+        (SLEDS_FOR_HALF_THE_BAND as f32, TWO_ROW_CREW as f32),
+        "the sled is quoted over BOTH rows that carry it, and reaches four of the eight hunters — \
+         a kit-id grouping would have handed each row its own full set"
+    );
+    let rows = published_row_coverage(&app, band);
+    for (workers, held) in &rows {
+        assert_eq!(
+            (*workers, *held),
+            (ROW_CREW, (SLEDS_FOR_HALF_THE_BAND / 2) as f32),
+            "…and each row is outfitted only as far as the shared item reaches, because a COMPLETE \
+             kit is the min over its items: {rows:?}"
+        );
+    }
+}
+
+/// **⛔ A BAND THAT IS NOT SHORT TAKES EXACTLY WHAT EACH ROW WOULD TAKE ALONE.**
+///
+/// The regression guard for the whole change. Where the band owns gear for everybody, a row's
+/// pro-rata share still exceeds what its own people can hold and `coverage`'s
+/// `min(from_units, from_people)` clamps it — so the take must be **bit-identical** to the reading
+/// each row got when it was the only claimant on the ledger, which is what the whole-ledger coverage
+/// gave every row before the budget existed. A silent retune of a band that is not scarce is the
+/// failure this change could most easily hide.
+///
+/// One turn, deliberately: across several the two-row band wears its gear twice as fast, which is a
+/// real difference and not this one.
+#[test]
+fn a_band_that_is_not_short_takes_exactly_what_each_row_would_take_alone() {
+    /// Which of the two pinned herds a fixture row is staffed on — spelled rather than indexed so
+    /// the arms below read as the claim.
+    const FIRST_HERD: &str = "first";
+
+    let run = |rows: &[(&str, &str)], traps: u32| {
+        let mut app = placid_world();
+        let (first, pos) = pin_herd(&mut app);
+        let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+        let named: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(which, kit_id)| {
+                let herd = if *which == FIRST_HERD {
+                    first.as_str()
+                } else {
+                    second.as_str()
+                };
+                (herd, *kit_id)
+            })
+            .collect();
+        let band = spawn_band_hunting(&mut app, pos, &named, &[(TRAPS, traps)]);
+        drive_local_turn(&mut app);
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture spawned an allocation")
+            .last_yields
+            .clone()
+    };
+
+    let stocked = run(
+        &[(FIRST_HERD, TRAPPING_KIT), (SECOND_HERD_ID, TRAPPING_KIT)],
+        TRAPS_FOR_THE_WHOLE_BAND,
+    );
+    let first_alone = run(&[(FIRST_HERD, TRAPPING_KIT)], TRAPS_FOR_THE_WHOLE_BAND);
+    let second_alone = run(&[(SECOND_HERD_ID, TRAPPING_KIT)], TRAPS_FOR_THE_WHOLE_BAND);
+
+    assert_eq!(
+        stocked[0], first_alone[0],
+        "an unshort band's first row resolves bit-for-bit what it resolved as the only claimant"
+    );
+    assert_eq!(
+        stocked[1], second_alone[0],
+        "…and so does the row beside it"
+    );
+
+    // Paired with the scarce arm, because "two readings agree" is also what a dead mechanism
+    // reports: the SAME comparison must part company the moment the band is genuinely short.
+    let shared = run(
+        &[(FIRST_HERD, TRAPPING_KIT), (SECOND_HERD_ID, TRAPPING_KIT)],
+        TRAPS_FOR_HALF_THE_BAND,
+    );
+    assert!(
+        shared[0].actual < first_alone[0].actual,
+        "liveness: a band short of traps must NOT match the row's solo reading — {:?} against {:?}",
+        shared[0],
+        first_alone[0]
+    );
+}
+
+/// **⛔ AN ITEM IS QUOTED OVER THE ROWS THAT CARRY IT — not at its job's default kit.**
+///
+/// The reported band, exactly: eight hunters across two `trapping` rows against four traps. The
+/// readout that could have spoken was silent about the real shortfall and wrong about a fake one —
+/// `spears` published *"4 of 8"*, a shortfall on gear **no row was using**, denominated in the whole
+/// hunt job's head count; `traps` published *"0 of 0"*, which the schema defines as *"nobody is
+/// staffed, do not warn"*.
+#[test]
+fn a_gear_row_is_quoted_over_the_rows_whose_kit_carries_it() {
+    let mut app = placid_world();
+    let (first, pos) = pin_herd(&mut app);
+    let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+    let band = spawn_band_hunting(
+        &mut app,
+        pos,
+        &[(&first, TRAPPING_KIT), (&second, TRAPPING_KIT)],
+        &[(TRAPS, TRAPS_FOR_HALF_THE_BAND)],
+    );
+    recapture_snapshot_in_place(&mut app.world);
+
+    assert_eq!(
+        published_gear_pair(&app, band, TRAPS),
+        (TRAPS_FOR_HALF_THE_BAND as f32, TWO_ROW_CREW as f32),
+        "the traps are quoted over both trapping rows: '4 of 8', which is the shortfall the band \
+         actually has"
+    );
+    assert_eq!(
+        published_gear_pair(&app, band, "spears"),
+        (0.0, 0.0),
+        "and no row carries a spear, so the spear row reads '0 of 0' — correct, and silent"
+    );
+    assert!(
+        app.world
+            .get::<BandEquipment>(band)
+            .expect("ledger")
+            .count_of("spears")
+            > 0,
+        "…and the band DOES own spears, so that zero is about the rows and not about the stock"
+    );
+}

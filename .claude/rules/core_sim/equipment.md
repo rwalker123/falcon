@@ -1197,6 +1197,105 @@ consumer reads it — the hunt, the raid, the haul, the assign-time seed and the
   is what every rate site answered before coverage existed and what keeps the crew inversions from
   dividing by zero.
 
+### ⛔ ONE BAND, ONE SET OF GEAR — a row is cut from its SHARE of the ledger, not from the ledger
+
+`coverage` reads the band's **whole** `BandEquipment`, so asking it once per work row hands every row
+a full copy of the band's things. Reported from play: a band outfitted with 4 stalking + 4 trapping +
+9 harvesting kits staffed two hunt rows, a Rabbit Warren and a Wild Fowl, both under the trap's
+`max_body_mass` and so both resolving `trapping` — and **four traps armed four hunters on each row**.
+Eight equipped hunters off four traps, nothing lost, and nothing anywhere saying the band was short.
+
+**`EquipmentConfig::coverage_from_units(kit, workers, wear, units)` is the one implementation of the
+crew cut**, and `coverage` is now `coverage_from_units` over the ledger — so the whole-ledger read is
+the *special case* for a caller holding one party, not a second copy of the partition. The condition
+predicate stays inside it, so a budget naming units of a worn-out item still arms nobody.
+
+**The budget is per ITEM, and deliberately not per kit id.** The upkeep side groups its claims by kit
+id (`keeping_rates`, `docs/plan_standing_upkeep.md` §2.7), which is enough there because no two kits
+on one web share an item. The hunt roster is not so lucky: `big_game` and `trapping` both carry the
+**sled**, so a kit-id grouping would still sled a full crew on each of two rows off one stock.
+
+```text
+demand[item] = Σ assignment.workers over the rows whose RESOLVED kit uses that item
+units(row, item) = live_units(item) × min(row.workers ÷ demand[item], 1)
+```
+
+- **Pro-rata, not priority**, matching `keeping_rates`. `SourcePriority` decides who sheds a worker;
+  making it decide who gets the spears as well would be a design lever nobody has asked for.
+- **Fractional units are fine** — `Crew::workers` is fractional by design, and the cut clamps the
+  share against the people on the row anyway.
+- **Every row counts, the band-wide roles included**: a Scout or Warrior row is an ordinary
+  assignment holding ordinary head count, and its gear is as much the band's as the hunters' spears.
+- **An item nothing asks for is not rationed.** `demand == 0` means no budgeted row carries it, so
+  the caller asking is the only claimant and gets the whole live stock. That is what keeps a detached
+  **party** (empty allocation) and the **builders' pool** (whose kit comes from the build queue
+  rather than from a row) reading exactly what the ledger-wide `coverage` gave them.
+- **A band that is NOT short is bit-identical to the old reading**, because its every row's share
+  still exceeds what its own people can hold and `min(from_units, from_people)` clamps it. That is
+  the property `a_band_that_is_not_short_takes_exactly_what_each_row_would_take_alone` pins, paired
+  with the scarce arm, since "two readings agree" is also what a dead mechanism reports.
+
+`LaborAllocation::item_budget` builds it, and **every site holding the band's allocation cuts from
+it**: `advance_labor_allocation`'s source-row loop (once per band, beside `band_kit`, for the same
+reason — a row that read all of the ledger would arm its own crew off gear the row beside it is
+already holding), `advance_predator_raids`' warrior line, and the capture's per-row coverages.
+
+#### ⛔ A PROSPECTIVE ROW COMPETES EXACTLY AS A COMMITTED ONE DOES — THREE MORE READERS
+
+The formula above prices a row that is *already staffed*, and the numbers a player decides on are
+quoted before that. Every surface quoting a crew therefore cuts from the same share, or a band whose
+two hunt rows reach for one stock of traps is promised a crew the turn cannot arm:
+
+```text
+other_demand[item] = Σ workers over the band's assignments that use `item`,
+                     EXCLUDING any existing assignment on THIS source
+units(w, item)     = live_units(item) × w ÷ (other_demand[item] + w)
+```
+
+**The exclusion is the whole of it.** A forecast, a seed and a take all describe one crew on one
+source, so leaving that source's own row in would count its head twice — once as itself, once as the
+ask — and quote short of the take it predicts. `other_demand == 0` falls through to the whole live
+stock, which is the *"an item nothing asks for is not rationed"* rule above and not a second one.
+`LaborAllocation::rows_excluding_source` produces the other rows and
+`BandItemBudget::with_prospective_row` chains the ask onto them, so there is one arithmetic and the
+committed and prospective forms cannot drift; `kitted_rows` is the single spelling of *"a row's
+resolved kit and its head count"* both budgets are built from.
+
+| Reader | What it quotes | How the share reaches it |
+|---|---|---|
+| `bin/server.rs`'s `seed_source_yield` — **both** arms, forage and hunt | the row the assign command just committed | `set_assignment` has already landed the row, so the band's `LaborAllocation` *is* the post-assignment truth: plain `item_budget` + `share_for(workers, ..)`, the identical denominator next turn divides by |
+| `forecast_query::resolve_ask` — the trip and denial sheets | a party nobody has committed | the queried source may or may not hold a row, so it is excluded and the asked-for party added |
+| `fauna::hunt_crew_take_curve` / `hunt_armed_crew` | one row **per crew size** | `HuntCrewCurveInputs::other_rows` carries the rows and `curve_coverage` strikes the budget per crew |
+
+**A CURVE RECOMPUTES THE SHARE PER CREW SIZE, AND THAT IS WHY IT TAKES ROWS RATHER THAN A BUDGET.**
+At crew `w` the denominator is `other_demand + w`, and `w` moves on every row of the curve — a budget
+struck once at one crew would misprice every other. `hunt_armed_crew` goes through the same
+`curve_coverage`, because the plateau and the count that explains it are read at the same crew size
+off the same share and a second spelling there is how *"max N workers useful"* comes to name a number
+no row of the curve was built from. `snapshot::population`'s `assigned_hunt_useful_crew` is that same
+producer on the Work board's `+` gate, so it hands over the band's allocation (`HuntCrewGear`) for the
+rows beside the one it is pricing.
+
+**A DETACHED EXPEDITION IS DELIBERATELY OUTSIDE ALL OF IT.** A launched party carries its own wear
+ledger and works no source rows, so it is not a resident band's row and is not rationed against one —
+the empty-allocation case the third rule above already answers.
+
+The invariant the three surfaces are held to is that a row rationed to half a shared ledger reads
+**exactly** what a band owning only that half reads, which is the one claim their three different
+units can all state: `bin/server.rs`'s
+`a_forecast_a_seed_and_a_take_are_cut_from_one_share_of_the_bands_gear` (seed, take and crew-take
+curve) and `a_trip_forecast_is_priced_at_the_asking_partys_share_of_the_gear` (the launch sheet's
+fill time, which is where a `pack_full`-bound trip shows the shortfall). Each pairs that with a
+scarce arm whose numbers **fall** and an abundant arm that is bit-identical to the same row standing
+alone — three surfaces that agree is also what three equally-broken surfaces report.
+
+**Three coverages are deliberately outside it**, and this is a boundary rather than an oversight —
+each runs at a different point in the turn against a pool of its own: the **builders'** pool
+(`BuildersGear::for_source`), **`keeping_rates`** (which has its own kit-id grouping and its own
+share-of-the-demand split), and the **scout vantage** in `visibility_systems`. Nothing shipped puts
+one item in a take kit and one of those, so no stock is over-issued today; folding them into one
+band-wide allocation is a change to *when* each pool is resolved, not a spelling correction.
+
 ### `HuntingParty` carries its composition, in SHARES
 
 `HuntingParty` is `{ crews: Vec<HuntCrew>, tuning, dispersion }` and is **Clone, not Copy**;
@@ -1876,7 +1975,7 @@ one place):
 
 | Field | Meaning |
 |---|---|
-| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` / `workersOnQuotedJob` ride beside both** since the partly-equipped slice, and they are ONE SENTENCE — *"`workersHolding` of `workersOnQuotedJob`"*. `count` is UNITS owned, the numerator is PEOPLE reached (the two differ whenever the band is short or holds the spawn's reserve), and the denominator is the head count of the job the row is quoted at. Quoted at the job whose kit carries the item — and at `kitId`'s for an item several jobs' kits carry, the same convention `huntCarryPerWorkerBiomass` follows |
+| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` / `workersOnQuotedJob` ride beside both** since the partly-equipped slice, and they are ONE SENTENCE — *"`workersHolding` of `workersOnQuotedJob`"*. `count` is UNITS owned, the numerator is PEOPLE reached (the two differ whenever the band is short or holds the spawn's reserve), and the denominator is the head count of the rows the item is quoted over. **Quoted over every assignment whose resolved kit carries it**, summed — see below |
 | `equipmentBatches:[EquipmentBatchState]` | **One row per BATCH**, plus one `count: 0` row per config item the band owns none of — `itemId`, `tierId`, `grade`, `count`, `remaining`, and the **life wording in use quanta, never percent**. It is the crafting arc's field; the rationale, the `Worn out` / `Never made` split and the `BandEquipment::retired` tally it needed are in `crafting.md` → "On the wire" |
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense`. **It is the BEST-EQUIPPED crew's tier, not the whole band's**, and `huntCrews` is the rest of the party — see below |
 | `huntCrews:[BandKitCrew]` | **How this band's gear divides its HUNT workers** — `workers` + that run's own `hunterAttack` + the `itemIds` it holds, best-equipped first, `Σ workers ==` the hunt head count. **Never empty**: a uniform band is one row |
@@ -1909,6 +2008,7 @@ schema; they disclaimed the estimate tables, which are gone.
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` / `defaultScoutKitId` / `defaultWarriorKitId:string` | What each verb runs on when the player names none — **and, for Hunt, only where there is no quarry to score against**; a herd names its own below. The last two arrived with the expanded roster; before it the band-wide roles had no kit axis and so no default to name |
 | `PopulationCohortState.kitId:string` | Which kit the row's **hunt-job** tiers are quoted at — an in-flight party's **own** kit (one kit, so it covers *every* tier on that party's row), a resident band's **hunt job default** (a band has one kit per assignment and this row is per cohort). See "One choice per JOB" below for the three tiers it deliberately does **not** answer for on a resident band |
 | `LaborAssignment.kitId:string` | The kit that row's yields are priced at, **resolved** — never "unspecified" and never `""`: a band-wide role publishes its own job's default now |
+| `LaborAssignment.kitWorkersHolding:float` | **Workers on THIS row holding a complete `kitId` kit**, over the `workers` already on the row — *"2 of 4 outfitted"*. Before it a work row structurally could not say it was short: it named its kit and nothing about how far that kit went. It is the **`min` over the kit's items** of that row's `workers_holding`, because three spears and no sled field *zero* stalking kits rather than three; the per-item reading is `KitItemCondition.workersHolding`, which is where a readout goes to name *which* thing is missing. **`== workers` when the kit carries nothing** — `none` has nothing to be short of, and a `0` there would read as *everybody short* |
 | `KitOption.itemIds:[string]` | **Which items the kit carries** — its `equipment.json` `uses` list verbatim, in config order (`big_game` → `["spears", "sled"]`). The tiers beside it are numbers and name no item, so without this a durability readout has to guess which component produced them — and the guess was `attack → "spears"`, which quoted a Trapping party the spears' condition. An **empty** list is a real answer (`none` carries nothing), never "unknown" |
 | `HerdTelemetryState.defaultKitId:string` | **The kit THIS HERD wants** — what the hunt compose sheet opens on, and what `assign_labor … hunt <herd> <n>` **and both raiding verbs** resolve with no `kit` token. Derived at the fresh tier from the take score against the species, *except* for a **corralled** herd, which takes the kit supplying `EquipmentStat::HuntCarry` (a pen has no stalk to score — see "A PEN is not a scoring question"). **It names the kit the sheet OPENS ON, never a rate**. Empty only for a species the roster cannot resolve, which falls back to `defaultHuntKitId`. See "Which kit a QUARRY wants is DERIVED" |
 
@@ -1949,12 +2049,25 @@ is PEOPLE, and the two differ whenever the band is short **or** holds the spawn'
 stated and a **basket's, club's or wayfinding's could not**, which is the quiet half of the same
 reassuring-direction failure `huntCrews` exists to remove.
 
-**Both come off the SAME coverage, chosen by which quoted kit carries the item** (ties to `kitId`'s,
-the hunt) — one coverage per job, resolved in the same pass — so `baskets` answers at the forage row
-and `clubs` at the warrior row rather than reading `0` against a hunt kit that carries neither, and
-the pair can never describe two different jobs. The job is picked by *"whose kit carries this"*
-rather than *"whose coverage holds somebody"*, deliberately: the latter leaves the denominator
-undefined in the case that matters most — a **staffed** job whose gear the band owns none of.
+**Both are folded out of ONE set of per-row coverages — every assignment whose RESOLVED kit carries
+the item**, so the pair can never describe two different sets of rows, and the per-item readout and
+the per-row `kitWorkersHolding` beside it are the same coverages read twice. They are the very
+coverages the take was armed from, off the one band-wide item budget, so the wire and the take cannot
+disagree by construction. An item **no** assignment carries reads `0` on both.
+
+> ⛔ **THE RULE IT REPLACED QUOTED EACH ITEM AT `default_kits.<job>`, and on a band running anything
+> else it lied in both directions at once.** The reported band staffed two `trapping` rows, eight
+> hunters between them, against four traps. It published `spears 4 of 8` — a shortfall on gear **no
+> row was using**, denominated in the whole hunt job's head count — while `traps`, the thing the band
+> was actually short of, published `0 of 0`, which the schema defines as *"nobody is staffed, do not
+> warn"*. The one readout that could have spoken was silent about the real problem and wrong about a
+> fake one.
+
+A **detached party** carries one kit across every job, so its rows are quoted at that kit over the
+whole party head count — unchanged, and the case the *"empty allocation"* arm above exists for.
+
+The **tie-break is gone with the rule**: summing over every carrying row leaves no tie for
+`PopulationCohortState.kitId` to break, which is why that sentence no longer appears on either field.
 
 > **TWO ZEROS A READER MUST NOT CONFUSE.** `workersOnQuotedJob == 0` is *nobody is staffed on that
 > job* — *"0 of 0"*, nothing was needed, not a warning, and nothing may divide by it. A **positive**
@@ -1970,6 +2083,9 @@ dead field:
 | `a_band_short_of_spears_publishes_one_hunt_crew_per_run` | two crews, the workers summing to the head count, the armed row equipped and the bare row intrinsic | `::a_fully_armed_band_publishes_exactly_one_hunt_crew` — *"exactly one row"* alone would pass on a sim that had stopped dividing anything |
 | `a_gear_row_publishes_the_head_count_of_the_job_it_is_quoted_at` | a **gathering** band short of baskets reads *"2 of 4"* at the FORAGE head count, which the hunt's says nothing about | the same band's spear row reads `0 of 0` in the same frame |
 | `a_job_nobody_is_staffed_on_publishes_a_zero_denominator_rather_than_an_absent_row` | `0 of 0` on two unstaffed jobs, with the row still present, and the baskets zero proven to be about the STAFFING (the band owns some) | the hunt row it is staffed on reads `4 of 4` in the same frame — a sim publishing zeros everywhere would pass every other assertion |
+| `a_gear_row_is_quoted_over_the_rows_whose_kit_carries_it` | the reported band exactly — two `trapping` rows, eight hunters, four traps: `traps` reads `4 of 8` | `spears` reads `0 of 0` in the same frame **and** the band is shown to own spears, so the zero is about the rows and not the stock |
+| `two_hunt_rows_naming_one_kit_cannot_arm_more_hunters_than_the_band_owns` | the published reach sums to the traps owned, two of four on each row, and the take falls | the same fixture stocked one trap per hunter arms every row in full and takes more |
+| `two_rows_on_different_kits_cannot_each_sled_a_full_crew` | the sled is quoted over BOTH rows that carry it and reaches four of eight — the case a kit-id grouping would have missed | the per-row reach is the `min` over the kit's items, so each row reads 2 |
 
 ### `kitTiers` — the resolved per-band answer, because the derivation is impossible on the wire
 

@@ -20,10 +20,19 @@ signal overlay_legend_changed(legend: Dictionary)
 signal overlay_channels_ingested()
 signal unit_selected(unit: Dictionary)
 signal herd_selected(herd: Dictionary)
-## Double-click on a herd (Early-Game Labor slice 3b): a convenience that assigns the
-## player band's idle workers to hunt this herd (Main → Hud.quick_assign_hunters). The
-## old shift+double-click "scout" shortcut was retired with the single-task scout command.
-signal herd_quick_hunt_requested(herd_id: String)
+# ⛔ **RETIRED: `herd_quick_hunt_requested(herd_id)`** — *"Double-click on a herd (Early-Game Labor
+# slice 3b): a convenience that assigns the player band's idle workers to hunt this herd (Main →
+# Hud.quick_assign_hunters)."*
+#
+# **IT FIRED ON THE INSPECT GESTURE AND COMMITTED THE WHOLE IDLE POOL, silently.** Double-clicking a
+# herd to look at it assigned every idle worker the band had, with no confirmation and no reading of
+# `max_useful_workers` — fifteen hunters onto a herd the compose sheet one line below caps at three.
+# Reported from play by Ray, who kept hitting it, assumed he had misclicked, and only found it after
+# the fact. **INSPECTING MUST NOT MUTATE STATE**; the compose sheet is the assign path.
+#
+# `handle_hex_click` on the line the branch sat under is untouched, which is the point: a
+# double-click is now just two selecting clicks. See `.claude/rules/client/map-renderers.md` →
+# "RETIRED — the double-click quick-hunt".
 signal tile_hovered(info: Dictionary)
 signal selection_cleared()
 ## The select-then-cycle click reached the LAND stop of an OCCUPIED hex. Carries no payload: the
@@ -2409,13 +2418,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			var col: int = offset.x
 			var row: int = offset.y
 			handle_hex_click(col, row, mouse_event.button_index)
-			var herd_hit: Dictionary = _herd_at_point(local_position)
-			if mouse_event.double_click and not herd_hit.is_empty():
-				var shortcut_id := String(herd_hit.get("id", ""))
-				if shortcut_id != "":
-					# Double-click a herd -> quick-assign idle hunters (Sustain). The old
-					# shift+double-click scout shortcut was retired with the scout command.
-					emit_signal("herd_quick_hunt_requested", shortcut_id)
+			# ⛔ **NOTHING READS `mouse_event.double_click` HERE ANY MORE, and the click above is the
+			# whole handler.** The retired branch emitted `herd_quick_hunt_requested` for a herd under
+			# the pointer — a convenience that assigned the band's entire idle pool, with no
+			# confirmation and no useful-crew cap, on the gesture a player uses to INSPECT. A
+			# double-click is now two selecting clicks, which is what it should always have been.
 			_mark_input_handled()
 			return
 	elif event is InputEventMouseMotion:
@@ -3355,8 +3362,14 @@ func _unit_at_point(point: Vector2) -> Dictionary:
 			return unit
 	return {}
 
-## Hit-test a herd MARKER under the pointer (the double-click quick-hunt shortcut). Fog-gated like
-## `_herds_on_tile`: a marker that isn't drawn can't be clicked, so an unseen herd can't be quick-hunted.
+## Hit-test a herd MARKER under the pointer. Fog-gated like `_herds_on_tile`: a marker that isn't
+## drawn can't be hit, so an unseen herd can't be picked out of an apparently-empty hex.
+##
+## ⛔ **IT HAS NO CALLER since the double-click quick-hunt retired** — that shortcut was its only
+## one, and the gesture is gone (see the retirement note on the click handler). It is left standing
+## rather than deleted with the branch: it is the pointer twin of `_unit_at_point` and its fog gate is
+## one of the three `herd-readouts.md` names as load-bearing, so removing it is a separate call from
+## removing the shortcut that happened to use it.
 func _herd_at_point(point: Vector2) -> Dictionary:
 	for herd in herds:
 		var x := int(herd.get("x", -1))

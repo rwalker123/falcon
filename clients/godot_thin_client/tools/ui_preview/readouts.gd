@@ -394,13 +394,11 @@ static func hunt_gate_line(root: Node) -> String:
 	var node := Q.find_meta_node(root, HudWidgets.HUNT_GATE_META)
 	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
 
-## **THE SPLIT PARTY'S LINE** (issue #520), by its OWN meta for the reason the pair above have theirs:
-## it is composed from `huntCrews` where the gate is composed from `hunterAttack` against the herd's
-## pair, so one handle would let either regress behind an assertion on the other. `""` when absent,
-## which is the shipped reading for every uniformly-equipped band and half of what is asserted.
-static func hunt_crew_split_line(root: Node) -> String:
-	var node := Q.find_meta_node(root, HudWidgets.HUNT_CREW_SPLIT_META)
-	return (node as RichTextLabel).get_parsed_text() if node is RichTextLabel else ""
+# ⛔ **RETIRED: `hunt_crew_split_line(root)`** — the split party's line, read by its own
+# `HUDWidgets.HUNT_CREW_SPLIT_META`. Both the sentence and the meta are gone: Ray removed it as
+# redundant with the kit line the same sheet carries (*"we have the stalking kit message, it seems the
+# second is redundant, you can remove it."*). `hunt_gate_line` above is NOT this one and stays — a
+# fight the party cannot make at all still states its refusal.
 
 ## **THE KIT ROW'S HINT LINE** — `attack 20.0 · carry 40.0 per hunter · 4 of 6 equipped · spears 74 ·
 ## sled 58`. A plain `Label` carrying `KitRoster.KIT_HINT_META`, so a harness makes its claim about

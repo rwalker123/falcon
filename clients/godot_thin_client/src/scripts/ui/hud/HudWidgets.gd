@@ -959,16 +959,11 @@ const VERDICT_META := "verdict"
 ## assertion for.
 const HUNT_GATE_META := "hunt_gate"
 
-## **THE PARTLY-EQUIPPED PARTY'S OWN LINE** (issue #520), and it takes a SECOND meta rather than
-## riding the gate's for the reason that one is read by value: `HUNT_GATE_META` is `true` exactly
-## when the fight is refused, so a split line wearing it would answer "the sheet says this fight is
-## winnable" to a harness asking whether it is blocked. The two are also composed from disjoint wire
-## terms — the gate from `hunterAttack` against the herd's pair, this from `huntCrews` — so one
-## handle would let either regress while an assertion on the other went on passing.
-##
-## They are mutually exclusive on screen: a refused fight renders the gate and no split (nobody can
-## take it, so `10 of 17` says nothing), a split party renders this and no gate.
-const HUNT_CREW_SPLIT_META := "hunt_crew_split"
+# ⛔ **RETIRED: `HUNT_CREW_SPLIT_META`**, the handle on the split line above. It took a SECOND meta
+# rather than riding the gate's *"for the reason that one is read by value: `HUNT_GATE_META` is `true`
+# exactly when the fight is refused, so a split line wearing it would answer 'the sheet says this
+# fight is winnable' to a harness asking whether it is blocked"* — a good rule, and it retires with
+# the only node that ever wore it. `HUNT_GATE_META` is untouched.
 
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
@@ -1541,33 +1536,20 @@ static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxCon
     block.add_child(chart)
     return block
 
-## **THE SPLIT PARTY'S LINE, mounted where the gate's refusal would go** (issue #520) — nothing at
-## all when the band's hunters are uniformly equipped, which is every band until one runs short.
-##
-## **IT IS THE GATE'S COMPLEMENT AND NEVER ITS COMPANION.** A refused fight renders the refusal and
-## this renders nothing (`0 of 17` beside "no party size changes that" is one sentence twice); a
-## cleared gate renders this and no refusal. Both hosts therefore call it from the gate's `else`.
-##
-## **WARN, not DANGER.** The hunt is possible — some of the party clears the defence — so it must not
-## take the refusal's ink, which in this HUD means *you cannot do this at all*.
-##
-## **`party_workers` IS THE COMPOSED PARTY, and a sheet that has a stepper must pass it.** The split
-## is a statement about the hunters being SENT, not about the band's roster: ten spears cover a party
-## of six entirely, so *"7 of your 17 are bare-handed"* over a `HUNTERS 6` stepper reads as seven of
-## six. `SourceForecast.HUNT_CREW_PARTY_UNSET` is the band-level reading, for a host with no party.
-##
-## In the shared widget layer for `mount_trip_readout`'s reason: two controllers mount the gate line
-## and a copied control drifts. Everything arrives as a PARAMETER; it holds no controller state.
-static func mount_hunt_crew_split(parent: Node, band: Dictionary, herd: Dictionary,
-        quarry: String, kit_id: String,
-        party_workers: int = SourceForecast.HUNT_CREW_PARTY_UNSET) -> void:
-    var split := SourceForecast.hunt_crew_split_model(band, herd, quarry, kit_id, party_workers)
-    if not bool(split["stated"]):
-        return
-    var label := forecast_label("[color=#%s]%s[/color]" % [
-        HudStyle.WARN_HEX, String(split["text"])])
-    label.set_meta(HUNT_CREW_SPLIT_META, true)
-    parent.add_child(label)
+# ⛔ **RETIRED: `mount_hunt_crew_split(parent, band, herd, quarry, kit_id, party_workers)`** — the
+# partly-equipped party's line, *"⚠ 4 of your 6 hunters can take Woolly Mammoth; the other 2 hold too
+# little gear and land nothing on it at any headcount."* (issue #520). Both compose hosts mounted it
+# from the hunt gate's `else`, i.e. on a fight the party COULD make.
+#
+# Reported from play, on a sheet carrying it directly under `KitRoster.shortfall_line`'s
+# *"1 of 15 Stalking kits available"*: *"The yellow message mentions the hunters. I'm not sure we need
+# that message at all, we have the stalking kit message, it seems the second is redundant, you can
+# remove it."* Two sentences about one shortfall, on one sheet.
+#
+# **THE GATE'S REFUSAL IS NOT THIS AND DID NOT GO WITH IT.** `HUNT_GATE_META` and the DANGER line it
+# tags are untouched: a fight the party cannot make at all still says so. What was removed is the
+# CLEARED-gate half. `SourceForecast.hunt_crew_split_model` went with the mount, and
+# `labor-ui.md` → "RETIRED — the hunt crew-split sentence" records what the removal costs.
 
 ## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
 ## branch used to answer with one wrapped bbcode sentence carrying every fact at once (the animals,

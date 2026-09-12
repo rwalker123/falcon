@@ -119,8 +119,25 @@ static func subject_of(kind: String, band_id: int, herd_id: String) -> String:
 ## and keying it on the stepper would put a fresh round trip behind every `+` press for an answer the
 ## seam is already holding. The parameter is the crew term either way, which is why there is one
 ## `key_of` rather than a second spelling of it.
-static func key_of(subject: String, kit_id: String, party_workers: int, floor: float) -> String:
-	return "%s:%s:%d:%f" % [subject, kit_id, party_workers, floor]
+##
+## > #### ⛔ THE BAND'S GEAR IS A KEY TERM, AND ITS ABSENCE WAS A REPORTED BUG
+## >
+## > Two ASSIGN HUNTERS sheets for one band and herd at one crew of 3 — one fully kitted, one reading
+## > `1 of 3 Stalking kits available` — rendered a **byte-identical** NEXT TURN panel. The server was
+## > never wrong: it prices the curve off the band's live wear and publishes `armed_crew` so the
+## > plateau can be explained. **The client never asked again.** This key was band · herd · kit ·
+## > party · floor, the gear appeared nowhere in it, and `ask` returns early whenever the key it holds
+## > an answer for matches — so the first answer stood for the session however the ledger changed.
+##
+## `band` and `kits` are what the gear term is folded out of, through
+## `KitRoster.gear_fingerprint` — the ONE producer, which carries what is in the fingerprint and why
+## the gear's CONDITION deliberately is not. **They are required arguments on purpose**: a caller left
+## on the old arity would keep the stale answer at its own surface and nothing would say so, so the
+## signature is one that cannot compile half-updated.
+static func key_of(subject: String, kit_id: String, party_workers: int, floor: float,
+		band: Dictionary, kits: Array) -> String:
+	return "%s:%s:%d:%f:%s" % [subject, kit_id, party_workers, floor,
+		KitRoster.gear_fingerprint(kits, kit_id, band)]
 
 ## **ASK, IDEMPOTENTLY.** Call it on every render of a sheet: a key already answered or already in
 ## flight sends nothing, so the sheets do not need to remember what they asked. `params` is the

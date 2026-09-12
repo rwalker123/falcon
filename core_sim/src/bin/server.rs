@@ -3242,7 +3242,14 @@ fn seed_source_yield(
     // **The kit this crew was assigned with, read off the assignment itself** — not off the band's
     // stock. `set_assignment` has already stored it, so the seed and the turn resolve the identical
     // tier through the identical seam, which is what `forecast == actual` rests on.
-    let crew_kit = {
+    //
+    // **And the band's per-item BUDGET beside it, for the same reason one step on**
+    // (`equipment.md` → "ONE BAND, ONE SET OF GEAR"): the turn arms this row from its *share* of the
+    // ledger, so a seed priced against the whole ledger promises a band with two rows on one item a
+    // haul only one of them can make. `set_assignment` has already landed this row, so the
+    // allocation read here is the post-assignment truth and its denominator is the one
+    // `advance_labor_allocation` will divide by next turn.
+    let crew_gear = {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
         app.world
             .get::<LaborAllocation>(band)
@@ -3251,10 +3258,15 @@ fn seed_source_yield(
                     .assignments
                     .iter()
                     .find(|assignment| assignment.target.same_source(target))
-                    .map(|assignment| assignment.kit_choice(&equipment_cfg))
+                    .map(|assignment| {
+                        (
+                            assignment.kit_choice(&equipment_cfg),
+                            allocation.item_budget(&equipment_cfg),
+                        )
+                    })
             })
     };
-    let Some(crew_kit) = crew_kit else {
+    let Some((crew_kit, item_budget)) = crew_gear else {
         return;
     };
     let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
@@ -3341,8 +3353,15 @@ fn seed_source_yield(
                 .unwrap_or_default();
             // **Through the same coverage the turn resolves** (`equipment.md` → "the
             // partly-equipped party"): baskets cover gatherers one unit at a time, so a seed priced
-            // at the whole crew's best tier would promise a basketful to people holding nothing.
-            let crew_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
+            // at the whole crew's best tier would promise a basketful to people holding nothing —
+            // and off this row's **share** of the band's baskets, because the rows beside it are
+            // reaching for the same ones.
+            let crew_coverage = equipment_cfg.coverage_from_units(
+                &crew_kit,
+                workers as f32,
+                &band_wear,
+                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+            );
             let per_worker_biomass = crew_coverage.weighted_rate(|kit| {
                 equipment_cfg.forage_per_worker_biomass_capacity(
                     labor.forage.per_worker_biomass_capacity,
@@ -3398,8 +3417,14 @@ fn seed_source_yield(
             // **The same coverage the turn resolves** (`equipment.md` → "the partly-equipped
             // party"): `advance_labor_allocation` divides this crew by the gear the band actually
             // owns, so a seed priced at the whole party's best tier would promise a haul only the
-            // armed half can make.
-            let hunt_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_wear);
+            // armed half can make — and by this row's **share** of it, because the hunt row beside
+            // it is reaching into the same stock of traps.
+            let hunt_coverage = equipment_cfg.coverage_from_units(
+                &crew_kit,
+                workers as f32,
+                &band_wear,
+                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+            );
             let per_worker_biomass = hunt_coverage.weighted_rate(|kit| {
                 equipment_cfg.hunt_per_worker_biomass_capacity(
                     labor.hunt.per_worker_biomass_capacity,
@@ -19510,6 +19535,372 @@ mod tests {
         assert!(
             allocation.last_yields.is_empty(),
             "its telemetry row must go with it"
+        );
+    }
+
+    // --- ONE BAND, ONE SET OF GEAR — one share, read by three surfaces ---------------------------
+    //
+    // `advance_labor_allocation` arms each work row from its **pro-rata share** of the band's gear
+    // (`equipment.md` → "ONE BAND, ONE SET OF GEAR"). Two surfaces quote a row before the turn pays
+    // it — the assign-time seed below (`seed_source_yield`) and the compose sheet's crew-take curve
+    // (`forecast_query::answer_hunt_crew_take`) — and both must be cut from that same share, or a
+    // band whose two hunt rows reach for one stock of traps is promised a crew the turn cannot arm.
+
+    /// The quarry both fixture rows hunt — a **trappable** species (`body_mass` under the trap's
+    /// `max_body_mass`), so the kit below is a real choice on it rather than a bundle whose weapon
+    /// never applies.
+    const TRAPPABLE_QUARRY: &str = "Rabbit Warren";
+    /// The kit both rows name — the reported band's shape: two hunt rows on one stock of traps.
+    const SHARED_HUNT_KIT: &str = "trapping";
+    /// The two items `trapping` puts in a hunter's hands. A complete outfit is one of each, so a
+    /// fixture stocks them together and the share is the same number on both.
+    const SHARED_HUNT_ITEMS: [&str; 2] = ["traps", "sled"];
+    /// Hands on **each** hunt row.
+    const SHORTFALL_ROW_CREW: u32 = 4;
+    /// Outfits for half the band's hunters — four across the two rows' eight hands.
+    const OUTFITS_FOR_HALF_THE_BAND: u32 = SHORTFALL_ROW_CREW;
+    /// The control stock: one outfit per hunter, so neither row is short.
+    const OUTFITS_FOR_THE_WHOLE_BAND: u32 = SHORTFALL_ROW_CREW * 2;
+    /// One row's share of [`OUTFITS_FOR_HALF_THE_BAND`] once the row beside it has taken its own —
+    /// and therefore the stock a band working **only** this row would have to own to be quoted the
+    /// identical crew. That equality is what pins the share arithmetic on all three surfaces.
+    const ONE_ROWS_SHARE_OF_HALF: u32 = OUTFITS_FOR_HALF_THE_BAND / 2;
+    /// The herd the competing row stands on.
+    const COMPETING_QUARRY_ID: &str = "shortfall_herd_competing";
+    /// The herd every arm's readings are taken on — always the **last** row assigned, so its seed is
+    /// written with every competing row already landed.
+    const QUERIED_QUARRY_ID: &str = "shortfall_herd_queried";
+    /// Standing stock and ceiling for both fixture herds, far above what four hunters draw in a
+    /// turn — so the escapement room never binds and what separates the arms is the **gear**.
+    const SHORTFALL_HERD_BIOMASS: f32 = 200.0;
+    /// The fixture herds draw nothing from the pasture layer, so a turn cannot recompute `K` out
+    /// from under a comparison between two arms.
+    const SHORTFALL_HERD_GRAZE_DRAW: f32 = 0.0;
+    /// Whether a row stands beside the queried one — spelled rather than passed as a bare bool at
+    /// the call sites.
+    const NO_COMPETING_ROW: bool = false;
+    const ONE_COMPETING_ROW: bool = true;
+
+    /// Seed one stationary, trappable herd at `coord` under `id`, at the roster's own body mass,
+    /// breeding rate and husbandry ceiling — the take prices it as the real species, and only the
+    /// stock and the graze draw are the fixture's.
+    fn seed_trappable_herd(app: &mut bevy::prelude::App, coord: UVec2, id: &str) {
+        use core_sim::{Herd, SizeClass};
+        let (body_mass, regrowth_rate, husbandry_ceiling) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let def = fauna
+                .species_by_display(TRAPPABLE_QUARRY)
+                .expect("the roster ships the fixture's quarry");
+            (
+                def.body_mass,
+                def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                def.husbandry_ceiling,
+            )
+        };
+        let mut herd = Herd::new(
+            id.to_string(),
+            TRAPPABLE_QUARRY.to_string(),
+            SizeClass::Small,
+            vec![coord],
+            SHORTFALL_HERD_BIOMASS,
+            SHORTFALL_HERD_BIOMASS,
+            SHORTFALL_HERD_GRAZE_DRAW,
+            regrowth_rate,
+            body_mass,
+        );
+        herd.husbandry_ceiling = husbandry_ceiling;
+        app.world.resource_mut::<HerdRegistry>().herds.push(herd);
+    }
+
+    /// The band, holding `outfits` complete `trapping` outfits and **nothing else** of either item —
+    /// how a fixture states *"this band owns four traps"* without inheriting the start-stocked
+    /// reserve a spawn is given.
+    fn spawn_band_with_hunt_outfits(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        tile: Entity,
+        outfits: u32,
+    ) -> Entity {
+        let band = spawn_idle_band(app, faction, tile);
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        let tiers: Vec<(&str, String)> = {
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            SHARED_HUNT_ITEMS
+                .iter()
+                .map(|item| {
+                    let tier = equipment_cfg
+                        .item(item)
+                        .unwrap_or_else(|| panic!("the roster ships '{item}'"))
+                        .default_tier()
+                        .id
+                        .clone();
+                    (*item, tier)
+                })
+                .collect()
+        };
+        let mut wear = app
+            .world
+            .get_mut::<BandEquipment>(band)
+            .expect("a spawned band carries a ledger");
+        for (item, tier) in &tiers {
+            wear.restore_batches(item, Vec::new());
+            wear.stock(item, outfits, tier, None);
+        }
+        band
+    }
+
+    /// Put [`SHORTFALL_ROW_CREW`] hunters on `herd_id` under the shared kit, through the real
+    /// command — which is what makes the seed under test the one a player's commit actually writes.
+    fn assign_trapping_hunt(app: &mut bevy::prelude::App, faction: FactionId, herd_id: &str) {
+        handle_assign_labor(
+            app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            "hunt".to_string(),
+            SHORTFALL_ROW_CREW,
+            None,
+            None,
+            Some(herd_id.to_string()),
+            None,
+            Some(SUSTAIN_FLOOR),
+            Some(SHARED_HUNT_KIT.to_string()),
+            Vec::new(),
+        );
+    }
+
+    /// One named source's `actual` yield — found by the herd it stands on rather than by index, so
+    /// an arm with a competing row reads the same row as an arm without one.
+    fn quarry_row_actual(app: &bevy::prelude::App, band: Entity, herd_id: &str) -> f32 {
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation");
+        let index = allocation
+            .assignments
+            .iter()
+            .position(|assignment| {
+                matches!(&assignment.target, LaborTarget::Hunt { fauna_id, .. } if fauna_id == herd_id)
+            })
+            .expect("the fixture staffed this herd");
+        allocation.last_yields[index].actual
+    }
+
+    /// The compose sheet's own reading: the crew-take curve's point estimate at the row's crew, off
+    /// the live world through the shipped query.
+    fn crew_take_likely(app: &mut bevy::prelude::App, herd_id: &str) -> f32 {
+        let reply = core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::HuntCrewTake(sim_runtime::commands::HuntCrewTakeQuery {
+                faction_id: 0,
+                band_id: FIXTURE_BAND_ID,
+                herd_id: herd_id.to_string(),
+                kit_id: SHARED_HUNT_KIT.to_string(),
+                floor: SUSTAIN_FLOOR,
+                max_workers: SHORTFALL_ROW_CREW,
+            }),
+        );
+        match reply {
+            QueryReply::HuntCrewTake(reply) => {
+                reply
+                    .per_crew
+                    .last()
+                    .expect("a curve over 1..=crew carries the crew's own row")
+                    .animals_likely
+            }
+            other => panic!("the crew-take ask must be answered with a curve: {other:?}"),
+        }
+    }
+
+    /// The three readings one arm of the shortfall fixture produces, all for the **same** crew on
+    /// the **same** herd.
+    struct ShortfallReading {
+        /// What `seed_source_yield` wrote when the command committed the row.
+        seeded: f32,
+        /// What `advance_labor_allocation` then paid it.
+        resolved: f32,
+        /// What the crew-take curve quotes at that crew, in animals a turn.
+        forecast: f32,
+    }
+
+    /// A band holding `outfits`, staffed on the queried herd and — when `competing_row` — on the
+    /// herd beside it, with every arm's world otherwise identical. Both fixtures below build their
+    /// arms from this, so *"the same band, one competing claim apart"* has one statement.
+    fn shortfall_world(competing_row: bool, outfits: u32) -> (bevy::prelude::App, Entity) {
+        let mut app = build_test_app();
+        // **The retreat is the take's one stochastic stage**, and a mixed party resolves a
+        // different dispersion from a fully-trapped one — so held at zero, the seed and the turn
+        // are the same arithmetic and a gap between them is the share and nothing else.
+        app.world
+            .resource_mut::<FaunaConfigHandle>()
+            .hold_wariness_at_zero();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        // Both herds exist in both arms — only the *row* comes and goes, so the two arms differ by
+        // the competing claim on the gear and by nothing else in the world.
+        seed_trappable_herd(&mut app, coord, COMPETING_QUARRY_ID);
+        seed_trappable_herd(&mut app, coord, QUERIED_QUARRY_ID);
+        let band = spawn_band_with_hunt_outfits(&mut app, faction, tile, outfits);
+
+        if competing_row {
+            assign_trapping_hunt(&mut app, faction, COMPETING_QUARRY_ID);
+        }
+        assign_trapping_hunt(&mut app, faction, QUERIED_QUARRY_ID);
+        (app, band)
+    }
+
+    /// Stand that band up and read all three surfaces at [`SHORTFALL_ROW_CREW`].
+    fn shortfall_arm(competing_row: bool, outfits: u32) -> ShortfallReading {
+        let (mut app, band) = shortfall_world(competing_row, outfits);
+
+        let seeded = quarry_row_actual(&app, band, QUERIED_QUARRY_ID);
+        // Quoted before the turn, exactly as a compose sheet is — the curve regrows its own private
+        // quarry, so it describes the turn the seed describes.
+        let forecast = crew_take_likely(&mut app, QUERIED_QUARRY_ID);
+        resolve_labor(&mut app);
+        let resolved = quarry_row_actual(&app, band, QUERIED_QUARRY_ID);
+        ShortfallReading {
+            seeded,
+            resolved,
+            forecast,
+        }
+    }
+
+    /// **⛔ THE FORECAST, THE SEED AND THE TAKE ARE CUT FROM ONE SHARE OF THE BAND'S GEAR.**
+    ///
+    /// The three readers of the crew cut have to agree at the same crew size, and the way to say so
+    /// without three different units is to name the stock each is really pricing: a row rationed to
+    /// half a shared ledger must read **exactly** what a band owning only that half reads. All three
+    /// surfaces are asserted against that same control, so a reader still cutting from the whole
+    /// ledger fails on its own line rather than hiding behind the other two.
+    ///
+    /// **The abundant arm is the regression guard and the scarce arm is the liveness one.** Three
+    /// surfaces that agree is also what three equally-broken surfaces report, so the scarce arm has
+    /// to show the numbers actually **falling** — and the abundant arm has to show that a band which
+    /// is not short is bit-identical to the same row standing alone, because a silent retune of a
+    /// band with gear to spare is what this change could most easily hide.
+    #[test]
+    fn a_forecast_a_seed_and_a_take_are_cut_from_one_share_of_the_bands_gear() {
+        let shared = shortfall_arm(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
+        let owns_only_its_share = shortfall_arm(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let stocked = shortfall_arm(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+        let stocked_alone = shortfall_arm(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+
+        assert!(
+            (shared.seeded - shared.resolved).abs() < SEED_EPSILON,
+            "a short band's commit-time seed must be what the turn then pays (seed {}, resolved {})",
+            shared.seeded,
+            shared.resolved
+        );
+        assert_eq!(
+            shared.seeded, owns_only_its_share.seeded,
+            "the SEED prices the row at its share of the shared stock — the same reading a band \
+             owning only that share gets"
+        );
+        assert_eq!(
+            shared.resolved, owns_only_its_share.resolved,
+            "…and so does the TAKE"
+        );
+        assert_eq!(
+            shared.forecast, owns_only_its_share.forecast,
+            "…and so does the FORECAST, which is the surface the player commits from"
+        );
+
+        assert!(
+            shared.resolved < stocked.resolved,
+            "liveness: a band short of outfits must bring home LESS than the same two rows fully \
+             outfitted ({} against {})",
+            shared.resolved,
+            stocked.resolved
+        );
+        assert!(
+            shared.forecast < stocked.forecast,
+            "liveness: and the curve must say so too ({} against {})",
+            shared.forecast,
+            stocked.forecast
+        );
+        assert!(
+            shared.resolved > 0.0,
+            "liveness: the fixture must actually hunt, or every equality above is two zeros"
+        );
+
+        assert_eq!(
+            (stocked.seeded, stocked.resolved, stocked.forecast),
+            (
+                stocked_alone.seeded,
+                stocked_alone.resolved,
+                stocked_alone.forecast
+            ),
+            "a band that is NOT short reads bit-for-bit what the same row read as the only claimant \
+             on the ledger — the share still exceeds what its own people can hold"
+        );
+        assert!(
+            (stocked.seeded - stocked.resolved).abs() < SEED_EPSILON,
+            "and the unshort arm's seed still equals its take (seed {}, resolved {})",
+            stocked.seeded,
+            stocked.resolved
+        );
+    }
+
+    /// **How long a launch sheet says a party of [`SHORTFALL_ROW_CREW`] needs to fill its pack** on
+    /// the queried herd — the `resolve_ask` path, the third reader of the crew cut and the one a
+    /// player commits an expedition from.
+    ///
+    /// **`turns_to_fill` rather than the payload**, because the shipped trip is `pack_full`-bound:
+    /// a half-armed party comes home with the same load, having taken longer to gather it, so the
+    /// delivered figure separates the arms by nothing but float noise while the fill time separates
+    /// them in whole turns.
+    fn trip_turns_to_fill(competing_row: bool, outfits: u32) -> u32 {
+        let (mut app, _band) = shortfall_world(competing_row, outfits);
+        let reply = core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
+                faction_id: 0,
+                band_id: FIXTURE_BAND_ID,
+                herd_id: QUERIED_QUARRY_ID.to_string(),
+                kit_id: SHARED_HUNT_KIT.to_string(),
+                party_workers: SHORTFALL_ROW_CREW,
+                floor: SUSTAIN_FLOOR,
+                // The composed row is the whole subject; a preset ladder and a plateau scan would
+                // be a second reading of the same coverage.
+                preset_floors: Vec::new(),
+                max_party_workers: 0,
+            }),
+        );
+        match reply {
+            QueryReply::HuntTripForecast(reply) => reply.at_composed.turns_to_fill,
+            other => panic!("the trip ask must be answered with a forecast: {other:?}"),
+        }
+    }
+
+    /// **⛔ AND THE LAUNCH SHEET IS CUT FROM THE SAME SHARE.**
+    ///
+    /// `forecast_query::resolve_ask` prices a party nobody has committed yet, so the row already
+    /// standing on the asked-about herd is **excluded** and the asked-for party takes its place in
+    /// the denominator — a party of `w` competes with the band's other rows exactly as a committed
+    /// crew of `w` does. The claim is the one the fixture above makes, on the surface an expedition
+    /// is launched from: a party rationed against a competing row reads what a band owning only
+    /// that share reads.
+    #[test]
+    fn a_trip_forecast_is_priced_at_the_asking_partys_share_of_the_gear() {
+        let shared = trip_turns_to_fill(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
+        let owns_only_its_share = trip_turns_to_fill(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let stocked = trip_turns_to_fill(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+        let stocked_alone = trip_turns_to_fill(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+
+        assert_eq!(
+            shared, owns_only_its_share,
+            "a party quoted against a competing row reads what a band owning only its share reads"
+        );
+        assert!(
+            shared > stocked,
+            "liveness: a short band's sheet must promise a LONGER trip than a fully outfitted \
+             one ({shared} turns against {stocked})"
+        );
+        assert_eq!(
+            stocked, stocked_alone,
+            "a band that is NOT short quotes bit-for-bit what the same party quoted as the only \
+             claimant on the ledger"
         );
     }
 

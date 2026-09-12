@@ -1149,6 +1149,11 @@ func _forage_kit_line(tile: Dictionary, held: float) -> String:
 	h._hud.close_compose_sheet()
 	var band := BandFx.band_fixture()
 	band["kit_item_conditions"] = BandFx.kit_condition_rows(BandFx.KIT_HUNT_HEADCOUNT, held)
+	# ⛔ **THE BASKETS ARE IN THE TENT** — this sheet composes a crew nobody has committed, and
+	# `shortfall_line` counts the FREE store against it. `kit_condition_row` makes `count` follow
+	# `workersHolding`, so an unwrapped fixture states a band whose every basket is already out with a
+	# gathering row, and all three legs below would honestly read `0 of 3`.
+	band = BandFx.with_kit_in_the_store(band)
 	h._hud._band_labor._player_band = band
 	h._hud._band_labor._player_bands = [band]
 	h._hud._compose.reset_forage_source()

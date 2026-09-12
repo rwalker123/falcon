@@ -2988,7 +2988,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         func(picked: String) -> void:
             _compose.set_hunt_kit_id(picked)
             _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_count())
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_count(),
+        _band_labor.hunt_assignment_of(band, herd_id))
     # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
     # directly under the crew that will fight it — both lines answer "is this crew the right size, and
     # can it win at all", which is what the stepper one row up has just posed.
@@ -3045,17 +3046,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 HudStyle.DANGER_HEX, String(gate["text"])])
             gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
             target.add_child(gate_label)
-        else:
-            # **THE FIGHT IS WINNABLE — BUT NOT BY EVERYBODY.** The gate above answers at ONE tier,
-            # and on a partly-equipped band that tier is the best-armed crew's, so a cleared gate is
-            # the reassuring half of a split party (issue #520). The complement, never the companion.
-            #
-            # **ASKED ABOUT THE COMPOSED PARTY, NOT THE BAND.** The gear covers a prefix of whoever
-            # is sent, so a party small enough to fit inside the armed run has no split at all — and
-            # a band-level sentence over this stepper would name more bare hands than there are
-            # hunters in the party.
-            HudWidgets.mount_hunt_crew_split(target, band, herd, quarry, kit_id,
-                _compose.hunt_count())
+        # ⛔ **A CLEARED GATE NOW RENDERS NOTHING, and the `else` that stood here is RETIRED.** It mounted
+        # `HudWidgets.mount_hunt_crew_split` — *"⚠ 1 of your 3 hunters can take Wild Horses; the other 2
+        # hold too little gear and land nothing on it at any headcount."* — the gate's complement for a
+        # partly-equipped band (issue #520). Reported from play, on a sheet showing it directly beneath
+        # the kit line: *"The yellow message mentions the hunters. I'm not sure we need that message at
+        # all, we have the stalking kit message, it seems the second is redundant, you can remove it."*
+        #
+        # **THE KIT LINE UNDER THE PICKER IS WHAT SURVIVES** (`KitRoster.shortfall_line`) — one sentence
+        # about the gear, on the control that chose it. **The REFUSAL above is untouched**: a fight this
+        # party cannot make at all must still say so, and that is the branch, not this one.
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
@@ -3296,11 +3296,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ## which has no animal to be inapplicable to.
 ## **`crew` IS THE STEPPER ONE ROW ABOVE**, handed on so the hint can say how far the band's gear
 ## reaches into the party being composed. A sheet that passes none keeps the pre-clause line.
+## **`assignment` IS THE COMMITTED SOURCE ROW this sheet is composing**, `{}` for a source this band
+## does not work yet. It is the raw WIRE row, so it carries the `kit_workers_holding` of `workers`
+## pair the sim cut from the band's one ledger — which is what stops two 4-hunter sheets on four traps
+## each reading *covered* while the rows behind them each arm two. `KitRoster.shortfall_line` carries
+## the argument.
 func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: String,
         default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
-        prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED) -> void:
+        prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED,
+        assignment: Dictionary = {}) -> void:
     var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix,
-        HudComposeVocab.COMPOSE_FIELD_KIT, false, crew)
+        HudComposeVocab.COMPOSE_FIELD_KIT, false, crew, assignment)
     if row != null:
         target.add_child(row)
 
@@ -3825,7 +3831,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         func(picked: String) -> void:
             _compose.set_forage_kit_id(picked)
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
-        {}, "", _compose.forage_count())
+        {}, "", _compose.forage_count(), _band_labor.forage_assignment_of(band, x, y))
     # **THE SPECIES CHIPS — what this crew carries home**, standing where the retired crop picker stood
     # and doing both of that control's jobs: on a plain gather it narrows the TAKE (multi-select, the
     # selective gather); with a rung composed it is the COMMIT crop (single-select), which is the same
@@ -4168,7 +4174,8 @@ func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, part
         return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, party, floor, band,
+        _band_labor.kits())
     # A party of 0 is `invalid_party` server-side and there is no raid to project, so it is never
     # asked — the sheet's Send is already disabled there and the readout has nothing to say.
     if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
@@ -4232,7 +4239,8 @@ func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: f
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, workers, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
+        _band_labor.kits())
     if workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -4273,7 +4281,8 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
     # under one key and read back under another.
     var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, workers, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
+        _band_labor.kits())
     var now := Time.get_ticks_msec()
     if key != _crew_take_drag_asked_key \
             and now - _crew_take_drag_asked_at_msec \
@@ -5281,7 +5290,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         func(picked: String) -> void:
             _compose.set_deposit_kit_id(picked)
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        {}, "", _compose.deposit_count())
+        {}, "", _compose.deposit_count(),
+        _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's two zero-crew cases, verbatim: `0` on a
     # working this band does not hold is a no-op (dead button), `0` on one it does is the sim's own
     # unassign (live button, renamed).
@@ -5712,6 +5722,12 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
             SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
         SourceForecast.material_payoff_rows(assignment.get(
             SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY, [])))
+    # ⛔ **THE GEAR-SHORTFALL ARM IS DELIBERATELY NOT HERE, and that is not the drift the paragraph
+    # above warns about.** The work board's row carries `kit_note` because it has nowhere else to say
+    # it; this summary sits on a sheet whose KIT PICKER states the identical sentence one control
+    # away, off the same published pair (`KitRoster.shortfall_line`'s committed arm, handed this
+    # source's row by `_mount_kit_row`). Adding it here would print one shortfall twice on one sheet
+    # — the failure the retired `N of M equipped` clause was, not the one the material arm fixed.
     return {
         "text": text.strip_edges(),
         "tooltip": String(readout["tooltip"]),

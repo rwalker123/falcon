@@ -720,13 +720,19 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	# **COVERED — every hunter holds what the kit is built around.** The gear is also visibly WORN
 	# (spears 87, sled 54), which is what makes this a claim about coverage rather than about
 	# condition: the old line would have printed both numbers here.
-	var covered := KitRoster.tier_hint(roster, big_game, BandFx.with_equipped_kit(
-		BandFx.band_fixture()), KitRoster.JOB_HUNT, crew)
+	# ⛔ **THE GEAR IS IN THE TENT, NOT ON A CREW** (`BandFx.with_kit_in_the_store`) — every band in
+	# this block, because every claim below is about the PRE-COMMIT arithmetic: what can this party be
+	# handed. `kit_condition_row` makes `count` follow `workersHolding`, so an unwrapped fixture is a
+	# band whose every unit is already out with a committed row, and `shortfall_line` correctly reads
+	# `0 of 17` off it — which would satisfy none of the five numbers this function pins.
+	var covered := KitRoster.tier_hint(roster, big_game, BandFx.with_kit_in_the_store(
+		BandFx.with_equipped_kit(BandFx.band_fixture())), KitRoster.JOB_HUNT, crew)
 	h._assert_hud("a fully covered crew gets NO kit line at all (\"%s\")" % covered, covered == "")
 
 	# **SHORT — five complete Stalking kits among seventeen hunters.**
 	var partly := BandFx.band_fixture()
 	partly["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_SPEARS_HELD)
+	partly = BandFx.with_kit_in_the_store(partly)
 	var some := KitRoster.tier_hint(roster, big_game, partly, KitRoster.JOB_HUNT, crew)
 	h._assert_hud("…a partly outfitted crew counts KITS, not items (wanted \"%s\", got \"%s\")"
 			% [_kit_shortfall_want(int(SHORTFALL_SPEARS_HELD), crew, big_game), some],
@@ -737,6 +743,7 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	# once read `spears dry`, i.e. *you have spears and they are spent*.
 	var bare := BandFx.band_fixture()
 	bare["kit_item_conditions"] = BandFx.kit_condition_rows(SHORTFALL_NONE_HELD)
+	bare = BandFx.with_kit_in_the_store(bare)
 	var none_held := KitRoster.tier_hint(roster, big_game, bare, KitRoster.JOB_HUNT, crew)
 	h._assert_hud("…and owning NONE reads `0 of %d` in the same sentence (got \"%s\")"
 			% [crew, none_held],
@@ -756,6 +763,7 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 		if String(row["item_id"]) == BandFx.KIT_ITEM_SLED:
 			row["count"] = int(SHORTFALL_SLED_HELD)
 	sled_short["kit_item_conditions"] = rows
+	sled_short = BandFx.with_kit_in_the_store(sled_short)
 	var sled_line := KitRoster.tier_hint(roster, big_game, sled_short, KitRoster.JOB_HUNT, crew)
 	h._assert_hud("…a kit is only as complete as its SCARCEST item (wanted \"%s\", got \"%s\")"
 			% [_kit_shortfall_want(int(SHORTFALL_SLED_HELD), crew, big_game), sled_line],
@@ -766,6 +774,7 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	# the covered case, so the honest answer is SILENCE.
 	var deep := BandFx.band_fixture()
 	deep["kit_item_conditions"] = BandFx.kit_condition_rows(crew + SHORTFALL_SURPLUS)
+	deep = BandFx.with_kit_in_the_store(deep)
 	h._assert_hud("…and a store deeper than the party says nothing at all, never `%d of %d`"
 			% [crew + SHORTFALL_SURPLUS, crew],
 		KitRoster.tier_hint(roster, big_game, deep, KitRoster.JOB_HUNT, crew) == "")
@@ -783,6 +792,58 @@ func _assert_the_kit_line_is_a_shortfall_warning() -> void:
 	var unstated := KitRoster.tier_hint(roster, big_game, silent, KitRoster.JOB_HUNT, crew)
 	h._assert_hud("…and a band that publishes no item ledger is not accused (\"%s\")" % unstated,
 		unstated == "")
+	_assert_a_committed_sheet_states_its_own_row()
+
+## The reported band's own arithmetic: **four kits, two rows of four, and each row arms two.**
+const COMMITTED_ROW_CREW := 4
+const COMMITTED_ROW_ARMED := 2.0
+## What that band OWNS — four complete outfits, every one of them out with one of the two rows. The
+## whole-store reading calls a four-hunter sheet covered off exactly this number, which is the
+## contradiction the committed arm removes.
+const COMMITTED_ROW_STOCK := 4.0
+
+## ⛔ **A COMMITTED SHEET STATES ITS OWN ROW'S PUBLISHED PAIR, NOT A DIVISION OF THE STORE.**
+##
+## Reported from play: a band outfitted with four trapping kits staffed two hunt rows of four that
+## both resolved `trapping`; the sim arms two hunters on each, and every compose sheet in the client
+## read the band's WHOLE store against its own crew and called both of them covered. The row and the
+## sheet that staffs it were two answers to one question, and the reassuring one was on the sheet.
+##
+## **THE THREE LEGS ARE ONE CLAIM**, because any of them alone passes a client that has simply gone
+## quiet or simply gone loud: the committed row states `2 of 4`; the identical band and crew with NO
+## row handed in states something else (the free-store reading, which is `0 of 4` — the store is all
+## out with the two rows); and a row the sheet is not composing — a picker mid-change, whose `kit_id`
+## is not the kit being rendered — is ignored rather than quoted at the wrong kit.
+func _assert_a_committed_sheet_states_its_own_row() -> void:
+	var roster := BandFx.kit_roster_fixture()
+	var big_game := KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME)
+	var band := BandFx.band_fixture()
+	band["kit_item_conditions"] = BandFx.kit_condition_rows(COMMITTED_ROW_STOCK)
+	var row := {
+		"kit_id": BandFx.KIT_ID_BIG_GAME, "workers": COMMITTED_ROW_CREW,
+		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: COMMITTED_ROW_ARMED,
+	}
+	var committed := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
+		COMMITTED_ROW_CREW, row)
+	var want := _kit_shortfall_want(int(COMMITTED_ROW_ARMED), COMMITTED_ROW_CREW, big_game)
+	h._assert_hud("…a sheet on a COMMITTED row states that row's own share (wanted \"%s\", got \"%s\")"
+			% [want, committed], committed == want)
+	# **THE FALSIFIER: the same band, the same crew, no row.** It must NOT answer `2 of 4` — that
+	# figure exists nowhere but on the row, so a client that had gone on dividing the store would
+	# agree with the leg above by coincidence and disagree here.
+	var uncommitted := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
+		COMMITTED_ROW_CREW)
+	h._assert_hud("…and without that row the sheet reads the free STORE instead, not the row's share (\"%s\")"
+			% uncommitted, uncommitted != "" and uncommitted != want)
+	# **A ROW PRICED AT ANOTHER KIT IS NOT THIS SHEET'S ANSWER.** The player has changed the picker,
+	# so the sim has not priced what is on screen; quoting the old choice's coverage under the new
+	# kit's name is the one way this arm can lie.
+	var other_kit_row := row.duplicate()
+	other_kit_row["kit_id"] = BandFx.KIT_ID_NONE
+	var mismatched := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
+		COMMITTED_ROW_CREW, other_kit_row)
+	h._assert_hud("…and a row priced at a DIFFERENT kit is ignored, never quoted under this one (\"%s\")"
+			% mismatched, mismatched == uncommitted)
 
 # =====================================================================================
 #  A KIT THAT CANNOT WORK ON THIS PREY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO

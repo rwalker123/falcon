@@ -3906,6 +3906,11 @@ pub fn advance_labor_allocation(
             ),
             band_reach,
         );
+        // **ONE BAND, ONE SET OF GEAR** — the per-item unit budget every row below cuts its crews
+        // from ([`LaborAllocation::item_budget`]). Resolved here, before the walk, for the reason
+        // `band_kit` is: a band's ledger is one thing, and a row that read all of it would arm its
+        // own crew off gear the row beside it is already holding.
+        let item_budget = allocation.item_budget(&equipment_cfg);
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             // **A ROW WITH NO TAKE CREW IS STILL VISITED, because the row is the band's HOLDING**
@@ -4050,7 +4055,16 @@ pub fn advance_labor_allocation(
             // party"). A band owning five spears and staffing ten hunters sends five out armed and
             // five bare-handed, so every tier below that a *count* can bind is read through this
             // one coverage rather than off the crew's kit alone.
-            let crew_coverage = equipment_cfg.coverage(&crew_kit, workers as f32, &band_kit);
+            //
+            // **AND IT IS CUT FROM THE BAND'S SHARE OF THE LEDGER, NOT THE LEDGER** (`item_budget`
+            // above). Asked against the whole ledger, every row here got a full copy of the band's
+            // things: two hunt rows on one `trapping` kit armed four hunters each off four traps.
+            let crew_coverage = equipment_cfg.coverage_from_units(
+                &crew_kit,
+                workers as f32,
+                &band_kit,
+                item_budget.share_for(workers as f32, &band_kit, &equipment_cfg),
+            );
             // This crew's HUNT haul tier — the **sled**, if its kit carries one and the band still
             // has condition in it — **averaged over the crews**, because a party short of sleds
             // drags home what its people are actually dragging.
@@ -9490,10 +9504,21 @@ pub fn advance_predator_raids(
         // band holding three clubs and standing eight warriors up arms three of them; the other
         // five defend at the bare hand's `1`. Resolved through the same `coverage` seam the hunt
         // uses, so the two roles cannot disagree about what "the band owns three of these" means.
+        //
+        // **AND THE BAND'S OTHER ROWS ARE HOLDING THINGS TOO** — the clubs are cut from this band's
+        // share of the ledger ([`LaborAllocation::item_budget`]), the same budget the work rows are
+        // cut from, so a warrior row cannot arm itself off gear a hunt row is already carrying. No
+        // shipped kit puts an item in both, which is why this reads identically today.
         let warrior_kit = alloc.kit_on(&LaborTarget::Warrior, &equipment_cfg);
-        let warrior_coverage = band_equipment
-            .as_deref()
-            .map(|wear| equipment_cfg.coverage(&warrior_kit, warrior_count, wear));
+        let warrior_budget = alloc.item_budget(&equipment_cfg);
+        let warrior_coverage = band_equipment.as_deref().map(|wear| {
+            equipment_cfg.coverage_from_units(
+                &warrior_kit,
+                warrior_count,
+                wear,
+                warrior_budget.share_for(warrior_count, wear, &equipment_cfg),
+            )
+        });
         // One contingent per crew, best-armed first — the resolver gates each attacker/target pair
         // on that attacker's own `attack`, so an unarmed warrior run contributes exactly what it
         // would have contributed on its own rather than borrowing the clubs' tier.

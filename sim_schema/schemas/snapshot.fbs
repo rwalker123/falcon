@@ -2120,6 +2120,29 @@ table LaborAssignment {
   // "" on every row that is not `extract`, which is every other row kind: nothing else names a
   // material.
   material:string;
+  // --- HOW FAR THIS ROW'S GEAR REACHES (appended last) ------------------------------------------
+  // *** WORKERS ON THIS ROW HOLDING A COMPLETE `kitId` KIT. ***
+  //
+  // The denominator is `workers`, already on this table: "2 of 4 outfitted". Before this field a
+  // work row structurally could not say it was short - it named its kit and nothing about how far
+  // that kit went - so a band with four traps and eight hunters staffed across two trapping rows
+  // was told nothing, anywhere, and every one of those eight was priced as if armed.
+  //
+  // IT IS A COMPLETE OUTFIT, not a per-item count: the min over the kit's items of the workers
+  // holding each. Three spears and no sled field ZERO stalking kits, not three. The per-ITEM
+  // reading is KitItemCondition.workersHolding on the cohort, which is where a readout goes to name
+  // WHICH thing is missing.
+  //
+  // *** ONE BAND, ONE SET OF GEAR. *** Every row of this list is cut from the band's ledger ONCE,
+  // pro-rata by head count over the rows that reach for each item - so two rows naming `trapping`
+  // against four traps read 2 of 4 each, not 4 of 4 each. Rows sharing an item (the sled is in both
+  // `big_game` and `trapping`) share its scarcity however they named it.
+  //
+  // == workers WHEN THE KIT CARRIES NOTHING - the `none` kit, and any row naming it, has nothing to
+  // be short of. Do NOT render that as a shortfall; a 0 there would read as "everybody short".
+  // A float because coverage counts workers in fractions, the same head count `workers` rounds.
+  // Derived per-turn at capture. Appended last (append-only).
+  kitWorkersHolding:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -5091,36 +5114,49 @@ table KitItemCondition {
   //
   // A float because a forecast counts workers in fractions and this is the same head count.
   //
-  // *** WHICH JOB IT IS QUOTED AT ***
-  // The job whose quoted kit carries this item, and — for an item several jobs' kits carry — the one
-  // `PopulationCohortState.kitId` names, exactly as `huntCarryPerWorkerBiomass` is. So `spears` and
-  // `sled` are quoted at the hunt row, `baskets` at the forage default, `clubs` at the warrior
-  // default, `wayfinding` at the scout default. An item NO quoted kit carries reads 0 — including a
-  // bench tool, which no kit may name at all.
+  // *** WHICH ROWS IT IS QUOTED OVER ***
+  // EVERY ASSIGNMENT WHOSE RESOLVED KIT ACTUALLY CARRIES THE ITEM, summed - not a job's default
+  // kit. The per-row terms are the very coverages `LaborAssignment.kitWorkersHolding` publishes,
+  // off the one band-wide budget the sim armed the crews from, so this readout and the take cannot
+  // disagree by construction.
   //
-  // 0 is therefore three different sentences (nobody staffed on the job, the band owns none, or no
-  // quoted kit carries it) and a readout that needs to tell them apart reads `count` beside it.
+  // The rule it replaced quoted each item against `default_kits.<job>`, which lied in both
+  // directions at once on a band running a non-default kit: two staffed `trapping` rows published
+  // `spears 4 of 8` - a shortfall on gear NO row was using, denominated in the whole hunt job's
+  // head count - while `traps`, the thing the band was actually short of, read `0 of 0` and is
+  // defined below as "nobody is staffed, do not warn".
+  //
+  // AN ITEM NO ASSIGNMENT CARRIES READS 0, and that is correct and silent: a bench tool (no kit may
+  // name one), a basket on a band with nobody gathering, and now `spears` on a band with no
+  // big-game row.
+  //
+  // A DETACHED PARTY carries ONE kit across every job, so its rows are quoted at that kit over the
+  // whole party head count.
+  //
+  // 0 is therefore three different sentences (no row carries it, nobody is staffed on the rows that
+  // do, or the band owns none) and a readout that needs to tell them apart reads `count` beside it.
   workersHolding:float = 0;
   // --- ...AND ITS DENOMINATOR (appended) --------------------------------------------------------
   // *** THE TWO FIELDS ARE ONE SENTENCE: `workersHolding` OF `workersOnQuotedJob`. ***
   //
-  // The head count of the job this row is quoted at - the same number the sim divided against when
-  // it resolved `workersHolding`, published rather than re-derived. Without it only the HUNT has a
-  // denominator on the wire (Sigma huntCrews.workers), so a spears shortfall could be stated and a
-  // basket / club / wayfinding shortfall could not - the quiet half of the same "reassuring
-  // direction" failure `huntCrews` exists to remove.
+  // The head count of the rows this item is quoted over - the sum of `workers` across exactly the
+  // assignments whose kit carries it, and the same number the sim divided against when it resolved
+  // `workersHolding`. Published rather than re-derived: without it only the HUNT has a denominator
+  // on the wire (Sigma huntCrews.workers), so a spears shortfall could be stated and a basket /
+  // club / wayfinding shortfall could not - the quiet half of the same "reassuring direction"
+  // failure `huntCrews` exists to remove.
   //
-  // The job is the SAME one `workersHolding` names, by the same tie-break: whichever quoted kit
-  // carries the item, and `PopulationCohortState.kitId`'s for an item several jobs' kits carry. The
-  // pair therefore cannot disagree about which job it is describing.
+  // The rows are the SAME ones `workersHolding` sums over - both halves are folded out of one set
+  // of per-row coverages - so the pair cannot disagree about what it is describing.
   //
   // *** TWO ZEROS A READER MUST NOT CONFUSE ***
-  //   - workersOnQuotedJob == 0 -> NOBODY IS STAFFED on that job. "0 of 0" is not a shortfall; the
-  //     band has assigned no gatherers, so no basket was needed and none went unheld. Do not render
-  //     it as a warning, and do not divide by it.
-  //   - workersOnQuotedJob > 0 && workersHolding == 0 -> the job IS staffed and NOBODY is holding
-  //     the item. That is the real shortfall: every one of those workers is at the unequipped tier.
-  // (An item no quoted kit carries reads 0/0 for the third reason `workersHolding` documents, and
+  //   - workersOnQuotedJob == 0 -> NOBODY IS STAFFED on a row carrying this item. "0 of 0" is not a
+  //     shortfall; the band has assigned no gatherers, so no basket was needed and none went
+  //     unheld. Do not render it as a warning, and do not divide by it.
+  //   - workersOnQuotedJob > 0 && workersHolding == 0 -> those rows ARE staffed and NOBODY is
+  //     holding the item. That is the real shortfall: every one of those workers is at the
+  //     unequipped tier.
+  // (An item no row carries at all reads 0/0 for the third reason `workersHolding` documents, and
   // `count` is what separates it from the two above.)
   workersOnQuotedJob:float = 0;
 }

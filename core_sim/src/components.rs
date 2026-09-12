@@ -4358,6 +4358,66 @@ impl LaborAllocation {
             .sum()
     }
 
+    /// **THIS BAND'S GEAR, DIVIDED ONCE ACROSS EVERY ROW THAT REACHES FOR IT** — the per-item unit
+    /// budget every row's coverage is then struck against
+    /// ([`crate::equipment_config::EquipmentConfig::coverage_from_units`]).
+    ///
+    /// ⛔ **Resolve it ONCE per band, before the rows are walked.** A row asking the whole ledger
+    /// arms its own crew off it, so N rows naming one item each get a full copy of it — four traps
+    /// arming four hunters on one herd and four more on the next. See
+    /// [`crate::equipment_config::BandItemBudget`] for why the key is the item rather than the kit
+    /// id, and why the split is pro-rata.
+    ///
+    /// **Every row counts, band-wide roles included**: a Scout or a Warrior row is an ordinary
+    /// assignment holding ordinary head count, and its wayfinding gear is as much the band's as the
+    /// hunters' spears.
+    pub fn item_budget(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> crate::equipment_config::BandItemBudget {
+        // The kits have to outlive the borrow the budget builds from, so they are resolved into a
+        // vector first — `kit_choice` mints a fresh `KitChoice` per call.
+        let kits = self.kitted_rows(config, |_| true);
+        crate::equipment_config::BandItemBudget::of_rows(
+            kits.iter().map(|(kit, workers)| (kit, *workers)),
+        )
+    }
+
+    /// **THE BAND'S ROWS OTHER THAN THE ONE STANDING ON `source`** — the competing demand a
+    /// **prospective** crew on that source is rationed against
+    /// ([`crate::equipment_config::BandItemBudget::with_prospective_row`]).
+    ///
+    /// ⛔ **The exclusion is the whole point.** A forecast, an assign-time seed and the turn's take
+    /// all describe one crew on one source; if the source's existing row stayed in, its head count
+    /// would be counted twice — once as itself, once as the crew being asked about — and the quote
+    /// would come back short of the take it is predicting. A source with no row yet simply has
+    /// nothing to drop, which is why the same call serves both cases.
+    ///
+    /// It resolves each kit through [`LaborAssignment::kit_choice`], exactly as [`Self::item_budget`]
+    /// does, so a prospective row and a committed one are struck against the identical denominator.
+    pub fn rows_excluding_source(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+        source: &LaborTarget,
+    ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
+        self.kitted_rows(config, |target| !target.same_source(source))
+    }
+
+    /// The rows `keep` accepts, each as its **resolved** kit and head count — the pairs both
+    /// [`Self::item_budget`] and [`Self::rows_excluding_source`] are built from, spelled once so a
+    /// committed row and a prospective one cannot come to be kitted two ways.
+    fn kitted_rows(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+        keep: impl Fn(&LaborTarget) -> bool,
+    ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
+        self.assignments
+            .iter()
+            .filter(|assignment| keep(&assignment.target))
+            .map(|assignment| (assignment.kit_choice(config), assignment.workers as f32))
+            .collect()
+    }
+
     /// **The kit staffed on a SINGLETON source**, resolved through the same seam every priced row
     /// reads ([`LaborAssignment::kit_choice`]) — or the job's default when the role is unstaffed.
     ///

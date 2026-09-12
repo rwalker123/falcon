@@ -1295,6 +1295,137 @@ impl KitCoverage {
             .map(|crew| crew.workers)
             .sum()
     }
+
+    /// **Workers on this row holding a COMPLETE kit** — the `min` over the kit's items of
+    /// [`Self::workers_holding`], and what `LaborAssignment.kitWorkersHolding` publishes.
+    ///
+    /// **The `min` is what makes it OUTFITS rather than a per-axis count.** Three spears and no sled
+    /// field zero stalking kits, not three — the crews are prefixes of the same party, so the people
+    /// holding everything are exactly the shortest item's run.
+    ///
+    /// **A kit with NO ITEMS answers the whole head count**, because there is nothing to be short
+    /// of: `none` (and any row naming it) is fully outfitted by definition, and a `0` there would
+    /// read as *everybody short*.
+    pub fn workers_holding_whole_kit(&self) -> f32 {
+        self.kit
+            .uses()
+            .map(|item| self.workers_holding(item))
+            .fold(self.workers, f32::min)
+    }
+}
+
+/// **WHAT ONE BAND'S GEAR IS BEING ASKED FOR, ITEM BY ITEM** — the denominator every row's share of
+/// the ledger is struck against ([`EquipmentConfig::coverage_from_units`]).
+///
+/// # It is per ITEM because two kits can name the same thing
+///
+/// The upkeep side groups its claims by **kit id** (`systems::labor::keeping_rates`), which is
+/// enough there because no two kits on one web share an item. A band's *work rows* are not so
+/// lucky: `big_game` and `trapping` both carry the sled, so a kit-id grouping would still sled a
+/// full crew on each of two rows off one stock. The key here is the item, so anything two rows both
+/// reach for is split between them however they named it.
+///
+/// # The split is PRO-RATA, by head count
+///
+/// A row's share of an item is `live units × (its workers ÷ every row's workers that want it)`,
+/// which is the same rule the keeping pool splits by and deliberately **not** a priority order:
+/// `SourcePriority` decides who sheds a worker, and making it decide who gets the spears as well
+/// would be a design lever nobody has asked for. **Fractional units are fine** — `Crew::workers` is
+/// fractional by design, and coverage clamps the share against the people on the row anyway.
+///
+/// # An item NOTHING asks for is not rationed
+///
+/// Demand of zero means no budgeted row carries the item, so the caller asking about it is the only
+/// claimant and gets the band's whole live stock. That is what keeps a detached party (whose
+/// allocation is empty) and the builders' pool (whose kit is resolved from the build queue rather
+/// than from a row) reading exactly what the ledger-wide [`EquipmentConfig::coverage`] gave them.
+#[derive(Debug, Clone, Default)]
+pub struct BandItemBudget {
+    /// Workers wanting each item, summed over the rows that carry it. A `Vec` walked linearly
+    /// rather than a map: a roster is a handful of items and a band a handful of rows, so the probe
+    /// is cheaper than hashing.
+    demand: Vec<(Arc<str>, f32)>,
+}
+
+/// No row has asked for this item — see [`BandItemBudget`]'s third rule.
+const NO_ITEM_DEMAND: f32 = 0.0;
+
+/// The band holds none of it (or holds none in serving condition).
+const NO_UNITS_IN_HAND: f32 = 0.0;
+
+/// **A row can never draw more than the band's WHOLE stock**, whatever head count it asks with.
+const WHOLE_STOCK: f32 = 1.0;
+
+impl BandItemBudget {
+    /// Build the budget from the band's rows — each row's **resolved** kit and the head count
+    /// standing on it.
+    pub fn of_rows<'a>(rows: impl IntoIterator<Item = (&'a KitChoice, f32)>) -> Self {
+        let mut demand: Vec<(Arc<str>, f32)> = Vec::new();
+        for (kit, workers) in rows {
+            for item in kit.uses.iter() {
+                match demand.iter_mut().find(|(id, _)| id == item) {
+                    Some((_, wanted)) => *wanted += workers,
+                    None => demand.push((Arc::clone(item), workers)),
+                }
+            }
+        }
+        Self { demand }
+    }
+
+    /// **THE BUDGET A ROW NOBODY HAS COMMITTED YET COMPETES UNDER** — the band's *other* rows,
+    /// chained with the party being asked about, so a prospective crew of `workers` is rationed
+    /// exactly as a committed one is.
+    ///
+    /// ⛔ **`other_rows` must EXCLUDE any row already standing on the source being asked about.**
+    /// A forecast, a commit-time seed and the turn's take describe one crew on one source; leaving
+    /// that source's existing row in would count its head twice — once as itself and once as the
+    /// ask — and quote a share smaller than the take will pay.
+    ///
+    /// Demand of zero still falls through to the whole live stock ([`Self::units_for`]), so a band
+    /// with nothing else staffed reads what the ledger-wide [`EquipmentConfig::coverage`] gave it.
+    /// That is the same *"an item nothing asks for is not rationed"* rule, not a second one.
+    pub fn with_prospective_row<'a>(
+        other_rows: impl IntoIterator<Item = (&'a KitChoice, f32)>,
+        kit: &'a KitChoice,
+        workers: f32,
+    ) -> Self {
+        Self::of_rows(
+            other_rows
+                .into_iter()
+                .chain(std::iter::once((kit, workers))),
+        )
+    }
+
+    /// **One row's units of `item`** — its pro-rata share of what the band holds in serving
+    /// condition.
+    pub fn units_for(
+        &self,
+        item: &str,
+        workers: f32,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> f32 {
+        let live = wear.live_units(item, config) as f32;
+        let wanted = self
+            .demand
+            .iter()
+            .find(|(id, _)| id.as_ref() == item)
+            .map_or(NO_ITEM_DEMAND, |(_, wanted)| *wanted);
+        if wanted <= NO_ITEM_DEMAND {
+            return live;
+        }
+        live * (workers / wanted).min(WHOLE_STOCK)
+    }
+
+    /// The `units` closure [`EquipmentConfig::coverage_from_units`] takes, for one row of `workers`.
+    pub fn share_for<'a>(
+        &'a self,
+        workers: f32,
+        wear: &'a crate::components::BandEquipment,
+        config: &'a EquipmentConfig,
+    ) -> impl Fn(&str) -> f32 + 'a {
+        move |item| self.units_for(item, workers, wear, config)
+    }
 }
 
 /// **A chosen kit, resolved once against the roster** — an id plus the set of items it stands for.
@@ -1889,6 +2020,36 @@ impl EquipmentConfig {
         workers: f32,
         wear: &crate::components::BandEquipment,
     ) -> KitCoverage {
+        self.coverage_from_units(kit, workers, wear, |item| {
+            wear.live_units(item, self) as f32
+        })
+    }
+
+    /// **[`Self::coverage`] over a UNIT BUDGET the caller decides** — the one implementation of the
+    /// crew cut, and the seam a band that is working several rows at once resolves through.
+    ///
+    /// # ⛔ ONE BAND, ONE SET OF GEAR
+    ///
+    /// [`Self::coverage`] reads the band's **whole** ledger, so asking it once per work row hands
+    /// every row a full copy of the band's things: four traps arm four hunters on a Rabbit Warren
+    /// row and the same four arm four more on a Wild Fowl row beside it — eight equipped hunters off
+    /// four traps, with nothing anywhere saying the band was short. A caller holding more than one
+    /// row therefore passes each row its **share** of the stock
+    /// ([`BandItemBudget`]) rather than the stock.
+    ///
+    /// **The budget is per ITEM, never per kit id.** Two *different* kits can name the same thing —
+    /// `big_game` and `trapping` both carry the sled — so grouping by the kit would still sled two
+    /// full crews off one stock.
+    ///
+    /// `wear` still travels: the condition predicate is applied **here**, so a budget that named
+    /// units of a worn-out item cannot arm anybody with it.
+    pub fn coverage_from_units(
+        &self,
+        kit: &KitChoice,
+        workers: f32,
+        wear: &crate::components::BandEquipment,
+        units: impl Fn(&str) -> f32,
+    ) -> KitCoverage {
         // A non-finite head count takes the empty arm too — a NaN would otherwise flow into every
         // crew's `share`.
         if !workers.is_finite() || workers <= 0.0 {
@@ -1906,7 +2067,14 @@ impl EquipmentConfig {
             .filter_map(|item| {
                 let def = self.item(item)?;
                 let per_unit = def.workers_per_unit as f32;
-                let units = wear.live_units(item, self) as f32;
+                // **A DEAD ITEM COVERS NOBODY**, whatever the budget says — the predicate the
+                // ledger-reading arm gets for free from `live_units`, stated once here so both
+                // arms carry it.
+                let units = if kit.item_live(item, wear, self) {
+                    units(item)
+                } else {
+                    NO_UNITS_IN_HAND
+                };
                 // Two independent caps: the gear you hold, and the people you brought. The second is
                 // whole crews only for a multi-worker unit — see the doc comment.
                 let from_units = units * per_unit;
