@@ -8313,16 +8313,15 @@ func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, ban
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.
     #
-    # **…EXCEPT WHEN THE PARTY IS SPLIT** (issue #520). The gate answers at ONE tier and on a
-    # partly-equipped band that tier is the best-armed crew's, so a cleared gate here is the
-    # reassuring half. Same complement, same builder as the herd drawer's line.
-    #
-    # **ASKED ABOUT `_send_expedition_count`, because BOTH sheets that mount this line have a party
-    # stepper** — the hunting-party form and the denial form. The gear covers a prefix of whoever is
-    # sent, so quoting the band's whole hunt roster here would name more bare hands than the party
-    # has people the moment the party is smaller than the armed run.
+    # ⛔ **AND THE SPLIT-PARTY EXCEPTION IS RETIRED WITH IT** — quoted rather than deleted, because it
+    # was a deliberate arm: *"…EXCEPT WHEN THE PARTY IS SPLIT (issue #520). The gate answers at ONE
+    # tier and on a partly-equipped band that tier is the best-armed crew's, so a cleared gate here is
+    # the reassuring half. Same complement, same builder as the herd drawer's line."* It mounted
+    # `HudWidgets.mount_hunt_crew_split`, and Ray removed it as redundant with the kit line the same
+    # sheet already carries: *"we have the stalking kit message, it seems the second is redundant, you
+    # can remove it."* Both hosts dropped their mount in the same pass; the REFUSAL below is
+    # untouched.
     if not bool(gate["blocked"]):
-        HudWidgets.mount_hunt_crew_split(sheet, band, herd, quarry, kit_id, _send_expedition_count)
         return
     var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
         HudStyle.DANGER_HEX, String(gate["text"])])

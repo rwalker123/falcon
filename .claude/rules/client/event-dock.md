@@ -127,7 +127,7 @@ accepted-send log, which is the single place in the client where a command is kn
 reason in reverse: their default IS the echo, and the resync caller overrides it.
 
 **The HUD's own `system_note_requested` chain carries no kind.** Every note on it — the quarry
-refusals, the knowledge unlock, the unanswered fork, the quick-hunt refusals — is a fault or a state
+refusals, the knowledge unlock, the unanswered fork — is a fault or a state
 change by construction; the HUD has no acknowledgement path, so `Main` states nothing and the
 `system` default stands.
 

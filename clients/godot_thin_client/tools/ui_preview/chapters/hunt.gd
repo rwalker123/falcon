@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 377
+const EXPECTED_CHECKPOINTS := 374
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -2116,11 +2116,10 @@ func _combat_gate_states() -> void:
 	h._assert_hud("a party above the gate is told nothing about the fight — no line at all",
 		Readout.hunt_gate_blocked(speared_sheet) == Readout.HUNT_GATE_ABSENT
 			and Readout.hunt_gate_line(speared_sheet) == "")
-	# **THE UNIFORM CONTROL for the split line below**, and without it that state's claim passes on a
-	# sheet that states a split for every band. This band publishes ONE crew — the shipped case — so
-	# there is no division to report and the sheet says nothing about who can and who cannot.
-	h._assert_hud("…and a UNIFORMLY equipped party states no split either",
-		Readout.hunt_crew_split_line(speared_sheet) == "")
+	# ⛔ **RETIRED WITH THE SENTENCE IT CONTROLLED**: *"THE UNIFORM CONTROL for the split line below,
+	# and without it that state's claim passes on a sheet that states a split for every band."* The
+	# split line is gone from both compose hosts, so there is no longer a per-band division for a
+	# uniform band to be the control for. The gate claim directly above is untouched.
 
 	# State gate-b — THE SAME MAMMOTH, THE SAME PARTY SIZE, BARE HANDS. `max(0, 1 − 12)` is zero, so
 	# no headcount kills anything and the party takes casualties for nothing. **The only thing that
@@ -2227,15 +2226,12 @@ func _combat_gate_states() -> void:
 	h._hud._compose.set_hunt_band(-1)
 
 
-## **THE SENTENCE, SPELLED OUT rather than recomposed through `SourceForecast`'s own format.** An
-## expectation built from the code under test can only agree with itself, and both candidate readings
-## here — the armed count against the barred one, "bare-handed" against "hold too little gear" —
-## differ by a word or a digit, which a `contains` would not separate.
-##
-## **IT COUNTS THE PARTY, NOT THE BAND.** `LOCAL_HUNT_HUNTERS` (6) drawn from an armed run of 4 is
-## `4 of your 6`; the band-level reading of the same rows would be `4 of your 17`, which over a
-## `HUNTERS 6` stepper names more bare hands than the party has people.
-const GATE_SPLIT_LINE := "⚠ 4 of your 6 hunters can take Woolly Mammoth; the other 2 hold too little gear and land nothing on it at any headcount."
+# ⛔ **RETIRED: `GATE_SPLIT_LINE`**, the split sentence spelled out —
+# *"⚠ 4 of your 6 hunters can take Woolly Mammoth; the other 2 hold too little gear and land nothing
+# on it at any headcount."* It was written out rather than recomposed *"because an expectation built
+# from the code under test can only agree with itself"*, and that rule outlives it; what went is the
+# line. Ray removed it as redundant with `GATE_SPLIT_KIT_HINT` below, which this state still pins and
+# which is the surviving sentence about the same shortfall.
 
 ## A party that fits INSIDE the armed run — every hunter sent is holding a spear, so this hunt has no
 ## split whatever the rest of the band is carrying.
@@ -2287,28 +2283,31 @@ func _combat_gate_split_state() -> void:
 	# ever stands where the fight is winnable by somebody.
 	h._assert_hud("a split party clears the gate — the refusal does not render",
 		Readout.hunt_gate_blocked(sheet) == Readout.HUNT_GATE_ABSENT)
-	h._assert_hud("…and the sheet says WHICH of them can take it: %s" % GATE_SPLIT_LINE,
-		Readout.hunt_crew_split_line(sheet) == GATE_SPLIT_LINE)
-	# **AND THE KIT LINE NO LONGER CLAIMS AN ATTACK THE PARTY DOES NOT HAVE.** The two lines answer
-	# different questions off different wire terms — the split says who can beat THIS quarry's
-	# defence (`huntCrews` against `defense`), the kit line says how far the gear reaches into the
-	# party at all — so a band whose spears simply ran short would state the second and not the first.
+	# ⛔ **AND THE SECOND SENTENCE IS GONE**: *"…and the sheet says WHICH of them can take it"*, over
+	# `Readout.hunt_crew_split_line`. It stood directly under the kit line asserted next, which is how
+	# Ray saw the pair and why he cut this one: *"we have the stalking kit message, it seems the second
+	# is redundant."*
+	#
+	# **THE KIT LINE IS THE WHOLE CLAIM NOW.** The two answered different questions off different wire
+	# terms — the split said who can beat THIS quarry's defence (`huntCrews` against `defense`), this
+	# says how far the gear reaches into the party at all — and only the second survives. What that
+	# costs is recorded in `labor-ui.md` → "RETIRED — the hunt crew-split sentence".
 	h._assert_hud("…and the Kit line says plainly who is going without: \"%s\""
 		% Readout.kit_hint_line(sheet), Readout.kit_hint_line(sheet) == GATE_SPLIT_KIT_HINT)
 	# **THE SAME BAND AND THE SAME QUARRY, A SMALLER PARTY — AND NOW THERE IS NOTHING TO SAY.** The
-	# gear covers a prefix of whoever is sent, so three hunters drawn from four spears are all armed;
-	# a line here would be the band's shortfall reported as this party's, which reads as "2 of my 3
-	# are bare-handed" over a stepper the player just set. PNG-less: the claim is an absence, and the
-	# frame above is the picture.
+	# gear covers a prefix of whoever is sent, so three hunters drawn from four spears are all armed.
+	# PNG-less: the claim is an absence, and the frame above is the picture.
+	#
+	# ⛔ **THE SPLIT HALF OF THIS PAIR IS RETIRED**: *"…and a party that fits inside the armed run
+	# states NO split"*, which read `Readout.hunt_crew_split_line`. It was asserted BESIDE the kit
+	# claim below *"because both are absences for DIFFERENT reasons — the split line has no division
+	# in THIS party to report, and the kit line has no shortfall in it at all."* Only the second
+	# reason still has a line to be about.
 	h._hud._compose.reset_hunt_source()
 	h._show_herd(mammoth)
 	h._compose_herd(mammoth, GATE_SPLIT_COVERED_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
-	h._assert_hud("…and a party that fits inside the armed run states NO split",
-		Readout.hunt_crew_split_line(h._hud._drawercompose._compose_sheet) == "")
-	# **AND THE KIT LINE GOES QUIET TOO — the same party, nothing short.** Both lines are absences here
-	# and they are absences for DIFFERENT reasons, which is why both are asserted: the split line has no
-	# division in THIS party to report, and the kit line has no shortfall in it at all.
+	# **AND THE KIT LINE GOES QUIET — the same party, nothing short.**
 	h._assert_hud("…and the Kit line falls silent, everyone being covered: \"%s\""
 		% Readout.kit_hint_line(h._hud._drawercompose._compose_sheet),
 		Readout.kit_hint_line(h._hud._drawercompose._compose_sheet) == GATE_SPLIT_COVERED_KIT_HINT)

@@ -2391,73 +2391,55 @@ only when `blocked`**. `durability` is still the STATED-ness test even though no
 quotes it: a species the roster cannot resolve reads `0`, and answering `blocked` about one whose
 defence could not be looked up would refuse a hunt over a gap in the data.
 
-### …AND A CLEARED GATE IS THE REASSURING HALF OF A SPLIT PARTY (issue #520)
+### ⛔ RETIRED — THE HUNT CREW-SPLIT SENTENCE (issue #520), REDUNDANT WITH THE KIT LINE
 
-The gate is composed at ONE attack tier, and on a partly-equipped band that tier is the **best-equipped
-crew's** — the sim reads `hunterAttack` off `huntCrews[0]`. So a cleared gate says *somebody* can take
-this and says nothing about the rest, which is wrong in the reassuring direction on exactly the band
-the arc is about: ten spears among seventeen hunters take a Red Deer with ten of them and with none of
-the other seven, at any headcount.
+`⚠ 4 of your 6 hunters can take Woolly Mammoth; the other 2 hold too little gear and land nothing on
+it at any headcount.` It was the hunt gate's **complement**: the gate is composed at ONE attack tier
+and on a partly-equipped band that tier is the best-equipped crew's (the sim reads `hunterAttack` off
+`huntCrews[0]`), so a cleared gate says *somebody* can take this and nothing about the rest. This
+walked `huntCrews` as a prefix of the composed party and said how many of the hunters being SENT could
+clear the defence at all.
 
-`SourceForecast.hunt_crew_split_model(band, herd, quarry, kit_id)` is the rest of the sentence —
-`{stated, armed, barred, text}`, both counts WHOLE PEOPLE — and `HudWidgets.mount_hunt_crew_split` is
-the ONE builder both gate hosts mount it through (`DrawerComposeController`'s herd sheet and
-`BandPanelController._mount_kit_gate_line`), `mount_trip_readout`'s reason: two controllers rendering
-one line is how a copied control drifts.
+Reported from play, on an ASSIGN HUNTERS sheet carrying it directly beneath
+`KitRoster.shortfall_line`'s *"1 of 15 Stalking kits available"*: **"The yellow message mentions the
+hunters. I'm not sure we need that message at all, we have the stalking kit message, it seems the
+second is redundant, you can remove it."** Two sentences about one shortfall, stacked, on one sheet.
 
-- **IT IS THE GATE'S COMPLEMENT AND NEVER ITS COMPANION.** A refused fight renders the refusal and no
-  split (`0 of 17` beside *"no party size changes that"* is one sentence twice); a cleared gate renders
-  the split and no refusal. Both hosts call it from the gate's `else`, and the two frames assert both
-  directions.
-- **WARN, not DANGER.** The hunt is possible for part of the party, so it must not take the refusal's
-  ink, which in this HUD means *you cannot do this at all*.
-- **IT HAS ITS OWN META** (`HudWidgets.HUNT_CREW_SPLIT_META`), the two-readers rule the gate and the
-  retired reach line already followed. `HUNT_GATE_META` is read BY VALUE — `true` exactly when the
-  fight is refused — so a split line wearing it would answer *"the sheet says this fight is winnable"*
-  to a harness asking whether it is blocked.
-- **IT COUNTS THE PARTY BEING COMPOSED, NEVER THE BAND'S ROSTER — on every sheet that has a stepper.**
-  The gear covers a **prefix** of whoever is sent (the sim's own coverage model, `equipment.md` → "The
-  partition is by ITEM SET"), and the crews arrive best-equipped first, so the first `party_workers`
-  hunters take the best gear the band holds. A band-level sentence over a `HUNTERS 6` stepper reads as
-  *"7 of my 6 are bare-handed"* — which is what shipped first, and it is a NEW wrong number rather than
-  a stale one. `min(selected, armed prefix)` is arithmetic over two published counts; nothing here
-  resolves a tier, a step-down or a coverage of its own.
-  - **All three hosts pass one** — the herd drawer's `_compose.hunt_count()` and BOTH Band-panel raid
-    sheets' `_send_expedition_count`. The dock's hunting-party and denial forms are compose sheets with
-    party steppers, not band readouts, so "the band panel has no selected headcount" is false for them.
-    `SourceForecast.HUNT_CREW_PARTY_UNSET` is the band-level reading and exists for a host that
-    genuinely has no party.
-  - **A PARTY LARGER THAN THE PUBLISHED CREWS states nothing.** `huntCrews` divides the band's CURRENT
-    hunt workers and a compose stepper draws on idle ones too, so past that head count the wire's
-    division does not describe the party and `10 of 13` out of a 12-strong division would invent a row.
-- **IT STATES NOTHING IN SIX CASES, each for its own reason.** One crew (the shipped case — a uniform
-  band publishes exactly one row, never an empty list). The party fits inside the armed prefix (there
-  is no split in THIS party, whatever the rest of the band holds). Nobody armed (the refusal is
-  rendering instead). Nobody on the hunt (a band with no hunters publishes one crew at `workers 0`,
-  which is nothing to say rather than a shortfall of zero out of zero). A party the crews do not cover,
-  above. And **a kit that is not the band's quoted one** — the crews are resolved against
-  `PopulationCohortState.kitId`, so quoting them under a kit the player has just picked would describe
-  a division that does not exist for that choice. The common case is unaffected, both hunt defaults
-  resolving to the same id.
-- **THE TWO COUNTS ARE APPORTIONED** (`HudFormat.apportion_people`): crew workers are floats, so
-  rounding each side alone yields a 4 and a 2 that do not make 6.
-- **THE TAIL CLAUSE IS READ OFF `item_ids`, NOT ASSUMED.** A barred crew holding nothing is
-  *bare-handed*; one holding something the defence still shrugs off *holds too little gear*, which is
-  the shipped case whenever the party's sled goes round and its spears do not.
+**What went**, all of it caller-less at removal: `SourceForecast.hunt_crew_split_model` and its whole
+vocabulary (`HUNT_CREW_SPLIT_FORMAT`, the `HUNT_CREW_SPLIT_BARE_CLAUSE` / `_UNDER_CLAUSE` tails, the
+`HUNT_CREW_PARTY_UNSET` sentinel), `HudWidgets.mount_hunt_crew_split` and `HUNT_CREW_SPLIT_META`, the
+`else` arm in `DrawerComposeController`'s herd sheet and the early-return arm in
+`BandPanelController._mount_kit_gate_line`, `Readout.hunt_crew_split_line`, and the chapter's
+`GATE_SPLIT_LINE` with its three assertions (`hunt.gd`'s `EXPECTED_CHECKPOINTS` 377 → 374).
 
-**Frames:** `herd_hunt_gate_split` (`chapters/hunt.gd`, appended last in the combat-gate block) — the
-same mammoth and the same party size as `herd_hunt_gate_effort`, with only the band's crew division
-moving, asserting the refusal is absent AND the sentence by EQUALITY (both candidate readings differ
-by a word or a digit, which a `contains` cannot separate, and the band-level reading of those same
-rows is `4 of your 17` against the party's `4 of your 6`). Two negatives ride with it, each covering a
-different way the line can be wrong: `herd_hunt_gate_effort`'s UNIFORM control, without which the
-claim passes on a sheet that annotates every band, and a PNG-less re-compose of the SAME band and
-quarry at a party that fits inside the armed run, which must state nothing.
+> #### ⛔ THE REFUSAL IS **NOT** THIS AND DID NOT GO WITH IT
+>
+> `hunt_gate_model_at`, `HUNT_GATE_META`, the DANGER line and `Readout.hunt_gate_line` are untouched.
+> A fight the party cannot make **at all** still says so on both sheets — `herd_hunt_gate_blocked`
+> renders *"⚠ Your hunters cannot hurt Woolly Mammoth — they need weapons."* beside its kit line.
+> Only the CLEARED-gate half was removed. The two were mutually exclusive on screen, which is why
+> removing one leaves the other's frames untouched.
 
-**THE FIXTURE'S ARMED RUN IS SIZED UNDER THE HARNESS PARTIES ON PURPOSE** (`BandFx`'s
-`KIT_SHORT_SPEARS_ARMED` = 4 of a 17-strong hunt roster). A shortfall that only bites above ten
-hunters is silent on every compose frame in the corpus, so the positive claim would be unreachable —
-which is the shape this arc shipped with first.
+#### What the removal COSTS — stated because it is a real loss, not a tidy-up
+
+**The surviving kit line says the GEAR is short. The removed line was the only thing that said what
+that means for THIS quarry.** `1 of 15 Stalking kits available` is true of a Red Deer and of a Woolly
+Mammoth alike; the split sentence was composed from `huntCrews` against the **herd's own `defense`**,
+and its claim was that the under-geared share lands **nothing at any headcount** — not that they work
+at the bare-handed tier. Against a defended animal those are different outcomes, and no sentence in
+the client states the second one now. The gate still refuses a party where *nobody* clears the
+defence; what is unsayable is the middle case, where some of the party can and some cannot.
+
+**`herd_hunt_gate_split` is still the frame**, and it still stages the split band — `BandFx
+.with_short_spears`, whose `hunt_crews` rows now feed no readout on this sheet (the Kit popover's
+coverage claim in `band_expedition.gd` is that fixture's live second caller, which is why it stays).
+What it asserts is the refusal's absence and `GATE_SPLIT_KIT_HINT`, the surviving sentence.
+
+**Left caller-less by this, deliberately not deleted with it:** `DetailFormat.band_hunt_crews`,
+`band_hunt_headcount` and the `HUNT_CREWS_KEY` / `HUNT_CREW_WORKERS_KEY` / `HUNT_CREW_ATTACK_KEY` /
+`HUNT_CREW_ITEM_IDS_KEY` constants — the client's whole reading of the live
+`PopulationCohortState.huntCrews` field. Removing a readout is not a decision to stop being able to
+read the wire. `HUNT_CREW_WORKER_EPSILON` keeps a live caller in `DetailFormat.kit_coverage`.
 
 ## THE RAID'S READOUT IS ONE BUILDER, IN THE SHARED WIDGET LAYER
 
@@ -6239,10 +6221,13 @@ spelled and never a raw count.
   `cancel_order_requested` (the repurposed `cancel_order` = clear-all → fully idle). The roster
   glyph keeps reading the still-populated `activity` (now the largest-worker
   kind: `idle|forage|hunt|scout|warrior`) and `hunt_mode`. `harvestTask`/`scoutTask` are always
-  null server-side and no longer decoded. **Convenience shortcut:** double-clicking a herd on the
-  map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`)
-  assigns the player band's idle workers to hunt that herd at Sustain — a no-op with a command-feed
-  note when there are no idle workers (never silently nothing).
+  null server-side and no longer decoded. ⛔ **RETIRED — the convenience shortcut**: *"double-clicking
+  a herd on the map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` →
+  `Hud.quick_assign_hunters`) assigns the player band's idle workers to hunt that herd at Sustain — a
+  no-op with a command-feed note when there are no idle workers."* It fired on the gesture a player
+  uses to INSPECT a herd and committed the whole idle pool with no confirmation and no useful-crew
+  cap — see `map-renderers.md` → "RETIRED — the double-click quick-hunt". **The compose sheet is the
+  assign path**, and was throughout.
 
 ---
 

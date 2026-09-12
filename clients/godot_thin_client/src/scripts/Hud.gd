@@ -224,8 +224,9 @@ signal alert_focus_requested(x: int, y: int)
 ## chosen occupant without a hex click.
 signal roster_occupant_selected(kind: String, id: Variant)
 
-## A CLIENT-SIDE note the player should see — a refused quick-hunt, an unanswered fork, a knowledge
-## unlock. It used to be written straight into the left-dock command feed; that feed is retired and
+## A CLIENT-SIDE note the player should see — an unanswered fork, a knowledge unlock, a command the
+## transport could not seat. (Its first example was *"a refused quick-hunt"*, which retired with the
+## map's double-click shortcut; the signal is unchanged and has other callers.) It used to be written straight into the left-dock command feed; that feed is retired and
 ## the surface these land on (`EventDockPanel`, System channel) belongs to `Main`, so the HUD emits
 ## and `Main` relays. Same shape as every other HudLayer signal: the coordinator mediates.
 signal system_note_requested(label: String, detail: String)
@@ -1725,29 +1726,20 @@ func close_compose_sheet() -> void:
     _drawercompose.close_compose_sheet()
 
 
-## Map double-click convenience (Main forwards `MapView.herd_quick_hunt_requested`): assign
-## ALL of the player band's currently-idle workers to hunt `herd_id` at the default floor (the food
-## peak). A no-op (with a command-feed note) when there's no player band or no idle workers,
-## so the shortcut never silently does nothing.
-func quick_assign_hunters(herd_id: String) -> void:
-    if herd_id.strip_edges() == "":
-        return
-    var band := _resolve_assign_band()
-    if band.is_empty():
-        note_system_event("Quick-hunt", "No player band to assign.")
-        return
-    var idle := int(band.get("idle_workers", 0))
-    if idle <= 0:
-        note_system_event("Quick-hunt", "No idle workers to assign to %s." % herd_id)
-        return
-    # The improvement the band is ALREADY building on this herd rides the edit (issue #442): the
-    # shortcut sets a crew and a floor, and letting the pending overlay default to `IMPROVEMENT_NONE`
-    # would flash a running pen off the work board (and drop the herding-crew floor) for a turn.
-    # Double-clicking a herd nobody hunts yet answers "" here, which is the honest value.
-    _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, idle,
-        int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id,
-        SourceForecast.DEFAULT_HARVEST_FLOOR, "",
-        _band_labor.improvement_for_hunt(band, herd_id))
+# ⛔ **RETIRED: `quick_assign_hunters(herd_id)`** — the map's double-click convenience, which
+# assigned *"ALL of the player band's currently-idle workers to hunt `herd_id` at the default floor"*.
+#
+# **IT FIRED ON THE INSPECT GESTURE, AND WHAT IT COMMITTED WAS UNBOUNDED.** A double-click on a herd
+# is how a player LOOKS at one; this put the band's entire idle pool on it with no confirmation, and
+# it read no crew ceiling at all — fifteen hunters onto a herd whose `max_useful_workers` the compose
+# sheet one line below states as three. Reported from play by Ray, who kept triggering it, assumed he
+# had misclicked, and only noticed afterwards. **Inspecting must not mutate state.**
+#
+# `MapView.herd_quick_hunt_requested`, its `Main` forward and the branch that emitted it went in the
+# same pass; the compose sheet is the assign path and always was. `_band_labor.improvement_for_hunt`
+# is NOT retired with it — the herd compose sheet is a live caller (see `DrawerComposeController`'s
+# seed and `composed_improvement`), and it kept a running pen off the pending overlay here for the
+# same reason it does there.
 
 func get_upper_stack_height() -> float:
     var max_bottom := 0.0

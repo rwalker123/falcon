@@ -3046,17 +3046,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 HudStyle.DANGER_HEX, String(gate["text"])])
             gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
             target.add_child(gate_label)
-        else:
-            # **THE FIGHT IS WINNABLE — BUT NOT BY EVERYBODY.** The gate above answers at ONE tier,
-            # and on a partly-equipped band that tier is the best-armed crew's, so a cleared gate is
-            # the reassuring half of a split party (issue #520). The complement, never the companion.
-            #
-            # **ASKED ABOUT THE COMPOSED PARTY, NOT THE BAND.** The gear covers a prefix of whoever
-            # is sent, so a party small enough to fit inside the armed run has no split at all — and
-            # a band-level sentence over this stepper would name more bare hands than there are
-            # hunters in the party.
-            HudWidgets.mount_hunt_crew_split(target, band, herd, quarry, kit_id,
-                _compose.hunt_count())
+        # ⛔ **A CLEARED GATE NOW RENDERS NOTHING, and the `else` that stood here is RETIRED.** It mounted
+        # `HudWidgets.mount_hunt_crew_split` — *"⚠ 1 of your 3 hunters can take Wild Horses; the other 2
+        # hold too little gear and land nothing on it at any headcount."* — the gate's complement for a
+        # partly-equipped band (issue #520). Reported from play, on a sheet showing it directly beneath
+        # the kit line: *"The yellow message mentions the hunters. I'm not sure we need that message at
+        # all, we have the stalking kit message, it seems the second is redundant, you can remove it."*
+        #
+        # **THE KIT LINE UNDER THE PICKER IS WHAT SURVIVES** (`KitRoster.shortfall_line`) — one sentence
+        # about the gear, on the control that chose it. **The REFUSAL above is untouched**: a fight this
+        # party cannot make at all must still say so, and that is the branch, not this one.
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
