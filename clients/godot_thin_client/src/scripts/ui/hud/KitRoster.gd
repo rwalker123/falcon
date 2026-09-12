@@ -1567,11 +1567,35 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ## > nothing, and this line serves the hunt sheets too — the same problem, so the same rule; there is
 ## > no forage special case.
 ##
-## **THE COVERAGE IS COUNTED IN UNITS AGAINST THE COMPOSED CREW**, which is the only reading available
-## before a commit: `KitItemCondition.workersOnQuotedJob` is the head count of the job as STAFFED, and
-## that is `0` on a sheet where nobody is assigned yet. So a party being composed is measured against
-## itself, and a host with no stepper (`KIT_CREW_UNCOMPOSED`) falls back to the published pair, which
-## is the sim's own answer wherever it applies.
+## > #### ⛔ A COMMITTED ROW STATES ITS OWN PUBLISHED PAIR, AND RE-DERIVING IT IS THE BUG
+## >
+## > This function measures the sheet's crew against the band's **whole** store, which is right for a
+## > party that does not exist yet and wrong the moment one does: with four traps in the ledger, two
+## > 4-hunter `trapping` sheets each read *covered* while the two committed rows behind them each arm
+## > **2 of 4** — the same contradiction, one surface over, that
+## > `LaborAssignment.kitWorkersHolding` was published to end. So where the caller hands in the
+## > SOURCE ROW this sheet is composing, its own published pair is the answer and nothing here
+## > divides anything.
+## >
+## > The row is used only when its `kit_id` is the kit being rendered: a player mid-change of the
+## > picker is composing something the sim has not priced, which is the uncommitted reading below.
+##
+## **OTHERWISE THE COVERAGE IS COUNTED IN UNITS AGAINST THE COMPOSED CREW**, which is the only reading
+## available before a commit: `KitItemCondition.workersOnQuotedJob` is the head count of the STAFFED
+## rows carrying the item, and that is `0` on a sheet for a source nobody works yet. So a party being
+## composed is measured against itself, and a host with no stepper (`KIT_CREW_UNCOMPOSED` — the role
+## cards) falls back to the published pair, which is the sim's own answer wherever it applies.
+##
+## **AND THE STOCK IT IS COUNTED AGAINST IS THE FREE STOCK.** Units already reaching the band's
+## committed rows are `KitItemCondition.workersHolding`, published per item, so free units are
+## `count − workersHolding` clamped at zero. Quoting the whole store told a player that a second
+## trapping party was covered by the very traps the first one had walked out with — the uncommitted
+## half of the same contradiction. **Both terms are already on the wire**; this needs no field of its
+## own.
+##
+## ⛔ **THE EXPEDITION ARM NETS NOTHING**, and that is not an omission: a detached party carries its
+## own ledger, its gear leaves the band's, and subtracting the home band's committed rows from a
+## store the party does not draw on would invent a shortfall.
 ##
 ## **THE COUNT IS THE KIT'S, NOT ONE AXIS'S** — the `min` across the items the kit carries, and the
 ## sentence names the item that is shortest. This file may not map an axis to the component behind it
@@ -1586,8 +1610,11 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ##   will not quote a `0` at it.
 ## - **NO CREW AND NO PUBLISHED PAIR** — nothing to be a fraction of.
 ## - **EVERYONE COVERED** — the rule, literally.
+## **`row` IS THE COMMITTED SOURCE ROW THIS SHEET IS COMPOSING**, `{}` for a source no band row works
+## and for every host that has none. It reaches the SOURCE-JOB branch alone: a role card is not a
+## source row, and an expedition's ledger is the party's rather than the band's.
 static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: String,
-		crew: int = KIT_CREW_UNCOMPOSED) -> String:
+		crew: int = KIT_CREW_UNCOMPOSED, row: Dictionary = {}) -> String:
 	if kit.is_empty():
 		return ""
 	# **A BAND-WIDE ROLE KEEPS ITS OWN READING**, and takes a branch of its own: a role card states
@@ -1600,7 +1627,7 @@ static func tier_hint(kits: Array, kit: Dictionary, band: Dictionary, job: Strin
 	# as the role cards' — the neutral gear reading, then the shortfall where there is one.
 	if job == JOB_EXPEDITION:
 		return expedition_hint(kits, kit, band, crew)
-	return shortfall_line(kits, kit, band, job, crew)
+	return shortfall_line(kits, kit, band, job, crew, row)
 
 ## **DOES THIS JOB'S HINT CARRY A NEUTRAL CLAUSE BESIDE THE SHORTFALL?** — the one test `build_kit_row`
 ## asks to choose between a plain `Label` (all one run, all `DANGER` when short) and the rich-text
@@ -1621,11 +1648,25 @@ static func hint_markup(kits: Array, kit: Dictionary, band: Dictionary, job: Str
 ## The shortfall sentence itself, or `""`. Split out of `tier_hint` so a caller can ask for it without
 ## going through the role fork, and so the harnesses can drive the three coverage states directly.
 static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: String,
-		crew: int = KIT_CREW_UNCOMPOSED) -> String:
+		crew: int = KIT_CREW_UNCOMPOSED, row: Dictionary = {}) -> String:
 	var items := kit_item_ids(kit)
 	if items.is_empty():
 		return ""
+	# **THE COMMITTED ROW WINS, and it is matched on the KIT it is priced at** — a picker mid-change
+	# is composing something the sim has not priced yet, and the pair it published describes the old
+	# choice.
+	if String(row.get(ROW_KIT_ID_KEY, NO_KIT_ID)) == String(kit.get(KIT_ID_KEY, NO_KIT_ID)):
+		var committed := row_coverage(row)
+		if not committed.is_empty():
+			if int(committed[ROW_COVERAGE_SHORT_KEY]) <= 0:
+				return ""
+			return shortfall_sentence(kit, int(committed[ROW_COVERAGE_HELD_KEY]),
+				int(committed[ROW_COVERAGE_CREW_KEY]))
 	var on_job := crew
+	# **A CREW IS BEING COMPOSED** — so the store is counted against it, and the units already out with
+	# the band's committed rows are not part of the store this party can draw on. A host with no
+	# stepper is a committed standing slot reading its own published pair, and nets nothing.
+	var net_committed := crew > KIT_CREW_UNCOMPOSED and job != JOB_EXPEDITION
 	# **COMPLETE OUTFITS — the `min` over every item the kit carries.** A Stalking kit is spears AND a
 	# sled, so three spears and no sled field ZERO kits; counting the scarcest item and naming it
 	# reported three.
@@ -1635,11 +1676,13 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 		var owned := DetailFormat.kit_units_owned(band, item_id)
 		if owned == DetailFormat.KIT_UNITS_UNSTATED:
 			return ""
-		if held < 0 or owned < held:
-			held = owned
+		var free := maxi(owned - _published_workers_holding(band, item_id), 0) if net_committed \
+			else owned
+		if held < 0 or free < held:
+			held = free
 		if on_job <= KIT_CREW_UNCOMPOSED:
 			# No party is being composed, so the published pair is the reading — the head count of the
-			# job as staffed, which is what the sim divided its own `workersHolding` against.
+			# rows carrying the item, which is what the sim divided its own `workersHolding` against.
 			on_job = maxi(on_job, _published_on_quoted_job(band, item_id))
 	if on_job <= 0 or held < 0:
 		return ""
@@ -1648,13 +1691,89 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 	var covered := mini(held, on_job)
 	if covered >= on_job:
 		return ""
+	return shortfall_sentence(kit, covered, on_job)
 
-	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [covered, on_job,
+## **THE ONE PHRASING FOR *GEAR RAN SHORT*, WHEREVER IT IS STATED** — the compose sheets' line, the
+## role cards', and the work row's own note, which wraps this in its remedy clause
+## (`HudWorkVocab.kit_short_note`). `HudComposeVocab.KIT_SHORTFALL_FORMAT` is the sentence; this is
+## the one place its three slots are filled, so a second surface cannot word the same shortfall its
+## own way. Both counts are WHOLE PEOPLE by the time they arrive.
+static func shortfall_sentence(kit: Dictionary, covered: int, crew: int) -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [covered, crew,
 		kit_display_name(kit) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
 
-## The sim's own head count for the job this item is quoted at, `0` when it states none. **`0` is not
-## a shortfall** — `snapshot.fbs` is explicit that `workersOnQuotedJob == 0` means nobody is staffed,
-## so there was nobody to hand gear to and nobody went without.
+## `row_coverage`'s three slots — the people outfitted, the people going without, and the row's own
+## head count they sum to. Named because two surfaces spend them (the compose sheets' shortfall line
+## and the work board's `kit_note`) and a bare `"held"` in each would be two spellings of one answer.
+const ROW_COVERAGE_HELD_KEY := "held"
+const ROW_COVERAGE_SHORT_KEY := "short"
+const ROW_COVERAGE_CREW_KEY := "crew"
+
+## **THE HEAD COUNT ON A LABOR ASSIGNMENT** — the wire row's own `workers`, which is the denominator
+## `kit_workers_holding` is published over. A TWIN of `HudBandLaborState.staffed_total`'s key in
+## prose rather than a read of it: this layer must never reach for that model (see the file header).
+const ROW_WORKERS_KEY := "workers"
+
+## ⛔ **AND THE ROW'S KIT ID IS `kit_id`, NOT THE ROSTER ENTRY'S `id`.** A `LaborAssignment` NAMES a
+## kit and a roster entry IS one, so the two dicts spell it differently — reading `KIT_ID_KEY` off a
+## row answers `""`, which matches no kit, and the committed arm silently never fires. Caught by
+## `compose_rungs`' committed-row leg, which is why that leg asserts the figure rather than the
+## absence.
+const ROW_KIT_ID_KEY := "kit_id"
+
+## **ONE WORK ROW'S OWN COVERAGE, AS WHOLE PEOPLE** — `{held, short, crew}` off the row's published
+## `kit_workers_holding` over the `workers` beside it, `{}` where the row states neither.
+##
+## **`held == crew` IS *NOTHING TO BE SHORT OF*, NEVER A SHORTFALL** — and that one equality is the
+## whole of the `none` case: the sim hands an itemless kit back the row's entire head count on
+## purpose, precisely so no client grows a `none` branch. `short` is what a caller tests.
+##
+## ⛔ **THE TWO HALVES ARE APPORTIONED, NOT ROUNDED INDEPENDENTLY** — `DetailFormat.kit_coverage`'s
+## rule, for the same reason: `kit_workers_holding` is fractional, and rounding each half on its own
+## gives a *"4 of 17"* whose remainder is 13. They partition the row's own head count, so that count
+## is the target they must sum to.
+##
+## An ABSENT key is silence, not a zero: a pending (optimistic) row publishes none, because a `+`
+## re-cuts the band's whole ledger and the settled pair describes a staffing that no longer exists.
+static func row_coverage(row: Dictionary) -> Dictionary:
+	if not row.has(SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY):
+		return {}
+	var crew := maxi(int(row.get(ROW_WORKERS_KEY, 0)), 0)
+	if crew <= 0:
+		return {}
+	var holding := clampf(float(row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY]),
+		0.0, float(crew))
+	var parts := HudFormat.apportion_people_to([holding, float(crew) - holding], crew)
+	return {ROW_COVERAGE_HELD_KEY: parts[0], ROW_COVERAGE_SHORT_KEY: parts[1],
+		ROW_COVERAGE_CREW_KEY: crew}
+
+## **HOW MANY UNITS OF ONE ITEM THE BAND'S COMMITTED ROWS ARE ALREADY HOLDING** — the numerator of
+## `KitItemCondition`'s pair, `0` where the band states none.
+##
+## **ROUNDED UP, because the netting must never overstate what is free.** The published count is
+## PEOPLE and the store is UNITS — exact for every shipped item (`workers_per_unit` is 1 throughout,
+## the licence `DetailFormat.kit_units_owned` already spends) — and a truncation would hand a compose
+## sheet a spare unit that a committed crew has a fractional claim on.
+static func _published_workers_holding(band: Dictionary, item_id: String) -> int:
+	for row_variant in band.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, []):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(DetailFormat.KIT_ITEM_ID_KEY, "")) != item_id:
+			continue
+		return maxi(ceili(float(row.get(DetailFormat.KIT_ITEM_WORKERS_HOLDING_KEY, 0.0))), 0)
+	return 0
+
+## The sim's own head count for the ROWS this item is quoted over — the sum of `workers` across every
+## assignment whose resolved kit carries it, and `0` when the band states none.
+##
+## **IT IS NOT A JOB'S DEFAULT KIT ANY MORE**, though the wire field kept its name: the old rule
+## quoted each item at `default_kits.<job>`, which on a band running two `trapping` rows published a
+## `spears` denominator of the whole hunt head count while `traps` — the thing it was short of — read
+## `0`. Nothing here had to change for the correction; the sum is sim-side.
+##
+## **`0` IS NOT A SHORTFALL** — `snapshot.fbs` is explicit that `workersOnQuotedJob == 0` means nobody
+## is staffed on a row carrying the item, so there was nobody to hand gear to and nobody went without.
 static func _published_on_quoted_job(band: Dictionary, item_id: String) -> int:
 	for row_variant in band.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, []):
 		if not (row_variant is Dictionary):
@@ -1907,10 +2026,14 @@ static func _tier_face(value: float) -> String:
 ## **`crew` IS THE PARTY THE SHEET IS COMPOSING** — the stepper's own value, passed straight to the
 ## HINT so the line can state how far the band's gear reaches into it. `KIT_CREW_UNCOMPOSED` (the
 ## default) is a host with no stepper, and renders exactly as it did before the clause existed.
+## **`row` IS THE COMMITTED SOURCE ROW BEHIND THE SHEET**, handed to the hint so a sheet on a source
+## this band already works states that row's own published coverage instead of re-dividing the store
+## — see `shortfall_line`, which carries why. `{}` is every host that has no such row.
 static func build_kit_row(kits: Array, job: String, selected_id: String, default_id: String,
 		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
 		prefix: String = "", key_text: String = HudComposeVocab.COMPOSE_FIELD_KIT,
-		compact_chrome: bool = false, crew: int = KIT_CREW_UNCOMPOSED) -> VBoxContainer:
+		compact_chrome: bool = false, crew: int = KIT_CREW_UNCOMPOSED,
+		row_assignment: Dictionary = {}) -> VBoxContainer:
 	var offered := kits_for_job(kits, job)
 	if offered.is_empty():
 		return null
@@ -1955,11 +2078,11 @@ static func build_kit_row(kits: Array, job: String, selected_id: String, default
 			HudWorkVocab.WORK_STEPPER_PADDING_V)
 	row.add_child(picker)
 	block.add_child(row)
-	var hint_text := tier_hint(kits, selected, band, job, crew)
+	var hint_text := tier_hint(kits, selected, band, job, crew, row_assignment)
 	if hint_text != "":
 		# **THE INK FOLLOWS THE SHORTFALL, and it is asked of the PRODUCER rather than read off the
 		# text** — so a copy edit cannot silently take the colour with it.
-		var shortfall := shortfall_line(kits, selected, band, job, crew)
+		var shortfall := shortfall_line(kits, selected, band, job, crew, row_assignment)
 		var hint: Control
 		if hint_states_gear(job):
 			# ⛔ **A GEAR-STATING LINE IS TWO RUNS AND ONLY THE SECOND IS A WARNING.** `1-tile sight per

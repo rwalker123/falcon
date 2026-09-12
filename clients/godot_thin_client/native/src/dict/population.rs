@@ -874,6 +874,27 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // component and so has no kit axis — read that as "no selection to make", never as "no
             // kit". Always inserted so the entry shape is stable.
             let _ = entry.insert("kit_id", assignment.kitId().unwrap_or_default());
+            // **HOW FAR THAT KIT REACHES ON THIS ROW** — the workers on it holding a COMPLETE
+            // `kit_id` outfit, over the `workers` already on the entry: *"2 of 4 outfitted"*. It is
+            // the `min` across the kit's items, so three spears and no sled field ZERO stalking
+            // kits rather than three; the per-ITEM reading is `kitItemConditions.workersHolding` on
+            // the cohort, which is where a readout goes to name WHICH thing is missing.
+            //
+            // ⛔ **ONE BAND, ONE SET OF GEAR.** Every row is cut from the band's ledger once,
+            // pro-rata by head count over the rows reaching for each item, so two rows naming
+            // `trapping` against four traps read `2` each rather than `4` each. A client may NOT
+            // re-derive this from the item counts: the cut depends on what the rows beside this one
+            // are holding, which no single row carries.
+            //
+            // **`== workers` MEANS NOTHING TO BE SHORT OF, NEVER A SHORTFALL** — that is what an
+            // itemless kit (`none`) publishes, deliberately, so a reader needs no `none` special
+            // case and a `0` there cannot read as *everybody short*. Always inserted so the entry
+            // shape is stable; its ABSENCE (a hand-built fixture, never the decoder) is the only
+            // *"this row states no coverage"* there is.
+            let _ = entry.insert(
+                "kit_workers_holding",
+                f64::from(assignment.kitWorkersHolding()),
+            );
             // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — the crew beyond which more
             // hunters add nothing, and the sim's own answer rather than an input to a client
             // quotient. It is the plateau of `fauna::hunt_crew_take_curve`, the SAME curve the

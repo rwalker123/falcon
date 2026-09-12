@@ -1747,6 +1747,8 @@ mod tests {
             // do not stand up.
             Vec::new(),
             Vec::new(),
+            // …nor on the gear's reach, which is a fact about the BAND's whole allocation.
+            EVERY_WORKER_OUTFITTED,
         );
         assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
@@ -1789,6 +1791,8 @@ mod tests {
             // do not stand up.
             Vec::new(),
             Vec::new(),
+            // …nor on the gear's reach, which is a fact about the BAND's whole allocation.
+            EVERY_WORKER_OUTFITTED,
         );
         assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
@@ -1808,6 +1812,8 @@ mod tests {
             // do not stand up.
             Vec::new(),
             Vec::new(),
+            // …nor on the gear's reach, which is a fact about the BAND's whole allocation.
+            EVERY_WORKER_OUTFITTED,
         );
         assert_eq!(
             state.floor, 0.15,
@@ -1815,6 +1821,10 @@ mod tests {
         );
         assert_eq!(state.improvement, "", "nothing queued here");
     }
+
+    /// **The reach these row fixtures hand in** — the whole crew, which is what a row whose kit
+    /// carries nothing publishes anyway. None of them is about a shortfall.
+    const EVERY_WORKER_OUTFITTED: f32 = 6.0;
 
     /// **The wire's word for "this band has nothing queued on this source"** — an empty token, which
     /// is a real answer rather than an omission.

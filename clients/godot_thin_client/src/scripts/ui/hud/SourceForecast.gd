@@ -861,6 +861,21 @@ const ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY := "material_upkeep_supplied"
 # Nothing may read this off a forage row — see `with_published_useful_crew`, whose one caller is the
 # board's hunt branch.
 const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
+# **HOW FAR THIS ROW'S GEAR REACHES, ON A LABOR ASSIGNMENT** — the workers on it holding a COMPLETE
+# `kit_id` outfit, over the `workers` already on the row. It is the `min` across the kit's items, so
+# three spears and no sled field ZERO stalking kits; `DetailFormat.KIT_ITEM_WORKERS_HOLDING_KEY` is
+# the per-ITEM reading, which is where a readout goes to name WHICH thing is missing.
+#
+# ⛔ **NO CLIENT MAY RE-DERIVE IT FROM THE ITEM COUNTS.** The band's ledger is cut once, pro-rata by
+# head count over every row reaching for each item, so two rows naming `trapping` against four traps
+# each get two — an answer that depends on the rows BESIDE this one and that nothing on this row
+# carries.
+#
+# **IT RIDES PRESENCE-SENSITIVELY, and `== workers` is the equality that means *nothing to be short
+# of***: that is what an itemless kit (`none`) publishes on purpose, so no reader needs a `none`
+# branch. An ABSENT key is the third reading — *this row states no coverage* — which is a hand-built
+# fixture or an optimistic row, never the decoder, and which every readout treats as silence.
+const ASSIGNMENT_KIT_WORKERS_HOLDING_KEY := "kit_workers_holding"
 # **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
 # composed row and every per-preset one). It is a PAYLOAD, not a rate: no `/turn`, projected off the
 # same carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree. On an

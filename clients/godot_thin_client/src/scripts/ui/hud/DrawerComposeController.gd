@@ -2988,7 +2988,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         func(picked: String) -> void:
             _compose.set_hunt_kit_id(picked)
             _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_count())
+        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_count(),
+        _band_labor.hunt_assignment_of(band, herd_id))
     # **THE FIGHT, STATED BEFORE THE PARTY LEAVES** (`docs/plan_hunt_through_combat.md` §2.1 / §6.5),
     # directly under the crew that will fight it — both lines answer "is this crew the right size, and
     # can it win at all", which is what the stepper one row up has just posed.
@@ -3296,11 +3297,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ## which has no animal to be inapplicable to.
 ## **`crew` IS THE STEPPER ONE ROW ABOVE**, handed on so the hint can say how far the band's gear
 ## reaches into the party being composed. A sheet that passes none keeps the pre-clause line.
+## **`assignment` IS THE COMMITTED SOURCE ROW this sheet is composing**, `{}` for a source this band
+## does not work yet. It is the raw WIRE row, so it carries the `kit_workers_holding` of `workers`
+## pair the sim cut from the band's one ledger — which is what stops two 4-hunter sheets on four traps
+## each reading *covered* while the rows behind them each arm two. `KitRoster.shortfall_line` carries
+## the argument.
 func _mount_kit_row(target: VBoxContainer, kits: Array, job: String, kit_id: String,
         default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
-        prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED) -> void:
+        prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED,
+        assignment: Dictionary = {}) -> void:
     var row := KitRoster.build_kit_row(kits, job, kit_id, default_kit, band, on_pick, quarry, prefix,
-        HudComposeVocab.COMPOSE_FIELD_KIT, false, crew)
+        HudComposeVocab.COMPOSE_FIELD_KIT, false, crew, assignment)
     if row != null:
         target.add_child(row)
 
@@ -3825,7 +3832,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         func(picked: String) -> void:
             _compose.set_forage_kit_id(picked)
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
-        {}, "", _compose.forage_count())
+        {}, "", _compose.forage_count(), _band_labor.forage_assignment_of(band, x, y))
     # **THE SPECIES CHIPS — what this crew carries home**, standing where the retired crop picker stood
     # and doing both of that control's jobs: on a plain gather it narrows the TAKE (multi-select, the
     # selective gather); with a rung composed it is the COMMIT crop (single-select), which is the same
@@ -5281,7 +5288,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         func(picked: String) -> void:
             _compose.set_deposit_kit_id(picked)
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        {}, "", _compose.deposit_count())
+        {}, "", _compose.deposit_count(),
+        _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's two zero-crew cases, verbatim: `0` on a
     # working this band does not hold is a no-op (dead button), `0` on one it does is the sim's own
     # unassign (live button, renamed).
@@ -5712,6 +5720,12 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
             SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_DEMAND_KEY, [])),
         SourceForecast.material_payoff_rows(assignment.get(
             SourceForecast.ASSIGNMENT_MATERIAL_UPKEEP_SUPPLIED_KEY, [])))
+    # ⛔ **THE GEAR-SHORTFALL ARM IS DELIBERATELY NOT HERE, and that is not the drift the paragraph
+    # above warns about.** The work board's row carries `kit_note` because it has nowhere else to say
+    # it; this summary sits on a sheet whose KIT PICKER states the identical sentence one control
+    # away, off the same published pair (`KitRoster.shortfall_line`'s committed arm, handed this
+    # source's row by `_mount_kit_row`). Adding it here would print one shortfall twice on one sheet
+    # — the failure the retired `N of M equipped` clause was, not the one the material arm fixed.
     return {
         "text": text.strip_edges(),
         "tooltip": String(readout["tooltip"]),

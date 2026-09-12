@@ -2268,7 +2268,12 @@ const GATE_SPLIT_COVERED_KIT_HINT := ""
 ## wear — so the only thing that can move this line is the crew division itself.
 func _combat_gate_split_state() -> void:
 	var mammoth := _combat_gate_mammoth()
-	var split := BandFx.with_short_spears(BandFx.hunt_preview_local_band())
+	# ⛔ **AND ITS SPEARS ARE IN THE TENT** (`BandFx.with_kit_in_the_store`): the party on this sheet
+	# is being composed, so the kit line counts the FREE store against it. Unwrapped, the fixture
+	# states four spears all of them already in somebody's hands, and the line honestly reads `0 of 6`
+	# — a true sentence about a different band from the one this frame is about.
+	var split := BandFx.with_kit_in_the_store(
+		BandFx.with_short_spears(BandFx.hunt_preview_local_band()))
 	h._hud._band_labor._player_bands = [split]
 	h._hud._band_labor._player_band = split
 	h._hud._compose.reset_hunt_source()

@@ -4358,6 +4358,35 @@ impl LaborAllocation {
             .sum()
     }
 
+    /// **THIS BAND'S GEAR, DIVIDED ONCE ACROSS EVERY ROW THAT REACHES FOR IT** — the per-item unit
+    /// budget every row's coverage is then struck against
+    /// ([`crate::equipment_config::EquipmentConfig::coverage_from_units`]).
+    ///
+    /// ⛔ **Resolve it ONCE per band, before the rows are walked.** A row asking the whole ledger
+    /// arms its own crew off it, so N rows naming one item each get a full copy of it — four traps
+    /// arming four hunters on one herd and four more on the next. See
+    /// [`crate::equipment_config::BandItemBudget`] for why the key is the item rather than the kit
+    /// id, and why the split is pro-rata.
+    ///
+    /// **Every row counts, band-wide roles included**: a Scout or a Warrior row is an ordinary
+    /// assignment holding ordinary head count, and its wayfinding gear is as much the band's as the
+    /// hunters' spears.
+    pub fn item_budget(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> crate::equipment_config::BandItemBudget {
+        // The kits have to outlive the borrow the budget builds from, so they are resolved into a
+        // vector first — `kit_choice` mints a fresh `KitChoice` per call.
+        let kits: Vec<(crate::equipment_config::KitChoice, f32)> = self
+            .assignments
+            .iter()
+            .map(|assignment| (assignment.kit_choice(config), assignment.workers as f32))
+            .collect();
+        crate::equipment_config::BandItemBudget::of_rows(
+            kits.iter().map(|(kit, workers)| (kit, *workers)),
+        )
+    }
+
     /// **The kit staffed on a SINGLETON source**, resolved through the same seam every priced row
     /// reads ([`LaborAssignment::kit_choice`]) — or the job's default when the role is unstaffed.
     ///

@@ -1022,6 +1022,16 @@ const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
 const WORK_INSPECTOR_KITS_UPKEEP_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT \
     + WORK_INSPECTOR_NOTE_HEIGHT
 
+## …and what the KIT SHORTFALL line under the take picker costs when the row has one to state — one
+## prose line and the block gap above it, exactly as every other conditional sentence on this card is
+## priced. It is charged separately from the UPKEEP pair because the two are independent: a WILD
+## source owes no keeping bill and can still be short of the gear its crew takes.
+##
+## **AT ONE LINE, like every term in `WORK_INSPECTOR_CEILING_HEIGHT`** — the sentence names a kit and
+## carries a remedy clause, so it routinely wraps, and the lines beyond the first are
+## `BandPanelController._work_inspector_wrap_overflow`'s to add on top.
+const WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT := WORK_INSPECTOR_NOTE_HEIGHT
+
 ## **THE CEILING THESE TERMS ADD UP TO, AND IT IS A SUM OVER THREE SECTIONS — AT ONE LINE PER NOTE.**
 ##
 ## ⛔ **IT IS A FLOOR ON THE WORST CASE NOW RATHER THAN THE WORST CASE ITSELF** (§4.9 item 12d, third
@@ -1070,6 +1080,7 @@ const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + WORK_INSPECTOR_POLICY_SECTION_HEIGHT \
     + WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
     + WORK_INSPECTOR_KITS_SECTION_HEIGHT \
+    + WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
     + WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
     + WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
@@ -1110,6 +1121,50 @@ const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
 ## `+0.06 fibre · +0.07 grape · +0.06 tea · +0.07 tobacco` measured 583px of a 356px zone and the row's
 ## NAME, its only expanding child, was allocated Godot's 1px floor.
 const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
+
+## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row
+## short of HANDS have opposite remedies (`KIT_SHORT_REMEDY` names the bench; the staffing note names
+## the stepper), and a board that flew one glyph for both makes the player hover every marked row to
+## find out which it is — the very discovery problem the whole arc was reported for. Reported from
+## play: *"Each individual work tile should also tell me if it is missing kits."*
+##
+## > #### ⛔ IT MUST BE A **TEXT-PRESENTATION** GLYPH, BECAUSE ITS COLOUR IS HALF OF WHAT IT SAYS
+## >
+## > This mark is drawn in `KIT_SHORT_SEVERITY`'s amber — *dearer, not stopped*. **A colour emoji
+## > ignores `font_color` and renders in its own palette**, so the first cut of this (`🎒`, twinned
+## > with `HudComposeVocab.KIT_JOB_GLYPH_FALLBACK`) drew a RED blob: the missing-good register, which
+## > means the work is STOPPED, on the one hazard that stops nothing. Every assertion passed while it
+## > did — `get_theme_color` reads the OVERRIDE, which was correctly amber — so the guard that
+## > catches this class is `band_panel_preview`'s code-point test, and the only proof is a rendered
+## > frame read by eye.
+## >
+## > It is the same rule `WORK_CHIP_FORAGE_MARK` states one screen down, where the `⚠` / `⌈` chips
+## > were deliberately left as text while the kind chips became bundled art: *their colour is half of
+## > what they say*. **The tint requirement outranks twinning with the picker's glyph** — the picker
+## > draws its fallback large and untinted, which is a different problem.
+##
+## **AND NO TOOL PICTOGRAM SURVIVES `WORK_ROW_FONT_SIZE`.** Ten candidates were rendered into this
+## slot and read off the frame at 12×: `⚒` (the crafting launcher's own bench mark) and `⛏` collapse
+## to a smear at 13px, and `⚙` / `⛭` / `⛮` all resolve to a small RING — indistinguishable from the
+## `♻` policy glyph standing beside them on the same row. **Legibility and the correct ink beat
+## literal iconography**, so the mark is an abstract one and the hover and the inspector card carry
+## the meaning.
+##
+## `◆` is bold enough to find while scanning, and it is confusable with none of the board's existing
+## marks — not the `⚠` triangle, the `♻` ring, the `⌈` chevron, the `▦` field square or the `◎`
+## meter — and it appears nowhere else in `src/`, so it carries no second meaning to collide with.
+## (`❖` was the runner-up and is `HudFormat.FACTION_PAGE_GLYPH`; `◈` / `✦` are likewise taken.)
+##
+## **THE MARK IS A POINTER, NOT THE SENTENCE.** The figures and the remedy stay in the inspector
+## card's KITS section and on the row's hover; 20px of a 356px board cannot hold a clause, and a
+## second, shorter wording for one fact is what `KitRoster.shortfall_sentence` exists to prevent.
+const KIT_SHORT_MARK := "◆"
+
+## The stable handle on a row's MARKS run — `WORK_ROW_RUNG_META`'s job one slot over, and for its
+## reason: `FoodIcons` spends the same emoji family on source icons, so a harness matching this
+## Label by text would find the wrong node. It carries the run itself, so a claim about *what is
+## flown* and a claim about *which Label flew it* are the same read.
+const WORK_ROW_MARKS_META := &"work_row_marks"
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
@@ -1539,6 +1594,44 @@ const NOTE_SEVERITY_DANGER := "danger"
 ## cannot colour one note two ways.
 static func note_color(severity: String) -> Color:
     return HudStyle.DANGER if severity == NOTE_SEVERITY_DANGER else HudStyle.WARN
+
+## ---- THE KIT ARM: WHEN THE ROW'S GEAR DOES NOT REACH EVERYBODY ON IT ----------------------------
+##
+## ⛔ **THIS IS A SLOT OF ITS OWN (`kit_note`), NOT THE `note` ABOVE.** `note` is the sim's
+## `workers_needed` telemetry — *how many of these hands bring anything home* — and a row can be
+## understaffed **and** short of kits in the same turn: four hunters where six would pay, two of them
+## carrying traps. They are two independent facts with two different remedies, so they get two slots.
+## (`note` and `overstaffed` share ONE slot for the opposite reason: they are mutually exclusive by
+## construction. Follow that comment's LOGIC, not its letter.)
+##
+## ⛔ **AND THE REMEDY NAMES THE BENCH, NEVER THE STEPPER — pointing at the `+` here is not merely
+## unhelpful, it is BACKWARDS.** *A dead kit makes a job want more hands; a missing GOOD stops the
+## work outright* is the distinction this file already draws, and a kit the band does not own is the
+## second kind: the band's ledger is cut pro-rata by head count, so each hand added to a short row
+## takes a smaller share and MORE of the crew ends up bare-handed. The sentence is therefore built in
+## `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT`'s family — the same two levers, refusing the
+## same lever — rather than in `WORK_ROW_UNDER_KEPT_NOTE`'s *raise this band's role* shape.
+const KIT_SHORT_REMEDY := "The bench or a trade, not more hands — another hand here only goes without."
+
+## **THE ROW'S WHOLE SENTENCE: the shortfall, then its remedy.** The first clause is
+## `KitRoster.shortfall_sentence` — `HudComposeVocab.KIT_SHORTFALL_FORMAT`, the ONE phrasing the
+## compose sheets and the role cards already state a gear shortfall in, and the reason this format
+## takes it as a slot rather than spelling `%d of %d` itself: a second wording for one fact is what
+## `band_panel_preview._assert_role_card_shortfall` exists to stop. ⛔ No BBCode — both hosts draw
+## this as a plain `Label`.
+const WORK_ROW_KIT_SHORT_FORMAT := "%s. " + KIT_SHORT_REMEDY
+
+## **AMBER, NEVER RED, and the difference is what the shortfall COSTS.** A missing material stops the
+## work outright (`NOTE_SEVERITY_DANGER`); a short kit only makes it dearer — the unequipped share of
+## the crew still works, at the bare-handed tier — so it wears the hands-short ink. Stated here, in
+## the severity vocabulary, so the render sites ask `note_color` instead of naming a `HudStyle`
+## colour themselves.
+const KIT_SHORT_SEVERITY := NOTE_SEVERITY_WARN
+
+## The row's kit sentence, or `""` for a row with no shortfall to state. One producer, so the work
+## board's tooltip and the inspector card's KITS section cannot word one shortfall two ways.
+static func kit_short_note(shortfall_sentence: String) -> String:
+    return "" if shortfall_sentence == "" else WORK_ROW_KIT_SHORT_FORMAT % shortfall_sentence
 
 ## **THE GOOD-SHORTFALL SENTENCE FOR ONE ROW, OR `""`** — `""` meaning *this row went short of no
 ## good*, which is every row on the shipped ladder but a pen's.

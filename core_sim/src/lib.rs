@@ -181,10 +181,10 @@ pub use demographics_config::{
     DemographicsConfigMetadata,
 };
 pub use equipment_config::{
-    load_equipment_config_from_env, Crew, DefaultKitsConfig, EffectTier, EquipmentConfig,
-    EquipmentConfigHandle, EquipmentConfigMetadata, EquipmentEffect, EquipmentStat, EquipmentTier,
-    ItemDefinition, KitChoice, KitCoverage, KitDefinition, KitJob, KitSelectionError, LiveItem,
-    Quarry, WearConfig, WearQuantum, BUILTIN_EQUIPMENT_CONFIG,
+    load_equipment_config_from_env, BandItemBudget, Crew, DefaultKitsConfig, EffectTier,
+    EquipmentConfig, EquipmentConfigHandle, EquipmentConfigMetadata, EquipmentEffect,
+    EquipmentStat, EquipmentTier, ItemDefinition, KitChoice, KitCoverage, KitDefinition, KitJob,
+    KitSelectionError, LiveItem, Quarry, WearConfig, WearQuantum, BUILTIN_EQUIPMENT_CONFIG,
 };
 pub use espionage::{
     AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,

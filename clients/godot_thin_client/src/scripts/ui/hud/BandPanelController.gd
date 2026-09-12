@@ -5715,12 +5715,18 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(ready)
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
+    marks.set_meta(HudWorkVocab.WORK_ROW_MARKS_META, marks.text)
     marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
-    # Amber for an overdraw (⚠), an under-KEPT managed herd (its shed ⚠) or a part-built rung nobody
-    # is building (its decay ⚠) — all three are trouble the eye must find; INK_DIM otherwise (a plain
-    # policy glyph).
+    # Amber for an overdraw (⚠), an under-KEPT managed herd (its shed ⚠), a part-built rung nobody
+    # is building (its decay ⚠) — or a row whose GEAR does not reach its crew (its 🎒) — all four are
+    # trouble the eye must find; INK_DIM otherwise (a plain policy glyph).
+    #
+    # **THE KIT ARM IS HERE BECAUSE A KIT-SHORT ROW NEED BE NEITHER OF THE OTHER TWO.** Its gear
+    # shortfall costs the band nothing the yield telemetry reports and puts no rung at risk, so
+    # without this conjunct the one mark that says *look here* would draw in the quiet ink.
     marks.add_theme_color_override("font_color",
         HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("at_risk", false)) \
+                or String(model.get("kit_note", "")) != "" \
             else HudStyle.INK_DIM)
     marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -6084,6 +6090,18 @@ func _build_work_inspector_kits(band: Dictionary, model: Dictionary) -> VBoxCont
     # draws both.
     var take := _build_work_inspector_kit_line(column, _work_inspector_take_key(model))
     take.add_child(_build_work_inspector_take_kit_picker(band, model))
+    # **AND HOW FAR THAT PICK ACTUALLY REACHES, directly under the control that made it** — *"2 of 4
+    # Trapping kits available"*, then the remedy. This is the one surface that draws the pair in
+    # full: the board row carries it on its hover and in the ⚠ chip's count, because a two-line row
+    # has nowhere to put a sentence.
+    #
+    # ⛔ **IT IS NOT INSIDE THE UPKEEP BRANCH BELOW.** The two are independent — a WILD source owes
+    # no keeping bill and can still be short of the gear its take crew carries — which is why the
+    # reservation charges `WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT` separately from the upkeep pair.
+    var kit_note := String(model.get("kit_note", ""))
+    if kit_note != "":
+        column.add_child(HudWidgets.build_wrapping_status_part(kit_note,
+            HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
     if _work_inspector_has_upkeep(model):
         var upkeep := _build_work_inspector_kit_line(column, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY)
         upkeep.add_child(_build_work_inspector_upkeep_kit_picker(band, model))
@@ -6410,6 +6428,13 @@ func _work_inspector_height(model: Dictionary) -> float:
     height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT
     if _work_inspector_has_kits(model):
         height += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
+        # …and the gear-shortfall line under the take picker, on the builder's own test verbatim. It
+        # is charged INDEPENDENTLY of the upkeep pair below: a wild source owes no keeping bill and
+        # can still be short of the gear its crew carries, so folding the two into one term would
+        # leave that row drawing a line nothing reserved.
+        if String(model.get("kit_note", "")) != "":
+            height += HudWorkVocab.WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
+                + _work_inspector_wrap_overflow(String(model.get("kit_note", "")))
         # …and the UPKEEP half on top, which a WILD source does not draw: the picker and the bill line
         # under it are one term behind the builder's own second predicate, verbatim.
         if _work_inspector_has_upkeep(model):
@@ -6646,6 +6671,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # missing material stops the work outright, and the two must not read alike. The producer that
         # knows which shortfall it is says so here; neither renderer sniffs the sentence.
         var note_severity := HudWorkVocab.NOTE_SEVERITY_WARN
+        # **AND HOW FAR THIS ROW'S GEAR REACHES, IN A SLOT OF ITS OWN.** It is deliberately NOT the
+        # `note` above: that one is the sim's `workers_needed` telemetry, and a row can be
+        # understaffed AND short of kits in the same turn — two independent facts with two different
+        # remedies. (The `note`/`overstaffed` pair shares one slot for the opposite reason, being
+        # mutually exclusive by construction; `HudWorkVocab`'s kit arm carries the distinction.)
+        var kit_note := _work_row_kit_note(m)
         var rung := _work_source_rung(kind, patch, live_herd)
         # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
         # `rung_glyph` (the rung the source STANDS on). Same `RungGates` answer the map's badge and the
@@ -6802,6 +6833,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # nothing home, and this one says the ground or the flock is being lost.
             note = HudWorkVocab.under_kept_note(kind, material_note)
             note_severity = HudWorkVocab.under_kept_note_severity(material_note)
+        # **AND THE ROW FLIES A MARK OF ITS OWN FOR IT** — a KIT, never a second ⚠. The two hazards
+        # have opposite remedies (the bench against the stepper), so one glyph for both would make a
+        # player hover every marked row to learn which it is: the discovery problem this arc was
+        # reported for. It is APPENDED rather than substituted — a row can be overdrawing, at risk
+        # AND short of gear, and each of those is its own mark.
+        if kit_note != "":
+            marks += " " + HudWorkVocab.KIT_SHORT_MARK
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -6831,6 +6869,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # ⚠ answer to it rather than to the work account alone.
             "at_risk": at_risk,
             "note": note, "note_severity": note_severity,
+            # **THE GEAR SHORTFALL, IN ITS OWN SLOT** — `""` on a row that is not short, on a row
+            # whose kit carries nothing (the sim hands `none` back the whole head count, so the
+            # equality speaks for it) and on a PENDING row, which states no coverage until the
+            # recapture re-cuts the band's ledger. Its ink is `HudWorkVocab.KIT_SHORT_SEVERITY`,
+            # which is amber and not the missing-good red: a short kit makes the work dearer, it
+            # does not stop it.
+            "kit_note": kit_note,
             "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
@@ -7000,6 +7045,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 # cap note above is empty, so without this the attention flag would have no sentence
                 # anywhere on the row explaining what it is for.
                 overstaffed,
+                # **THE KIT SHORTFALL RIDES THE HOVER for the same reason `overstaffed` does**: it
+                # raises the row's attention flag, and a row may not carry a mark whose sentence is
+                # nowhere on it. The board row has no prose line — the full pair is drawn in the
+                # inspector card's KITS section, beside the picker that chose the kit.
+                kit_note,
                 under_kept_hint,
                 ready_tooltip,
                 building_tooltip,
@@ -7010,10 +7060,45 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # `workers_needed` telemetry in figures; `overstaffed` is this client's ceiling reading,
             # emitted only where the wire is silent. So the flag below is raised by whichever one
             # spoke, and the row can never carry both.
+            # **AND A ROW WHOSE GEAR DOES NOT REACH ITS CREW WANTS IT TOO.** This chip's count is
+            # what answers *how many rows are short* at a glance — deliberately, in place of the
+            # band-level *"you are short N kits"* readout Ray declined: *"we don't need it if in the
+            # work tab we show each row that is short of kits."*
             "attention": bool(yld.get("warn", false)) or note != "" or pending
-                or overstaffed != "",
+                or overstaffed != "" or kit_note != "",
         })
     return models
+
+## **HOW FAR THIS ROW'S GEAR REACHES, AS THE ROW'S OWN SENTENCE** — `""` for every row with nothing
+## to report, which is most of them.
+##
+## **THE SIM'S OWN PAIR, NEVER A CLIENT DIVISION** (`LaborAssignment.kitWorkersHolding` over the
+## `workers` beside it). The band's ledger is cut ONCE, pro-rata by head count over every row reaching
+## for each item, so two rows naming `trapping` against four traps arm two hunters each — an answer
+## that depends on the rows BESIDE this one and that no item count on this row could reproduce.
+##
+## Silent in four states, each for its own reason:
+## - **NOT SHORT** — the rule, and the same test states it for an ITEMLESS kit: the sim hands `none`
+##   back the row's whole head count on purpose, so the equality speaks for it and there is no
+##   client-side `none` branch to keep in step.
+## - **NO COVERAGE STATED** — a PENDING row, whose settled pair describes a staffing the `+` has
+##   already moved (`HudBandLaborState.effective_worker_map`).
+## - **A KIT THIS ROSTER DOES NOT CARRY** — an id held over from another world. The sentence names
+##   the kit, and naming it `""` would state a shortfall of nothing.
+##
+## `KitRoster.shortfall_sentence` composes the figures, so this row and the compose sheet that
+## staffed it state one shortfall in one wording.
+func _work_row_kit_note(row: Dictionary) -> String:
+    var coverage := KitRoster.row_coverage(row)
+    if coverage.is_empty() or int(coverage[KitRoster.ROW_COVERAGE_SHORT_KEY]) <= 0:
+        return ""
+    var kit := KitRoster.kit_by_id(_band_labor.kits(),
+        String(row.get("kit_id", KitRoster.NO_KIT_ID)))
+    if kit.is_empty():
+        return ""
+    return HudWorkVocab.kit_short_note(KitRoster.shortfall_sentence(kit,
+        int(coverage[KitRoster.ROW_COVERAGE_HELD_KEY]),
+        int(coverage[KitRoster.ROW_COVERAGE_CREW_KEY])))
 
 ## The source's STANDING RUNG as `{glyph, tooltip}` — `{}` for WILD ground / a wild herd, which is the
 ## honest default and keeps the common row unmarked (see `HudWorkVocab.WORK_ROW_RUNG_TENDED_TOOLTIP`).

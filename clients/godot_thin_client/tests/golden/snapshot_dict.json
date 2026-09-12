@@ -4672,6 +4672,7 @@
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
+          "kit_workers_holding": 99.230003,
           "material": "populations[0].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -4742,6 +4743,7 @@
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
+          "kit_workers_holding": 53.110001,
           "material": "populations[0].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -4812,6 +4814,7 @@
           "improvement": "populations[0].labor_assignments[2].improvement",
           "kind": "populations[0].labor_assignments[2].kind",
           "kit_id": "populations[0].labor_assignments[2].kit_id",
+          "kit_workers_holding": 14.23,
           "material": "populations[0].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -5576,6 +5579,7 @@
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
+          "kit_workers_holding": 68.360001,
           "material": "populations[1].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -5646,6 +5650,7 @@
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
+          "kit_workers_holding": 76.669998,
           "material": "populations[1].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -5716,6 +5721,7 @@
           "improvement": "populations[1].labor_assignments[2].improvement",
           "kind": "populations[1].labor_assignments[2].kind",
           "kit_id": "populations[1].labor_assignments[2].kit_id",
+          "kit_workers_holding": 15.11,
           "material": "populations[1].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -6419,6 +6425,7 @@
           "improvement": "populations[2].labor_assignments[0].improvement",
           "kind": "populations[2].labor_assignments[0].kind",
           "kit_id": "populations[2].labor_assignments[0].kit_id",
+          "kit_workers_holding": 63.790001,
           "material": "populations[2].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -6489,6 +6496,7 @@
           "improvement": "populations[2].labor_assignments[1].improvement",
           "kind": "populations[2].labor_assignments[1].kind",
           "kit_id": "populations[2].labor_assignments[1].kit_id",
+          "kit_workers_holding": 0.66,
           "material": "populations[2].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -6559,6 +6567,7 @@
           "improvement": "populations[2].labor_assignments[2].improvement",
           "kind": "populations[2].labor_assignments[2].kind",
           "kit_id": "populations[2].labor_assignments[2].kit_id",
+          "kit_workers_holding": 75.290001,
           "material": "populations[2].labor_assignments[2].material",
           "material_upkeep_demand": [
             {

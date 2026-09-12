@@ -974,6 +974,14 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY):
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY] = \
 				int((a as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY])
+		# **AND HOW FAR THIS ROW'S GEAR REACHES**, presence-sensitively for the ceiling's reason and
+		# not the rates': its `0` is the SHARPEST shortfall there is — *this row is staffed and not
+		# one of them is outfitted* — so a `get(..., 0.0)` default would assert that of every band
+		# whose wire predates the field, and every row on the board would carry a kit warning.
+		# Absent means *this row states no coverage*, which is silence.
+		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY):
+			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = \
+				float((a as Dictionary)[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY])
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
@@ -1016,6 +1024,13 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# sent. On a brand-new assignment there is no settled row to fall back to anyway, which
 			# is the case the work inspector's blank, unselectable kit picker was reported on.
 			"kit_id": String(pd.get("kit_id", KitRoster.NO_KIT_ID)),
+			# **AND NO KIT COVERAGE EITHER** (`SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY`),
+			# which is the good-shortfall pair's treatment and for the same reason: a `+`/`−` moves
+			# the very denominator the coverage is a fraction of, and it re-cuts the band's ledger
+			# across every OTHER row as well, so the settled row's pair describes a staffing this
+			# band no longer has. The key is simply absent until the recapture answers, and absent
+			# is the reading *this row states no coverage*.
+			#
 			# A pending (optimistic) assign has no confirmed yield yet — render no yield number.
 			# Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
 			# the next snapshot resolves what the source actually used.
