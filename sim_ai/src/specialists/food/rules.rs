@@ -36,10 +36,6 @@ const WHY_NO_USEFUL_CREW: &str = "no useful crew on";
 const WHY_DEAD_ROW: &str = "dead row";
 const WHY_LOWEST_ROW: &str = "lowest row";
 
-/// **The crews of `split_band_workers` a band must hold before *split to feed* asks for one**:
-/// a parent keeps one crew of `split_band_workers` for itself, so the band must hold two crews.
-const SPLIT_PARENT_CREWS: u32 = 2;
-
 /// **How far a band walks in a turn**, restated from `core_sim/src/data/labor_config.json` →
 /// `band_move_tiles_per_turn` (`1`): the seat cannot read the sim's config, and the split's
 /// travel is priced in turns. The server's value is the authority.
@@ -482,9 +478,17 @@ impl Food {
     }
 
     /// **Rule 3 — split to feed.** After rule 1's change the band's projected runway is still
-    /// below the goal, and a discovered, workable site just outside its reach would feed a band
-    /// of `split_band_workers`: split toward it. The child appears on the parent's tile next turn
-    /// and [`Food::settle`] walks it there.
+    /// below the goal, and a discovered, workable site just outside its reach would feed the
+    /// child crew: split toward it. The child appears on the parent's tile next turn and
+    /// [`Food::settle`] walks it there.
+    ///
+    /// **The crew is `min(split_band_workers, working_age − founding_parent_min_workers)`, and
+    /// the rule is silent below `founding_min_workers`.** The sim's two split floors cross the
+    /// wire on every cohort (`PopulationCohortState::founding_min_workers` /
+    /// `founding_parent_min_workers` — *"The two floors cross the wire; the verdict does not."*),
+    /// so the child is sized to what the parent may give up, and a crew the sim would refuse as
+    /// too small is not asked for. The refusal memory ([`SeatMemory::split_refused_at`]) stays as
+    /// a belt: a split can still be refused for reasons the floors do not state.
     pub fn split_to_feed(
         &self,
         view: &SeatView,
@@ -494,21 +498,23 @@ impl Food {
         carried: &Reassignment,
     ) -> Option<Proposal> {
         let goals = plan.food_goals()?;
-        let split = self.floors.split_band_workers;
-        // A split the sim refused at this size is not asked for again until the band has grown:
-        // the sim's floors are not on the wire, so the refusal is what is learned from.
+        let crew = self.floors.split_band_workers.min(
+            band.working_age
+                .saturating_sub(band.founding_parent_min_workers),
+        );
+        // A split the sim refused at this size is not asked for again until the band has grown.
         let refused_at_this_size = memory
             .split_refused_at(band.band_id)
             .is_some_and(|refused_at| refused_at >= band.working_age);
         if band.is_traveling
             || memory.pending_split(band.band_id).is_some()
             || refused_at_this_size
-            || band.working_age < SPLIT_PARENT_CREWS * split
+            || crew < band.founding_min_workers
         {
             return None;
         }
         let budget = self.budget_workers(view, plan);
-        if budget < split {
+        if budget < crew {
             return None;
         }
         let book = Self::book(band);
@@ -541,7 +547,7 @@ impl Food {
             })
             .map(|(patch, distance)| {
                 let take = crew_take(
-                    split,
+                    crew,
                     patch_per_worker_yield(memory, band, patch),
                     patch.biomass * patch.provisions_per_biomass,
                 );
@@ -551,7 +557,7 @@ impl Food {
                 a.total_cmp(b).then_with(|| b_distance.cmp(a_distance))
             })?;
         // A child that cannot feed itself is not a fix.
-        let share = band.food_consumption * split as f32 / band.working_age.max(1) as f32;
+        let share = band.food_consumption * crew as f32 / band.working_age.max(1) as f32;
         if take <= share {
             return None;
         }
@@ -560,7 +566,7 @@ impl Food {
         let mut rows = Self::rows_ascending(band, ROLE_HUNT);
         rows.extend(Self::rows_ascending(band, ROLE_FORAGE));
         rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
-        let drawn = self.draw(&rows, split, band.idle_workers);
+        let drawn = self.draw(&rows, crew, band.idle_workers);
         let change = Reassignment {
             income_lost: drawn.income_lost,
             income_gained: take,
@@ -572,16 +578,16 @@ impl Food {
             commands: vec![CommandPayload::SplitBand {
                 faction_id: self.faction,
                 band_id: Some(band.band_id),
-                workers: split,
+                workers: crew,
             }],
             intent: intent_key(SPECIALIST_FOOD, INTENT_SPLIT, band.band_id),
             score: goal_progress(&goals, &after, &after_split) * self.weight,
             cost: Cost {
-                workers: split,
+                workers: crew,
                 bands: vec![band.band_id],
             },
             reason: format!(
-                "{REASON_SPLIT_TO_FEED}: {split} toward {},{} taking {take:.1}/turn from t{travel} [{}]",
+                "{REASON_SPLIT_TO_FEED}: {crew} toward {},{} taking {take:.1}/turn from t{travel} [{}]",
                 target.x,
                 target.y,
                 ledger_note(&after_split)
@@ -589,7 +595,7 @@ impl Food {
             memo: Some(Memo::Split {
                 band: band.band_id,
                 target,
-                workers: split,
+                workers: crew,
             }),
         })
     }
@@ -955,14 +961,15 @@ impl Food {
 #[cfg(test)]
 mod tests {
     use super::super::tests::{
-        a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, BAND, FACTION,
-        HERD_AT, HERD_ID, HERE, NEAR_PATCH, RICH_PATCH, STOCK, TICK,
+        a_unit_of, a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, BAND,
+        FACTION, FORAGE_KIT_ITEM, HERD_AT, HERD_ID, HERE, HUNT_KIT_HAUL_ITEM, HUNT_KIT_ITEM,
+        NEAR_PATCH, RICH_PATCH, STOCK, TICK,
     };
     use super::*;
     use crate::orchestrator::Plan;
     use crate::specialists::Specialist;
     use sim_runtime::{
-        CohortStoreState, HerdTelemetryState, IntensificationKnowledgeState,
+        CohortStoreState, EquipmentBatchState, HerdTelemetryState, IntensificationKnowledgeState,
         LadderKnowledgeProgress, FIXED_POINT_SCALE, FOOD_CARGO_KEY,
     };
     use std::sync::Arc;
@@ -1067,6 +1074,68 @@ mod tests {
                 .negative_income(&view, &Plan::pass_through(TICK), &memory(), own_band(&view))
                 .is_none(),
             "no share, no goals, no hands"
+        );
+    }
+
+    /// `equipment.json`: *"HUNTING YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"* —
+    /// a band holding no hunting gear is never sent to a herd, however rich; one hunting kit and
+    /// the herd is a source again. Gear a hunt kit does not carry (baskets) is not a hunting kit.
+    #[test]
+    fn a_band_with_no_hunting_kit_is_never_sent_to_a_herd() {
+        let mut view = a_view();
+        // The rich patch out of sight, the herd big enough to out-earn the near patch.
+        view.snapshot.visibility_raster.samples[(RICH_PATCH.y * 8 + RICH_PATCH.x) as usize] = 0;
+        view.snapshot.herds[0].biomass = 100.0;
+        let plan = plan_with_food_share(1.0);
+        let assigned_role = |view: &SeatView| {
+            let proposal = food()
+                .negative_income(view, &plan, &memory(), own_band(view))
+                .expect("a proposal");
+            assigned_to(&proposal.commands[0]).0
+        };
+        assert_eq!(
+            assigned_role(&view),
+            ROLE_HUNT,
+            "one spear: the herd is a source"
+        );
+        view.snapshot.populations[0].equipment_batches.clear();
+        assert_eq!(
+            assigned_role(&view),
+            ROLE_FORAGE,
+            "no gear: the herd is not"
+        );
+        assert!(
+            food()
+                .spare_hands_into_hunts(
+                    &view,
+                    &plan,
+                    &memory(),
+                    own_band(&view),
+                    &Reassignment::NONE
+                )
+                .is_none(),
+            "nor does rule 4 see it"
+        );
+        // A `count 0` row is "owns none of this item at all"; baskets are not hunting gear.
+        view.snapshot.populations[0].equipment_batches = vec![
+            EquipmentBatchState {
+                count: 0,
+                ..a_unit_of(HUNT_KIT_ITEM)
+            },
+            a_unit_of(FORAGE_KIT_ITEM),
+        ];
+        assert_eq!(
+            assigned_role(&view),
+            ROLE_FORAGE,
+            "none of the spear, one basket"
+        );
+        view.snapshot.populations[0]
+            .equipment_batches
+            .push(a_unit_of(HUNT_KIT_HAUL_ITEM));
+        assert_eq!(
+            assigned_role(&view),
+            ROLE_HUNT,
+            "a hunt kit's haul aid counts"
         );
     }
 
@@ -1691,7 +1760,8 @@ mod tests {
             })
         );
         assert_eq!(proposal.cost.workers, 5);
-        // Not below two children's worth of hands; not with a split already pending.
+        // Nine hands leave 3 over the parent floor of 6, under the founding floor of 4; not with
+        // a split already pending.
         let small = a_view_with(|view| view.snapshot.populations[0].working_age = 9);
         let small = SeatView {
             snapshot: sim_runtime::WorldSnapshot {
@@ -1709,7 +1779,7 @@ mod tests {
             .split_to_feed(&view, &plan, &pending, own_band(&view), &carried)
             .is_none());
         // The sim refused it (no child ever appeared): not asked again at this size, asked again
-        // once the band has grown. The sim's floors are not on the wire; the refusal is.
+        // once the band has grown. The floors say twelve may split; the refusal is the belt.
         let mut refused = memory();
         refused.observe(&view, FACTION);
         refused.record_choices(TICK, [(proposal.intent.clone(), proposal.memo)].into_iter());
@@ -1745,6 +1815,60 @@ mod tests {
         assert!(specialist
             .split_to_feed(&poor, &plan, &memory(), own_band(&poor), &carried)
             .is_none());
+    }
+
+    /// The child crew is what the parent may give up, capped at `split_band_workers`, and the
+    /// rule is silent under the founding floor: with parent floor 6 and founding floor 4, ten
+    /// hands split 4, nine split nothing, seventeen split the profile's 5.
+    #[test]
+    fn the_split_crew_is_sized_by_the_wires_floors() {
+        let specialist = food();
+        let plan = plan_with_food_share(1.0);
+        let at = |working_age: u32| {
+            a_view_with(|view| {
+                view.snapshot
+                    .food_modules
+                    .retain(|site| site.x != RICH_PATCH.x || site.y != RICH_PATCH.y);
+                // A site rich enough that any crew the floors allow out-earns its share.
+                add_patch(view, SPLIT_SITE, 2.0, 40.0);
+                let band = &mut view.snapshot.populations[0];
+                band.working_age = working_age;
+                band.idle_workers = 0;
+                band.food_income = 12.0;
+                band.food_consumption = 16.0;
+                band.stores = vec![CohortStoreState {
+                    item: FOOD_CARGO_KEY.to_owned(),
+                    quantity: (40.0 * FIXED_POINT_SCALE as f32) as i64,
+                }];
+                band.labor_assignments = vec![forage_row(NEAR_PATCH, working_age, 12.0)];
+            })
+        };
+        let crew_at = |working_age: u32| {
+            let view = at(working_age);
+            let band = own_band(&view);
+            assert_eq!(
+                (band.founding_min_workers, band.founding_parent_min_workers),
+                (4, 6)
+            );
+            let (_, carried) = specialist.assess_income(&view, &plan, &memory(), band);
+            specialist
+                .split_to_feed(&view, &plan, &memory(), band, &carried)
+                .map(|proposal| match proposal.commands[0] {
+                    CommandPayload::SplitBand { workers, .. } => {
+                        assert_eq!(proposal.cost.workers, workers);
+                        assert!(
+                            proposal.reason.contains(&format!("{workers} toward")),
+                            "{}",
+                            proposal.reason
+                        );
+                        workers
+                    }
+                    ref other => panic!("not a split: {other:?}"),
+                })
+        };
+        assert_eq!(crew_at(10), Some(4), "ten less the parent's six");
+        assert_eq!(crew_at(9), None, "three is under the founding floor");
+        assert_eq!(crew_at(17), Some(5), "capped at split_band_workers");
     }
 
     #[test]

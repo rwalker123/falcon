@@ -202,10 +202,11 @@ pub struct SeatMemory {
     /// Children this seat split off and their sites, by child band.
     born_by_split: BTreeMap<u64, SplitBirth>,
     /// **The working-age a band had when the sim refused to split it.** The sim's floors
-    /// (`min_founding_workers`, `parent_min_workers`) are not on the wire and are not copied here;
-    /// what the frame teaches is that a band of *this* size cannot split, so a split is asked for
-    /// again only once the band has grown. Kept across the horizon: a refusal is a fact about
-    /// the sim, not a sighting.
+    /// (`founding_min_workers`, `founding_parent_min_workers`) are on every cohort, and *split to
+    /// feed* sizes its crew by them; this is the belt behind them — a split can be refused for a
+    /// reason the floors do not state, and what the frame then teaches is that a band of *this*
+    /// size cannot split, so a split is asked for again only once the band has grown. Kept across
+    /// the horizon: a refusal is a fact about the sim, not a sighting.
     split_refused: BTreeMap<u64, u32>,
     /// **Per band, the tile it last departed from on an accepted move, and when.** *Better
     /// ground* will not walk a band back onto it while it is remembered (decayed by the horizon).

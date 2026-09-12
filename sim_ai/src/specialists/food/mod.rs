@@ -48,14 +48,16 @@ use crate::profile::FoodFloors;
 use crate::view::{band_tile, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
 use ledger::Book;
 
-use sources::Source;
 pub(crate) use sources::{
     crew_take, is_food_site, patch_per_worker_yield, workable_patch_at, SourceKey,
 };
+use sources::{hunting_kits_held, Source};
 
 /// The `assign_labor` roles this specialist staffs — the `kind` vocabulary of
 /// `LaborAssignmentState` (`sim_runtime/src/command_text.rs`).
 pub const ROLE_FORAGE: &str = "forage";
+/// Also the kit job a herd is worked under — `KitOptionState::jobs` names the verbs by the same
+/// words as the labor roles (*"any of `"hunt"`, `"forage"`, `"scout"`, `"warrior"`"*).
 pub const ROLE_HUNT: &str = "hunt";
 /// The band-wide build pool: `assign_labor <faction> <band> builders <n>`, whose whole output goes
 /// on the head of the band's build queue (`command_text.rs` → `assign_labor`).
@@ -189,10 +191,13 @@ impl Food {
                 !self.is_dead(memory, band, &source.key, forecast)
             })
             .collect();
+        // A herd is a source only for a band holding hunting gear ([`hunting_kits_held`]).
+        let kits_held = hunting_kits_held(view, band);
         sources.extend(
             view.snapshot
                 .herds
                 .iter()
+                .filter(|_| kits_held > 0)
                 .filter(|herd| herd.huntable && herd.per_worker_yield > 0.0)
                 .filter(|herd| grid.distance(here, Tile::new(herd.x, herd.y)) <= band.hunt_reach)
                 .map(|herd| {
@@ -214,6 +219,7 @@ impl Food {
             at = ?here,
             work_range = band.work_range,
             hunt_reach = band.hunt_reach,
+            hunting_kits_held = kits_held,
             patches_in_frame = view.snapshot.forage_patches.len(),
             visibility_here = view.visibility(here),
             sources = ?sources
@@ -387,7 +393,10 @@ pub(crate) mod tests {
     use crate::orchestrator::{FoodGoals, Goals, GroundRung};
     use crate::profile::{AiProfiles, NO_MEMORY_DECAY};
     use crate::view::{VISIBILITY_ACTIVE, VISIBILITY_DISCOVERED};
-    use sim_runtime::{CohortStoreState, ForagePatchState, HerdTelemetryState, WorldSnapshot};
+    use sim_runtime::{
+        CohortStoreState, EquipmentBatchState, ForagePatchState, HerdTelemetryState,
+        KitOptionState, WorldSnapshot,
+    };
 
     pub const FACTION: u32 = 3;
     pub const BAND: u64 = 7001;
@@ -407,6 +416,27 @@ pub(crate) mod tests {
     pub const STOCK: f32 = 84.0;
     /// The turns a pending split waits for its child in these tests.
     pub const SETTLE: u32 = 3;
+    /// The sim's split floors as the band echoes them (`expedition_config.json` → `settle`):
+    /// the working-age the child must clear, and what the parent must keep.
+    pub const FOUNDING_FLOOR: u32 = 4;
+    pub const PARENT_FLOOR: u32 = 6;
+    /// The roster's hunting kit and the weapon it carries (`equipment.json` → `big_game`); the
+    /// fixture band holds one, so a herd is a source for it ([`hunting_kits_held`]).
+    pub const HUNT_KIT: &str = "big_game";
+    pub const HUNT_KIT_ITEM: &str = "spears";
+    pub const HUNT_KIT_HAUL_ITEM: &str = "sled";
+    /// The roster's gathering kit — a kit whose items are not hunting gear.
+    pub const FORAGE_KIT: &str = "gathering";
+    pub const FORAGE_KIT_ITEM: &str = "baskets";
+
+    /// One unit of `item` in the band's hands.
+    pub fn a_unit_of(item: &str) -> EquipmentBatchState {
+        EquipmentBatchState {
+            item_id: item.to_owned(),
+            count: 1,
+            ..Default::default()
+        }
+    }
 
     pub fn memory() -> SeatMemory {
         SeatMemory::new(NO_MEMORY_DECAY, SETTLE)
@@ -443,8 +473,21 @@ pub(crate) mod tests {
             is_traveling: false,
             is_expedition: false,
             labor_assignments: Vec::new(),
+            founding_min_workers: FOUNDING_FLOOR,
+            founding_parent_min_workers: PARENT_FLOOR,
+            equipment_batches: vec![a_unit_of(HUNT_KIT_ITEM)],
             ..Default::default()
         }];
+        let kit = |id: &str, job: &str, items: &[&str]| KitOptionState {
+            id: id.to_owned(),
+            jobs: vec![job.to_owned()],
+            item_ids: items.iter().map(|item| (*item).to_owned()).collect(),
+            ..Default::default()
+        };
+        snapshot.kits = vec![
+            kit(HUNT_KIT, ROLE_HUNT, &[HUNT_KIT_ITEM, HUNT_KIT_HAUL_ITEM]),
+            kit(FORAGE_KIT, ROLE_FORAGE, &[FORAGE_KIT_ITEM]),
+        ];
         // Each stand's ceiling (`biomass × provisions_per_biomass`) is 1.5× its capacity, so a
         // 17-hand crew is capped at 30 on the near patch and takes its full 34 on the rich one.
         let patch = |tile: Tile, per_worker_yield: f32, carrying_capacity: f32| ForagePatchState {

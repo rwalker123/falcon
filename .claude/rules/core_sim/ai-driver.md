@@ -187,6 +187,17 @@ job's default on the wire); `policy` is left `None` too, because the field is **
 *"a labor assignment carries a `floor`, not a stance … the server ignores it"*
 (`CommandPayload::AssignLabor::policy`), so the balanced take is the default floor.
 
+**No kit, no hunt.** `equipment.json`: *"A SPAWNING BAND OWNS NO EQUIPMENT AT ALL … HUNTING YIELDS
+NOTHING AT ANY CREW SIZE until a spear is crafted"*, and an AI seat never outfits (the opening
+window closes with nothing applied, `starting_loadout::close_opening_window`). So a herd is a
+source (`reachable_sources`) only for a band whose `hunting_kits_held` (`sources.rs`) is above 0:
+the `count` summed over the band's `equipment_batches` rows whose `item_id` is in the `item_ids`
+of a `WorldSnapshot::kits` entry whose `jobs` include `hunt` (the kit's `equipment.json` `uses`
+list — `spears`/`sled` for `big_game`, `traps`/`sled` for `trapping`; the `none` kit carries
+nothing). A `count 0` row is *"the band owns none of this item at all"*. Nothing is said in a
+reason: the rules simply rank forage. Before this, `Food` sent twelve hands to a herd every turn
+for the first 10–13 turns of every bench seed, each rejected next turn as *no useful crew*.
+
 **The plan hands `Food` goals** (`Plan.goals[food]` = `Goals::Food(FoodGoals { net_income_per_turn,
 runway_turns, ground_rung })`, from the profile's `goals` block), and **the goal gap is the score**:
 every rule projects the band's book under its change through the ledger below and scores
@@ -217,22 +228,25 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   the idle hands and the crews of rows that stay in range after the move, onto the best source that
   will not. Never a band `born_by_split` within `food.split_settle_turns` of its birth.
 - **split to feed** (`food:split:<band>`, then `food:settle:<child>`) — after rule 1's change the
-  band's projected runway is still under `goals.runway_turns`, it holds `SPLIT_PARENT_CREWS` (2)
-  crews of `food.split_band_workers` — *a parent keeps one crew of `split_band_workers` for
-  itself, so the band must hold two crews* — no split is pending, **the sim has not refused a split
-  of this band at its current size or larger** (`SeatMemory::split_refused_at`, below), and a
-  discovered, workable, unowned-or-own site within
-  `food.split_search_tiles` but **outside** `work_range` would pay a crew of `split_band_workers`
-  more than that crew's consumption share: `split_band <workers>`, with `Memo::Split { target }`.
+  band's projected runway is still under `goals.runway_turns`, the child crew
+  `min(food.split_band_workers, working_age − founding_parent_min_workers)` is at least
+  `founding_min_workers` — **the sim's two split floors are on every cohort**
+  (`PopulationCohortState::founding_min_workers` / `founding_parent_min_workers`, *"The two floors
+  cross the wire; the verdict does not."*), so the child is sized to what the parent may give up
+  and a crew the sim would refuse as too small is not asked for — no split is pending, **the sim
+  has not refused a split of this band at its current size or larger**
+  (`SeatMemory::split_refused_at`, below), and a discovered, workable, unowned-or-own site within
+  `food.split_search_tiles` but **outside** `work_range` would pay that crew more than its
+  consumption share: `split_band <crew>`, with `Memo::Split { target }`.
   The child appears on the parent's tile next turn (`split_band_from_parent`,
   `core_sim/src/systems/fission.rs`); `SeatMemory` matches it and **settle** walks it there with
   `move_band` under `food:settle:<child>` every turn until arrival (the commitment bonus), the
   travel priced at `BAND_MOVE_TILES_PER_TURN` (restated from `labor_config.json`, 1 tile a turn).
-  The sim's `split_refusals` (`expedition_config.json`: `min_founding_workers`,
-  `parent_min_workers`) are not on the wire and are **not copied here**: at exactly `2 × 5`
-  working-age the split leaves 5 and is refused, the refusal shows in the failed-command log, the
-  pending entry expires — and the memory learns from the frame that a band of *that* size cannot
-  split, so the rule is silent until the band has grown.
+  The refusal memory is the belt behind the floors: a split can be refused for a reason the floors
+  do not state, the refusal shows in the failed-command log, the pending entry expires — and the
+  memory learns from the frame that a band of *that* size cannot split, so the rule is silent
+  until the band has grown. (With the shipped floors `4` / `6`, ten working-age split 4, nine
+  split nothing, seventeen split the profile's 5.)
 - **spare hands into hunts** (`food:hunt:<band>`) — projected net after rule 1 is at
   `goals.net_income_per_turn` or within `food.near_positive_fraction` of it, and a live huntable
   herd is in reach: the most hands off the lowest-paying **forage rows** (never the idle hands —
@@ -391,7 +405,9 @@ own band **not among them** standing on the tile of a parent with a pending entr
 child, and the entry moves to `born_by_split[child] = SplitBirth { tick, target }`. A pending entry
 no child has answered within `split_settle_turns` is a refused split: it is dropped, and
 `split_refused[parent]` records the parent's `working_age` in that frame — what the sim refused
-was a band of that size, and *split to feed* asks again only once the band is larger. That entry
+was a band of that size, and *split to feed* asks again only once the band is larger. The sim's
+split floors are on the wire and size the crew; this is the belt behind them, for a refusal the
+floors do not explain. That entry
 is **kept across the memory horizon** (a refusal is a fact about the sim, not a sighting) and
 cleared by `forget_after`. A birth is dropped when the child stands on its target or the memory
 horizon passes. `forget_after` drops pending entries and births stamped later than the tick and
@@ -542,10 +558,17 @@ the record derives nothing the client would have to (`labor-ui.md` → "THE ⚠ 
 
 ## The bench (`sim_ai bench`)
 
-`sim_ai bench --seeds <u64,…> --turns <n> --seats <spec> … --out <dir> [--server <path>]
+`sim_ai bench [--seeds <u64,…>] [--turns <n>] --seats <spec> … --out <dir> [--server <path>]
 [--config <path>] [--compare <other-out-dir>] [--check <baselines.json>] [--write-baselines <path>]`.
-`--server` defaults to `server` beside the executable; `--config` to the embedded shipped config;
-seat `0` and a repeated faction are refused. An operator's `RUST_LOG` is passed through to the
+`--seeds` defaults to **`23,47`** (`DEFAULT_SEEDS`): two Tiny `earthlike` starts a human can feed
+the start band on. Seed 11 was the first default and was dropped because a human cannot feed the
+start band there — the two food sites in reach of its start regrow ~1.2 food/turn for 30 people —
+so a rival benched on it measures nothing; 47 replaces it. `--turns` defaults to **`60`**
+(`DEFAULT_TURNS`): cultivation costs 50 work units and a crew of a few builders takes ~15–25
+turns, so a 30-turn run ends inside the investment's dip and the ratchet's end-of-run population
+reads the trough. `--server` defaults to `server` beside
+the executable; `--config` to the embedded shipped config; seat `0` and a repeated faction are
+refused. An operator's `RUST_LOG` is passed through to the
 seats (default `info`).
 
 **The seat spec** is `<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*`: the

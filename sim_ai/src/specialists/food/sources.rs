@@ -2,7 +2,7 @@
 //! a forage patch or a huntable herd, its expected take for a crew, and the two eligibility
 //! accessors both specialists must ask the same way.
 
-use sim_runtime::{ForagePatchState, LaborAssignmentState, PopulationCohortState};
+use sim_runtime::{ForagePatchState, KitOptionState, LaborAssignmentState, PopulationCohortState};
 
 use super::{Food, ROLE_FORAGE, ROLE_HUNT};
 use crate::geometry::Tile;
@@ -50,6 +50,36 @@ pub(crate) fn is_food_site(view: &SeatView, tile: Tile) -> bool {
 /// as nothing — because a crew takes nothing off either.
 pub(crate) fn workable_patch_at(view: &SeatView, tile: Tile) -> Option<&ForagePatchState> {
     view.patch_at(tile).filter(|_| is_food_site(view, tile))
+}
+
+/// **The hunting gear `band` holds, in units** — the `count` summed over its `equipment_batches`
+/// rows whose `item_id` is carried by a kit whose `jobs` include `hunt`. The join is
+/// `EquipmentBatchState::item_id` ↔ `KitOptionState::item_ids` (the kit's `equipment.json` `uses`
+/// list); a batch row with `count 0` is *"the band owns none of this item at all"*, and the `none`
+/// kit carries no items, so a bare band reads `0`.
+///
+/// ⛔ **NO KIT, NO HUNT.** `equipment.json`: *"A SPAWNING BAND OWNS NO EQUIPMENT AT ALL … HUNTING
+/// YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"*, and an AI seat never outfits (the
+/// opening window closes with nothing applied, `starting_loadout::close_opening_window`). So a
+/// herd is not a source for a band that reads `0` here, whatever the herd is forecast to pay: the
+/// twelve hands sent to it were rejected next turn as *no useful crew*, every turn, for the first
+/// ten-odd turns of every bench seed.
+pub(crate) fn hunting_kits_held(view: &SeatView, band: &PopulationCohortState) -> u32 {
+    let hunt_kits: Vec<&KitOptionState> = view
+        .snapshot
+        .kits
+        .iter()
+        .filter(|kit| kit.jobs.iter().any(|job| job == ROLE_HUNT))
+        .collect();
+    band.equipment_batches
+        .iter()
+        .filter(|batch| {
+            hunt_kits
+                .iter()
+                .any(|kit| kit.item_ids.contains(&batch.item_id))
+        })
+        .map(|batch| batch.count)
+        .sum()
 }
 
 /// **What a crew of `hands` takes off a source in one turn**: `min(hands × rate, ceiling)`, the

@@ -68,6 +68,15 @@ pub const MAP_PRESET: &str = "earthlike";
 pub const START_PROFILE: &str = "late_forager_tribe";
 /// The seat the bench holds while the rivals claim theirs (`HudConst.PLAYER_FACTION_ID`).
 const HUMAN_SEAT: u32 = 0;
+/// **The seeds a bench plays when `--seeds` is not given.** Two Tiny `earthlike` starts a human
+/// can feed the start band on. Seed 11 was the first default and was dropped: the two food sites
+/// in reach of its start regrow ~1.2 food/turn for 30 people, so no player survives it and a
+/// rival benched there measures nothing; 47 replaces it.
+pub const DEFAULT_SEEDS: &str = "23,47";
+/// **The turns a bench plays when `--turns` is not given.** Cultivation costs 50 work units and a
+/// crew of a few builders takes ~15–25 turns, so a 30-turn run ends inside the investment's dip
+/// and the ratchet's end-of-run population reads the trough.
+pub const DEFAULT_TURNS: u64 = 60;
 
 /// The config keys the bench rewrites.
 const KEY_MAP_SEED: &str = "map_seed";
@@ -259,10 +268,10 @@ pub struct BenchArgs {
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// The map seeds, comma-separated.
-    #[arg(long, value_delimiter = ',', required = true)]
+    #[arg(long, value_delimiter = ',', default_value = DEFAULT_SEEDS)]
     pub seeds: Vec<u64>,
     /// Turns each seat plays.
-    #[arg(long)]
+    #[arg(long, default_value_t = DEFAULT_TURNS)]
     pub turns: u64,
     /// A seat to fill, `<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*`; repeatable.
     #[arg(long = "seats", required = true)]
