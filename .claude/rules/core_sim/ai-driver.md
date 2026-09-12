@@ -219,10 +219,31 @@ because a gathering kit grants no attack and a stalking kit no baskets — **or*
 belt for a cohort whose tiers are not on the wire). A material grant is carried when
 `material_batches` sum to at least the granted units.
 
-**`Food` posts** (`Food::outfit_demands`) for every own band with an open window: `gathering` ×
-the hands `cluster_take(here, working_age)` deals to the sites in work range, at
-`DEMAND_PRIORITY_GATHERING` (1.0 — forage pays first, and a hand without a basket gathers nothing
-better than bare hands do); a hunting kit × the hands left over, at `DEMAND_PRIORITY_HUNTING`
+**`Food` posts** (`Food::outfit_demands`) for every own band with an open window, **sized by
+value** (`Food::outfit_split`): the band's hands are walked one at a time, each going to a basket
+while the cluster's best marginal take over `food.projection_horizon_turns` is at least the best
+herd's marginal take at the Best floor, and to the hunting kit otherwise; ties go to the basket.
+A site's `k`-th hand earns its share of the site's sustained regrowth at Best
+(`regrowth_at(BEST_FLOOR) × provisions_per_biomass × horizon / sustained_hands`,
+`sustained_hands` = `ceil(that regrowth / rate)`) while `k ≤ sustained_hands`, plus what it
+carries of the room above the floor that the hands before it cannot (`min(per_worker_biomass ×
+horizon, room left) × provisions_per_biomass`) — the fresh plateau first, the sustained after. A
+herd's `j`-th hunter
+earns its share of the herd's sustained take at Best while `j ≤ ceil(that biomass /
+per_worker_biomass)` (at least one) and nothing past it: at the Best floor the take is the
+regrowth whatever the crew. **The herd is priced off the wire, unworked**:
+`HerdTelemetryState::regrowth_samples` — *"This herd's own per-turn regrowth, in biomass,
+sampled at evenly spaced fractions of `K` … Sample `i` of `n` is the delta at `B = i/(n−1) ×
+K`"* — and `per_worker_biomass` — *"What ONE hunter moves this turn, in BIOMASS … It is what
+turns a ceiling into a crew count"*; a worked hunt row's `sustainable_yield` is *"the herd's net
+regrowth"*, the
+same quantity. Why value and not a plateau: on the bench's ground `gathering 17` fed seed 23 to
+t60 (21 working, no death) where sizing the baskets at the sustained plateau alone (`gathering 2,
+big_game 15`, the reading Ray's *"those 4 areas at 50% floor needed 8 workers"* suggested) starved
+it (4 working, 19 dead) — a deer herd's regrowth is one hunter's work, so the walk sends one spear
+and the rest of the band gathers. The baskets go at `DEMAND_PRIORITY_GATHERING` (1.0 — forage
+pays first, and a hand without a basket gathers nothing better than bare hands do); a hunting
+kit × the hands left over, at `DEMAND_PRIORITY_HUNTING`
 (0.8 — hunting is what opens penning, second to the sites), when a huntable herd within
 `hunt_reach` can be brought down with it (`Food::hunting_kit_for`: among the roster's hunt-job
 kits, never `none`, the greatest fresh `attack` whose mass window admits the biggest herd in
@@ -277,7 +298,7 @@ big_game 9` on the tick its loadout was sent (read off the `orchestrator:outfit`
 Decisions tabs gain `orchestrator` the moment such a decision exists, since the tab set is the
 decision log's specialist names.
 
-### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the six rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
+### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the seven rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
 
 Owns `runway_turns`; alarms `food_short` when the minimum own-band `turns_of_food` is below
 `food.runway_floor_turns`. Every assignment is `assign_labor` with kit and floor left `None` (the
@@ -320,10 +341,13 @@ first up to each site's **plateau** — the smallest crew `n` with `crew_take(n)
 which for `min(n × rate, ceiling)` is `ceil(ceiling / rate)` — then the next site; `total` is the
 takes summed and `sites` is `(tile, hands dealt, take)` per site. `cluster_take_over` is the same
 deal on top of crews already standing (`existing(tile)`, whose take is not counted again; `None`
-strikes a site out). `Land` ranks a standing tile on it and `Food` deals free hands by it, so the
-two specialists read ground the same way. `is_dead` is `Food::is_dead` handed in as a closure —
-`Land` holds none of `Food`'s dead-row levers and passes `NEVER_DEAD`; a dead source already reads
-its realized rate, which is what made it dead, so the cluster weighs it down without a verdict.
+strikes a site out); `cluster_sites` is the same site list with its rates, for a caller that
+prices the sites itself (outfitting), and `sustained_hands` is the crew whose take reaches a
+site's Best-floor regrowth. `Land` ranks a standing tile on it and `Food` deals free hands by it,
+so the two specialists read ground the same way. `is_dead` is `Food::is_dead` handed in as a
+closure — `Land` holds none of `Food`'s dead-row levers and passes `NEVER_DEAD`; a dead source
+already reads its realized rate, which is what made it dead, so the cluster weighs it down
+without a verdict.
 
 **The plan hands `Food` goals** (`Plan.goals[food]` = `Goals::Food(FoodGoals { net_income_per_turn,
 runway_turns, ground_rung })`, from the profile's `goals` block), and **the goal gap is the score**:
@@ -342,13 +366,24 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   changes — a band in a cluster spreads over it instead of piling seventeen onto a site needing
   eight) and, weighed beside it, the same hands onto the single best source none of them leave
   (which may be a herd; one site in reach and no herd: nowhere to put them, and the rule is
-  silent), (b) the *row to empty first* onto the best other source, (c) both onto the best source
-  for the whole crew — and takes
+  silent) — **either only where the hands improve the take** (`Food::improves`): a site's
+  marginal take of the hands moved must be at least `food.runway_gain_fraction × moved × rate`,
+  the row-empty guard's idiom, *and* the band's row there, if any, must not already read
+  `workers ≥ workers_needed` — a hand that would read surplus where it lands stays where it is
+  (the model's ceiling said 47,5 and 49,5 each had room for one more while the frame read that
+  hand as surplus wherever it stood, and rule 1 sent it back and forth every turn of seed 23's
+  t45–t52), (b) the *row to empty first* onto the best other source, (c) both onto the best
+  source for the whole crew — and takes
   the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
   are met every candidate closes the same nothing, and without the tiebreak the band took the
   first one offered). The row to empty first is an **overused** row (`actual_yield >
-  sustainable_yield`), a hunt row the sim marks **`hunt_useful_workers == 0`**, or a **dead row**
-  (below) — those need no gain guard — and failing one of those the lowest-paying row, which moves
+  sustainable_yield` — **on a hunt row, or on a patch at or below its floor**: a patch whose
+  `biomass > floor × carrying_capacity` is not overused by a take above its regrowth, that is
+  the room above the floor being taken by design, and the floor protects the stand — without
+  that, a fresh patch read "overused" every other turn and rule 1 shuffled band 2's hands between
+  47,5 and 49,5 for the whole of seed 23's t45–t50), a hunt row the sim marks
+  **`hunt_useful_workers == 0`**, or a **dead row** (below) — those need no gain guard — and
+  failing one of those the lowest-paying row, which moves
   only onto ground out-paying it by `food.runway_gain_fraction` per worker **and** whose marginal
   take exceeds what the row earns today. ⛔ Distinctness is not improvement: with only "are these
   distinct rows" between them, two rows paying the same shuffled workers every turn under the alarm
@@ -386,6 +421,33 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   lowest-paying (never the idle hands — those are rule 1's, and a hunt drawn from them competed
   with the assignment for the band's one order) — whose leaving keeps the projected net at the
   goal with the herd's take counted, and whose projection survives.
+- **hold the ground** (`food:hold:<x>,<y>`) — a patch the seat owns whose `upkeep` row reads
+  `upkeep_shortfall > 0` (the standing-upkeep bill for holding its rung, unpaid —
+  `docs/plan_standing_upkeep.md`) gets `assign_labor … agriculture <upkeep_workers_needed>` on
+  the band that works it, the kit left `None` so the wire derives `tillage` (the hoes are the
+  board's business later). The hands come from the surplus first, then the lowest rows, and the
+  change is priced like any reassignment: what they earned where they stood against **the rung
+  lost** — an unpaid bill costs the whole improvement, so the hold keeps, as a `Change::Series`
+  over the horizon, the rung's premium per turn (`tended_yield`, `field_yield` on a field, less
+  the wild take the same hands make on that patch) **once the rung is complete** (`is_cultivated`
+  / `is_field`; the bill runs during the build too — 51,9 read `need 1` at progress 0.22 — but a
+  patch mid-build earns no premium yet) plus, **on the horizon's last turn**, the rebuild the
+  seat would otherwise declare again: the work already done (`cultivation_work_done`, the full
+  cost once complete) in builder-turns (`/ build_work_per_worker_turn`) at the row's rate. The
+  rebuild sits at the end because an avoided cost is never food in hand: it raises the runway
+  the goal is held against, never the trough. Put on the first turn it read as 76 food at t0,
+  the survival check lied, and band 4 on seed 23 gave its last forage hand to a hold at t25
+  (`builders 3, agriculture 2, forage 0`, income 0.00 from then on) and starved — its deaths took
+  the agriculture hands with them and 51,9 unwound anyway. Priced as the first turns' decay alone
+  (a hundredth a turn of the tended yield) it lost eight of eleven conflicts to a hand-shuffle.
+  `agriculture` hands pay a patch's bill whether or not the band still works it (band 4 supplied
+  51,9 at 1.88 with its forage row empty). Fires before *upgrade the ground*: holding what the
+  band has beats declaring the next rung. The fact that forced it:
+  seed 23's cultivate on 49,5 completed at t44 (`cultivated: true`, progress 1.0, queue empty)
+  and read `cultivated: false, 0.99` at t45, decaying a hundredth a turn to 0.84 at t60, the
+  tile's `upkeep` row at `demand 1.92, supplied 0.0, shortfall 1.92, workers_needed 2, kit_id
+  tillage` the whole way, two builders still on the `builders` role — the role the upkeep wants
+  is `agriculture`, and no rule staffed it.
 - **upgrade the ground** (`food:upgrade:<band>`) — `goals.ground_rung > wild`, the rung's gate
   knowledge known, and a worked forage patch below it with nothing queued (`build_destination_rung`
   is *"empty when no band has queued it"*, plus the band's own `build_queue`; not
@@ -418,8 +480,12 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   model below as a `Change::Series` (the row's `actual_yield` lost, `floor_income` gained). The
   **highest** floor whose projection survives wins the row; none surviving, **the floor whose
   projection has the highest trough** — the latest, shallowest failure: *survival outranks the
-  peak* means "die last", never "strip the stand" — and the row closing the most goal gap wins
-  the band, **provided it closes any** (`goal_progress > 0`, the guard every rule has). A crew
+  peak* means "die last", never "strip the stand". Either way **a rung must buy a turn**
+  (`RUNG_MIN_GAIN_TURNS` = 1: the floor's trough at least one turn of the band's consumption
+  above the plan in force's, or it is not stepped to — the slide on seed 23, t34–t40, stepped
+  0.4 → 0.3 → 0.2 → 0.1 a rung a turn for a hair of gap each). The row closing the most goal
+  gap wins the band, **provided it closes any** (`goal_progress > 0`, the guard every rule has).
+  A crew
   already carrying less than the room above Best takes the same at any floor — its series is the
   book it already has — so stripping the patch moves nothing but the learning rate
   (`plan_harvest_floor.md` §3: `learn_mult = floor / 0.5`, *"stripping teaches nothing"*);
@@ -895,16 +961,19 @@ never gates on its own.
 **`sim_ai/bench/baselines.json`** holds one entry, `1=utility:forager@hard 2=pass` on the
 bench's default seeds `23, 47` for its default 60 turns (`BASELINE_SEEDS` / `BASELINE_TURNS` /
 `BASELINE_SEAT_SETS`; a unit test holds the file to them), recorded on the Tiny `earthlike` world
-above with the outfitting board in place: seed 23 ends with 21 working and no hunger death (the
-band eats 5.1 a turn on 4.0 of income and 10 in the larder — the 60-turn window closes inside
-that decline); seed 47 with 7 working and 16 hunger deaths, the first on t38. `hard` because
+above with the outfitting board sizing the loadout by value (`gathering 15, big_game 2` on both
+seeds), *hold the ground* priced as the rung lost, overuse read only at or below a patch's floor
+and free hands moved only where they improve a site's take: seed 23 ends with 8 working, 16
+hunger deaths (the first on t39) and `patches_improved 1` — the cultivate on 49,5 completes at
+t39 and holds to t60 on two `agriculture` hands, while 51,9 (complete t30) unwound at t31 with
+its holds outscored and 53,8 never completed; seed 47 with 12 working, 8 hunger deaths (the first
+on t51) and `patches_improved 1` — 12,5 holds from t17 to t60. `hard` because
 argmax makes the run the rules' — at `normal` two proposals for one band in the top two are a
 seeded coin flip. The all-Pass control went with seed 11: a Pass seat starves on every seed alike
 and measured nothing the forager's own `hunger_deaths_total` does not; seat 2 is still Pass and
-is marked `degenerate` on both seeds. The file carries one `declined` entry — `Land` on seed 47:
-the start stands in the best cluster within its horizon and the raster around it is known past
-`known_tiles_floor`, so neither *better ground* nor *blind* has anything to propose for all 60
-turns. Regenerate the entry in the PR that moves it, with the numbers in the PR body.
+is marked `degenerate` on both seeds. `Land` wins on both seeds (7 and 6 moves accepted), so
+the file carries no `declined` entry. Regenerate the entry in the PR that moves it, with the
+numbers in the PR body.
 
 ## The run viewer (`sim_ai viewer`, `viewer/`)
 

@@ -63,6 +63,10 @@ pub const ROLE_HUNT: &str = "hunt";
 /// The band-wide build pool: `assign_labor <faction> <band> builders <n>`, whose whole output goes
 /// on the head of the band's build queue (`command_text.rs` → `assign_labor`).
 pub const ROLE_BUILDERS: &str = "builders";
+/// **The role that pays a tended patch's standing upkeep** — the job the upkeep row's kit
+/// (`tillage`, jobs `builders` + `agriculture`) serves; `assign_labor … agriculture <n>`, a
+/// band-wide pool like `builders`.
+pub const ROLE_AGRICULTURE: &str = "agriculture";
 /// The intent kinds, one per rule (*split to feed* has two: the split, then the child's settle).
 pub const INTENT_ASSIGN: &str = "assign";
 pub const INTENT_FEED_MOVE: &str = "feed_move";
@@ -71,6 +75,7 @@ pub const INTENT_SETTLE: &str = "settle";
 pub const INTENT_HUNT: &str = "hunt";
 pub const INTENT_UPGRADE: &str = "upgrade";
 pub const INTENT_DRAWDOWN: &str = "drawdown";
+pub const INTENT_HOLD: &str = "hold";
 
 pub struct Food {
     faction: u32,
@@ -414,10 +419,13 @@ impl Specialist for Food {
             let (assign, carried) = self.assess_income(view, plan, memory, band);
             out.proposals.extend(assign);
             out.proposals.extend(self.settle(view, plan, memory, band));
-            let ruled: [Option<(Proposal, Reassignment)>; 4] = [
+            // *Hold the ground* comes before *upgrade the ground*: holding what the band has
+            // beats declaring the next rung.
+            let ruled: [Option<(Proposal, Reassignment)>; 5] = [
                 self.feed_while_moving_change(view, plan, memory, band),
                 self.split_to_feed_change(view, plan, memory, band, &carried),
                 self.spare_hands_into_hunts_change(view, plan, memory, band, &carried),
+                self.hold_the_ground_change(view, plan, memory, band, &carried),
                 self.upgrade_the_ground_change(view, plan, memory, band, &carried),
             ];
             let mut in_force = vec![carried];

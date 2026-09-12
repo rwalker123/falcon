@@ -6,6 +6,7 @@ use sim_runtime::{
     ForagePatchState, KitOptionState, LaborAssignmentState, PopulationCohortState, TerrainTags,
 };
 
+use super::ledger::{regrowth_at, BEST_FLOOR};
 use super::{Food, ROLE_FORAGE, ROLE_HUNT};
 use crate::geometry::Tile;
 use crate::view::{band_tile, row_key, SeatMemory, SeatView};
@@ -153,6 +154,17 @@ pub(crate) struct ClusterTake {
     pub sites: Vec<(Tile, u32, f32)>,
 }
 
+/// **The hands a site needs at the Best floor's sustained regrowth**:
+/// the floor's regrowth in provisions over what one hand takes, rounded up; `0` for a patch whose
+/// curve was not sent.
+pub(crate) fn sustained_hands(patch: &ForagePatchState, rate: f32) -> u32 {
+    let sustained = regrowth_at(&patch.regrowth_samples, BEST_FLOOR) * patch.provisions_per_biomass;
+    if rate <= 0.0 || sustained <= 0.0 {
+        return 0;
+    }
+    (sustained / rate).ceil() as u32
+}
+
 /// **The food a band could take from every workable site within `work_range` of `standing`** —
 /// the reading `Land` ranks a standing tile on and `Food` deals free hands by
 /// (`docs/plan_ai_driver.md` §4, *"`Land` positions by the cluster, not the patch"*). A site is a
@@ -173,7 +185,7 @@ pub(crate) fn cluster_take_over(
     existing: &dyn Fn(Tile) -> Option<u32>,
 ) -> ClusterTake {
     let grid = view.grid();
-    let mut sites: Vec<(Tile, f32, f32, u32)> = view
+    let mut sites: Vec<(Tile, f32, f32, u32, u32)> = view
         .snapshot
         .forage_patches
         .iter()
@@ -190,29 +202,31 @@ pub(crate) fn cluster_take_over(
             .flatten()
             .and_then(|patch| {
                 existing(tile).map(|already| {
-                    (
-                        tile,
-                        patch_per_worker_yield(memory, band, patch),
-                        patch.biomass * patch.provisions_per_biomass,
-                        already,
-                    )
+                    let rate = patch_per_worker_yield(memory, band, patch);
+                    let ceiling = patch.biomass * patch.provisions_per_biomass;
+                    // The plateau: `ceil(ceiling / rate)`, the standing biomass included.
+                    let plateau = if rate > 0.0 {
+                        (ceiling / rate).ceil() as u32
+                    } else {
+                        0
+                    };
+                    (tile, rate, ceiling, already, plateau)
                 })
             })
         })
-        .filter(|(_, rate, _, _)| *rate > 0.0)
+        .filter(|(_, rate, _, _, _)| *rate > 0.0)
         .collect();
-    sites.sort_by(|(a_tile, a_rate, _, _), (b_tile, b_rate, _, _)| {
+    sites.sort_by(|(a_tile, a_rate, _, _, _), (b_tile, b_rate, _, _, _)| {
         b_rate
             .total_cmp(a_rate)
             .then_with(|| (a_tile.y, a_tile.x).cmp(&(b_tile.y, b_tile.x)))
     });
     let mut left = hands;
     let mut dealt = Vec::new();
-    for (tile, rate, ceiling, already) in sites {
+    for (tile, rate, ceiling, already, plateau) in sites {
         if left == 0 {
             break;
         }
-        let plateau = (ceiling / rate).ceil() as u32;
         let room = plateau.saturating_sub(already).min(left);
         if room == 0 {
             continue;
@@ -226,6 +240,37 @@ pub(crate) fn cluster_take_over(
         total: dealt.iter().fold(0.0, |total, (_, _, take)| total + take),
         sites: dealt,
     }
+}
+
+/// **The sites a cluster is made of**: every workable patch within `work_range` of `standing`
+/// that [`cluster_take_over`] would deal to, with the rate it is dealt at — for a caller that
+/// prices the sites itself ([`super::Food::outfit_split`]).
+pub(crate) fn cluster_sites<'v>(
+    view: &'v SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    is_dead: &IsDead<'_>,
+) -> Vec<(&'v ForagePatchState, f32)> {
+    let grid = view.grid();
+    view.snapshot
+        .forage_patches
+        .iter()
+        .filter(|patch| patch.per_worker_yield > 0.0)
+        .filter(|patch| patch.owner.is_none_or(|owner| owner == band.faction))
+        .filter_map(|patch| {
+            let tile = Tile::new(patch.x, patch.y);
+            let key = SourceKey::Patch(tile);
+            (view.is_discovered(tile)
+                && grid.distance(standing, tile) <= band.work_range
+                && !foreign_band_at(view, band.faction, tile)
+                && !is_dead(&key, patch.per_worker_yield))
+            .then(|| workable_patch_at(view, tile))
+            .flatten()
+        })
+        .map(|patch| (patch, patch_per_worker_yield(memory, band, patch)))
+        .filter(|(_, rate)| *rate > 0.0)
+        .collect()
 }
 
 /// [`cluster_take_over`] with every site empty: what a band of `hands` would take standing at
