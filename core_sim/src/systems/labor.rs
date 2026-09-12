@@ -1179,11 +1179,20 @@ fn deposit_head_gate(
 /// worth learning on are one reading, or they are two readings that will disagree.
 ///
 /// **`true` whenever there is no rung for the ground to refuse** — a lesson that opens nothing on its
-/// branch, or one that opens a rung with `site_requirement: null`. That is every rung on the plant,
-/// animal and route webs and both free floors here, so this term is inert outside the two cases the
+/// branch, or one that opens a rung with `site_requirement: null`. On the deposit branches that is
+/// `forestry:deadfall`, whose `woodcraft` opens a `forestry:felling` that asks nothing of the ground,
+/// and both branch TOPS, which earn nothing at all — so this term is inert outside the two cases the
 /// shipped ladder actually states: `extraction:gathering` → `quarrying` → `extraction:quarry`, and
 /// `forestry:felling` → `conservationism` → `forestry:coppice`. **Both follow from the one sentence**
 /// — you learn to work rock on rock worth quarrying, and to manage a wood on a wood worth managing.
+///
+/// ⛔ **THE PLANT, ANIMAL AND ROUTE WEBS ARE UNTOUCHED BY THE *ARM*, NOT BY THE GROUND — and this
+/// paragraph used to say otherwise.** It read *"that is every rung on the plant, animal and route
+/// webs"*, which is false of the plant web: [`LadderConfig::rung_unlocked_by_lesson`] is
+/// branch-generic, `plant:wild` earns `cultivation`, and the `plant:tended` it unlocks demands a
+/// gathering site. What keeps those webs out is that this term is composed into the **Extract arm
+/// alone**. So wiring it into the food webs later is a real behaviour change there — it would gate
+/// `seed_selection` on fresh water — rather than the no-op the old wording promised.
 fn ground_takes_the_rung_this_lesson_unlocks(
     standing: &RungDef,
     ladder: &LadderConfig,

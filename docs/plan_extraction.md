@@ -100,6 +100,39 @@ different thing (§4).
 > renewability to the branch would have made a flint scatter and an ore body unrepresentable on one
 > ladder, which is precisely what the minerals arc needs them to be.
 
+### 3a. You learn a rung by practising where that rung COULD BE BUILT
+
+`earns_knowledge` credits the lesson the source's own rung teaches, and on both deposit branches that
+credit is gated on the ground: the lesson is paid only where the rung it **unlocks** could be sited.
+
+**Picking loose stone off a 40-unit scatter teaches nothing about quarrying, because no quarry could
+ever stand on a 40-unit scatter.** Picking it off a rock body teaches it. The lesson is credited for
+the ground it is practised on, not for the verb. The seam, and why it asks `forage::rung_site_refusal`
+rather than reading `min_deposit_capacity` a second time, are in
+`.claude/rules/core_sim/extraction.md`.
+
+**It is inert wherever there is no rung for the ground to refuse** — a lesson that opens nothing on
+its branch, or one that opens a rung stating `site_requirement: null`. On these two branches that is
+`forestry:deadfall`, whose woodcraft opens a `forestry:felling` that asks nothing of the
+ground, and both branch **tops**, which earn nothing at all. So the shipped ladder states exactly two
+live cases: `extraction:gathering` → quarrying → `extraction:quarry`, and `forestry:felling` →
+conservationism → `forestry:coppice`. Both follow from the one sentence — you learn to work rock on
+rock worth quarrying, and to manage a wood on a wood worth managing.
+
+> ⛔ **THE FOOD AND ROUTE WEBS ARE UNTOUCHED BY THE *ARM*, NOT BY THE GROUND.** It is tempting to fold
+> them into the sentence above as more rungs with nothing to refuse, and that reading is **false of
+> the plant web**: the ladder lookup is branch-generic, `plant:wild` earns cultivation, and the
+> `plant:tended` it unlocks demands a gathering site. What keeps those webs out is that the term is
+> composed into the **deposit arm alone** — so wiring it into them later is a real behaviour change
+> there, gating `seed_selection` on fresh water, rather than the no-op the shorter wording promises.
+
+> ⛔ **ON THE STONE BRANCH THE GATE AND THE ESCAPEMENT DIAL ARE NOT INDEPENDENT, and that is the thing
+> to know before moving either number.** Every renewing stone scatter tops out at 70, under
+> `extraction:quarry`'s 100 — so the ground that carries an escapement dial is exactly the ground the
+> gate now credits nothing for, and `intensification::PRACTICE_AT_THE_PLAIN_RATE` is the only pacing
+> `extraction:gathering` ever pays at. Lowering that 100 under 70 does not merely admit more sites; it
+> re-opens a second pacing reading on that rung.
+
 ---
 
 ## 4. What a rung buys, and it differs by branch
@@ -212,6 +245,26 @@ roads is.*
 
 **The scarcity is in the RATE, not in the material.** A band knapping points never needs a quarry; a
 faction paving roads cannot do without one.
+
+**As shipped, two rungs state a placement rule and the other three state none.**
+`extraction:quarry` asks `min_deposit_capacity` **100** of the tile's own stone capacity and
+`forestry:coppice` asks **70** of its wood capacity, both through the `forage::rung_site_refusal`
+seam a `sow` already resolves through — so the command's rejection, the labor arm's gate, the lesson
+gate (§3a) and any readout cannot drift into disagreeing about which ground takes a working.
+**The two free floors state `null` deliberately**: what refuses a crew on bare ground is that the
+ground holds no deposit at all, and a floor of ~0 admits every tile and reads as a placement rule
+while being none — which `validate_site_requirement` rejects outright.
+
+**Each number is a READING OF ITS OWN TABLE rather than a chosen round figure, and the two tables are
+read differently because they are shaped differently.** On stone, capacity and rate are correlated by
+construction — the rate-0 bodies are the large ones — so 100 sits in the gap the deposits table
+leaves between its two populations (every renewing scatter at or under 70, every finite body at or
+over 120) and ranks the rows exactly. On wood the two are independent, so 70 is ranked on what the
+rung **buys**: a coppice doubles `regrowth_rate`, and the logistic peak `K × r / 4` splits the
+shipped wood table either side of it with a gap and no overlap. Both derivations live on their own
+rung's `_comment_site_requirement` in `intensification_ladder.json`, with the measured figures;
+**re-read the owning one before moving either number**, and note that capacity is a looser proxy on
+wood than on stone.
 
 ### 5b. Stone's axes finally get a reader, and they were authored for this
 
