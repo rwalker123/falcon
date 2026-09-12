@@ -191,12 +191,25 @@ job's default on the wire); `policy` is left `None` too, because the field is **
 NOTHING AT ANY CREW SIZE until a spear is crafted"*, and an AI seat never outfits (the opening
 window closes with nothing applied, `starting_loadout::close_opening_window`). So a herd is a
 source (`reachable_sources`) only for a band whose `hunting_kits_held` (`sources.rs`) is above 0:
-the `count` summed over the band's `equipment_batches` rows whose `item_id` is in the `item_ids`
-of a `WorldSnapshot::kits` entry whose `jobs` include `hunt` (the kit's `equipment.json` `uses`
-list — `spears`/`sled` for `big_game`, `traps`/`sled` for `trapping`; the `none` kit carries
-nothing). A `count 0` row is *"the band owns none of this item at all"*. Nothing is said in a
-reason: the rules simply rank forage. Before this, `Food` sent twelve hands to a herd every turn
-for the first 10–13 turns of every bench seed, each rejected next turn as *no useful crew*.
+the hunt-job kits of `WorldSnapshot::kits` whose row in the band's `kit_tiers` (joined on
+`kit_id`) resolves an `attack` above the bare hand's — the bare hand being the row of the hunt-job
+kit that carries no items (`none`), which resolves to the `creatures.json` `person` attack. The
+tiers and not the batches, because `BandKitTiersState` is *"the RESOLVED answer. A client must not
+re-derive it … 'all items dry' keeps it at full tier with only the sled left"*: a sled without a
+spear is bare. Nothing is said in a reason: the rules simply rank forage. Before this, `Food` sent
+twelve hands to a herd every turn for the first 10–13 turns of every bench seed, each rejected
+next turn as *no useful crew*.
+
+**Surplus hands are free hands.** `LaborAssignmentState::workers_needed` is *"Minimum workers that
+would have produced this turn's take — the overstaffing signal. `workers > workers_needed` ⇒ the
+binding constraint was not labor, so the extra workers were idle"*, so a row's surplus is
+`workers − workers_needed` (`surplus_hands`, `sources.rs`; `0` on a row whose `workers_needed` is
+`0` — a fresh row and one that produced nothing alike, neither an overstaffing signal).
+`Food::draw` frees hands in three tiers — idle, then the surplus on the rows offered for it (each
+down to its `workers_needed`, at no cost), then the rows named until each is empty — and every
+rule that moves hands draws through it. Before this a band that had parked all seventeen hands on
+a patch needing eight read `idle 0`, so no rule could find a hand to move and the seat went silent
+for fifty turns.
 
 **The plan hands `Food` goals** (`Plan.goals[food]` = `Goals::Food(FoodGoals { net_income_per_turn,
 runway_turns, ground_rung })`, from the profile's `goals` block), and **the goal gap is the score**:
@@ -208,9 +221,12 @@ the `reason` is `"<rule>: <subject> [ledger: trough X at tN, positive again tM]"
 shows which rule fired and what the ledger said. The rules, in `propose` order:
 
 - **negative income** (`food:assign:<band>`) — fires on `food_income < food_consumption` **or**
-  `idle_workers > 0` (idle hands are negative income against what they could earn). Weighs three
-  reassignments within budget — (a) the idle hands onto the best source, (b) the *row to empty
-  first* onto the best other source, (c) both onto the best source for the whole crew — and takes
+  `idle_workers > 0` **or** a row with surplus (idle and surplus hands alike are negative income
+  against what they could earn). Weighs three reassignments within budget — (a) the free hands,
+  idle plus every row's surplus with each donor row cut to its `workers_needed`, onto the best
+  source none of them leave (one site in reach: nowhere to put them, and the rule is silent), (b)
+  the *row to empty first* onto the best other source, (c) both onto the best source for the whole
+  crew — and takes
   the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
   are met every candidate closes the same nothing, and without the tiebreak the band took the
   first one offered). The row to empty first is an **overused** row (`actual_yield >
@@ -249,10 +265,10 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   split nothing, seventeen split the profile's 5.)
 - **spare hands into hunts** (`food:hunt:<band>`) — projected net after rule 1 is at
   `goals.net_income_per_turn` or within `food.near_positive_fraction` of it, and a live huntable
-  herd is in reach: the most hands off the lowest-paying **forage rows** (never the idle hands —
-  those are rule 1's, and a hunt drawn from them competed with the assignment for the band's one
-  order) whose leaving keeps the projected net at the goal with the herd's take counted, and whose
-  projection survives.
+  herd is in reach: the most hands off the **forage rows** — their surplus first, then the
+  lowest-paying (never the idle hands — those are rule 1's, and a hunt drawn from them competed
+  with the assignment for the band's one order) — whose leaving keeps the projected net at the
+  goal with the herd's take counted, and whose projection survives.
 - **upgrade the ground** (`food:upgrade:<band>`) — `goals.ground_rung > wild`, the rung's gate
   knowledge known, and a worked forage patch below it with nothing queued (`build_destination_rung`
   is *"empty when no band has queued it"*, plus the band's own `build_queue`; not
@@ -268,9 +284,11 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn))` — there is **no**
   reduced yield during the build (`yield_fraction_while_building` is retired in the ladder JSON:
   *"the gatherers on a source take exactly what their hands carry whatever is being built beside
-  them"*). Builders = the smallest crew from 1 up to the budget whose projection survives and whose
-  payoff is inside `food.projection_horizon_turns`, drawn from the idle hands, then the hunt rows,
-  then the lowest forage rows — never the patch's own row, which keeps the declaration attached.
+  them"*). Builders = the free hands (idle plus every row's surplus — **the patch's own row
+  included**, cut to its `workers_needed`, which is what keeps the declaration attached), all of
+  them since they cost nothing, then the smallest crew up to the budget whose projection survives
+  and whose payoff is inside `food.projection_horizon_turns`, drawn from the hunt rows, then the
+  lowest forage rows.
   Commands: `cultivate`/`sow`, **then the row reductions, then** `assign_labor … builders <n>` —
   in that order, because `assign_labor` clamps a role to the band's idle hands at dispatch
   (`" (clamped from {} — only {} idle)"`, `core_sim/src/bin/server.rs`): builders named before the

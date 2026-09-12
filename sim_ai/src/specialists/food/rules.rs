@@ -4,8 +4,9 @@
 //! [`goal_progress`] × the specialist's weight; a rule handed no goals proposes nothing.
 //!
 //! The rules share one piece of arithmetic: [`Food::draw`], the hands a change frees and what
-//! they earn where they stand — idle first (they cost nothing), then the rows named, in the order
-//! named, until each is empty.
+//! they earn where they stand — idle first (they cost nothing), then the **surplus** on the rows
+//! offered for it (hands a row's take never needed, [`surplus_hands`]; nothing lost either), then
+//! the rows named, in the order named, until each is empty.
 
 use sim_runtime::{
     CommandPayload, FloraShareInfo, ForagePatchState, LaborAssignmentState, PopulationCohortState,
@@ -14,7 +15,9 @@ use sim_runtime::{
 use super::ledger::{
     goal_progress, ledger_note, project, project_all, survives, Projection, Reassignment,
 };
-use super::sources::{crew_take, patch_per_worker_yield, workable_patch_at, Source, SourceKey};
+use super::sources::{
+    crew_take, patch_per_worker_yield, surplus_hands, workable_patch_at, Source, SourceKey,
+};
 use super::{
     Food, INTENT_ASSIGN, INTENT_FEED_MOVE, INTENT_HUNT, INTENT_SETTLE, INTENT_SPLIT,
     INTENT_UPGRADE, ROLE_BUILDERS, ROLE_FORAGE, ROLE_HUNT,
@@ -89,14 +92,35 @@ enum Climb {
 }
 
 impl Food {
-    /// Free `want` hands: the band's idle first, then `rows` in the order given until each is
-    /// empty. `hands` is what could be freed, which may be short of `want`.
-    fn draw(&self, rows: &[&LaborAssignmentState], want: u32, idle: u32) -> Drawn {
+    /// Free `want` hands: the band's idle first, then the surplus on `surplus_from` — each row
+    /// down to its `workers_needed`, at no cost ([`surplus_hands`]) — then `rows` in the order
+    /// given until each is empty. `hands` is what could be freed, which may be short of `want`.
+    fn draw(
+        &self,
+        surplus_from: &[&LaborAssignmentState],
+        rows: &[&LaborAssignmentState],
+        want: u32,
+        idle: u32,
+    ) -> Drawn {
         let mut drawn = Drawn {
             hands: idle.min(want),
             income_lost: 0.0,
             reductions: Vec::new(),
         };
+        for row in surplus_from {
+            if drawn.hands >= want {
+                break;
+            }
+            let Some(key) = SourceKey::of_row(row) else {
+                continue;
+            };
+            let take = (want - drawn.hands).min(surplus_hands(row));
+            if take == 0 {
+                continue;
+            }
+            drawn.reductions.push((key, row.workers - take));
+            drawn.hands += take;
+        }
         for row in rows {
             if drawn.hands >= want {
                 break;
@@ -104,15 +128,48 @@ impl Food {
             let Some(key) = SourceKey::of_row(row) else {
                 continue;
             };
-            let take = (want - drawn.hands).min(row.workers);
+            // What the surplus tier left on this row, if it drew from it.
+            let left = drawn
+                .reductions
+                .iter()
+                .find(|(reduced, _)| *reduced == key)
+                .map_or(row.workers, |(_, left)| *left);
+            let take = (want - drawn.hands).min(left);
             if take == 0 {
                 continue;
             }
             drawn.income_lost += Self::row_rate(row) * take as f32;
-            drawn.reductions.push((key, row.workers - take));
+            match drawn
+                .reductions
+                .iter_mut()
+                .find(|(reduced, _)| *reduced == key)
+            {
+                Some((_, held)) => *held = left - take,
+                None => drawn.reductions.push((key, left - take)),
+            }
             drawn.hands += take;
         }
         drawn
+    }
+
+    /// The band's rows carrying surplus hands ([`surplus_hands`]), lowest-paying first.
+    fn surplus_rows(band: &PopulationCohortState) -> Vec<&LaborAssignmentState> {
+        let mut rows: Vec<&LaborAssignmentState> = band
+            .labor_assignments
+            .iter()
+            .filter(|row| surplus_hands(row) > 0)
+            .collect();
+        rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
+        rows
+    }
+
+    /// How a candidate names its free hands: *"9 idle hands"*, *"9 surplus hands"*, or both.
+    fn free_hands_phrase(idle: u32, surplus: u32) -> String {
+        match (idle, surplus) {
+            (_, 0) => format!("{idle} idle hands"),
+            (0, _) => format!("{surplus} surplus hands"),
+            _ => format!("{idle} idle and {surplus} surplus hands"),
+        }
     }
 
     /// The `assign_labor` lines that reduce the rows a draw took hands from.
@@ -182,9 +239,10 @@ impl Food {
             .map(|(row, key)| (row, key, false, WHY_LOWEST_ROW))
     }
 
-    /// The reassignments *negative income* chooses among, all within `budget`: (a) the idle hands
-    /// onto the best source; (b) the row to empty first onto the best other source, when that
-    /// buys something; (c) both onto the best source for the whole crew.
+    /// The reassignments *negative income* chooses among, all within `budget`: (a) the free hands
+    /// — the idle ones plus every row's surplus, each donor row reduced to its `workers_needed` —
+    /// onto the best source none of them leave; (b) the row to empty first onto the best other
+    /// source, when that buys something; (c) both onto the best source for the whole crew.
     fn reassignments(
         &self,
         view: &SeatView,
@@ -195,20 +253,29 @@ impl Food {
     ) -> Vec<Candidate> {
         let mut out = Vec::new();
         let idle = band.idle_workers.min(budget);
-        let idle_onto = (idle > 0)
-            .then(|| Self::best_source(sources, idle, None))
+        let surplus_rows = Self::surplus_rows(band);
+        let free = self.draw(&surplus_rows, &[], budget, idle);
+        let donors: Vec<SourceKey> = free.reductions.iter().map(|(key, _)| key.clone()).collect();
+        let free_onto = (free.hands > 0)
+            .then(|| Self::best_source(sources, free.hands, &donors))
             .flatten();
-        if let Some(best) = idle_onto {
+        if let Some(best) = free_onto {
             let existing = Self::workers_on(band, &best.key);
+            let mut commands = self.reduction_commands(band, &free);
+            commands.push(self.assign(band, &best.key, existing + free.hands));
             out.push(Candidate {
-                commands: vec![self.assign(band, &best.key, existing + idle)],
-                hands: idle,
+                commands,
+                hands: free.hands,
                 change: Reassignment {
                     income_lost: 0.0,
-                    income_gained: best.marginal(existing, idle),
+                    income_gained: best.marginal(existing, free.hands),
                     payoff_turn: 0,
                 },
-                subject: format!("{idle} idle hands -> {}", best.key.describe()),
+                subject: format!(
+                    "{} -> {}",
+                    Self::free_hands_phrase(idle, free.hands - idle),
+                    best.key.describe()
+                ),
             });
         }
         let Some((row, low_key, troubled, why)) = self.row_to_empty(view, memory, band) else {
@@ -231,8 +298,8 @@ impl Food {
                     && next.per_worker_yield - low
                         >= self.floors.runway_gain_fraction * next.per_worker_yield)
         };
-        if let Some(next) =
-            Self::best_source(sources, moved, Some(&low_key)).filter(|next| clears(next))
+        if let Some(next) = Self::best_source(sources, moved, std::slice::from_ref(&low_key))
+            .filter(|next| clears(next))
         {
             let existing = Self::workers_on(band, &next.key);
             let change = Reassignment {
@@ -252,10 +319,20 @@ impl Food {
                 });
             }
         }
-        let both = idle + moved;
-        if idle > 0 && both <= budget {
+        // The free hands again, less the emptied row's own surplus (its whole crew moves).
+        let surplus_elsewhere: Vec<&LaborAssignmentState> = surplus_rows
+            .iter()
+            .copied()
+            .filter(|other| SourceKey::of_row(other).as_ref() != Some(&low_key))
+            .collect();
+        let free = self.draw(&surplus_elsewhere, &[], budget.saturating_sub(moved), idle);
+        let both = free.hands + moved;
+        if free.hands > 0 && both <= budget {
+            let mut except: Vec<SourceKey> =
+                free.reductions.iter().map(|(key, _)| key.clone()).collect();
+            except.push(low_key.clone());
             if let Some(best) =
-                Self::best_source(sources, both, Some(&low_key)).filter(|next| clears(next))
+                Self::best_source(sources, both, &except).filter(|next| clears(next))
             {
                 let existing = Self::workers_on(band, &best.key);
                 let change = Reassignment {
@@ -264,15 +341,16 @@ impl Food {
                     payoff_turn: 0,
                 };
                 if change.income_gained > change.income_lost {
+                    let mut commands = self.reduction_commands(band, &free);
+                    commands.push(self.assign(band, &low_key, row.workers - moved));
+                    commands.push(self.assign(band, &best.key, existing + both));
                     out.push(Candidate {
-                        commands: vec![
-                            self.assign(band, &low_key, row.workers - moved),
-                            self.assign(band, &best.key, existing + both),
-                        ],
+                        commands,
                         hands: both,
                         change,
                         subject: format!(
-                            "{idle} idle hands and {why} {} -> {}",
+                            "{} and {why} {} -> {}",
+                            Self::free_hands_phrase(idle, free.hands - idle),
                             low_key.describe(),
                             best.key.describe()
                         ),
@@ -283,9 +361,10 @@ impl Food {
         out
     }
 
-    /// **Rule 1 — negative income.** Income below consumption, or idle hands (negative income
-    /// against what they could earn), reassigns to the source the crew takes the most from; the
-    /// change that closes the most goal gap wins. Answers the proposal and the change it carries,
+    /// **Rule 1 — negative income.** Income below consumption, or idle hands, or surplus hands on
+    /// a row ([`surplus_hands`] — both are negative income against what they could earn),
+    /// reassigns to the source the crew takes the most from; the change that closes the most goal
+    /// gap wins. Answers the proposal and the change it carries,
     /// which the later rules project on top of. Not for a travelling band, nor for a child still
     /// walking to the site it was split toward — it must not strip the parent's ground.
     pub(super) fn assess_income(
@@ -298,7 +377,9 @@ impl Food {
         let Some(goals) = plan.food_goals() else {
             return (None, Reassignment::NONE);
         };
-        let fires = band.food_income < band.food_consumption || band.idle_workers > 0;
+        let fires = band.food_income < band.food_consumption
+            || band.idle_workers > 0
+            || !Self::surplus_rows(band).is_empty();
         if !fires || band.is_traveling || memory.born_by_split(band.band_id).is_some() {
             return (None, Reassignment::NONE);
         }
@@ -427,13 +508,13 @@ impl Food {
         let before = project(&book, &Reassignment::NONE, horizon);
         let mut best: Option<(Drawn, &Source, Projection, f32, Reassignment)> = None;
         for drawn in [
-            self.draw(&[], idle, idle),
-            self.draw(&staying, budget, idle),
+            self.draw(&[], &[], idle, idle),
+            self.draw(&[], &staying, budget, idle),
         ] {
             if drawn.hands == 0 {
                 continue;
             }
-            let Some(source) = Self::best_source(&falling, drawn.hands, None) else {
+            let Some(source) = Self::best_source(&falling, drawn.hands, &[]) else {
                 continue;
             };
             let existing = Self::workers_on(band, &source.key);
@@ -566,7 +647,7 @@ impl Food {
         let mut rows = Self::rows_ascending(band, ROLE_HUNT);
         rows.extend(Self::rows_ascending(band, ROLE_FORAGE));
         rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
-        let drawn = self.draw(&rows, crew, band.idle_workers);
+        let drawn = self.draw(&Self::surplus_rows(band), &rows, crew, band.idle_workers);
         let change = Reassignment {
             income_lost: drawn.income_lost,
             income_gained: take,
@@ -708,11 +789,16 @@ impl Food {
             return None;
         }
         let forage = Self::rows_ascending(band, ROLE_FORAGE);
+        let forage_surplus: Vec<&LaborAssignmentState> = Self::surplus_rows(band)
+            .into_iter()
+            .filter(|row| row.kind == ROLE_FORAGE)
+            .collect();
         let mut best: Option<(Drawn, &Source, Projection)> = None;
         for hands in 1..=budget {
-            // Off the rows only: the idle hands are *negative income*'s to place, and a hunt
-            // drawn from them would compete with that assignment for the band's one order.
-            let drawn = self.draw(&forage, hands, 0);
+            // Off the rows only — their surplus first, then the lowest-paying: the idle hands are
+            // *negative income*'s to place, and a hunt drawn from them would compete with that
+            // assignment for the band's one order.
+            let drawn = self.draw(&forage_surplus, &forage, hands, 0);
             if drawn.hands < hands {
                 break;
             }
@@ -805,8 +891,11 @@ impl Food {
     /// **Rule 5 — upgrade the ground.** The goal rung above wild, its gate knowledge known, and
     /// a worked forage patch below it with nothing queued: declare the climb and staff the
     /// smallest `builders` pool whose projection survives and pays off inside the horizon. The
-    /// builders are drawn from the idle hands, then the hunt rows, then the lowest forage rows —
-    /// never from the patch's own row, which is what keeps the declaration attached.
+    /// builders are drawn from the idle hands, then every row's surplus — **the patch's own row
+    /// included**, down to its `workers_needed`, which is what keeps the declaration attached —
+    /// then the hunt rows, then the lowest forage rows. The free hands (idle and surplus) all go,
+    /// since they cost nothing where they stand; the crew grows past them only as far as the
+    /// projection survives.
     pub fn upgrade_the_ground(
         &self,
         view: &SeatView,
@@ -830,6 +919,8 @@ impl Food {
         let after = project(&book, carried, horizon);
         let idle = band.idle_workers.min(budget);
         let builders_now = Self::workers_in_pool(band, ROLE_BUILDERS);
+        let surplus_rows = Self::surplus_rows(band);
+        let free = self.draw(&surplus_rows, &[], budget, idle);
         let mut best: Option<(Proposal, f32)> = None;
         for row in band
             .labor_assignments
@@ -893,8 +984,8 @@ impl Food {
                     .into_iter()
                     .filter(|other| Tile::new(other.target_x, other.target_y) != tile),
             );
-            for hands in 1..=budget {
-                let drawn = self.draw(&pool, hands, idle);
+            for hands in free.hands.max(1)..=budget {
+                let drawn = self.draw(&surplus_rows, &pool, hands, idle);
                 if drawn.hands < hands {
                     break;
                 }
@@ -961,15 +1052,15 @@ impl Food {
 #[cfg(test)]
 mod tests {
     use super::super::tests::{
-        a_unit_of, a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, BAND,
-        FACTION, FORAGE_KIT_ITEM, HERD_AT, HERD_ID, HERE, HUNT_KIT_HAUL_ITEM, HUNT_KIT_ITEM,
-        NEAR_PATCH, RICH_PATCH, STOCK, TICK,
+        a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, ARMED_ATTACK,
+        BAND, BARE_ATTACK, FACTION, FORAGE_KIT, HERD_AT, HERD_ID, HERE, HUNT_KIT, NEAR_PATCH,
+        RICH_PATCH, STOCK, TICK,
     };
     use super::*;
     use crate::orchestrator::Plan;
     use crate::specialists::Specialist;
     use sim_runtime::{
-        CohortStoreState, EquipmentBatchState, HerdTelemetryState, IntensificationKnowledgeState,
+        CohortStoreState, HerdTelemetryState, IntensificationKnowledgeState,
         LadderKnowledgeProgress, FIXED_POINT_SCALE, FOOD_CARGO_KEY,
     };
     use std::sync::Arc;
@@ -1078,8 +1169,9 @@ mod tests {
     }
 
     /// `equipment.json`: *"HUNTING YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"* —
-    /// a band holding no hunting gear is never sent to a herd, however rich; one hunting kit and
-    /// the herd is a source again. Gear a hunt kit does not carry (baskets) is not a hunting kit.
+    /// a band whose hunt-kit tier resolves to the bare hand is never sent to a herd, however rich;
+    /// a tier above it and the herd is a source again. The reading is the band's `kit_tiers`, not
+    /// its batches: a sled without a spear resolves to the bare hand and counts for nothing.
     #[test]
     fn a_band_with_no_hunting_kit_is_never_sent_to_a_herd() {
         let mut view = a_view();
@@ -1098,11 +1190,18 @@ mod tests {
             ROLE_HUNT,
             "one spear: the herd is a source"
         );
-        view.snapshot.populations[0].equipment_batches.clear();
+        let tier_of = |view: &mut SeatView, kit: &str, attack: f32| {
+            for tier in &mut view.snapshot.populations[0].kit_tiers {
+                if tier.kit_id == kit {
+                    tier.attack = attack;
+                }
+            }
+        };
+        tier_of(&mut view, HUNT_KIT, BARE_ATTACK);
         assert_eq!(
             assigned_role(&view),
             ROLE_FORAGE,
-            "no gear: the herd is not"
+            "the spear kit resolves to the bare hand: the herd is not"
         );
         assert!(
             food()
@@ -1116,27 +1215,155 @@ mod tests {
                 .is_none(),
             "nor does rule 4 see it"
         );
-        // A `count 0` row is "owns none of this item at all"; baskets are not hunting gear.
-        view.snapshot.populations[0].equipment_batches = vec![
-            EquipmentBatchState {
-                count: 0,
-                ..a_unit_of(HUNT_KIT_ITEM)
-            },
-            a_unit_of(FORAGE_KIT_ITEM),
-        ];
+        // A forage kit above the bare hand is not a hunting kit; no tiers published reads bare.
+        tier_of(&mut view, FORAGE_KIT, ARMED_ATTACK);
         assert_eq!(
             assigned_role(&view),
             ROLE_FORAGE,
-            "none of the spear, one basket"
+            "baskets are not a weapon"
         );
-        view.snapshot.populations[0]
-            .equipment_batches
-            .push(a_unit_of(HUNT_KIT_HAUL_ITEM));
+        tier_of(&mut view, HUNT_KIT, ARMED_ATTACK);
+        assert_eq!(assigned_role(&view), ROLE_HUNT, "armed again");
+        view.snapshot.populations[0].kit_tiers.clear();
         assert_eq!(
             assigned_role(&view),
-            ROLE_HUNT,
-            "a hunt kit's haul aid counts"
+            ROLE_FORAGE,
+            "no tiers on the wire: nothing to hunt with"
         );
+    }
+
+    // ---- surplus hands --------------------------------------------------------------------------
+
+    /// `workers − workers_needed`; `0` on a row whose `workers_needed` is `0`, fresh or barren.
+    #[test]
+    fn surplus_is_the_hands_the_take_did_not_need_and_a_fresh_row_has_none() {
+        let mut row = forage_row(NEAR_PATCH, 17, 8.0);
+        row.workers_needed = 8;
+        assert_eq!(surplus_hands(&row), 9);
+        row.workers_needed = 17;
+        assert_eq!(surplus_hands(&row), 0);
+        // Fresh: nothing resolved yet.
+        assert_eq!(surplus_hands(&forage_row(NEAR_PATCH, 5, 0.0)), 0);
+        // Produced nothing: the sim's `0`, and not a surplus either.
+        let mut barren = hunt_row(12, 0.0, 0);
+        barren.workers_needed = 0;
+        assert_eq!(surplus_hands(&barren), 0);
+    }
+
+    /// Seventeen hands parked on the rich patch, which needed eight of them: nine are surplus.
+    /// Breaking even, the larder full, cultivation known and the patch priced for it.
+    fn a_parked_band() -> SeatView {
+        a_view_with(|view| {
+            knowledge(view, 1.0, 0.0);
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.food_income = band.food_consumption;
+            band.labor_assignments = vec![LaborAssignmentState {
+                workers_needed: 8,
+                ..forage_row(RICH_PATCH, 17, 26.0)
+            }];
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                    patch.composition = Arc::from(vec![FloraShareInfo {
+                        species: "hazel".to_owned(),
+                        share: 1.0,
+                        can_cultivate: true,
+                        can_sow: true,
+                        cultivate_payoff: 40.0,
+                        sow_payoff: 80.0,
+                        ..Default::default()
+                    }]);
+                    patch.cultivation_work_cost = 50.0;
+                    patch.field_work_cost = 75.0;
+                    patch.build_work_per_worker_turn = 1.0;
+                }
+            }
+        })
+    }
+
+    /// The nine surplus hands are the builders — off the patch's own row, which keeps its eight
+    /// and so its declaration — and all nine go, since they cost nothing where they stand.
+    #[test]
+    fn the_surplus_on_the_patchs_own_row_builds_its_upgrade() {
+        let view = a_parked_band();
+        let proposal = food()
+            .upgrade_the_ground(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+                &Reassignment::NONE,
+            )
+            .expect("nine free builders");
+        assert!(
+            proposal
+                .reason
+                .contains("cultivate 2,3 (hazel) with 9 builders, payoff turn 6"),
+            "{}",
+            proposal.reason
+        );
+        assert!(matches!(
+            proposal.commands[0],
+            CommandPayload::Cultivate {
+                target_x: 2,
+                target_y: 3,
+                ..
+            }
+        ));
+        assert_eq!(
+            assigned_to(&proposal.commands[1]),
+            (ROLE_FORAGE.to_owned(), 8, Some(RICH_PATCH), None),
+            "the row keeps what its take needs"
+        );
+        assert_eq!(
+            assigned_to(&proposal.commands[2]),
+            (ROLE_BUILDERS.to_owned(), 9, None, None)
+        );
+        assert_eq!(proposal.cost.workers, 9);
+    }
+
+    /// Surplus hands fire *negative income* on a band that is otherwise breaking even, and go to
+    /// the best source that is not the row they leave — the near patch, the rich row cut to eight.
+    #[test]
+    fn surplus_hands_are_moved_off_their_row_onto_a_second_site() {
+        let view = a_parked_band();
+        let proposal = food()
+            .negative_income(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+            )
+            .expect("nine surplus hands with a second site in reach");
+        assert!(
+            proposal.reason.contains("9 surplus hands -> forage 4,2"),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(
+            assigned_to(&proposal.commands[0]),
+            (ROLE_FORAGE.to_owned(), 8, Some(RICH_PATCH), None)
+        );
+        assert_eq!(
+            assigned_to(&proposal.commands[1]),
+            (ROLE_FORAGE.to_owned(), 9, Some(NEAR_PATCH), None)
+        );
+        assert_eq!(proposal.cost.workers, 9);
+        // With the near patch gone there is nowhere to put them, and the rule is silent.
+        let mut alone = a_parked_band();
+        alone
+            .snapshot
+            .food_modules
+            .retain(|site| site.x != NEAR_PATCH.x || site.y != NEAR_PATCH.y);
+        alone.snapshot.herds.clear();
+        assert!(food()
+            .negative_income(
+                &alone,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&alone)
+            )
+            .is_none());
     }
 
     #[test]

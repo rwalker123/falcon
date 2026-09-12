@@ -236,16 +236,16 @@ impl Food {
         sources
     }
 
-    /// The source a crew of `hands` takes the most from, other than `except`; none when nothing
-    /// in reach would pay.
+    /// The source a crew of `hands` takes the most from, other than any in `except` (the rows
+    /// the crew is leaving); none when nothing in reach would pay.
     fn best_source<'s>(
         sources: &'s [Source],
         hands: u32,
-        except: Option<&SourceKey>,
+        except: &[SourceKey],
     ) -> Option<&'s Source> {
         sources
             .iter()
-            .filter(|source| except != Some(&source.key))
+            .filter(|source| !except.contains(&source.key))
             .filter(|source| source.expected(hands) > 0.0)
             .max_by(|a, b| a.expected(hands).total_cmp(&b.expected(hands)))
     }
@@ -394,8 +394,8 @@ pub(crate) mod tests {
     use crate::profile::{AiProfiles, NO_MEMORY_DECAY};
     use crate::view::{VISIBILITY_ACTIVE, VISIBILITY_DISCOVERED};
     use sim_runtime::{
-        CohortStoreState, EquipmentBatchState, ForagePatchState, HerdTelemetryState,
-        KitOptionState, WorldSnapshot,
+        BandKitTiersState, CohortStoreState, ForagePatchState, HerdTelemetryState, KitOptionState,
+        WorldSnapshot,
     };
 
     pub const FACTION: u32 = 3;
@@ -421,19 +421,25 @@ pub(crate) mod tests {
     pub const FOUNDING_FLOOR: u32 = 4;
     pub const PARENT_FLOOR: u32 = 6;
     /// The roster's hunting kit and the weapon it carries (`equipment.json` → `big_game`); the
-    /// fixture band holds one, so a herd is a source for it ([`hunting_kits_held`]).
+    /// fixture band's tier under it is a fresh spear's, so a herd is a source for it
+    /// ([`hunting_kits_held`]).
     pub const HUNT_KIT: &str = "big_game";
     pub const HUNT_KIT_ITEM: &str = "spears";
-    pub const HUNT_KIT_HAUL_ITEM: &str = "sled";
     /// The roster's gathering kit — a kit whose items are not hunting gear.
     pub const FORAGE_KIT: &str = "gathering";
     pub const FORAGE_KIT_ITEM: &str = "baskets";
+    /// The roster's item-less kit, offered on every job — the bare hand's reading.
+    pub const BARE_KIT: &str = "none";
+    /// The `creatures.json` `person` row's attack, which every kit resolves to with nothing live
+    /// in it; and what a fresh spear grants (`PopulationCohortState::hunter_attack`'s two readings).
+    pub const BARE_ATTACK: f32 = 1.0;
+    pub const ARMED_ATTACK: f32 = 20.0;
 
-    /// One unit of `item` in the band's hands.
-    pub fn a_unit_of(item: &str) -> EquipmentBatchState {
-        EquipmentBatchState {
-            item_id: item.to_owned(),
-            count: 1,
+    /// What `kit` grants the fixture band: `attack` and nothing else.
+    pub fn kit_tier(kit: &str, attack: f32) -> BandKitTiersState {
+        BandKitTiersState {
+            kit_id: kit.to_owned(),
+            attack,
             ..Default::default()
         }
     }
@@ -475,18 +481,23 @@ pub(crate) mod tests {
             labor_assignments: Vec::new(),
             founding_min_workers: FOUNDING_FLOOR,
             founding_parent_min_workers: PARENT_FLOOR,
-            equipment_batches: vec![a_unit_of(HUNT_KIT_ITEM)],
+            kit_tiers: vec![
+                kit_tier(HUNT_KIT, ARMED_ATTACK),
+                kit_tier(FORAGE_KIT, BARE_ATTACK),
+                kit_tier(BARE_KIT, BARE_ATTACK),
+            ],
             ..Default::default()
         }];
-        let kit = |id: &str, job: &str, items: &[&str]| KitOptionState {
+        let kit = |id: &str, jobs: &[&str], items: &[&str]| KitOptionState {
             id: id.to_owned(),
-            jobs: vec![job.to_owned()],
+            jobs: jobs.iter().map(|job| (*job).to_owned()).collect(),
             item_ids: items.iter().map(|item| (*item).to_owned()).collect(),
             ..Default::default()
         };
         snapshot.kits = vec![
-            kit(HUNT_KIT, ROLE_HUNT, &[HUNT_KIT_ITEM, HUNT_KIT_HAUL_ITEM]),
-            kit(FORAGE_KIT, ROLE_FORAGE, &[FORAGE_KIT_ITEM]),
+            kit(HUNT_KIT, &[ROLE_HUNT], &[HUNT_KIT_ITEM]),
+            kit(FORAGE_KIT, &[ROLE_FORAGE], &[FORAGE_KIT_ITEM]),
+            kit(BARE_KIT, &[ROLE_HUNT, ROLE_FORAGE], &[]),
         ];
         // Each stand's ceiling (`biomass × provisions_per_biomass`) is 1.5× its capacity, so a
         // 17-hand crew is capped at 30 on the near patch and takes its full 34 on the rich one.

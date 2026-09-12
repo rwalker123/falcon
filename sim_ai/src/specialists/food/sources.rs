@@ -52,11 +52,18 @@ pub(crate) fn workable_patch_at(view: &SeatView, tile: Tile) -> Option<&ForagePa
     view.patch_at(tile).filter(|_| is_food_site(view, tile))
 }
 
-/// **The hunting gear `band` holds, in units** — the `count` summed over its `equipment_batches`
-/// rows whose `item_id` is carried by a kit whose `jobs` include `hunt`. The join is
-/// `EquipmentBatchState::item_id` ↔ `KitOptionState::item_ids` (the kit's `equipment.json` `uses`
-/// list); a batch row with `count 0` is *"the band owns none of this item at all"*, and the `none`
-/// kit carries no items, so a bare band reads `0`.
+/// **The hunting kits `band` could actually send a crew out under** — the roster's hunt-job kits
+/// (`WorldSnapshot::kits`, `jobs` includes `hunt`) whose resolved `attack` on *this* band
+/// (`PopulationCohortState::kit_tiers`, joined on `kit_id`) is above the bare hand's. The bare
+/// hand is read off the same list: the hunt-job kit that carries no items (`equipment.json`'s
+/// `none`), whose row resolves to the `creatures.json` `person` attack because there is nothing to
+/// add to it. A roster without one, or a cohort with no tiers published, reads `0`.
+///
+/// **Why the tiers and not the batches.** `BandKitTiersState` is *"the RESOLVED answer. A client
+/// must not re-derive it … 'all items dry' keeps it at full tier with only the sled left"*: a kit's
+/// `item_ids` says what it carries, not which item is its weapon, so a band holding a sled and no
+/// spear counted as armed by the batches and reads bare here — the sim resolved `big_game` to the
+/// intrinsic attack because nothing it holds declares one.
 ///
 /// ⛔ **NO KIT, NO HUNT.** `equipment.json`: *"A SPAWNING BAND OWNS NO EQUIPMENT AT ALL … HUNTING
 /// YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"*, and an AI seat never outfits (the
@@ -71,15 +78,41 @@ pub(crate) fn hunting_kits_held(view: &SeatView, band: &PopulationCohortState) -
         .iter()
         .filter(|kit| kit.jobs.iter().any(|job| job == ROLE_HUNT))
         .collect();
-    band.equipment_batches
+    let attack_under = |kit: &KitOptionState| {
+        band.kit_tiers
+            .iter()
+            .find(|tier| tier.kit_id == kit.id)
+            .map(|tier| tier.attack)
+    };
+    let Some(bare) = hunt_kits
         .iter()
-        .filter(|batch| {
-            hunt_kits
-                .iter()
-                .any(|kit| kit.item_ids.contains(&batch.item_id))
-        })
-        .map(|batch| batch.count)
-        .sum()
+        .filter(|kit| kit.item_ids.is_empty())
+        .find_map(|kit| attack_under(kit))
+    else {
+        return 0;
+    };
+    hunt_kits
+        .iter()
+        .filter(|kit| !kit.item_ids.is_empty())
+        .filter(|kit| attack_under(kit).is_some_and(|attack| attack > bare))
+        .count() as u32
+}
+
+/// **The hands on `row` its take did not need** — `workers − workers_needed`, the frame's own
+/// overstaffing signal: `LaborAssignmentState::workers_needed` is *"Minimum workers that would
+/// have produced this turn's take — the **overstaffing** signal. `workers > workers_needed` ⇒ the
+/// binding constraint was not labor, so the extra workers were idle."* They cost nothing to move,
+/// because the row's take is what the needed hands bring home.
+///
+/// `0` when `workers_needed` is `0`: that is the sim's *"the source produced nothing"* and a fresh
+/// row the turn has not resolved yet alike, and neither is an overstaffing signal — a row nobody
+/// was useful on is *negative income*'s to empty, not surplus to skim.
+pub(crate) fn surplus_hands(row: &LaborAssignmentState) -> u32 {
+    if row.workers_needed == 0 {
+        0
+    } else {
+        row.workers.saturating_sub(row.workers_needed)
+    }
 }
 
 /// **What a crew of `hands` takes off a source in one turn**: `min(hands × rate, ceiling)`, the
