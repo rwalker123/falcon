@@ -1240,6 +1240,55 @@ it**: `advance_labor_allocation`'s source-row loop (once per band, beside `band_
 reason — a row that read all of the ledger would arm its own crew off gear the row beside it is
 already holding), `advance_predator_raids`' warrior line, and the capture's per-row coverages.
 
+#### ⛔ A PROSPECTIVE ROW COMPETES EXACTLY AS A COMMITTED ONE DOES — THREE MORE READERS
+
+The formula above prices a row that is *already staffed*, and the numbers a player decides on are
+quoted before that. Every surface quoting a crew therefore cuts from the same share, or a band whose
+two hunt rows reach for one stock of traps is promised a crew the turn cannot arm:
+
+```text
+other_demand[item] = Σ workers over the band's assignments that use `item`,
+                     EXCLUDING any existing assignment on THIS source
+units(w, item)     = live_units(item) × w ÷ (other_demand[item] + w)
+```
+
+**The exclusion is the whole of it.** A forecast, a seed and a take all describe one crew on one
+source, so leaving that source's own row in would count its head twice — once as itself, once as the
+ask — and quote short of the take it predicts. `other_demand == 0` falls through to the whole live
+stock, which is the *"an item nothing asks for is not rationed"* rule above and not a second one.
+`LaborAllocation::rows_excluding_source` produces the other rows and
+`BandItemBudget::with_prospective_row` chains the ask onto them, so there is one arithmetic and the
+committed and prospective forms cannot drift; `kitted_rows` is the single spelling of *"a row's
+resolved kit and its head count"* both budgets are built from.
+
+| Reader | What it quotes | How the share reaches it |
+|---|---|---|
+| `bin/server.rs`'s `seed_source_yield` — **both** arms, forage and hunt | the row the assign command just committed | `set_assignment` has already landed the row, so the band's `LaborAllocation` *is* the post-assignment truth: plain `item_budget` + `share_for(workers, ..)`, the identical denominator next turn divides by |
+| `forecast_query::resolve_ask` — the trip and denial sheets | a party nobody has committed | the queried source may or may not hold a row, so it is excluded and the asked-for party added |
+| `fauna::hunt_crew_take_curve` / `hunt_armed_crew` | one row **per crew size** | `HuntCrewCurveInputs::other_rows` carries the rows and `curve_coverage` strikes the budget per crew |
+
+**A CURVE RECOMPUTES THE SHARE PER CREW SIZE, AND THAT IS WHY IT TAKES ROWS RATHER THAN A BUDGET.**
+At crew `w` the denominator is `other_demand + w`, and `w` moves on every row of the curve — a budget
+struck once at one crew would misprice every other. `hunt_armed_crew` goes through the same
+`curve_coverage`, because the plateau and the count that explains it are read at the same crew size
+off the same share and a second spelling there is how *"max N workers useful"* comes to name a number
+no row of the curve was built from. `snapshot::population`'s `assigned_hunt_useful_crew` is that same
+producer on the Work board's `+` gate, so it hands over the band's allocation (`HuntCrewGear`) for the
+rows beside the one it is pricing.
+
+**A DETACHED EXPEDITION IS DELIBERATELY OUTSIDE ALL OF IT.** A launched party carries its own wear
+ledger and works no source rows, so it is not a resident band's row and is not rationed against one —
+the empty-allocation case the third rule above already answers.
+
+The invariant the three surfaces are held to is that a row rationed to half a shared ledger reads
+**exactly** what a band owning only that half reads, which is the one claim their three different
+units can all state: `bin/server.rs`'s
+`a_forecast_a_seed_and_a_take_are_cut_from_one_share_of_the_bands_gear` (seed, take and crew-take
+curve) and `a_trip_forecast_is_priced_at_the_asking_partys_share_of_the_gear` (the launch sheet's
+fill time, which is where a `pack_full`-bound trip shows the shortfall). Each pairs that with a
+scarce arm whose numbers **fall** and an abundant arm that is bit-identical to the same row standing
+alone — three surfaces that agree is also what three equally-broken surfaces report.
+
 **Three coverages are deliberately outside it**, and this is a boundary rather than an oversight —
 each runs at a different point in the turn against a pool of its own: the **builders'** pool
 (`BuildersGear::for_source`), **`keeping_rates`** (which has its own kit-id grouping and its own

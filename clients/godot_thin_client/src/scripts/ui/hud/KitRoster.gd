@@ -1693,6 +1693,81 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 		return ""
 	return shortfall_sentence(kit, covered, on_job)
 
+## ⛔ **THE BAND'S GEAR STATE FOR ONE KIT, AS A CACHE KEY TERM** — `spears=9@17|sled=17@17`, or `""`
+## for a kit that carries nothing. It is not rendered anywhere; its whole job is to be *different*
+## when a forecast's answer would be.
+##
+## > #### ⛔ THE SERVER WAS NEVER WRONG. THE CLIENT NEVER ASKED AGAIN.
+## >
+## > Reported from play: two ASSIGN HUNTERS sheets for the same band and herd at the same crew of 3 —
+## > one with three Stalking kits, one reading `1 of 3 Stalking kits available` — rendered a
+## > **byte-identical** NEXT TURN panel: the same 0.23 FOOD, the same `≈0.76 Red Deer/turn`, the same
+## > *"max 3 workers useful here"*. `answer_hunt_crew_take` prices the curve off the band's live wear
+## > and publishes `armed_crew` precisely so the plateau can be explained; `ForecastQuery.key_of` was
+## > keyed on band · herd · kit · party · floor, **with the gear nowhere in it**, and `ask` returns
+## > early whenever the key it holds an answer for matches. So the first answer stood for the whole
+## > session however the ledger moved.
+##
+## **TWO TERMS PER ITEM, AND ONE IS NOT ENOUGH.** A prospective row's share is
+## `live_units × w ÷ (other_rows_demand + w)` (`equipment.md` → "A PROSPECTIVE ROW COMPETES EXACTLY AS
+## A COMMITTED ONE DOES"), so the answer moves with the competing demand as well as with the stock.
+## Keying on stock alone fixes one staleness and leaves another: staff a second trapping row and the
+## first sheet goes stale again.
+##
+## - **`count`** — units owned, through `DetailFormat.kit_units_owned`.
+## - **`workersOnQuotedJob`** — Σ workers on the rows carrying that item, which IS the demand term,
+##   through `_published_on_quoted_job`.
+##
+## Both are already published per item, so **nothing here derives anything**.
+##
+## ⛔ **`remaining` (the CONDITION) IS DELIBERATELY NOT IN IT.** Coverage is struck against
+## `live_units` — a COUNT of batches with condition left — so a unit contributes the same share at 91%
+## as at 12%, while its condition moves every single turn as the gear wears. Keying on it would put a
+## fresh round trip behind every turn for an answer that did not change. **Counts move only when a
+## unit is gained, lost, or finally expires**, which is exactly the granularity at which the answer
+## moves too.
+##
+## **REDUNDANT RE-ASKS ARE CORRECT HERE AND ARE NOT NARROWED.** An edit to an unrelated row that
+## happens to carry one of this kit's items moves `workersOnQuotedJob` and re-asks; that is one
+## question, and the alternative is a client deciding for itself which of the sim's inputs matter.
+##
+## Two stability rules, because a key that churns is a socket spun once per frame:
+## - **`KIT_UNITS_UNSTATED` maps to ONE fixed token.** A band the server has published no `count` for
+##   must not produce a key that varies frame to frame.
+## - **An ITEMLESS kit yields the empty fingerprint** — `none` has nothing to be short of, so there is
+##   nothing for it to invalidate on. A kit id this roster cannot name answers the same way, for the
+##   honest reason that its items cannot be looked up at all.
+static func gear_fingerprint(kits: Array, kit_id: String, band: Dictionary) -> String:
+	var items := kit_item_ids(kit_by_id(kits, kit_id))
+	if items.is_empty():
+		return GEAR_FINGERPRINT_ITEMLESS
+	var terms: Array[String] = []
+	for item_variant in items:
+		var item_id := String(item_variant)
+		var owned := DetailFormat.kit_units_owned(band, item_id)
+		var stock := GEAR_FINGERPRINT_UNSTATED if owned == DetailFormat.KIT_UNITS_UNSTATED \
+			else str(owned)
+		terms.append(GEAR_FINGERPRINT_TERM_FORMAT % [item_id, stock,
+			_published_on_quoted_job(band, item_id)])
+	return GEAR_FINGERPRINT_SEPARATOR.join(terms)
+
+## `gear_fingerprint`'s spelling. **The shape is legibility only** — nothing parses this back — but the
+## item id is in it on purpose: the terms are in the kit's own `itemIds` order, and naming each one
+## means a roster that ever reorders its list cannot make two different ledgers collide.
+const GEAR_FINGERPRINT_TERM_FORMAT := "%s=%s@%d"
+const GEAR_FINGERPRINT_SEPARATOR := "|"
+
+## **THE ONE TOKEN FOR *THE BAND HAS STATED NO COUNT*** (`DetailFormat.KIT_UNITS_UNSTATED`). It must be
+## a CONSTANT, not the sentinel's number and not anything frame-dependent: a key that moves while the
+## ledger does not asks the server the same question forever.
+const GEAR_FINGERPRINT_UNSTATED := "?"
+
+## **AND AN ITEMLESS KIT'S FINGERPRINT IS STABLE AND EMPTY** — `none` carries nothing, so no ledger
+## change can alter what a forecast quoted at it answers. Named rather than inlined because *"the
+## empty string here is a real answer"* is exactly the kind of thing a later reader replaces with a
+## guard.
+const GEAR_FINGERPRINT_ITEMLESS := ""
+
 ## **THE ONE PHRASING FOR *GEAR RAN SHORT*, WHEREVER IT IS STATED** — the compose sheets' line, the
 ## role cards', and the work row's own note, which wraps this in its remedy clause
 ## (`HudWorkVocab.kit_short_note`). `HudComposeVocab.KIT_SHORTFALL_FORMAT` is the sentence; this is

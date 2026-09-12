@@ -4174,7 +4174,8 @@ func _raid_forecast_view(band: Dictionary, herd_id: String, kit_id: String, part
         return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, party, floor, band,
+        _band_labor.kits())
     # A party of 0 is `invalid_party` server-side and there is no raid to project, so it is never
     # asked — the sheet's Send is already disabled there and the readout has nothing to say.
     if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
@@ -4238,7 +4239,8 @@ func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: f
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, workers, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
+        _band_labor.kits())
     if workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -4279,7 +4281,8 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
     # under one key and read back under another.
     var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, workers, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
+        _band_labor.kits())
     var now := Time.get_ticks_msec()
     if key != _crew_take_drag_asked_key \
             and now - _crew_take_drag_asked_at_msec \

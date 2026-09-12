@@ -9916,7 +9916,8 @@ func _denial_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, p
     var herd_id := String(herd.get("id", ""))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_DENIAL_RAID, band_id, herd_id)
     # No floor axis, so the key's floor slot is the one value every denial ask carries.
-    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR)
+    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR, band,
+        _band_labor.kits())
     if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_DENIAL_RAID, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -9937,7 +9938,8 @@ func _raid_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, par
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var herd_id := String(herd.get("id", ""))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, party, floor, band,
+        _band_labor.kits())
     if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_HUNT_TRIP, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -9985,7 +9987,15 @@ func launched_party_denial_view(exp: Dictionary) -> Dictionary:
         return {}
     var kit_id := String(exp.get("kit_id", ""))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_DENIAL_RAID, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR)
+    # ⛔ **THE GEAR TERM IS THE PARTY'S OWN LEDGER, NOT ITS HOME BAND'S** — `exp`, the same dict this
+    # whole function takes unchanged, for the reason stated above: an expedition prices its whole life
+    # from the choice made at launch and never re-resolves against the band it left. The sim agrees
+    # and says so (`equipment.md` → *"A DETACHED EXPEDITION IS DELIBERATELY OUTSIDE ALL OF IT — a
+    # launched party carries its own wear ledger and works no source rows"*), so handing the home
+    # band here would invalidate this raid's answer every time a crew back home picked up a spear.
+    # A party that publishes no item ledger keys on the UNSTATED token, which is stable.
+    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR, exp,
+        _band_labor.kits())
     _forecast_query.ask(ForecastQuery.KIND_DENIAL_RAID, subject, key, {
         "faction_id": int(exp.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": band_id,

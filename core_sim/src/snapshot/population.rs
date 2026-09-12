@@ -200,15 +200,26 @@ pub(crate) fn labor_assignment_to_state(
 ///
 /// [`crate::fauna::NO_USEFUL_CREW`] for every non-hunt row (no quarry to fight) and for a herd that
 /// has left the registry.
+/// **The gear one hunt row's useful-crew cap is quoted from** — the row's own resolved kit, the
+/// band's wear ledger, and the band's whole allocation. Bundled exactly as [`BandKitLevers`] is:
+/// three references that only ever travel together, and that must describe one band.
+pub(crate) struct HuntCrewGear<'a> {
+    /// The kit the row's yields are priced at, already resolved.
+    pub(crate) kit: &'a crate::equipment_config::KitChoice,
+    /// The band's live wear ledger — the curve re-divides it per crew size, so a band with five
+    /// spears is quoted the mix it actually fields at each size.
+    pub(crate) wear: &'a BandEquipment,
+    /// The band's whole allocation — the rows BESIDE this one are what the quoted crew competes
+    /// with for that ledger, so a ceiling quoted off the full stock would offer hands the traps on
+    /// the row next door are already holding (`equipment.md` → "ONE BAND, ONE SET OF GEAR").
+    pub(crate) allocation: &'a LaborAllocation,
+}
+
 fn assigned_hunt_useful_crew(
     target: &LaborTarget,
     // This source's own crew pool — the hands on the row plus the band's idle ones.
     crew_pool: u32,
-    // The kit the row's yields are priced at, already resolved.
-    kit: &crate::equipment_config::KitChoice,
-    // The band's live wear ledger — the curve re-divides it per crew size, so a band with five
-    // spears is quoted the mix it actually fields at each size.
-    wear: &BandEquipment,
+    gear: &HuntCrewGear<'_>,
     kit_levers: &BandKitLevers<'_>,
     hunt_crew_levers: &HuntCrewLevers<'_>,
     herds: &crate::fauna::HerdRegistry,
@@ -219,13 +230,18 @@ fn assigned_hunt_useful_crew(
     let Some(herd) = herds.find(fauna_id) else {
         return crate::fauna::NO_USEFUL_CREW;
     };
+    // Resolved after the two gates, so a non-hunt row pays nothing for a vector it never reads.
+    let other_rows = gear
+        .allocation
+        .rows_excluding_source(kit_levers.config, target);
     crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(
         &crate::fauna::HuntCrewCurveInputs {
             herd,
             fauna: hunt_crew_levers.fauna,
             equipment: kit_levers.config,
-            kit,
-            wear,
+            kit: gear.kit,
+            wear: gear.wear,
+            other_rows: &other_rows,
             intrinsic: kit_levers.person_intrinsic,
             // **BASE, not `expedition_tuning`** — this is a band hunting its own range.
             tuning: hunt_crew_levers.combat.tuning(),
@@ -1095,8 +1111,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     let hunt_useful_workers = assigned_hunt_useful_crew(
                         &assignment.target,
                         assignment.workers.saturating_add(idle_workers),
-                        &resolved_kit,
-                        &kit,
+                        &HuntCrewGear {
+                            kit: &resolved_kit,
+                            wear: &kit,
+                            allocation: a,
+                        },
                         kit_levers,
                         hunt_crew_levers,
                         build_sources.herds,

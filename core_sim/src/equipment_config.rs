@@ -1372,6 +1372,30 @@ impl BandItemBudget {
         Self { demand }
     }
 
+    /// **THE BUDGET A ROW NOBODY HAS COMMITTED YET COMPETES UNDER** — the band's *other* rows,
+    /// chained with the party being asked about, so a prospective crew of `workers` is rationed
+    /// exactly as a committed one is.
+    ///
+    /// ⛔ **`other_rows` must EXCLUDE any row already standing on the source being asked about.**
+    /// A forecast, a commit-time seed and the turn's take describe one crew on one source; leaving
+    /// that source's existing row in would count its head twice — once as itself and once as the
+    /// ask — and quote a share smaller than the take will pay.
+    ///
+    /// Demand of zero still falls through to the whole live stock ([`Self::units_for`]), so a band
+    /// with nothing else staffed reads what the ledger-wide [`EquipmentConfig::coverage`] gave it.
+    /// That is the same *"an item nothing asks for is not rationed"* rule, not a second one.
+    pub fn with_prospective_row<'a>(
+        other_rows: impl IntoIterator<Item = (&'a KitChoice, f32)>,
+        kit: &'a KitChoice,
+        workers: f32,
+    ) -> Self {
+        Self::of_rows(
+            other_rows
+                .into_iter()
+                .chain(std::iter::once((kit, workers))),
+        )
+    }
+
     /// **One row's units of `item`** — its pro-rata share of what the band holds in serving
     /// condition.
     pub fn units_for(
