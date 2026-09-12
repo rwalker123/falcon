@@ -143,8 +143,8 @@ was handed, not what it did.
 **`decide`, in order:** `memory.observe` (sightings, arrivals, what every worked row realized, and
 a `warn!` per command the sim refused last turn — the feed's `… failed` rows); the orchestrator
 (a `plan` record when it re-plans); every specialist proposes (an `alarm` record per alarm, queued
-for the *next* plan); the arbiter; `memory.record_choices` (the accepted intents, and the move
-target any accepted `MoveBand` carries); `memory.remember_runways`. `on_full_frame(tick)` forgets
+for the *next* plan); the arbiter; `memory.record_choices` (the accepted intents and their memos —
+a move target, a pending split); `memory.remember_runways`. `on_full_frame(tick)` forgets
 everything stamped later than `tick`, drops a plan adopted after it, **and resets the orchestrator's
 goal cadence** (`Orchestrator::forget_after`) so the dropped plan is re-planned at the new epoch's
 first tick. Dropping the plan alone left `since_turn` in the future: `plan()` then returned `None`
@@ -153,19 +153,23 @@ empty — a rival that played nothing for the first 8 turns after every New Game
 
 **`ConstantStance`.** Stance = the archetype's. Budgets = the weights of the enabled specialists
 normalised (`food_security → food`, `land_claim → land`; `contact_seeking` is read and funds nothing
-until `Contact` exists); priorities = the same weights raw. Re-plans when `tick − since_turn ≥
-goal_cadence_turns` or an alarm arrived since the last plan; an alarm moves `tuning.alarm_budget_shift`
-of worker share to the alarming specialist, taken from the others pro rata, and the next cadence
-plan reverts it. The stance never moves, so `orchestrator.stance_switches_per_100_turns` is 0 by
+until `Contact` exists); priorities = the same weights raw; goals = the profile's `goals` block for
+`Food` when it is on the roster (`Land` has none in v1 — `Goals` is the enum that grows). Re-plans
+when `tick − since_turn ≥ goal_cadence_turns` or an alarm arrived since the last plan; an alarm
+moves `tuning.alarm_budget_shift` of worker share to the alarming specialist, taken from the others
+pro rata, and the next cadence plan reverts it — the goals never move with an alarm. The `plan`
+record and the observation's `plan` carry `goals: { <specialist>: { net_income_per_turn,
+runway_turns, ground_rung } }` (flat, one shape for every specialist), and the viewer's orchestrator
+table renders it as `net +1.0/turn · runway 12t · toward field`. The stance never moves, so `orchestrator.stance_switches_per_100_turns` is 0 by
 construction and the ratchet pins it there.
 
 **Budgets are a share of the seat's working-age pool per turn**, charged by the arbiter as
 `floor(share × Σ own working_age)`. A specialist reads its share (`Plan::worker_share`) and sizes a
-proposal to it — `Food` caps *idle hands* at its budget and moves the rest next turn — because a
-proposal larger than the slice is `over_budget` whatever its score.
+proposal to it — *negative income* caps the idle hands it places at its budget and moves the rest
+next turn — because a proposal larger than the slice is `over_budget` whatever its score.
 
 **The intent key** is `<specialist>:<kind>:<subject>` (`food:assign:2`, `land:move:2`,
-`food:relieve:19,12`, `food:relieve:game_boar_05`); the scripted fixture's is the bare `script`.
+`food:upgrade:2`, `food:settle:9`); the scripted fixture's is the bare `script`.
 The middle token is the class the behaviour gate reads: `raid` needs `will_raid`, `trade` needs
 `will_trade`. The bench's intent histogram groups on `<specialist>:<kind>`.
 
@@ -175,23 +179,104 @@ order per band), `over_budget`. Selection: sorted by final score; `selection_top
 above it each pass draws uniformly among the top k still unpicked from the `(seed, faction, tick)`
 rng, so the order — not the set — is what difficulty moves.
 
-### `Food`
+### `Food` (`specialists/food/`: `mod.rs` the plumbing, `rules.rs` the five rules, `ledger.rs` the projection, `sources.rs` the source vocabulary)
 
 Owns `runway_turns`; alarms `food_short` when the minimum own-band `turns_of_food` is below
-`food.runway_floor_turns`. Every command is `assign_labor` with kit and floor left `None` (the
-job's default on the wire).
+`food.runway_floor_turns`. Every assignment is `assign_labor` with kit and floor left `None` (the
+job's default on the wire); `policy` is left `None` too, because the field is **retired** —
+*"a labor assignment carries a `floor`, not a stance … the server ignores it"*
+(`CommandPayload::AssignLabor::policy`), so the balanced take is the default floor.
 
-- *idle hands* — a band's idle workers onto the source a crew of that size takes the most from,
-  as many as the budget allows. Intent `food:assign:<band>`.
-- *runway* — under the alarm, the band's lowest-yielding worked row is emptied onto its highest,
-  as far as the budget reaches, **only when the highest actually pays `food.runway_gain_fraction`
-  more per worker than the lowest**. Distinctness is not improvement: two rows paying the same rate
-  otherwise produced a shuffle between identical rows every turn under the alarm, scored highest
-  exactly when the band was starving, and one-order-per-band then rejected *idle hands* as a
-  conflict. `food:runway:<band>`.
-- *overuse* — a row whose `actual_yield > sustainable_yield`, a hunt row the sim marks
-  `hunt_useful_workers == 0`, or a **dead row** (below) is emptied onto the next-best source.
-  `food:relieve:<source>`.
+**The plan hands `Food` goals** (`Plan.goals[food]` = `Goals::Food(FoodGoals { net_income_per_turn,
+runway_turns, ground_rung })`, from the profile's `goals` block), and **the goal gap is the score**:
+every rule projects the band's book under its change through the ledger below and scores
+`goal_progress × weight`. A rule handed no goals — `Plan::pass_through`, the scripted brain's plan,
+whose brain has no `Food` — proposes nothing (`the_pass_through_plan_proposes_nothing_from_any_rule`).
+Each rule yields at most one proposal per band, the arbiter's one-order-per-band rule keeps one, and
+the `reason` is `"<rule>: <subject> [ledger: trough X at tN, positive again tM]"` so the viewer
+shows which rule fired and what the ledger said. The rules, in `propose` order:
+
+- **negative income** (`food:assign:<band>`) — fires on `food_income < food_consumption` **or**
+  `idle_workers > 0` (idle hands are negative income against what they could earn). Weighs three
+  reassignments within budget — (a) the idle hands onto the best source, (b) the *row to empty
+  first* onto the best other source, (c) both onto the best source for the whole crew — and takes
+  the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
+  are met every candidate closes the same nothing, and without the tiebreak the band took the
+  first one offered). The row to empty first is an **overused** row (`actual_yield >
+  sustainable_yield`), a hunt row the sim marks **`hunt_useful_workers == 0`**, or a **dead row**
+  (below) — those need no gain guard — and failing one of those the lowest-paying row, which moves
+  only onto ground out-paying it by `food.runway_gain_fraction` per worker **and** whose marginal
+  take exceeds what the row earns today. ⛔ Distinctness is not improvement: with only "are these
+  distinct rows" between them, two rows paying the same shuffled workers every turn under the alarm
+  at the specialist's highest score, and one-order-per-band then rejected the idle hands as
+  `conflict`. Not for a travelling band, nor for a child still walking to the site it was split
+  toward (it must not strip the parent's ground — the same reason the next rule excludes it).
+  Carries its change forward: rules 3–5 project **on top of it**.
+- **feed while moving** (`food:feed_move:<band>`) — a band with a move target in memory and not
+  yet `is_traveling` works what will fall **outside** its range from the target before it leaves:
+  the idle hands and the crews of rows that stay in range after the move, onto the best source that
+  will not. Never a band `born_by_split` within `food.split_settle_turns` of its birth.
+- **split to feed** (`food:split:<band>`, then `food:settle:<child>`) — after rule 1's change the
+  band's projected runway is still under `goals.runway_turns`, it holds `SPLIT_PARENT_CREWS` (2)
+  crews of `food.split_band_workers` — *a parent keeps one crew of `split_band_workers` for
+  itself, so the band must hold two crews* — no split is pending, **the sim has not refused a split
+  of this band at its current size or larger** (`SeatMemory::split_refused_at`, below), and a
+  discovered, workable, unowned-or-own site within
+  `food.split_search_tiles` but **outside** `work_range` would pay a crew of `split_band_workers`
+  more than that crew's consumption share: `split_band <workers>`, with `Memo::Split { target }`.
+  The child appears on the parent's tile next turn (`split_band_from_parent`,
+  `core_sim/src/systems/fission.rs`); `SeatMemory` matches it and **settle** walks it there with
+  `move_band` under `food:settle:<child>` every turn until arrival (the commitment bonus), the
+  travel priced at `BAND_MOVE_TILES_PER_TURN` (restated from `labor_config.json`, 1 tile a turn).
+  The sim's `split_refusals` (`expedition_config.json`: `min_founding_workers`,
+  `parent_min_workers`) are not on the wire and are **not copied here**: at exactly `2 × 5`
+  working-age the split leaves 5 and is refused, the refusal shows in the failed-command log, the
+  pending entry expires — and the memory learns from the frame that a band of *that* size cannot
+  split, so the rule is silent until the band has grown.
+- **spare hands into hunts** (`food:hunt:<band>`) — projected net after rule 1 is at
+  `goals.net_income_per_turn` or within `food.near_positive_fraction` of it, and a live huntable
+  herd is in reach: the most hands off the lowest-paying **forage rows** (never the idle hands —
+  those are rule 1's, and a hunt drawn from them competed with the assignment for the band's one
+  order) whose leaving keeps the projected net at the goal with the herd's take counted, and whose
+  projection survives.
+- **upgrade the ground** (`food:upgrade:<band>`) — `goals.ground_rung > wild`, the rung's gate
+  knowledge known, and a worked forage patch below it with nothing queued (`build_destination_rung`
+  is *"empty when no band has queued it"*, plus the band's own `build_queue`; not
+  `build_queue_position`, which is a source-addressed readout of the *winning* band and defaults
+  to `0` off the wire). Knowledge is `snapshot.intensification_knowledge[faction].knowledges[id]
+  .progress >= KNOWLEDGE_COMPLETE` (1.0) — the row is *"0..1 (1.0 = known)"*, there is no `known`
+  flag on the ladder row (`CraftKnowledgeState` has one; `LadderKnowledgeProgress` does not), and
+  `FloraShareInfo::can_cultivate` is the **species ceiling**, not the gate. Tended if the patch is
+  not `is_cultivated` and `cultivation` is known; field if the goal is `field`, the patch is
+  cultivated, `seed_selection` is known and `sow_site_refusal` is empty. Priced by the ledger:
+  `income_gained` = the committed (else largest legal share) plant's `cultivate_payoff` /
+  `sow_payoff` minus the row's take today; `income_lost` = the builders' rows; `payoff_turn` =
+  `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn))` — there is **no**
+  reduced yield during the build (`yield_fraction_while_building` is retired in the ladder JSON:
+  *"the gatherers on a source take exactly what their hands carry whatever is being built beside
+  them"*). Builders = the smallest crew from 1 up to the budget whose projection survives and whose
+  payoff is inside `food.projection_horizon_turns`, drawn from the idle hands, then the hunt rows,
+  then the lowest forage rows — never the patch's own row, which keeps the declaration attached.
+  Commands: `cultivate`/`sow`, **then the row reductions, then** `assign_labor … builders <n>` —
+  in that order, because `assign_labor` clamps a role to the band's idle hands at dispatch
+  (`" (clamped from {} — only {} idle)"`, `core_sim/src/bin/server.rs`): builders named before the
+  hands are freed would be clamped to zero.
+
+### The projection ledger (`specialists/food/ledger.rs`)
+
+A pure function of numbers, tested alone. `Book { stock, income, consumption }` is a band's food
+book off the frame (`stores[FOOD_CARGO_KEY]` with the fixed-point divided out as the scoreboard
+does, `food_income`, `food_consumption`); `Reassignment { income_lost, income_gained, payoff_turn }`
+is a change; `project_all(book, changes, horizon)` walks `stock_t+1 = stock_t + income − Σ lost +
+Σ gained(t ≥ its payoff) − consumption` for `food.projection_horizon_turns` and answers
+`Projection { stock, trough: (min, turn), positive_again: first turn net ≥ 0, net_after,
+runway_at_end: stock_end / consumption (NOT_FOOD_LIMITED_TURNS when the band eats nothing) }`.
+`survives` is §4's rule verbatim: `trough > 0`. `goal_progress(goals, before, after)` is the goal
+gap closed — `(goal − value).max(0) / goal` on the runway and on the net income, each normalised to
+its goal, averaged over `GOAL_TERMS` (2) — so `1.0` closes both whole gaps, `0` is no change, and a
+change away from the goals reads negative. A gap is not capped at 1: a band eating more than it
+earns has a runway *below zero* at the horizon, and closing that is more than a goal's worth. Once
+both goals are met every change reads `0`, which is why the rules break ties on net income added.
 
 ⛔ **A source is ranked on what the crew will take, and on what this seat has measured — never on
 the published per-worker rate alone.** Three facts of the frame forced this:
@@ -205,7 +290,8 @@ the published per-worker rate alone.** Three facts of the frame forced this:
    once the row is worked. So `SeatMemory` keeps what every worked row **realized** per worker and
    the mean per web (`realized_for_kind`), and a source is ranked on its own realized rate, else the
    web's, else the forecast. A row realizing under `food.poor_yield_fraction` of its forecast for
-   `food.dead_row_turns` consecutive turns is **dead**: relieved, and avoided while remembered.
+   `food.dead_row_turns` consecutive turns is **dead**: the row *negative income* empties first,
+   and avoided while remembered.
    ⛔ **The web's mean can weigh a source down but never veto it** — it is consulted only while it
    is *positive*. A non-positive prior says nothing and the source falls back to its own forecast.
    Without that guard a single `0.0` folded into `realized_by_kind["hunt"]` rated **every** hunt
@@ -227,10 +313,25 @@ provisions_per_biomass)`) is below its `food_consumption`, and no better patch i
   ⛔ **The `scout <x> <y>` verb is retired server-side** (`command.retired=ignored`,
   `core_sim/src/bin/server.rs`); the standing scout role posts vantage points around the band.
 - *better ground* — while the runway is falling, a discovered, unowned, **unoccupied**, **workable**
-  patch within the horizon with a higher **per-worker yield** than the band's own proposes
-  `move_band`, and the
-  intent persists until arrival: the memory holds the target and re-proposes the same
-  `land:move:<band>` each turn, which is what the commitment bonus rewards.
+  patch within the horizon whose **per-worker yield** out-pays the band's own by
+  `land.better_ground_gain_fraction` of its own (`(target − own) / target`), and which is **not the
+  tile the band most recently left** (`SeatMemory::left_from`), proposes `move_band` with
+  `Memo::Move { target, from: here }`, and the intent persists until arrival: the memory holds the
+  target and re-proposes the same `land:move:<band>` each turn, which is what the commitment bonus
+  rewards.
+
+⛔ **Two guards on *better ground*, because the margin alone does not stop the oscillation.** On
+bench seed 11 the band walked 20,8 → 18,8 (t12) → 20,8 (t17) → 18,8 (t19), and every arrival
+dropped its rows (t19: 16 of 17 idle again). The rate `Land` ranks on is `patch_per_worker_yield`
+— the band's **realized** rate where it has worked, else the frame's forecast — so the tile under
+the band was read on what it had just stripped (20,8 fell 1.80 → 0.11 a turn under 17 hands) while
+the tile it had left was read on a forecast, or on the last realized figure before it was left, that
+the stripping had not yet reached. Each tile therefore always out-paid the other by a hair. The
+margin refuses a move that buys nearly nothing — distinctness is not improvement, the runway
+shuffle's lesson — and the departure memory refuses the one move the margin cannot judge: back onto
+the tile whose reading is a forecast rather than the rate the band is realizing now. Neither guard
+alone closed it; a tile can out-pay by the whole margin on a forecast the band's own arrival will
+disprove.
 - *room* — under `Expand`, a band above `land.split_size` standing on ground the faction owns
   proposes `split_band` with half its workers. `land:split:<band>`.
 
@@ -268,10 +369,36 @@ range, so the exposure remains.
 A pure function of the frames received, dropped past a full frame's tick. Per tile, the last tick
 it was `Active` (or first known, for ground discovered before the process watched), decayed by the
 difficulty's `memory_horizon_turns` (`0` never decays); last turn's chosen intents; the alarms
-since the last plan; per band the `land:move` target still being walked to (cleared on arrival) and
-last turn's `turns_of_food`; per worked row (`<band>:<kind>:<x>,<y>` or `<band>:<kind>:<fauna_id>`)
-what it realized per worker and for how many consecutive turns, kept when the row is emptied so a
-dead source is judged on its record.
+since the last plan; per band the move target still being walked to **and the intent it was
+accepted under** (`land:move:<band>` or `food:settle:<band>` — `move_intent`, what the observation's
+`intent_in_force` reads; cleared on arrival) and last turn's `turns_of_food`; per worked row
+(`<band>:<kind>:<x>,<y>` or `<band>:<kind>:<fauna_id>`) what it realized per worker and for how
+many consecutive turns, kept when the row is emptied so a dead source is judged on its record.
+
+**What to remember is stated by the proposal, not parsed from its commands.** `Proposal.memo:
+Option<Memo>` — `Memo::Move { band, target, from }` (any specialist's `move_band`; `from` is the
+tile the band stands on as it is accepted) or `Memo::Split { band, target, workers }` — is what
+`record_choices(tick, (intent, memo)…)` reads, so the memory never has to know a verb's shape. A
+`Move` also records `left_from[band] = (from, tick)` — the tile the band most recently departed,
+which *better ground* never proposes walking back to; decayed by the horizon, cleared by
+`forget_after`. Constructed with `SeatMemory::new(memory_horizon_turns,
+food.split_settle_turns)`: the settle turns are a fact about the seat, so they are passed once at
+construction and not to every `observe`.
+
+**The split bookkeeping.** An accepted `Memo::Split` is `pending_splits[parent] = SplitPending {
+tick, target, workers }`. `observe` keeps the own band ids of the last frame (`known_bands`); an
+own band **not among them** standing on the tile of a parent with a pending entry is that split's
+child, and the entry moves to `born_by_split[child] = SplitBirth { tick, target }`. A pending entry
+no child has answered within `split_settle_turns` is a refused split: it is dropped, and
+`split_refused[parent]` records the parent's `working_age` in that frame — what the sim refused
+was a band of that size, and *split to feed* asks again only once the band is larger. That entry
+is **kept across the memory horizon** (a refusal is a fact about the sim, not a sighting) and
+cleared by `forget_after`. A birth is dropped when the child stands on its target or the memory
+horizon passes. `forget_after` drops pending entries and births stamped later than the tick and
+clears `known_bands`. `pending_split(band)` and
+`born_by_split(band)` are what *split to feed* / *settle* / *feed while moving* read; the
+observation's `born_by_split: Option<TilePos>` is the settle target, which the page shows as
+`↳ split, settling to x,y` under the band.
 
 ⛔ **A row nobody was useful on is not a measurement.** `per_worker` is an `Option`, and the
 denominator is `useful_workers(row)` — `hunt_useful_workers` on a hunt row, `workers` otherwise. A
@@ -303,11 +430,20 @@ and `rover` (expand). Each key has one consumer:
 | `food.runway_floor_turns` | `Food` | the `food_short` alarm and *runway* |
 | `food.dead_row_turns` | `Food` | consecutive poor turns before a row is dead |
 | `food.poor_yield_fraction` | `Food` | the share of the forecast a row must realize per worker |
-| `food.runway_gain_fraction` | `Food` | the per-worker gain *runway* must buy before it moves anyone |
+| `food.runway_gain_fraction` | `Food` | the per-worker gain *negative income* must buy before it empties a merely lowest row |
+| `food.projection_horizon_turns` | `Food` (the ledger) | how far ahead a band's stock is projected, and the longest payoff *upgrade the ground* waits for |
+| `food.split_search_tiles` | `Food` | how far from a band *split to feed* looks for a site |
+| `food.split_band_workers` | `Food` | the crew a split gives the new band |
+| `food.split_settle_turns` | `SeatMemory`, `Food` | turns a pending split waits for its child; turns after birth a child is exempt from *feed while moving* |
+| `food.near_positive_fraction` | `Food` | how far under the net-income goal *spare hands into hunts* still fires |
+| `goals.net_income_per_turn` | `ConstantStance` → `Food` | the net-income target `Food` scores toward (positive: build stock) |
+| `goals.runway_turns` | `ConstantStance` → `Food` | the runway target `Food` scores toward — the goal, where `food.runway_floor_turns` is the alarm |
+| `goals.ground_rung` (`wild` / `tended` / `field`) | `ConstantStance` → `Food` | the rung *upgrade the ground* climbs toward |
 | `land.known_tiles_floor` | `Land` | *blind*'s floor |
 | `land.split_size` | `Land` | *room*'s band size |
 | `land.horizon_tiles` | `Land` | how far *blind* counts and *better ground* looks |
 | `land.scout_workers` | `Land` | how many scouts *blind* posts |
+| `land.better_ground_gain_fraction` | `Land` | the per-worker gain, as a share of the target's rate, *better ground* must buy before it moves a band |
 
 | Difficulty key | Consumer | Effect |
 |---|---|---|
@@ -381,7 +517,9 @@ and the readout the client's Forage/Hunt sheets show — `workers_needed`, `wast
 `overdraws`, `kit_id` (null on a band-wide role), `floor`, `species` (the commit crop, null for
 the tile's pick), `take_species` (empty = the whole basket), `improvement` (the declared build
 verb, null when none)], `build_queue` [`job`, `target`] in the band's order, `intent_in_force` —
-`land:move:<band>` while the memory holds a move target — and `move_target`), and `neighborhood`:
+the intent the memory holds a move target under, `land:move:<band>` or `food:settle:<band>` —
+`move_target`, and `born_by_split` — the site a child band was split toward, while it has not
+reached it), and `neighborhood`:
 every **discovered** tile within `radius` hex steps of any own band, sorted `(y, x)`, with
 `terrain` (the `tiles` row's variant name, `null` when the frame carries no row), `food_site`
 (`food::is_food_site`), `forage_biomass`, `carrying_capacity`, `per_worker_yield` (the frame's
@@ -598,8 +736,9 @@ appears with no template change) and idle of working-age, then the seat's improv
 declared climb, and every upkeep row in view (owned patches, herds); the **seat scoreboard** under
 that — every `ScoreRow` field for the tick, captioned as the seat's ratchet
 numbers and not a tile score; the **orchestrator** panel — the plan in force (stance, since tick,
-a row per specialist with budget share and priority, and a `goals` column left empty for the slice
-that adds goals), the alarms in force, and this tick's re-plan / alarm / link events; and
+a row per specialist with budget share, priority and its goals — `net +1.0/turn · runway 12t ·
+toward field` for `Food`, `—` for a specialist with none), the alarms in force, and this tick's
+re-plan (with its goals) / alarm / link events; and
 **decisions** as **tabs**, `All` plus one per entry of `specialists`, each showing that
 specialist's accepted proposals then the rejected ones grouped by `rejected_by` (specialist,
 intent, reason, raw → final score, `commands_text`), "no proposals" when it has none, and the

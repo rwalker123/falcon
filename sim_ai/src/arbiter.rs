@@ -28,7 +28,7 @@ use crate::instruments::decisions::{
 use crate::orchestrator::Plan;
 use crate::profile::{AiProfile, Difficulty, ARGMAX_TOP_K};
 use crate::specialists::{
-    intent_class, Proposal, SpecialistId, INTENT_CLASS_RAID, INTENT_CLASS_TRADE,
+    intent_class, Memo, Proposal, SpecialistId, INTENT_CLASS_RAID, INTENT_CLASS_TRADE,
 };
 use crate::view::SeatMemory;
 
@@ -43,6 +43,7 @@ pub const REJECTED_OUTSCORED: &str = "outscored";
 pub struct Accepted {
     pub intent: String,
     pub commands: Vec<CommandPayload>,
+    pub memo: Option<Memo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,6 +222,7 @@ fn accept(offered: Offered) -> Accepted {
     Accepted {
         intent: offered.proposal.intent,
         commands: offered.proposal.commands,
+        memo: offered.proposal.memo,
     }
 }
 
@@ -280,6 +282,7 @@ mod tests {
                 (SPECIALIST_LAND, Budget { worker_share: 0.5 }),
             ]),
             priorities: BTreeMap::from([(SPECIALIST_FOOD, 1.0), (SPECIALIST_LAND, 1.0)]),
+            goals: BTreeMap::new(),
             since_turn: TICK,
         }
     }
@@ -302,6 +305,7 @@ mod tests {
                     bands: vec![band],
                 },
                 reason: "test".to_owned(),
+                memo: None,
             },
         }
     }
@@ -383,11 +387,7 @@ mod tests {
     #[test]
     fn the_commitment_bonus_applies_only_to_a_remembered_intent() {
         let mut memory = SeatMemory::default();
-        memory.record_choices(
-            TICK - 1,
-            BTreeSet::from(["land:move:1".to_owned()]),
-            [].iter(),
-        );
+        memory.record_choices(TICK - 1, [("land:move:1".to_owned(), None)].into_iter());
         let offered = vec![
             offer(SPECIALIST_FOOD, "food:assign:1", 0.5, 1, BAND_A),
             offer(SPECIALIST_LAND, "land:move:1", 0.4, 0, BAND_B),

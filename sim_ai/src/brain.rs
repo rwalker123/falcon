@@ -11,7 +11,6 @@
 //! | [`ScriptedBrain`] | none | `Scripted` | pass-through — the **fixture** |
 //! | [`UtilityBrain`] | `ConstantStance` | `Food`, `Land` | the six steps — the opponent |
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use rand::rngs::StdRng;
@@ -119,6 +118,10 @@ impl Composite {
         specialists: Vec<Box<dyn Specialist>>,
         arbiter: Arbiter,
     ) -> Self {
+        let memory = SeatMemory::new(
+            difficulty.memory_horizon_turns,
+            profile.food.split_settle_turns,
+        );
         Self {
             faction,
             profile,
@@ -126,7 +129,7 @@ impl Composite {
             orchestrator,
             specialists,
             arbiter,
-            memory: SeatMemory::new(difficulty.memory_horizon_turns),
+            memory,
             plan: None,
         }
     }
@@ -149,6 +152,7 @@ impl Composite {
                     since_tick: plan.since_turn,
                     budgets: plan.budgets_record(),
                     priorities: plan.priorities_record(),
+                    goals: plan.goals_record(),
                 }));
                 self.plan = Some(plan);
             }
@@ -218,12 +222,16 @@ impl Brain for Composite {
             rng,
             sink,
         );
-        let intents: BTreeSet<String> = accepted.iter().map(|a| a.intent.clone()).collect();
+        self.memory.record_choices(
+            tick,
+            accepted
+                .iter()
+                .map(|accepted| (accepted.intent.clone(), accepted.memo)),
+        );
         let commands: Vec<CommandPayload> = accepted
             .into_iter()
             .flat_map(|accepted| accepted.commands)
             .collect();
-        self.memory.record_choices(tick, intents, commands.iter());
         self.memory.remember_runways(view, self.faction);
         commands
     }

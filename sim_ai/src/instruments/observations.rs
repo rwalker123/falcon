@@ -21,10 +21,9 @@ use sim_runtime::{
 
 use crate::brain::BrainLens;
 use crate::geometry::Tile;
+use crate::instruments::decisions::GoalsRecord;
 use crate::instruments::scoreboard::ScoreRow;
 use crate::specialists::food::{is_food_site, patch_per_worker_yield, ROLE_HUNT};
-use crate::specialists::land::INTENT_MOVE;
-use crate::specialists::{intent_key, SPECIALIST_LAND};
 use crate::view::{band_tile, SeatMemory, SeatView};
 
 /// The file the records go to, under `--log-dir`.
@@ -63,6 +62,10 @@ pub struct PlanInForce {
     pub since_tick: u64,
     pub budgets: BTreeMap<String, f32>,
     pub priorities: BTreeMap<String, f32>,
+    /// `default` for the reason `PlanRecord::goals` carries it: a log written before goals
+    /// existed still reads.
+    #[serde(default)]
+    pub goals: BTreeMap<String, GoalsRecord>,
 }
 
 /// An alarm raised since the plan in force, which the next plan weighs.
@@ -180,10 +183,15 @@ pub struct BandObservation {
     pub hunt_reach: u32,
     pub is_traveling: bool,
     pub assignments: Vec<AssignmentObservation>,
-    /// The intent the band is still walking under (`land:move:<band>`), when the memory holds a
-    /// move target for it — the commitment the arbiter will reward this tick.
+    /// The intent the band is still walking under (`land:move:<band>`, `food:settle:<band>`),
+    /// when the memory holds a move target for it — the commitment the arbiter will reward this
+    /// tick.
     pub intent_in_force: Option<String>,
     pub move_target: Option<TilePos>,
+    /// The site this band was split off toward (`SeatMemory::born_by_split`), while it has not
+    /// reached it — so a viewer can mark a child band.
+    #[serde(default)]
+    pub born_by_split: Option<TilePos>,
     /// The band's build queue, in the band's order; the declaration itself is on the source row.
     pub build_queue: Vec<BuildQueueObservation>,
 }
@@ -264,6 +272,7 @@ impl Observation {
             .iter()
             .map(|band| {
                 let move_target = memory.move_target(band.band_id);
+                let born_by_split = memory.born_by_split(band.band_id);
                 BandObservation {
                     band_id: band.band_id,
                     x: band.current_x,
@@ -282,11 +291,14 @@ impl Observation {
                         .iter()
                         .map(assignment_observation)
                         .collect(),
-                    intent_in_force: move_target
-                        .map(|_| intent_key(SPECIALIST_LAND, INTENT_MOVE, band.band_id)),
+                    intent_in_force: memory.move_intent(band.band_id).map(str::to_owned),
                     move_target: move_target.map(|tile| TilePos {
                         x: tile.x,
                         y: tile.y,
+                    }),
+                    born_by_split: born_by_split.map(|birth| TilePos {
+                        x: birth.target.x,
+                        y: birth.target.y,
                     }),
                     build_queue: band
                         .build_queue
@@ -371,6 +383,7 @@ impl Observation {
                 since_tick: plan.since_turn,
                 budgets: plan.budgets_record(),
                 priorities: plan.priorities_record(),
+                goals: plan.goals_record(),
             }),
             alarms: lens
                 .alarms
@@ -562,14 +575,19 @@ const UNTARGETED_ROLES: [&str; 7] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestrator::{Alarm, AlarmKind, Budget, Plan, Stance};
+    use crate::orchestrator::{
+        Alarm, AlarmKind, Budget, FoodGoals, Goals, GroundRung, Plan, Stance,
+    };
     use crate::profile::NO_MEMORY_DECAY;
     use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, TICK};
-    use crate::specialists::SPECIALIST_FOOD;
+    use crate::specialists::land::INTENT_MOVE;
+    use crate::specialists::{intent_key, Memo, SPECIALIST_FOOD, SPECIALIST_LAND};
     use crate::view::VISIBILITY_ACTIVE;
     use sim_runtime::{BuildQueueEntryState, LaborAssignmentState, PopulationCohortState};
 
     const HORIZON: u32 = 3;
+    /// The turns a pending split waits for its child in these tests.
+    const SETTLE: u32 = 3;
     const FOREIGN_FACTION: u32 = FACTION + 1;
     const FOREIGN_BAND: u64 = BAND + 1;
     /// A tile inside the radius the seat has never discovered.
@@ -641,6 +659,14 @@ mod tests {
             stance: Stance::Consolidate,
             budgets: BTreeMap::from([(SPECIALIST_FOOD, Budget { worker_share: 0.75 })]),
             priorities: BTreeMap::from([(SPECIALIST_FOOD, 0.9)]),
+            goals: BTreeMap::from([(
+                SPECIALIST_FOOD,
+                Goals::Food(FoodGoals {
+                    net_income_per_turn: 1.0,
+                    runway_turns: 12.0,
+                    ground_rung: GroundRung::Field,
+                }),
+            )]),
             since_turn: EARLIER_TICK,
         }
     }
@@ -677,7 +703,7 @@ mod tests {
     #[test]
     fn only_own_bands_appear_and_the_neighborhood_is_the_discovered_disk_around_them() {
         let view = a_view_with_a_rival();
-        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let observation = capture(&view, &memory);
 
         assert_eq!(observation.tick, TICK);
@@ -763,21 +789,22 @@ mod tests {
     #[test]
     fn last_seen_and_the_intent_in_force_read_from_memory() {
         let mut view = a_view_with_a_rival();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         view.snapshot.header.tick = EARLIER_TICK;
         memory.observe(&view, FACTION);
         view.snapshot.header.tick = TICK;
         memory.observe(&view, FACTION);
         memory.record_choices(
             TICK - 1,
-            BTreeSet::new(),
-            [sim_runtime::CommandPayload::MoveBand {
-                faction_id: FACTION,
-                band_id: Some(BAND),
-                target_x: 4,
-                target_y: 2,
-            }]
-            .iter(),
+            [(
+                intent_key(SPECIALIST_LAND, INTENT_MOVE, BAND),
+                Some(Memo::Move {
+                    band: BAND,
+                    target: Tile::new(4, 2),
+                    from: HERE,
+                }),
+            )]
+            .into_iter(),
         );
         let observation = capture(&view, &memory);
         let at = |x, y| {
@@ -801,6 +828,40 @@ mod tests {
         let band = &observation.bands[0];
         assert_eq!(band.intent_in_force.as_deref(), Some("land:move:7001"));
         assert_eq!(band.move_target, Some(TilePos { x: 4, y: 2 }));
+        assert_eq!(band.born_by_split, None);
+        let plan = observation.plan.as_ref().expect("the lens carried a plan");
+        assert_eq!(plan.goals[SPECIALIST_FOOD].ground_rung, "field");
+        assert_eq!(plan.goals[SPECIALIST_FOOD].runway_turns, 12.0);
+        // A child band the memory holds a birth for is marked with its site.
+        memory.record_choices(
+            TICK,
+            [(
+                "food:split:7001".to_owned(),
+                Some(Memo::Split {
+                    band: BAND,
+                    target: Tile::new(6, 4),
+                    workers: 5,
+                }),
+            )]
+            .into_iter(),
+        );
+        let mut next = a_view_with_a_rival();
+        next.snapshot.header.tick = TICK + 1;
+        next.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND + 100,
+            current_x: HERE.x,
+            current_y: HERE.y,
+            ..Default::default()
+        });
+        memory.observe(&next, FACTION);
+        let observation = capture(&next, &memory);
+        let child = observation
+            .bands
+            .iter()
+            .find(|band| band.band_id == BAND + 100)
+            .expect("the child is an own band");
+        assert_eq!(child.born_by_split, Some(TilePos { x: 6, y: 4 }));
     }
 
     #[test]
@@ -820,8 +881,10 @@ mod tests {
     #[test]
     fn a_record_round_trips_through_one_json_line_with_its_kind_tag() {
         let view = a_view_with_a_rival();
-        let record =
-            ObservationRecord::Observation(capture(&view, &SeatMemory::new(NO_MEMORY_DECAY)));
+        let record = ObservationRecord::Observation(capture(
+            &view,
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE),
+        ));
         let line = serde_json::to_string(&record).expect("serialises");
         assert!(!line.contains('\n'));
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -837,7 +900,7 @@ mod tests {
     #[test]
     fn the_worked_row_and_its_source_carry_the_readout_fields() {
         let view = a_view_with_a_rival();
-        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY));
+        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
         let band = &observation.bands[0];
         let row = &band.assignments[0];
         assert_eq!(row.workers_needed, 2);

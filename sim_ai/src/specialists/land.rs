@@ -23,7 +23,9 @@
 use sim_runtime::{CommandPayload, ForagePatchState, PopulationCohortState};
 
 use super::food::{crew_take, is_food_site, patch_per_worker_yield, workable_patch_at};
-use super::{intent_key, Cost, Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_LAND};
+use super::{
+    intent_key, Cost, Memo, Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_LAND,
+};
 use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, AlarmKind, Plan, Stance};
 use crate::profile::LandFloors;
@@ -67,7 +69,18 @@ impl Land {
     }
 
     /// The best discovered, unowned, unoccupied patch within the horizon, and what it would pay a
-    /// worker — the richest ground that beats a per-worker rate of `above`.
+    /// worker — the richest ground that beats a per-worker rate of `above` by
+    /// `land.better_ground_gain_fraction` of its own, and is not the tile the band most recently
+    /// left ([`SeatMemory::left_from`]).
+    ///
+    /// ⛔ **Two guards, because the margin alone did not stop the oscillation.** On bench seed 11
+    /// the band walked 20,8 → 18,8 → 20,8 → 18,8, dropping its rows on every arrival: the rate it
+    /// ranks on is the *realized* one where it has worked (`patch_per_worker_yield`), and a patch
+    /// it has just stripped realizes little, while the tile it left is rated on its last realized
+    /// figure — or, once that record thins, the frame's fresh forecast — so the ground behind it
+    /// always looked better than the ground under it. The margin refuses a move that buys nearly
+    /// nothing; the departure memory refuses the one move the margin cannot judge, back onto the
+    /// tile whose reading is a forecast rather than the rate the band is realizing now.
     ///
     /// ⛔ **Ground is ranked on what it pays a worker, never on its `carrying_capacity`.** The
     /// capacity is the stand's standing biomass `K` — what the land can *hold* — and the rate is
@@ -85,6 +98,8 @@ impl Land {
     ) -> Option<(&'v ForagePatchState, f32)> {
         let grid = view.grid();
         let here = band_tile(band);
+        let left = memory.left_from(band.band_id);
+        let margin = self.floors.better_ground_gain_fraction;
         view.snapshot
             .forage_patches
             .iter()
@@ -92,13 +107,16 @@ impl Land {
             .filter(|patch| {
                 let tile = Tile::new(patch.x, patch.y);
                 tile != here
+                    && left != Some(tile)
                     && view.is_discovered(tile)
                     && is_food_site(view, tile)
                     && !self.foreign_band_at(view, tile)
                     && grid.distance(here, tile) <= self.floors.horizon_tiles
             })
             .map(|patch| (patch, patch_per_worker_yield(memory, band, patch)))
-            .filter(|(_, per_worker)| *per_worker > above)
+            .filter(|(_, per_worker)| {
+                *per_worker > above && per_worker - above >= margin * per_worker
+            })
             .max_by(|(a, a_rate), (b, b_rate)| {
                 a_rate
                     .total_cmp(b_rate)
@@ -177,6 +195,7 @@ impl Land {
                 bands: vec![band.band_id],
             },
             reason: REASON_BLIND.to_owned(),
+            memo: None,
         })
     }
 
@@ -220,6 +239,11 @@ impl Land {
                 bands: vec![band.band_id],
             },
             reason: format!("{REASON_BETTER_GROUND}: {},{}", target.x, target.y),
+            memo: Some(Memo::Move {
+                band: band.band_id,
+                target: Tile::new(target.x, target.y),
+                from: band_tile(band),
+            }),
         })
     }
 
@@ -257,6 +281,7 @@ impl Land {
                 bands: vec![band.band_id],
             },
             reason: REASON_ROOM.to_owned(),
+            memo: None,
         })
     }
 
@@ -304,8 +329,8 @@ mod tests {
     use super::*;
     use crate::orchestrator::Budget;
     use crate::profile::{AiProfiles, NO_MEMORY_DECAY};
-    use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, TICK};
-    use std::collections::{BTreeMap, BTreeSet};
+    use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, SETTLE, TICK};
+    use std::collections::BTreeMap;
 
     fn land(profile: &str) -> Land {
         let profile = AiProfiles::builtin().profile(profile).unwrap().clone();
@@ -317,6 +342,7 @@ mod tests {
             stance,
             budgets: BTreeMap::from([(SPECIALIST_LAND, Budget { worker_share: 1.0 })]),
             priorities: BTreeMap::from([(SPECIALIST_LAND, 1.0)]),
+            goals: BTreeMap::new(),
             since_turn: TICK,
         }
     }
@@ -344,7 +370,7 @@ mod tests {
     #[test]
     fn a_blind_band_posts_scouts_and_a_seeing_one_does_not() {
         let view = a_view();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         // Nothing observed yet: every tile is unknown.
         let proposal = land("forager")
             .blind(&view, &memory, own_band(&view))
@@ -376,16 +402,115 @@ mod tests {
             workers: 1,
             ..Default::default()
         }];
-        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         assert!(land("forager")
             .blind(&view, &memory, own_band(&view))
             .is_none());
     }
 
+    /// ⛔ **Better ground must out-pay the band's own by the profile's margin, and is never the
+    /// tile the band just left.** On bench seed 11 the band walked 20,8 ↔ 18,8 four times in
+    /// eight turns, dropping its rows on every arrival: the ground it stood on was rated on what
+    /// it had just stripped, the ground it had left on a forecast, so each always out-paid the
+    /// other by a hair.
+    #[test]
+    fn better_ground_needs_the_margin_and_never_walks_back_to_the_tile_just_left() {
+        // The band stands on a workable patch paying 1.0; the rich patch in reach pays `rate`.
+        let view_with_rates = |own: f32, rich: f32| {
+            let mut view = a_view();
+            view.snapshot.forage_patches.push(ForagePatchState {
+                x: HERE.x,
+                y: HERE.y,
+                owner: None,
+                per_worker_yield: own,
+                carrying_capacity: 20.0,
+                biomass: 30.0,
+                provisions_per_biomass: 1.0,
+                ..Default::default()
+            });
+            make_a_gathering_site(&mut view, HERE);
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == Tile::new(2, 3) {
+                    patch.per_worker_yield = rich;
+                }
+            }
+            // The near patch (4,2 at 1.0) and the far one are out of the running.
+            view.snapshot
+                .forage_patches
+                .retain(|patch| Tile::new(patch.x, patch.y) != Tile::new(4, 2));
+            view
+        };
+        let falling = |view: &SeatView| {
+            let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+            memory.observe(view, FACTION);
+            let mut before = SeatView {
+                snapshot: view.snapshot.clone(),
+                last_acted_tick: None,
+            };
+            before.snapshot.populations[0].turns_of_food += 1.0;
+            memory.remember_runways(&before, FACTION);
+            memory
+        };
+        let specialist = land("forager");
+        // 1.2 against 1.0 is a sixth of the target — under the forager's quarter.
+        let close = view_with_rates(1.0, 1.2);
+        assert!(
+            specialist
+                .better_ground(&close, &falling(&close), own_band(&close))
+                .is_none(),
+            "distinctness is not improvement"
+        );
+        // 1.4 against 1.0 clears it.
+        let clear = view_with_rates(1.0, 1.4);
+        let proposal = specialist
+            .better_ground(&clear, &falling(&clear), own_band(&clear))
+            .expect("a margin's worth better");
+        assert!(matches!(
+            proposal.commands[0],
+            CommandPayload::MoveBand {
+                target_x: 2,
+                target_y: 3,
+                ..
+            }
+        ));
+        assert_eq!(
+            proposal.memo,
+            Some(Memo::Move {
+                band: BAND,
+                target: Tile::new(2, 3),
+                from: HERE
+            })
+        );
+        // The band moved 2,3 → here last turn; 2,3 now out-pays here by any margin, and is still
+        // not offered — the tile it just left is the one reading it cannot trust.
+        let mut just_left = falling(&clear);
+        just_left.record_choices(
+            TICK - 1,
+            [(
+                "land:move:7001".to_owned(),
+                Some(Memo::Move {
+                    band: BAND,
+                    target: HERE,
+                    from: Tile::new(2, 3),
+                }),
+            )]
+            .into_iter(),
+        );
+        assert!(specialist
+            .better_ground(&clear, &just_left, own_band(&clear))
+            .is_none());
+        assert!(
+            specialist
+                .better_ground(&clear, &falling(&clear), own_band(&clear))
+                .is_some(),
+            "with no departure remembered, the same ground is offered"
+        );
+    }
+
     #[test]
     fn better_ground_needs_a_falling_runway_and_then_persists_until_arrival() {
         let view = a_view();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         memory.observe(&view, FACTION);
         let specialist = land("forager");
         assert!(
@@ -415,11 +540,7 @@ mod tests {
             proposal.commands[0]
         );
         // Accepted: the memory learns the target and the intent persists, runway or no runway.
-        memory.record_choices(
-            TICK,
-            BTreeSet::from([proposal.intent.clone()]),
-            proposal.commands.iter(),
-        );
+        memory.record_choices(TICK, [(proposal.intent.clone(), proposal.memo)].into_iter());
         let again = specialist
             .better_ground(&view, &memory, own_band(&view))
             .expect("persists");
@@ -439,7 +560,7 @@ mod tests {
     fn room_splits_a_large_band_on_owned_ground_under_expand_only() {
         let mut view = a_view();
         let specialist = land("rover");
-        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let _ = &memory;
         view.snapshot.populations[0].size = 30;
         view.snapshot.populations[0].working_age = 17;
@@ -479,7 +600,7 @@ mod tests {
     #[test]
     fn the_alarm_is_ground_that_cannot_feed_the_band_with_nothing_better_in_view() {
         let mut view = a_view();
-        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         view.snapshot.populations[0].food_consumption = 100.0;
         assert!(
             land("forager").alarm(&view, &memory).is_none(),
@@ -533,7 +654,7 @@ mod tests {
         view.snapshot.populations[0].food_consumption = 4.0;
 
         let specialist = land("forager");
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         memory.observe(&view, FACTION);
         memory.remember_runways(&view, FACTION);
         view.snapshot.populations[0].turns_of_food -= 1.0;
@@ -571,7 +692,7 @@ mod tests {
     #[test]
     fn the_alarm_weighs_what_the_crew_harvests_per_turn_not_the_biomass_standing_here() {
         let mut view = a_view();
-        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         // The band's own ground: a great deal of biomass standing, paying a worker almost nothing.
         // Nothing else is on the table, so only this ground answers the question.
         view.snapshot.forage_patches = vec![ForagePatchState {
@@ -635,7 +756,7 @@ mod tests {
                 patch.carrying_capacity = 70.0;
             }
         }
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         memory.observe(&view, FACTION);
         memory.remember_runways(&view, FACTION);
         view.snapshot.populations[0].turns_of_food -= 1.0;

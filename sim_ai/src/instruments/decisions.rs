@@ -58,6 +58,17 @@ pub fn command_text(payload: &CommandPayload) -> String {
     render_command_line(payload)
 }
 
+/// A specialist's goals as the plan record carries them (§3) — flat, one shape for every
+/// specialist, so the JSON is a row and not a tagged union. `Food` is the one specialist with
+/// goals today; a specialist without any has no entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalsRecord {
+    pub net_income_per_turn: f32,
+    pub runway_turns: f32,
+    /// The plant rung the seat is climbing toward (`wild` / `tended` / `field`).
+    pub ground_rung: String,
+}
+
 /// A plan adopted by the orchestrator (§3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanRecord {
@@ -66,6 +77,10 @@ pub struct PlanRecord {
     pub since_tick: u64,
     pub budgets: BTreeMap<String, f32>,
     pub priorities: BTreeMap<String, f32>,
+    /// `default` (no goals) for the same reason `Decision::commands_text` carries it: a log
+    /// written before goals existed still reads, or `read_jsonl` fails the whole run.
+    #[serde(default)]
+    pub goals: BTreeMap<String, GoalsRecord>,
 }
 
 /// An alarm a specialist raised (§4).
@@ -175,6 +190,14 @@ mod tests {
                 since_tick: A_TICK - 1,
                 budgets: BTreeMap::from([("food".to_owned(), 3.0)]),
                 priorities: BTreeMap::from([("food".to_owned(), 1.0)]),
+                goals: BTreeMap::from([(
+                    "food".to_owned(),
+                    GoalsRecord {
+                        net_income_per_turn: 1.0,
+                        runway_turns: 12.0,
+                        ground_rung: "field".to_owned(),
+                    },
+                )]),
             }),
             DecisionRecord::Alarm(AlarmRecord {
                 tick: A_TICK,
@@ -230,6 +253,22 @@ mod tests {
         let line = command_text(&payload);
         assert_eq!(line, "split_band 1 7001 4");
         assert_eq!(parse_command_line(&line).expect("parses"), payload);
+    }
+
+    /// A plan line written before goals existed reads as a plan with none, for the reason
+    /// `commands_text` defaults: one unreadable line fails the whole viewer page.
+    #[test]
+    fn a_plan_line_without_goals_parses_with_none_and_goals_are_flat() {
+        let line = r#"{"kind":"plan","tick":7,"stance":"consolidate","since_tick":7,
+            "budgets":{"food":0.75},"priorities":{"food":0.9}}"#;
+        let record: DecisionRecord = serde_json::from_str(line).expect("parses without goals");
+        match record {
+            DecisionRecord::Plan(plan) => assert!(plan.goals.is_empty()),
+            other => panic!("expected a plan, got {other:?}"),
+        }
+        let plan: serde_json::Value = serde_json::to_value(&every_record()[2]).unwrap();
+        assert_eq!(plan["goals"]["food"]["ground_rung"], "field");
+        assert_eq!(plan["goals"]["food"]["runway_turns"], 12.0);
     }
 
     #[test]

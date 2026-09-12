@@ -517,6 +517,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
       b.assignments.forEach(function (a) { extra += assignmentRow(b, a); });
       if (!b.assignments.length) extra += "<div class=\"assign muted\">no worked rows</div>";
       if (b.intent_in_force) extra += "<div class=\"assign\">intent in force: " + esc(b.intent_in_force) + (b.move_target ? " → " + b.move_target.x + "," + b.move_target.y : "") + "</div>";
+      if (b.born_by_split) extra += "<div class=\"assign\">↳ split, settling to " + b.born_by_split.x + "," + b.born_by_split.y + "</div>";
       html += "<tr><td colspan=\"6\">" + extra + "</td></tr>";
     });
     host.innerHTML = html + "</table>";
@@ -527,6 +528,15 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
   function mapText(m) {
     if (!m) return "—";
     return Object.keys(m).map(function (k) { return k + " " + num(m[k]); }).join(", ") || "—";
+  }
+  // A specialist's goals (`GoalsRecord`): `net +1.0/turn · runway 12t · toward field`.
+  function goalsText(g) {
+    var net = g.net_income_per_turn;
+    return "net " + (net >= 0 ? "+" : "") + num(net, 1) + "/turn · runway " + num(g.runway_turns, 0) + "t · toward " + g.ground_rung;
+  }
+  function goalsMapText(m) {
+    if (!m) return "—";
+    return Object.keys(m).map(function (k) { return k + " [" + goalsText(m[k]) + "]"; }).join(", ") || "—";
   }
   // The plan in force is resolved by the writer (`viewer::resolve_in_force`): this tick's plan
   // record, else the observation's plan, else the last one — so tick 1, whose observation was
@@ -541,11 +551,14 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
       var names = {};
       Object.keys(plan.budgets || {}).forEach(function (k) { names[k] = true; });
       Object.keys(plan.priorities || {}).forEach(function (k) { names[k] = true; });
+      Object.keys(plan.goals || {}).forEach(function (k) { names[k] = true; });
       var rows = Object.keys(names).sort();
       html += "<table><tr><th>specialist</th><th class=\"n\">budget share</th><th class=\"n\">priority</th><th>goals</th></tr>";
       if (!rows.length) html += "<tr><td colspan=\"4\" class=\"empty\">the plan funds no specialist</td></tr>";
       rows.forEach(function (name) {
-        html += "<tr><td>" + esc(name) + "</td><td class=\"n\">" + num(plan.budgets && plan.budgets[name], 2) + "</td><td class=\"n\">" + num(plan.priorities && plan.priorities[name], 2) + "</td><td class=\"muted\">—</td></tr>";
+        var goals = plan.goals && plan.goals[name];
+        html += "<tr><td>" + esc(name) + "</td><td class=\"n\">" + num(plan.budgets && plan.budgets[name], 2) + "</td><td class=\"n\">" + num(plan.priorities && plan.priorities[name], 2) + "</td>" +
+          (goals ? "<td>" + esc(goalsText(goals)) + "</td>" : "<td class=\"muted\">—</td>") + "</tr>";
       });
       html += "</table>";
     }
@@ -557,7 +570,7 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
     }
     html += "<h3>This tick</h3>";
     var events = [];
-    if (turn.plan) events.push("re-planned: " + turn.plan.stance + ", budgets " + mapText(turn.plan.budgets) + ", priorities " + mapText(turn.plan.priorities));
+    if (turn.plan) events.push("re-planned: " + turn.plan.stance + ", budgets " + mapText(turn.plan.budgets) + ", priorities " + mapText(turn.plan.priorities) + ", goals " + goalsMapText(turn.plan.goals));
     (turn.alarms || []).forEach(function (a) { events.push("alarm raised: " + a.specialist + ":" + a.alarm); });
     (turn.link_events || []).forEach(function (l) { events.push("link: " + l.event); });
     if (!events.length) html += "<p class=\"empty\">no re-plan, no alarm</p>";

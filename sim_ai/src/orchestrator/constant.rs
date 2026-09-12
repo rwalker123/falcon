@@ -12,9 +12,9 @@
 
 use std::collections::BTreeMap;
 
-use super::{Alarm, Budget, Orchestrator, Plan, Stance};
+use super::{Alarm, Budget, FoodGoals, Goals, Orchestrator, Plan, Stance};
 use crate::profile::{AiProfile, WEIGHT_TO_SPECIALIST};
-use crate::specialists::SpecialistId;
+use crate::specialists::{SpecialistId, SPECIALIST_FOOD};
 use crate::view::{SeatMemory, SeatView};
 
 pub struct ConstantStance {
@@ -36,7 +36,9 @@ impl ConstantStance {
     }
 
     /// The profile's weights, over the enabled specialists: normalised as budgets, raw as
-    /// priorities. A profile whose enabled weights sum to zero funds everything equally.
+    /// priorities. A profile whose enabled weights sum to zero funds everything equally. `Food`,
+    /// when enabled, is handed the profile's goals; they never move with an alarm in v1 — the
+    /// budget shift is the alarm's answer.
     fn base_plan(&self, profile: &AiProfile, stance: Stance, tick: u64) -> Plan {
         let raw: Vec<(SpecialistId, f32)> = WEIGHT_TO_SPECIALIST
             .iter()
@@ -62,10 +64,22 @@ impl ConstantStance {
             })
             .collect();
         let priorities = raw.into_iter().collect::<BTreeMap<_, _>>();
+        let goals = self
+            .enabled
+            .contains(&SPECIALIST_FOOD)
+            .then(|| {
+                (
+                    SPECIALIST_FOOD,
+                    Goals::Food(FoodGoals::from_levers(&profile.goals)),
+                )
+            })
+            .into_iter()
+            .collect();
         Plan {
             stance,
             budgets,
             priorities,
+            goals,
             since_turn: tick,
         }
     }
@@ -184,6 +198,39 @@ mod tests {
         let plan = solo.plan(&view_at(1), &memory, &profile, &[]).unwrap();
         assert_eq!(plan.worker_share(SPECIALIST_FOOD), 1.0);
         assert_eq!(plan.worker_share(SPECIALIST_LAND), 0.0);
+    }
+
+    #[test]
+    fn food_is_handed_the_profiles_goals_and_a_plan_without_food_carries_none() {
+        let profile = forager();
+        let memory = SeatMemory::default();
+        let mut orchestrator =
+            ConstantStance::new(&[SPECIALIST_FOOD, SPECIALIST_LAND], cadence(), SHIFT);
+        let plan = orchestrator
+            .plan(&view_at(1), &memory, &profile, &[])
+            .unwrap();
+        let goals = plan.food_goals().expect("Food is funded, so it has goals");
+        assert_eq!(goals.net_income_per_turn, profile.goals.net_income_per_turn);
+        assert_eq!(goals.runway_turns, profile.goals.runway_turns);
+        assert_eq!(goals.ground_rung, profile.goals.ground_rung);
+        let record = plan.goals_record();
+        assert_eq!(record.len(), 1, "Land has no goals in v1: {record:?}");
+        assert_eq!(record[SPECIALIST_FOOD].ground_rung, "field");
+        // An alarm shifts budget, never the goals.
+        let alarm = Alarm {
+            specialist: SPECIALIST_LAND,
+            kind: AlarmKind::LandShort,
+            since_tick: 2,
+        };
+        let shifted = orchestrator
+            .plan(&view_at(2), &memory, &profile, &[alarm])
+            .unwrap();
+        assert_eq!(shifted.food_goals(), Some(goals));
+        // Food off the roster: no goals for it.
+        let mut land_only = ConstantStance::new(&[SPECIALIST_LAND], cadence(), SHIFT);
+        let plan = land_only.plan(&view_at(1), &memory, &profile, &[]).unwrap();
+        assert_eq!(plan.food_goals(), None);
+        assert_eq!(Plan::pass_through(1).food_goals(), None);
     }
 
     #[test]

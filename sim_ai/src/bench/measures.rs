@@ -15,7 +15,8 @@ use std::path::Path;
 
 use crate::instruments::decisions::{DecisionRecord, LinkEventKind, Outcome, DECISIONS_FILE};
 use crate::instruments::scoreboard::{ScoreRow, DEATH_CAUSES, DEATH_CAUSE_HUNGER, SCOREBOARD_FILE};
-use crate::specialists::INTENT_SEPARATOR;
+use crate::specialists::food::{INTENT_SPLIT, INTENT_UPGRADE};
+use crate::specialists::{intent_key, INTENT_SEPARATOR, SPECIALIST_FOOD};
 
 /// Measure name → value. `None` is "the log cannot answer this yet".
 pub type Measures = BTreeMap<String, Option<f64>>;
@@ -54,6 +55,11 @@ pub const M_COMMANDS_FAILED_TOTAL: &str = "commands_failed_total";
 /// `intent.<specialist>:<kind>`: the share of accepted decisions under each intent class — the
 /// histogram two profiles are told apart by (§8.2, profile divergence).
 pub const M_INTENT_PREFIX: &str = "intent.";
+/// **The two `Food` rule firings slice 6 is done-when'd on** (`plan_ai_driver.md` §11 row 6):
+/// accepted `food:upgrade` intents (a `Cultivate`/`Sow` declared) and accepted `food:split`
+/// intents, counted over the run. Absolute counts, not shares, so "never once" reads as 0.
+pub const M_UPGRADES_DECLARED: &str = "food.upgrades_declared";
+pub const M_SPLITS: &str = "food.splits";
 // --- per specialist ------------------------------------------------------------------------------
 pub const M_SPECIALIST_PREFIX: &str = "specialist.";
 pub const M_ACCEPTED: &str = "accepted";
@@ -253,13 +259,23 @@ fn specialists(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Mea
             .entry(intent_class_key(&decision.intent))
             .or_insert(0) += 1;
     }
-    for (class, count) in histogram {
+    for (class, count) in &histogram {
         put(
             measures,
             format!("{M_INTENT_PREFIX}{class}"),
-            f64::from(count) / accepted_all.len() as f64,
+            f64::from(*count) / accepted_all.len() as f64,
         );
     }
+    let firings = |kind: &str| {
+        f64::from(
+            histogram
+                .get(&intent_class_key(&intent_key(SPECIALIST_FOOD, kind, "")))
+                .copied()
+                .unwrap_or(0),
+        )
+    };
+    put(measures, M_UPGRADES_DECLARED, firings(INTENT_UPGRADE));
+    put(measures, M_SPLITS, firings(INTENT_SPLIT));
     for name in names {
         let own: Vec<_> = decisions
             .iter()
@@ -550,6 +566,35 @@ mod tests {
         assert_eq!(land(&format!("{M_REJECTED_PREFIX}conflict")), 2.0);
         assert_eq!(land(M_LIVENESS), NOT_LIVE, "the second window is empty");
         assert_eq!(land(M_INTENT_CHURN), 0.5);
+        // Neither Food rule the slice counts fired: the bare fixture intents are not `food:*`.
+        assert_eq!(value(&measures, M_UPGRADES_DECLARED), 0.0);
+        assert_eq!(value(&measures, M_SPLITS), 0.0);
+        let (rows, mut records) = a_run();
+        records.push(decision(
+            FIRST_TICK + 1,
+            FOOD,
+            "food:upgrade:7001",
+            Outcome::Accepted,
+        ));
+        records.push(decision(
+            FIRST_TICK + 2,
+            FOOD,
+            "food:upgrade:7001",
+            rejected("conflict"),
+        ));
+        records.push(decision(
+            FIRST_TICK + 2,
+            FOOD,
+            "food:split:7001",
+            Outcome::Accepted,
+        ));
+        let with_firings = compute(&rows, &records);
+        assert_eq!(
+            value(&with_firings, M_UPGRADES_DECLARED),
+            1.0,
+            "accepted firings only"
+        );
+        assert_eq!(value(&with_firings, M_SPLITS), 1.0);
         // Four accepted with bare intents: forage, hunt, cultivate, forage.
         assert_eq!(value(&measures, &format!("{M_INTENT_PREFIX}forage")), 0.5);
         assert_eq!(value(&measures, &format!("{M_INTENT_PREFIX}hunt")), 0.25);
@@ -594,6 +639,7 @@ mod tests {
                 since_tick: tick,
                 budgets: BTreeMap::from([(FOOD.to_owned(), food_budget)]),
                 priorities: BTreeMap::new(),
+                goals: BTreeMap::new(),
             })
         };
         records.push(plan(FIRST_TICK, "settle", 1.0));

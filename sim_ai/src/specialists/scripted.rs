@@ -143,6 +143,7 @@ impl Specialist for Scripted {
                         score: SCRIPT_SCORE,
                         cost: Cost::default(),
                         reason: resolved.clone(),
+                        memo: None,
                     });
                 }
                 Err(err) => error!(tick, line = %resolved, %err, "script line does not parse"),

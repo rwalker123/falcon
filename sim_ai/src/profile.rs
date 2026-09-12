@@ -20,7 +20,7 @@ use std::path::Path;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::orchestrator::Stance;
+use crate::orchestrator::{GroundRung, Stance};
 use crate::specialists::{SpecialistId, SPECIALIST_FOOD, SPECIALIST_LAND};
 
 /// The shipped file.
@@ -96,6 +96,37 @@ pub struct FoodFloors {
     /// between them, two rows paying the same shuffled workers back and forth every turn under the
     /// alarm while the band's idle hands stood still.
     pub runway_gain_fraction: f32,
+    /// The projection ledger's horizon, in turns: how far ahead `Food` projects a band's stock
+    /// under a proposed reassignment (`specialists::food::ledger::project`), and the longest
+    /// payoff *upgrade the ground* will wait for.
+    pub projection_horizon_turns: u32,
+    /// *Split to feed*: how far from the band, in hex steps, a site for a new band is looked for.
+    pub split_search_tiles: u32,
+    /// *Split to feed*: the working-age crew a new band is given (`split_band <workers>`).
+    pub split_band_workers: u32,
+    /// *Split to feed*: turns a pending split waits for its child to appear before it is forgotten
+    /// (the sim refused it), and the turns after its birth a child is still "freshly split" —
+    /// exempt from *feed while moving*, so it does not strip the parent's ground on its way out.
+    pub split_settle_turns: u32,
+    /// *Spare hands into hunts*: the share of the net-income goal a band may be short by and still
+    /// count as "near positive" — the rule fires at `net ≥ goal × (1 − this)`.
+    pub near_positive_fraction: f32,
+}
+
+/// Consumed by the orchestrator: what `Food` is *for* this cadence (`plan_ai_driver.md` §3). The
+/// targets are in the units the frame reports, so a specialist scores a proposal by the gap it
+/// closes rather than by a number times a weight.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FoodGoalLevers {
+    /// Target food income minus consumption, per turn, over the seat's bands. Positive: build
+    /// stock, do not merely break even.
+    pub net_income_per_turn: f32,
+    /// Target minimum own-band runway, in turns — what `Food` scores toward; distinct from
+    /// `food.runway_floor_turns`, which is where it alarms.
+    pub runway_turns: f32,
+    /// The rung the seat should be climbing toward: `tended` (cultivate) or `field` (sow).
+    pub ground_rung: GroundRung,
 }
 
 /// Consumed by `Land`: its floors and reach.
@@ -110,6 +141,11 @@ pub struct LandFloors {
     pub horizon_tiles: u32,
     /// How many scouts *blind* posts (`assign_labor … scout <n>`).
     pub scout_workers: u32,
+    /// *Better ground*: the share by which a patch must out-pay the band's own ground, per worker,
+    /// before the band is walked to it — `(target − own) / target`. The same lesson as
+    /// `food.runway_gain_fraction`: distinctness is not improvement, and without a margin a band
+    /// walked between two tiles paying nearly the same, dropping its rows on every arrival.
+    pub better_ground_gain_fraction: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -124,6 +160,8 @@ pub struct AiProfile {
     /// the arbiter's intent bonus (`score *= 1 + commitment` on an intent chosen last turn).
     pub commitment: f32,
     pub food: FoodFloors,
+    /// Consumed by the orchestrator: `Food`'s goals, written into every plan that funds it.
+    pub goals: FoodGoalLevers,
     pub land: LandFloors,
 }
 
@@ -266,6 +304,12 @@ impl AiProfiles {
             if profile.land.scout_workers == 0 {
                 return invalid(format!("profile `{id}`: land.scout_workers is 0"));
             }
+            let better = profile.land.better_ground_gain_fraction;
+            if !better.is_finite() || !(0.0..=1.0).contains(&better) || better <= 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: land.better_ground_gain_fraction = {better} is not a positive share"
+                ));
+            }
             if profile.food.dead_row_turns == 0 {
                 return invalid(format!("profile `{id}`: food.dead_row_turns is 0"));
             }
@@ -279,6 +323,32 @@ impl AiProfiles {
             if !gain.is_finite() || !(0.0..=1.0).contains(&gain) || gain <= 0.0 {
                 return invalid(format!(
                     "profile `{id}`: food.runway_gain_fraction = {gain} is not a positive share"
+                ));
+            }
+            if profile.food.projection_horizon_turns == 0 {
+                return invalid(format!(
+                    "profile `{id}`: food.projection_horizon_turns is 0"
+                ));
+            }
+            if profile.food.split_band_workers == 0 {
+                return invalid(format!("profile `{id}`: food.split_band_workers is 0"));
+            }
+            let near = profile.food.near_positive_fraction;
+            if !near.is_finite() || !(0.0..=1.0).contains(&near) {
+                return invalid(format!(
+                    "profile `{id}`: food.near_positive_fraction = {near} is not a share"
+                ));
+            }
+            let net = profile.goals.net_income_per_turn;
+            if !net.is_finite() || net <= 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: goals.net_income_per_turn = {net} is not positive"
+                ));
+            }
+            let runway = profile.goals.runway_turns;
+            if !runway.is_finite() || runway <= 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: goals.runway_turns = {runway} is not positive"
                 ));
             }
         }
