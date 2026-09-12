@@ -1514,8 +1514,10 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_assert_kit_short_notes()
 	_assert_kit_short_marks()
+	# ⛔ **NOT `_assert_note_renders_in_full` — it requires a WRAPPED sentence and this one no longer
+	# wraps** (the remedy clause is retired). The readability half it made moved into the ink guard,
+	# which asks the same questions of the drawn label minus the line-count floor.
 	_assert_kit_short_note_ink(_kit_short_sentence())
-	_assert_note_renders_in_full("band_panel_work_kit_short", _kit_short_sentence())
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
@@ -4447,12 +4449,17 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 const WORST_CASE_INSPECTOR_NOTE := \
     "Short of hurdles — 0.03 of the 0.05 a turn it needs. The bench or a trade, not more hands."
 
-## …and the KITS section's gear-shortfall line, composed through the SHIPPED producers rather than
-## typed: `KitRoster.shortfall_sentence` fills `HudComposeVocab.KIT_SHORTFALL_FORMAT` and
-## `HudWorkVocab.kit_short_note` adds the remedy, so the fixture cannot drift from the wording the
-## card draws, and it wraps for the same reason the note above does — it names a kit AND a remedy.
-const WORST_CASE_INSPECTOR_KIT_NOTE := \
-	"2 of 4 Trapping kits available. " + HudWorkVocab.KIT_SHORT_REMEDY
+## …and the KITS section's gear-shortfall line, in the shape `KitRoster.shortfall_sentence` composes:
+## `HudComposeVocab.KIT_SHORTFALL_FORMAT` filled with a count, a total and a kit name.
+##
+## ⛔ **IT NO LONGER WRAPS, and that is the point of the edit that shortened it.** It read
+## `"2 of 4 Trapping kits available. " + HudWorkVocab.KIT_SHORT_REMEDY` and took two lines; the remedy
+## clause is retired (Ray: *"We don't need all the AI gibberish after the '1 of 2 ..... available'"*),
+## so this term now costs the card ONE line and the reservation's wrap overflow for it is zero. The
+## worst case is still genuinely wrapped — `WORST_CASE_INSPECTOR_NOTE` and
+## `WORST_CASE_INSPECTOR_MUTED_NOTE` both take their second line, which is what
+## `_assert_work_inspector_worst_case_fits` reads off the DRAWN label before it measures anything.
+const WORST_CASE_INSPECTOR_KIT_NOTE := "2 of 4 Trapping kits available"
 
 ## …and the standing bill that makes the KITS section draw its Upkeep row and the line under it. Both
 ## currencies, because the worst case is the shape that states both terms.
@@ -4910,6 +4917,15 @@ func _kit_short_band_fixture() -> Dictionary:
 	]
 	return band
 
+## ⛔ **THE SHAPE OF THE CLAUSE THAT WAS CUT, AS A NEEDLE** — not its words. Ray removed the remedy
+## that followed the count (*"The bench or a trade, not more hands — another hand here only goes
+## without."*), and the useful claim is not that THAT sentence is gone but that **nothing** follows
+## the count: any second clause has to be joined to the first somehow, and every joining this file's
+## note vocabulary uses is a full stop and a space. Spelling the punctuation rather than the retired
+## string is what makes the guard catch a DIFFERENT tail, which is the one a later edit would add.
+const RETIRED_CLAUSE_JOINER := ". "
+const RETIRED_CLAUSE_TERMINATOR := "."
+
 ## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
 ## `KitRoster.shortfall_sentence` OR `HudWorkVocab.kit_short_note`** — the material-short guard's own
 ## rule, and for its reason: an expectation re-derived through the code under test collapses with it
@@ -4919,7 +4935,10 @@ func _kit_short_sentence() -> String:
 	var covered := HudComposeVocab.KIT_SHORTFALL_FORMAT % [int(KIT_SHORT_WORK_ARMED),
 		KIT_SHORT_WORK_CREW, KitRoster.display_name_for_id(BandFx.kit_roster_fixture(),
 			BandFx.KIT_DEFAULT_HUNT) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
-	return "%s. %s" % [covered, HudWorkVocab.KIT_SHORT_REMEDY]
+	# ⛔ **AND NOTHING FOLLOWS IT — no remedy clause, and no trailing period.** It returned
+	# `"%s. %s" % [covered, HudWorkVocab.KIT_SHORT_REMEDY]` until Ray cut the clause; the row states the
+	# bare sentence now, which is the identical line the compose sheets have always drawn.
+	return covered
 
 ## GUARD: **THE THREE READINGS, ASSERTED AS A SET** — a client that marked every row, or none, passes
 ## any one of them alone. The covered row and the itemless row are the falsifiers, and the itemless
@@ -4950,14 +4969,22 @@ func _assert_kit_short_notes() -> void:
 			% [short_model.size(), covered_model.size(), itemless_model.size()])
 		return
 	var want := _kit_short_sentence()
-	_assert_band_panel("work kit note — the short row states its OWN published pair and the remedy: \"%s\" (got \"%s\")"
+	_assert_band_panel("work kit note — the short row states its OWN published pair: \"%s\" (got \"%s\")"
 		% [want, String(short_model.get("kit_note", ""))],
 		String(short_model.get("kit_note", "")) == want)
-	# **THE REMEDY NAMES THE BENCH, NOT THE STEPPER — adding hands here makes it WORSE**, the band's
-	# ledger being cut pro-rata by head count. Asserted separately from the sentence so a copy edit
-	# that dropped the clause cannot pass on the figures alone.
-	_assert_band_panel("work kit note — …and it points at the bench rather than at this row's `+`",
-		String(short_model.get("kit_note", "")).ends_with(HudWorkVocab.KIT_SHORT_REMEDY))
+	# ⛔ **AND NOTHING FOLLOWS THE COUNT.** The retired claim was *"THE REMEDY NAMES THE BENCH, NOT THE
+	# STEPPER — adding hands here makes it WORSE, the band's ledger being cut pro-rata by head count.
+	# Asserted separately from the sentence so a copy edit that dropped the clause cannot pass on the
+	# figures alone."* Ray cut the clause (*"We don't need all the AI gibberish after the
+	# '1 of 2 ..... available'"*), so the claim inverts: the note must be the bare sentence, ending on
+	# the kit's own name and not on a period. Asserted separately for the retired claim's own reason —
+	# an equality on the whole string passes on a sentence that quietly grew a tail only because the
+	# expectation grew the same tail.
+	var drawn_note := String(short_model.get("kit_note", ""))
+	_assert_band_panel("work kit note — …and NOTHING follows the count — no second clause, no full stop (\"%s\")"
+			% drawn_note,
+		not drawn_note.ends_with(RETIRED_CLAUSE_TERMINATOR)
+			and not drawn_note.contains(RETIRED_CLAUSE_JOINER))
 	_assert_band_panel("work kit note — …and the row wants attention, which is what the ⚠ chip counts",
 		bool(short_model.get("attention", false)))
 	# **BOTH SLOTS AT ONCE.** `note` is the sim's `workers_needed` telemetry and `kit_note` is the gear;
@@ -5053,10 +5080,17 @@ func _label_with_meta(node: Node, meta: StringName, needle: String) -> Label:
 			return found
 	return null
 
-## GUARD: **the drawn kit line is AMBER, not the missing-good red.** A missing material stops the work
+## GUARD: **the drawn kit line is AMBER and is drawn WHOLE.** A missing material stops the work
 ## outright; a short kit only makes it dearer — the unequipped share still works, bare-handed — so the
 ## two hazards must not be inked alike. Read off the drawn label, the ink being a render-site decision
 ## no model claim can see (`_assert_material_note_ink`'s own rule, one arm over).
+##
+## ⛔ **IT CARRIES THE READABILITY CLAIM NOW, because `_assert_note_renders_in_full` CANNOT.** That
+## helper requires `WRAPPED_NOTE_MIN_LINES`, and this sentence no longer wraps: the remedy clause that
+## made it a two-liner is retired. Asking it here would fail for the LENGTH rather than for anything
+## about the render. What still has to hold is what the elided-sentence defect was about — the label
+## is found by its WHOLE text (so a note that lost a clause is not found at all), it trims nothing,
+## and every line it has is on screen.
 func _assert_kit_short_note_ink(note: String) -> void:
 	var label := _find_aside_label(_work_inspector_root(), note)
 	if label == null:
@@ -5064,6 +5098,10 @@ func _assert_kit_short_note_ink(note: String) -> void:
 		return
 	_assert_band_panel("work kit note — the drawn line takes the WARN amber, not the missing-good red",
 		label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
+	_assert_band_panel("work kit note — …and nothing is trimmed off it (overrun %d, %d of %d lines shown)"
+			% [label.text_overrun_behavior, label.get_visible_line_count(), label.get_line_count()],
+		label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING
+			and label.get_visible_line_count() == label.get_line_count())
 
 ## **THREE SHORTFALLS, THREE REMEDIES, AND THEY MUST NOT READ ALIKE.** Asserted over the SAME board's
 ## two rows, because the contrast is the claim: the good-short row names the GOOD and takes the danger

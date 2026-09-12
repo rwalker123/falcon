@@ -4926,14 +4926,25 @@ COMPLETE kit, over the row's own `workers`); `_work_row_kit_note` turns it into 
   turn. Two independent facts, two remedies, two slots. (`note` and `overstaffed` share ONE slot for
   the opposite reason: they are mutually exclusive by construction. Follow that comment's LOGIC, not
   its letter.) `band_panel_work_kit_short` stages a row carrying both at once.
-- **ONE PHRASING WHEREVER GEAR RUNS SHORT.** The figures are
+- **ONE PHRASING WHEREVER GEAR RUNS SHORT, AND IT IS THE WHOLE NOTE.**
   `KitRoster.shortfall_sentence` → `HudComposeVocab.KIT_SHORTFALL_FORMAT`, the sentence the compose
-  sheets and the role cards already use; `HudWorkVocab.kit_short_note` only adds the remedy clause.
-- ⛔ **THE REMEDY NAMES THE BENCH, AND POINTING AT THE STEPPER WOULD BE BACKWARDS.** The band's
-  ledger is cut pro-rata by head count, so each hand added to a short row takes a smaller share and
-  MORE of the crew ends up bare-handed. `HudWorkVocab.KIT_SHORT_REMEDY` is built in
-  `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT`'s family — the same two levers refusing the same
-  lever — and not in `WORK_ROW_UNDER_KEPT_NOTE`'s *raise this band's role* shape.
+  sheets and the role cards already use, passed through `HudWorkVocab.kit_short_note` **unchanged**.
+  No trailing period: the row reads `1 of 2 Harvesting kits available`, identical to the compose
+  sheets' line.
+- ⛔ **RETIRED — THE REMEDY CLAUSE, AND WHAT IT COST.** `kit_short_note` appended
+  `HudWorkVocab.KIT_SHORT_REMEDY` — *"The bench or a trade, not more hands — another hand here only
+  goes without."* — built in `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT`'s family, the same
+  two levers refusing the same lever. Reported from play on a Harvest row's inspector card: *"We
+  don't need all the AI gibberish after the '1 of 2 ..... available'. If the same gibberish is on the
+  hunt line, remove that as well."* One producer serves forage, hunt and extract, so one edit covered
+  all three; the compose sheets never carried it.
+
+  **What went with the words:** that clause was the ONLY place the row said that adding workers makes
+  a kit shortfall **worse** rather than better — the band's ledger is cut pro-rata by head count, so
+  each hand added to a short row takes a smaller share and more of the crew ends up bare-handed. It
+  is the very gear-against-hands distinction the note's ink rule below is built on, and **nothing
+  states it in words now.** No shorter replacement was invented: the number alone is what was asked
+  for, and the register survives in the INK and in the row's own `◆` mark.
 - **AMBER, NOT RED** (`HudWorkVocab.KIT_SHORT_SEVERITY`, read through `note_color`). A missing
   material stops the work outright; a short kit only makes it dearer — the unequipped share still
   works, at the bare-handed tier.

@@ -1769,10 +1769,11 @@ const GEAR_FINGERPRINT_UNSTATED := "?"
 const GEAR_FINGERPRINT_ITEMLESS := ""
 
 ## **THE ONE PHRASING FOR *GEAR RAN SHORT*, WHEREVER IT IS STATED** — the compose sheets' line, the
-## role cards', and the work row's own note, which wraps this in its remedy clause
-## (`HudWorkVocab.kit_short_note`). `HudComposeVocab.KIT_SHORTFALL_FORMAT` is the sentence; this is
-## the one place its three slots are filled, so a second surface cannot word the same shortfall its
-## own way. Both counts are WHOLE PEOPLE by the time they arrive.
+## role cards', and the work row's own note, which passes it through UNCHANGED
+## (`HudWorkVocab.kit_short_note`; it wrapped this in a remedy clause until Ray cut the clause).
+## `HudComposeVocab.KIT_SHORTFALL_FORMAT` is the sentence; this is the one place its three slots are
+## filled, so a second surface cannot word the same shortfall its own way. Both counts are WHOLE
+## PEOPLE by the time they arrive, and the line ends without a period — every host states it bare.
 static func shortfall_sentence(kit: Dictionary, covered: int, crew: int) -> String:
 	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [covered, crew,
 		kit_display_name(kit) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]

@@ -1123,9 +1123,9 @@ const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
 const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row
-## short of HANDS have opposite remedies (`KIT_SHORT_REMEDY` names the bench; the staffing note names
-## the stepper), and a board that flew one glyph for both makes the player hover every marked row to
-## find out which it is — the very discovery problem the whole arc was reported for. Reported from
+## short of HANDS have opposite remedies (the bench against the stepper — and adding hands to a
+## kit-short row makes it WORSE, the ledger being cut pro-rata by head count), and a board that flew
+## one glyph for both makes the player hover every marked row to find out which it is — the very discovery problem the whole arc was reported for. Reported from
 ## play: *"Each individual work tile should also tell me if it is missing kits."*
 ##
 ## > #### ⛔ IT MUST BE A **TEXT-PRESENTATION** GLYPH, BECAUSE ITS COLOUR IS HALF OF WHAT IT SAYS
@@ -1604,22 +1604,26 @@ static func note_color(severity: String) -> Color:
 ## (`note` and `overstaffed` share ONE slot for the opposite reason: they are mutually exclusive by
 ## construction. Follow that comment's LOGIC, not its letter.)
 ##
-## ⛔ **AND THE REMEDY NAMES THE BENCH, NEVER THE STEPPER — pointing at the `+` here is not merely
-## unhelpful, it is BACKWARDS.** *A dead kit makes a job want more hands; a missing GOOD stops the
-## work outright* is the distinction this file already draws, and a kit the band does not own is the
-## second kind: the band's ledger is cut pro-rata by head count, so each hand added to a short row
-## takes a smaller share and MORE of the crew ends up bare-handed. The sentence is therefore built in
-## `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT`'s family — the same two levers, refusing the
-## same lever — rather than in `WORK_ROW_UNDER_KEPT_NOTE`'s *raise this band's role* shape.
-const KIT_SHORT_REMEDY := "The bench or a trade, not more hands — another hand here only goes without."
-
-## **THE ROW'S WHOLE SENTENCE: the shortfall, then its remedy.** The first clause is
-## `KitRoster.shortfall_sentence` — `HudComposeVocab.KIT_SHORTFALL_FORMAT`, the ONE phrasing the
-## compose sheets and the role cards already state a gear shortfall in, and the reason this format
-## takes it as a slot rather than spelling `%d of %d` itself: a second wording for one fact is what
-## `band_panel_preview._assert_role_card_shortfall` exists to stop. ⛔ No BBCode — both hosts draw
-## this as a plain `Label`.
-const WORK_ROW_KIT_SHORT_FORMAT := "%s. " + KIT_SHORT_REMEDY
+# ⛔ **RETIRED: `KIT_SHORT_REMEDY` AND `WORK_ROW_KIT_SHORT_FORMAT`** — the clause that followed the
+# count, *"The bench or a trade, not more hands — another hand here only goes without."*, appended by
+# `WORK_ROW_KIT_SHORT_FORMAT := "%s. " + KIT_SHORT_REMEDY`.
+#
+# The row read `1 of 2 Harvesting kits available. The bench or a trade, not more hands — another hand
+# here only goes without.` Reported from play, on a Harvest row's inspector card: *"We don't need all
+# the AI gibberish after the '1 of 2 ..... available'. If the same gibberish is on the hunt line,
+# remove that as well."* It is one producer behind forage, hunt and extract alike, so it was.
+#
+# **The bare sentence carries NO trailing period**, which is what makes the row read identically to
+# the compose sheets — they state this line through `KitRoster.shortfall_line` and never carried the
+# clause at all.
+#
+# ⛔ **WHAT IT COST, stated because it is a real loss.** That clause was the ONLY place the row said
+# that adding workers makes a kit shortfall **worse** rather than better: the band's ledger is cut
+# pro-rata by head count, so each hand added to a short row takes a smaller share and more of the crew
+# ends up bare-handed. **That is the very distinction the note's ink rule is built on** — see
+# `KIT_SHORT_SEVERITY` below, which still draws the gear register apart from the hands register in
+# colour. Nothing states it in WORDS now, and no shorter replacement was invented: the number alone is
+# what was asked for.
 
 ## **AMBER, NEVER RED, and the difference is what the shortfall COSTS.** A missing material stops the
 ## work outright (`NOTE_SEVERITY_DANGER`); a short kit only makes it dearer — the unequipped share of
@@ -1628,10 +1632,16 @@ const WORK_ROW_KIT_SHORT_FORMAT := "%s. " + KIT_SHORT_REMEDY
 ## colour themselves.
 const KIT_SHORT_SEVERITY := NOTE_SEVERITY_WARN
 
-## The row's kit sentence, or `""` for a row with no shortfall to state. One producer, so the work
-## board's tooltip and the inspector card's KITS section cannot word one shortfall two ways.
+## The row's kit sentence, or `""` for a row with no shortfall to state — `KitRoster
+## .shortfall_sentence`'s line, **unchanged**, which is `HudComposeVocab.KIT_SHORTFALL_FORMAT` and the
+## same words the compose sheets and the role cards already use.
+##
+## **IT IS A PASS-THROUGH AND IT STAYS A FUNCTION.** The remedy clause it used to append is retired
+## above; what it still buys is the ONE seam the work board's hover and the inspector card's KITS
+## section both go through, so a wording that ever diverges between them has to diverge here first.
+## ⛔ No BBCode — both hosts draw this as a plain `Label`.
 static func kit_short_note(shortfall_sentence: String) -> String:
-    return "" if shortfall_sentence == "" else WORK_ROW_KIT_SHORT_FORMAT % shortfall_sentence
+    return shortfall_sentence
 
 ## **THE GOOD-SHORTFALL SENTENCE FOR ONE ROW, OR `""`** — `""` meaning *this row went short of no
 ## good*, which is every row on the shipped ladder but a pen's.
