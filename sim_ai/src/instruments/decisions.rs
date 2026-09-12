@@ -3,8 +3,9 @@
 //!
 //! Every proposal the arbiter weighs becomes a [`Decision`], accepted or not; every plan the
 //! orchestrator adopts a [`PlanRecord`]; every alarm a specialist raises an [`AlarmRecord`]; every
-//! `ready` the loop submits a [`ReadyRecord`], so a lost turn is countable; and every reconnect a
-//! [`LinkRecord`]. The records are written through a [`DecisionSink`], which is what a brain is
+//! `ready` the loop submits a [`ReadyRecord`], so a lost turn is countable; every reconnect a
+//! [`LinkRecord`]; and every transition of a demand on the board a [`DemandRecord`], so the
+//! outfitting of every band is measurable. The records are written through a [`DecisionSink`], which is what a brain is
 //! handed — a brain never sees a file, and a brain that records nothing ignores the sink.
 //!
 //! The log carries the faction id and never the seat token (§10).
@@ -115,6 +116,22 @@ pub enum LinkEventKind {
     StreamReopen,
 }
 
+/// **A demand's transition on the board** (`docs/plan_ai_driver.md` §4, the demand board):
+/// `state` is `posted` | `planned` | `fulfilled` | `expired` (`board::DemandState::as_str`),
+/// `resource` the loadout word (`kit:<id>` / `material:<id>`), `granted` what the orchestrator
+/// granted on a `planned` / `fulfilled` row. One row per transition, so a demand's life reads
+/// off the log in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DemandRecord {
+    pub tick: u64,
+    pub requester: String,
+    pub band: u64,
+    pub resource: String,
+    pub amount: u32,
+    pub state: String,
+    pub granted: Option<u32>,
+}
+
 /// The one line type: every record, tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -124,6 +141,7 @@ pub enum DecisionRecord {
     Alarm(AlarmRecord),
     Ready(ReadyRecord),
     Link(LinkRecord),
+    Demand(DemandRecord),
 }
 
 /// Where a brain's records go. The loop hands one to `decide`; a brain that has nothing to record
@@ -208,6 +226,15 @@ mod tests {
             DecisionRecord::Link(LinkRecord {
                 tick: Some(A_TICK),
                 event: LinkEventKind::CommandReconnect,
+            }),
+            DecisionRecord::Demand(DemandRecord {
+                tick: A_TICK,
+                requester: "food".into(),
+                band: 7,
+                resource: "kit:gathering".into(),
+                amount: 8,
+                state: "planned".into(),
+                granted: Some(8),
             }),
         ]
     }

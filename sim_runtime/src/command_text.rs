@@ -2122,6 +2122,24 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
             format!("move_band {faction_id} {band} {target_x} {target_y}")
         }
+        CommandPayload::SetStartingLoadout {
+            faction_id,
+            band_id,
+            kits,
+            materials,
+        } => {
+            let mut line = format!("set_starting_loadout {faction_id} {band_id}");
+            for kit in kits {
+                line.push_str(&format!(" kit {} {}", kit.kit_id, kit.count));
+            }
+            for material in materials {
+                line.push_str(&format!(
+                    " material {} {}",
+                    material.material_id, material.units
+                ));
+            }
+            line
+        }
         CommandPayload::SplitBand {
             faction_id,
             band_id,
@@ -3786,11 +3804,11 @@ mod tests {
                 faction_id: 0,
                 band_id: 4,
                 kits: vec![
-                    crate::StartingKitAllocation {
+                    crate::commands::StartingKitAllocation {
                         kit_id: "big_game".to_string(),
                         count: 6,
                     },
-                    crate::StartingKitAllocation {
+                    crate::commands::StartingKitAllocation {
                         kit_id: "trapping".to_string(),
                         count: 3,
                     },
@@ -3886,11 +3904,41 @@ mod tests {
                 faction_id: 1,
                 directive: OrdersDirective::Ready,
             },
+            CommandPayload::SetStartingLoadout {
+                faction_id: 1,
+                band_id: 7001,
+                kits: vec![
+                    crate::commands::StartingKitAllocation {
+                        kit_id: "gathering".to_owned(),
+                        count: 8,
+                    },
+                    crate::commands::StartingKitAllocation {
+                        kit_id: "big_game".to_owned(),
+                        count: 9,
+                    },
+                ],
+                materials: vec![crate::commands::StartingMaterialAllocation {
+                    material_id: "fibre".to_owned(),
+                    units: 17,
+                }],
+            },
         ] {
             let line = render_command_line(&payload);
             let back = parse_command_line(&line).unwrap_or_else(|err| panic!("`{line}`: {err}"));
             assert_eq!(back, payload, "`{line}`");
         }
+        assert_eq!(
+            render_command_line(&CommandPayload::SetStartingLoadout {
+                faction_id: 1,
+                band_id: 7001,
+                kits: vec![crate::commands::StartingKitAllocation {
+                    kit_id: "gathering".to_owned(),
+                    count: 8,
+                }],
+                materials: Vec::new(),
+            }),
+            "set_starting_loadout 1 7001 kit gathering 8"
+        );
         assert_eq!(
             render_command_line(&assign("forage", Some(3), None)),
             "assign_labor 1 7001 forage 3 4 5"

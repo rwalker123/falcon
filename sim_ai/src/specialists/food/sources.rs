@@ -2,11 +2,13 @@
 //! a forage patch or a huntable herd, its expected take for a crew, and the two eligibility
 //! accessors both specialists must ask the same way.
 
-use sim_runtime::{ForagePatchState, KitOptionState, LaborAssignmentState, PopulationCohortState};
+use sim_runtime::{
+    ForagePatchState, KitOptionState, LaborAssignmentState, PopulationCohortState, TerrainTags,
+};
 
 use super::{Food, ROLE_FORAGE, ROLE_HUNT};
 use crate::geometry::Tile;
-use crate::view::{row_key, SeatMemory, SeatView};
+use crate::view::{band_tile, row_key, SeatMemory, SeatView};
 
 /// **What one worker would take off `patch` this turn** — the rate the band has realized on that
 /// ground, else the web's prior, else the frame's forecast ([`Food::rate`]).
@@ -113,6 +115,130 @@ pub(crate) fn surplus_hands(row: &LaborAssignmentState) -> u32 {
     } else {
         row.workers.saturating_sub(row.workers_needed)
     }
+}
+
+/// Whether a band of another faction than `faction` stands on `tile`. **Ground under a rival is
+/// not ground to work or walk to**: walking a band into a foreign camp is a contact, and the
+/// defection gate (`core_sim/tests/defection_contact_gate.rs`) can hand the whole band over.
+pub(crate) fn foreign_band_at(view: &SeatView, faction: u32, tile: Tile) -> bool {
+    view.snapshot
+        .populations
+        .iter()
+        .any(|cohort| cohort.faction != faction && band_tile(cohort) == tile)
+}
+
+/// **Whether a band may stand on `tile`** — the sim's own rule for a `move_band`, restated:
+/// `ensure_land_tile` (`core_sim/src/bin/server.rs`) refuses a tile whose
+/// `terrain_tags.contains(TerrainTags::WATER)` as `water_tile`. A tile the frame carries no row
+/// for cannot be judged and is not offered.
+pub(crate) fn is_walkable(view: &SeatView, tile: Tile) -> bool {
+    view.snapshot
+        .tiles
+        .iter()
+        .find(|row| row.x == tile.x && row.y == tile.y)
+        .is_some_and(|row| !row.terrain_tags.contains(TerrainTags::WATER))
+}
+
+/// Whether a source is dead in this seat's memory — `Food::is_dead`, handed in as a closure so
+/// `Land`, which holds none of `Food`'s levers, reads the same cluster with no dead-row judgement.
+pub(crate) type IsDead<'a> = dyn Fn(&SourceKey, f32) -> bool + 'a;
+
+/// What a band would take, per turn, from **every** workable site within its `work_range` of a
+/// standing tile ([`cluster_take`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ClusterTake {
+    /// The takes summed over `sites`.
+    pub total: f32,
+    /// Each site dealt hands: its tile, the hands dealt, and what those hands take there.
+    pub sites: Vec<(Tile, u32, f32)>,
+}
+
+/// **The food a band could take from every workable site within `work_range` of `standing`** —
+/// the reading `Land` ranks a standing tile on and `Food` deals free hands by
+/// (`docs/plan_ai_driver.md` §4, *"`Land` positions by the cluster, not the patch"*). A site is a
+/// discovered forage patch that is a gathering site ([`workable_patch_at`]), forecast above zero,
+/// unowned or the band's own, under no foreign band, and not dead; it is rated by [`Food::rate`]
+/// (the realized rate first) with the ceiling [`Source`] carries. `hands` are dealt greedily, the
+/// best rate first, each site up to its **plateau** — the smallest crew `n` with `crew_take(n) ==
+/// crew_take(n + 1)`, which for `min(n × rate, ceiling)` is `ceil(ceiling / rate)` — and then the
+/// next site. `existing(tile)` is the crew already on a site, which counts against its plateau and
+/// whose take is not counted again; `None` strikes the site out (a row the hands are leaving).
+pub(crate) fn cluster_take_over(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    hands: u32,
+    is_dead: &IsDead<'_>,
+    existing: &dyn Fn(Tile) -> Option<u32>,
+) -> ClusterTake {
+    let grid = view.grid();
+    let mut sites: Vec<(Tile, f32, f32, u32)> = view
+        .snapshot
+        .forage_patches
+        .iter()
+        .filter(|patch| patch.per_worker_yield > 0.0)
+        .filter(|patch| patch.owner.is_none_or(|owner| owner == band.faction))
+        .filter_map(|patch| {
+            let tile = Tile::new(patch.x, patch.y);
+            let key = SourceKey::Patch(tile);
+            (view.is_discovered(tile)
+                && grid.distance(standing, tile) <= band.work_range
+                && !foreign_band_at(view, band.faction, tile)
+                && !is_dead(&key, patch.per_worker_yield))
+            .then(|| workable_patch_at(view, tile))
+            .flatten()
+            .and_then(|patch| {
+                existing(tile).map(|already| {
+                    (
+                        tile,
+                        patch_per_worker_yield(memory, band, patch),
+                        patch.biomass * patch.provisions_per_biomass,
+                        already,
+                    )
+                })
+            })
+        })
+        .filter(|(_, rate, _, _)| *rate > 0.0)
+        .collect();
+    sites.sort_by(|(a_tile, a_rate, _, _), (b_tile, b_rate, _, _)| {
+        b_rate
+            .total_cmp(a_rate)
+            .then_with(|| (a_tile.y, a_tile.x).cmp(&(b_tile.y, b_tile.x)))
+    });
+    let mut left = hands;
+    let mut dealt = Vec::new();
+    for (tile, rate, ceiling, already) in sites {
+        if left == 0 {
+            break;
+        }
+        let plateau = (ceiling / rate).ceil() as u32;
+        let room = plateau.saturating_sub(already).min(left);
+        if room == 0 {
+            continue;
+        }
+        let take = crew_take(already + room, rate, ceiling) - crew_take(already, rate, ceiling);
+        dealt.push((tile, room, take));
+        left -= room;
+    }
+    ClusterTake {
+        // Folded from `0.0`: `f32::sum` of nothing is `-0.0`, which a reason would print.
+        total: dealt.iter().fold(0.0, |total, (_, _, take)| total + take),
+        sites: dealt,
+    }
+}
+
+/// [`cluster_take_over`] with every site empty: what a band of `hands` would take standing at
+/// `standing` — the reading `Land` compares tiles on.
+pub(crate) fn cluster_take(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    hands: u32,
+    is_dead: &IsDead<'_>,
+) -> ClusterTake {
+    cluster_take_over(view, memory, band, standing, hands, is_dead, &|_| Some(0))
 }
 
 /// **What a crew of `hands` takes off a source in one turn**: `min(hands × rate, ceiling)`, the

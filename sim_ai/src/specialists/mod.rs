@@ -18,6 +18,7 @@ use std::fmt::Display;
 
 use sim_runtime::CommandPayload;
 
+use crate::board::Demand;
 use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, Plan};
 use crate::view::{SeatMemory, SeatView};
@@ -92,6 +93,9 @@ pub struct Proposal {
 pub struct Proposals {
     pub proposals: Vec<Proposal>,
     pub alarm: Option<Alarm>,
+    /// What this specialist asks the board for this turn (`board.rs`) — a kit or a material for
+    /// a band whose outfitting window is open. Empty for a specialist with nothing to ask.
+    pub demands: Vec<Demand>,
 }
 
 pub trait Specialist {

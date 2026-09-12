@@ -15,6 +15,11 @@
 //!
 //! The pass-through arbiter (the scripted fixture's) skips every step: every proposal is accepted
 //! in order, raw and final scores equal, so a script's records are exactly what slice 3 wrote.
+//!
+//! **A loadout never comes here.** The composite's `set_starting_loadout` for an open outfitting
+//! window (`brain.rs`, `outfit_windows`) spends no worker budget and gives no band an order — the
+//! two things the six steps ration — so it is emitted ahead of the accepted proposals and recorded
+//! as an accepted decision under `orchestrator:outfit:<band>` without passing through.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -54,6 +54,20 @@ impl Drop for Process {
     }
 }
 
+/// Every line of a JSON-lines log as a value, in order — what a test reads a seat's
+/// `decisions.jsonl` through.
+pub fn jsonl(path: &Path) -> Vec<serde_json::Value> {
+    let text = fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("{} could not be read: {err}", path.display()));
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .unwrap_or_else(|err| panic!("{}: `{line}` is not JSON: {err}", path.display()))
+        })
+        .collect()
+}
+
 /// The built `server`.
 pub fn server_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_server"))

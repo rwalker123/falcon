@@ -17,6 +17,7 @@
 
 mod arbiter;
 mod bench;
+mod board;
 mod brain;
 mod geometry;
 mod import_record;

@@ -13,7 +13,10 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::instruments::decisions::{DecisionRecord, LinkEventKind, Outcome, DECISIONS_FILE};
+use crate::board::{DEMAND_STATE_EXPIRED, DEMAND_STATE_FULFILLED, DEMAND_STATE_POSTED};
+use crate::instruments::decisions::{
+    DecisionRecord, DemandRecord, LinkEventKind, Outcome, DECISIONS_FILE,
+};
 use crate::instruments::scoreboard::{ScoreRow, DEATH_CAUSES, DEATH_CAUSE_HUNGER, SCOREBOARD_FILE};
 use crate::specialists::food::{INTENT_SPLIT, INTENT_UPGRADE};
 use crate::specialists::{intent_key, INTENT_SEPARATOR, SPECIALIST_FOOD};
@@ -60,6 +63,18 @@ pub const M_INTENT_PREFIX: &str = "intent.";
 /// intents, counted over the run. Absolute counts, not shares, so "never once" reads as 0.
 pub const M_UPGRADES_DECLARED: &str = "food.upgrades_declared";
 pub const M_SPLITS: &str = "food.splits";
+// --- the demand board -----------------------------------------------------------------------------
+/// `board.*` (`plan_ai_driver.md` §4: *"the board is measurable — fulfilment rate and latency per
+/// requester"*): `posted` (demands posted over the run), `expired`, `fulfilment_rate`
+/// (`fulfilled / (fulfilled + expired)`, `null` with neither), `latency_turns` (mean ticks from a
+/// demand's `posted` record to its `fulfilled` one), and `board.<requester>.fulfilment_rate`.
+/// **Reported, not ratcheted**: the ratchet takes it on once the board has a second customer.
+pub const M_BOARD_PREFIX: &str = "board.";
+pub const M_BOARD_POSTED: &str = "board.posted";
+pub const M_BOARD_EXPIRED: &str = "board.expired";
+pub const M_BOARD_FULFILMENT_RATE: &str = "board.fulfilment_rate";
+pub const M_BOARD_LATENCY: &str = "board.latency_turns";
+const M_FULFILMENT_RATE: &str = "fulfilment_rate";
 // --- per specialist ------------------------------------------------------------------------------
 pub const M_SPECIALIST_PREFIX: &str = "specialist.";
 pub const M_ACCEPTED: &str = "accepted";
@@ -134,6 +149,7 @@ pub fn compute(rows: &[ScoreRow], records: &[DecisionRecord]) -> Measures {
     whole_seat(rows, &mut measures);
     specialists(rows, records, &mut measures);
     orchestrator(rows, records, &mut measures);
+    board(records, &mut measures);
     link(rows, records, &mut measures);
     measures
 }
@@ -402,6 +418,72 @@ fn orchestrator(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Me
     measures.insert(M_ALARM_LATENCY.to_owned(), latency);
 }
 
+/// `fulfilled / (fulfilled + expired)`, or nothing when neither happened.
+fn fulfilment_rate(fulfilled: usize, expired: usize) -> Option<f64> {
+    (fulfilled + expired > 0).then(|| fulfilled as f64 / (fulfilled + expired) as f64)
+}
+
+fn board(records: &[DecisionRecord], measures: &mut Measures) {
+    let demands: Vec<&DemandRecord> = records
+        .iter()
+        .filter_map(|record| match record {
+            DecisionRecord::Demand(demand) => Some(demand),
+            _ => None,
+        })
+        .collect();
+    let with_state = |state: &str| -> Vec<&DemandRecord> {
+        demands
+            .iter()
+            .copied()
+            .filter(|d| d.state == state)
+            .collect()
+    };
+    let posted = with_state(DEMAND_STATE_POSTED);
+    let fulfilled = with_state(DEMAND_STATE_FULFILLED);
+    let expired = with_state(DEMAND_STATE_EXPIRED);
+    put(measures, M_BOARD_POSTED, posted.len() as f64);
+    put(measures, M_BOARD_EXPIRED, expired.len() as f64);
+    measures.insert(
+        M_BOARD_FULFILMENT_RATE.to_owned(),
+        fulfilment_rate(fulfilled.len(), expired.len()),
+    );
+    // From a demand's `posted` record — the latest one for the same requester, band and
+    // resource at or before the fulfilment — to its `fulfilled` one.
+    let latencies: Vec<f64> = fulfilled
+        .iter()
+        .filter_map(|done| {
+            posted
+                .iter()
+                .filter(|post| {
+                    post.tick <= done.tick
+                        && post.requester == done.requester
+                        && post.band == done.band
+                        && post.resource == done.resource
+                })
+                .map(|post| post.tick)
+                .max()
+                .map(|posted_tick| (done.tick - posted_tick) as f64)
+        })
+        .collect();
+    measures.insert(
+        M_BOARD_LATENCY.to_owned(),
+        (!latencies.is_empty()).then(|| latencies.iter().sum::<f64>() / latencies.len() as f64),
+    );
+    let requesters: BTreeSet<&str> = demands.iter().map(|d| d.requester.as_str()).collect();
+    for requester in requesters {
+        let of = |state: &str| {
+            demands
+                .iter()
+                .filter(|d| d.requester == requester && d.state == state)
+                .count()
+        };
+        measures.insert(
+            format!("{M_BOARD_PREFIX}{requester}.{M_FULFILMENT_RATE}"),
+            fulfilment_rate(of(DEMAND_STATE_FULFILLED), of(DEMAND_STATE_EXPIRED)),
+        );
+    }
+}
+
 fn link(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Measures) {
     let observed: BTreeSet<u64> = rows.iter().map(|row| row.tick).collect();
     let ready: BTreeSet<u64> = records
@@ -465,6 +547,50 @@ mod tests {
             victory_progress: BTreeMap::from([("survive".to_owned(), 0.1)]),
             commands_failed: u32::from(tick == FIRST_TICK + 2),
         }
+    }
+
+    fn demand(tick: u64, requester: &str, resource: &str, state: &str) -> DecisionRecord {
+        DecisionRecord::Demand(DemandRecord {
+            tick,
+            requester: requester.to_owned(),
+            band: 7,
+            resource: resource.to_owned(),
+            amount: 8,
+            state: state.to_owned(),
+            granted: (state != DEMAND_STATE_POSTED && state != DEMAND_STATE_EXPIRED).then_some(8),
+        })
+    }
+
+    /// Two demands posted on the first tick: Food's baskets fulfilled a tick later, Land's scout
+    /// kit expired — posted 2, expired 1, a rate of one half, a latency of one turn, and the
+    /// per-requester rates.
+    #[test]
+    fn the_board_measures_read_the_demand_records() {
+        let rows = vec![row(FIRST_TICK, 0), row(FIRST_TICK + 1, 0)];
+        let records = vec![
+            demand(FIRST_TICK, "food", "kit:gathering", DEMAND_STATE_POSTED),
+            demand(FIRST_TICK, "land", "kit:wayfinding", DEMAND_STATE_POSTED),
+            demand(FIRST_TICK, "food", "kit:gathering", "planned"),
+            demand(FIRST_TICK, "land", "kit:wayfinding", DEMAND_STATE_EXPIRED),
+            demand(
+                FIRST_TICK + 1,
+                "food",
+                "kit:gathering",
+                DEMAND_STATE_FULFILLED,
+            ),
+        ];
+        let measures = compute(&rows, &records);
+        assert_eq!(measures[M_BOARD_POSTED], Some(2.0));
+        assert_eq!(measures[M_BOARD_EXPIRED], Some(1.0));
+        assert_eq!(measures[M_BOARD_FULFILMENT_RATE], Some(0.5));
+        assert_eq!(measures[M_BOARD_LATENCY], Some(1.0));
+        assert_eq!(measures["board.food.fulfilment_rate"], Some(1.0));
+        assert_eq!(measures["board.land.fulfilment_rate"], Some(0.0));
+        // No demand records at all: nothing to rate.
+        let none = compute(&rows, &[]);
+        assert_eq!(none[M_BOARD_POSTED], Some(0.0));
+        assert_eq!(none[M_BOARD_FULFILMENT_RATE], None);
+        assert_eq!(none[M_BOARD_LATENCY], None);
     }
 
     fn decision(tick: u64, specialist: &str, intent: &str, outcome: Outcome) -> DecisionRecord {

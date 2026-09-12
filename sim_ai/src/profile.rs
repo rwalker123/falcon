@@ -21,6 +21,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::orchestrator::{GroundRung, Stance};
+use crate::specialists::food::ledger::BEST_FLOOR;
 use crate::specialists::{SpecialistId, SPECIALIST_FOOD, SPECIALIST_LAND};
 
 /// The shipped file.
@@ -111,6 +112,11 @@ pub struct FoodFloors {
     /// *Spare hands into hunts*: the share of the net-income goal a band may be short by and still
     /// count as "near positive" — the rule fires at `net ≥ goal × (1 − this)`.
     pub near_positive_fraction: f32,
+    /// *Draw down to survive*: the lowest harvest floor the rule may set on a worked patch, as a
+    /// fraction of the patch's `K`, from `BEST_FLOOR` (0.5, the food peak) down. The goal floor
+    /// stays Best; this is how far a starving band may spend the future for calories now — `0`
+    /// lets it strip the patch (*"survival outranks the peak"*).
+    pub survival_floor: f32,
 }
 
 /// Consumed by the orchestrator: what `Food` is *for* this cadence (`plan_ai_driver.md` §3). The
@@ -337,6 +343,12 @@ impl AiProfiles {
             if !near.is_finite() || !(0.0..=1.0).contains(&near) {
                 return invalid(format!(
                     "profile `{id}`: food.near_positive_fraction = {near} is not a share"
+                ));
+            }
+            let survival = profile.food.survival_floor;
+            if !survival.is_finite() || !(0.0..=BEST_FLOOR).contains(&survival) {
+                return invalid(format!(
+                    "profile `{id}`: food.survival_floor = {survival} is not a floor from 0 to {BEST_FLOOR}"
                 ));
             }
             let net = profile.goals.net_income_per_turn;

@@ -8,6 +8,12 @@
 //!
 //! v1 is [`constant::ConstantStance`]; a `UtilityOrchestrator` or an LLM one produces the same
 //! `Plan`, so nothing below the plan changes when the orchestrator does.
+//!
+//! **It also resolves the demand board** (`plan_ai_driver.md` §4, *"The board's first customer
+//! is outfitting"*): for every own band whose outfitting window is open, [`Orchestrator::outfit`]
+//! turns the specialists' posted demands into one [`Outfit`] against the window's two budgets —
+//! by its goals and personality — and the composite emits the `set_starting_loadout`. It still
+//! never emits a command: it resolves, the composite sends.
 
 pub mod constant;
 
@@ -15,11 +21,29 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sim_runtime::{BandLoadoutWindowState, PopulationCohortState};
 
+use crate::board::{Entry, Resource};
 use crate::instruments::decisions::GoalsRecord;
 use crate::profile::{AiProfile, FoodGoalLevers};
 use crate::specialists::{SpecialistId, SPECIALIST_FOOD};
 use crate::view::{SeatMemory, SeatView};
+
+/// The name the decision log files a loadout under — not a specialist, and never on the roster.
+pub const ORCHESTRATOR_ID: &str = "orchestrator";
+/// The loadout's intent kind: `orchestrator:outfit:<band>`.
+pub const INTENT_OUTFIT: &str = "outfit";
+
+/// **One window's loadout, resolved**: the kit and material lines to send (coalesced, never a
+/// `none` kit, never above either budget) and, per demand **in the order given**, what each
+/// was granted — what the board is told.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outfit {
+    pub band: u64,
+    pub kits: Vec<(String, u32)>,
+    pub materials: Vec<(String, u32)>,
+    pub grants: Vec<(Resource, u32)>,
+}
 
 /// The v1 stance set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,4 +252,15 @@ pub trait Orchestrator {
     /// every consideration returns `None` and the seat plays nothing at all until the old world's
     /// cadence would have come round.
     fn forget_after(&mut self, _tick: u64) {}
+
+    /// Resolve `band`'s open outfitting `window` against the `demands` posted for it (module
+    /// docs): what to send, and what each demand was granted.
+    fn outfit(
+        &mut self,
+        view: &SeatView,
+        profile: &AiProfile,
+        band: &PopulationCohortState,
+        window: &BandLoadoutWindowState,
+        demands: &[&Entry],
+    ) -> Outfit;
 }

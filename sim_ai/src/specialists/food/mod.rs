@@ -41,15 +41,16 @@ use sim_runtime::{
 };
 use tracing::debug;
 
-use super::{Proposals, Specialist, SpecialistId, SPECIALIST_FOOD};
+use super::{Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_FOOD};
 use crate::geometry::Tile;
 use crate::orchestrator::{Alarm, AlarmKind, Plan};
 use crate::profile::FoodFloors;
 use crate::view::{band_tile, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
-use ledger::Book;
+use ledger::{Book, Reassignment};
 
 pub(crate) use sources::{
-    crew_take, is_food_site, patch_per_worker_yield, workable_patch_at, SourceKey,
+    cluster_take, foreign_band_at, is_food_site, is_walkable, patch_per_worker_yield, ClusterTake,
+    IsDead, SourceKey,
 };
 use sources::{hunting_kits_held, Source};
 
@@ -69,6 +70,7 @@ pub const INTENT_SPLIT: &str = "split";
 pub const INTENT_SETTLE: &str = "settle";
 pub const INTENT_HUNT: &str = "hunt";
 pub const INTENT_UPGRADE: &str = "upgrade";
+pub const INTENT_DRAWDOWN: &str = "drawdown";
 
 pub struct Food {
     faction: u32,
@@ -260,7 +262,17 @@ impl Food {
             SourceKey::Patch(tile) => (ROLE_FORAGE, Some(tile.x), Some(tile.y), None),
             SourceKey::Herd(id) => (ROLE_HUNT, None, None, Some(id.clone())),
         };
-        self.assign_role(band, role, workers, target_x, target_y, fauna_id)
+        // ⛔ **A WORKED ROW'S FLOOR RIDES ALONG.** `floor: None` is the wire default, Best — so a
+        // rule re-issuing a row it is reducing or topping up would silently undo *draw down to
+        // survive* (bench seed 23: the t32 upgrade's `assign_labor forage 47,5 2` put the row it
+        // had drawn down at t31 back to Best, and t34 drew it down again). A row the band does
+        // not work yet has no floor to keep and takes the default.
+        let floor = band
+            .labor_assignments
+            .iter()
+            .find(|row| row.workers > 0 && SourceKey::of_row(row).as_ref() == Some(key))
+            .map(|row| row.floor);
+        self.assign_role(band, role, workers, target_x, target_y, fauna_id, floor)
     }
 
     /// `assign_labor` on a band-wide role (`builders`, …): no target, no kit, no floor.
@@ -270,12 +282,34 @@ impl Food {
         role: &str,
         workers: u32,
     ) -> CommandPayload {
-        self.assign_role(band, role, workers, None, None, None)
+        self.assign_role(band, role, workers, None, None, None, None)
+    }
+
+    /// `assign_labor` on a forage patch **at a stated harvest floor** — *draw down to survive*'s
+    /// command; `None` is the wire default, Best.
+    fn assign_at_floor(
+        &self,
+        band: &PopulationCohortState,
+        tile: Tile,
+        workers: u32,
+        floor: Option<f32>,
+    ) -> CommandPayload {
+        self.assign_role(
+            band,
+            ROLE_FORAGE,
+            workers,
+            Some(tile.x),
+            Some(tile.y),
+            None,
+            floor,
+        )
     }
 
     /// `policy` is left `None`: the field is **retired** — *"a labor assignment carries a `floor`,
     /// not a stance … the server ignores it"* (`CommandPayload::AssignLabor::policy`); the balanced
-    /// take is the sim's default floor, which `floor: None` selects.
+    /// take is the sim's default floor, which `floor: None` selects — every rule but *draw down to
+    /// survive* leaves it so.
+    #[allow(clippy::too_many_arguments)]
     fn assign_role(
         &self,
         band: &PopulationCohortState,
@@ -284,6 +318,7 @@ impl Food {
         target_x: Option<u32>,
         target_y: Option<u32>,
         fauna_id: Option<String>,
+        floor: Option<f32>,
     ) -> CommandPayload {
         CommandPayload::AssignLabor {
             faction_id: self.faction,
@@ -295,7 +330,7 @@ impl Food {
             fauna_id,
             policy: None,
             species: None,
-            floor: None,
+            floor,
             kit_id: None,
             take_species: Vec::new(),
         }
@@ -369,19 +404,29 @@ impl Specialist for Food {
         let mut out = Proposals {
             proposals: Vec::new(),
             alarm: self.alarm(view),
+            demands: Vec::new(),
         };
         for band in view.own_bands(self.faction) {
+            out.demands
+                .extend(self.outfit_demands(view, plan, memory, band));
+            // **The plan in force**: the band's book plus every change rules 1–5 propose this
+            // turn, which is what *draw down to survive* projects.
             let (assign, carried) = self.assess_income(view, plan, memory, band);
             out.proposals.extend(assign);
-            out.proposals
-                .extend(self.feed_while_moving(view, plan, memory, band));
-            out.proposals
-                .extend(self.split_to_feed(view, plan, memory, band, &carried));
             out.proposals.extend(self.settle(view, plan, memory, band));
+            let ruled: [Option<(Proposal, Reassignment)>; 4] = [
+                self.feed_while_moving_change(view, plan, memory, band),
+                self.split_to_feed_change(view, plan, memory, band, &carried),
+                self.spare_hands_into_hunts_change(view, plan, memory, band, &carried),
+                self.upgrade_the_ground_change(view, plan, memory, band, &carried),
+            ];
+            let mut in_force = vec![carried];
+            for (proposal, change) in ruled.into_iter().flatten() {
+                out.proposals.push(proposal);
+                in_force.push(change);
+            }
             out.proposals
-                .extend(self.spare_hands_into_hunts(view, plan, memory, band, &carried));
-            out.proposals
-                .extend(self.upgrade_the_ground(view, plan, memory, band, &carried));
+                .extend(self.draw_down_to_survive(view, plan, memory, band, &in_force));
         }
         out
     }
@@ -448,16 +493,31 @@ pub(crate) mod tests {
         SeatMemory::new(NO_MEMORY_DECAY, SETTLE)
     }
 
+    /// The raster the fixture world is: 8 wide, 6 high, wrapped.
+    pub const RASTER_WIDTH: u32 = 8;
+    pub const RASTER_HEIGHT: u32 = 6;
+
     /// The saturated fixture, pinned: one own band with idle hands, three patches (near, rich,
-    /// out of reach) and one huntable herd, the raster all discovered.
+    /// out of reach) and one huntable herd, the raster all discovered and all dry land.
     pub fn a_view() -> SeatView {
         let mut snapshot: WorldSnapshot =
             sim_runtime::fixture::saturated_snapshot().expect("the fixture builds");
         snapshot.header.tick = TICK;
         snapshot.header.wrap_horizontal = true;
-        snapshot.visibility_raster.width = 8;
-        snapshot.visibility_raster.height = 6;
-        snapshot.visibility_raster.samples = vec![VISIBILITY_DISCOVERED; 48];
+        snapshot.visibility_raster.width = RASTER_WIDTH;
+        snapshot.visibility_raster.height = RASTER_HEIGHT;
+        snapshot.visibility_raster.samples =
+            vec![VISIBILITY_DISCOVERED; (RASTER_WIDTH * RASTER_HEIGHT) as usize];
+        // Every tile a walkable row: a band may stand anywhere on the fixture.
+        let land = snapshot.tiles[0].clone();
+        snapshot.tiles = (0..RASTER_WIDTH * RASTER_HEIGHT)
+            .map(|index| sim_runtime::TileState {
+                x: index % RASTER_WIDTH,
+                y: index / RASTER_WIDTH,
+                terrain_tags: sim_runtime::TerrainTags::empty(),
+                ..land.clone()
+            })
+            .collect();
         snapshot.visibility_raster.samples[(HERE.y * 8 + HERE.x) as usize] = VISIBILITY_ACTIVE;
         snapshot.populations = vec![PopulationCohortState {
             faction: FACTION,
@@ -488,16 +548,17 @@ pub(crate) mod tests {
             ],
             ..Default::default()
         }];
-        let kit = |id: &str, jobs: &[&str], items: &[&str]| KitOptionState {
+        let kit = |id: &str, jobs: &[&str], items: &[&str], attack: f32| KitOptionState {
             id: id.to_owned(),
             jobs: jobs.iter().map(|job| (*job).to_owned()).collect(),
             item_ids: items.iter().map(|item| (*item).to_owned()).collect(),
+            attack,
             ..Default::default()
         };
         snapshot.kits = vec![
-            kit(HUNT_KIT, &[ROLE_HUNT], &[HUNT_KIT_ITEM]),
-            kit(FORAGE_KIT, &[ROLE_FORAGE], &[FORAGE_KIT_ITEM]),
-            kit(BARE_KIT, &[ROLE_HUNT, ROLE_FORAGE], &[]),
+            kit(HUNT_KIT, &[ROLE_HUNT], &[HUNT_KIT_ITEM], ARMED_ATTACK),
+            kit(FORAGE_KIT, &[ROLE_FORAGE], &[FORAGE_KIT_ITEM], BARE_ATTACK),
+            kit(BARE_KIT, &[ROLE_HUNT, ROLE_FORAGE], &[], BARE_ATTACK),
         ];
         // Each stand's ceiling (`biomass × provisions_per_biomass`) is 1.5× its capacity, so a
         // 17-hand crew is capped at 30 on the near patch and takes its full 34 on the rich one.

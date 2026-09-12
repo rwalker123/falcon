@@ -9,10 +9,22 @@
 //! goes positive again. The same projection answers the goals the plan handed down: the gap
 //! between projected runway / net income and the targets is the score ([`goal_progress`]).
 //!
+//! **The ledger models the patch, not only the band** (§4), once *draw down to survive* exists: a
+//! flat income line cannot price a lowered floor, because taking below Best draws the standing
+//! biomass down now and pays the lower regrowth after. [`PatchBook`] is one worked patch as the
+//! frame shows it and [`floor_income`] walks it at a floor, turn by turn; [`Change::Series`] is
+//! that walk as a change the projection takes beside the flat ones.
+//!
 //! A pure function of numbers — no view, no memory — so it is tested on its own.
 
 use crate::instruments::scoreboard::NOT_FOOD_LIMITED_TURNS;
 use crate::orchestrator::FoodGoals;
+
+/// **The food peak — the Best floor.** `components::DEFAULT_ESCAPEMENT_FLOOR`
+/// (`fauna::MSY_BIOMASS_FRACTION`, `core_sim`), the wire default every assignment gets when its
+/// `floor` is `None`. Sustained take at floor `f` is `r · fK · (1 − f)`, maximal at `0.5`
+/// (`docs/plan_harvest_floor.md` §2). Restated: this crate cannot link the server.
+pub const BEST_FLOOR: f32 = 0.5;
 
 /// One band's food book, read off the frame: `stores[FOOD_CARGO_KEY]` (fixed-point divided out),
 /// `food_income`, `food_consumption` on `PopulationCohortState`.
@@ -43,6 +55,137 @@ impl Reassignment {
     };
 }
 
+/// **A change as the projection takes it**: a flat [`Reassignment`], or a per-turn income series
+/// in place of the flat gain — what a floor change on a patch is ([`floor_income`]), since its
+/// take is front-loaded and then settles on the floor's regrowth.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Change {
+    Flat(Reassignment),
+    Series {
+        /// Income lost from now on, per turn — the row's take today, which the series replaces.
+        income_lost: f32,
+        /// Income gained per turn, from turn 0; the last entry holds past the series' end.
+        income_gained: Vec<f32>,
+    },
+}
+
+impl Change {
+    fn income_lost(&self) -> f32 {
+        match self {
+            Change::Flat(change) => change.income_lost,
+            Change::Series { income_lost, .. } => *income_lost,
+        }
+    }
+
+    /// What this change adds on `turn`.
+    fn gained_at(&self, turn: u32) -> f32 {
+        match self {
+            Change::Flat(change) => {
+                if turn >= change.payoff_turn {
+                    change.income_gained
+                } else {
+                    0.0
+                }
+            }
+            Change::Series { income_gained, .. } => income_gained
+                .get(turn as usize)
+                .or(income_gained.last())
+                .copied()
+                .unwrap_or(0.0),
+        }
+    }
+
+    /// What this change adds once it has paid off — a series' last entry.
+    fn gained_after(&self) -> f32 {
+        match self {
+            Change::Flat(change) => change.income_gained,
+            Change::Series { income_gained, .. } => income_gained.last().copied().unwrap_or(0.0),
+        }
+    }
+}
+
+/// **One worked patch as the frame shows it**, for a floor projection ([`floor_income`]) — the
+/// `ForagePatchState` terms the harvest-floor arc put on the wire so a client can evaluate the
+/// take at any floor (*"`max(0, B − floor·K) × dip × rate` at **any** floor"*,
+/// `ForagePatchState::provisions_per_biomass`), plus the crew on the row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatchBook {
+    /// `ForagePatchState::biomass` — what stands on the patch now.
+    pub biomass: f32,
+    /// `ForagePatchState::carrying_capacity` — the patch's `K`, the rung already folded in.
+    pub capacity: f32,
+    /// `ForagePatchState::provisions_per_biomass` — what one unit of the standing crop is worth.
+    pub provisions_per_biomass: f32,
+    /// `ForagePatchState::regrowth_samples` — *"This patch's own per-turn regrowth, in biomass,
+    /// sampled at evenly spaced fractions of `K` … Sample `i` of `n` is the delta at `B = i/(n−1)
+    /// × K`; the x-axis is implicit and a client interpolates."* The wire's curve, not the
+    /// logistic's shape: a tended patch's curve is the one its rung bought.
+    pub regrowth_samples: Vec<f32>,
+    /// The crew on the row.
+    pub hands: u32,
+    /// `ForagePatchState::per_worker_biomass` — what one gatherer moves per turn, in biomass;
+    /// `0` in a dead season, when the crew carries nothing.
+    pub per_worker_biomass: f32,
+}
+
+/// **What `patch` regrows in one turn standing at `fraction` of its capacity** — the wire's
+/// samples interpolated at that fraction; `0` when the frame sent none (a curve that was not
+/// sent is not a curve that is flat).
+pub fn regrowth_at(samples: &[f32], fraction: f32) -> f32 {
+    match samples {
+        [] => 0.0,
+        [only] => *only,
+        _ => {
+            let last = (samples.len() - 1) as f32;
+            let x = (fraction.clamp(0.0, 1.0) * last).clamp(0.0, last);
+            let below = x.floor() as usize;
+            let above = (below + 1).min(samples.len() - 1);
+            let weight = x - below as f32;
+            samples[below] + (samples[above] - samples[below]) * weight
+        }
+    }
+}
+
+/// What [`floor_income`] answers: the income series, and the turn the patch is spent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FloorIncome {
+    /// What the crew takes each turn, `horizon` entries, in provisions.
+    pub per_turn: Vec<f32>,
+    /// The first turn whose take leaves the patch standing at the floor — the standing biomass
+    /// above `floor × K` is spent, and every turn after pays the floor's regrowth. `None` when
+    /// the crew cannot draw it down within the horizon.
+    pub spent_at: Option<u32>,
+}
+
+/// **What a crew takes from `patch` at `floor`, turn by turn for `horizon` turns**: the standing
+/// biomass above `floor × capacity` first (capped by what the hands carry, `hands ×
+/// per_worker_biomass` a turn), then the regrowth at that floor — the same order the sim resolves
+/// a turn in, the take then the regrowth. Sustained, that is the harvest-floor arc's
+/// `r · fK · (1 − f)` read off the wire's own curve.
+pub fn floor_income(patch: &PatchBook, floor: f32, horizon: u32) -> FloorIncome {
+    let carried = patch.hands as f32 * patch.per_worker_biomass;
+    let held = floor * patch.capacity;
+    let mut standing = patch.biomass;
+    let mut per_turn = Vec::with_capacity(horizon as usize);
+    let mut spent_at = None;
+    for turn in 0..horizon {
+        let room = (standing - held).max(0.0);
+        let take = room.min(carried);
+        if spent_at.is_none() && room > 0.0 && take >= room {
+            spent_at = Some(turn);
+        }
+        standing -= take;
+        let fraction = if patch.capacity > 0.0 {
+            standing / patch.capacity
+        } else {
+            0.0
+        };
+        standing = (standing + regrowth_at(&patch.regrowth_samples, fraction)).min(patch.capacity);
+        per_turn.push(take * patch.provisions_per_biomass);
+    }
+    FloorIncome { per_turn, spent_at }
+}
+
 /// What a projection says about a change.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
@@ -61,20 +204,16 @@ pub struct Projection {
 }
 
 /// Project `book` under every change in `changes` together, `horizon` turns ahead:
-/// `stock_t+1 = stock_t + income − Σ lost + Σ gained(t) − consumption`, where a change's gain
-/// counts from its own `payoff_turn` on.
-pub fn project_all(book: &Book, changes: &[Reassignment], horizon: u32) -> Projection {
-    let lost: f32 = changes.iter().map(|change| change.income_lost).sum();
+/// `stock_t+1 = stock_t + income − Σ lost + Σ gained(t) − consumption`, where a flat change's gain
+/// counts from its own `payoff_turn` on and a series' is its entry for the turn.
+pub fn project_changes(book: &Book, changes: &[Change], horizon: u32) -> Projection {
+    let lost: f32 = changes.iter().map(Change::income_lost).sum();
     let mut stock = Vec::with_capacity(horizon as usize);
     let mut level = book.stock;
     let mut trough = (book.stock, 0);
     let mut positive_again = None;
     for turn in 0..horizon {
-        let gained: f32 = changes
-            .iter()
-            .filter(|change| turn >= change.payoff_turn)
-            .map(|change| change.income_gained)
-            .sum();
+        let gained: f32 = changes.iter().map(|change| change.gained_at(turn)).sum();
         let net = book.income - lost + gained - book.consumption;
         if net >= 0.0 && positive_again.is_none() {
             positive_again = Some(turn);
@@ -85,7 +224,7 @@ pub fn project_all(book: &Book, changes: &[Reassignment], horizon: u32) -> Proje
         }
         stock.push(level);
     }
-    let gained_all: f32 = changes.iter().map(|change| change.income_gained).sum();
+    let gained_all: f32 = changes.iter().map(Change::gained_after).sum();
     let end = stock.last().copied().unwrap_or(book.stock);
     Projection {
         stock,
@@ -98,6 +237,12 @@ pub fn project_all(book: &Book, changes: &[Reassignment], horizon: u32) -> Proje
             NOT_FOOD_LIMITED_TURNS
         },
     }
+}
+
+/// [`project_changes`] over flat changes only.
+pub fn project_all(book: &Book, changes: &[Reassignment], horizon: u32) -> Projection {
+    let changes: Vec<Change> = changes.iter().copied().map(Change::Flat).collect();
+    project_changes(book, &changes, horizon)
 }
 
 /// Project `book` under one `change`, `horizon` turns ahead.
@@ -234,6 +379,72 @@ mod tests {
         let flat = project(&a_book(), &Reassignment::NONE, 0);
         assert_eq!(flat.trough, (8.0, 0));
         assert_eq!(flat.runway_at_end, 4.0);
+    }
+
+    /// A patch at its capacity of 40, regrowing a flat 6 a turn wherever it stands (nothing at
+    /// zero), seventeen hands carrying one each.
+    fn a_patch() -> PatchBook {
+        PatchBook {
+            biomass: 40.0,
+            capacity: 40.0,
+            provisions_per_biomass: 1.0,
+            regrowth_samples: vec![0.0, 6.0, 6.0, 6.0, 6.0, 6.0],
+            hands: 17,
+            per_worker_biomass: 1.0,
+        }
+    }
+
+    /// At Best the crew clears the 20 above the floor in two turns and then takes the floor's
+    /// regrowth, turn after turn — the regrowth line; at zero it front-loads the whole stand and
+    /// then reads the zero regrowth of a stripped patch.
+    #[test]
+    fn floor_income_is_the_regrowth_line_at_best_and_front_loads_the_stand_at_zero() {
+        let best = floor_income(&a_patch(), BEST_FLOOR, 6);
+        // t0: room 20, take 17 → 23, regrows to 29; t1: room 9, take 9 → 20, regrows to 26; then
+        // room 6 each turn: the regrowth at the floor.
+        assert_eq!(best.per_turn, vec![17.0, 9.0, 6.0, 6.0, 6.0, 6.0]);
+        assert_eq!(best.spent_at, Some(1));
+        let stripped = floor_income(&a_patch(), 0.0, 6);
+        // t0: 17 → 23, regrows to 29; t1: 17 → 12, regrows to 18; t2: 17 → 1, regrows to 7 (the
+        // curve interpolates 0 → 6 over the first fifth); t3: 7 → 0, and nothing regrows at zero.
+        assert_eq!(stripped.per_turn[..2], [17.0, 17.0]);
+        assert_eq!(stripped.spent_at, Some(3));
+        assert_eq!(stripped.per_turn[4..], [0.0, 0.0]);
+        // A patch already standing at the floor pays the regrowth from the first turn.
+        let settled = PatchBook {
+            biomass: 20.0,
+            ..a_patch()
+        };
+        assert_eq!(
+            floor_income(&settled, BEST_FLOOR, 3).per_turn,
+            vec![0.0, 6.0, 6.0]
+        );
+        // The crew, not the room, may be the cap: two hands take 2 a turn, and never spend it.
+        let few = PatchBook {
+            hands: 2,
+            ..a_patch()
+        };
+        let income = floor_income(&few, BEST_FLOOR, 3);
+        assert_eq!(income.per_turn, vec![2.0, 2.0, 2.0]);
+        assert_eq!(income.spent_at, None);
+        // No curve sent: nothing regrows.
+        assert_eq!(regrowth_at(&[], 0.5), 0.0);
+        assert_eq!(regrowth_at(&[0.0, 10.0, 0.0], 0.25), 5.0);
+    }
+
+    /// A series is taken beside the flat changes, entry by entry, and holds its last entry past
+    /// its end.
+    #[test]
+    fn a_series_change_is_projected_turn_by_turn() {
+        let series = Change::Series {
+            income_lost: 2.0,
+            income_gained: vec![10.0, 4.0],
+        };
+        let projection = project_changes(&a_book(), &[series], 4);
+        // 8 + (2 − 2 + 10 − 2) = 16; then +2 a turn on the held last entry of 4.
+        assert_eq!(projection.stock, vec![16.0, 18.0, 20.0, 22.0]);
+        assert_eq!(projection.net_after, 2.0);
+        assert_eq!(projection.positive_again, Some(0));
     }
 
     #[test]
