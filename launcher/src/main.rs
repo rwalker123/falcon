@@ -172,6 +172,14 @@ const VIEWER_PAGE_EXTENSION: &str = ".html";
 /// How the printed viewer lines are introduced, at start and at exit.
 const VIEWER_LINES_LABEL_START: &str = "after quitting, open this run with:";
 const VIEWER_LINES_LABEL_EXIT: &str = "open this run with:";
+/// **The same recipe as a file in the run directory**, because stderr reaches nobody in the
+/// packaged game: a double-clicked `.app` has no terminal and the Windows build has no console
+/// (the `windows_subsystem` attribute above). Rewritten whole at every place the lines are
+/// printed, so it always holds every seat known so far, under [`VIEWER_RECIPE_HEADING`].
+const VIEWER_RECIPE_FILE: &str = "open_this_run.txt";
+/// The one line of [`VIEWER_RECIPE_FILE`] that says what the file is.
+const VIEWER_RECIPE_HEADING: &str =
+    "Paste one of these lines into a terminal to open the run in the viewer:";
 
 /// **The human's faction.** Contract twin of `PLAYER_FACTION_ID` in
 /// `clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd`: the seat the
@@ -264,6 +272,7 @@ fn run() -> Result<(), String> {
         VIEWER_LINES_LABEL_START,
         &viewer_lines(&layout.ai, &run_dir, &[HUMAN_FACTION_ID]),
     );
+    write_viewer_recipe(&layout.ai, &run_dir, &[HUMAN_FACTION_ID]);
 
     let server = Command::new(&layout.server)
         .current_dir(&data_dir)
@@ -301,6 +310,7 @@ fn run() -> Result<(), String> {
         VIEWER_LINES_LABEL_EXIT,
         &viewer_lines(&layout.ai, &run_dir, &session.seats_of_run()),
     );
+    write_viewer_recipe(&layout.ai, &run_dir, &session.seats_of_run());
     outcome
 }
 
@@ -330,6 +340,28 @@ fn report_viewer_lines(label: &str, lines: &[String]) {
     report_info(label);
     for line in lines {
         eprintln!("  {line}");
+    }
+}
+
+/// The body of [`VIEWER_RECIPE_FILE`]: the heading, then one [`viewer_lines`] line per seat, each
+/// newline-terminated. Pure, so the shape is unit-tested without a run directory.
+fn viewer_recipe(sim_ai: &Path, run_dir: &Path, seats: &[u32]) -> String {
+    let mut body = String::from(VIEWER_RECIPE_HEADING);
+    body.push('\n');
+    for line in viewer_lines(sim_ai, run_dir, seats) {
+        body.push_str(&line);
+        body.push('\n');
+    }
+    body
+}
+
+/// Rewrite `<run_dir>/`[`VIEWER_RECIPE_FILE`] with the recipe for `seats` — every seat known so
+/// far, so the file is complete at whatever point the run ends. A file that cannot be written is
+/// a warning: the stderr copy was printed already, and the game runs either way.
+fn write_viewer_recipe(sim_ai: &Path, run_dir: &Path, seats: &[u32]) {
+    let path = run_dir.join(VIEWER_RECIPE_FILE);
+    if let Err(err) = fs::write(&path, viewer_recipe(sim_ai, run_dir, seats)) {
+        report_warning(&format!("could not write {}: {err}", path.display()));
     }
 }
 
@@ -1043,6 +1075,7 @@ impl Session {
                 VIEWER_LINES_LABEL_START,
                 &viewer_lines(ai_program, &self.run_dir, &[faction]),
             );
+            write_viewer_recipe(ai_program, &self.run_dir, &self.seats_of_run());
         }
         let (_, child) = self
             .rivals
@@ -1634,6 +1667,32 @@ mod tests {
             ]
         );
         assert!(viewer_lines(sim_ai, run_dir, &[]).is_empty());
+    }
+
+    /// The recipe file is the heading and then exactly the printed lines, one per seat, so a
+    /// player with no terminal open finds the same paste-ready commands in the run directory.
+    #[test]
+    fn the_recipe_file_is_the_heading_and_one_viewer_line_per_seat() {
+        let sim_ai = Path::new("/pkg/Contents/Helpers/sim_ai");
+        let run_dir = Path::new("/data/ShadowScale/runs/run-1757600000-42");
+        let body = viewer_recipe(sim_ai, run_dir, &[HUMAN_FACTION_ID, 1]);
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                VIEWER_RECIPE_HEADING,
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 0 --out /data/ShadowScale/runs/run-1757600000-42/seat_0.html",
+                "/pkg/Contents/Helpers/sim_ai viewer /data/ShadowScale/runs/run-1757600000-42 \
+                 --seat 1 --out /data/ShadowScale/runs/run-1757600000-42/seat_1.html",
+            ]
+        );
+        assert!(body.ends_with('\n'), "every line is terminated");
+        assert_eq!(
+            viewer_recipe(sim_ai, run_dir, &[]),
+            format!("{VIEWER_RECIPE_HEADING}\n"),
+            "no seats is the heading alone"
+        );
     }
 
     /// A run id sorts by its start time, which is what pruning by name relies on.

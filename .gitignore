@@ -29,3 +29,5 @@ __pycache__/
 
 # Per-launch client git build stamp written by scripts/run_stack.sh (like the ports file).
 clients/godot_thin_client/build_stamp.txt
+# Recorded runs written by scripts/run_stack.sh (`SIM_RECORD_DIR`, under runs/run-<secs>-<pid>/record).
+/runs/
