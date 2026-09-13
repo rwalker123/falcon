@@ -3189,6 +3189,12 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     var pending := bool(effective.get("pending", false))
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
     var wants_mark := coverage_line != ""
+    # **AND WHETHER ITS GEAR REACHES THE HANDS ON IT** — a SECOND, independent shortfall on the same
+    # card (`docs/plan_standing_upkeep.md`; the sim folded the standing pools into the band item
+    # budget, so `agriculture` / `husbandry` / `builders` publish a derived keeping kit and a real
+    # hoe/crook reach). It rendered NOWHERE before this: these rows are filtered off the work board,
+    # so the `kit_note` path that states it on a forage or hunt row never sees them.
+    var kit_line := _pool_kit_short_line(band, kind, effective)
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -3199,11 +3205,35 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
     # The coverage sentence joins the role's own description rather than replacing it: what the pool
     # DOES is the answer to "how much do I need", and the figures are meaningless without it.
-    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line])
+    # ⛔ **THE GEAR SHORTFALL IS ON THE HOVER — SENTENCE *AND* MARK — AND THAT IS MEASURED, NOT
+    # PREFERRED.** The intent was the work rows' `◆` beside the name, the way the work-bill `⚠` sits
+    # there. **It does not fit, at any packing.** This block's contract is that a card's minimum is
+    # its STEPPER's and never its name row's (`_assert_pool_cards_are_level`), which puts the floor at
+    # **83px**, and the name row is already at that ceiling with one mark. Three placements were built
+    # and measured on the drawn card:
+    #
+    #   - two `Label`s beside the name, the row's own separation between them — **96px**
+    #   - both glyphs packed into ONE run, no separation — **92px**
+    #   - the gear glyph on the STEPPER row instead — **94px**
+    #
+    # Each took the four-card row past the left dock's 356px box (by 7, 3 and 16px), and each broke
+    # the levelness claim. **The block may not grow to make room**: four cards already ran 42px over
+    # at the shared name size, which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every
+    # `POOL_STEPPER_*` metric, and a second ROW costs 62px the work zone's floor cannot find.
+    #
+    # **WHAT THE CARD DOES SAY AT A GLANCE IS ITS TITLE'S INK** (below), which costs no width: a pool
+    # short of its tools reads in the WARN amber exactly as one short of hands or mid-edit does. The
+    # figures, and which of the two shortfalls it is, are on the hover — the rule the work-bill mark
+    # already follows here (*"the card is a role name over a stepper and has no room for
+    # arithmetic"*).
+    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, kit_line])
     # **THE META IS THE MARK, and the mark is now the coverage answer** — every harness reads it to ask
     # *is this card marked*, which is the question the `⚠` answers, and the composer that decides the
     # sentence is the same one that decides the glyph.
     card.set_meta(POOL_CARD_SHORT_META, wants_mark)
+    # …and the gear answer on its own meta, carrying the SENTENCE rather than a flag: a harness asking
+    # *what does that mark say* must not re-compose the wording it is checking.
+    card.set_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, kit_line)
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     card.add_child(col)
@@ -3214,7 +3244,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
     title.add_theme_color_override("font_color",
-        HudStyle.WARN if pending or wants_mark else HudStyle.INK)
+        HudStyle.WARN if pending or wants_mark or kit_line != "" else HudStyle.INK)
     if not wants_mark:
         col.add_child(title)
     else:
@@ -3225,11 +3255,12 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         var name_row := HBoxContainer.new()
         name_row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
         name_row.add_child(title)
-        var mark := Label.new()
-        mark.text = HudWorkVocab.UPKEEP_POOL_SHORT_MARK
-        mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
-        mark.add_theme_color_override("font_color", HudStyle.WARN)
-        name_row.add_child(mark)
+        # ⛔ **TWO MARKS, APPENDED AND NEVER SUBSTITUTED.** A pool can be short of HANDS and short of
+        # TOOLS in the same turn, and the two have opposite remedies — one is a stepper away, the
+        # other is the bench — so each keeps its own glyph and a card wearing both says both. The
+        # gear one is `HudWorkVocab.KIT_SHORT_MARK`, the SAME `◆` the work rows fly: one thing means
+        # *short of gear* across this client, which is why that glyph was chosen to twin nothing else.
+        name_row.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK))
         col.add_child(name_row)
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
@@ -3251,6 +3282,47 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     })
     col.add_child(stepper)
     return card
+
+## One mark beside a pool card's name, at the name's own size and in the WARN amber both shortfalls
+## wear. Shared so the two cannot be drawn at different sizes on one row.
+##
+## **IT WEARS `WORK_ROW_MARKS_META`, the work row's own handle**, because it is the same kind of node
+## answering the same question — *which marks is this thing flying* — and a harness must identify it
+## by handle rather than by text: the glyph is what is under test, so matching on it would assert the
+## string the caller just passed in.
+func _pool_card_mark(glyph: String) -> Label:
+    var mark := Label.new()
+    mark.text = glyph
+    mark.set_meta(HudWorkVocab.WORK_ROW_MARKS_META, glyph)
+    mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
+    mark.add_theme_color_override("font_color", HudStyle.WARN)
+    mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return mark
+
+## **HOW FAR A STANDING POOL'S OWN GEAR REACHES** — `KitRoster.shortfall_sentence`'s line, or `""`.
+##
+## The sim folded the standing pools into the band item budget, so `agriculture` / `husbandry` /
+## `builders` publish a DERIVED keeping kit on their row and a real hoe/crook reach beside it
+## (`LaborAllocation::row_kit`). **It rendered nowhere**: `_work_source_models` admits only forage and
+## hunt rows, so the `kit_note` path never sees a pool — the same *"I am getting no messages
+## anywhere"* this arc began with, one surface over.
+##
+## **THE ROW'S OWN PRODUCER, WITH NO SPECIAL CASE.** `_work_row_kit_note` is the one that states a
+## work row's shortfall, and every gate it already carries is the gate a pool needs:
+## - **`kit_workers_holding == workers` is silence**, which is also what an ITEMLESS kit publishes —
+##   so `roadwork` and `quarrywork`, whose rows stay on `kit_choice` (`none`), fall silent on the
+##   equality rather than on a branch naming them. That is asserted, not assumed.
+## - **a kit this roster cannot name is silence**, and
+## - **an unstaffed pool has no row at all**, so `row_coverage` answers `{}`.
+##
+## ⛔ **PENDING IS THIS FUNCTION'S OWN GATE, because `role_assignment_of` reads the CONFIRMED row.**
+## The work board gets this free — `effective_worker_map` drops the key on a pending source — and a
+## pool has no such merge, so the `+` the player just pressed would otherwise be answered with the
+## coverage of the staffing they have left behind.
+func _pool_kit_short_line(band: Dictionary, kind: String, effective: Dictionary) -> String:
+    if bool(effective.get("pending", false)):
+        return ""
+    return _work_row_kit_note(HudBandLaborState.role_assignment_of(band, kind))
 
 ## **THE BAND'S BUILD QUEUE, IN THE BAND'S OWN ORDER** — its `PopulationCohortState.buildQueue`
 ## entries joined to the work-source models, in wire order (`docs/plan_standing_upkeep.md` §4.9

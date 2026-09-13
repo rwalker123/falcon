@@ -3720,6 +3720,28 @@ func _render_upkeep_mode_states() -> void:
 	_report_zone_content_extent("band_panel_upkeep_mode_priority")
 	_assert_pools_block("the tall LEFT dock", true)
 	_assert_pool_cards_are_level("the tall LEFT dock")
+
+	# **A STANDING POOL CAN BE SHORT OF ITS TOOLS, AND UNTIL NOW IT SAID SO NOWHERE.** The sim folded
+	# the pools into the band item budget, so `agriculture` / `husbandry` / `builders` publish a
+	# DERIVED keeping kit and a real hoe/crook reach — and those rows are filtered off the work board,
+	# so the `kit_note` path that states a shortfall on a forage or hunt row never sees them. This is
+	# the same *"I am getting no messages anywhere"* the arc began with, one surface over.
+	#
+	# **FOUR CARDS, FOUR DIFFERENT ANSWERS, ONE FRAME** — which is the claim, because a client that
+	# marked every card and one that marked none are the same picture at a glance.
+	_push_bands([_pool_gear_band_fixture()])
+	await _settle()
+	await _save("band_panel_pool_kit_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_pool_cards_are_level("the pool gear frame")
+	_assert_pool_kit_marks()
+	# ⛔ **THE BAND GOES BACK, because the dock states below re-render the POOLS block and push NO
+	# band of their own.** Order is load-bearing in this file: leaving this fixture standing had the
+	# BOTTOM-dock and TWO-COLUMN claims measuring a band they were never written about, and they
+	# failed there rather than here — several hundred lines from the state that changed.
+	_push_bands([_keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_PRIORITY)])
+	await _settle()
 	# …and the BOTTOM dock, so the block's height is in the MEASURED budget rather than only in the
 	# arithmetic — that is the 300px box the work zone's whole chrome has to fit inside.
 	#
@@ -4684,6 +4706,127 @@ func _keeping_pool_herd_fixtures() -> Array:
 	var herds := _under_herded_work_herd_fixtures(KEEPING_POOL_HERD_SUPPLIED)
 	_set_keeper_demand(herds[0], KEEPING_POOL_HERD_DEMAND, KEEPING_POOL_HERD_SUPPLIED)
 	return herds
+
+## The four pool rows the gear frame is built from, each staging ONE of the four answers a card can
+## give. They ride `_keeping_pool_band_fixture`'s world, which is short of KEEPERS on both webs — so
+## the work-bill `⚠` is already live on the two keeping cards and the gear mark has something to be
+## told apart FROM.
+##
+## ⛔ **`ROADWORK` IS THE CONFIRMATION, NOT A SPECIAL CASE.** `LaborAllocation::row_kit` leaves it on
+## `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers` for it and the
+## client falls silent on the EQUALITY — the same test that silences a covered pool. If it ever
+## marked, the equality contract would be what broke, not a missing branch naming this role.
+const POOL_GEAR_KEEPER_CREW := 1
+## The BUILDERS pool: three hands, one complete Tillage kit. It is the card that wears the gear mark
+## ALONE — `_build_pools_block` passes it no `cover` at all, so it can never fly the work-bill one.
+const POOL_GEAR_BUILDERS_CREW := 3
+const POOL_GEAR_BUILDERS_ARMED := 1.0
+const POOL_GEAR_ROADWORK_CREW := 2
+
+## The band those four rows belong to. It keeps `_keeping_pool_band_fixture`'s source rows and its
+## short keeping demand; what it adds is the per-row gear pair the sim now publishes on a pool.
+func _pool_gear_band_fixture() -> Dictionary:
+	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
+	band["entity"] = 963
+	band["id"] = "Band 25"
+	var rows: Array = []
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
+		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
+			# HANDS SHORT, TOOLS FINE — every keeper on it holds a Tillage kit.
+			row["kit_id"] = BandFx.KIT_ID_TILLAGE
+			row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = float(POOL_GEAR_KEEPER_CREW)
+		elif String(row.get("kind", "")) == HudConst.LABOR_KIND_HUSBANDRY:
+			# SHORT OF BOTH — the card that has to say two things at once.
+			row["kit_id"] = BandFx.KIT_ID_HURDLING
+			row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = 0.0
+		rows.append(row)
+	# The two pools `_keeping_pool_band_fixture` does not staff, added here because the frame is about
+	# what a POOL card says and an unstaffed pool has no row to say it with.
+	rows.append({"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_GEAR_ROADWORK_CREW,
+		"kit_id": BandFx.KIT_ID_NONE,
+		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(POOL_GEAR_ROADWORK_CREW)})
+	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW,
+		"kit_id": BandFx.KIT_ID_TILLAGE,
+		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: POOL_GEAR_BUILDERS_ARMED})
+	band["labor_assignments"] = rows
+	return band
+
+## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
+## `KitRoster.shortfall_sentence`** — the material-short guard's rule: an expectation re-derived
+## through the code under test collapses with it. It is also what pins *"one phrasing wherever gear
+## runs short"*, this being the compose sheets' and the work rows' own `KIT_SHORTFALL_FORMAT`.
+func _pool_gear_sentence(held: int, crew: int, kit_id: String) -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [held, crew,
+		KitRoster.display_name_for_id(BandFx.kit_roster_fixture(), kit_id)
+			+ HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+
+## What one pool card is flying, as the pair of answers it publishes: `{work, gear}` — the work-bill
+## boolean and the gear SENTENCE. Read off the card's own metas, never off the glyphs, which is
+## `_assert_pool_card_marks`' rule and for its reason.
+func _pool_card_answers(role_name: String) -> Dictionary:
+	var card := _find_pool_card(role_name)
+	if card == null:
+		return {}
+	return {
+		"work": bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)),
+		"gear": String(card.get_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, "")),
+	}
+
+## GUARD: **THE FOUR ANSWERS A POOL CARD CAN GIVE, ASSERTED AS A SET ON ONE FRAME.**
+##
+## A pool can be short of HANDS and short of TOOLS at once, and the two have opposite remedies — one
+## is a stepper away, the other is the bench — so they are two marks and not one. Any one of these
+## claims alone passes a client that marks everything or nothing; together they are the picture.
+##
+## ⛔ **AND THE GEAR GLYPH IS THE WORK ROWS’, NOT A SECOND ONE INVENTED FOR THIS SURFACE.** Asserted
+## against `HudWorkVocab.KIT_SHORT_MARK` and against its being distinct from the work-bill mark: one
+## thing means *short of gear* across this client, which is why that glyph twins nothing else.
+func _assert_pool_kit_marks() -> void:
+	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
+	var both := _pool_card_answers(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	var itemless := _pool_card_answers(HudWorkVocab.ROLE_NAME_ROADWORK)
+	var gear := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
+	if hands.is_empty() or both.is_empty() or itemless.is_empty() or gear.is_empty():
+		_fail("pool gear — the POOLS block is missing one of its four cards")
+		return
+	var want_gear := _pool_gear_sentence(int(POOL_GEAR_BUILDERS_ARMED), POOL_GEAR_BUILDERS_CREW,
+		BandFx.KIT_ID_TILLAGE)
+	_assert_band_panel("pool gear — a pool short of its TOOL states the count: \"%s\" (got \"%s\")"
+		% [want_gear, String(gear["gear"])], String(gear["gear"]) == want_gear)
+	_assert_band_panel("pool gear — …and that card flies NO work-bill mark, the two being different news",
+		not bool(gear["work"]))
+	_assert_band_panel("pool gear — a pool short of HANDS flies the work mark and no gear one (\"%s\")"
+		% String(hands["gear"]), bool(hands["work"]) and String(hands["gear"]) == "")
+	var want_both := _pool_gear_sentence(0, POOL_GEAR_KEEPER_CREW, BandFx.KIT_ID_HURDLING)
+	_assert_band_panel("pool gear — a pool short of BOTH flies both, distinguishably: \"%s\" (got \"%s\")"
+		% [want_both, String(both["gear"])],
+		bool(both["work"]) and String(both["gear"]) == want_both)
+	_assert_band_panel("pool gear — …and a pool on an ITEMLESS kit flies neither (\"%s\")"
+		% String(itemless["gear"]),
+		not bool(itemless["work"]) and String(itemless["gear"]) == "")
+	# **THE GLYPH IS THE WORK ROWS’ OWN**, and it is not the work-bill mark. Both halves, because a
+	# surface that reused `⚠` here would satisfy every claim above.
+	_assert_band_panel("pool gear — …and the mark is the client’s ONE gear glyph, not the work-bill ⚠",
+		HudWorkVocab.KIT_SHORT_MARK != HudWorkVocab.UPKEEP_POOL_SHORT_MARK)
+	# ⛔ **AND THE CARD SAYS SO AT A GLANCE IN ITS TITLE'S INK, because the GLYPH DOES NOT FIT.** The
+	# intent was the work rows' `◆` beside the name; three placements were built and measured on the
+	# drawn card — two `Label`s (96px), one packed run (92px), the stepper row (94px) — against this
+	# block's 83px floor, and each took the four-card row past the left dock's 356px box. The sentence
+	# and the mark are on the hover; what costs no width is the ink, so that is what is asserted here.
+	var builders_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS),
+		HudWorkVocab.ROLE_NAME_BUILDERS)
+	_assert_band_panel("pool gear — …and the gear-short card's NAME takes the WARN amber (%s)"
+			% ("found" if builders_title != null else "no title Label on the card"),
+		builders_title != null \
+			and builders_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
+	# …and the calm card's does not, or "the ink says short" is satisfied by a block that reddens
+	# every title it draws.
+	var roadwork_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK),
+		HudWorkVocab.ROLE_NAME_ROADWORK)
+	_assert_band_panel("pool gear — …while the card with nothing to say keeps the calm ink",
+		roadwork_title != null \
+			and roadwork_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK))
 
 ## GUARD: the fund-mode control states the band's OWN mode, offers both, and quotes the pool's
 ## arithmetic — asserted together, since a control that lit no button and one that lit both are the

@@ -2563,6 +2563,72 @@ every configuration with the INSPECTOR open and never the queue, while the queue
 strip only at `DOCKROW_CANVAS`, so this was the gap between two disjoint frame families for the fourth
 time in this file's history.
 
+### ⛔ A POOL CAN BE SHORT OF ITS TOOLS, AND IT SAID SO NOWHERE
+
+The sim folded the standing pools into the band item budget, so `agriculture` / `husbandry` /
+`builders` publish a **derived** keeping kit on their labor row (`LaborAllocation::row_kit` — the
+web's `keeping_kit_for`, the queue head's `builders_kit`) and a real hoe/crook reach beside it. **The
+client rendered none of it**: `_work_source_models` admits only forage and hunt rows, so the
+`kit_note` path that states a shortfall on a work row never sees a pool. Same *"I am getting no
+messages anywhere"* the arc began with, one surface over.
+
+- **The producer is the work row's own, with no special case.** `_pool_kit_short_line` hands
+  `HudBandLaborState.role_assignment_of(band, kind)` — the band-wide twin of the three
+  `*_assignment_of` lookups — to `_work_row_kit_note`. Every gate that function already carries is
+  the gate a pool needs: `kitWorkersHolding == workers` is silence, a kit the roster cannot name is
+  silence, and an unstaffed pool has no row for `row_coverage` to read.
+- ⛔ **PENDING IS THE ONE GATE THIS PATH ADDS**, because `role_assignment_of` reads the CONFIRMED
+  row. A work row gets it free (`effective_worker_map` drops the key on a pending source); a pool has
+  no such merge, so a `+` the player just pressed would otherwise be answered with the coverage of
+  the staffing they left behind.
+- **`roadwork` and `quarrywork` fall silent on the EQUALITY, not on a branch naming them.** `row_kit`
+  leaves them on `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers`
+  and the same test that silences a covered pool silences them. Asserted on the frame rather than
+  assumed — if one ever marked, the equality contract is what broke.
+- **`POOL_CARD_KIT_SHORT_META` carries the SENTENCE, not a flag**, and is a second meta rather than a
+  value on `POOL_CARD_SHORT_META` for that meta's own stated reason: it is read as a boolean meaning
+  *is this pool short of HANDS*, and a gear shortfall wearing it would answer yes to a question about
+  the work bill.
+
+#### ⛔ THE `◆` MARK DOES NOT FIT THIS BLOCK — THREE PLACEMENTS, ALL MEASURED
+
+The intent was the work rows' own `◆` beside the name, the way the work-bill `⚠` sits there. **It
+does not fit at any packing.** This block's contract is that a card's minimum is its STEPPER's and
+never its name row's (`_assert_pool_cards_are_level`), which puts the floor at **83px**, and the name
+row is already at that ceiling with one mark:
+
+| Placement | Card | Over the left dock's 356px box |
+|---|---|---|
+| two `Label`s beside the name, row separation between | 96px | 7px |
+| both glyphs packed into ONE run, no separation | 92px | 3px |
+| the gear glyph on the STEPPER row instead | 94px | 16px |
+
+**The block may not grow to make room.** Four cards already ran 42px over at the shared name size —
+which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every `POOL_STEPPER_*` metric — and
+a second row costs 62px the work zone's floor cannot find.
+
+**So the sentence and the mark are both on the HOVER, and what the card says at a glance is its
+TITLE'S INK**, which costs no width: a pool short of its tools reads in the WARN amber exactly as one
+short of hands, or one mid-edit, already does. That is the same rule the work-bill mark on this card
+follows for its own figures (*"the card is a role name over a stepper and has no room for
+arithmetic"*).
+
+> **WHAT THAT COSTS, stated because it is a real gap.** *Short of hands* and *short of tools* have
+> opposite remedies — a stepper against the bench — and on this block they are **not distinguishable
+> without hovering**: a gear-short card and a hands-short card are both an amber name, and only the
+> `⚠` (hands) separates them. On the work rows the two are told apart by glyph (`◆` against `⚠`).
+> Closing it needs either width this block does not have or a substitution rule it was explicitly not
+> given.
+
+**Frame:** `band_panel_pool_kit_short` — four cards, four different answers, one frame, because a
+client that marks every card and one that marks none are the same picture at a glance. Agriculture is
+short of HANDS only, Husbandry of BOTH, Roadwork of neither (the itemless confirmation), Builders of
+TOOLS only — that last one being the card that can never fly the work-bill mark, since
+`_build_pools_block` passes it no `cover` at all. The state re-pushes the fund-mode band afterwards:
+the dock states below it re-render this block and push no band of their own, so leaving the fixture
+standing failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that
+changed.
+
 ## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
 `docs/plan_standing_upkeep.md` §2.5. Maintenance is a band-level standing role now, so the band zone

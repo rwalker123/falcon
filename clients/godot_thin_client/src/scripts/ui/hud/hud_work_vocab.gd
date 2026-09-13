@@ -1166,6 +1166,16 @@ const KIT_SHORT_MARK := "◆"
 ## flown* and a claim about *which Label flew it* are the same read.
 const WORK_ROW_MARKS_META := &"work_row_marks"
 
+## **A POOL CARD'S GEAR-SHORTFALL SENTENCE, ON THE CARD AS META** — `KitRoster.shortfall_sentence`'s
+## line, or `""` for a pool with nothing to be short of. The card DRAWS only the `◆`; the sentence is
+## on its hover, so this is what a harness asks *what does that mark say* without re-composing the
+## wording it is checking.
+##
+## It is a second meta rather than a value on `POOL_CARD_SHORT_META` for that meta's own stated
+## reason: that one is read as a BOOLEAN meaning *is this pool short of HANDS*, and a gear shortfall
+## wearing it would answer yes to a question about the work bill.
+const POOL_CARD_KIT_SHORT_META := &"pool_card_kit_short"
+
 const WORK_ROW_MARKS_WIDTH := 20.0
 
 ## The SOURCE-RUNG slot, immediately left of the policy/⚠ marks. Sized like `WORK_ROW_ICON_WIDTH` —

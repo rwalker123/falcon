@@ -1314,6 +1314,21 @@ func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 		return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
 	return {"workers": workers_for_role(band, kind), "pending": false}
 
+## **THE BAND'S STANDING ROW FOR ONE ROLE, RAW** — `{}` when the role is unstaffed. The band-wide
+## twin of `forage_assignment_of` / `hunt_assignment_of` / `extract_assignment_of`, and it exists for
+## their reason: the POOLS cards need the row's own published gear pair (`kit_workers_holding` over
+## `workers`) and `workers_for_role` below throws everything but the head count away.
+##
+## ⛔ **IT IS THE CONFIRMED ROW, SO A CALLER MUST ASK `effective_role_workers` ABOUT PENDING.** The
+## overlay is not merged here — a `+` on a pool moves the very denominator its coverage is a fraction
+## of, and the settled pair then describes a staffing the band no longer has, which is exactly why
+## `effective_worker_map` drops the key on a pending source row rather than carrying it through.
+static func role_assignment_of(band: Dictionary, kind: String) -> Dictionary:
+	for entry in labor_assignments_of(band):
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
+			return entry
+	return {}
+
 ## Workers currently on a band-wide role (scout/warrior); 0 when unstaffed. The role sibling of
 ## `workers_for_forage` / `workers_for_hunt`.
 func workers_for_role(band: Dictionary, kind: String) -> int:
