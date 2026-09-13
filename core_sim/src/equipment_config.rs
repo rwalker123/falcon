@@ -1336,9 +1336,18 @@ impl KitCoverage {
 /// # An item NOTHING asks for is not rationed
 ///
 /// Demand of zero means no budgeted row carries the item, so the caller asking about it is the only
-/// claimant and gets the band's whole live stock. That is what keeps a detached party (whose
-/// allocation is empty) and the builders' pool (whose kit is resolved from the build queue rather
-/// than from a row) reading exactly what the ledger-wide [`EquipmentConfig::coverage`] gave them.
+/// claimant and gets the band's whole live stock. That is what keeps a **detached party** — whose
+/// allocation is empty, and which works no source rows — reading exactly what the ledger-wide
+/// [`EquipmentConfig::coverage`] gave it.
+///
+/// ⛔ **THE BUILDERS' POOL USED TO BE THE SECOND EXAMPLE HERE, AND IS NOT ONE.** This paragraph read
+/// *"…and the builders' pool (whose kit is resolved from the build queue rather than from a row)"*,
+/// which was true only while `kitted_rows` resolved that row through
+/// [`crate::components::LaborAssignment::kit_choice`] and got `default_kits.builders` — `none`. The
+/// pool is a budgeted claimant now: [`crate::components::LaborAllocation::row_kit`] registers the
+/// head entry's kit over the whole pool and `systems::labor::BuildersGear::for_source` cuts from
+/// that row's share. Four shipped kits serve `builders` **and** a role job, so leaving it here
+/// issued one stock twice.
 #[derive(Debug, Clone, Default)]
 pub struct BandItemBudget {
     /// Workers wanting each item, summed over the rows that carry it. A `Vec` walked linearly

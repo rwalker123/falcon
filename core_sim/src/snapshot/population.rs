@@ -806,13 +806,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .coverage(choice, job_workers(job) as f32, &kit)
     };
     let hunt_coverage = coverage_for(crate::equipment_config::KitJob::Hunt, &hunt_choice);
-    // **THE KIT EACH WORK ROW IS PRICED AT, AND HOW FAR THAT KIT REACHES — ONE MATCH, ONE ARM PER
-    // ROW KIND**, in `assignments` order. The two halves are resolved in the same arm because the
-    // defect this shape exists to prevent is them answering about *different* kits: the builders'
-    // row was kitted from the build queue here and then cut a share of a budget that had resolved
-    // that same row as `default_kits.builders` (`none`), so the row put **no demand** on the very
-    // item it was then issued a share of — a band owning six hoes published twelve workers holding
-    // them.
+    // **THE KIT EACH WORK ROW IS PRICED AT, AND HOW FAR THAT KIT REACHES — ONE EXPRESSION FOR EVERY
+    // ROW**, in `assignments` order. The two halves are resolved together because the defect this
+    // shape exists to prevent is them answering about *different* kits: the builders' row was
+    // kitted from the build queue here and then cut a share of a budget that had resolved that same
+    // row as `default_kits.builders` (`none`), so the row put **no demand** on the very item it was
+    // then issued a share of — a band owning six hoes published twelve workers holding them.
+    //
+    // ⛔ **THE BUILDERS ROW NEEDS NO ARM OF ITS OWN NOW.** Its kit and the budget's are the one
+    // resolution ([`crate::components::LaborAllocation::row_kit`], which the budget is struck from),
+    // and `systems::labor::BuildersGear::for_source` arms the pool off that same share rather than
+    // off the whole ledger — so the published reach is the reach the turn grants, which is what wire
+    // equals take means here.
     //
     // Resolved here rather than per readout because both of this section's gear readouts fold out of
     // it: the per-row `kitWorkersHolding` below and the per-item pair on `kitItemConditions`. One
@@ -830,40 +835,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .iter()
                 .map(|assignment| {
                     let workers = assignment.workers as f32;
-                    match assignment.target {
-                        // ⛔ **THE BUILDERS ROW IS DELIBERATELY NOT CUT FROM THE BUDGET, BECAUSE
-                        // ITS TAKE IS NOT EITHER.** `systems::labor::BuildersGear::for_source` arms
-                        // the builders' pool off the band's **whole** ledger — the scope boundary
-                        // `equipment.md` records under "ONE BAND, ONE SET OF GEAR" — so a budget
-                        // share published here would state a reach the turn does not grant. Wire
-                        // equals take is the invariant, and this arm is where it is kept: the row's
-                        // kit is the queue's (`builders_kit`, the same resolution it publishes as
-                        // `kitId`) and its coverage is that kit over the same whole ledger the pool
-                        // will actually be armed from.
-                        //
-                        // ⛔ **THE FIX IS NOT TO TEACH `kitted_rows` ABOUT BUILDERS.** That would
-                        // make this row eat demand from the rows beside it while its own take still
-                        // armed off the whole ledger — a visible over-issue traded for a silent
-                        // under-issue on every other row.
-                        LaborTarget::Builders => {
-                            let row_kit = alloc.builders_kit(kit_levers.config);
-                            let coverage = kit_levers.config.coverage(&row_kit, workers, &kit);
-                            (row_kit, coverage)
-                        }
-                        // **Every other row is a budgeted claimant**, so it is kitted with exactly
-                        // what `kitted_rows` struck the demand with (`kit_choice`) and reaches only
-                        // as far as its **share** of the stock.
-                        _ => {
-                            let row_kit = assignment.kit_choice(kit_levers.config);
-                            let coverage = kit_levers.config.coverage_from_units(
-                                &row_kit,
-                                workers,
-                                &kit,
-                                budget.share_for(workers, &kit, kit_levers.config),
-                            );
-                            (row_kit, coverage)
-                        }
-                    }
+                    let row_kit = alloc.row_kit(assignment, kit_levers.config);
+                    let coverage = kit_levers.config.coverage_from_units(
+                        &row_kit,
+                        workers,
+                        &kit,
+                        budget.share_for(workers, &kit, kit_levers.config),
+                    );
+                    (row_kit, coverage)
                 })
                 .collect()
         })

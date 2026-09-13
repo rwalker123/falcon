@@ -4370,7 +4370,8 @@ impl LaborAllocation {
     ///
     /// **Every row counts, band-wide roles included**: a Scout or a Warrior row is an ordinary
     /// assignment holding ordinary head count, and its wayfinding gear is as much the band's as the
-    /// hunters' spears.
+    /// hunters' spears. **The standing pools count too** — see [`Self::row_kit`] for the rows whose
+    /// kit is not stored on them.
     pub fn item_budget(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -4393,8 +4394,10 @@ impl LaborAllocation {
     /// would come back short of the take it is predicting. A source with no row yet simply has
     /// nothing to drop, which is why the same call serves both cases.
     ///
-    /// It resolves each kit through [`LaborAssignment::kit_choice`], exactly as [`Self::item_budget`]
-    /// does, so a prospective row and a committed one are struck against the identical denominator.
+    /// It resolves each kit through [`Self::row_kit`], exactly as [`Self::item_budget`] does, so a
+    /// prospective row and a committed one are struck against the identical denominator. **A
+    /// standing pool passes its own role row here**, which is what lets the pool re-strike its share
+    /// at the kit and head count it actually put on the ground.
     pub fn rows_excluding_source(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -4414,8 +4417,68 @@ impl LaborAllocation {
         self.assignments
             .iter()
             .filter(|assignment| keep(&assignment.target))
-            .map(|assignment| (assignment.kit_choice(config), assignment.workers as f32))
+            .map(|assignment| (self.row_kit(assignment, config), assignment.workers as f32))
             .collect()
+    }
+
+    /// **THE KIT ONE ROW'S PEOPLE ACTUALLY HOLD** — the single resolution the band's item budget is
+    /// struck from, the row's share is cut with, and the wire publishes as `kitId`.
+    ///
+    /// ⛔ **A STANDING POOL'S KIT IS NOT STORED ON ITS ROW, AND ASKING
+    /// [`LaborAssignment::kit_choice`] FOR IT IS THE BUG THIS SEAM EXISTS TO CLOSE.**
+    /// `assign_labor` refuses a `kit` token on `builders` / `agriculture` / `husbandry` /
+    /// `roadwork`, so every one of those rows stores `None` and `kit_choice` answers
+    /// `default_kits.<job>` — `none` in all four cases. A row resolved that way puts **no demand**
+    /// on the very items its pool is out with, so the pool armed off the band's whole ledger beside
+    /// a budget that had never heard of it: six hoes arming six builders **and** six keepers, which
+    /// is the last place *"one band, one set of gear"* was broken in the take rather than merely
+    /// mis-reported.
+    ///
+    /// - **`builders`** resolves [`Self::builders_kit`] — the **head** entry's kit, because all
+    ///   hands go on the head, so at any instant the pool funds one queue entry and its demand is
+    ///   `builders` workers on that entry's kit, registered **once**. Registering one reading per
+    ///   branch would count the same people twice, which is the error on the demand side.
+    /// - **`agriculture` / `husbandry`** resolve the web's derived keeping kit
+    ///   ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`] with no site override) —
+    ///   `tillage` and `hurdling`. The *selection* is still per work site
+    ///   ([`LaborAssignment::upkeep_kit`]); what this row states is the derivation every site
+    ///   departs from, and `systems::labor::keeping_rates` re-strikes each kit group's share off
+    ///   this row through [`Self::rows_excluding_source`], so a site that named something else is
+    ///   priced at what it named rather than at this default.
+    /// - **`roadwork` / `quarrywork`** fall through to `kit_choice`, and that is a property of the
+    ///   roster rather than of this seam: every tool serving those two webs declares a `rung`
+    ///   (`earthmoving` on `route:dirt_road`, `stone_dressing` on `route:paved_road` /
+    ///   `extraction:quarry`), a role row stands on **no** rung, and
+    ///   [`crate::equipment_config::EquipmentEffect::serves_build`] refuses a rung-bound tool where
+    ///   no rung was named — so the derivation has nothing to answer and `none` is the honest
+    ///   reading. Their pools are still **cut** from this budget; what they cannot do is register
+    ///   against it.
+    ///
+    /// Every other row keeps [`LaborAssignment::kit_choice`]: its kit really is stored on it.
+    pub fn row_kit(
+        &self,
+        assignment: &LaborAssignment,
+        config: &crate::equipment_config::EquipmentConfig,
+    ) -> crate::equipment_config::KitChoice {
+        /// **A ROLE ROW STANDS ON NO RUNG** — the pool is the band's, and the rung is the site's.
+        const NO_RUNG_ON_A_ROLE_ROW: Option<&str> = None;
+        /// **NO SITE OVERRIDE IS IN HAND HERE** — the row states the web's derivation, and the
+        /// override lives on the worked source's own row.
+        const NO_SITE_OVERRIDE: Option<&crate::equipment_config::KitChoice> = None;
+        match assignment.target {
+            LaborTarget::Builders => self.builders_kit(config),
+            LaborTarget::Agriculture => config.keeping_kit_for(
+                NO_SITE_OVERRIDE,
+                crate::intensification::RungBranch::Plant,
+                NO_RUNG_ON_A_ROLE_ROW,
+            ),
+            LaborTarget::Husbandry => config.keeping_kit_for(
+                NO_SITE_OVERRIDE,
+                crate::intensification::RungBranch::Animal,
+                NO_RUNG_ON_A_ROLE_ROW,
+            ),
+            _ => assignment.kit_choice(config),
+        }
     }
 
     /// **The kit staffed on a SINGLETON source**, resolved through the same seam every priced row

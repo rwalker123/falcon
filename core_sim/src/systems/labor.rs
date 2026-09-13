@@ -331,6 +331,26 @@ struct BuildersGear<'a> {
     band_kit: &'a BandEquipment,
     /// The whole pool, since all hands go on the head.
     builders: u32,
+    /// **THE BAND'S OTHER ROWS, THE DEMAND THIS POOL IS RATIONED AGAINST**
+    /// ([`crate::components::LaborAllocation::rows_excluding_source`] at
+    /// [`LaborTarget::Builders`]).
+    ///
+    /// ⛔ **THE POOL IS A BUDGETED CLAIMANT NOW, AND BOTH ENDS MOVED TOGETHER.** It used to arm off
+    /// the band's **whole** ledger while putting no demand into
+    /// [`crate::components::LaborAllocation::item_budget`] — and four shipped kits serve `builders`
+    /// *and* a role job (`tillage`, `hurdling`, `roadbuilding`, `paving`), so six hoes really did
+    /// arm six builders and six keepers at once. Registering the demand without cutting the take
+    /// would have starved the rows beside it; cutting the take without registering the demand would
+    /// have under-armed the pool against a denominator that never counted it. See
+    /// [`crate::components::LaborAllocation::row_kit`] for the one resolution both ends read.
+    ///
+    /// **The row itself is excluded, and the ask is chained on per source**
+    /// ([`crate::equipment_config::BandItemBudget::with_prospective_row`]) — the *"a prospective row
+    /// competes exactly as a committed one does"* seam. On the **head**, whose kit is the one the
+    /// row registered, that is arithmetically the committed budget, so the wire and the take state
+    /// one number. On an entry further down the queue — which banks nothing and is only *dated* —
+    /// it is what that entry would be armed at when the pool reaches it.
+    other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
     /// **The entries that named a kit of their own**, keyed by source.
     ///
     /// A plain `Vec` walked linearly rather than a map: a band's queue is a handful of entries and
@@ -368,11 +388,13 @@ impl<'a> BuildersGear<'a> {
         build_queue: &[crate::components::BuildQueueEntry],
         builders: u32,
         band_kit: &'a BandEquipment,
+        other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
     ) -> Self {
         Self {
             equipment,
             band_kit,
             builders,
+            other_rows,
             // **Only the entries that named a kit are recorded** — everything else is served by the
             // roster's own answer for the job in front of it, which is the same kit it would resolve
             // to. The *pricing* is not done here: it depends on the rung, which is a fact about the
@@ -431,10 +453,22 @@ impl<'a> BuildersGear<'a> {
             };
         };
         // **The coverage is over the POOL**, so the rate the wire publishes and the rate the accrual
-        // is struck at are one number for the whole band.
-        let coverage = self
-            .equipment
-            .coverage(&kit, self.builders as f32, self.band_kit);
+        // is struck at are one number for the whole band — **and it is cut from the pool's SHARE of
+        // the band's gear, not from the ledger** ([`Self::other_rows`]). The `builders` row is the
+        // claimant, so it is excluded and the ask chained back on: on the head that is the committed
+        // budget exactly, and everything below it is dated at what it would be armed with.
+        let pool = self.builders as f32;
+        let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+            self.other_rows.iter().map(|(kit, workers)| (kit, *workers)),
+            &kit,
+            pool,
+        );
+        let coverage = self.equipment.coverage_from_units(
+            &kit,
+            pool,
+            self.band_kit,
+            budget.share_for(pool, self.band_kit, self.equipment),
+        );
         let work_per_worker = coverage.weighted_rate(|crew| {
             self.equipment
                 .build_work_per_worker(crew, self.band_kit, branch, key)
@@ -609,6 +643,29 @@ impl Default for KeepingAward {
 /// Closing it means grouping by the item rather than by the kit, which is a real change to what
 /// "sharing scarcity" means and wants a case in front of it first.
 ///
+/// # ⛔ AND THE GROUP IS CUT FROM THE BAND'S SHARE OF THE LEDGER, NOT FROM THE LEDGER
+///
+/// Grouping by kit keeps *this pool's* sites from double-counting each other; it says nothing about
+/// the rows and pools **beside** it. `tillage` and `hurdling` each serve a keeping job **and**
+/// `builders`, so the keeping pool and the builders' pool reach for one stock of hoes — and while
+/// both armed off the whole ledger, six hoes armed six keepers and six builders at once.
+///
+/// So the group's coverage is struck against the band's per-item budget
+/// ([`crate::equipment_config::BandItemBudget`]), exactly as a work row's is. `other_rows` is the
+/// band's rows **excluding this pool's own role row**
+/// ([`crate::components::LaborAllocation::rows_excluding_source`]), and the group's ask is chained
+/// on: the role row registered the web's *derived* kit over the whole pool
+/// ([`crate::components::LaborAllocation::row_kit`]), and what actually went out is this group's kit
+/// over this group's hands — so re-striking is what prices a site that named something else at what
+/// it named. With one group and no override the two are the same pair, and the prospective budget
+/// is the committed one.
+///
+/// ⛔ **THE ROUTE AND DEPOSIT POOLS ARE CUT HERE BUT CANNOT REGISTER**, and the reason is the
+/// roster's rather than this seam's: every tool serving those webs declares a `rung`, a role row
+/// stands on none, and [`crate::equipment_config::EquipmentEffect::serves_build`] refuses a
+/// rung-bound tool where no rung was named. So `roadwork` / `quarrywork` resolve `none` on the row
+/// and the builders' pool does not see those keepers, while those keepers do see the builders.
+///
 /// # THE GROUP'S SHARE OF THE POOL IS STRUCK OFF THE BILL, AND IT HAS TO BE
 ///
 /// A group's *rate* depends on how many hands stand in it, and how many hands stand in it depends on
@@ -622,6 +679,7 @@ fn keeping_rates(
     band_kit: &BandEquipment,
     keepers: u32,
     claims: &[KeepingClaim],
+    other_rows: &[(crate::equipment_config::KitChoice, f32)],
 ) -> Vec<KeepingRate> {
     let total_demand = keeping_demand(claims);
     // The distinct kits on this branch, and what each group's sites ask for between them. Keyed by
@@ -650,7 +708,8 @@ fn keeping_rates(
     }
     // **The coverage is over the GROUP**, exactly as the builders' is over their pool: the seam arms
     // a prefix, so a part-equipped group gets the share it actually carries and the bare hands
-    // beside it still bring their own `PER_WORKER_OUTPUT`.
+    // beside it still bring their own `PER_WORKER_OUTPUT`. **And over the group's SHARE of the
+    // band's gear**, for the builders' pool's reason — see the note above.
     let coverage: Vec<crate::equipment_config::KitCoverage> = group_kits
         .iter()
         .zip(&group_demand)
@@ -660,7 +719,17 @@ fn keeping_rates(
             } else {
                 NO_UPKEEP_DEMAND
             };
-            equipment.coverage(kit, share, band_kit)
+            let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+                other_rows.iter().map(|(kit, workers)| (kit, *workers)),
+                kit,
+                share,
+            );
+            equipment.coverage_from_units(
+                kit,
+                share,
+                band_kit,
+                budget.share_for(share, band_kit, equipment),
+            )
         })
         .collect();
     // **THE RATE IS PER CLAIM, AT THE RUNG THAT SITE STANDS ON** — the group's partition is shared
@@ -700,8 +769,9 @@ fn keeping_worker_need(
     band_kit: &BandEquipment,
     keepers: u32,
     claims: &[KeepingClaim],
+    other_rows: &[(crate::equipment_config::KitChoice, f32)],
 ) -> f32 {
-    keeping_rates(equipment, band_kit, keepers, claims)
+    keeping_rates(equipment, band_kit, keepers, claims, other_rows)
         .iter()
         .zip(claims)
         .map(|(rate, claim)| rate.worker_need(claim.demand))
@@ -1740,6 +1810,7 @@ fn resolve_shed_facts(
                 band_kit,
                 allocation.workers_on(&LaborTarget::Agriculture),
                 &plant_claims,
+                &allocation.rows_excluding_source(equipment, &LaborTarget::Agriculture),
             ),
         ),
         spare_husbandry_keepers: spare_keepers(
@@ -1749,6 +1820,7 @@ fn resolve_shed_facts(
                 band_kit,
                 allocation.workers_on(&LaborTarget::Husbandry),
                 &animal_claims,
+                &allocation.rows_excluding_source(equipment, &LaborTarget::Husbandry),
             ),
         ),
         spare_roadwork_keepers: spare_keepers(
@@ -1758,6 +1830,7 @@ fn resolve_shed_facts(
                 band_kit,
                 allocation.workers_on(&LaborTarget::Roadwork),
                 road_claims,
+                &allocation.rows_excluding_source(equipment, &LaborTarget::Roadwork),
             ),
         ),
         spare_quarrywork_keepers: spare_keepers(
@@ -1767,6 +1840,7 @@ fn resolve_shed_facts(
                 band_kit,
                 allocation.workers_on(&LaborTarget::Quarrywork),
                 extraction_claims,
+                &allocation.rows_excluding_source(equipment, &LaborTarget::Quarrywork),
             ),
         ),
     }
@@ -1827,7 +1901,10 @@ fn maintenance_shares(
         // the work-unit split produced. The proof that this change moves nothing that ships is that
         // equality — see `upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`.
         let keepers = allocation.workers_on(&role);
-        let rates = keeping_rates(equipment, band_kit, keepers, claims);
+        // **The rows this pool's gear is rationed against** — its own role row excluded, since the
+        // group's ask is chained back on per kit group inside [`keeping_rates`].
+        let other_rows = allocation.rows_excluding_source(equipment, &role);
+        let rates = keeping_rates(equipment, band_kit, keepers, claims, &other_rows);
         let needs: Vec<f32> = claims
             .iter()
             .zip(&rates)
@@ -2096,7 +2173,8 @@ pub fn settle_bands_extraction(
     let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
         BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
     });
-    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims);
+    let other_rows = allocation.rows_excluding_source(equipment_cfg, &LaborTarget::Quarrywork);
+    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims, &other_rows);
     let needs: Vec<f32> = claims
         .iter()
         .zip(&rates)
@@ -2387,7 +2465,8 @@ pub fn settle_bands_roadwork(
     let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
         BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
     });
-    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims);
+    let other_rows = allocation.rows_excluding_source(equipment_cfg, &LaborTarget::Roadwork);
+    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims, &other_rows);
     let needs: Vec<f32> = claims
         .iter()
         .zip(&rates)
@@ -3748,8 +3827,13 @@ pub fn advance_labor_allocation(
         // question *"which kit"* is the **entry's** — a queue item is one job — so the two derived
         // per-web answers serve every entry that named nothing and an entry that named a kit is
         // resolved on its own (§4.7a ②). See [`BuildersGear`].
-        let builders_gear =
-            BuildersGear::resolve(&equipment_cfg, &build_queue, builders, &band_kit);
+        let builders_gear = BuildersGear::resolve(
+            &equipment_cfg,
+            &build_queue,
+            builders,
+            &band_kit,
+            allocation.rows_excluding_source(&equipment_cfg, &LaborTarget::Builders),
+        );
         // **WHAT EACH SOURCE CONTRIBUTED TO THE CHAIN**, recorded as the loop goes and evaluated in
         // **queue order** afterwards — the loop visits assignments, and the queue's order is the
         // player's.
@@ -9809,6 +9893,9 @@ mod keeping_split_tests {
         /// grouping test's subject, not this one.
         const KEEPERS: u32 = 8;
 
+        /// The band has no rows beside the keeping pool under test.
+        const NO_COMPETING_ROWS: &[(crate::equipment_config::KitChoice, f32)] = &[];
+
         let equipment = crate::equipment_config::EquipmentConfig::for_a_stocked_fixture();
         let stocked = BandEquipment::start_stocked_for(&equipment, KEEPERS as f32);
         let need = |kits: [&str; 2]| -> f32 {
@@ -9817,6 +9904,9 @@ mod keeping_split_tests {
                 &stocked,
                 KEEPERS,
                 &[claim(0, A_BILL, kits[0]), claim(1, A_BILL, kits[1])],
+                // No band rows beside this pool, so nothing competes for the hoes and the group
+                // reads the whole ledger — the `demand == 0` fall-through, stated as a fixture.
+                NO_COMPETING_ROWS,
             )
         };
 
@@ -13683,6 +13773,15 @@ mod labor_yield_tests {
         let kit = equipment
             .kit(kit_id)
             .unwrap_or_else(|| panic!("the shipped roster carries the '{kit_id}' kit"));
+        // ⛔ **THE TAKE ROW CARRIES A HUNT KIT, NOT THE BUILD KIT UNDER TEST.** It used to carry
+        // `kit_id`, which put `hurdling` — a `builders`/`husbandry` kit — on a `hunt` row, a state
+        // `assign_labor` refuses by name. It was harmless while the builders' pool armed off the
+        // whole ledger and is not now: the row's ten hands and the pool's both claim the band's one
+        // `crook`, so the pool was issued half a set and the fixture measured the budget rather than
+        // the tool. Both arms take with the job's own default, so the take is identical across them
+        // and the queue entry's kit is the only variable — which is also what retires the *"the two
+        // kits move the pace through a second channel"* caveat the comparison below carried.
+        let take_kit = equipment.default_kit(crate::equipment_config::KitJob::Hunt);
         let band = spawn_band(
             &mut world,
             tile,
@@ -13693,7 +13792,7 @@ mod labor_yield_tests {
                         floor: BUILDER_FLOOR,
                     },
                     workers: WORKERS,
-                    kit: Some(kit.clone()),
+                    kit: Some(take_kit),
                     priority: SourcePriority::default(),
                     upkeep_kit: None,
                 },
@@ -13857,12 +13956,15 @@ mod labor_yield_tests {
         //
         // # WHY THE TURN COUNT IS NOT THE MEASURE HERE
         //
-        // **The two kits move the pace through a second channel**: `big_game` carries spears and its
-        // lone hunter kills more, which shrinks the flock and moves the escapement room the build's
-        // own gate reads. An end-to-end turn comparison therefore measures the two kits' ATTACK tiers
-        // as much as their handling gear. The finishes-sooner half is (1) above — a strictly larger
-        // per-turn accrual against an identical bar — and the end-to-end pair is
+        // The claim is about the JOB, so it is measured on the job: a strictly larger per-turn
+        // accrual against an identical bar, which is (1) above. The end-to-end pair is
         // `intensification::tests::gear_shortens_the_build_and_never_the_job`.
+        //
+        // (This used to carry a second reason — *"the two kits move the pace through a second
+        // channel"*, `big_game`'s spears shrinking the flock and moving the escapement room the
+        // build's gate reads. That channel is closed: both arms now take with the hunt job's own
+        // default kit and differ only in the queue entry's, so a turn count here would measure the
+        // handling gear alone.)
         let ladder = LadderConfig::builtin();
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
         let cost = pastoral
