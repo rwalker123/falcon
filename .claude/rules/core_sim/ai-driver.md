@@ -423,18 +423,19 @@ fired and what the ledger said. The rules, in `propose` order:
   source for the whole crew — and takes
   the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
   are met every candidate closes the same nothing, and without the tiebreak the band took the
-  first one offered). The row to empty first is an **overused** row — the sim's
-  `LaborAssignmentState::overdraws`, **on a hunt row, or on a patch at or below its floor**.
-  `overdraws` and not `actual_yield > sustainable_yield`: the field's doc says it replaces that
-  test, *"which mis-fires on a hunt's lumpy per-turn take (a kill turn cashes a whole banked
-  animal …)"*. It is intent and ability (a floor below the food peak, a crew out-taking the
-  regrowth between that floor and the stock), so a row at Best never reads it. The floor half
-  stays for a row *draw down to survive* set below Best: that row reads `overdraws` while its
-  crew strips the room above the floor on purpose, and a patch whose `biomass > floor ×
-  carrying_capacity` is not overused — rule 1 does not empty the row the drawdown set. (Before
-  the floor half, a fresh patch read "overused" every other turn under the old comparison and
-  rule 1 shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's t45–t50.)
-  Or a hunt row the sim marks
+  first one offered). The row to empty first is an **overused** row (`Food::overused`), read by
+  job. **A hunt row** reads the sim's `LaborAssignmentState::overdraws`: a kill turn cashes a
+  whole banked animal, so a hunt's `actual_yield` spikes above its `sustainable_yield` under any
+  floor, and the field's doc says it replaces that comparison, *"which mis-fires on a hunt's
+  lumpy per-turn take"*. **A forage row** reads a take above its regrowth (`actual_yield >
+  sustainable_yield`) on a patch at or below its floor (`biomass ≤ floor × carrying_capacity`; a
+  patch the frame does not carry reads at its floor): `overdraws` needs `floor <
+  MSY_BIOMASS_FRACTION` (the sim's `floor_overdraws`), so it is never true for a row at the
+  default floor. A take above the regrowth on a patch above its floor is the room above the floor
+  being taken, not overuse — so rule 1 does not empty a row *draw down to survive* set below
+  Best while it strips that room. (Before the floor half, a fresh patch read "overused" every
+  other turn and rule 1 shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's
+  t45–t50.) Or a hunt row the sim marks
   **`hunt_useful_workers == 0`**, or a **dead row** (below) — those need no gain guard — and
   failing one of those the lowest-paying row, which moves
   only onto ground out-paying it by `food.runway_gain_fraction` per worker **and** whose marginal
@@ -456,7 +457,9 @@ fired and what the ledger said. The rules, in `propose` order:
   cross the wire; the verdict does not."*), so the child is sized to what the parent may give up
   and a crew the sim would refuse as too small is not asked for — no split is pending, **the sim
   has not refused a split of this band at its current size or larger**
-  (`SeatMemory::split_refused_at`, below), and a discovered, workable, unowned-or-own site within
+  (`SeatMemory::split_refused_at`, below), and a discovered, workable, **walkable**
+  (`sources::is_walkable`, the predicate *better ground* moves by — *settle* walks the child onto
+  the site, and `move_band` refuses a water tile as `water_tile`), unowned-or-own site within
   `food.split_search_tiles` but **outside** `work_range` would pay that crew more than its
   consumption share: `split_band <crew>`, with `Memo::Split { target }`.
   The child appears on the parent's tile next turn (`split_band_from_parent`,
