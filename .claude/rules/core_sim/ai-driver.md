@@ -278,7 +278,28 @@ species … `0` if unknown"* — against `KitOptionState::attack_min/max_body_ma
 end means unbounded"*); a herd whose mass reads unknown is trusted only to a kit with no upper
 bound. When
 no herd in reach clears any kit, the hands left over ask for baskets too: a spare basket is not
-forfeited budget, an unspent slot is. **`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
+forfeited budget, an unspent slot is. **A third bin, the plant builders kit**
+(`Food::tillage_build`, only toward a `goals.ground_rung` above `wild`): cultivation is earned in
+play on `late_forager_tribe`, so the ask forecasts the build rather than copying this turn's
+builders. The kit (`Food::plant_builders_kit`) is the roster's, never `none`, that lists
+`builders`, adds `build_work_per_worker > 0` and reads `build_work_branch == "plant"`
+(`PLANT_BRANCH`) — the greatest addend, ties by the lower id; `tillage` on the shipped roster, never
+named. The site is the cluster's (`cluster_sites`, the walk's own list) not `is_cultivated`, with
+`build_destination_rung` empty and a plant that may be tended (`climb_payoff`), whose premium
+`gained = cultivate_payoff − regrowth_at(BEST_FLOOR) × provisions_per_biomass` is greatest, ties by
+the lower `(y, x)`; a site whose `gained`, work left (`cultivation_work_cost −
+cultivation_work_done`) or bare `build_work_per_worker_turn` is at or below zero is skipped. The
+crew is `ceil(work / (horizon × bare))`, at least one — the smallest bare crew that finishes inside
+the horizon, *upgrade the ground*'s own bar. With `j` of that crew equipped the build finishes at
+`T(j) = work / (crew × bare + j × build_work_per_worker)` and earns `P(j) = gained × max(0,
+horizon − T(j))`; the `j`-th kit is worth `P(j) − P(j − 1)` while `j ≤ crew` and nothing past it
+(the spear past the herd's crew) — continuous, in the horizon-total unit the basket and the spear
+are in. A hand takes the kit only when that is strictly greater than both the basket and the spear
+(the basket keeps its ties); with no kit or no site the walk is the two-bin walk. The kits go at
+`DEMAND_PRIORITY_TILLAGE` (0.6 — the hands feed the band before they build, and a hoe still ranks
+above wayfinding); the no-herd fallback folds only the spare hunters into baskets. On a splinter's
+take the orchestrator's per-item cap bounds the kit at the parent's `hoes`, as it does any kit.
+**`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
 `land.scout_workers` for a band with an open window that is blind (fewer than
 `known_tiles_floor` known tiles within the horizon), at `DEMAND_PRIORITY_SCOUT` (0.5 — after
 food; it sees farther and nothing eats it).
@@ -512,7 +533,12 @@ fired and what the ledger said. The rules, in `propose` order:
   cultivated, `seed_selection` is known and `sow_site_refusal` is empty. Priced by the ledger:
   `income_gained` = the committed (else largest legal share) plant's `cultivate_payoff` /
   `sow_payoff` minus the row's take today; `income_lost` = the builders' rows; `payoff_turn` =
-  `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn))` — there is **no**
+  `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn + min(builders, armed) ×
+  kit_work))`. `build_work_per_worker_turn` is published bare, so the band's hoes are added:
+  `kit_work` is the band's `kit_tiers` row for the plant builders kit (`Food::held_plant_build_gear`)
+  — the resolved, wear-aware `build_work_per_worker`, never the roster's — and `armed` the least
+  `count` over that kit's `item_ids` in `kit_item_conditions`, one unit a worker (`workers_per_unit`
+  is not on the wire, and every shipped item leaves it at 1); no kit or no row reads bare. There is **no**
   reduced yield during the build (`yield_fraction_while_building` is retired in the ladder JSON:
   *"the gatherers on a source take exactly what their hands carry whatever is being built beside
   them"*). Builders = the free hands (idle plus every row's surplus — **the patch's own row
