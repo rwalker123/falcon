@@ -250,6 +250,55 @@ pub fn run_scripted_sim_ai(
 ) -> AiRun {
     let script_path = server.scratch.dir.join(format!("seat_{faction}.script"));
     fs::write(&script_path, script).expect("the script writes");
+    let script_arg = script_path.to_string_lossy().into_owned();
+    run_sim_ai(
+        sim_ai,
+        server,
+        faction,
+        &["--brain", "scripted", "--script", &script_arg],
+        turns,
+        log_dir,
+    )
+}
+
+/// A built `sim_ai` playing seat `faction` with the utility brain at `profile` / `difficulty`
+/// for `turns` turns, its instruments under `log_dir`.
+pub fn run_utility_sim_ai(
+    sim_ai: &Path,
+    server: &Server,
+    faction: u32,
+    profile: &str,
+    difficulty: &str,
+    turns: u64,
+    log_dir: Option<&Path>,
+) -> AiRun {
+    run_sim_ai(
+        sim_ai,
+        server,
+        faction,
+        &[
+            "--brain",
+            "utility",
+            "--profile",
+            profile,
+            "--difficulty",
+            difficulty,
+        ],
+        turns,
+        log_dir,
+    )
+}
+
+/// A built `sim_ai` on seat `faction` with `brain_args` for `turns` turns, waited for and asserted
+/// to exit cleanly.
+fn run_sim_ai(
+    sim_ai: &Path,
+    server: &Server,
+    faction: u32,
+    brain_args: &[&str],
+    turns: u64,
+    log_dir: Option<&Path>,
+) -> AiRun {
     let ai_log_path = server.scratch.dir.join(format!("sim_ai_{faction}.log"));
     let ai_log = fs::File::create(&ai_log_path).expect("sim_ai log file");
     let ai_log_err = ai_log.try_clone().expect("sim_ai log file (stderr half)");
@@ -259,8 +308,7 @@ pub fn run_scripted_sim_ai(
         .args(["--ports-file"])
         .arg(&server.ports_path)
         .args(["--faction", &faction.to_string()])
-        .args(["--brain", "scripted", "--script"])
-        .arg(&script_path)
+        .args(brain_args)
         .args(["--turns", &turns.to_string()])
         .env("RUST_LOG", AI_LOG_FILTER)
         .stdin(Stdio::null())

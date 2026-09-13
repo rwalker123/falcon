@@ -1,9 +1,12 @@
-//! **From the two measured logs to a number per layer** (`docs/plan_ai_driver.md` §8.2).
+//! **From the measured logs to a number per layer** (`docs/plan_ai_driver.md` §8.2).
 //!
-//! A seat's measures are computed from its `scoreboard.jsonl` and `decisions.jsonl` alone. They
-//! are a flat map of measure name → value, `None` where the record that would answer it is not
-//! written yet — the orchestrator's rows need `PlanRecord`s and `AlarmRecord`s, which arrive with
-//! the real brain — so a report is honest about what it could not read rather than silent.
+//! A seat's measures are computed from its `scoreboard.jsonl` and `decisions.jsonl`, plus the
+//! first record of `observations.jsonl` for the **ground** measures (what the start could feed —
+//! read there because the reading needs the seat's memory and the profile's horizon, which the
+//! scoreboard row has neither of; a seat with no observation log reports them `None`). They are a
+//! flat map of measure name → value, `None` where the record that would answer it is not written
+//! yet — the orchestrator's rows need `PlanRecord`s and `AlarmRecord`s, which arrive with the real
+//! brain — so a report is honest about what it could not read rather than silent.
 //!
 //! The names are dotted paths (`specialist.food.accepted`, `deaths.hunger`,
 //! `link.turns_observed`) so a baseline file, a comparison and a table all key on one string.
@@ -13,9 +16,14 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::instruments::decisions::{DecisionRecord, LinkEventKind, Outcome, DECISIONS_FILE};
+use crate::board::{DEMAND_STATE_EXPIRED, DEMAND_STATE_FULFILLED, DEMAND_STATE_POSTED};
+use crate::instruments::decisions::{
+    DecisionRecord, DemandRecord, LinkEventKind, Outcome, DECISIONS_FILE,
+};
+use crate::instruments::observations::{Observation, ObservationRecord, OBSERVATIONS_FILE};
 use crate::instruments::scoreboard::{ScoreRow, DEATH_CAUSES, DEATH_CAUSE_HUNGER, SCOREBOARD_FILE};
-use crate::specialists::INTENT_SEPARATOR;
+use crate::specialists::food::{INTENT_SPLIT, INTENT_UPGRADE};
+use crate::specialists::{intent_key, INTENT_SEPARATOR, SPECIALIST_FOOD};
 
 /// Measure name → value. `None` is "the log cannot answer this yet".
 pub type Measures = BTreeMap<String, Option<f64>>;
@@ -54,6 +62,35 @@ pub const M_COMMANDS_FAILED_TOTAL: &str = "commands_failed_total";
 /// `intent.<specialist>:<kind>`: the share of accepted decisions under each intent class — the
 /// histogram two profiles are told apart by (§8.2, profile divergence).
 pub const M_INTENT_PREFIX: &str = "intent.";
+/// **The two `Food` rule firings slice 6 is done-when'd on** (`plan_ai_driver.md` §11 row 6):
+/// accepted `food:upgrade` intents (a `Cultivate`/`Sow` declared) and accepted `food:split`
+/// intents, counted over the run. Absolute counts, not shares, so "never once" reads as 0.
+pub const M_UPGRADES_DECLARED: &str = "food.upgrades_declared";
+pub const M_SPLITS: &str = "food.splits";
+// --- the ground at the start ----------------------------------------------------------------------
+/// `ground.*`, off the seat's **first observation** (`observations::GroundObservation`): what the
+/// start band's sites give per turn at the Best floor's regrowth from the tile it stands on
+/// (`sustained_take_at_start`, summed over own bands), the best such reading within
+/// `land.horizon_tiles` of it (`best_cluster_in_horizon`, the best over own bands), and the
+/// consumption the first scoreboard row read (`consumption_at_start`). Ground whose sustained
+/// cluster is at or near the consumption can feed the band — a seed there measures the rules
+/// and not the start's luck, which is what the default seeds are chosen by. **Reported, not
+/// ratcheted**: the world sets them, the brain cannot move them.
+pub const M_GROUND_SUSTAINED_TAKE_AT_START: &str = "ground.sustained_take_at_start";
+pub const M_GROUND_BEST_CLUSTER_IN_HORIZON: &str = "ground.best_cluster_in_horizon";
+pub const M_GROUND_CONSUMPTION_AT_START: &str = "ground.consumption_at_start";
+// --- the demand board -----------------------------------------------------------------------------
+/// `board.*` (`plan_ai_driver.md` §4: *"the board is measurable — fulfilment rate and latency per
+/// requester"*): `posted` (demands posted over the run), `expired`, `fulfilment_rate`
+/// (`fulfilled / (fulfilled + expired)`, `null` with neither), `latency_turns` (mean ticks from a
+/// demand's `posted` record to its `fulfilled` one), and `board.<requester>.fulfilment_rate`.
+/// **Reported, not ratcheted**: the ratchet takes it on once the board has a second customer.
+pub const M_BOARD_PREFIX: &str = "board.";
+pub const M_BOARD_POSTED: &str = "board.posted";
+pub const M_BOARD_EXPIRED: &str = "board.expired";
+pub const M_BOARD_FULFILMENT_RATE: &str = "board.fulfilment_rate";
+pub const M_BOARD_LATENCY: &str = "board.latency_turns";
+const M_FULFILMENT_RATE: &str = "fulfilment_rate";
 // --- per specialist ------------------------------------------------------------------------------
 pub const M_SPECIALIST_PREFIX: &str = "specialist.";
 pub const M_ACCEPTED: &str = "accepted";
@@ -95,11 +132,21 @@ pub enum MeasureError {
     },
 }
 
-/// Read one seat's two measured logs from `log_dir` and compute its measures.
+/// Read one seat's measured logs from `log_dir` and compute its measures. The observation log
+/// is optional: a seat that wrote none reports the ground measures `None`.
 pub fn measures_for_seat(log_dir: &Path) -> Result<Measures, MeasureError> {
     let rows: Vec<ScoreRow> = read_jsonl(&log_dir.join(SCOREBOARD_FILE))?;
     let records: Vec<DecisionRecord> = read_jsonl(&log_dir.join(DECISIONS_FILE))?;
-    Ok(compute(&rows, &records))
+    let observations_path = log_dir.join(OBSERVATIONS_FILE);
+    let observations: Vec<Observation> = if observations_path.is_file() {
+        read_jsonl::<ObservationRecord>(&observations_path)?
+            .into_iter()
+            .map(|ObservationRecord::Observation(observation)| observation)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(compute(&rows, &records, &observations))
 }
 
 pub(crate) fn read_jsonl<T: serde::de::DeserializeOwned>(
@@ -122,14 +169,57 @@ pub(crate) fn read_jsonl<T: serde::de::DeserializeOwned>(
         .collect()
 }
 
-/// The measures of §8.2 from the rows and records of one seat.
-pub fn compute(rows: &[ScoreRow], records: &[DecisionRecord]) -> Measures {
+/// The measures of §8.2 from the rows, records and observations of one seat.
+pub fn compute(
+    rows: &[ScoreRow],
+    records: &[DecisionRecord],
+    observations: &[Observation],
+) -> Measures {
     let mut measures = Measures::new();
     whole_seat(rows, &mut measures);
     specialists(rows, records, &mut measures);
     orchestrator(rows, records, &mut measures);
+    board(records, &mut measures);
     link(rows, records, &mut measures);
+    ground(rows, observations, &mut measures);
     measures
+}
+
+/// The `ground.*` measures, off the earliest observation and the earliest scoreboard row.
+fn ground(rows: &[ScoreRow], observations: &[Observation], measures: &mut Measures) {
+    let Some(first) = observations
+        .iter()
+        .min_by_key(|observation| observation.tick)
+    else {
+        return;
+    };
+    let take_here: f32 = first
+        .bands
+        .iter()
+        .map(|band| band.ground.sustained_take_here)
+        .sum();
+    let best_in_horizon = first
+        .bands
+        .iter()
+        .map(|band| band.ground.best_sustained_cluster_in_horizon)
+        .fold(0.0, f32::max);
+    put(
+        measures,
+        M_GROUND_SUSTAINED_TAKE_AT_START,
+        f64::from(take_here),
+    );
+    put(
+        measures,
+        M_GROUND_BEST_CLUSTER_IN_HORIZON,
+        f64::from(best_in_horizon),
+    );
+    if let Some(row) = rows.iter().min_by_key(|row| row.tick) {
+        put(
+            measures,
+            M_GROUND_CONSUMPTION_AT_START,
+            f64::from(row.food_consumption),
+        );
+    }
 }
 
 fn put(measures: &mut Measures, name: impl Into<String>, value: f64) {
@@ -253,13 +343,23 @@ fn specialists(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Mea
             .entry(intent_class_key(&decision.intent))
             .or_insert(0) += 1;
     }
-    for (class, count) in histogram {
+    for (class, count) in &histogram {
         put(
             measures,
             format!("{M_INTENT_PREFIX}{class}"),
-            f64::from(count) / accepted_all.len() as f64,
+            f64::from(*count) / accepted_all.len() as f64,
         );
     }
+    let firings = |kind: &str| {
+        f64::from(
+            histogram
+                .get(&intent_class_key(&intent_key(SPECIALIST_FOOD, kind, "")))
+                .copied()
+                .unwrap_or(0),
+        )
+    };
+    put(measures, M_UPGRADES_DECLARED, firings(INTENT_UPGRADE));
+    put(measures, M_SPLITS, firings(INTENT_SPLIT));
     for name in names {
         let own: Vec<_> = decisions
             .iter()
@@ -386,6 +486,72 @@ fn orchestrator(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Me
     measures.insert(M_ALARM_LATENCY.to_owned(), latency);
 }
 
+/// `fulfilled / (fulfilled + expired)`, or nothing when neither happened.
+fn fulfilment_rate(fulfilled: usize, expired: usize) -> Option<f64> {
+    (fulfilled + expired > 0).then(|| fulfilled as f64 / (fulfilled + expired) as f64)
+}
+
+fn board(records: &[DecisionRecord], measures: &mut Measures) {
+    let demands: Vec<&DemandRecord> = records
+        .iter()
+        .filter_map(|record| match record {
+            DecisionRecord::Demand(demand) => Some(demand),
+            _ => None,
+        })
+        .collect();
+    let with_state = |state: &str| -> Vec<&DemandRecord> {
+        demands
+            .iter()
+            .copied()
+            .filter(|d| d.state == state)
+            .collect()
+    };
+    let posted = with_state(DEMAND_STATE_POSTED);
+    let fulfilled = with_state(DEMAND_STATE_FULFILLED);
+    let expired = with_state(DEMAND_STATE_EXPIRED);
+    put(measures, M_BOARD_POSTED, posted.len() as f64);
+    put(measures, M_BOARD_EXPIRED, expired.len() as f64);
+    measures.insert(
+        M_BOARD_FULFILMENT_RATE.to_owned(),
+        fulfilment_rate(fulfilled.len(), expired.len()),
+    );
+    // From a demand's `posted` record — the latest one for the same requester, band and
+    // resource at or before the fulfilment — to its `fulfilled` one.
+    let latencies: Vec<f64> = fulfilled
+        .iter()
+        .filter_map(|done| {
+            posted
+                .iter()
+                .filter(|post| {
+                    post.tick <= done.tick
+                        && post.requester == done.requester
+                        && post.band == done.band
+                        && post.resource == done.resource
+                })
+                .map(|post| post.tick)
+                .max()
+                .map(|posted_tick| (done.tick - posted_tick) as f64)
+        })
+        .collect();
+    measures.insert(
+        M_BOARD_LATENCY.to_owned(),
+        (!latencies.is_empty()).then(|| latencies.iter().sum::<f64>() / latencies.len() as f64),
+    );
+    let requesters: BTreeSet<&str> = demands.iter().map(|d| d.requester.as_str()).collect();
+    for requester in requesters {
+        let of = |state: &str| {
+            demands
+                .iter()
+                .filter(|d| d.requester == requester && d.state == state)
+                .count()
+        };
+        measures.insert(
+            format!("{M_BOARD_PREFIX}{requester}.{M_FULFILMENT_RATE}"),
+            fulfilment_rate(of(DEMAND_STATE_FULFILLED), of(DEMAND_STATE_EXPIRED)),
+        );
+    }
+}
+
 fn link(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Measures) {
     let observed: BTreeSet<u64> = rows.iter().map(|row| row.tick).collect();
     let ready: BTreeSet<u64> = records
@@ -416,6 +582,7 @@ mod tests {
     use crate::instruments::decisions::{
         AlarmRecord, Decision, LinkRecord, PlanRecord, ReadyRecord,
     };
+    use crate::instruments::observations::{BandObservation, GridInfo, GroundObservation, Ledger};
 
     const FIRST_TICK: u64 = 5;
     const FOOD: &str = "food";
@@ -449,6 +616,120 @@ mod tests {
             victory_progress: BTreeMap::from([("survive".to_owned(), 0.1)]),
             commands_failed: u32::from(tick == FIRST_TICK + 2),
         }
+    }
+
+    /// An observation carrying one band with the given ground reading and nothing else.
+    fn observation(tick: u64, take_here: f32, best: f32) -> Observation {
+        Observation {
+            tick,
+            faction: 1,
+            radius: 3,
+            grid: GridInfo {
+                width: 8,
+                height: 8,
+                wrap_horizontal: false,
+            },
+            plan: None,
+            alarms: Vec::new(),
+            ledger: Ledger {
+                stock: 40.0,
+                income: 5.0,
+                consumption: 4.0,
+                runway_turns: 8.0,
+                working_age: 10,
+                idle_workers: 1,
+                patches_owned: 2,
+                patches_cultivated: 1,
+                patches_field: 0,
+            },
+            bands: vec![BandObservation {
+                band_id: 7,
+                x: 3,
+                y: 2,
+                size: 12,
+                working_age: 10,
+                idle_workers: 1,
+                turns_of_food: 8.0,
+                food_income: 5.0,
+                food_consumption: 4.0,
+                work_range: 2,
+                hunt_reach: 5,
+                is_traveling: false,
+                ground: GroundObservation {
+                    sustained_take_here: take_here,
+                    best_sustained_cluster_in_horizon: best,
+                },
+                assignments: Vec::new(),
+                intent_in_force: None,
+                move_target: None,
+                born_by_split: None,
+                build_queue: Vec::new(),
+            }],
+            neighborhood: Vec::new(),
+        }
+    }
+
+    /// The ground measures are the first observation's, whatever order the log came in, and the
+    /// consumption is the first row's; a seat without an observation log reports them `None`
+    /// (absent), not zero.
+    #[test]
+    fn the_ground_measures_read_the_first_observation_and_the_first_row() {
+        let rows = vec![row(FIRST_TICK, 0), row(FIRST_TICK + 1, 0)];
+        let observations = vec![
+            observation(FIRST_TICK + 1, 9.0, 9.0),
+            observation(FIRST_TICK, 3.5, 6.0),
+        ];
+        let measures = compute(&rows, &[], &observations);
+        assert_eq!(measures[M_GROUND_SUSTAINED_TAKE_AT_START], Some(3.5));
+        assert_eq!(measures[M_GROUND_BEST_CLUSTER_IN_HORIZON], Some(6.0));
+        assert_eq!(measures[M_GROUND_CONSUMPTION_AT_START], Some(4.0));
+        let none = compute(&rows, &[], &[]);
+        assert!(!none.contains_key(M_GROUND_SUSTAINED_TAKE_AT_START));
+        assert!(!none.contains_key(M_GROUND_CONSUMPTION_AT_START));
+    }
+
+    fn demand(tick: u64, requester: &str, resource: &str, state: &str) -> DecisionRecord {
+        DecisionRecord::Demand(DemandRecord {
+            tick,
+            requester: requester.to_owned(),
+            band: 7,
+            resource: resource.to_owned(),
+            amount: 8,
+            state: state.to_owned(),
+            granted: (state != DEMAND_STATE_POSTED && state != DEMAND_STATE_EXPIRED).then_some(8),
+        })
+    }
+
+    /// Two demands posted on the first tick: Food's baskets fulfilled a tick later, Land's scout
+    /// kit expired — posted 2, expired 1, a rate of one half, a latency of one turn, and the
+    /// per-requester rates.
+    #[test]
+    fn the_board_measures_read_the_demand_records() {
+        let rows = vec![row(FIRST_TICK, 0), row(FIRST_TICK + 1, 0)];
+        let records = vec![
+            demand(FIRST_TICK, "food", "kit:gathering", DEMAND_STATE_POSTED),
+            demand(FIRST_TICK, "land", "kit:wayfinding", DEMAND_STATE_POSTED),
+            demand(FIRST_TICK, "food", "kit:gathering", "planned"),
+            demand(FIRST_TICK, "land", "kit:wayfinding", DEMAND_STATE_EXPIRED),
+            demand(
+                FIRST_TICK + 1,
+                "food",
+                "kit:gathering",
+                DEMAND_STATE_FULFILLED,
+            ),
+        ];
+        let measures = compute(&rows, &records, &[]);
+        assert_eq!(measures[M_BOARD_POSTED], Some(2.0));
+        assert_eq!(measures[M_BOARD_EXPIRED], Some(1.0));
+        assert_eq!(measures[M_BOARD_FULFILMENT_RATE], Some(0.5));
+        assert_eq!(measures[M_BOARD_LATENCY], Some(1.0));
+        assert_eq!(measures["board.food.fulfilment_rate"], Some(1.0));
+        assert_eq!(measures["board.land.fulfilment_rate"], Some(0.0));
+        // No demand records at all: nothing to rate.
+        let none = compute(&rows, &[], &[]);
+        assert_eq!(none[M_BOARD_POSTED], Some(0.0));
+        assert_eq!(none[M_BOARD_FULFILMENT_RATE], None);
+        assert_eq!(none[M_BOARD_LATENCY], None);
     }
 
     fn decision(tick: u64, specialist: &str, intent: &str, outcome: Outcome) -> DecisionRecord {
@@ -510,7 +791,7 @@ mod tests {
     #[test]
     fn the_whole_seat_reads_the_last_row_and_sums_hunger_over_the_run() {
         let (rows, records) = a_run();
-        let measures = compute(&rows, &records);
+        let measures = compute(&rows, &records, &[]);
         let last = rows.last().unwrap();
         assert_eq!(
             value(&measures, M_POPULATION_WORKING),
@@ -537,7 +818,7 @@ mod tests {
     #[test]
     fn a_specialist_is_measured_on_acceptance_liveness_and_churn() {
         let (rows, records) = a_run();
-        let measures = compute(&rows, &records);
+        let measures = compute(&rows, &records, &[]);
         let food = |name: &str| value(&measures, &format!("{M_SPECIALIST_PREFIX}{FOOD}.{name}"));
         let land = |name: &str| value(&measures, &format!("{M_SPECIALIST_PREFIX}{LAND}.{name}"));
         assert_eq!(food(M_ACCEPTED), 3.0);
@@ -550,6 +831,35 @@ mod tests {
         assert_eq!(land(&format!("{M_REJECTED_PREFIX}conflict")), 2.0);
         assert_eq!(land(M_LIVENESS), NOT_LIVE, "the second window is empty");
         assert_eq!(land(M_INTENT_CHURN), 0.5);
+        // Neither Food rule the slice counts fired: the bare fixture intents are not `food:*`.
+        assert_eq!(value(&measures, M_UPGRADES_DECLARED), 0.0);
+        assert_eq!(value(&measures, M_SPLITS), 0.0);
+        let (rows, mut records) = a_run();
+        records.push(decision(
+            FIRST_TICK + 1,
+            FOOD,
+            "food:upgrade:7001",
+            Outcome::Accepted,
+        ));
+        records.push(decision(
+            FIRST_TICK + 2,
+            FOOD,
+            "food:upgrade:7001",
+            rejected("conflict"),
+        ));
+        records.push(decision(
+            FIRST_TICK + 2,
+            FOOD,
+            "food:split:7001",
+            Outcome::Accepted,
+        ));
+        let with_firings = compute(&rows, &records, &[]);
+        assert_eq!(
+            value(&with_firings, M_UPGRADES_DECLARED),
+            1.0,
+            "accepted firings only"
+        );
+        assert_eq!(value(&with_firings, M_SPLITS), 1.0);
         // Four accepted with bare intents: forage, hunt, cultivate, forage.
         assert_eq!(value(&measures, &format!("{M_INTENT_PREFIX}forage")), 0.5);
         assert_eq!(value(&measures, &format!("{M_INTENT_PREFIX}hunt")), 0.25);
@@ -562,7 +872,7 @@ mod tests {
     #[test]
     fn the_link_counts_observed_lost_and_command_reconnects() {
         let (rows, records) = a_run();
-        let measures = compute(&rows, &records);
+        let measures = compute(&rows, &records, &[]);
         assert_eq!(value(&measures, M_TURNS_OBSERVED), rows.len() as f64);
         assert_eq!(
             value(&measures, M_TURNS_LOST),
@@ -579,7 +889,7 @@ mod tests {
     #[test]
     fn the_orchestrator_rows_are_null_without_plan_records() {
         let (rows, records) = a_run();
-        let measures = compute(&rows, &records);
+        let measures = compute(&rows, &records, &[]);
         assert_eq!(measures.get(M_STANCE_SWITCHES), Some(&None));
         assert_eq!(measures.get(M_ALARM_LATENCY), Some(&None));
     }
@@ -594,6 +904,7 @@ mod tests {
                 since_tick: tick,
                 budgets: BTreeMap::from([(FOOD.to_owned(), food_budget)]),
                 priorities: BTreeMap::new(),
+                goals: BTreeMap::new(),
             })
         };
         records.push(plan(FIRST_TICK, "settle", 1.0));
@@ -604,7 +915,7 @@ mod tests {
         }));
         records.push(plan(FIRST_TICK + 3, "settle", 1.0)); // same budgets: not a response
         records.push(plan(FIRST_TICK + 5, "roam", 2.0)); // a switch, and the response
-        let measures = compute(&rows, &records);
+        let measures = compute(&rows, &records, &[]);
         let turns = rows.len() as f64;
         assert_eq!(
             value(&measures, M_STANCE_SWITCHES),
@@ -615,7 +926,7 @@ mod tests {
 
     #[test]
     fn an_empty_scoreboard_measures_only_the_totals_and_the_link() {
-        let measures = compute(&[], &[]);
+        let measures = compute(&[], &[], &[]);
         assert_eq!(value(&measures, M_HUNGER_DEATHS_TOTAL), 0.0);
         assert_eq!(value(&measures, M_TURNS_OBSERVED), 0.0);
         assert!(!measures.contains_key(M_POPULATION_WORKING));

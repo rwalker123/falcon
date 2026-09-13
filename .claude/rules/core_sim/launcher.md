@@ -115,6 +115,17 @@ every faction ever started, so a rival reaped mid-session still gets its line an
 is not listed twice. Plain `eprintln!` (`report_viewer_lines`), the launcher's existing verbosity,
 so a crash still leaves the recipe in the log.
 
+**The same recipe is a file, `<run dir>/open_this_run.txt`** (`VIEWER_RECIPE_FILE`), because in
+the packaged game stderr reaches nobody: a double-clicked `.app` has no terminal and the Windows
+build has no console (`windows_subsystem = "windows"`). `write_viewer_recipe` rewrites it whole at
+each of the three places the lines are printed — start, a rival's first spawn, exit — with
+`Session::seats_of_run` (every seat known so far), so whenever the run ends the file is complete.
+`viewer_recipe` renders the body: one heading line saying what the file is
+(`VIEWER_RECIPE_HEADING`, "Paste one of these lines into a terminal to open the run in the
+viewer:"), then one `viewer_lines` line per seat. A write failure is a `report_warning`, never a
+fatal — the stderr copy is already out. `scripts/run_stack.sh` prints the equivalent recipe for the
+dev stack at exit (`core_sim/CLAUDE.md` → Environment Overrides, `SIM_RECORD_DIR`).
+
 **Pruning.** `create_run_dir` makes this session's directory and then removes every `run-*`
 directory under `runs/` but the newest `KEPT_RUNS` (5), by name — a run holds every frame of every
 seat, and a machine that plays daily would otherwise fill up with games nobody will look at again.

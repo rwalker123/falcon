@@ -17,6 +17,7 @@
 
 mod arbiter;
 mod bench;
+mod board;
 mod brain;
 mod geometry;
 mod import_record;
@@ -267,11 +268,15 @@ fn run(args: Args) -> Result<(), RunError> {
         };
         match event {
             LinkEvent::Frame(bytes) => match perception.ingest(&bytes) {
-                FrameOutcome::Replaced => {
+                // The brain forgets only on a rewind (`view::rewinds`): the same world republished
+                // — a `Resync` answered after the broadcast, a mid-turn recapture — keeps every
+                // memory, or the pending split's birth lands on the parent at the next tick.
+                FrameOutcome::Replaced { rewound: true } => {
                     if let Some(view) = perception.view_mut() {
                         brain.on_full_frame(view.tick());
                     }
                 }
+                FrameOutcome::Replaced { rewound: false } => {}
                 FrameOutcome::Applied => {}
                 FrameOutcome::ChainBroken(err) => {
                     warn!(%err, "asking for a full frame");

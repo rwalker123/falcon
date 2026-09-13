@@ -21,10 +21,12 @@ use sim_runtime::{
 
 use crate::brain::BrainLens;
 use crate::geometry::Tile;
+use crate::instruments::decisions::GoalsRecord;
 use crate::instruments::scoreboard::ScoreRow;
-use crate::specialists::food::{is_food_site, patch_per_worker_yield, ROLE_HUNT};
-use crate::specialists::land::INTENT_MOVE;
-use crate::specialists::{intent_key, SPECIALIST_LAND};
+use crate::specialists::food::{
+    best_sustained_cluster_within, cluster_take_sustained, is_food_site, patch_per_worker_yield,
+    ROLE_HUNT,
+};
 use crate::view::{band_tile, SeatMemory, SeatView};
 
 /// The file the records go to, under `--log-dir`.
@@ -63,6 +65,10 @@ pub struct PlanInForce {
     pub since_tick: u64,
     pub budgets: BTreeMap<String, f32>,
     pub priorities: BTreeMap<String, f32>,
+    /// `default` for the reason `PlanRecord::goals` carries it: a log written before goals
+    /// existed still reads.
+    #[serde(default)]
+    pub goals: BTreeMap<String, GoalsRecord>,
 }
 
 /// An alarm raised since the plan in force, which the next plan weighs.
@@ -179,11 +185,18 @@ pub struct BandObservation {
     pub work_range: u32,
     pub hunt_reach: u32,
     pub is_traveling: bool,
+    /// What the ground would feed this band, read where it stands.
+    pub ground: GroundObservation,
     pub assignments: Vec<AssignmentObservation>,
-    /// The intent the band is still walking under (`land:move:<band>`), when the memory holds a
-    /// move target for it — the commitment the arbiter will reward this tick.
+    /// The intent the band is still walking under (`land:move:<band>`, `food:settle:<band>`),
+    /// when the memory holds a move target for it — the commitment the arbiter will reward this
+    /// tick.
     pub intent_in_force: Option<String>,
     pub move_target: Option<TilePos>,
+    /// The site this band was split off toward (`SeatMemory::born_by_split`), while it has not
+    /// reached it — so a viewer can mark a child band.
+    #[serde(default)]
+    pub born_by_split: Option<TilePos>,
     /// The band's build queue, in the band's order; the declaration itself is on the source row.
     pub build_queue: Vec<BuildQueueObservation>,
 }
@@ -200,6 +213,19 @@ pub struct HerdObservation {
     pub corral_progress: f32,
     pub build: Option<SourceBuild>,
     pub upkeep: Option<SourceUpkeep>,
+}
+
+/// **The ground's sustained reading for a band** (`food::cluster_take_sustained`): what every
+/// site within its `work_range` gives per turn at the Best floor's regrowth, its whole crew
+/// dealt, from the tile it stands on and from the best tile within the profile's
+/// `land.horizon_tiles`. The bench's `ground.*` measures are these two off the first observation
+/// — which is why they are read here, through the brain's lens, and not off the scoreboard row:
+/// the row is read off the snapshot alone, and the reading needs the seat's memory (the rate a
+/// site is rated at) and the profile's horizon.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GroundObservation {
+    pub sustained_take_here: f32,
+    pub best_sustained_cluster_in_horizon: f32,
 }
 
 /// One discovered tile within the radius of an own band.
@@ -264,6 +290,7 @@ impl Observation {
             .iter()
             .map(|band| {
                 let move_target = memory.move_target(band.band_id);
+                let born_by_split = memory.born_by_split(band.band_id);
                 BandObservation {
                     band_id: band.band_id,
                     x: band.current_x,
@@ -277,16 +304,35 @@ impl Observation {
                     work_range: band.work_range,
                     hunt_reach: band.hunt_reach,
                     is_traveling: band.is_traveling,
+                    ground: GroundObservation {
+                        sustained_take_here: cluster_take_sustained(
+                            view,
+                            memory,
+                            band,
+                            band_tile(band),
+                            band.working_age,
+                        )
+                        .total,
+                        best_sustained_cluster_in_horizon: best_sustained_cluster_within(
+                            view,
+                            memory,
+                            band,
+                            lens.horizon_tiles,
+                        ),
+                    },
                     assignments: band
                         .labor_assignments
                         .iter()
                         .map(assignment_observation)
                         .collect(),
-                    intent_in_force: move_target
-                        .map(|_| intent_key(SPECIALIST_LAND, INTENT_MOVE, band.band_id)),
+                    intent_in_force: memory.move_intent(band.band_id).map(str::to_owned),
                     move_target: move_target.map(|tile| TilePos {
                         x: tile.x,
                         y: tile.y,
+                    }),
+                    born_by_split: born_by_split.map(|birth| TilePos {
+                        x: birth.target.x,
+                        y: birth.target.y,
                     }),
                     build_queue: band
                         .build_queue
@@ -371,6 +417,7 @@ impl Observation {
                 since_tick: plan.since_turn,
                 budgets: plan.budgets_record(),
                 priorities: plan.priorities_record(),
+                goals: plan.goals_record(),
             }),
             alarms: lens
                 .alarms
@@ -562,14 +609,19 @@ const UNTARGETED_ROLES: [&str; 7] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestrator::{Alarm, AlarmKind, Budget, Plan, Stance};
+    use crate::orchestrator::{
+        Alarm, AlarmKind, Budget, FoodGoals, Goals, GroundRung, Plan, Stance,
+    };
     use crate::profile::NO_MEMORY_DECAY;
-    use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, TICK};
-    use crate::specialists::SPECIALIST_FOOD;
+    use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, NEAR_PATCH, TICK};
+    use crate::specialists::land::INTENT_MOVE;
+    use crate::specialists::{intent_key, Memo, SPECIALIST_FOOD, SPECIALIST_LAND};
     use crate::view::VISIBILITY_ACTIVE;
     use sim_runtime::{BuildQueueEntryState, LaborAssignmentState, PopulationCohortState};
 
     const HORIZON: u32 = 3;
+    /// The turns a pending split waits for its child in these tests.
+    const SETTLE: u32 = 3;
     const FOREIGN_FACTION: u32 = FACTION + 1;
     const FOREIGN_BAND: u64 = BAND + 1;
     /// A tile inside the radius the seat has never discovered.
@@ -641,6 +693,14 @@ mod tests {
             stance: Stance::Consolidate,
             budgets: BTreeMap::from([(SPECIALIST_FOOD, Budget { worker_share: 0.75 })]),
             priorities: BTreeMap::from([(SPECIALIST_FOOD, 0.9)]),
+            goals: BTreeMap::from([(
+                SPECIALIST_FOOD,
+                Goals::Food(FoodGoals {
+                    net_income_per_turn: 1.0,
+                    runway_turns: 12.0,
+                    ground_rung: GroundRung::Field,
+                }),
+            )]),
             since_turn: EARLIER_TICK,
         }
     }
@@ -677,7 +737,7 @@ mod tests {
     #[test]
     fn only_own_bands_appear_and_the_neighborhood_is_the_discovered_disk_around_them() {
         let view = a_view_with_a_rival();
-        let memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         let observation = capture(&view, &memory);
 
         assert_eq!(observation.tick, TICK);
@@ -763,21 +823,22 @@ mod tests {
     #[test]
     fn last_seen_and_the_intent_in_force_read_from_memory() {
         let mut view = a_view_with_a_rival();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
         view.snapshot.header.tick = EARLIER_TICK;
         memory.observe(&view, FACTION);
         view.snapshot.header.tick = TICK;
         memory.observe(&view, FACTION);
         memory.record_choices(
             TICK - 1,
-            BTreeSet::new(),
-            [sim_runtime::CommandPayload::MoveBand {
-                faction_id: FACTION,
-                band_id: Some(BAND),
-                target_x: 4,
-                target_y: 2,
-            }]
-            .iter(),
+            [(
+                intent_key(SPECIALIST_LAND, INTENT_MOVE, BAND),
+                Some(Memo::Move {
+                    band: BAND,
+                    target: Tile::new(4, 2),
+                    from: HERE,
+                }),
+            )]
+            .into_iter(),
         );
         let observation = capture(&view, &memory);
         let at = |x, y| {
@@ -801,6 +862,80 @@ mod tests {
         let band = &observation.bands[0];
         assert_eq!(band.intent_in_force.as_deref(), Some("land:move:7001"));
         assert_eq!(band.move_target, Some(TilePos { x: 4, y: 2 }));
+        assert_eq!(band.born_by_split, None);
+        let plan = observation.plan.as_ref().expect("the lens carried a plan");
+        assert_eq!(plan.goals[SPECIALIST_FOOD].ground_rung, "field");
+        assert_eq!(plan.goals[SPECIALIST_FOOD].runway_turns, 12.0);
+        // A child band the memory holds a birth for is marked with its site.
+        memory.record_choices(
+            TICK,
+            [(
+                "food:split:7001".to_owned(),
+                Some(Memo::Split {
+                    band: BAND,
+                    target: Tile::new(6, 4),
+                    workers: 5,
+                }),
+            )]
+            .into_iter(),
+        );
+        let mut next = a_view_with_a_rival();
+        next.snapshot.header.tick = TICK + 1;
+        next.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND + 100,
+            current_x: HERE.x,
+            current_y: HERE.y,
+            ..Default::default()
+        });
+        memory.observe(&next, FACTION);
+        let observation = capture(&next, &memory);
+        let child = observation
+            .bands
+            .iter()
+            .find(|band| band.band_id == BAND + 100)
+            .expect("the child is an own band");
+        assert_eq!(child.born_by_split, Some(TilePos { x: 6, y: 4 }));
+    }
+
+    /// The ground reading is the sustained cluster, not the standing one: the near patch regrows
+    /// 6 biomass a turn at the Best floor (one hand's take on it is 1.0, so it holds six hands
+    /// for 6.0/turn), the rich one 8 (four hands at 2.0 for 8.0/turn), the far one is out of
+    /// range and the rival's patch is struck out — 14.0 where the band stands, though the
+    /// standing biomass would deal the same crew far more. The best tile within the horizon is
+    /// at least the band's own.
+    #[test]
+    fn a_band_carries_the_ground_it_stands_on_read_at_the_sustained_ceiling() {
+        /// The near patch's regrowth at every sampled floor, in biomass.
+        const NEAR_REGROWTH: f32 = 6.0;
+        const RICH_REGROWTH: f32 = 8.0;
+        let mut view = a_view();
+        for patch in &mut view.snapshot.forage_patches {
+            let regrowth = if Tile::new(patch.x, patch.y) == NEAR_PATCH {
+                NEAR_REGROWTH
+            } else {
+                RICH_REGROWTH
+            };
+            patch.regrowth_samples = vec![regrowth; 3];
+        }
+        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        let ground = observation.bands[0].ground;
+        assert_eq!(ground.sustained_take_here, NEAR_REGROWTH + RICH_REGROWTH);
+        assert!(
+            ground.best_sustained_cluster_in_horizon >= ground.sustained_take_here,
+            "{ground:?}"
+        );
+        // With the rival on the rich patch it is struck out of both readings.
+        let observation = capture(
+            &a_view_with_a_rival(),
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE),
+        );
+        let with_rival = observation.bands[0].ground;
+        assert!(with_rival.sustained_take_here < ground.sustained_take_here);
+        // Without a regrowth curve the ground feeds nothing.
+        let bare = capture(&a_view(), &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        assert_eq!(bare.bands[0].ground.sustained_take_here, 0.0);
+        assert_eq!(bare.bands[0].ground.best_sustained_cluster_in_horizon, 0.0);
     }
 
     #[test]
@@ -820,8 +955,10 @@ mod tests {
     #[test]
     fn a_record_round_trips_through_one_json_line_with_its_kind_tag() {
         let view = a_view_with_a_rival();
-        let record =
-            ObservationRecord::Observation(capture(&view, &SeatMemory::new(NO_MEMORY_DECAY)));
+        let record = ObservationRecord::Observation(capture(
+            &view,
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE),
+        ));
         let line = serde_json::to_string(&record).expect("serialises");
         assert!(!line.contains('\n'));
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -837,7 +974,7 @@ mod tests {
     #[test]
     fn the_worked_row_and_its_source_carry_the_readout_fields() {
         let view = a_view_with_a_rival();
-        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY));
+        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
         let band = &observation.bands[0];
         let row = &band.assignments[0];
         assert_eq!(row.workers_needed, 2);

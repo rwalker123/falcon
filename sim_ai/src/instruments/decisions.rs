@@ -3,8 +3,9 @@
 //!
 //! Every proposal the arbiter weighs becomes a [`Decision`], accepted or not; every plan the
 //! orchestrator adopts a [`PlanRecord`]; every alarm a specialist raises an [`AlarmRecord`]; every
-//! `ready` the loop submits a [`ReadyRecord`], so a lost turn is countable; and every reconnect a
-//! [`LinkRecord`]. The records are written through a [`DecisionSink`], which is what a brain is
+//! `ready` the loop submits a [`ReadyRecord`], so a lost turn is countable; every reconnect a
+//! [`LinkRecord`]; and every transition of a demand on the board a [`DemandRecord`], so the
+//! outfitting of every band is measurable. The records are written through a [`DecisionSink`], which is what a brain is
 //! handed — a brain never sees a file, and a brain that records nothing ignores the sink.
 //!
 //! The log carries the faction id and never the seat token (§10).
@@ -58,6 +59,17 @@ pub fn command_text(payload: &CommandPayload) -> String {
     render_command_line(payload)
 }
 
+/// A specialist's goals as the plan record carries them (§3) — flat, one shape for every
+/// specialist, so the JSON is a row and not a tagged union. `Food` is the one specialist with
+/// goals today; a specialist without any has no entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalsRecord {
+    pub net_income_per_turn: f32,
+    pub runway_turns: f32,
+    /// The plant rung the seat is climbing toward (`wild` / `tended` / `field`).
+    pub ground_rung: String,
+}
+
 /// A plan adopted by the orchestrator (§3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanRecord {
@@ -66,6 +78,10 @@ pub struct PlanRecord {
     pub since_tick: u64,
     pub budgets: BTreeMap<String, f32>,
     pub priorities: BTreeMap<String, f32>,
+    /// `default` (no goals) for the same reason `Decision::commands_text` carries it: a log
+    /// written before goals existed still reads, or `read_jsonl` fails the whole run.
+    #[serde(default)]
+    pub goals: BTreeMap<String, GoalsRecord>,
 }
 
 /// An alarm a specialist raised (§4).
@@ -100,6 +116,22 @@ pub enum LinkEventKind {
     StreamReopen,
 }
 
+/// **A demand's transition on the board** (`docs/plan_ai_driver.md` §4, the demand board):
+/// `state` is `posted` | `planned` | `fulfilled` | `expired` (`board::DemandState::as_str`),
+/// `resource` the loadout word (`kit:<id>` / `material:<id>`), `granted` what the orchestrator
+/// granted on a `planned` / `fulfilled` row. One row per transition, so a demand's life reads
+/// off the log in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DemandRecord {
+    pub tick: u64,
+    pub requester: String,
+    pub band: u64,
+    pub resource: String,
+    pub amount: u32,
+    pub state: String,
+    pub granted: Option<u32>,
+}
+
 /// The one line type: every record, tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -109,6 +141,7 @@ pub enum DecisionRecord {
     Alarm(AlarmRecord),
     Ready(ReadyRecord),
     Link(LinkRecord),
+    Demand(DemandRecord),
 }
 
 /// Where a brain's records go. The loop hands one to `decide`; a brain that has nothing to record
@@ -175,6 +208,14 @@ mod tests {
                 since_tick: A_TICK - 1,
                 budgets: BTreeMap::from([("food".to_owned(), 3.0)]),
                 priorities: BTreeMap::from([("food".to_owned(), 1.0)]),
+                goals: BTreeMap::from([(
+                    "food".to_owned(),
+                    GoalsRecord {
+                        net_income_per_turn: 1.0,
+                        runway_turns: 12.0,
+                        ground_rung: "field".to_owned(),
+                    },
+                )]),
             }),
             DecisionRecord::Alarm(AlarmRecord {
                 tick: A_TICK,
@@ -185,6 +226,15 @@ mod tests {
             DecisionRecord::Link(LinkRecord {
                 tick: Some(A_TICK),
                 event: LinkEventKind::CommandReconnect,
+            }),
+            DecisionRecord::Demand(DemandRecord {
+                tick: A_TICK,
+                requester: "food".into(),
+                band: 7,
+                resource: "kit:gathering".into(),
+                amount: 8,
+                state: "planned".into(),
+                granted: Some(8),
             }),
         ]
     }
@@ -230,6 +280,22 @@ mod tests {
         let line = command_text(&payload);
         assert_eq!(line, "split_band 1 7001 4");
         assert_eq!(parse_command_line(&line).expect("parses"), payload);
+    }
+
+    /// A plan line written before goals existed reads as a plan with none, for the reason
+    /// `commands_text` defaults: one unreadable line fails the whole viewer page.
+    #[test]
+    fn a_plan_line_without_goals_parses_with_none_and_goals_are_flat() {
+        let line = r#"{"kind":"plan","tick":7,"stance":"consolidate","since_tick":7,
+            "budgets":{"food":0.75},"priorities":{"food":0.9}}"#;
+        let record: DecisionRecord = serde_json::from_str(line).expect("parses without goals");
+        match record {
+            DecisionRecord::Plan(plan) => assert!(plan.goals.is_empty()),
+            other => panic!("expected a plan, got {other:?}"),
+        }
+        let plan: serde_json::Value = serde_json::to_value(&every_record()[2]).unwrap();
+        assert_eq!(plan["goals"]["food"]["ground_rung"], "field");
+        assert_eq!(plan["goals"]["food"]["runway_turns"], 12.0);
     }
 
     #[test]
