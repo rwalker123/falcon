@@ -3263,3 +3263,224 @@ fn a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it() {
          the stranded entry actually caused"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// (15) THE BUILDERS ROW'S PUBLISHED REACH IS THE ONE THE TURN ACTUALLY ARMS
+// ---------------------------------------------------------------------------------------------
+
+/// The one item `tillage` puts in a builder's hands. Because that kit serves **both** `builders`
+/// and `agriculture` (`equipment.json` → `kits[].jobs`), it is also the one thing on the shipped
+/// roster a builders row and a role row can reach for at the same time — which is what makes the
+/// two resolutions below comparable at all.
+const SHARED_TOOL: &str = "hoes";
+
+/// **Fewer hoes than the keeping row asks for.** The budget's denominator only bites when the band
+/// is genuinely short, so a stock at or above the demand would make both arms read alike whatever
+/// the seam did.
+const HOES_FOR_A_SHORT_BAND: u32 = 3;
+
+/// The keeping row's head count in the short arm — twice the stock, so a pro-rata share of the
+/// hoes is strictly smaller than the whole of them.
+const KEEPERS_OUTNUMBERING_THE_HOES: u32 = 6;
+
+/// The keeping row's head count in the unshort arm, sized so the two rows together hold **exactly**
+/// what the band owns: [`BUILDERS`] on the pool plus these keepers is [`HOES_FOR_EVERY_HAND`].
+const KEEPERS_THE_STOCK_COVERS: u32 = 4;
+
+/// One hoe per hand across both rows — the arm where "no row may be issued gear the band does not
+/// own" is a claim about a number rather than about a clamp.
+const HOES_FOR_EVERY_HAND: u32 = BUILDERS + KEEPERS_THE_STOCK_COVERS;
+
+/// The keeping row holds the same kit the pool does — the competing claim under test.
+const KEEPERS_ON_TILLAGE: bool = true;
+
+/// The keeping row holds nothing, so no row but the pool reaches for the hoes. The **control**: the
+/// pool's own reading with no competing demand in the band at all.
+const KEEPERS_BARE_HANDED: bool = false;
+
+/// A queued plant build whose **pool** and whose **keeping row** both hold `tillage`, over a band
+/// owning exactly `hoes` units of the one item that kit uses.
+fn a_band_whose_pool_and_keepers_share_the_tillage(
+    hoes: u32,
+    keepers: u32,
+    keepers_hold_tillage: bool,
+) -> (App, Entity, UVec2) {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let staffed: u32 = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        assert!(
+            allocation
+                .set_build_entry_kit(&BuildSource::Patch(sources[0]), Some(plant_build_kit())),
+            "fixture: the head entry must carry the tillage kit, or the pool reaches for nothing"
+        );
+        let row = allocation
+            .assignments
+            .iter_mut()
+            .find(|row| matches!(row.target, LaborTarget::Agriculture))
+            .expect("the fixture staffs a keeping row");
+        row.workers = keepers;
+        row.kit = keepers_hold_tillage.then(plant_build_kit);
+        allocation.assignments.iter().map(|row| row.workers).sum()
+    };
+    // The cohort is sized to exactly what it staffs, so `normalize` never trims a row under test.
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band has a cohort")
+        .working = scalar_from_f32(staffed as f32);
+    stock_the_band(&mut app, band);
+    {
+        let tier = core_sim::EquipmentConfig::builtin()
+            .item(SHARED_TOOL)
+            .expect("the shipped roster carries the tillage tool")
+            .default_tier()
+            .id
+            .clone();
+        let mut ledger = app
+            .world
+            .get_mut::<core_sim::BandEquipment>(band)
+            .expect("the fixture band carries a ledger");
+        ledger.restore_batches(SHARED_TOOL, Vec::new());
+        ledger.stock(SHARED_TOOL, hoes, &tier, None);
+    }
+    resolve_a_turn(&mut app);
+    (app, band, sources[0])
+}
+
+/// **One published field of this band's `builders` row, off the ENCODED buffer.**
+fn published_builders_row<T>(
+    app: &App,
+    band: Entity,
+    read: impl Fn(&shadow_scale_flatbuffers::generated::shadow_scale::sim::LaborAssignment<'_>) -> T,
+) -> T {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .laborAssignments()
+        .expect("a staffed band publishes its work rows")
+        .iter()
+        .find(|row| row.kind() == Some(LaborTarget::Builders.kind()))
+        .expect("the fixture staffs a builders row");
+    read(&row)
+}
+
+/// One item's published `(workersHolding, count)` — how many of this band's people the wire says
+/// are holding it, and how many units the band owns.
+fn published_holding_and_stock(app: &App, band: Entity, item: &str) -> (f32, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .kitItemConditions()
+        .expect("the band publishes a condition row per config item")
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| (row.workersHolding(), row.count()))
+        .unwrap_or_else(|| panic!("the config carries '{item}', so it has a row"))
+}
+
+/// **⛔ THE BUILDERS ROW PUBLISHES THE REACH THE TURN ARMS — not a share of a budget its take
+/// never competes in.**
+///
+/// The builders' pool is deliberately **outside** the band-wide item budget: `BuildersGear::for_source`
+/// arms it off the whole ledger, and `LaborAllocation::kitted_rows` resolves the builders row as
+/// `default_kits.builders` (`none`), so the row puts no demand on the budget either. The snapshot
+/// used to kit that row from the **queue** (`tillage`) and then cut it a **budget** share of the very
+/// item it had contributed no demand for — two resolutions of one row, disagreeing.
+///
+/// # The two arms are the same band, and only the row beside the pool moves
+///
+/// A keeping row on the same kit is added or withheld. The take cannot see it — the pool reads the
+/// whole ledger — so `buildWorkFromGear`, which **is** `for_source`'s coverage weighted into work,
+/// must be identical across the pair. The published reach is held to that same indifference, which
+/// is the claim: wire equals take. Under the defect the wire fell to a pro-rata share
+/// (`3 hoes × 2 builders ÷ 6 keepers = 1`) while the turn armed both builders.
+///
+/// **And no row may be issued gear the band does not own**: the unshort arm sizes the two rows to
+/// exactly the stock, so the published holding is a number rather than a clamp.
+#[test]
+fn a_builders_row_and_a_keeping_row_sharing_one_tool_publish_the_reach_the_turn_arms() {
+    let (competing, competing_band, competing_patch) =
+        a_band_whose_pool_and_keepers_share_the_tillage(
+            HOES_FOR_A_SHORT_BAND,
+            KEEPERS_OUTNUMBERING_THE_HOES,
+            KEEPERS_ON_TILLAGE,
+        );
+    let (alone, alone_band, alone_patch) = a_band_whose_pool_and_keepers_share_the_tillage(
+        HOES_FOR_A_SHORT_BAND,
+        KEEPERS_OUTNUMBERING_THE_HOES,
+        KEEPERS_BARE_HANDED,
+    );
+
+    let armed_take = published(&alone, alone_patch, |patch| patch.buildWorkFromGear());
+    assert!(
+        armed_take > 0.0,
+        "liveness: the pool must really be geared, or every equality below is two zeros — got          {armed_take}"
+    );
+    assert_eq!(
+        published(&competing, competing_patch, |patch| patch
+            .buildWorkFromGear()),
+        armed_take,
+        "the TAKE is indifferent to the row beside it: `BuildersGear::for_source` arms the pool off          the band's whole ledger, so a keeping row reaching for the same hoes cannot move it"
+    );
+
+    let reach_alone = published_builders_row(&alone, alone_band, |row| row.kitWorkersHolding());
+    assert_eq!(
+        reach_alone, BUILDERS as f32,
+        "fixture: with nothing competing, the wire already said every builder holds the kit — got          {reach_alone}"
+    );
+    assert_eq!(
+        published_builders_row(&competing, competing_band, |row| row.kitWorkersHolding()),
+        reach_alone,
+        "…so the WIRE must be indifferent too. A budget share here would publish a reach the turn          does not grant, on a row whose demand was never in that budget"
+    );
+
+    // **The other end of the same seam**: where the budgeted rows do not saturate the stock, the
+    // two rows between them hold exactly what the band owns and not one hand more.
+    let (unshort, unshort_band, _) = a_band_whose_pool_and_keepers_share_the_tillage(
+        HOES_FOR_EVERY_HAND,
+        KEEPERS_THE_STOCK_COVERS,
+        KEEPERS_ON_TILLAGE,
+    );
+    let (holding, owned) = published_holding_and_stock(&unshort, unshort_band, SHARED_TOOL);
+    assert_eq!(
+        (holding, owned),
+        (HOES_FOR_EVERY_HAND as f32, HOES_FOR_EVERY_HAND),
+        "the pool and the keepers together are issued exactly the band's stock of hoes"
+    );
+}

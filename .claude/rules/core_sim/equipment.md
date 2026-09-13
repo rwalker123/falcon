@@ -1292,9 +1292,57 @@ alone — three surfaces that agree is also what three equally-broken surfaces r
 **Three coverages are deliberately outside it**, and this is a boundary rather than an oversight —
 each runs at a different point in the turn against a pool of its own: the **builders'** pool
 (`BuildersGear::for_source`), **`keeping_rates`** (which has its own kit-id grouping and its own
-share-of-the-demand split), and the **scout vantage** in `visibility_systems`. Nothing shipped puts
-one item in a take kit and one of those, so no stock is over-issued today; folding them into one
+share-of-the-demand split), and the **scout vantage** in `visibility_systems`. Folding them into one
 band-wide allocation is a change to *when* each pool is resolved, not a spelling correction.
+
+> #### ⛔ THE BOUNDARY IS NOT FREE, AND THE CLAIM THAT IT WAS IS RETIRED HERE
+>
+> This paragraph used to end: *"Nothing shipped puts one item in a take kit and one of those, so no
+> stock is over-issued today."* **Both halves are false**, and the roster says so —
+> `tillage` (hoes) declares `jobs: ["builders", "agriculture"]`, `hurdling` (crook)
+> `["builders", "husbandry"]`, and `roadbuilding` / `paving` `["builders", "roadwork"]`. Every one of
+> those items is reachable *both* from the pool's queue-derived kit and from a role row that names it
+> through `kits_for_job` — which the role kit picker and the `assign_labor <role> <n> kit <id>`
+> grammar both expose. So an item **does** span a budgeted row and an unbudgeted pool.
+>
+> **And stock really is over-issued today**: the pool's claim is not *reserved* out of the budget, so
+> a role row saturating the stock beside a staffed pool puts more hands on a tool than the band owns
+> — six hoes arming six builders *and* six keepers. See the Builders subsection below for the
+> mechanism, the `workersHolding 12` reading it produces, and why the capture is now reporting that
+> honestly rather than committing an error of its own.
+>
+> **The scout vantage's overlap is vacuous rather than absent**, which is a different claim and the
+> only one this file should make: no shipped kit outside the expedition roster carries `wayfinding`,
+> so the Scout row's demand is its own and its share is the whole stock either way. That is a
+> property of today's roster, not of the seam — a second scout-capable kit would end it.
+
+#### ⛔ THE BUILDERS ROW IS PUBLISHED OFF THE WHOLE LEDGER, BECAUSE ITS TAKE IS ARMED OFF IT
+
+The builders' pool being outside the budget is a statement about **both** ends of that row, and the
+capture broke it by splitting them. `snapshot::population` kitted the `builders` row from the build
+**queue** (`LaborAllocation::builders_kit`, the same resolution it publishes as `kitId`) and then cut
+that kit a **budget** share — but the budget resolves the identical row through
+`LaborAssignment::kit_choice`, which is `default_kits.builders`, i.e. **`none`**. So the row was
+issued a pro-rata share of an item it had put no demand on, and the published number stopped being
+the one `BuildersGear::for_source` arms. Reachable both ways on the shipped roster, because
+`tillage`, `hurdling`, `roadbuilding` and `paving` each serve `builders` **and** a role job: one
+builder beside ten keepers reaching for six hoes published a reach of `0.6` for a pool the turn armed
+in full.
+
+**The fix is that the row's two resolutions sit in one `match` arm** — kit *and* coverage together,
+whole-ledger `coverage` for `Builders` and a budget share for every other row — so a reader sees at
+the seam which row is deliberately uncut and why.
+
+> **Teaching `kitted_rows` about the builders row instead would be strictly worse.** The row would
+> then eat demand from the rows beside it while its own take still armed off the whole ledger:
+> a visible over-issue traded for a silent under-issue everywhere else.
+
+**A consequence worth naming**: the pool's claim is not *reserved* out of the budget either, so a
+role row that saturates the stock plus a staffed pool publish more holders than the band owns — six
+hoes reading `workersHolding 12` — and that is the take reported honestly, not a capture error.
+`build_queue.rs`'s `a_builders_row_and_a_keeping_row_sharing_one_tool_publish_the_reach_the_turn_arms`
+pins both ends: the take (`buildWorkFromGear`) and the published reach are held to the **same**
+indifference to the row beside them, and an unshort band's two rows are issued exactly its stock.
 
 ### `HuntingParty` carries its composition, in SHARES
 

@@ -1579,6 +1579,11 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ## >
 ## > The row is used only when its `kit_id` is the kit being rendered: a player mid-change of the
 ## > picker is composing something the sim has not priced, which is the uncommitted reading below.
+## >
+## > ⛔ **AND ONLY WHILE THE SHEET IS STILL DESCRIBING THAT PARTY** — `_describes_the_committed_party`,
+## > which carries the defect that rule was missing from. A stepper moved off the row's own `workers`
+## > is composing a party the sim has priced nothing for, so the published pair describes nobody on
+## > screen and the composed reading below answers instead.
 ##
 ## **OTHERWISE THE COVERAGE IS COUNTED IN UNITS AGAINST THE COMPOSED CREW**, which is the only reading
 ## available before a commit: `KitItemCondition.workersOnQuotedJob` is the head count of the STAFFED
@@ -1586,9 +1591,10 @@ static func kit_item_ids(kit: Dictionary) -> Array:
 ## composed is measured against itself, and a host with no stepper (`KIT_CREW_UNCOMPOSED` — the role
 ## cards) falls back to the published pair, which is the sim's own answer wherever it applies.
 ##
-## **AND THE STOCK IT IS COUNTED AGAINST IS THE FREE STOCK.** Units already reaching the band's
-## committed rows are `KitItemCondition.workersHolding`, published per item, so free units are
-## `count − workersHolding` clamped at zero. Quoting the whole store told a player that a second
+## **AND THE STOCK IT IS COUNTED AGAINST IS THE FREE STOCK — PLUS WHATEVER THIS ROW IS HOLDING.**
+## Units already reaching the band's committed rows are `KitItemCondition.workersHolding`, published
+## per item, so free units are `count − workersHolding` — **and re-composing this source's own row
+## hands its gear back**, so its share is added on before the clamp at zero. Quoting the whole store told a player that a second
 ## trapping party was covered by the very traps the first one had walked out with — the uncommitted
 ## half of the same contradiction. **Both terms are already on the wire**; this needs no field of its
 ## own.
@@ -1652,21 +1658,34 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 	var items := kit_item_ids(kit)
 	if items.is_empty():
 		return ""
-	# **THE COMMITTED ROW WINS, and it is matched on the KIT it is priced at** — a picker mid-change
-	# is composing something the sim has not priced yet, and the pair it published describes the old
-	# choice.
+	# **THE COMMITTED ROW IS MATCHED ON THE KIT IT IS PRICED AT** — a picker mid-change is composing
+	# something the sim has not priced yet, and the pair it published describes the old choice.
+	var committed := {}
 	if String(row.get(ROW_KIT_ID_KEY, NO_KIT_ID)) == String(kit.get(KIT_ID_KEY, NO_KIT_ID)):
-		var committed := row_coverage(row)
-		if not committed.is_empty():
-			if int(committed[ROW_COVERAGE_SHORT_KEY]) <= 0:
-				return ""
-			return shortfall_sentence(kit, int(committed[ROW_COVERAGE_HELD_KEY]),
-				int(committed[ROW_COVERAGE_CREW_KEY]))
+		committed = row_coverage(row)
+	# **CASE 1 — THE SHEET IS DESCRIBING THE COMMITTED PARTY**, so the sim's own answer for it wins and
+	# nothing here re-derives anything.
+	if not committed.is_empty() and _describes_the_committed_party(crew, committed):
+		if int(committed[ROW_COVERAGE_SHORT_KEY]) <= 0:
+			return ""
+		return shortfall_sentence(kit, int(committed[ROW_COVERAGE_HELD_KEY]),
+			int(committed[ROW_COVERAGE_CREW_KEY]))
 	var on_job := crew
 	# **A CREW IS BEING COMPOSED** — so the store is counted against it, and the units already out with
 	# the band's committed rows are not part of the store this party can draw on. A host with no
 	# stepper is a committed standing slot reading its own published pair, and nets nothing.
 	var net_committed := crew > KIT_CREW_UNCOMPOSED and job != JOB_EXPEDITION
+	# ⛔ **CASE 2 — AND RE-COMPOSING THIS ROW HANDS ITS OWN GEAR BACK.** The netting above subtracts
+	# every unit the band's committed rows are holding, and THIS row is one of them: without adding its
+	# share back, stepping a fully-armed 4-worker row to 12 would count its own four traps as
+	# unavailable to itself and read `0 of 12`. `0` where there is no committed row, which is the
+	# uncommitted reading unchanged.
+	#
+	# **IT IS THE ROW'S COMPLETE-KIT COUNT, WHICH SLIGHTLY UNDER-COUNTS AN ITEM IT HOLDS MORE OF** than
+	# its scarcest — `kit_workers_holding` is a `min` across the kit's items. That is conservative in
+	# the safe direction and costs nothing: this line takes the `min` across those same items anyway,
+	# so the scarcest one decides the answer and it is the one counted exactly.
+	var released := 0 if committed.is_empty() else int(committed[ROW_COVERAGE_HELD_KEY])
 	# **COMPLETE OUTFITS — the `min` over every item the kit carries.** A Stalking kit is spears AND a
 	# sled, so three spears and no sled field ZERO kits; counting the scarcest item and naming it
 	# reported three.
@@ -1676,8 +1695,8 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 		var owned := DetailFormat.kit_units_owned(band, item_id)
 		if owned == DetailFormat.KIT_UNITS_UNSTATED:
 			return ""
-		var free := maxi(owned - _published_workers_holding(band, item_id), 0) if net_committed \
-			else owned
+		var free := maxi(owned - _published_workers_holding(band, item_id) + released, 0) \
+			if net_committed else owned
 		if held < 0 or free < held:
 			held = free
 		if on_job <= KIT_CREW_UNCOMPOSED:
@@ -1767,6 +1786,28 @@ const GEAR_FINGERPRINT_UNSTATED := "?"
 ## empty string here is a real answer"* is exactly the kind of thing a later reader replaces with a
 ## guard.
 const GEAR_FINGERPRINT_ITEMLESS := ""
+
+## ⛔ **IS THE SHEET STILL TALKING ABOUT THE PARTY THE SIM PRICED?** — the one test that decides which
+## of `shortfall_line`'s two arms answers, and its absence was a reported defect.
+##
+## **TRUE for a host with no stepper** (`KIT_CREW_UNCOMPOSED` — the role cards) and for a stepper
+## still sitting on the row's own `workers`. In both, the committed row's published pair IS the answer
+## on screen, and it is the sim's own, so it cannot disagree with the take.
+##
+## > #### ⛔ THE ARM USED TO RETURN BEFORE THE STEPPER WAS CONSULTED AT ALL
+## >
+## > A `trapping` row committed at 4 workers with 4 traps publishes `kit_workers_holding == workers`,
+## > so `short == 0` and the arm answered `""`. **Step ASSIGN HUNTERS to 12 and the sheet said
+## > nothing**, where before the arm existed it read `4 of 12 Trapping kits available`. With a
+## > shortfall already on the row it was worse than silence: a 4-worker row holding 2, stepped to 12,
+## > rendered `2 of 4 Trapping kits available` over a `HUNTERS 12` stepper — stale figures describing
+## > a party the player is not composing. `build_kit_row`'s own contract (*"`crew` IS THE PARTY THE
+## > SHEET IS COMPOSING"*) was false for every committed source.
+##
+## **A MOVED STEPPER IS A DIFFERENT PARTY**, and the sim has priced no such row — so the answer falls
+## to the composed reading, which counts the free store against the crew on screen.
+static func _describes_the_committed_party(crew: int, committed: Dictionary) -> bool:
+	return crew <= KIT_CREW_UNCOMPOSED or crew == int(committed[ROW_COVERAGE_CREW_KEY])
 
 ## **THE ONE PHRASING FOR *GEAR RAN SHORT*, WHEREVER IT IS STATED** — the compose sheets' line, the
 ## role cards', and the work row's own note, which passes it through UNCHANGED
@@ -2102,9 +2143,17 @@ static func _tier_face(value: float) -> String:
 ## **`crew` IS THE PARTY THE SHEET IS COMPOSING** — the stepper's own value, passed straight to the
 ## HINT so the line can state how far the band's gear reaches into it. `KIT_CREW_UNCOMPOSED` (the
 ## default) is a host with no stepper, and renders exactly as it did before the clause existed.
-## **`row` IS THE COMMITTED SOURCE ROW BEHIND THE SHEET**, handed to the hint so a sheet on a source
-## this band already works states that row's own published coverage instead of re-dividing the store
-## — see `shortfall_line`, which carries why. `{}` is every host that has no such row.
+##
+## ⛔ **AND IT IS CONSULTED EVEN WHERE `row_assignment` IS HANDED IN, which it briefly was not.** The
+## committed arm returned the row's published pair before reading `crew` at all, so a fully-armed
+## 4-worker row stepped to 12 said NOTHING and a half-armed one said `2 of 4` over a `HUNTERS 12`
+## stepper — stale figures for a party nobody was composing, and this sentence false for every
+## committed source. `shortfall_line` forks on `_describes_the_committed_party` now: the published
+## pair while the stepper sits on the row's own crew, the composed reading the moment it moves.
+## **`row_assignment` IS THE COMMITTED SOURCE ROW BEHIND THE SHEET**, handed to the hint so a sheet on
+## a source this band already works states that row's own published coverage instead of re-dividing
+## the store — **while the stepper still sits on that row's crew**. `{}` is every host that has no
+## such row. See `shortfall_line`, which carries the two-case rule and the defect that produced it.
 static func build_kit_row(kits: Array, job: String, selected_id: String, default_id: String,
 		band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
 		prefix: String = "", key_text: String = HudComposeVocab.COMPOSE_FIELD_KIT,

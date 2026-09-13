@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 114
+const EXPECTED_CHECKPOINTS := 118
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -802,6 +802,17 @@ const COMMITTED_ROW_ARMED := 2.0
 ## contradiction the committed arm removes.
 const COMMITTED_ROW_STOCK := 4.0
 
+## **THE PARTY THE STEPPER IS MOVED TO**, well clear of the committed crew so the two readings cannot
+## be confused for one another: a line quoting the committed row would read `… of 4`, a line quoting
+## the composed one `… of 12`.
+const STEPPED_ROW_CREW := 12
+
+## …and a row whose four workers are ALL armed — `kit_workers_holding == workers`, the state the sim
+## publishes for a row with nothing to be short of. It is the sharper of the two stepper cases: at the
+## committed crew it answers SILENCE, so a fork that never consulted the stepper answered silence at
+## every crew.
+const COVERED_ROW_ARMED := 4.0
+
 ## ⛔ **A COMMITTED SHEET STATES ITS OWN ROW'S PUBLISHED PAIR, NOT A DIVISION OF THE STORE.**
 ##
 ## Reported from play: a band outfitted with four trapping kits staffed two hunt rows of four that
@@ -844,6 +855,50 @@ func _assert_a_committed_sheet_states_its_own_row() -> void:
 		COMMITTED_ROW_CREW, other_kit_row)
 	h._assert_hud("…and a row priced at a DIFFERENT kit is ignored, never quoted under this one (\"%s\")"
 			% mismatched, mismatched == uncommitted)
+	_assert_a_moved_stepper_leaves_the_committed_party(roster, big_game, band, row)
+
+## ⛔ **AND THE COMMITTED ARM STOPS THE MOMENT THE STEPPER MOVES OFF THAT ROW'S CREW.**
+##
+## Found in review. The arm above returned the row's published pair **before `crew` was consulted at
+## all**, so on a committed source the sheet stopped describing the party on screen:
+##
+## - a row of 4 holding 4 publishes `short == 0`, so the arm answered `""` — **stepped to 12 the sheet
+##   said NOTHING**, where before the arm existed it read `4 of 12 Stalking kits available`;
+## - a row of 4 holding 2, stepped to 12, rendered `2 of 4` over a `HUNTERS 12` stepper: stale figures
+##   describing a party the player is not composing, which is worse than the silence.
+##
+## **THE TWO CASES BELOW ARE A PAIR WITH THE TWO ABOVE**, and all four are needed: the committed pair
+## at the committed crew (which is what the arm is FOR), and the composed reading past it (which is
+## what it was swallowing). A fix that simply deleted the arm passes the second pair and fails the
+## first.
+##
+## **RE-COMPOSING A ROW HANDS ITS OWN GEAR BACK**, so the covered row stepped to 12 reads `4 of 12`
+## and not `0 of 12`: the netting subtracts every unit the band's committed rows hold, and this row is
+## one of them.
+func _assert_a_moved_stepper_leaves_the_committed_party(roster: Array, big_game: Dictionary,
+		band: Dictionary, short_row: Dictionary) -> void:
+	# THE COVERED ROW — nothing to be short of at its own crew, and a real shortfall past it.
+	var covered_row := short_row.duplicate()
+	covered_row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = COVERED_ROW_ARMED
+	var at_its_own_crew := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
+		COMMITTED_ROW_CREW, covered_row)
+	h._assert_hud("…a fully covered committed row says nothing AT ITS OWN CREW (\"%s\")"
+			% at_its_own_crew, at_its_own_crew == "")
+	var stepped_covered := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
+		STEPPED_ROW_CREW, covered_row)
+	var want_covered := _kit_shortfall_want(int(COVERED_ROW_ARMED), STEPPED_ROW_CREW, big_game)
+	h._assert_hud("…but STEPPED PAST IT the shortfall appears, where it used to fall silent (wanted \"%s\", got \"%s\")"
+			% [want_covered, stepped_covered], stepped_covered == want_covered)
+	# THE ALREADY-SHORT ROW — the figures must follow the stepper, not the commitment.
+	var stepped_short := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
+		STEPPED_ROW_CREW, short_row)
+	var want_short := _kit_shortfall_want(int(COMMITTED_ROW_ARMED), STEPPED_ROW_CREW, big_game)
+	h._assert_hud("…and a SHORT row stepped past its crew describes the composed party (wanted \"%s\", got \"%s\")"
+			% [want_short, stepped_short], stepped_short == want_short)
+	# …which is the same thing said as a NEGATIVE, because the defect's output was a valid sentence:
+	# `2 of 4` is exactly what this row publishes, and it is the wrong answer on a `HUNTERS 12` sheet.
+	h._assert_hud("…never the committed row's own pair, which named a party nobody was composing",
+		stepped_short != _kit_shortfall_want(int(COMMITTED_ROW_ARMED), COMMITTED_ROW_CREW, big_game))
 
 # =====================================================================================
 #  A KIT THAT CANNOT WORK ON THIS PREY IS GREYED, AND THE TAKE IT WOULD HAVE QUOTED IS ZERO

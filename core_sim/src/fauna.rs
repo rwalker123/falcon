@@ -8936,6 +8936,33 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
     quarry
 }
 
+/// **THE CREWS A BAND ACTUALLY FIELDS AT `workers` ON THIS ROW** — [`HuntCrewCurveInputs`]'s
+/// coverage, resolved over the crew's **share** of the band's gear rather than over all of it.
+///
+/// One expression, because [`hunt_crew_take_curve`] and [`hunt_armed_crew`] must describe the same
+/// party: the curve's plateau and the count that explains it are read at the same crew size off the
+/// same ledger, and a second spelling here is exactly how *"max N workers useful"* comes to name a
+/// number no row of the curve was built from.
+///
+/// The share is struck per crew size — see [`HuntCrewCurveInputs::other_rows`] for why that cannot
+/// be hoisted out of the loop.
+fn curve_coverage(
+    inputs: &HuntCrewCurveInputs<'_>,
+    workers: f32,
+) -> crate::equipment_config::KitCoverage {
+    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+        inputs.other_rows.iter().map(|(kit, held)| (kit, *held)),
+        inputs.kit,
+        workers,
+    );
+    inputs.equipment.coverage_from_units(
+        inputs.kit,
+        workers,
+        inputs.wear,
+        budget.share_for(workers, inputs.wear, inputs.equipment),
+    )
+}
+
 /// **THE HUNT TAKE CURVE — the one producer.** One row per crew size, `1..=max_workers`, each row
 /// the *whole* crew's expected animals a turn with the engagement, the retreat and **the fight** all
 /// resolved.
@@ -8995,33 +9022,6 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 /// (`regrow` → read the room → take) stopped after its first turn — and that is why the work board,
 /// which reads that projection, was right about this herd for the whole life of the discrepancy.
 /// The clone is what keeps *"nothing here touches the herd"* true.
-/// **THE CREWS A BAND ACTUALLY FIELDS AT `workers` ON THIS ROW** — [`HuntCrewCurveInputs`]'s
-/// coverage, resolved over the crew's **share** of the band's gear rather than over all of it.
-///
-/// One expression, because [`hunt_crew_take_curve`] and [`hunt_armed_crew`] must describe the same
-/// party: the curve's plateau and the count that explains it are read at the same crew size off the
-/// same ledger, and a second spelling here is exactly how *"max N workers useful"* comes to name a
-/// number no row of the curve was built from.
-///
-/// The share is struck per crew size — see [`HuntCrewCurveInputs::other_rows`] for why that cannot
-/// be hoisted out of the loop.
-fn curve_coverage(
-    inputs: &HuntCrewCurveInputs<'_>,
-    workers: f32,
-) -> crate::equipment_config::KitCoverage {
-    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        inputs.other_rows.iter().map(|(kit, held)| (kit, *held)),
-        inputs.kit,
-        workers,
-    );
-    inputs.equipment.coverage_from_units(
-        inputs.kit,
-        workers,
-        inputs.wear,
-        budget.share_for(workers, inputs.wear, inputs.equipment),
-    )
-}
-
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
     let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     let sigmas = inputs.range_sigmas.abs();

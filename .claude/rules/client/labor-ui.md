@@ -60,16 +60,49 @@ covered. One band's gear, counted twice, on the two surfaces the player staffs f
 of that row's share, cut pro-rata by head count from one band-wide budget), and `shortfall_line`
 takes it in two arms:
 
-- **A COMMITTED SOURCE ROW STATES ITS OWN PUBLISHED PAIR** — `kitWorkersHolding` of the row's
-  `workers`, with nothing re-divided here. The three drawer sheets hand their row in
+**THE STEPPER DECIDES WHICH ARM ANSWERS.** Two cases, and the test between them is
+`_describes_the_committed_party`:
+
+- **CASE 1 — THE SHEET IS DESCRIBING THE COMMITTED PARTY**: no crew composed (`KIT_CREW_UNCOMPOSED`,
+  the role cards) or a stepper still sitting on the row's own `workers`. The row's published pair is
+  the answer — `kitWorkersHolding` of `workers`, with nothing re-divided here — because it is the
+  sim's own and cannot disagree with the take. The three drawer sheets hand their row in
   (`_band_labor.{forage,hunt,extract}_assignment_of`), so a sheet and the board row behind it cannot
   give two answers. **The row is used only when its `kit_id` is the kit on screen**: a picker
   mid-change is composing something the sim has not priced, and quoting the old choice's coverage
   under the new kit's name is the one way this arm can lie.
-- **AN UNCOMMITTED COMPOSE COUNTS THE FREE STORE**, not the whole store: free units for item X are
-  `count − workersHolding`, clamped at zero, **both already on the wire**. Quoting the whole ledger
-  told a player a second trapping party was covered by the very traps the first had walked out with
-  — the uncommitted half of the same contradiction.
+- **CASE 2 — THE STEPPER HAS MOVED, so the player is composing a DIFFERENT party** and the committed
+  row's pair describes nobody on screen. The composed reading answers, counting the **free store**
+  against the crew: free units for item X are `count − workersHolding`, clamped at zero, **both
+  already on the wire**. Quoting the whole ledger told a player a second trapping party was covered
+  by the very traps the first had walked out with — the uncommitted half of the same contradiction.
+  - ⛔ **PLUS WHATEVER THIS ROW IS HOLDING, because re-composing it hands its own gear back.** The
+    netting subtracts every unit the band's committed rows hold and this row is one of them; without
+    the add-back, stepping a fully-armed 4-worker row to 12 would count its own four traps as
+    unavailable to itself and read `0 of 12`. The row's contribution is its complete-kit
+    `kitWorkersHolding`, which slightly UNDER-counts an item it holds more of than its scarcest —
+    conservative, and free, since this line takes the `min` across those same items anyway, so the
+    scarcest item decides the answer and is the one counted exactly.
+
+> #### ⛔ CASE 2 IS A REVIEW FINDING — THE ARM RETURNED BEFORE THE STEPPER WAS CONSULTED AT ALL
+>
+> The committed arm fired on *"this source's row names the kit on screen"* alone. On a committed
+> source the sheet therefore stopped describing the party in front of the player:
+>
+> - a `trapping` row of 4 with 4 traps publishes `kitWorkersHolding == workers`, so `short == 0` and
+>   the arm answered `""`. **Stepped to 12, the sheet said nothing** — where before the arm existed it
+>   read `4 of 12 Trapping kits available`.
+> - a row of 4 holding 2, stepped to 12, rendered `2 of 4 Trapping kits available` over a
+>   `HUNTERS 12` stepper: **stale figures, and a perfectly valid-looking sentence**, which is worse
+>   than the silence.
+>
+> `build_kit_row`'s own contract — *"`crew` IS THE PARTY THE SHEET IS COMPOSING … so the line can
+> state how far the band's gear reaches into it"* — was false for every committed source, and its
+> docstring is corrected with the code. **Four claims in `chapters/compose_rungs.gd` pin all four
+> corners**: the published pair at the committed crew (what the arm is FOR), silence on a covered row
+> at its own crew, `4 of 12` once stepped past it, and `2 of 12` on an already-short row — that last
+> one asserted as a negative too, because the defect's output was a valid sentence rather than an
+> empty one. A fix that simply deleted the arm passes the stepped pair and fails the first two.
 - **THE EXPEDITION ARM NETS NOTHING.** A detached party carries its own ledger and its gear leaves
   the band's, so subtracting the home band's committed rows from a store the party does not draw on
   would invent a shortfall.
