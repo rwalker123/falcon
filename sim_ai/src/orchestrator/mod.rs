@@ -65,7 +65,7 @@ impl Stance {
 }
 
 /// What a specialist may spend this turn. **v1 unit: a share of the seat's working-age
-/// population** — bands are arbitrated by conflict (one order per band), not budgeted.
+/// population** — moves and labor rows are arbitrated by conflict (`Cost::claimed`), not budgeted.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Budget {
     pub worker_share: f32,

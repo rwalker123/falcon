@@ -184,8 +184,9 @@ pub struct Proposal {
     pub commands: Vec<CommandPayload>, // the wire actions, already faction-tagged
     pub intent: IntentKey,             // "what this is for", stable across turns — the commitment key
     pub score: f32,                    // this specialist's utility, before priority and commitment
-    pub cost: Cost,                    // scarce units it spends: workers, the bands it moves
+    pub cost: Cost,                    // scarce units it spends: workers, the moves and rows it claims
     pub reason: String,                // the consideration that produced it, naming its target — the decision log's why
+    pub standing: bool,                // a standing bill the seat owes — paid before any bid is weighed (§5 step 4)
 }
 
 pub struct Proposals { pub proposals: Vec<Proposal>, pub alarm: Option<Alarm> }
@@ -331,10 +332,14 @@ for — *no kit, no hunt* — reads the band's `equipment_batches`, not the boar
 
 ### Budgets and costs share one vocabulary
 
-The shared scarce things a seat spends are **workers** (working-age population, assigned per job) and
-**bands** (a band takes one movement order per turn). `Budget` and `Cost` are both denominated in
-those units, so "may this specialist afford this proposal" is arithmetic the arbiter does, not a
-judgement a specialist makes. Materials and work-points join the vocabulary when `Build` does.
+The shared scarce things a seat spends are **workers** (working-age population, assigned per job),
+**moves** (a band walks one way a turn — `move_band`, `split_band`) and **rows** (the labor rows a
+proposal sets, keyed by band, kind and target — every `assign_labor` it emits, donors and targets
+both; a `cultivate`/`sow` claims the patch's forage row). A band is not a unit: the sim takes
+several labor orders for one band in a turn, and two proposals on one band collide only where they
+set the same row or both walk it. `Budget` and `Cost` are both denominated in those units, so "may
+this specialist afford this proposal" is arithmetic the arbiter does, not a judgement a specialist
+makes. Materials and work-points join the vocabulary when `Build` does.
 
 ---
 
@@ -353,10 +358,13 @@ what the decision log records:
    one people that means what it does.
 4. **Selection under difficulty.** Argmax at the top; sample among the top-*k* below it
    (`Difficulty.selection_top_k`). The AI evaluates correctly at every difficulty and only its
-   follow-through varies (`plan_ai_opponents.md` §6).
+   follow-through varies (`plan_ai_opponents.md` §6). **A standing bill goes first**: a proposal
+   marked `standing` (a hold on a completed rung) is walked before every bid, in score order among
+   the bills, so no bid outscores it; the bills are still under the budget and the claims among
+   themselves, and the bids are then selected with those claims already taken.
 5. **Feasibility.** Walk the ordered list, charging each `cost` against the specialist's `Budget`
-   and against the turn's conflict set — one order per band, workers not assigned twice. Reject
-   `over_budget` or `conflict` and continue down the list.
+   and against the turn's conflict set — a move or a row already claimed this turn, workers not
+   assigned twice. Reject `over_budget` or `conflict` and continue down the list.
 6. **Emit.** The accepted proposals' commands, then `Orders { directive: Ready }`. Always — an
    arbiter that emits nothing still ends the turn, because a silent seat is auto-submitted at
    `seat_turn_timeout_seconds` (120 s) and *loses its turn* (`factions.md` → Seats).

@@ -525,8 +525,9 @@ impl SeatMemory {
 /// What ingesting one frame did.
 #[derive(Debug)]
 pub enum FrameOutcome {
-    /// A full frame replaced the view.
-    Replaced,
+    /// A full frame replaced the view; `rewound` says whether it moved the world under the seat
+    /// ([`rewinds`]) — the only case the brain is told to forget.
+    Replaced { rewound: bool },
     /// A delta merged into the view.
     Applied,
     /// A delta did not name the frame held: the view is stale until a full frame arrives, and the
@@ -554,6 +555,25 @@ fn carried_acted_tick(held: &SeatView, incoming: &SnapshotHeader) -> Option<u64>
     let acted = held.last_acted_tick?;
     let same_world = held.snapshot.header.world_epoch == incoming.world_epoch;
     (same_world && incoming.tick >= acted).then_some(acted)
+}
+
+/// **Whether a full frame moves the world under the seat** — a new `world_epoch` (a New Game,
+/// a Load) or a tick behind the one held (a rollback). A full frame of the same epoch at the
+/// held tick or later is the world the seat already stands in, republished: a `Resync` answered
+/// after the world's own broadcast, a mid-turn recapture. Only a rewind is a reason to forget.
+///
+/// ⛔ **Forgetting on the republished frame was the tick-2 divergence.** The link asks `Resync`
+/// on connect; when the world was built before the ask, the server answers with a second full
+/// frame of tick 1 (`resync.published`), which lands after the seat has acted on the first. The
+/// brain's `on_full_frame` then cleared `known_bands` (and the move targets, realized rates and
+/// departure memory), so at tick 2 every band read as newborn and the pending split's birth was
+/// pinned on the *parent* — which re-split, walked to settle itself, and the run parted from one
+/// where the ask reached the server first (`resync.no_world`) for good: five of sixty seeds in
+/// two sweeps of one build, seed 9 reading 0 working / 26 hunger deaths one time and 15 / 8 the
+/// next.
+fn rewinds(held: &SeatView, incoming: &SnapshotHeader) -> bool {
+    held.snapshot.header.world_epoch != incoming.world_epoch
+        || incoming.tick < held.snapshot.header.tick
 }
 
 /// The view plus the one piece of state the chain needs: whether a full frame is owed.
@@ -589,6 +609,10 @@ impl Perception {
                     tick = snapshot.header.tick,
                     "full frame replaced the view"
                 );
+                let rewound = self
+                    .view
+                    .as_ref()
+                    .is_some_and(|held| rewinds(held, &snapshot.header));
                 let last_acted_tick = self
                     .view
                     .as_ref()
@@ -598,7 +622,7 @@ impl Perception {
                     last_acted_tick,
                 });
                 self.awaiting_full_frame = false;
-                FrameOutcome::Replaced
+                FrameOutcome::Replaced { rewound }
             }
             Ok(FramePayload::Delta(delta)) => {
                 if self.awaiting_full_frame {
@@ -682,7 +706,7 @@ mod tests {
         let mut perception = Perception::default();
         assert!(matches!(
             perception.ingest(&a_full_frame()),
-            FrameOutcome::Replaced
+            FrameOutcome::Replaced { rewound: false }
         ));
         assert!(matches!(
             perception.ingest(&a_delta_on(FIRST_FRAME)),
@@ -757,9 +781,36 @@ mod tests {
         ));
         assert!(matches!(
             perception.ingest(&a_full_frame()),
-            FrameOutcome::Replaced
+            FrameOutcome::Replaced { rewound: false }
         ));
         assert!(!perception.awaiting_full_frame());
+    }
+
+    /// The republished world is not a rewind: a second full frame of the same epoch at the same
+    /// tick (a `Resync` answered after the broadcast) or a later one (a mid-turn recapture) keeps
+    /// what the brain remembers; a lower tick or a new epoch is a rewind and forgets.
+    #[test]
+    fn only_a_new_epoch_or_an_earlier_tick_rewinds_the_seat() {
+        const EPOCH: u32 = 1;
+        const TICK: u64 = 7;
+        let mut perception = Perception::default();
+        perception.ingest(&a_full_frame_of(EPOCH, TICK));
+        assert!(matches!(
+            perception.ingest(&a_full_frame_of(EPOCH, TICK)),
+            FrameOutcome::Replaced { rewound: false }
+        ));
+        assert!(matches!(
+            perception.ingest(&a_full_frame_of(EPOCH, TICK + 1)),
+            FrameOutcome::Replaced { rewound: false }
+        ));
+        assert!(matches!(
+            perception.ingest(&a_full_frame_of(EPOCH, TICK)),
+            FrameOutcome::Replaced { rewound: true }
+        ));
+        assert!(matches!(
+            perception.ingest(&a_full_frame_of(EPOCH + 1, TICK + 5)),
+            FrameOutcome::Replaced { rewound: true }
+        ));
     }
 
     #[test]

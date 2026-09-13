@@ -6,10 +6,16 @@
 //! 2. **Priority** — `score *= plan.priorities[specialist]`.
 //! 3. **Commitment** — `score *= 1 + profile.commitment` when the intent was chosen last turn.
 //! 4. **Selection under difficulty** — sorted by final score; `selection_top_k = 1` is argmax,
-//!    above it each pass picks uniformly among the top k remaining.
-//! 5. **Feasibility** — walking that order: a repeated intent is `outscored`; a band already
-//!    ordered this turn is `conflict`; workers past the specialist's share of the working-age
-//!    pool is `over_budget`.
+//!    above it each pass picks uniformly among the top k remaining. **The standing bills go
+//!    first**: a proposal marked `standing` (a hold on a completed rung — `Proposal::standing`)
+//!    is walked before every bid, in score order among the bills, so a bid never outscores a
+//!    bill; the bills are still subject to the budget and to the claims among themselves.
+//! 5. **Feasibility** — walking that order: a repeated intent is `outscored`; a **claim already
+//!    taken this turn** is `conflict` — a claim is a band's move (`Cost::moves`: `move_band`,
+//!    `split_band`) or a labor row it sets (`Cost::rows`, keyed as `view::row_key`), never the
+//!    band itself, because the sim takes several labor orders for one band in a turn and two
+//!    proposals on one band collide only where they set the same row or both walk it; workers
+//!    past the specialist's share of the working-age pool is `over_budget`.
 //! 6. **Emit** — the accepted proposals' commands, in order. `ready` is the loop's, and always
 //!    follows.
 //!
@@ -33,7 +39,7 @@ use crate::instruments::decisions::{
 use crate::orchestrator::Plan;
 use crate::profile::{AiProfile, Difficulty, ARGMAX_TOP_K};
 use crate::specialists::{
-    intent_class, Memo, Proposal, SpecialistId, INTENT_CLASS_RAID, INTENT_CLASS_TRADE,
+    intent_class, Cost, Memo, Proposal, SpecialistId, INTENT_CLASS_RAID, INTENT_CLASS_TRADE,
 };
 use crate::view::SeatMemory;
 
@@ -139,8 +145,15 @@ fn weigh(
         });
     }
 
-    // 4: selection under difficulty.
-    let ordered = select(scored, difficulty.selection_top_k, rng);
+    // 4: selection under difficulty — the standing bills first, then the bids, each in its own
+    // selection order. A bill is paid before any bid is weighed, so no bid can outscore it; the
+    // claims it takes are then already taken when the bids are walked.
+    let (bills, bids): (Vec<Scored>, Vec<Scored>) = scored
+        .into_iter()
+        .partition(|scored| scored.offered.proposal.standing);
+    let ordered = select(bills, difficulty.selection_top_k, rng)
+        .into_iter()
+        .chain(select(bids, difficulty.selection_top_k, rng));
 
     // 5: feasibility, in that order.
     let mut budget: BTreeMap<SpecialistId, u32> = plan
@@ -154,7 +167,7 @@ fn weigh(
             )
         })
         .collect();
-    let mut ordered_bands: BTreeSet<u64> = BTreeSet::new();
+    let mut claims = Claims::default();
     let mut intents: BTreeSet<String> = BTreeSet::new();
     let mut accepted = Vec::new();
     for Scored {
@@ -166,12 +179,7 @@ fn weigh(
         let remaining = budget.entry(offered.specialist).or_insert(0);
         let verdict = if intents.contains(&proposal.intent) {
             Err(REJECTED_OUTSCORED)
-        } else if proposal
-            .cost
-            .bands
-            .iter()
-            .any(|band| ordered_bands.contains(band))
-        {
+        } else if claims.collides(&proposal.cost) {
             Err(REJECTED_CONFLICT)
         } else if proposal.cost.workers > *remaining {
             Err(REJECTED_OVER_BUDGET)
@@ -181,7 +189,7 @@ fn weigh(
         match verdict {
             Ok(()) => {
                 *remaining -= proposal.cost.workers;
-                ordered_bands.extend(proposal.cost.bands.iter().copied());
+                claims.take(&proposal.cost);
                 intents.insert(proposal.intent.clone());
                 record(sink, tick, &offered, score_final, Outcome::Accepted);
                 accepted.push(accept(offered));
@@ -190,6 +198,26 @@ fn weigh(
         }
     }
     accepted
+}
+
+/// **The turn's conflict set**: every move and every labor row an accepted proposal has claimed
+/// (`Cost::moves`, `Cost::rows`). A proposal collides when any one of its claims is here.
+#[derive(Default)]
+struct Claims {
+    moves: BTreeSet<u64>,
+    rows: BTreeSet<String>,
+}
+
+impl Claims {
+    fn collides(&self, cost: &Cost) -> bool {
+        cost.moves.iter().any(|band| self.moves.contains(band))
+            || cost.rows.iter().any(|row| self.rows.contains(row))
+    }
+
+    fn take(&mut self, cost: &Cost) {
+        self.moves.extend(cost.moves.iter().copied());
+        self.rows.extend(cost.rows.iter().cloned());
+    }
 }
 
 /// Step 1: the class of intent the profile forbids, if this is one.
@@ -257,13 +285,18 @@ mod tests {
     use crate::instruments::decisions::VecSink;
     use crate::orchestrator::{Budget, Stance};
     use crate::profile::{AiProfiles, DEFAULT_DIFFICULTY};
-    use crate::specialists::{Cost, SPECIALIST_FOOD, SPECIALIST_LAND};
+    use crate::specialists::{SPECIALIST_FOOD, SPECIALIST_LAND};
     use rand::SeedableRng;
 
     const TICK: u64 = 5;
     const WORKING_AGE: u32 = 20;
     const BAND_A: u64 = 1;
     const BAND_B: u64 = 2;
+    /// A labor row's tile, for the row-claim cases.
+    const ROW_X: u32 = 4;
+    const ROW_Y: u32 = 2;
+    const OTHER_ROW_X: u32 = 2;
+    const OTHER_ROW_Y: u32 = 3;
 
     fn profile() -> AiProfile {
         AiProfiles::builtin().profile("forager").unwrap().clone()
@@ -292,6 +325,7 @@ mod tests {
         }
     }
 
+    /// A proposal that walks `band`: its one claim is the band's move.
     fn offer(
         specialist: SpecialistId,
         intent: &str,
@@ -299,19 +333,63 @@ mod tests {
         workers: u32,
         band: u64,
     ) -> Offered {
+        offer_with(
+            specialist,
+            intent,
+            score,
+            workers,
+            band,
+            vec![move_band(band)],
+            false,
+        )
+    }
+
+    fn offer_with(
+        specialist: SpecialistId,
+        intent: &str,
+        score: f32,
+        workers: u32,
+        band: u64,
+        commands: Vec<CommandPayload>,
+        standing: bool,
+    ) -> Offered {
         Offered {
             specialist,
             proposal: Proposal {
-                commands: vec![CommandPayload::Resync],
+                cost: Cost::claimed(workers, band, &commands),
+                commands,
                 intent: intent.to_owned(),
                 score,
-                cost: Cost {
-                    workers,
-                    bands: vec![band],
-                },
                 reason: "test".to_owned(),
                 memo: None,
+                standing,
             },
+        }
+    }
+
+    fn move_band(band: u64) -> CommandPayload {
+        CommandPayload::MoveBand {
+            faction_id: 1,
+            band_id: Some(band),
+            target_x: 0,
+            target_y: 0,
+        }
+    }
+
+    fn assign_row(band: u64, x: u32, y: u32, workers: u32) -> CommandPayload {
+        CommandPayload::AssignLabor {
+            faction_id: 1,
+            band_id: Some(band),
+            role: "forage".to_owned(),
+            workers,
+            target_x: Some(x),
+            target_y: Some(y),
+            fauna_id: None,
+            policy: None,
+            species: None,
+            floor: None,
+            kit_id: None,
+            take_species: Vec::new(),
         }
     }
 
@@ -358,9 +436,9 @@ mod tests {
         let offered = vec![
             offer(SPECIALIST_FOOD, "food:assign:1", 0.9, 4, BAND_A),
             offer(SPECIALIST_FOOD, "food:assign:1", 0.5, 4, BAND_B), // same intent: outscored
-            offer(SPECIALIST_LAND, "land:move:1", 0.8, 0, BAND_A),   // band A taken: conflict
+            offer(SPECIALIST_LAND, "land:move:1", 0.8, 0, BAND_A), // band A's move taken: conflict
             offer(SPECIALIST_LAND, "land:split:2", 0.7, 11, BAND_B), // 11 > Land's 10: over budget
-            offer(SPECIALIST_LAND, "contact:raid:9", 1.0, 0, 9),     // will_raid false: gated
+            offer(SPECIALIST_LAND, "contact:raid:9", 1.0, 0, 9),   // will_raid false: gated
         ];
         let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &SeatMemory::default());
         assert_eq!(decisions.len(), 5, "one record per proposal");
@@ -404,6 +482,144 @@ mod tests {
         assert!((by_intent("land:move:1").score_final - 0.4 * bonus).abs() < 1e-6);
     }
 
+    /// **Conflicts are per claim, not per band.** Two assignments on one band that set
+    /// different rows are both accepted; two that set the same donor row collide; a move and an
+    /// assignment on the same band no longer collide by band.
+    #[test]
+    fn two_proposals_on_one_band_collide_only_where_they_claim_the_same_row_or_move() {
+        let memory = SeatMemory::default();
+        // Different rows: both accepted.
+        let offered = vec![
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:1",
+                0.9,
+                2,
+                BAND_A,
+                vec![assign_row(BAND_A, ROW_X, ROW_Y, 2)],
+                false,
+            ),
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:hold:4,2",
+                0.5,
+                2,
+                BAND_A,
+                vec![assign_row(BAND_A, OTHER_ROW_X, OTHER_ROW_Y, 2)],
+                false,
+            ),
+        ];
+        let (accepted, _) = run(offered, ARGMAX_TOP_K, &memory);
+        assert_eq!(accepted.len(), 2, "different rows on one band both go");
+        // The same donor row: the second collides.
+        let offered = vec![
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:1",
+                0.9,
+                2,
+                BAND_A,
+                vec![
+                    assign_row(BAND_A, ROW_X, ROW_Y, 0),
+                    assign_row(BAND_A, OTHER_ROW_X, OTHER_ROW_Y, 2),
+                ],
+                false,
+            ),
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:hunt:1",
+                0.5,
+                2,
+                BAND_A,
+                vec![assign_row(BAND_A, ROW_X, ROW_Y, 1)],
+                false,
+            ),
+        ];
+        let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &memory);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(
+            rejection(&decisions, "food:hunt:1"),
+            Some(REJECTED_CONFLICT)
+        );
+        // A move and an assignment on the same band: both accepted.
+        let offered = vec![
+            offer(SPECIALIST_LAND, "land:move:1", 0.9, 0, BAND_A),
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:1",
+                0.5,
+                2,
+                BAND_A,
+                vec![assign_row(BAND_A, ROW_X, ROW_Y, 2)],
+                false,
+            ),
+        ];
+        let (accepted, _) = run(offered, ARGMAX_TOP_K, &memory);
+        assert_eq!(
+            accepted.len(),
+            2,
+            "a move and an assignment do not collide by band"
+        );
+    }
+
+    /// **A hold is a bill, not a bid.** A standing hold at a low score and a higher-scored,
+    /// commitment-boosted assignment on the same row: the hold is paid first and the assignment
+    /// is `conflict`.
+    #[test]
+    fn a_standing_bill_is_paid_before_a_higher_scored_bid_on_the_same_row() {
+        let mut memory = SeatMemory::default();
+        memory.record_choices(TICK - 1, [("food:assign:1".to_owned(), None)].into_iter());
+        let offered = vec![
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:assign:1",
+                0.9,
+                2,
+                BAND_A,
+                vec![assign_row(BAND_A, ROW_X, ROW_Y, 2)],
+                false,
+            ),
+            offer_with(
+                SPECIALIST_FOOD,
+                "food:hold:4,2",
+                0.1,
+                2,
+                BAND_A,
+                vec![assign_row(BAND_A, ROW_X, ROW_Y, 0)],
+                true,
+            ),
+        ];
+        let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &memory);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].intent, "food:hold:4,2");
+        assert_eq!(
+            rejection(&decisions, "food:assign:1"),
+            Some(REJECTED_CONFLICT)
+        );
+        let boosted = decisions
+            .iter()
+            .find(|d| d.intent == "food:assign:1")
+            .unwrap()
+            .score_final;
+        assert!(boosted > 0.9, "the bid was the higher score: {boosted}");
+        // A bill is still under the budget: one past Food's share is `over_budget`.
+        let offered = vec![offer_with(
+            SPECIALIST_FOOD,
+            "food:hold:4,2",
+            0.1,
+            11,
+            BAND_A,
+            vec![assign_row(BAND_A, ROW_X, ROW_Y, 0)],
+            true,
+        )];
+        let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &memory);
+        assert!(accepted.is_empty());
+        assert_eq!(
+            rejection(&decisions, "food:hold:4,2"),
+            Some(REJECTED_OVER_BUDGET)
+        );
+    }
+
     #[test]
     fn top_k_one_is_argmax_and_feasibility_never_orders_a_band_twice() {
         let offered = vec![
@@ -416,7 +632,7 @@ mod tests {
         assert_eq!(
             intents,
             vec!["land:move:1", "food:assign:2"],
-            "highest first, band A once"
+            "highest first, band A walked once"
         );
     }
 

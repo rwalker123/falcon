@@ -94,7 +94,7 @@ pub const BASELINE_TOLERANCE: f64 = 0.0;
 /// starves on every seed alike and measured nothing the forager's own `hunger_deaths_total` does
 /// not.
 #[cfg(test)]
-pub const BASELINE_SEEDS: [u64; 2] = [23, 47];
+pub const BASELINE_SEEDS: [u64; 2] = [19, 40];
 #[cfg(test)]
 pub const BASELINE_TURNS: u64 = 60;
 #[cfg(test)]

@@ -49,8 +49,8 @@ use crate::view::{band_tile, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
 use ledger::{Book, Reassignment};
 
 pub(crate) use sources::{
-    cluster_take, foreign_band_at, is_food_site, is_walkable, patch_per_worker_yield, ClusterTake,
-    IsDead, SourceKey,
+    best_sustained_cluster_within, cluster_take, cluster_take_sustained, foreign_band_at,
+    is_food_site, is_walkable, patch_per_worker_yield, ClusterTake, IsDead, SourceKey,
 };
 use sources::{hunting_kits_held, Source};
 

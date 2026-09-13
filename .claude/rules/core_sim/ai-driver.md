@@ -152,9 +152,21 @@ move target, a pending split); `memory.remember_runways`; the commands are **the
 then the arbiter's. `on_full_frame(tick)` forgets everything stamped later than `tick` (the
 board's entries too), drops a plan adopted after it, **and resets the orchestrator's goal
 cadence** (`Orchestrator::forget_after`) so the dropped plan is re-planned at the new epoch's
-first tick. Dropping the plan alone left `since_turn` in the future: `plan()` then returned `None`
-for a full cadence and `plan_for` fell back to `Plan::pass_through`, whose budgets and priorities are
-empty — a rival that played nothing for the first 8 turns after every New Game or Load.
+first tick. **It is called only for a full frame that rewinds the seat** (`view::rewinds`: a new
+`world_epoch`, or a tick behind the one held). The same world republished — a `Resync` answered
+after the world's own broadcast, a mid-turn recapture — is `Replaced { rewound: false }` and the
+brain keeps everything. ⛔ Forgetting on it was the tick-2 divergence: the link asks `Resync` on
+connect, and when `new_game` had landed first the server answered with a second full frame of
+tick 1 (`resync.published`, against `resync.no_world` when the ask came first) after the seat
+had acted on the first; `forget_after` cleared `known_bands`, every band read as newborn at
+tick 2, the pending split's birth was pinned on the parent, which re-split and walked to settle
+itself — five of sixty seeds in two sweeps of one build, seed 9 reading 0 working / 26 hunger
+deaths one time and 15 / 8 the next. The server kept its order throughout: the split was
+applied at tick 1 on both branches (`starting_loadout.applied … band=4` ahead of
+`orders.accepted`). Dropping the plan alone left `since_turn` in the future: `plan()` then
+returned `None` for a full cadence and `plan_for` fell back to `Plan::pass_through`, whose budgets
+and priorities are empty — a rival that played nothing for the first 8 turns after every New Game
+or Load.
 
 **`ConstantStance`.** Stance = the archetype's. Budgets = the weights of the enabled specialists
 normalised (`food_security → food`, `land_claim → land`; `contact_seeking` is read and funds nothing
@@ -181,10 +193,23 @@ The middle token is the class the behaviour gate reads: `raid` needs `will_raid`
 `will_trade`. The bench's intent histogram groups on `<specialist>:<kind>`.
 
 **The arbiter's rejection set**, fixed: `behavior_gated` (step 1), `outscored` (a second proposal
-under an intent already accepted this turn), `conflict` (a band already ordered this turn — one
-order per band), `over_budget`. Selection: sorted by final score; `selection_top_k = 1` is argmax;
-above it each pass draws uniformly among the top k still unpicked from the `(seed, faction, tick)`
-rng, so the order — not the set — is what difficulty moves.
+under an intent already accepted this turn), `conflict` (a **claim** already taken this turn),
+`over_budget`. **A claim is a move or a row, never a band**: `Cost::moves` is the bands a
+proposal walks or splits (`move_band`, `split_band`), `Cost::rows` the labor rows it sets, keyed
+as `view::row_key` — every `assign_labor` it emits, donors and targets both, a `builders` /
+`agriculture` pool as much as a forage row, and the patch's forage row for a `cultivate` / `sow`.
+`Cost::claimed` reads them off the commands themselves, so a proposal cannot claim less than it
+sends. The sim takes several labor orders for one band in a turn, so two proposals on one band
+collide only where they set the same row or both walk it — the old one-order-per-band rule cost
+`Land` five conflicts to `Food` on seed 11 and rejected a hold beside an assignment on the same
+band. Selection: sorted by final score; `selection_top_k = 1` is argmax; above it each pass draws
+uniformly among the top k still unpicked from the `(seed, faction, tick)` rng, so the order — not
+the set — is what difficulty moves. **A standing bill goes first**: a proposal marked
+`Proposal::standing` — *hold the ground* on a completed rung, nothing else — is walked before
+every bid, in score order among the bills, still under the budget and the claims among themselves;
+the bids are then selected with those claims taken. A hold is a bill the seat owes, not a bid:
+priced as the rung lost it still lost 51,9 on seed 23 to a same-band assignment through `conflict`
+the turn the rung completed, and the patch unwound.
 
 ## The demand board (`board.rs`)
 
@@ -354,9 +379,10 @@ runway_turns, ground_rung })`, from the profile's `goals` block), and **the goal
 every rule projects the band's book under its change through the ledger below and scores
 `goal_progress × weight`. A rule handed no goals — `Plan::pass_through`, the scripted brain's plan,
 whose brain has no `Food` — proposes nothing (`the_pass_through_plan_proposes_nothing_from_any_rule`).
-Each rule yields at most one proposal per band, the arbiter's one-order-per-band rule keeps one, and
-the `reason` is `"<rule>: <subject> [ledger: trough X at tN, positive again tM]"` so the viewer
-shows which rule fired and what the ledger said. The rules, in `propose` order:
+Each rule yields at most one proposal per band, the arbiter keeps those whose claims (the rows they
+set, the band's move) do not collide, and the `reason` is
+`"<rule>: <subject> [ledger: trough X at tN, positive again tM]"` so the viewer shows which rule
+fired and what the ledger said. The rules, in `propose` order:
 
 - **negative income** (`food:assign:<band>`) — fires on `food_income < food_consumption` **or**
   `idle_workers > 0` **or** a row with surplus (idle and surplus hands alike are negative income
@@ -419,13 +445,24 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   `goals.net_income_per_turn` or within `food.near_positive_fraction` of it, and a live huntable
   herd is in reach: the most hands off the **forage rows** — their surplus first, then the
   lowest-paying (never the idle hands — those are rule 1's, and a hunt drawn from them competed
-  with the assignment for the band's one order) — whose leaving keeps the projected net at the
+  with the assignment for the same rows) — whose leaving keeps the projected net at the
   goal with the herd's take counted, and whose projection survives.
-- **hold the ground** (`food:hold:<x>,<y>`) — a patch the seat owns whose `upkeep` row reads
+- **hold the ground** (`food:hold:<band>`) — a patch the seat owns whose `upkeep` row reads
   `upkeep_shortfall > 0` (the standing-upkeep bill for holding its rung, unpaid —
-  `docs/plan_standing_upkeep.md`) gets `assign_labor … agriculture <upkeep_workers_needed>` on
-  the band that works it, the kit left `None` so the wire derives `tillage` (the hoes are the
-  board's business later). The hands come from the surplus first, then the lowest rows, and the
+  `docs/plan_standing_upkeep.md`) gets `assign_labor … agriculture <n>` on the band that holds a
+  forage row on it — **with or without hands on the row**: the sim keeps by the row, not the
+  crew (`keeping_claims` walks the band's assignments whatever their `workers`), and the
+  `agriculture` pool is **one pool against the band's summed plant bill**
+  (`LaborTarget::Agriculture`, `maintenance_shares`). So `n` is Σ `upkeep_workers_needed` over
+  every owned patch the band holds a row on, less the pool it has, and one more hand
+  (`HOLD_MIN_HANDS`) when the pool already stands at the sum and a patch still reads short — the
+  wire's `workers_needed` is `ceil(demand / PER_WORKER_OUTPUT)` and a bare keeper delivers under
+  that (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`). Sized per patch less the whole
+  pool it read `want 0` for 49,5 while the pool's two hands kept 53,8, and skipping a row the
+  band had emptied it never proposed for 49,5 again; the patch unwound at t48 with two holds
+  accepted twenty turns earlier. One proposal per band naming every short patch; the kit left
+  `None` so the wire derives `tillage` (the hoes are the board's business later). The hands
+  come from the surplus first, then the lowest rows, and the
   change is priced like any reassignment: what they earned where they stood against **the rung
   lost** — an unpaid bill costs the whole improvement, so the hold keeps, as a `Change::Series`
   over the horizon, the rung's premium per turn (`tended_yield`, `field_yield` on a field, less
@@ -441,8 +478,17 @@ shows which rule fired and what the ledger said. The rules, in `propose` order:
   the agriculture hands with them and 51,9 unwound anyway. Priced as the first turns' decay alone
   (a hundredth a turn of the tended yield) it lost eight of eleven conflicts to a hand-shuffle.
   `agriculture` hands pay a patch's bill whether or not the band still works it (band 4 supplied
-  51,9 at 1.88 with its forage row empty). Fires before *upgrade the ground*: holding what the
-  band has beats declaring the next rung. The fact that forced it:
+  51,9 at 1.88 with its forage row empty). **On a completed rung the proposal is `standing`** — a
+  bill the arbiter pays before weighing any bid (above); mid-build it is a bid like any other.
+  **A bill the band cannot pay without starving is defaulted on**: the projection with the bill
+  paid must `survives` (trough above zero), as every other rule's must, or nothing is proposed
+  and the rung unwinds. Paid unconditionally, band 2 on seed 24 held 7,18 three times at a
+  projected trough of −22, −40 and 2 with seven hands, and by t32 kept three, built with four
+  and fed nobody. Over the sixty-seed sweep the unconditional bill ends with 286 working, 1103
+  hunger deaths and 29 improved patches; gated on `survives`, 399, 951 and 15 — survival is the
+  purpose, so the gate stands and the patches it lets go are the price.
+  Fires before *upgrade the ground*: holding what the band has beats declaring the next rung.
+  The fact that forced it:
   seed 23's cultivate on 49,5 completed at t44 (`cultivated: true`, progress 1.0, queue empty)
   and read `cultivated: false, 0.99` at t45, decaying a hundredth a turn to 0.84 at t60, the
   tile's `upkeep` row at `demand 1.92, supplied 0.0, shortfall 1.92, workers_needed 2, kit_id
@@ -826,10 +872,19 @@ the record derives nothing the client would have to (`labor-ui.md` → "THE ⚠ 
 
 `sim_ai bench [--seeds <u64,…>] [--turns <n>] --seats <spec> … --out <dir> [--server <path>]
 [--config <path>] [--compare <other-out-dir>] [--check <baselines.json>] [--write-baselines <path>]`.
-`--seeds` defaults to **`23,47`** (`DEFAULT_SEEDS`): two Tiny `earthlike` starts a human can feed
-the start band on. Seed 11 was the first default and was dropped because a human cannot feed the
-start band there — the two food sites in reach of its start regrow ~1.2 food/turn for 30 people —
-so a rival benched on it measures nothing; 47 replaces it. `--turns` defaults to **`60`**
+`--seeds` defaults to **`19,40`** (`DEFAULT_SEEDS`): of seeds 1–60 at `@hard`, the two starts
+the forager brings through sixty turns with no hunger death that have the best ground by the
+bench's own reading — `ground.best_cluster_in_horizon` 2.72 and 2.22 food/turn against a start
+consumption of 4.09 — and that replayed identically in every run, so the ratchet measures the
+rules on them and not the start's luck. No start on the map feeds thirty people on regrowth
+alone (the best of sixty is 2.72; forty-one read under 2.0), so "can feed" is the best ground
+there is, not a threshold met. Seed 21 reads 2.56, second best, and is passed over: the band is
+wiped out by t43 — `Land` walked it 51,26 → 2,19 → 52,24 → 4,22 across the wrap seam, each
+cluster reading better once the other was stripped — so its row would be degenerate and ratchet
+nothing, the reason seed 11 (the first default; ~1.2 food/turn in reach) was dropped; 12 (2.31)
+survives but was the one seed that flipped a branch before the replay fix. 23 and 47 were the
+defaults before the sweep, picked by hand for a start a human could feed. `--turns` defaults to
+**`60`**
 (`DEFAULT_TURNS`): cultivation costs 50 work units and a crew of a few builders takes ~15–25
 turns, so a 30-turn run ends inside the investment's dip and the ratchet's end-of-run population
 reads the trough. `--server` defaults to `server` beside
@@ -863,7 +918,7 @@ rival waiting forever on `unknown_seat`. Then `new_game` is sent and synchronise
 question behind it. A 30-turn seed on Tiny is ~3–3.6 s wall (both shipped seat sets, debug build).
 
 **The New Game recipe** — to open the world a bench seed played, from the client menu: preset
-*Earthlike*, size *Tiny*, seed = the bench seed (`23` or `47` for the shipped baselines), start
+*Earthlike*, size *Tiny*, seed = the bench seed (`19` or `40` for the shipped baselines), start
 profile *late_forager_tribe*, rivals = the number of `--seats` (2 for the shipped set). The
 human holds seat 0 — the seat the bench only *holds* and never plays — and the rivals are seats 1
 and 2 in `--seats` order; the AI played seat 1 (`1=utility:forager@hard`), seat 2 was Pass. The
@@ -888,6 +943,7 @@ resolve on the rivals' `ready` alone (`SeatTurnGate` → `TurnWait::Resolve`).
 | per specialist (`specialist.<name>.`) | `accepted`, `rejected.<rejected_by>`, `acceptance_rate`, `liveness` (1.0 iff accepted > 0 in **every** window of `LIVENESS_WINDOW_TURNS` = 10 over the run's tick span), `intent_churn` (mean distinct accepted intents per window); and `intent.<specialist>:<kind>`, the share of every accepted decision under each intent class |
 | orchestrator | `orchestrator.stance_switches_per_100_turns`, `orchestrator.alarm_latency_turns` (mean ticks from an `alarm` to the next `plan` whose budgets differ from the one in force) — `null` on a seat whose brain writes no `plan`/`alarm` records (Pass, Scripted) |
 | the demand board | `board.posted`, `board.expired`, `board.fulfilment_rate`, `board.latency_turns`, `board.<requester>.fulfilment_rate` (the board section above); reported, not ratcheted |
+| the ground at the start | `ground.sustained_take_at_start` (what the start band's sites give per turn at the Best floor's regrowth from the tile it stands on — `food::cluster_take_sustained`, the cluster dealt with each site capped at its sustained regrowth and its `sustained_hands`), `ground.best_cluster_in_horizon` (the best such reading over the discovered, walkable tiles within `land.horizon_tiles`), `ground.consumption_at_start` (the first row's `food_consumption`); off the **first `observations.jsonl` record** (`GroundObservation` on every band observation), read there and not off the scoreboard row because the reading needs the seat's memory and the profile's horizon; `None` on a seat with no observation log; reported, not ratcheted — the world sets them, and they are what the default seeds are chosen by |
 | link | `link.turns_observed` (distinct scoreboard ticks), `link.turns_lost_to_timeout` (observed ticks with no `ready`), `link.reconnects` (`command_reconnect` records; a stream reopen is not one) |
 
 **`--compare`** requires the same seeds, turns and seat **factions** (the brains may differ —
@@ -952,28 +1008,43 @@ hand-written judgement no regeneration can recompute — so `upsert` carries it 
 ⛔ **The gate is "never wins", not `liveness`.** §8.2's bar is *"a specialist whose proposals never
 win is not being measured by the ablation, it is being ignored"* — and losing a single window to a
 higher-scoring sibling is ordinary arbitration, not being ignored. On seed 11 `Land` wins at ticks 9
-and 23 and loses five conflicts to `Food` in between (one band takes one order a turn), so its
+and 23 and loses five conflicts to `Food` in between (under the one-order-per-band rule of the
+time), so its
 `liveness` is 0 while it is plainly alive. Gating on `liveness` would fail that seat and the only
 ways to clear it — rescoring `Land`, or splitting a band between specialists — are changing the
 brain to move a number. So `liveness` stays **reported** and ratchetable through `tolerance`, and
 never gates on its own.
 
 **`sim_ai/bench/baselines.json`** holds one entry, `1=utility:forager@hard 2=pass` on the
-bench's default seeds `23, 47` for its default 60 turns (`BASELINE_SEEDS` / `BASELINE_TURNS` /
+bench's default seeds `19, 40` for its default 60 turns (`BASELINE_SEEDS` / `BASELINE_TURNS` /
 `BASELINE_SEAT_SETS`; a unit test holds the file to them), recorded on the Tiny `earthlike` world
-above with the outfitting board sizing the loadout by value (`gathering 15, big_game 2` on both
-seeds), *hold the ground* priced as the rung lost, overuse read only at or below a patch's floor
-and free hands moved only where they improve a site's take: seed 23 ends with 8 working, 16
-hunger deaths (the first on t39) and `patches_improved 1` — the cultivate on 49,5 completes at
-t39 and holds to t60 on two `agriculture` hands, while 51,9 (complete t30) unwound at t31 with
-its holds outscored and 53,8 never completed; seed 47 with 12 working, 8 hunger deaths (the first
-on t51) and `patches_improved 1` — 12,5 holds from t17 to t60. `hard` because
-argmax makes the run the rules' — at `normal` two proposals for one band in the top two are a
-seeded coin flip. The all-Pass control went with seed 11: a Pass seat starves on every seed alike
-and measured nothing the forager's own `hunger_deaths_total` does not; seat 2 is still Pass and
-is marked `degenerate` on both seeds. `Land` wins on both seeds (7 and 6 moves accepted), so
-the file carries no `declined` entry. Regenerate the entry in the PR that moves it, with the
-numbers in the PR body.
+above with the outfitting board sizing the loadout by value (`gathering 16, big_game 1` on seed
+19, `gathering 15, big_game 2` on 40), conflicts per claim, *hold the ground* a standing bill
+sized to the band's summed plant bill and defaulted on when paying it would starve the band,
+overuse read only at or below a patch's floor and free hands moved only where they improve a
+site's take: seed 19 ends with 16 working, no hunger deaths and `patches_improved 0` — 27,18
+(complete t25) and 28,20 (complete t30) each held one tick and unwound, their bills defaulted
+on, and read 0.96 and 0.88 at t60; seed 40 with 20 working, no hunger deaths and
+`patches_improved 2` — 26,28 completes at t41 and 24,31 at t58, both held to t60 on two
+`agriculture` hands each. `hard` because argmax makes the run the rules' — at `normal` two
+proposals for one band in the top two are a seeded coin flip. The all-Pass control went with
+seed 11: a Pass seat starves on every seed alike and measured nothing the forager's own
+`hunger_deaths_total` does not; seat 2 is still Pass and is marked `degenerate` on both seeds.
+`Land` wins on both seeds (11 and 9 moves accepted), so the file carries no `declined` entry.
+Regenerate the entry in the PR that moves it, with the numbers in the PR body.
+
+⛔ **The file must parse back to the f64 it was written from.** The tolerance is 0, so `sim_ai`
+takes serde_json with `float_roundtrip`: the default float parse is best-effort and read seed
+12's `food_stock` 20.447092056274414 back as …418, failing `--check` on a run that replayed the
+baseline decision for decision.
+
+⛔ **Every seed replays.** Two sweeps of seeds 1–60 on one build once diverged on five (1, 9,
+26, 31, 42) at tick 2 — the seat forgetting itself on a republished full frame (the turn loop
+section above), not the server — and seed 12 once in four runs (5 working / 16 deaths against
+17 / 3). With the brain forgetting only on a rewind, two sweeps replay all sixty decision for
+decision. The ratchet fails only on a regression, so a non-replaying seed would pass on its
+better branch and fail on its worse without a code change — which is why the defaults are the
+seeds that replayed in every run before the fix too.
 
 ## The run viewer (`sim_ai viewer`, `viewer/`)
 
@@ -1245,7 +1316,8 @@ claim as `accepted > 0` — which the line above it already makes. `UTILITY_TURN
 Seconds, not minutes; the 30-turn baselines are not generated by a test.
 
 ⛔ **The liveness the test gates on is the seat's, read off `decisions.jsonl`, not
-`specialist.food.liveness`.** A one-band seat takes one order a turn, so a window in which `Land`
+`specialist.food.liveness`.** On a one-band seat a proposal that claims the band's rows or its
+move shuts the others out for the turn, so a window in which `Land`
 wins the band twice is a window `Food` lost to ordinary arbitration — on Tiny seed 11 that is the
 run's two-tick second window, and `specialist.food.liveness` reads 0 while the seat is plainly
 playing. Gating on it would fail a healthy seat, and the only ways to clear it change the brain

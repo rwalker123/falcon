@@ -23,7 +23,10 @@ use crate::brain::BrainLens;
 use crate::geometry::Tile;
 use crate::instruments::decisions::GoalsRecord;
 use crate::instruments::scoreboard::ScoreRow;
-use crate::specialists::food::{is_food_site, patch_per_worker_yield, ROLE_HUNT};
+use crate::specialists::food::{
+    best_sustained_cluster_within, cluster_take_sustained, is_food_site, patch_per_worker_yield,
+    ROLE_HUNT,
+};
 use crate::view::{band_tile, SeatMemory, SeatView};
 
 /// The file the records go to, under `--log-dir`.
@@ -182,6 +185,8 @@ pub struct BandObservation {
     pub work_range: u32,
     pub hunt_reach: u32,
     pub is_traveling: bool,
+    /// What the ground would feed this band, read where it stands.
+    pub ground: GroundObservation,
     pub assignments: Vec<AssignmentObservation>,
     /// The intent the band is still walking under (`land:move:<band>`, `food:settle:<band>`),
     /// when the memory holds a move target for it — the commitment the arbiter will reward this
@@ -208,6 +213,19 @@ pub struct HerdObservation {
     pub corral_progress: f32,
     pub build: Option<SourceBuild>,
     pub upkeep: Option<SourceUpkeep>,
+}
+
+/// **The ground's sustained reading for a band** (`food::cluster_take_sustained`): what every
+/// site within its `work_range` gives per turn at the Best floor's regrowth, its whole crew
+/// dealt, from the tile it stands on and from the best tile within the profile's
+/// `land.horizon_tiles`. The bench's `ground.*` measures are these two off the first observation
+/// — which is why they are read here, through the brain's lens, and not off the scoreboard row:
+/// the row is read off the snapshot alone, and the reading needs the seat's memory (the rate a
+/// site is rated at) and the profile's horizon.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GroundObservation {
+    pub sustained_take_here: f32,
+    pub best_sustained_cluster_in_horizon: f32,
 }
 
 /// One discovered tile within the radius of an own band.
@@ -286,6 +304,22 @@ impl Observation {
                     work_range: band.work_range,
                     hunt_reach: band.hunt_reach,
                     is_traveling: band.is_traveling,
+                    ground: GroundObservation {
+                        sustained_take_here: cluster_take_sustained(
+                            view,
+                            memory,
+                            band,
+                            band_tile(band),
+                            band.working_age,
+                        )
+                        .total,
+                        best_sustained_cluster_in_horizon: best_sustained_cluster_within(
+                            view,
+                            memory,
+                            band,
+                            lens.horizon_tiles,
+                        ),
+                    },
                     assignments: band
                         .labor_assignments
                         .iter()
@@ -579,7 +613,7 @@ mod tests {
         Alarm, AlarmKind, Budget, FoodGoals, Goals, GroundRung, Plan, Stance,
     };
     use crate::profile::NO_MEMORY_DECAY;
-    use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, TICK};
+    use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, NEAR_PATCH, TICK};
     use crate::specialists::land::INTENT_MOVE;
     use crate::specialists::{intent_key, Memo, SPECIALIST_FOOD, SPECIALIST_LAND};
     use crate::view::VISIBILITY_ACTIVE;
@@ -862,6 +896,46 @@ mod tests {
             .find(|band| band.band_id == BAND + 100)
             .expect("the child is an own band");
         assert_eq!(child.born_by_split, Some(TilePos { x: 6, y: 4 }));
+    }
+
+    /// The ground reading is the sustained cluster, not the standing one: the near patch regrows
+    /// 6 biomass a turn at the Best floor (one hand's take on it is 1.0, so it holds six hands
+    /// for 6.0/turn), the rich one 8 (four hands at 2.0 for 8.0/turn), the far one is out of
+    /// range and the rival's patch is struck out — 14.0 where the band stands, though the
+    /// standing biomass would deal the same crew far more. The best tile within the horizon is
+    /// at least the band's own.
+    #[test]
+    fn a_band_carries_the_ground_it_stands_on_read_at_the_sustained_ceiling() {
+        /// The near patch's regrowth at every sampled floor, in biomass.
+        const NEAR_REGROWTH: f32 = 6.0;
+        const RICH_REGROWTH: f32 = 8.0;
+        let mut view = a_view();
+        for patch in &mut view.snapshot.forage_patches {
+            let regrowth = if Tile::new(patch.x, patch.y) == NEAR_PATCH {
+                NEAR_REGROWTH
+            } else {
+                RICH_REGROWTH
+            };
+            patch.regrowth_samples = vec![regrowth; 3];
+        }
+        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        let ground = observation.bands[0].ground;
+        assert_eq!(ground.sustained_take_here, NEAR_REGROWTH + RICH_REGROWTH);
+        assert!(
+            ground.best_sustained_cluster_in_horizon >= ground.sustained_take_here,
+            "{ground:?}"
+        );
+        // With the rival on the rich patch it is struck out of both readings.
+        let observation = capture(
+            &a_view_with_a_rival(),
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE),
+        );
+        let with_rival = observation.bands[0].ground;
+        assert!(with_rival.sustained_take_here < ground.sustained_take_here);
+        // Without a regrowth curve the ground feeds nothing.
+        let bare = capture(&a_view(), &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        assert_eq!(bare.bands[0].ground.sustained_take_here, 0.0);
+        assert_eq!(bare.bands[0].ground.best_sustained_cluster_in_horizon, 0.0);
     }
 
     #[test]

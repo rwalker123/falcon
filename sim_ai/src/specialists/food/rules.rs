@@ -55,6 +55,11 @@ const FLOOR_TOLERANCE: f32 = FLOOR_STEP / 10.0;
 /// as it stands. Without it the slide stepped a rung a turn for a hair of gap each (bench seed
 /// 23, t34–t40: 0.4 → 0.3 → 0.2 → 0.1).
 const RUNG_MIN_GAIN_TURNS: f32 = 1.0;
+/// **The least *hold the ground* adds to a pool that reads short**: one hand. The wire's
+/// `upkeep_workers_needed` is `ceil(demand / PER_WORKER_OUTPUT)`, and a bare keeper delivers
+/// under that output, so a pool at the summed need can still leave a patch short by a fraction
+/// of a hand (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`); the next hand closes it.
+const HOLD_MIN_HANDS: u32 = 1;
 /// Why *negative income* empties a row ahead of the per-worker minimum.
 const WHY_OVERUSED: &str = "overused";
 const WHY_NO_USEFUL_CREW: &str = "no useful crew on";
@@ -568,19 +573,17 @@ impl Food {
             return (None, Reassignment::NONE);
         };
         let proposal = Proposal {
+            cost: Cost::claimed(candidate.hands, band.band_id, &candidate.commands),
             commands: candidate.commands,
             intent: intent_key(SPECIALIST_FOOD, INTENT_ASSIGN, band.band_id),
             score: progress * self.weight,
-            cost: Cost {
-                workers: candidate.hands,
-                bands: vec![band.band_id],
-            },
             reason: format!(
                 "{REASON_NEGATIVE_INCOME}: {} [{}]",
                 candidate.subject,
                 ledger_note(&after)
             ),
             memo: None,
+            standing: false,
         };
         (Some(proposal), candidate.change)
     }
@@ -719,13 +722,10 @@ impl Food {
         let mut commands = self.reduction_commands(band, &drawn);
         commands.push(self.assign(band, &source.key, existing + drawn.hands));
         let proposal = Proposal {
+            cost: Cost::claimed(drawn.hands, band.band_id, &commands),
             commands,
             intent: intent_key(SPECIALIST_FOOD, INTENT_FEED_MOVE, band.band_id),
             score: progress * self.weight,
-            cost: Cost {
-                workers: drawn.hands,
-                bands: vec![band.band_id],
-            },
             reason: format!(
                 "{REASON_FEED_MOVE}: {} hands onto {} before it falls out of range from {},{} [{}]",
                 drawn.hands,
@@ -735,6 +735,7 @@ impl Food {
                 ledger_note(&after)
             ),
             memo: None,
+            standing: false,
         };
         Some((proposal, change))
     }
@@ -854,18 +855,16 @@ impl Food {
         };
         let after_split = project_all(&book, &[*carried, change], horizon);
         let target = Tile::new(patch.x, patch.y);
+        let commands = vec![CommandPayload::SplitBand {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            workers: crew,
+        }];
         let proposal = Proposal {
-            commands: vec![CommandPayload::SplitBand {
-                faction_id: self.faction,
-                band_id: Some(band.band_id),
-                workers: crew,
-            }],
+            cost: Cost::claimed(crew, band.band_id, &commands),
+            commands,
             intent: intent_key(SPECIALIST_FOOD, INTENT_SPLIT, band.band_id),
             score: goal_progress(&goals, &after, &after_split) * self.weight,
-            cost: Cost {
-                workers: crew,
-                bands: vec![band.band_id],
-            },
             reason: format!(
                 "{REASON_SPLIT_TO_FEED}: {crew} toward {},{} taking {take:.1}/turn from t{travel} [{}]",
                 target.x,
@@ -877,6 +876,7 @@ impl Food {
                 target,
                 workers: crew,
             }),
+            standing: false,
         };
         Some((proposal, change))
     }
@@ -925,19 +925,17 @@ impl Food {
             },
             horizon,
         );
+        let commands = vec![CommandPayload::MoveBand {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            target_x: birth.target.x,
+            target_y: birth.target.y,
+        }];
         Some(Proposal {
-            commands: vec![CommandPayload::MoveBand {
-                faction_id: self.faction,
-                band_id: Some(band.band_id),
-                target_x: birth.target.x,
-                target_y: birth.target.y,
-            }],
+            cost: Cost::claimed(0, band.band_id, &commands),
+            commands,
             intent: intent_key(SPECIALIST_FOOD, INTENT_SETTLE, band.band_id),
             score: goal_progress(&goals, &before, &after) * self.weight,
-            cost: Cost {
-                workers: 0,
-                bands: vec![band.band_id],
-            },
             reason: format!(
                 "{REASON_SPLIT_TO_FEED}: settle toward {},{} in t{travel} [{}]",
                 birth.target.x,
@@ -949,6 +947,7 @@ impl Food {
                 target: birth.target,
                 from: here,
             }),
+            standing: false,
         })
     }
 
@@ -1015,7 +1014,7 @@ impl Food {
         for hands in 1..=budget {
             // Off the rows only — their surplus first, then the lowest-paying: the idle hands are
             // *negative income*'s to place, and a hunt drawn from them would compete with that
-            // assignment for the band's one order.
+            // assignment for the same rows.
             let drawn = self.draw(&forage_surplus, &forage, hands, 0);
             if drawn.hands < hands {
                 break;
@@ -1045,13 +1044,10 @@ impl Food {
         let mut commands = self.reduction_commands(band, &drawn);
         commands.push(self.assign(band, &herd.key, existing + drawn.hands));
         let proposal = Proposal {
+            cost: Cost::claimed(drawn.hands, band.band_id, &commands),
             commands,
             intent: intent_key(SPECIALIST_FOOD, INTENT_HUNT, band.band_id),
             score: goal_progress(&goals, &after, &projection) * self.weight,
-            cost: Cost {
-                workers: drawn.hands,
-                bands: vec![band.band_id],
-            },
             reason: format!(
                 "{REASON_SPARE_HANDS}: {} hands onto {} [{}]",
                 drawn.hands,
@@ -1059,6 +1055,7 @@ impl Food {
                 ledger_note(&projection)
             ),
             memo: None,
+            standing: false,
         };
         Some((proposal, change))
     }
@@ -1260,13 +1257,10 @@ impl Food {
                 commands.push(self.assign_pool(band, ROLE_BUILDERS, builders));
                 let progress = goal_progress(&goals, &after, &projection);
                 let proposal = Proposal {
+                    cost: Cost::claimed(hands, band.band_id, &commands),
                     commands,
                     intent: intent_key(SPECIALIST_FOOD, INTENT_UPGRADE, band.band_id),
                     score: progress * self.weight,
-                    cost: Cost {
-                        workers: hands,
-                        bands: vec![band.band_id],
-                    },
                     reason: format!(
                         "{REASON_UPGRADE}: {verb} {},{} ({}) with {builders} builders, payoff turn {payoff_turn} [{}]",
                         tile.x,
@@ -1275,6 +1269,7 @@ impl Food {
                         ledger_note(&projection)
                     ),
                     memo: None,
+                    standing: false,
                 };
                 if best.as_ref().is_none_or(|(_, held, _)| progress > *held) {
                     best = Some((proposal, progress, change));
@@ -1531,29 +1526,49 @@ impl Food {
             .map(|(proposal, _)| proposal)
     }
 
-    /// **Rule 5a — hold the ground.** A patch the seat owns whose `upkeep` row reads
-    /// `upkeep_shortfall > 0` — the standing-upkeep bill for holding its rung, unpaid — gets
-    /// `assign_labor … agriculture <upkeep_workers_needed>` on the band that works it (the kit
-    /// left `None`, so the wire derives `tillage`; the hoes are the board's business). The hands
-    /// come from the surplus first, then the lowest rows, and the change is priced like any
-    /// reassignment: what the hands earned where they stood against **the rung lost** — an
-    /// unpaid bill costs the whole improvement. What holding keeps, as a series over the
-    /// horizon: the rung's premium per turn (the tile's `tended_yield`, `field_yield` on a field,
-    /// less the wild take the same hands make on that patch) **once the rung is complete**
-    /// (`is_cultivated` / `is_field` — the bill runs during the build too, but a patch mid-build
-    /// earns no premium yet), and the rebuild the seat would otherwise declare again — the work
-    /// already done (`cultivation_work_done`, `field_work_done`; the full cost once complete) in
-    /// builder-turns (`/ build_work_per_worker_turn`) at the row's own rate — **on the horizon's
-    /// last turn**, where an avoided cost belongs: it raises the runway the goal is held against
-    /// and never the trough. Put at the first turn instead it read as food in hand, the
-    /// survival check lied, and band 4 on seed 23 gave its last forage hand to a hold at t25 and
-    /// starved. Fires before *upgrade the ground*: holding what the band has beats declaring the
-    /// next rung. The fact that forced the rule: seed 23's cultivate on 49,5 completed at t44 and
-    /// read `cultivated: false, 0.99` at t45, decaying a hundredth a turn to 0.84 at t60, with
-    /// the tile's `upkeep` row at `demand 1.92, supplied 0.0, shortfall 1.92, workers_needed 2,
-    /// kit_id tillage` the whole way and two builders still on the `builders` role — the role the
-    /// upkeep wants is `agriculture`, and it pays a patch's bill whether or not the band still
-    /// works that patch (band 4 supplied 51,9 with its forage row empty).
+    /// **Rule 5a — hold the ground.** The band's `agriculture` pool is **one pool against its
+    /// summed plant bill** (`LaborTarget::Agriculture`, `systems::labor::maintenance_shares`):
+    /// the sim divides the pool's head count across every forage row the band holds — **with or
+    /// without hands on it**, `keeping_claims` walks the band's assignments whatever their
+    /// `workers` — whose patch has work on the ladder. So the bill is the band's, not a patch's:
+    /// when any owned patch it holds a row on reads `upkeep_shortfall > 0`, the pool is set to
+    /// Σ `upkeep_workers_needed` over every such patch, less what it holds, and one more hand
+    /// ([`HOLD_MIN_HANDS`]) when the pool already stands at the sum and a patch still reads
+    /// short — a bare keeper delivers under the `PER_WORKER_OUTPUT` the wire's `workers_needed`
+    /// is `ceil`ed by (49,5 on seed 23 read `need 1, supplied 0.98, short 0.92`). The kit is
+    /// left `None`, so the wire derives `tillage`; the hoes are the board's business. Sized per
+    /// patch less the whole pool it read `want 0` for 49,5 while the pool's two hands kept 53,8,
+    /// and skipping a row the band had emptied it never proposed for 49,5 again; the patch
+    /// unwound at t48 with two holds accepted twenty turns earlier.
+    ///
+    /// The hands come from the surplus first, then the lowest rows, and the change is priced
+    /// like any reassignment: what they earned where they stood against **the rungs lost** — an
+    /// unpaid bill costs the whole improvement. What holding keeps, as a series over the horizon,
+    /// summed over the short patches: the rung's premium per turn (the tile's `tended_yield`,
+    /// `field_yield` on a field, less the wild take the row's hands make on that patch) **once
+    /// the rung is complete** (`is_cultivated` / `is_field` — the bill runs during the build too,
+    /// but a patch mid-build earns no premium yet), and the rebuild the seat would otherwise
+    /// declare again — the work already done (`cultivation_work_done`, `field_work_done`; the
+    /// full cost once complete) in builder-turns (`/ build_work_per_worker_turn`) at the row's
+    /// own rate (the patch's forecast rate on an emptied row) — **on the horizon's last turn**,
+    /// where an avoided cost belongs: it raises the runway the goal is held against and never
+    /// the trough. Put at the first turn instead it read as food in hand, the survival check
+    /// lied, and band 4 on seed 23 gave its last forage hand to a hold at t25 and starved.
+    /// **On a completed rung the proposal is `standing`** — a bill the arbiter pays before any
+    /// bid is weighed (`arbiter.rs`); mid-build it is a bid like any other. **A bill the band
+    /// cannot pay without starving is defaulted on** — the projection with the bill paid must
+    /// `survives` (trough above zero), as every other rule's must: paid unconditionally, band 2
+    /// on seed 24 held 7,18 three times at a projected trough of -22, -40 and 2 with seven
+    /// hands, and by t32 kept three, built with four and fed nobody. Over sixty seeds the
+    /// unconditional bill ended with 286 working, 1103 hunger deaths and 29 improved patches;
+    /// gated, 399, 951 and 15 — survival is the purpose, so the gate stands. Fires before
+    /// *upgrade the ground*: holding what the band has beats declaring the next rung. The fact
+    /// that forced the rule: seed 23's cultivate on 49,5 completed at t44 and read
+    /// `cultivated: false, 0.99` at t45, decaying a hundredth a turn to 0.84 at t60, with the
+    /// tile's `upkeep` row at `demand 1.92, supplied 0.0, shortfall 1.92, workers_needed 2,
+    /// kit_id tillage` the whole way and two builders still on the `builders` role — the role
+    /// the upkeep wants is `agriculture`, and it pays a patch's bill whether or not the band
+    /// still works that patch (band 4 supplied 51,9 with its forage row empty).
     pub(super) fn hold_the_ground_change(
         &self,
         view: &SeatView,
@@ -1570,104 +1585,121 @@ impl Food {
         if budget == 0 {
             return None;
         }
+        // The patches the band's pool answers for: every forage row it holds, hands or none,
+        // whose patch the seat owns and whose ladder has work to hold.
+        let kept: Vec<(&LaborAssignmentState, &ForagePatchState)> = band
+            .labor_assignments
+            .iter()
+            .filter(|row| row.kind == ROLE_FORAGE)
+            .filter_map(|row| {
+                let patch = view
+                    .patch_at(Tile::new(row.target_x, row.target_y))
+                    .filter(|patch| patch.owner == Some(self.faction))
+                    .filter(|patch| patch.upkeep_workers_needed > 0)?;
+                Some((row, patch))
+            })
+            .collect();
+        let short: Vec<&(&LaborAssignmentState, &ForagePatchState)> = kept
+            .iter()
+            .filter(|(_, patch)| patch.upkeep_shortfall > 0.0)
+            .collect();
+        if short.is_empty() {
+            return None;
+        }
+        let need: u32 = kept
+            .iter()
+            .map(|(_, patch)| patch.upkeep_workers_needed)
+            .sum();
         let held = Self::workers_in_pool(band, ROLE_AGRICULTURE);
+        let want = need.saturating_sub(held).max(HOLD_MIN_HANDS).min(budget);
+        let idle = band.idle_workers.min(budget);
+        let surplus_rows = Self::surplus_rows(band);
+        let mut pool = Self::rows_ascending(band, ROLE_HUNT);
+        pool.extend(Self::rows_ascending(band, ROLE_FORAGE));
+        let drawn = self.draw(&surplus_rows, &pool, want, idle);
+        if drawn.hands < want {
+            return None;
+        }
         let book = Self::book(band);
         let horizon = self.floors.projection_horizon_turns;
         let before = project(&book, carried, horizon);
-        let idle = band.idle_workers.min(budget);
-        let surplus_rows = Self::surplus_rows(band);
-        let mut best: Option<(Proposal, Reassignment, f32)> = None;
-        for row in band
-            .labor_assignments
-            .iter()
-            .filter(|row| row.kind == ROLE_FORAGE && row.workers > 0)
-        {
-            let tile = Tile::new(row.target_x, row.target_y);
-            let Some(patch) = view
-                .patch_at(tile)
-                .filter(|patch| patch.owner == Some(self.faction))
-                .filter(|patch| patch.upkeep_shortfall > 0.0 && patch.upkeep_workers_needed > 0)
-            else {
-                continue;
-            };
-            let want = patch.upkeep_workers_needed.saturating_sub(held).min(budget);
-            if want == 0 {
-                continue;
-            }
-            let mut pool = Self::rows_ascending(band, ROLE_HUNT);
-            pool.extend(Self::rows_ascending(band, ROLE_FORAGE));
-            let drawn = self.draw(&surplus_rows, &pool, want, idle);
-            if drawn.hands < want {
-                continue;
-            }
+        let mut premium_total = 0.0;
+        let mut rebuild_total = 0.0;
+        let mut any_complete = false;
+        let mut subjects = Vec::new();
+        for (row, patch) in &short {
             let (rung_yield, work_done) = if patch.is_field {
                 (patch.field_yield, patch.field_work_done)
             } else {
                 (patch.tended_yield, patch.cultivation_work_done)
             };
-            // The rung's premium over the wild take these hands would make on the patch — earned
+            // The rung's premium over the wild take the row's hands make on the patch — earned
             // only once the rung is complete.
             let complete = patch.is_cultivated || patch.is_field;
+            any_complete |= complete;
+            let rate = patch_per_worker_yield(memory, band, patch);
             let wild = crew_take(
                 row.workers,
-                patch_per_worker_yield(memory, band, patch),
+                rate,
                 patch.biomass * patch.provisions_per_biomass,
             );
-            let premium = if complete {
-                (rung_yield - wild).max(0.0)
-            } else {
-                0.0
-            };
+            if complete {
+                premium_total += (rung_yield - wild).max(0.0);
+            }
             // The rebuild an unwound rung costs, once, at the horizon's end: the work already
-            // done in builder-turns at the row's rate.
-            let rebuild = if patch.build_work_per_worker_turn > 0.0 {
-                work_done / patch.build_work_per_worker_turn * Self::row_rate(row)
+            // done in builder-turns at the row's rate — the patch's forecast on an emptied row.
+            let row_rate = if row.workers > 0 {
+                Self::row_rate(row)
             } else {
-                0.0
+                rate
             };
-            let mut series = vec![premium; horizon as usize];
-            if let Some(last) = series.last_mut() {
-                *last += rebuild;
+            if patch.build_work_per_worker_turn > 0.0 {
+                rebuild_total += work_done / patch.build_work_per_worker_turn * row_rate;
             }
-            let change = Change::Series {
-                income_lost: drawn.income_lost,
-                income_gained: series,
-            };
-            let after = project_changes(&book, &[Change::Flat(*carried), change], horizon);
-            let progress = goal_progress(&goals, &before, &after);
-            if progress <= 0.0 || best.as_ref().is_some_and(|(_, _, held)| progress <= *held) {
-                continue;
-            }
-            let mut commands = self.reduction_commands(band, &drawn);
-            commands.push(self.assign_pool(band, ROLE_AGRICULTURE, held + want));
-            let flat = Reassignment {
-                income_lost: drawn.income_lost,
-                income_gained: premium,
-                payoff_turn: 0,
-            };
-            best = Some((
-                Proposal {
-                    commands,
-                    intent: intent_key(SPECIALIST_FOOD, INTENT_HOLD, format!("{},{}", tile.x, tile.y)),
-                    score: progress * self.weight,
-                    cost: Cost {
-                        workers: want,
-                        bands: vec![band.band_id],
-                    },
-                    reason: format!(
-                        "{REASON_HOLD_GROUND}: {want} hands on agriculture for {},{} short {:.2} [{}]",
-                        tile.x,
-                        tile.y,
-                        patch.upkeep_shortfall,
-                        ledger_note(&after)
-                    ),
-                    memo: None,
-                },
-                flat,
-                progress,
+            subjects.push(format!(
+                "{},{} short {:.2}",
+                patch.x, patch.y, patch.upkeep_shortfall
             ));
         }
-        best.map(|(proposal, change, _)| (proposal, change))
+        let mut series = vec![premium_total; horizon as usize];
+        if let Some(last) = series.last_mut() {
+            *last += rebuild_total;
+        }
+        let change = Change::Series {
+            income_lost: drawn.income_lost,
+            income_gained: series,
+        };
+        let after = project_changes(&book, &[Change::Flat(*carried), change], horizon);
+        let progress = goal_progress(&goals, &before, &after);
+        // A bill the band cannot pay without starving is defaulted on: the rung unwinds and the
+        // people live (`survives`, as every other rule reads it).
+        if progress <= 0.0 || !survives(&after) {
+            return None;
+        }
+        let mut commands = self.reduction_commands(band, &drawn);
+        commands.push(self.assign_pool(band, ROLE_AGRICULTURE, held + want));
+        let flat = Reassignment {
+            income_lost: drawn.income_lost,
+            income_gained: premium_total,
+            payoff_turn: 0,
+        };
+        Some((
+            Proposal {
+                cost: Cost::claimed(want, band.band_id, &commands),
+                commands,
+                intent: intent_key(SPECIALIST_FOOD, INTENT_HOLD, band.band_id),
+                score: progress * self.weight,
+                reason: format!(
+                    "{REASON_HOLD_GROUND}: {want} hands on agriculture for {} [{}]",
+                    subjects.join(", "),
+                    ledger_note(&after)
+                ),
+                memo: None,
+                // A bill on a completed rung, not a bid: paid before anything is weighed.
+                standing: any_complete,
+            },
+            flat,
+        ))
     }
 
     /// The patch under a forage `row` as the ledger models it, with the row's crew.
@@ -1775,20 +1807,21 @@ impl Food {
                 .find_map(|(row, tile, patch)| {
                     let (change, _) = Self::floor_change(row, patch, BEST_FLOOR, horizon);
                     let after = with(change);
-                    survives(&after).then(|| Proposal {
-                        commands: vec![self.assign_at_floor(band, *tile, row.workers, None)],
-                        intent: intent_key(SPECIALIST_FOOD, INTENT_DRAWDOWN, band.band_id),
-                        score: goal_progress(&goals, &before, &after) * self.weight,
-                        cost: Cost {
-                            workers: 0,
-                            bands: vec![band.band_id],
-                        },
-                        reason: format!(
-                            "{REASON_FLOOR_RESTORE}: {} [{}]",
-                            SourceKey::Patch(*tile).describe(),
-                            ledger_note(&after)
-                        ),
-                        memo: None,
+                    survives(&after).then(|| {
+                        let commands = vec![self.assign_at_floor(band, *tile, row.workers, None)];
+                        Proposal {
+                            cost: Cost::claimed(0, band.band_id, &commands),
+                            commands,
+                            intent: intent_key(SPECIALIST_FOOD, INTENT_DRAWDOWN, band.band_id),
+                            score: goal_progress(&goals, &before, &after) * self.weight,
+                            reason: format!(
+                                "{REASON_FLOOR_RESTORE}: {} [{}]",
+                                SourceKey::Patch(*tile).describe(),
+                                ledger_note(&after)
+                            ),
+                            memo: None,
+                            standing: false,
+                        }
                     })
                 });
         }
@@ -1835,21 +1868,20 @@ impl Food {
                 Some(turn) => format!("patch spent by t{turn}"),
                 None => "patch never spent".to_owned(),
             };
+            let commands = vec![self.assign_at_floor(band, tile, row.workers, Some(floor))];
             best = Some((
                 Proposal {
-                    commands: vec![self.assign_at_floor(band, tile, row.workers, Some(floor))],
+                    cost: Cost::claimed(0, band.band_id, &commands),
+                    commands,
                     intent: intent_key(SPECIALIST_FOOD, INTENT_DRAWDOWN, band.band_id),
                     score: progress * self.weight,
-                    cost: Cost {
-                        workers: 0,
-                        bands: vec![band.band_id],
-                    },
                     reason: format!(
                         "{REASON_DRAW_DOWN}: {} to floor {floor:.1}, {spent} [{}]",
                         SourceKey::Patch(tile).describe(),
                         ledger_note(&after)
                     ),
                     memo: None,
+                    standing: false,
                 },
                 progress,
             ));
@@ -1935,7 +1967,11 @@ mod tests {
         assert_eq!(proposal.intent, "food:assign:7001");
         assert!(proposal.score > 0.0);
         assert_eq!(proposal.cost.workers, 17);
-        assert_eq!(proposal.cost.bands, vec![BAND]);
+        assert!(proposal.cost.moves.is_empty());
+        assert_eq!(
+            proposal.cost.rows,
+            vec![format!("{BAND}:forage:{},{}", RICH_PATCH.x, RICH_PATCH.y)]
+        );
         assert!(
             proposal.reason.starts_with(REASON_NEGATIVE_INCOME)
                 && proposal.reason.contains("ledger:"),
@@ -2183,7 +2219,8 @@ mod tests {
                 &Reassignment::NONE,
             )
             .expect("the upkeep is paid");
-        assert_eq!(proposal.intent, "food:hold:2,3");
+        assert_eq!(proposal.intent, format!("food:hold:{BAND}"));
+        assert!(proposal.standing, "a completed rung's hold is a bill");
         assert!(
             proposal
                 .reason
@@ -2249,6 +2286,19 @@ mod tests {
                 &Reassignment::NONE,
             )
             .is_none());
+        // A band whose projection starves with the bill paid defaults on it: no hold.
+        let mut starving = held(1.92);
+        starving.snapshot.populations[0].food_income = 0.0;
+        starving.snapshot.populations[0].labor_assignments[0].workers_needed = 17;
+        assert!(food()
+            .hold_the_ground(
+                &starving,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&starving),
+                &Reassignment::NONE,
+            )
+            .is_none());
         // A rung still being built earns no premium and has little work to lose: the bill runs,
         // but with no surplus to spare, two hands off a row paying 1.5 each for a 4-work rebuild
         // at the horizon's end is a change the ledger prices as a loss, and nothing is proposed.
@@ -2269,6 +2319,93 @@ mod tests {
                 &Reassignment::NONE,
             )
             .is_none());
+    }
+
+    /// ⛔ **THE BILL IS THE BAND'S, NOT A PATCH'S.** The pool keeps every patch the band holds a
+    /// row on — an emptied row included — and is sized against their summed need: with two hands
+    /// already keeping the rich patch (need 2, paid) and the near patch (need 1) short on a row
+    /// with nobody on it, the hold adds the one hand the sum is short of, names only the short
+    /// patch, and stands. Sized per patch less the whole pool it read `want 0` and never fired.
+    #[test]
+    fn a_band_keeps_every_patch_it_holds_a_row_on_from_one_pool() {
+        const KEPT_ALREADY: u32 = 2;
+        let mut view = a_view_with(|view| {
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.food_income = band.food_consumption;
+            band.labor_assignments = vec![
+                LaborAssignmentState {
+                    workers_needed: 8,
+                    ..forage_row(RICH_PATCH, 15, 23.0)
+                },
+                forage_row(NEAR_PATCH, 0, 0.0),
+                LaborAssignmentState {
+                    kind: ROLE_AGRICULTURE.into(),
+                    workers: KEPT_ALREADY,
+                    ..Default::default()
+                },
+            ];
+            for patch in &mut view.snapshot.forage_patches {
+                let tile = Tile::new(patch.x, patch.y);
+                if tile == RICH_PATCH || tile == NEAR_PATCH {
+                    patch.owner = Some(FACTION);
+                    patch.is_cultivated = true;
+                    patch.cultivation_work_cost = 50.0;
+                    patch.cultivation_work_done = 50.0;
+                    patch.build_work_per_worker_turn = 1.0;
+                }
+                if tile == RICH_PATCH {
+                    patch.tended_yield = 40.0;
+                    patch.upkeep_demand = 1.92;
+                    patch.upkeep_shortfall = 0.0;
+                    patch.upkeep_workers_needed = 2;
+                }
+                if tile == NEAR_PATCH {
+                    patch.tended_yield = 20.0;
+                    patch.upkeep_demand = 0.96;
+                    patch.upkeep_shortfall = 0.96;
+                    patch.upkeep_workers_needed = 1;
+                }
+            }
+        });
+        let proposal = food()
+            .hold_the_ground(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+                &Reassignment::NONE,
+            )
+            .expect("the near patch's bill");
+        assert_eq!(proposal.cost.workers, 1, "{}", proposal.reason);
+        assert!(
+            proposal
+                .reason
+                .starts_with("hold the ground: 1 hands on agriculture for 4,2 short 0.96 ["),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(
+            assigned_to(proposal.commands.last().unwrap()),
+            (ROLE_AGRICULTURE.to_owned(), KEPT_ALREADY + 1, None, None)
+        );
+        assert!(proposal.standing);
+        // The pool at the sum and a patch still short: one more hand, not none.
+        view.snapshot.populations[0].labor_assignments[2].workers = KEPT_ALREADY + 1;
+        let one_more = food()
+            .hold_the_ground(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+                &Reassignment::NONE,
+            )
+            .expect("one more hand");
+        assert_eq!(one_more.cost.workers, HOLD_MIN_HANDS);
+        assert_eq!(
+            assigned_to(one_more.commands.last().unwrap()),
+            (ROLE_AGRICULTURE.to_owned(), KEPT_ALREADY + 2, None, None)
+        );
     }
 
     /// A take above a fresh patch's regrowth is the room above the floor being taken, not
@@ -3672,7 +3809,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(proposal.cost.bands, vec![CHILD]);
+        assert_eq!(proposal.cost.moves, vec![CHILD]);
         // Accepted: the memory holds the move under the settle intent, and it is re-proposed.
         memory.record_choices(TICK, [(proposal.intent.clone(), proposal.memo)].into_iter());
         assert_eq!(memory.move_intent(CHILD), Some("food:settle:7002"));
@@ -3686,7 +3823,7 @@ mod tests {
         let for_child: Vec<&str> = proposals
             .proposals
             .iter()
-            .filter(|p| p.cost.bands.contains(&CHILD))
+            .filter(|p| p.intent.ends_with(&format!(":{CHILD}")))
             .map(|p| p.intent.as_str())
             .collect();
         assert_eq!(for_child, vec!["food:settle:7002"]);

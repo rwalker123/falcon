@@ -186,29 +186,28 @@ impl Land {
         if known >= floor || Self::scouts_posted(band) >= self.floors.scout_workers {
             return None;
         }
+        let commands = vec![CommandPayload::AssignLabor {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            role: ROLE_SCOUT.to_owned(),
+            workers: self.floors.scout_workers,
+            target_x: None,
+            target_y: None,
+            fauna_id: None,
+            policy: None,
+            species: None,
+            floor: None,
+            kit_id: None,
+            take_species: Vec::new(),
+        }];
         Some(Proposal {
-            commands: vec![CommandPayload::AssignLabor {
-                faction_id: self.faction,
-                band_id: Some(band.band_id),
-                role: ROLE_SCOUT.to_owned(),
-                workers: self.floors.scout_workers,
-                target_x: None,
-                target_y: None,
-                fauna_id: None,
-                policy: None,
-                species: None,
-                floor: None,
-                kit_id: None,
-                take_species: Vec::new(),
-            }],
+            cost: Cost::claimed(self.floors.scout_workers, band.band_id, &commands),
+            commands,
             intent: intent_key(SPECIALIST_LAND, INTENT_SCOUT, band.band_id),
             score: (floor - known) as f32 / floor as f32 * self.weight,
-            cost: Cost {
-                workers: self.floors.scout_workers,
-                bands: vec![band.band_id],
-            },
             reason: REASON_BLIND.to_owned(),
             memo: None,
+            standing: false,
         })
     }
 
@@ -239,19 +238,17 @@ impl Land {
                 self.better_cluster(view, memory, band, own)?
             }
         };
+        let commands = vec![CommandPayload::MoveBand {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            target_x: target.x,
+            target_y: target.y,
+        }];
         Some(Proposal {
-            commands: vec![CommandPayload::MoveBand {
-                faction_id: self.faction,
-                band_id: Some(band.band_id),
-                target_x: target.x,
-                target_y: target.y,
-            }],
+            cost: Cost::claimed(0, band.band_id, &commands),
+            commands,
             intent: intent_key(SPECIALIST_LAND, INTENT_MOVE, band.band_id),
             score: (cluster.total - own) / cluster.total * self.weight,
-            cost: Cost {
-                workers: 0,
-                bands: vec![band.band_id],
-            },
             reason: format!(
                 "{REASON_BETTER_GROUND}: {} sites at {},{} take {:.1}/turn vs {own:.1} here",
                 cluster.sites.len(),
@@ -264,6 +261,7 @@ impl Land {
                 target,
                 from: here,
             }),
+            standing: false,
         })
     }
 
@@ -288,20 +286,19 @@ impl Land {
         if workers == 0 {
             return None;
         }
+        let commands = vec![CommandPayload::SplitBand {
+            faction_id: self.faction,
+            band_id: Some(band.band_id),
+            workers,
+        }];
         Some(Proposal {
-            commands: vec![CommandPayload::SplitBand {
-                faction_id: self.faction,
-                band_id: Some(band.band_id),
-                workers,
-            }],
+            cost: Cost::claimed(workers, band.band_id, &commands),
+            commands,
             intent: intent_key(SPECIALIST_LAND, INTENT_SPLIT, band.band_id),
             score: (band.size - self.floors.split_size) as f32 / band.size as f32 * self.weight,
-            cost: Cost {
-                workers,
-                bands: vec![band.band_id],
-            },
             reason: REASON_ROOM.to_owned(),
             memo: None,
+            standing: false,
         })
     }
 
@@ -701,7 +698,8 @@ mod tests {
             .better_ground(&later, &memory, own_band(&later))
             .expect("a cluster in view");
         assert_eq!(proposal.intent, "land:move:7001");
-        assert_eq!(proposal.cost.bands, vec![BAND]);
+        assert_eq!(proposal.cost.moves, vec![BAND]);
+        assert!(proposal.cost.rows.is_empty());
         assert_eq!(move_target(&proposal), NORTH, "{}", proposal.reason);
         // Accepted: the memory learns the target and the intent persists, runway or no runway.
         memory.record_choices(TICK, [(proposal.intent.clone(), proposal.memo)].into_iter());

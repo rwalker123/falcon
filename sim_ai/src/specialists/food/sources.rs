@@ -184,6 +184,40 @@ pub(crate) fn cluster_take_over(
     is_dead: &IsDead<'_>,
     existing: &dyn Fn(Tile) -> Option<u32>,
 ) -> ClusterTake {
+    cluster_take_by(
+        view,
+        memory,
+        band,
+        standing,
+        hands,
+        is_dead,
+        existing,
+        Ceiling::Standing,
+    )
+}
+
+/// **What a site's take is capped at** when a cluster is dealt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ceiling {
+    /// The standing biomass — everything on the ground this turn (`biomass ×
+    /// provisions_per_biomass`); the reading `Land` moves on and `Food` deals free hands by.
+    Standing,
+    /// The Best floor's regrowth — what the site gives every turn without being drawn down
+    /// ([`sustained_hands`]); the reading that says whether ground can *feed* a band.
+    Sustained,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cluster_take_by(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    hands: u32,
+    is_dead: &IsDead<'_>,
+    existing: &dyn Fn(Tile) -> Option<u32>,
+    ceiling: Ceiling,
+) -> ClusterTake {
     let grid = view.grid();
     let mut sites: Vec<(Tile, f32, f32, u32, u32)> = view
         .snapshot
@@ -203,12 +237,22 @@ pub(crate) fn cluster_take_over(
             .and_then(|patch| {
                 existing(tile).map(|already| {
                     let rate = patch_per_worker_yield(memory, band, patch);
-                    let ceiling = patch.biomass * patch.provisions_per_biomass;
-                    // The plateau: `ceil(ceiling / rate)`, the standing biomass included.
-                    let plateau = if rate > 0.0 {
-                        (ceiling / rate).ceil() as u32
-                    } else {
-                        0
+                    let (ceiling, plateau) = match ceiling {
+                        Ceiling::Standing => {
+                            let ceiling = patch.biomass * patch.provisions_per_biomass;
+                            // The plateau: `ceil(ceiling / rate)`, the standing biomass included.
+                            let plateau = if rate > 0.0 {
+                                (ceiling / rate).ceil() as u32
+                            } else {
+                                0
+                            };
+                            (ceiling, plateau)
+                        }
+                        Ceiling::Sustained => (
+                            regrowth_at(&patch.regrowth_samples, BEST_FLOOR)
+                                * patch.provisions_per_biomass,
+                            sustained_hands(patch, rate),
+                        ),
                     };
                     (tile, rate, ceiling, already, plateau)
                 })
@@ -284,6 +328,53 @@ pub(crate) fn cluster_take(
     is_dead: &IsDead<'_>,
 ) -> ClusterTake {
     cluster_take_over(view, memory, band, standing, hands, is_dead, &|_| Some(0))
+}
+
+/// **What the ground would feed a band standing on `standing`, every turn**: [`cluster_take`]
+/// with each site capped at the Best floor's regrowth and dealt hands only up to
+/// [`sustained_hands`] — the standing biomass is left out, so the total is what the sites give
+/// without being drawn down. The bench's *ground* measures read this off the first observation
+/// (`instruments::observations`): ground whose sustained cluster is at or near the band's
+/// consumption can feed it, and a seed there measures the rules and not the start's luck.
+pub(crate) fn cluster_take_sustained(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    hands: u32,
+) -> ClusterTake {
+    cluster_take_by(
+        view,
+        memory,
+        band,
+        standing,
+        hands,
+        &|_, _| false,
+        &|_| Some(0),
+        Ceiling::Sustained,
+    )
+}
+
+/// **The best sustained cluster within `horizon_tiles` of the band** ([`cluster_take_sustained`]
+/// over every discovered, walkable tile with no foreign band on it, the band's own tile
+/// included) — the best ground the band could walk to, by what it would feed.
+pub(crate) fn best_sustained_cluster_within(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    horizon_tiles: u32,
+) -> f32 {
+    let grid = view.grid();
+    let here = band_tile(band);
+    grid.disk(here, horizon_tiles)
+        .into_iter()
+        .filter(|tile| {
+            view.is_discovered(*tile)
+                && is_walkable(view, *tile)
+                && !foreign_band_at(view, band.faction, *tile)
+        })
+        .map(|tile| cluster_take_sustained(view, memory, band, tile, band.working_age).total)
+        .fold(0.0, f32::max)
 }
 
 /// **What a crew of `hands` takes off a source in one turn**: `min(hands × rate, ceiling)`, the

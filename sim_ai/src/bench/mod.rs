@@ -68,11 +68,15 @@ pub const MAP_PRESET: &str = "earthlike";
 pub const START_PROFILE: &str = "late_forager_tribe";
 /// The seat the bench holds while the rivals claim theirs (`HudConst.PLAYER_FACTION_ID`).
 const HUMAN_SEAT: u32 = 0;
-/// **The seeds a bench plays when `--seeds` is not given.** Two Tiny `earthlike` starts a human
-/// can feed the start band on. Seed 11 was the first default and was dropped: the two food sites
-/// in reach of its start regrow ~1.2 food/turn for 30 people, so no player survives it and a
-/// rival benched there measures nothing; 47 replaces it.
-pub const DEFAULT_SEEDS: &str = "23,47";
+/// **The seeds a bench plays when `--seeds` is not given.** Of seeds 1–60 at `@hard`, the two
+/// Tiny `earthlike` starts the forager brings through sixty turns with no hunger death that
+/// have the best ground by the bench's own reading (`ground.best_cluster_in_horizon` 2.72 and
+/// 2.22 food/turn against a start consumption of 4.09) and that replayed identically in every
+/// run, so the ratchet measures the rules and not the start's luck. Seed 21 reads 2.56 and is
+/// passed over: its band is wiped out by t43, so its row would be degenerate and ratchet
+/// nothing — the reason seed 11 (the first default, ~1.2 food/turn in reach) was dropped. 23 and
+/// 47 were the hand-picked defaults before the sweep.
+pub const DEFAULT_SEEDS: &str = "19,40";
 /// **The turns a bench plays when `--turns` is not given.** Cultivation costs 50 work units and a
 /// crew of a few builders takes ~15–25 turns, so a 30-turn run ends inside the investment's dip
 /// and the ratchet's end-of-run population reads the trough.
