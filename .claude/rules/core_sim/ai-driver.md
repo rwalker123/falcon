@@ -278,7 +278,28 @@ species … `0` if unknown"* — against `KitOptionState::attack_min/max_body_ma
 end means unbounded"*); a herd whose mass reads unknown is trusted only to a kit with no upper
 bound. When
 no herd in reach clears any kit, the hands left over ask for baskets too: a spare basket is not
-forfeited budget, an unspent slot is. **`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
+forfeited budget, an unspent slot is. **A third bin, the plant builders kit**
+(`Food::tillage_build`, only toward a `goals.ground_rung` above `wild`): cultivation is earned in
+play on `late_forager_tribe`, so the ask forecasts the build rather than copying this turn's
+builders. The kit (`Food::plant_builders_kit`) is the roster's, never `none`, that lists
+`builders`, adds `build_work_per_worker > 0` and reads `build_work_branch == "plant"`
+(`PLANT_BRANCH`) — the greatest addend, ties by the lower id; `tillage` on the shipped roster, never
+named. The site is the cluster's (`cluster_sites`, the walk's own list) not `is_cultivated`, with
+`build_destination_rung` empty and a plant that may be tended (`climb_payoff`), whose premium
+`gained = cultivate_payoff − regrowth_at(BEST_FLOOR) × provisions_per_biomass` is greatest, ties by
+the lower `(y, x)`; a site whose `gained`, work left (`cultivation_work_cost −
+cultivation_work_done`) or bare `build_work_per_worker_turn` is at or below zero is skipped. The
+crew is `ceil(work / (horizon × bare))`, at least one — the smallest bare crew that finishes inside
+the horizon, *upgrade the ground*'s own bar. With `j` of that crew equipped the build finishes at
+`T(j) = work / (crew × bare + j × build_work_per_worker)` and earns `P(j) = gained × max(0,
+horizon − T(j))`; the `j`-th kit is worth `P(j) − P(j − 1)` while `j ≤ crew` and nothing past it
+(the spear past the herd's crew) — continuous, in the horizon-total unit the basket and the spear
+are in. A hand takes the kit only when that is strictly greater than both the basket and the spear
+(the basket keeps its ties); with no kit or no site the walk is the two-bin walk. The kits go at
+`DEMAND_PRIORITY_TILLAGE` (0.6 — the hands feed the band before they build, and a hoe still ranks
+above wayfinding); the no-herd fallback folds only the spare hunters into baskets. On a splinter's
+take the orchestrator's per-item cap bounds the kit at the parent's `hoes`, as it does any kit.
+**`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
 `land.scout_workers` for a band with an open window that is blind (fewer than
 `known_tiles_floor` known tiles within the horizon), at `DEMAND_PRIORITY_SCOUT` (0.5 — after
 food; it sees farther and nothing eats it).
@@ -402,18 +423,19 @@ fired and what the ledger said. The rules, in `propose` order:
   source for the whole crew — and takes
   the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
   are met every candidate closes the same nothing, and without the tiebreak the band took the
-  first one offered). The row to empty first is an **overused** row — the sim's
-  `LaborAssignmentState::overdraws`, **on a hunt row, or on a patch at or below its floor**.
-  `overdraws` and not `actual_yield > sustainable_yield`: the field's doc says it replaces that
-  test, *"which mis-fires on a hunt's lumpy per-turn take (a kill turn cashes a whole banked
-  animal …)"*. It is intent and ability (a floor below the food peak, a crew out-taking the
-  regrowth between that floor and the stock), so a row at Best never reads it. The floor half
-  stays for a row *draw down to survive* set below Best: that row reads `overdraws` while its
-  crew strips the room above the floor on purpose, and a patch whose `biomass > floor ×
-  carrying_capacity` is not overused — rule 1 does not empty the row the drawdown set. (Before
-  the floor half, a fresh patch read "overused" every other turn under the old comparison and
-  rule 1 shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's t45–t50.)
-  Or a hunt row the sim marks
+  first one offered). The row to empty first is an **overused** row (`Food::overused`), read by
+  job. **A hunt row** reads the sim's `LaborAssignmentState::overdraws`: a kill turn cashes a
+  whole banked animal, so a hunt's `actual_yield` spikes above its `sustainable_yield` under any
+  floor, and the field's doc says it replaces that comparison, *"which mis-fires on a hunt's
+  lumpy per-turn take"*. **A forage row** reads a take above its regrowth (`actual_yield >
+  sustainable_yield`) on a patch at or below its floor (`biomass ≤ floor × carrying_capacity`; a
+  patch the frame does not carry reads at its floor): `overdraws` needs `floor <
+  MSY_BIOMASS_FRACTION` (the sim's `floor_overdraws`), so it is never true for a row at the
+  default floor. A take above the regrowth on a patch above its floor is the room above the floor
+  being taken, not overuse — so rule 1 does not empty a row *draw down to survive* set below
+  Best while it strips that room. (Before the floor half, a fresh patch read "overused" every
+  other turn and rule 1 shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's
+  t45–t50.) Or a hunt row the sim marks
   **`hunt_useful_workers == 0`**, or a **dead row** (below) — those need no gain guard — and
   failing one of those the lowest-paying row, which moves
   only onto ground out-paying it by `food.runway_gain_fraction` per worker **and** whose marginal
@@ -435,7 +457,9 @@ fired and what the ledger said. The rules, in `propose` order:
   cross the wire; the verdict does not."*), so the child is sized to what the parent may give up
   and a crew the sim would refuse as too small is not asked for — no split is pending, **the sim
   has not refused a split of this band at its current size or larger**
-  (`SeatMemory::split_refused_at`, below), and a discovered, workable, unowned-or-own site within
+  (`SeatMemory::split_refused_at`, below), and a discovered, workable, **walkable**
+  (`sources::is_walkable`, the predicate *better ground* moves by — *settle* walks the child onto
+  the site, and `move_band` refuses a water tile as `water_tile`), unowned-or-own site within
   `food.split_search_tiles` but **outside** `work_range` would pay that crew more than its
   consumption share: `split_band <crew>`, with `Memo::Split { target }`.
   The child appears on the parent's tile next turn (`split_band_from_parent`,
@@ -512,7 +536,12 @@ fired and what the ledger said. The rules, in `propose` order:
   cultivated, `seed_selection` is known and `sow_site_refusal` is empty. Priced by the ledger:
   `income_gained` = the committed (else largest legal share) plant's `cultivate_payoff` /
   `sow_payoff` minus the row's take today; `income_lost` = the builders' rows; `payoff_turn` =
-  `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn))` — there is **no**
+  `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn + min(builders, armed) ×
+  kit_work))`. `build_work_per_worker_turn` is published bare, so the band's hoes are added:
+  `kit_work` is the band's `kit_tiers` row for the plant builders kit (`Food::held_plant_build_gear`)
+  — the resolved, wear-aware `build_work_per_worker`, never the roster's — and `armed` the least
+  `count` over that kit's `item_ids` in `kit_item_conditions`, one unit a worker (`workers_per_unit`
+  is not on the wire, and every shipped item leaves it at 1); no kit or no row reads bare. There is **no**
   reduced yield during the build (`yield_fraction_while_building` is retired in the ladder JSON:
   *"the gatherers on a source take exactly what their hands carry whatever is being built beside
   them"*). Builders = the free hands (idle plus every row's surplus — **the patch's own row

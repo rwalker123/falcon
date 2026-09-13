@@ -20,8 +20,8 @@ use super::ledger::{
     survives, Change, PatchBook, Projection, Reassignment, BEST_FLOOR,
 };
 use super::sources::{
-    cluster_sites, cluster_take_over, crew_take, patch_per_worker_yield, surplus_hands,
-    sustained_hands, workable_patch_at, Source, SourceKey,
+    cluster_sites, cluster_take_over, crew_take, is_walkable, patch_per_worker_yield,
+    surplus_hands, sustained_hands, workable_patch_at, Source, SourceKey,
 };
 use super::{
     Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT,
@@ -91,8 +91,15 @@ pub(super) const DEMAND_PRIORITY_GATHERING: f32 = 1.0;
 /// **Hunting is what opens penning**, second to the sites: a spear for every hand the sites in
 /// reach cannot use, when a herd in reach can be brought down with it.
 pub(super) const DEMAND_PRIORITY_HUNTING: f32 = 0.8;
+/// **The hands feed the band before they build**: the plant builders kit for the cultivate the
+/// band is forecast to declare comes after the baskets and the spears, and above `Land`'s
+/// wayfinding (`DEMAND_PRIORITY_SCOUT`, 0.5) — a hoe pays in food, a wider sight does not.
+pub(super) const DEMAND_PRIORITY_TILLAGE: f32 = 0.6;
 /// The roster's gathering kit (`equipment.json` → `gathering`, jobs `forage`, baskets).
 const GATHERING_KIT_ID: &str = "gathering";
+/// **The plant web's build branch** as `KitOptionState::build_work_branch` names it (*"`"plant"`
+/// or `"animal"`"*) — the branch the ladder's `wild` → `tended` → `field` rungs are on.
+const PLANT_BRANCH: &str = "plant";
 /// A herd whose `body_mass` reads this has none on the wire — *"`0` if unknown"*
 /// (`HerdTelemetryState::body_mass`) — and only a kit with no upper mass bound is trusted on it.
 const BODY_MASS_UNKNOWN: f32 = 0.0;
@@ -107,6 +114,43 @@ const MASS_UNBOUNDED: f32 = 0.0;
 fn closer(progress: f32, change: &Reassignment, held: f32, held_change: &Reassignment) -> bool {
     let gain = |change: &Reassignment| change.income_gained - change.income_lost;
     progress > held || (progress == held && gain(change) > gain(held_change))
+}
+
+/// **The cultivate an outfitting window's builders kits are priced against** ([`Food::tillage_build`]):
+/// the cluster site the band is forecast to climb to `tended`, and the smallest bare crew that
+/// finishes it inside the horizon.
+struct TillageBuild<'v> {
+    /// The plant builders kit ([`Food::plant_builders_kit`]).
+    kit: &'v KitOptionState,
+    /// The rung's premium per turn: the plant's `cultivate_payoff` less the site's sustained take
+    /// at Best.
+    gained: f32,
+    /// Work left on the cultivate.
+    work: f32,
+    /// What one bare builder delivers per turn (`build_work_per_worker_turn`, published bare).
+    bare: f32,
+    /// `ceil(work / (horizon × bare))`, at least one: past it a kit has no builder to arm.
+    crew: u32,
+    horizon: f32,
+}
+
+impl TillageBuild<'_> {
+    /// The premium earned inside the horizon with `kits` of the crew equipped: the build finishes
+    /// at `work / (crew × bare + kits × build_work_per_worker)` and pays `gained` a turn after.
+    /// Continuous, never a whole turn: the value is unit-free, as the basket and spear marginals are.
+    fn premium(&self, kits: u32) -> f32 {
+        let rate = self.crew as f32 * self.bare + kits as f32 * self.kit.build_work_per_worker;
+        self.gained * (self.horizon - self.work / rate).max(0.0)
+    }
+
+    /// **What the `j`-th kit (1-based) is worth**: `premium(j) − premium(j − 1)` while `j ≤ crew`,
+    /// and nothing past it — the spear past the herd's crew, restated.
+    fn marginal(&self, j: u32) -> f32 {
+        if j == 0 || j > self.crew {
+            return 0.0;
+        }
+        self.premium(j) - self.premium(j - 1)
+    }
 }
 
 /// Hands freed from where they stand ([`Food::draw`]).
@@ -246,11 +290,11 @@ impl Food {
         rows
     }
 
-    /// The row *negative income* empties first: one that is overused (the sim's `overdraws`, on a
-    /// source at its floor — [`Food::at_its_floor`]), a hunt row the sim says no crew is useful on,
-    /// or a dead row — and
-    /// failing those, the row paying the least per worker. `true` when the row is one of the
-    /// troubled kinds, which need no gain guard to be worth leaving.
+    /// The row *negative income* empties first: one that is overused ([`Food::overused`] — a hunt
+    /// row the sim says `overdraws`, a forage row whose patch stands at its floor), a hunt row the
+    /// sim says no crew is useful on, or a dead row — and failing those, the row paying the least
+    /// per worker. `true` when the row is one of the troubled kinds, which need no gain guard to
+    /// be worth leaving.
     fn row_to_empty<'b>(
         &self,
         view: &SeatView,
@@ -264,7 +308,7 @@ impl Food {
             .filter_map(|row| SourceKey::of_row(row).map(|key| (row, key)))
             .collect();
         for (row, key) in &worked {
-            let why = if row.overdraws && Self::at_its_floor(view, row) {
+            let why = if Self::overused(view, row) {
                 WHY_OVERUSED
             } else if row.kind == ROLE_HUNT && row.hunt_useful_workers == 0 {
                 WHY_NO_USEFUL_CREW
@@ -323,23 +367,33 @@ impl Food {
         !row_full && take >= self.floors.runway_gain_fraction * moved as f32 * rate
     }
 
-    /// **Whether a row's source is at or below its floor** — where the sim's `overdraws` is
-    /// overuse. The trigger is `LaborAssignmentState::overdraws`, not `actual_yield >
-    /// sustainable_yield`: the field *"replaces the client-derived `actual_yield >
-    /// sustainable_yield` test, which mis-fires on a hunt's lumpy per-turn take (a kill turn cashes
-    /// a whole banked animal …)"*. `overdraws` is intent **and** ability — a floor below the food
-    /// peak and a crew that out-takes the regrowth between that floor and the stock — so a row at
-    /// Best never reads it, which covers a fresh patch at the default floor. It does not cover a
-    /// patch *draw down to survive* set below Best: that row reads `overdraws` while the crew
-    /// strips the room above its floor on purpose, so a patch whose `biomass > floor ×
-    /// carrying_capacity` is still not overused, and rule 1 does not empty the row the drawdown
-    /// set. A hunt row reads `overdraws` alone (the herd's floor is its escapement, not priced
-    /// here). Before the floor half, a fresh patch read "overused" every other turn and rule 1
+    /// **Whether a worked row is overused**, read by job.
+    ///
+    /// A **hunt** row reads the sim's `overdraws`: a kill turn cashes a whole banked animal, so a
+    /// hunt's `actual_yield` spikes above its `sustainable_yield` under any floor, and the field
+    /// *"replaces the client-derived `actual_yield > sustainable_yield` test, which mis-fires on a
+    /// hunt's lumpy per-turn take"*.
+    ///
+    /// A **forage** row reads a take above its regrowth (`actual_yield > sustainable_yield`) on a
+    /// patch at its floor ([`Food::at_its_floor`]): `overdraws` needs `floor <
+    /// MSY_BIOMASS_FRACTION` (the sim's `floor_overdraws`), so it is never true for a row at the
+    /// default floor.
+    fn overused(view: &SeatView, row: &LaborAssignmentState) -> bool {
+        if row.kind == ROLE_FORAGE {
+            row.actual_yield > row.sustainable_yield && Self::at_its_floor(view, row)
+        } else {
+            row.overdraws
+        }
+    }
+
+    /// **Whether a forage row's patch stands at or below the row's floor**: `biomass ≤ floor ×
+    /// carrying_capacity`, at the floor the row reads on the wire (Best, 0.5, for an assignment
+    /// sent with `floor: None`); a patch the frame does not carry reads at its floor. A take above
+    /// the regrowth on a patch above its floor is the room above the floor being taken, not
+    /// overuse, so a row *draw down to survive* set below Best is not emptied while it strips that
+    /// room. Before the floor half, a fresh patch read "overused" every other turn and rule 1
     /// shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's t45–t50.
     fn at_its_floor(view: &SeatView, row: &LaborAssignmentState) -> bool {
-        if row.kind != ROLE_FORAGE {
-            return true;
-        }
         view.patch_at(Tile::new(row.target_x, row.target_y))
             .is_none_or(|patch| patch.biomass <= row.floor * patch.carrying_capacity)
     }
@@ -823,6 +877,7 @@ impl Food {
                 let tile = Tile::new(patch.x, patch.y);
                 let distance = grid.distance(here, tile);
                 (view.is_discovered(tile)
+                    && is_walkable(view, tile)
                     && distance > band.work_range
                     && distance <= self.floors.split_search_tiles)
                     .then(|| workable_patch_at(view, tile))
@@ -1162,6 +1217,7 @@ impl Food {
         let builders_now = Self::workers_in_pool(band, ROLE_BUILDERS);
         let surplus_rows = Self::surplus_rows(band);
         let free = self.draw(&surplus_rows, &[], budget, idle);
+        let gear = Self::held_plant_build_gear(view, band);
         let mut best: Option<(Proposal, f32, Reassignment)> = None;
         for row in band
             .labor_assignments
@@ -1231,7 +1287,12 @@ impl Food {
                     break;
                 }
                 let builders = builders_now + hands;
-                let payoff_turn = (work_left / (builders as f32 * per_builder)).ceil() as u32;
+                // `build_work_per_worker_turn` is published bare; the band's hoes add their
+                // resolved per-worker work on as many builders as they arm.
+                let geared =
+                    gear.map_or(0.0, |(armed, per_kit)| builders.min(armed) as f32 * per_kit);
+                let crew_rate = builders as f32 * per_builder + geared;
+                let payoff_turn = (work_left / crew_rate).ceil() as u32;
                 if payoff_turn > horizon {
                     continue;
                 }
@@ -1294,12 +1355,13 @@ impl Food {
     /// hand when a huntable herd
     /// within `hunt_reach` can be brought down with it ([`Food::hunting_kit_for`]), at
     /// [`DEMAND_PRIORITY_HUNTING`]; and when no herd in reach clears any kit, those hands ask for
-    /// baskets too — a spare basket is not forfeited budget, an unspent slot is. A window that
-    /// is not open asks for nothing.
+    /// baskets too — a spare basket is not forfeited budget, an unspent slot is. The hands the walk
+    /// gives the plant builders kit ([`Food::tillage_build`]) ask for it at
+    /// [`DEMAND_PRIORITY_TILLAGE`]. A window that is not open asks for nothing.
     pub fn outfit_demands(
         &self,
         view: &SeatView,
-        _plan: &Plan,
+        plan: &Plan,
         memory: &SeatMemory,
         band: &PopulationCohortState,
     ) -> Vec<Demand> {
@@ -1313,7 +1375,9 @@ impl Food {
         let tick = view.tick();
         let is_dead = |key: &SourceKey, forecast: f32| self.is_dead(memory, band, key, forecast);
         let horizon = self.floors.projection_horizon_turns;
-        let (gathering, spare) = self.outfit_split(view, memory, band, &is_dead, horizon);
+        let tillage = self.tillage_build(view, plan, memory, band, &is_dead, horizon);
+        let (gathering, spare, tillers) =
+            self.outfit_split(view, memory, band, &is_dead, horizon, tillage.as_ref());
         let demand = |resource: Resource, amount: u32, priority: f32| Demand {
             requester: SPECIALIST_FOOD,
             band: band.band_id,
@@ -1340,7 +1404,107 @@ impl Food {
         if let Some(kit) = hunting {
             demands.push(demand(Resource::Kit(kit), spare, DEMAND_PRIORITY_HUNTING));
         }
+        if let Some(build) = tillage.filter(|_| tillers > 0) {
+            demands.push(demand(
+                Resource::Kit(build.kit.id.clone()),
+                tillers,
+                DEMAND_PRIORITY_TILLAGE,
+            ));
+        }
         demands
+    }
+
+    /// **The plant builders kit**: among the roster's kits (never `none`) that list the
+    /// `builders` job and add build work on the plant branch (`build_work_per_worker > 0`,
+    /// `build_work_branch == "plant"` — *"a hoe adds work to a Cultivate and nothing to a
+    /// `Tame`"*), the one adding the most, ties by the lower id.
+    fn plant_builders_kit(view: &SeatView) -> Option<&KitOptionState> {
+        view.snapshot
+            .kits
+            .iter()
+            .filter(|kit| {
+                kit.id != BARE_KIT_ID
+                    && kit.jobs.iter().any(|job| job == ROLE_BUILDERS)
+                    && kit.build_work_per_worker > 0.0
+                    && kit.build_work_branch == PLANT_BRANCH
+            })
+            .max_by(|a, b| {
+                a.build_work_per_worker
+                    .total_cmp(&b.build_work_per_worker)
+                    .then_with(|| b.id.cmp(&a.id))
+            })
+    }
+
+    /// **The plant build gear `band` holds**: whole units armed — the least `count` over the plant
+    /// builders kit's `item_ids` in `kit_item_conditions`, one unit per worker — and the
+    /// per-worker build work the band's `kit_tiers` row for that kit resolves (wear-aware, never
+    /// re-derived from the roster). `None` with no such kit, no row, or a kit carrying no item.
+    fn held_plant_build_gear(view: &SeatView, band: &PopulationCohortState) -> Option<(u32, f32)> {
+        let kit = Self::plant_builders_kit(view)?;
+        let per_kit = band
+            .kit_tiers
+            .iter()
+            .find(|tier| tier.kit_id == kit.id)?
+            .build_work_per_worker;
+        let armed = kit
+            .item_ids
+            .iter()
+            .map(|item| {
+                band.kit_item_conditions
+                    .iter()
+                    .find(|condition| &condition.item_id == item)
+                    .map_or(0, |condition| condition.count)
+            })
+            .min()?;
+        Some((armed, per_kit))
+    }
+
+    /// **The cultivate an open window is forecast to fund** — cultivation is earned in play, so
+    /// the ask cannot copy this turn's builders. Only toward a goal rung above wild, and only with
+    /// a plant builders kit on the roster. Among the cluster's sites ([`cluster_sites`], the walk's
+    /// own list) not cultivated, with nothing queued (`build_destination_rung` empty) and a plant
+    /// that may be tended ([`Food::climb_payoff`]), the one whose premium — `cultivate_payoff`
+    /// less the sustained take at Best the walk prices the site at — is greatest, ties by the
+    /// lower `(y, x)`; skipping a site that gains nothing, has no work left or no bare build rate.
+    fn tillage_build<'v>(
+        &self,
+        view: &'v SeatView,
+        plan: &Plan,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+        is_dead: &super::sources::IsDead<'_>,
+        horizon: u32,
+    ) -> Option<TillageBuild<'v>> {
+        let goals = plan.food_goals()?;
+        if goals.ground_rung <= GroundRung::Wild {
+            return None;
+        }
+        let kit = Self::plant_builders_kit(view)?;
+        let horizon = horizon as f32;
+        cluster_sites(view, memory, band, band_tile(band), is_dead)
+            .into_iter()
+            .filter(|(patch, _)| !patch.is_cultivated && patch.build_destination_rung.is_empty())
+            .filter_map(|(patch, _)| {
+                let (_, payoff) = Self::climb_payoff(patch, Climb::Tended)?;
+                let wild =
+                    regrowth_at(&patch.regrowth_samples, BEST_FLOOR) * patch.provisions_per_biomass;
+                let gained = payoff - wild;
+                let work = patch.cultivation_work_cost - patch.cultivation_work_done;
+                let bare = patch.build_work_per_worker_turn;
+                (gained > 0.0 && work > 0.0 && bare > 0.0).then_some((patch, gained, work, bare))
+            })
+            .max_by(|a, b| {
+                a.1.total_cmp(&b.1)
+                    .then_with(|| (b.0.y, b.0.x).cmp(&(a.0.y, a.0.x)))
+            })
+            .map(|(_, gained, work, bare)| TillageBuild {
+                kit,
+                gained,
+                work,
+                bare,
+                crew: ((work / (horizon * bare)).ceil() as u32).max(1),
+                horizon,
+            })
     }
 
     /// **The basket / spear split, by value** (the outfitting reading that shipped): the band's
@@ -1364,6 +1528,11 @@ impl Food {
     /// bench's ground a deer herd's regrowth is one hunter's work, so one spear opens the hunting
     /// web and the rest of the band gathers — `gathering 17` fed seed 23 to t60 where sizing the
     /// baskets at the sustained plateau alone (`gathering 2, big_game 15`) starved it.
+    ///
+    /// **A third bin, when `tillage` is `Some`**: the `j`-th hand given the plant builders kit
+    /// earns [`TillageBuild::marginal`]`(j)`, and takes it only when strictly greater than both the
+    /// basket and the spear. With no tillage bin the walk is the two-bin walk above, unchanged.
+    /// Answers `(gathering, hunters, tillers)`.
     fn outfit_split(
         &self,
         view: &SeatView,
@@ -1371,7 +1540,8 @@ impl Food {
         band: &PopulationCohortState,
         is_dead: &super::sources::IsDead<'_>,
         horizon: u32,
-    ) -> (u32, u32) {
+        tillage: Option<&TillageBuild<'_>>,
+    ) -> (u32, u32, u32) {
         let horizon = horizon as f32;
         // Per site: the sustained take a hand earns, the hands that share it, the room above the
         // floor in biomass, what one hand carries over the horizon, and provisions per biomass.
@@ -1429,6 +1599,7 @@ impl Food {
         });
         let mut gathering = 0;
         let mut hunters = 0;
+        let mut tillers = 0;
         for _ in 0..band.working_age {
             let best_site = sites
                 .iter()
@@ -1439,7 +1610,10 @@ impl Food {
             let spear = herd
                 .filter(|(_, crew)| hunters < *crew)
                 .map_or(0.0, |(value, _)| value);
-            if basket >= spear {
+            let till = tillage.map(|build| build.marginal(tillers + 1));
+            if till.is_some_and(|till| till > basket && till > spear) {
+                tillers += 1;
+            } else if basket >= spear {
                 gathering += 1;
                 if let Some((index, _)) = best_site {
                     sites[index].hands += 1;
@@ -1448,7 +1622,7 @@ impl Food {
                 hunters += 1;
             }
         }
-        (gathering, hunters)
+        (gathering, hunters, tillers)
     }
 
     /// The huntable herd within `hunt_reach` a roster kit clears, with the greatest sustained
@@ -2185,6 +2359,114 @@ mod tests {
             .is_empty());
     }
 
+    /// The roster's plant builders kit (`equipment.json` → `tillage`, hoes at `+0.5` a builder).
+    const TILLAGE_KIT: &str = "tillage";
+    const TILLAGE_KIT_ITEM: &str = "hoes";
+    const HOE_BUILD_WORK: f32 = 0.5;
+
+    /// The roster's `tillage` kit on `branch`.
+    fn a_builders_kit(branch: &str) -> KitOptionState {
+        KitOptionState {
+            id: TILLAGE_KIT.to_owned(),
+            jobs: vec![ROLE_BUILDERS.to_owned(), ROLE_AGRICULTURE.to_owned()],
+            item_ids: vec![TILLAGE_KIT_ITEM.to_owned()],
+            build_work_per_worker: HOE_BUILD_WORK,
+            build_work_branch: branch.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    /// The window fixture with `kit` on the roster and the rich patch (sustained 8 a turn at Best)
+    /// able to be tended for 40 a turn: 32 gained, 50 work at 1.0 a bare builder, so over the
+    /// forager's 40-turn horizon the crew is `ceil(50 / 40)` = 2 and the two hoes are worth
+    /// `32 × (25 − 20)` = 160 and `32 × (20 − 16.7)` ≈ 107 — both above the rich basket's 80.
+    fn a_window_with_a_cultivable_site(kit: KitOptionState) -> SeatView {
+        let mut view = a_band_at_its_window(5.0);
+        view.snapshot.kits.push(kit);
+        for patch in &mut view.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                patch.composition = Arc::from(vec![FloraShareInfo {
+                    species: "hazel".to_owned(),
+                    share: 1.0,
+                    can_cultivate: true,
+                    cultivate_payoff: 40.0,
+                    ..Default::default()
+                }]);
+                patch.cultivation_work_cost = 50.0;
+                patch.build_work_per_worker_turn = 1.0;
+            }
+        }
+        view
+    }
+
+    fn asked(view: &SeatView, plan: &Plan) -> Vec<(String, u32, f32)> {
+        food()
+            .outfit_demands(view, plan, &memory(), own_band(view))
+            .iter()
+            .map(|d| (d.resource.to_string(), d.amount, d.priority))
+            .collect()
+    }
+
+    #[test]
+    fn a_window_toward_tended_asks_for_hoes_for_the_forecast_cultivate() {
+        let view = a_window_with_a_cultivable_site(a_builders_kit(PLANT_BRANCH));
+        let demands = asked(&view, &plan_toward(1.0, GroundRung::Tended));
+        assert_eq!(
+            demands,
+            vec![
+                ("kit:gathering".to_owned(), 14, DEMAND_PRIORITY_GATHERING),
+                (format!("kit:{HUNT_KIT}"), 1, DEMAND_PRIORITY_HUNTING),
+                (format!("kit:{TILLAGE_KIT}"), 2, DEMAND_PRIORITY_TILLAGE),
+            ]
+        );
+        assert_eq!(
+            demands.iter().map(|(_, amount, _)| amount).sum::<u32>(),
+            own_band(&view).working_age
+        );
+        // Toward wild: no build to forecast, and the split is today's.
+        assert_eq!(
+            asked(&view, &plan_toward(1.0, GroundRung::Wild)),
+            vec![
+                ("kit:gathering".to_owned(), 16, DEMAND_PRIORITY_GATHERING),
+                (format!("kit:{HUNT_KIT}"), 1, DEMAND_PRIORITY_HUNTING),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_plant_branch_builders_kit_on_the_roster_asks_for_no_hoes() {
+        // The animal web's builders kit adds nothing to a cultivate.
+        let view = a_window_with_a_cultivable_site(a_builders_kit("animal"));
+        assert_eq!(
+            asked(&view, &plan_toward(1.0, GroundRung::Tended)),
+            vec![
+                ("kit:gathering".to_owned(), 16, DEMAND_PRIORITY_GATHERING),
+                (format!("kit:{HUNT_KIT}"), 1, DEMAND_PRIORITY_HUNTING),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hoe_past_the_crew_is_worth_nothing_and_each_is_worth_no_more_than_the_last() {
+        let kit = a_builders_kit(PLANT_BRANCH);
+        let build = TillageBuild {
+            kit: &kit,
+            gained: 32.0,
+            work: 130.0,
+            bare: 1.0,
+            crew: 4,
+            horizon: 40.0,
+        };
+        let marginals: Vec<f32> = (1..=build.crew + 2).map(|j| build.marginal(j)).collect();
+        assert!(marginals[..build.crew as usize].iter().all(|m| *m > 0.0));
+        assert!(
+            marginals.windows(2).all(|pair| pair[1] <= pair[0]),
+            "{marginals:?}"
+        );
+        assert_eq!(marginals[build.crew as usize], 0.0, "past the crew");
+        assert_eq!(build.marginal(0), 0.0);
+    }
+
     // ---- rule 5a: hold the ground ------------------------------------------------------------
 
     /// The parked band's rich patch is the seat's own, its upkeep row unpaid (`shortfall 1.92,
@@ -2444,6 +2726,53 @@ mod tests {
             .expect("one worked row");
         assert!(troubled);
         assert_eq!(why, WHY_OVERUSED);
+    }
+
+    /// **A forage row at the default floor is overused on a take above its regrowth.** The sim's
+    /// `overdraws` is never true there (`floor_overdraws` needs a floor below the food peak), so
+    /// the row reads `actual_yield > sustainable_yield` on a patch at its floor: a take equal to
+    /// the regrowth is not overuse, and neither is any take on a patch above its floor.
+    #[test]
+    fn a_forage_row_at_its_default_floor_is_overused_only_on_a_take_above_its_regrowth() {
+        const REGROWTH: f32 = 2.0;
+        const ABOVE_REGROWTH: f32 = 2.5;
+        let reading = |actual_yield: f32, biomass_over_capacity: f32| {
+            let view = a_view_with(|view| {
+                let band = &mut view.snapshot.populations[0];
+                band.idle_workers = 0;
+                band.labor_assignments = vec![LaborAssignmentState {
+                    sustainable_yield: REGROWTH,
+                    overdraws: false,
+                    ..forage_row(RICH_PATCH, 17, actual_yield)
+                }];
+                for patch in &mut view.snapshot.forage_patches {
+                    if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                        patch.biomass = biomass_over_capacity * patch.carrying_capacity;
+                    }
+                }
+            });
+            let (row, _, troubled, why) = food()
+                .row_to_empty(&view, &memory(), own_band(&view))
+                .expect("one worked row");
+            assert!(!row.overdraws);
+            assert_eq!(row.floor, BEST_FLOOR, "the wire default");
+            (troubled, why)
+        };
+        assert_eq!(
+            reading(ABOVE_REGROWTH, BEST_FLOOR),
+            (true, WHY_OVERUSED),
+            "above its regrowth, at its floor"
+        );
+        assert_ne!(
+            reading(REGROWTH, BEST_FLOOR).1,
+            WHY_OVERUSED,
+            "the regrowth taken exactly"
+        );
+        assert_ne!(
+            reading(ABOVE_REGROWTH, BEST_FLOOR + FLOOR_STEP).1,
+            WHY_OVERUSED,
+            "above its floor"
+        );
     }
 
     // ---- rule 6: draw down to survive ---------------------------------------------------------
@@ -2824,6 +3153,53 @@ mod tests {
             (ROLE_BUILDERS.to_owned(), 9, None, None)
         );
         assert_eq!(proposal.cost.workers, 9);
+    }
+
+    /// The same nine builders holding nine hoes deliver `9 × 1.0 + 9 × 0.5` = 13.5 a turn, so the
+    /// 50-unit cultivate pays off at turn 4 where the bare crew's 9 a turn waits for turn 6; three
+    /// hoes arm three of them (10.5 a turn, turn 5).
+    #[test]
+    fn hoes_the_band_holds_bring_the_upgrades_payoff_forward() {
+        let reason = |hoes: u32| {
+            let mut view = a_parked_band();
+            view.snapshot.kits.push(a_builders_kit(PLANT_BRANCH));
+            let band = &mut view.snapshot.populations[0];
+            band.kit_tiers.push(sim_runtime::BandKitTiersState {
+                kit_id: TILLAGE_KIT.to_owned(),
+                build_work_per_worker: HOE_BUILD_WORK,
+                ..Default::default()
+            });
+            band.kit_item_conditions = vec![sim_runtime::KitItemConditionState {
+                item_id: TILLAGE_KIT_ITEM.to_owned(),
+                count: hoes,
+                ..Default::default()
+            }];
+            food()
+                .upgrade_the_ground(
+                    &view,
+                    &plan_with_food_share(1.0),
+                    &memory(),
+                    own_band(&view),
+                    &Reassignment::NONE,
+                )
+                .expect("the upgrade")
+                .reason
+        };
+        assert!(
+            reason(0).contains("with 9 builders, payoff turn 6"),
+            "{}",
+            reason(0)
+        );
+        assert!(
+            reason(9).contains("with 9 builders, payoff turn 4"),
+            "{}",
+            reason(9)
+        );
+        assert!(
+            reason(3).contains("with 9 builders, payoff turn 5"),
+            "{}",
+            reason(3)
+        );
     }
 
     /// §4: *"a band standing in a cluster spreads over it"*. Three sites in reach with plateaus
@@ -3741,6 +4117,28 @@ mod tests {
         }
         assert!(specialist
             .split_to_feed(&poor, &plan, &memory(), own_band(&poor), &carried)
+            .is_none());
+    }
+
+    /// **A child is never split toward ground it cannot stand on.** `move_band` refuses a water
+    /// tile as `water_tile`, so the short band's only site out of reach, flooded, is no target.
+    #[test]
+    fn a_split_is_never_aimed_at_a_water_tile() {
+        let mut view = a_short_band();
+        let specialist = food();
+        let plan = plan_with_food_share(1.0);
+        let (_, carried) = specialist.assess_income(&view, &plan, &memory(), own_band(&view));
+        assert!(specialist
+            .split_to_feed(&view, &plan, &memory(), own_band(&view), &carried)
+            .is_some());
+        view.snapshot
+            .tiles
+            .iter_mut()
+            .find(|row| row.x == SPLIT_SITE.x && row.y == SPLIT_SITE.y)
+            .expect("the fixture's site has a tile row")
+            .terrain_tags = sim_runtime::TerrainTags::WATER;
+        assert!(specialist
+            .split_to_feed(&view, &plan, &memory(), own_band(&view), &carried)
             .is_none());
     }
 
