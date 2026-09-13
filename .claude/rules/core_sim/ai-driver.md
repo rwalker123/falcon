@@ -1066,7 +1066,14 @@ that into the same three logs — the page is then the same for the AI's seat an
 the same world.
 
 **The record** is on while `SIM_RECORD_DIR` names a directory (`core_sim::record::RECORD_DIR_ENV`;
-the launcher sets it, below). Under it:
+the launcher sets it, below). The server logs `record.open record_dir=…` when it opens and, beside
+it and again at every world build, `record.view seat=0 run_dir=… command="sim_ai viewer <run dir>
+--seat 0 --out <run dir>/seat_0.html"` (`log_record_view` in `bin/server.rs`) — the viewer line for
+the human's seat in the server's own log, with the run directory taken as the record's parent. The
+program is the generic `sim_ai` because the server cannot know whether the reader has a bundled
+binary or runs `cargo run -p sim_ai --release --`; the launcher and `scripts/run_stack.sh` print the
+resolved form. It repeats at the world build because a record holds nothing to view before one, and
+there is no shutdown hook to log from: the server ends on a signal. Under it:
 
 ```text
 <record>/run.json                          RunInfo: map_preset_id, width, height, map_seed (as built —

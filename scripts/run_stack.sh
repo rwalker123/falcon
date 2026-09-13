@@ -47,6 +47,12 @@ KEPT_RUNS=5
 # clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd) and the launcher's HUMAN_FACTION_ID.
 HUMAN_SEAT=0
 RUN_DIR=""
+# The run directory the server half chose, for the client half to print the recipe from: Ray
+# runs `--server-only` in one terminal and `--client-only` in another, and the recipe has to
+# appear where the player is when the GAME ends -- the client's terminal, which never saw the
+# server start. One line, the absolute run dir; removed under --no-record so a stale pointer
+# from an earlier run is never printed for a session that recorded nothing.
+CURRENT_RUN_FILE="$RUNS_DIR/current-run"
 
 usage() {
   cat <<'EOF'
@@ -62,8 +68,9 @@ Usage: scripts/run_stack.sh [--server-only|--client-only|--godot-only] [--port-b
                  debug_assertions a debug build adds -- never for normal play.
   --no-record    Do not record the session. By default the server writes every
                  frame and command under runs/run-<secs>-<pid>/record (the newest
-                 5 runs are kept) and the exit message prints the `sim_ai viewer`
-                 lines that open the human's seat.
+                 5 runs are kept), runs/current-run points at that run, and when
+                 the game ends -- the client exits, or --server-only is stopped --
+                 the `sim_ai viewer` lines that open the human's seat are printed.
   -h, --help     Show this help text.
 
 Without any options both the server and the client are started. Rivals are NOT
@@ -277,16 +284,33 @@ list_runs() {
 # from the server's record first. `viewer` also imports a recorded seat on the fly, so the second
 # line alone works; the first is the explicit form.
 print_run_recipe() {
+  local run_dir="$1"
   echo
-  if [[ -n "$RUN_DIR" ]]; then
-    echo "[run_stack] This run was recorded under $RUN_DIR"
+  if [[ -n "$run_dir" ]]; then
+    echo "[run_stack] This run was recorded under $run_dir"
     echo "[run_stack] Open the human seat (faction $HUMAN_SEAT) in the viewer with:"
-    echo "  cargo run -p sim_ai --release -- import-record $RUN_DIR/$RECORD_SUBDIR --seat $HUMAN_SEAT --out $RUN_DIR/seat_$HUMAN_SEAT"
-    echo "  cargo run -p sim_ai --release -- viewer $RUN_DIR --seat $HUMAN_SEAT --out $RUN_DIR/seat_$HUMAN_SEAT.html"
+    echo "  cargo run -p sim_ai --release -- import-record $run_dir/$RECORD_SUBDIR --seat $HUMAN_SEAT --out $run_dir/seat_$HUMAN_SEAT"
+    echo "  cargo run -p sim_ai --release -- viewer $run_dir --seat $HUMAN_SEAT --out $run_dir/seat_$HUMAN_SEAT.html"
   else
     echo "[run_stack] This run was not recorded (--no-record)."
   fi
   echo "[run_stack] Rivals are not played under run_stack.sh; to play against the AI, build and run the packaged launcher (scripts/build_macos.sh or scripts/build_windows.sh)."
+}
+
+# The client half's exit: the game has ended, so print the recipe for the run the server half
+# pointed at. This process did not start the server, so the pointer file is the only thing that
+# says which run -- or that there is none.
+report_client_exit() {
+  local run_dir=""
+  if [[ -f "$CURRENT_RUN_FILE" ]]; then
+    IFS= read -r run_dir < "$CURRENT_RUN_FILE" || true
+  fi
+  if [[ -n "$run_dir" ]]; then
+    print_run_recipe "$run_dir"
+  else
+    echo
+    echo "[run_stack] No recorded run to open: the server was started with --no-record, or from another checkout ($CURRENT_RUN_FILE is missing), so the viewer commands cannot be given."
+  fi
 }
 
 # Runs once. A Ctrl-C fires the INT trap and then, when the script exits, the EXIT trap -- the
@@ -306,7 +330,7 @@ cleanup() {
     fi
   fi
   if [[ "$RUN_SERVER" == true ]]; then
-    print_run_recipe
+    print_run_recipe "$RUN_DIR"
   fi
 }
 
@@ -318,8 +342,11 @@ start_server() {
   local record_env=""
   if [[ "$RECORD" == true ]]; then
     create_run_dir
+    printf '%s\n' "$RUN_DIR" > "$CURRENT_RUN_FILE"
     record_env="SIM_RECORD_DIR=$RUN_DIR/$RECORD_SUBDIR"
     echo "[run_stack] Recording this run under $RUN_DIR/$RECORD_SUBDIR"
+  else
+    rm -f "$CURRENT_RUN_FILE"
   fi
   echo "[run_stack] Starting core simulation server..."
   env RUST_LOG=info SIM_PORT_BASE="$PORT_BASE" ${record_env:+"$record_env"} cargo run $SERVER_PROFILE_FLAG -p core_sim --bin server &
@@ -396,6 +423,9 @@ if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == true ]]; then
   echo "[run_stack] Thin client exited (code=${CLIENT_EXIT_CODE}). Stopping server..."
   trap - EXIT INT TERM
   cleanup
+elif [[ "$RUN_CLIENT" == true ]]; then
+  echo "[run_stack] Thin client exited (code=${CLIENT_EXIT_CODE})."
+  report_client_exit
 fi
 
 exit "$CLIENT_EXIT_CODE"

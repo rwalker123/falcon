@@ -135,8 +135,52 @@ where
 /// ([`record_dispatched_command`]). Unset, every one of them is the code that was there before.
 static RUN_RECORDER: OnceLock<Arc<RunRecorder>> = OnceLock::new();
 
+/// **The human's seat**, for the viewer line the record logs. Contract twin of
+/// `PLAYER_FACTION_ID` in `clients/godot_thin_client/src/scripts/ui/hud/hud_const.gd` (the seat
+/// the Godot client claims) and of the launcher's `HUMAN_FACTION_ID`.
+const HUMAN_FACTION_ID: FactionId = FactionId(0);
+/// The `sim_ai` subcommand that opens a run directory as a page, and the page's extension beside
+/// the seat directory — twins of `VIEWER_SUBCOMMAND` / `VIEWER_PAGE_EXTENSION` in
+/// `launcher/src/main.rs`, which prints the same line with a resolved binary.
+const VIEWER_SUBCOMMAND: &str = "viewer";
+const VIEWER_PAGE_EXTENSION: &str = ".html";
+
 fn run_recorder() -> Option<&'static Arc<RunRecorder>> {
     RUN_RECORDER.get()
+}
+
+/// **The viewer line for the human's seat, in the server's own log** — `record.view`, so the
+/// terminal (or log file) the operator reads carries the command that opens the game just played,
+/// beside `record.open`. The program is the generic `sim_ai`: the server cannot know whether the
+/// player has a bundled binary beside it or is running `cargo run -p sim_ai --release --`, so it
+/// names the subcommand and leaves the prefix to the reader; the launcher and `run_stack.sh` print
+/// the resolved form. Logged when the record opens and again at every world build, because a
+/// record holds nothing to view until a world has been built (`retain_claimed_seats`).
+///
+/// The run directory is the record's **parent**: the launcher and `scripts/run_stack.sh` both set
+/// `SIM_RECORD_DIR` to `<run dir>/record`, and `sim_ai viewer <run dir>` finds `record/` under it.
+/// A bare record directory with no parent is named as it is — there is no better guess.
+fn log_record_view(record_dir: &Path) {
+    let run_dir = record_dir
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(record_dir);
+    let seat = HUMAN_FACTION_ID.0;
+    let page = run_dir.join(format!(
+        "{}{seat}{VIEWER_PAGE_EXTENSION}",
+        core_sim::record::SEAT_DIR_PREFIX
+    ));
+    info!(
+        target: "shadow_scale::server",
+        seat,
+        run_dir = %run_dir.display(),
+        command = %format!(
+            "sim_ai {VIEWER_SUBCOMMAND} {} --seat {seat} --out {}",
+            run_dir.display(),
+            page.display()
+        ),
+        "record.view"
+    );
 }
 
 /// Open the recorder if the environment asks for one. A directory that cannot be created is a
@@ -154,6 +198,7 @@ fn open_run_recorder_from_env() {
                 record_dir = %dir.display(),
                 "record.open"
             );
+            log_record_view(&dir);
         }
         Err(err) => warn!(
             target: "shadow_scale::server",
@@ -1094,6 +1139,8 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
             roster: faction_ids,
             world_epoch,
         });
+        // A world now exists to view, and this is the log line nearest to the game being played.
+        log_record_view(recorder.dir());
     }
 }
 
