@@ -18,9 +18,10 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 11
+const EXPECTED_CHECKPOINTS := 16
 
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
+const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -52,6 +53,7 @@ func run(harness) -> void:
 	_assert_world_change_drops_the_answers()
 	_assert_failure_classes_differ()
 	_assert_useful_cap_is_the_last_rising_party()
+	_assert_the_key_carries_the_bands_gear()
 	# Back to the state every other chapter runs in: an empty seam with the canned answerer on it.
 	h._hud.forecast_query().reset()
 	ForecastFx.install(h._hud)
@@ -165,11 +167,107 @@ func _assert_useful_cap_is_the_last_rising_party() -> void:
 		int(SourceForecast.expedition_useful_cap({}, {}, GUARD_FLOOR, SCANNED_PLATEAU,
 			SCANNED_PLATEAU - 1).get("cap", -1)) == SCANNED_PLATEAU - 1)
 
+# ---- THE BAND'S GEAR IS PART OF THE QUESTION ----------------------------------------------------
+# Reported from play: two ASSIGN HUNTERS sheets for the same band and herd at the same crew of 3 — one
+# with three Stalking kits, one reading `1 of 3 Stalking kits available` — rendered a BYTE-IDENTICAL
+# NEXT TURN panel: the same 0.23 FOOD / 0.02 BONE / 0.01 FIBRE / 0.16 HIDE, the same
+# `≈0.76 Red Deer/turn`, the same *"max 3 workers useful here"*.
+#
+# **THE SERVER WAS NEVER WRONG.** `answer_hunt_crew_take` prices the curve off the band's live wear and
+# publishes `armed_crew` precisely so the plateau can be explained. `ForecastQuery.key_of` was keyed on
+# band · herd · kit · party · floor with the gear NOWHERE IN IT, and `ask` returns early whenever the
+# key it holds an answer for matches — so the first answer stood for the session however the ledger
+# moved. **NO FRAME COULD CARRY THIS**: a stale forecast renders as a perfectly ordinary one.
+
+## The item the gear claims move, and the kit that carries it. `big_game` is spears AND a sled, so the
+## fingerprint has two terms and a claim that only ever read the first would pass here — which is why
+## the terms name their items.
+const GEAR_KEY_KIT_ID := BandFx.KIT_ID_BIG_GAME
+const GEAR_KEY_ITEM := BandFx.KIT_ITEM_SPEARS
+
+## The three single-field edits the claims below are built from. Each moves ONE published number on
+## ONE item row, so a key that changed for any other reason would be changing for the wrong reason.
+const GEAR_KEY_STOCK_AFTER := 2
+const GEAR_KEY_DEMAND_AFTER := 9.0
+const GEAR_KEY_CONDITION_AFTER := 11.0
+
+## GUARD: **the key moves with the LEDGER and not with the WEAR — and the pair is the claim.**
+##
+## ⛔ Either half alone passes a broken implementation. *"Stock changes the key"* is satisfied by a
+## key that hashes the whole condition row, which then re-asks every turn as gear wears for an answer
+## that did not move; *"condition does not change the key"* is satisfied by the shipped bug, where
+## nothing about the gear changed it. Both, together, are what pin the fingerprint's contents.
+##
+## **WHY CONDITION IS EXCLUDED**: coverage is struck against `live_units`, a COUNT of batches with
+## condition left, so a unit arms the same share at 91% as at 12% — while its `remaining` moves every
+## turn. Counts move only when a unit is gained, lost or finally expires, which is when the answer
+## moves too.
+func _assert_the_key_carries_the_bands_gear() -> void:
+	var kits := BandFx.kit_roster_fixture()
+	var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, GUARD_BAND_ID,
+		GUARD_HERD_ID)
+	var base := BandFx.with_equipped_kit(BandFx.band_fixture())
+	var base_key := _gear_key(subject, base, kits)
+	# LIVENESS FIRST: a kit that carries items must produce a NON-empty fingerprint, or every
+	# difference claimed below is a difference between two empty strings.
+	h._assert_hud("gear key — a kit that carries items puts a fingerprint in the key (\"%s\")"
+			% base_key,
+		KitRoster.gear_fingerprint(kits, GEAR_KEY_KIT_ID, base) \
+			!= KitRoster.GEAR_FINGERPRINT_ITEMLESS)
+	# 1. THE STOCK — the band gains or loses a unit of something this kit carries.
+	var restocked := _with_item_field(base, GEAR_KEY_ITEM, DetailFormat.KIT_ITEM_COUNT_KEY,
+		GEAR_KEY_STOCK_AFTER)
+	h._assert_hud("gear key — a change in UNITS OWNED is a new question (\"%s\" vs \"%s\")"
+			% [base_key, _gear_key(subject, restocked, kits)],
+		_gear_key(subject, restocked, kits) != base_key)
+	# 2. THE COMPETING DEMAND — another row staffs up on the same item. After the sim's rationing
+	# change a prospective row's share is `live_units × w ÷ (other_demand + w)`, so this moves the
+	# answer exactly as the stock does, and a key on stock alone would leave THIS staleness behind.
+	var contested := _with_item_field(base, GEAR_KEY_ITEM,
+		DetailFormat.KIT_ITEM_ON_QUOTED_JOB_KEY, GEAR_KEY_DEMAND_AFTER)
+	h._assert_hud("gear key — …and so is a change in the WORKERS competing for it (\"%s\")"
+			% _gear_key(subject, contested, kits),
+		_gear_key(subject, contested, kits) != base_key)
+	# 3. THE CONDITION — and this one must NOT move the key.
+	var worn := _with_item_field(base, GEAR_KEY_ITEM, DetailFormat.KIT_ITEM_REMAINING_KEY,
+		GEAR_KEY_CONDITION_AFTER)
+	h._assert_hud("gear key — but WEAR alone is NOT a new question, or every turn re-asks for nothing (\"%s\")"
+			% _gear_key(subject, worn, kits),
+		_gear_key(subject, worn, kits) == base_key)
+	# 4. AN ITEMLESS KIT HAS NOTHING TO INVALIDATE ON, and its key must not move under any of the three.
+	h._assert_hud("gear key — an ITEMLESS kit keys the same however the ledger moves",
+		ForecastQuery.key_of(subject, BandFx.KIT_ID_NONE, GUARD_PARTY, GUARD_FLOOR, base, kits)
+			== ForecastQuery.key_of(subject, BandFx.KIT_ID_NONE, GUARD_PARTY, GUARD_FLOOR,
+				restocked, kits))
+
+## The key one band composes for the gear claims — the real `key_of`, at the one kit those claims use.
+func _gear_key(subject: String, band: Dictionary, kits: Array) -> String:
+	return ForecastQuery.key_of(subject, GEAR_KEY_KIT_ID, GUARD_PARTY, GUARD_FLOOR, band, kits)
+
+## A copy of `band` with ONE field of ONE `kitItemConditions` row replaced. Deep-duplicated, because
+## the fixture's rows are shared dictionaries and mutating one in place would edit the band every
+## other claim in this block compares against.
+func _with_item_field(band: Dictionary, item_id: String, field: String, value: Variant) -> Dictionary:
+	var copy := band.duplicate(true)
+	for row_variant in copy.get(DetailFormat.KIT_ITEM_CONDITIONS_KEY, []):
+		var row: Dictionary = row_variant
+		if String(row.get(DetailFormat.KIT_ITEM_ID_KEY, "")) == item_id:
+			row[field] = value
+	return copy
+
 # ---- the seam, driven directly ------------------------------------------------------------------
 
 ## The composed key for a subject, at the one (kit, party, floor) every claim here uses.
+##
+## **`GUARD_KIT_ID` IS NOT A ROSTER ID, and that is what makes these keys stable.**
+## `ForecastQuery.key_of` folds the band's gear in through `KitRoster.gear_fingerprint`, which cannot
+## look up the items of a kit the roster does not carry and answers the empty fingerprint — so the
+## world-boundary and failure-class claims below are about the seam's own bookkeeping and nothing
+## else, exactly as they were before the gear term existed. The gear term has its own claims, which
+## use a REAL kit and a real ledger.
 func _key_for(subject: String) -> String:
-	return ForecastQuery.key_of(subject, GUARD_KIT_ID, GUARD_PARTY, GUARD_FLOOR)
+	return ForecastQuery.key_of(subject, GUARD_KIT_ID, GUARD_PARTY, GUARD_FLOOR,
+		BandFx.band_fixture(), BandFx.kit_roster_fixture())
 
 ## Put the hunt question for `herd_id` through the seam's real `ask`, which is the only entry point a
 ## sheet has and the one the retry rule lives in.

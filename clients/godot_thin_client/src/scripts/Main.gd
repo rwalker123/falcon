@@ -456,8 +456,6 @@ func _ready() -> void:
             map_view.connect("herd_selected", Callable(self, "_on_map_herd_selected"))
         if map_view.has_signal("land_selected") and not map_view.is_connected("land_selected", Callable(self, "_on_map_land_selected")):
             map_view.connect("land_selected", Callable(self, "_on_map_land_selected"))
-        if map_view.has_signal("herd_quick_hunt_requested") and not map_view.is_connected("herd_quick_hunt_requested", Callable(self, "_on_map_herd_quick_hunt")):
-            map_view.connect("herd_quick_hunt_requested", Callable(self, "_on_map_herd_quick_hunt"))
         if map_view.has_signal("selection_cleared") and not map_view.is_connected("selection_cleared", Callable(self, "_on_map_selection_cleared")):
             map_view.connect("selection_cleared", Callable(self, "_on_map_selection_cleared"))
         if map_view.has_signal("tile_selected"):
@@ -1185,10 +1183,11 @@ func _on_hud_roster_occupant_selected(kind: String, id: Variant) -> void:
     if map_view != null and map_view.has_method("select_occupant"):
         map_view.call("select_occupant", kind, id)
 
-## Double-click a herd on the map → the HUD assigns the player band's idle workers to
-## hunt it (Sustain). All the band/idle-worker resolution lives in the HUD.
-func _on_map_herd_quick_hunt(herd_id: String) -> void:
-    _hud_invoke("quick_assign_hunters", [herd_id])
+# ⛔ **RETIRED: `_on_map_herd_quick_hunt`**, the forward for `MapView.herd_quick_hunt_requested` —
+# *"Double-click a herd on the map → the HUD assigns the player band's idle workers to hunt it."*
+# The shortcut fired on the INSPECT gesture and committed the band's whole idle pool with no
+# confirmation and no useful-crew cap; the signal, this forward, its `connect` above and
+# `Hud.quick_assign_hunters` were removed together.
 
 func _on_map_selection_cleared() -> void:
     _hud_invoke("clear_selection")

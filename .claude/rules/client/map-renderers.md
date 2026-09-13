@@ -69,6 +69,45 @@ used to take `herds_here[0]`, and only when the hex held no units at all: a mult
 opened on the same herd, and a herd sharing a hex with any band could not be selected from the map
 at any number of clicks (issue #429).
 
+### ⛔ RETIRED — THE DOUBLE-CLICK QUICK-HUNT. INSPECTING MUST NOT MUTATE STATE
+
+Double-clicking a herd on the map assigned the player band's **entire idle pool** to hunt it —
+`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`,
+*"a convenience that assigns the player band's idle workers to hunt this herd (Early-Game Labor slice
+3b)"*. All four pieces are gone.
+
+**It fired on the INSPECT gesture.** A double-click on a herd is how a player looks at one, and the
+same gesture committed a labor order — no confirmation, no undo, no dialog. Reported from play by
+Ray, who kept triggering it, assumed he had misclicked something, and only found it after the fact.
+
+**And what it committed was unbounded.** It sent `idle_workers` and read no crew ceiling at all, so
+it would put fifteen hunters on a herd whose `max_useful_workers` the compose sheet states as three
+one line below — the very number the board's `+` gate and every stepper in the client are struck at.
+
+**The click on the line above stays, and that is the whole fix**: `handle_hex_click` runs as it
+always did, so a double-click is now two selecting clicks (the select-then-cycle ring above). Nothing
+reads `InputEventMouseButton.double_click` in this file any more. **The compose sheet is the assign
+path**, and was throughout — it has the stepper, the cap, the kit picker and a commit button.
+
+**What survived, and why each is a separate call from removing the gesture:**
+
+- **`_herd_at_point`** — the fog-gated pointer hit-test, now CALLER-LESS. It is the twin of
+  `_unit_at_point` and its fog gate is one of the three `herd-readouts.md` records as load-bearing,
+  so it is left standing with its doc corrected rather than deleted along with its one user.
+- **`HudBandLaborState.improvement_for_hunt`** — written for this shortcut (issue #442: a quick-hunt
+  had to keep the pen the band was already building), and NOT caller-less: the herd compose sheet
+  seeds and re-seeds through it (`DrawerComposeController`'s `composed_improvement`).
+- **`Hud._resolve_assign_band`** — unaffected; targeting, move-band and both compose paths resolve
+  the acting band through it.
+- **The untailed `assign_labor` wire line.** The quick-hunt was `command_guard`'s driver for the form
+  that names no kit, and deleting it naively would have taken that parser coverage with it, silently.
+  `_drive_assign_labor` emits the same line through `Hud._emit_assign_labor` at
+  `KitRoster.NO_KIT_ID` instead — **not** through a compose sheet at the job default, which is the
+  other route to an untailed line and which `_record` refuses outright as a fixture error (*"the
+  token is legitimately omitted and the assertion could never fail"*). `cargo xtask command-guard`
+  still parses both forms: `assign_labor 0 71204 hunt game_deer_07 0.5 2` and its
+  `… kit none` twin.
+
 ### A map-driven LAND pick must reach the HUD as a DELIBERATE choice
 
 The land stop needs a signal of its own, and this is the reason. `_handle_entity_selection`'s land

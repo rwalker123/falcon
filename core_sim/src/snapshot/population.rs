@@ -17,6 +17,10 @@ pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> Pendin
 /// Serialize one labor assignment for the client readout. The `yields` carry this turn's
 /// actual/sustainable food income for the source (per-source breakdown; defaulted to `0` when the
 /// telemetry row is absent, e.g. an assignment no `advance_labor_allocation` has resolved yet).
+// Every term past the assignment itself is one the ROW cannot resolve for itself — each needs a
+// registry, both webs, or the band's whole allocation — so they are handed in rather than derived
+// here. A bundle struct would only move that list one line up.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
     yields: &SourceYield,
@@ -36,6 +40,10 @@ pub(crate) fn labor_assignment_to_state(
     // reason: the lookup needs both webs' registries.
     material_upkeep_demand: Vec<sim_runtime::MaterialPayoff>,
     material_upkeep_supplied: Vec<sim_runtime::MaterialPayoff>,
+    // **HOW FAR THIS ROW'S GEAR REACHES** — workers on it holding a COMPLETE `resolved_kit`, off
+    // the band-wide item budget the caller cut every row from. Passed in for `build_job`'s reason:
+    // one row cannot resolve it, because the answer depends on what the rows beside it are holding.
+    kit_workers_holding: f32,
 ) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
@@ -111,6 +119,10 @@ pub(crate) fn labor_assignment_to_state(
             SourcePriority::High => SourcePriorityState::High,
             SourcePriority::Low => SourcePriorityState::Low,
         },
+        // **WORKERS ON THIS ROW HOLDING A COMPLETE KIT**, over the `workers` already on the row —
+        // the first thing a work row has ever been able to say about its own shortfall. `== workers`
+        // on a row whose kit carries nothing, which has nothing to be short of.
+        kit_workers_holding,
         ..Default::default()
     };
     match &assignment.target {
@@ -164,6 +176,21 @@ pub(crate) fn labor_assignment_to_state(
     state
 }
 
+/// **The gear one hunt row's useful-crew cap is quoted from** — the row's own resolved kit, the
+/// band's wear ledger, and the band's whole allocation. Bundled exactly as [`BandKitLevers`] is:
+/// three references that only ever travel together, and that must describe one band.
+pub(crate) struct HuntCrewGear<'a> {
+    /// The kit the row's yields are priced at, already resolved.
+    pub(crate) kit: &'a crate::equipment_config::KitChoice,
+    /// The band's live wear ledger — the curve re-divides it per crew size, so a band with five
+    /// spears is quoted the mix it actually fields at each size.
+    pub(crate) wear: &'a BandEquipment,
+    /// The band's whole allocation — the rows BESIDE this one are what the quoted crew competes
+    /// with for that ledger, so a ceiling quoted off the full stock would offer hands the traps on
+    /// the row next door are already holding (`equipment.md` → "ONE BAND, ONE SET OF GEAR").
+    pub(crate) allocation: &'a LaborAllocation,
+}
+
 /// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING ON THIS ROW, *FIGHT INCLUDED*** — the sim's
 /// answer to the Work board's `+` gate, published on the row so the board never derives it.
 ///
@@ -192,11 +219,7 @@ fn assigned_hunt_useful_crew(
     target: &LaborTarget,
     // This source's own crew pool — the hands on the row plus the band's idle ones.
     crew_pool: u32,
-    // The kit the row's yields are priced at, already resolved.
-    kit: &crate::equipment_config::KitChoice,
-    // The band's live wear ledger — the curve re-divides it per crew size, so a band with five
-    // spears is quoted the mix it actually fields at each size.
-    wear: &BandEquipment,
+    gear: &HuntCrewGear<'_>,
     kit_levers: &BandKitLevers<'_>,
     hunt_crew_levers: &HuntCrewLevers<'_>,
     herds: &crate::fauna::HerdRegistry,
@@ -207,13 +230,18 @@ fn assigned_hunt_useful_crew(
     let Some(herd) = herds.find(fauna_id) else {
         return crate::fauna::NO_USEFUL_CREW;
     };
+    // Resolved after the two gates, so a non-hunt row pays nothing for a vector it never reads.
+    let other_rows = gear
+        .allocation
+        .rows_excluding_source(kit_levers.config, target);
     crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(
         &crate::fauna::HuntCrewCurveInputs {
             herd,
             fauna: hunt_crew_levers.fauna,
             equipment: kit_levers.config,
-            kit,
-            wear,
+            kit: gear.kit,
+            wear: gear.wear,
+            other_rows: &other_rows,
             intrinsic: kit_levers.person_intrinsic,
             // **BASE, not `expedition_tuning`** — this is a band hunting its own range.
             tuning: hunt_crew_levers.combat.tuning(),
@@ -778,39 +806,97 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .coverage(choice, job_workers(job) as f32, &kit)
     };
     let hunt_coverage = coverage_for(crate::equipment_config::KitJob::Hunt, &hunt_choice);
-    // **All four, HUNT FIRST** — an item is quoted at the job whose kit carries it, and at the
-    // hunt's for an item several of them carry (`kit_id`'s tie-break).
-    let quoted_coverages = [
-        &hunt_coverage,
-        &coverage_for(crate::equipment_config::KitJob::Forage, &forage_choice),
-        &coverage_for(crate::equipment_config::KitJob::Scout, &scout_choice),
-        &coverage_for(crate::equipment_config::KitJob::Warrior, &warrior_choice),
-    ];
+    // **THE KIT EACH WORK ROW IS PRICED AT, AND HOW FAR THAT KIT REACHES — ONE EXPRESSION FOR EVERY
+    // ROW**, in `assignments` order. The two halves are resolved together because the defect this
+    // shape exists to prevent is them answering about *different* kits: the builders' row was
+    // kitted from the build queue here and then cut a share of a budget that had resolved that same
+    // row as `default_kits.builders` (`none`), so the row put **no demand** on the very item it was
+    // then issued a share of — a band owning six hoes published twelve workers holding them.
+    //
+    // ⛔ **THE BUILDERS ROW NEEDS NO ARM OF ITS OWN NOW.** Its kit and the budget's are the one
+    // resolution ([`crate::components::LaborAllocation::row_kit`], which the budget is struck from),
+    // and `systems::labor::BuildersGear::for_source` arms the pool off that same share rather than
+    // off the whole ledger — so the published reach is the reach the turn grants, which is what wire
+    // equals take means here.
+    //
+    // Resolved here rather than per readout because both of this section's gear readouts fold out of
+    // it: the per-row `kitWorkersHolding` below and the per-item pair on `kitItemConditions`. One
+    // resolution, so the wire and the take cannot disagree about what the band owns.
+    let row_gear: Vec<(
+        crate::equipment_config::KitChoice,
+        crate::equipment_config::KitCoverage,
+    )> = allocation
+        .map(|alloc| {
+            // The band-wide per-item unit budget `advance_labor_allocation` arms the source crews
+            // from ([`crate::components::LaborAllocation::item_budget`]).
+            let budget = alloc.item_budget(kit_levers.config);
+            alloc
+                .assignments
+                .iter()
+                .map(|assignment| {
+                    let workers = assignment.workers as f32;
+                    let row_kit = alloc.row_kit(assignment, kit_levers.config);
+                    let coverage = kit_levers.config.coverage_from_units(
+                        &row_kit,
+                        workers,
+                        &kit,
+                        budget.share_for(workers, &kit, kit_levers.config),
+                    );
+                    (row_kit, coverage)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // **THE ROWS AN ITEM IS QUOTED OVER.** A resident band's are its assignments; a detached party
+    // is **one kit over its whole head count**, because it works no sources and its allocation is
+    // empty — reading a `0` off that would publish an outfitted raid as holding nothing.
+    let quoted_rows: Vec<(
+        &crate::equipment_config::KitChoice,
+        &crate::equipment_config::KitCoverage,
+    )> = match expedition {
+        Some(_) => vec![(&hunt_choice, &hunt_coverage)],
+        None => row_gear.iter().map(|(k, c)| (k, c)).collect(),
+    };
+    /// Neither half of the pair has found a row yet — the fold's start, and the published answer for
+    /// an item no row carries.
+    const NO_ROW_CARRIES_IT: f32 = 0.0;
     let kit_item_conditions = kit_levers
         .config
         .items()
         .map(|(id, _)| {
-            // **The job is chosen by WHICH QUOTED KIT CARRIES THE ITEM, not by which coverage
-            // happens to hold somebody.** Both published numbers then come from that one coverage,
-            // so the pair is one sentence — *"`workers_holding` of `workers_on_quoted_job`"* — and
-            // cannot describe two different jobs. Picking the first *positive* holding instead
-            // would leave the denominator undefined for the case that matters most: a staffed job
-            // whose gear the band owns none of.
-            let quoted = quoted_coverages
+            // **EVERY ROW WHOSE KIT CARRIES THE ITEM, summed — not a job's default kit.** Quoting
+            // against `default_kits.<job>` lied in both directions on a band running anything else:
+            // two staffed `trapping` rows published a `spears` shortfall over the whole hunt job's
+            // head count — gear no row was using — while `traps`, the thing the band was short of,
+            // read the *"nobody is staffed"* `0 of 0`.
+            //
+            // **Both halves come out of one fold**, so the pair is one sentence —
+            // *"`workers_holding` of `workers_on_quoted_job`"* — and cannot describe two different
+            // sets of rows.
+            let (workers_holding, workers_on_quoted_job) = quoted_rows
                 .iter()
-                .find(|coverage| coverage.kit().uses().any(|used| used == id));
+                .filter(|(row_kit, _)| row_kit.uses().any(|used| used == id))
+                .fold(
+                    (NO_ROW_CARRIES_IT, NO_ROW_CARRIES_IT),
+                    |(held, staffed), (_, coverage)| {
+                        (
+                            held + coverage.workers_holding(id),
+                            staffed + coverage.workers(),
+                        )
+                    },
+                );
             sim_schema::state::KitItemConditionState {
                 item_id: id.to_string(),
                 remaining: kit.remaining(id, kit_levers.config),
                 count: kit.count_of(id),
-                // An item no quoted kit carries — a bench tool, or a basket on a band running the
-                // `none` forage kit — reads `0` on both, and `count` beside it is what tells that
-                // from "the band owns none".
-                workers_holding: quoted.map_or(0.0, |coverage| coverage.workers_holding(id)),
-                // **The denominator, off the same coverage.** `0` here means *nobody is staffed on
-                // that job* — a different sentence from a staffed job holding none of the item, and
-                // a client must not divide by it.
-                workers_on_quoted_job: quoted.map_or(0.0, |coverage| coverage.workers()),
+                // An item **no row** carries — a bench tool, a basket on a band with nobody
+                // gathering, `spears` on a band with no big-game row — reads `0` on both, and
+                // `count` beside it is what tells that from "the band owns none".
+                workers_holding,
+                // **The denominator, off the same rows.** `0` here means *nobody is staffed on a row
+                // carrying it* — a different sentence from staffed rows holding none of the item,
+                // and a client must not divide by it.
+                workers_on_quoted_job,
             }
         })
         .collect();
@@ -1015,10 +1101,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **The builders row is the one whose default is not on the row.** Its kit is
                     // derived from the head queue entry's web, so a card reading this field states
                     // what the pool is holding this turn rather than a stored `none`.
-                    let resolved_kit = match assignment.target {
-                        LaborTarget::Builders => a.builders_kit(kit_levers.config),
-                        _ => assignment.kit_choice(kit_levers.config),
-                    };
+                    // **Resolved ONCE, above** (`row_gear`), in the same match arm as the coverage
+                    // beside it — so the kit this row publishes and the reach published beside it
+                    // are the same resolution.
+                    let resolved_kit = row_gear[i].0.clone();
                     // **The row's own useful-crew ceiling**, over the crew this source can actually
                     // reach: the hands standing on it plus the band's idle ones. That is the pool
                     // `assign_labor` judges an add against and the domain the compose sheet asks its
@@ -1026,8 +1112,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     let hunt_useful_workers = assigned_hunt_useful_crew(
                         &assignment.target,
                         assignment.workers.saturating_add(idle_workers),
-                        &resolved_kit,
-                        &kit,
+                        &HuntCrewGear {
+                            kit: &resolved_kit,
+                            wear: &kit,
+                            allocation: a,
+                        },
                         kit_levers,
                         hunt_crew_levers,
                         build_sources.herds,
@@ -1046,6 +1135,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         hunt_useful_workers,
                         material_demand,
                         material_supplied,
+                        // **HOW FAR THIS ROW'S GEAR REACHES** — off the band-wide budget every row
+                        // was cut from, so two rows naming one kit state the share each really got.
+                        row_gear[i].1.workers_holding_whole_kit(),
                     )
                 })
                 .collect()

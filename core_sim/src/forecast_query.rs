@@ -112,13 +112,33 @@ fn resolve_ask(
     if party_workers == 0 {
         return Err(query_failure(query_error::INVALID_PARTY));
     }
-    let (herd, wear, kit) = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
+    let AskedQuarry {
+        herd,
+        wear,
+        kit,
+        other_rows,
+    } = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
 
     // **How this band's gear divides the party it is asking about** — resolved once and read by
     // both halves below, so the fight it is quoted and the haul it is quoted describe the same
     // people (`equipment.md` → "the partly-equipped party").
-    let coverage = equipment.coverage(&kit, party_workers as f32, &wear);
+    //
+    // **And it is the party's SHARE of the gear, not the band's whole ledger** (`equipment.md` →
+    // "ONE BAND, ONE SET OF GEAR"): a prospective party competes with the rows already staffed
+    // exactly as a committed one does, so a band whose two trapping rows share four traps is quoted
+    // the half-armed party the turn will actually pay.
+    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+        other_rows.iter().map(|(kit, workers)| (kit, *workers)),
+        &kit,
+        party_workers as f32,
+    );
+    let coverage = equipment.coverage_from_units(
+        &kit,
+        party_workers as f32,
+        &wear,
+        budget.share_for(party_workers as f32, &wear, &equipment),
+    );
     let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
     let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
     Ok(ResolvedAsk {
@@ -128,20 +148,39 @@ fn resolve_ask(
     })
 }
 
-/// **The three things every query names before a party can be built** — the quarry, the asking
-/// band's live wear ledger, and the kit it is carrying — or the token that says which one failed.
+/// **What every query names before a party can be built** — the quarry, the asking band's live wear
+/// ledger, the kit it is carrying, and the band's *other* work rows.
+struct AskedQuarry {
+    herd: Herd,
+    wear: BandEquipment,
+    kit: crate::equipment_config::KitChoice,
+    /// **The rows the asked-about party competes with**, with any row already standing on this herd
+    /// dropped — the denominator a prospective crew's share of the band's gear is struck against
+    /// ([`crate::components::LaborAllocation::rows_excluding_source`]). Empty for a band with no
+    /// allocation, which is the whole-ledger reading a detached party has always had.
+    other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
+}
+
+/// `LaborTarget::same_source` keys a Hunt row on its `fauna_id` alone, so the floor a query names
+/// this herd's row with is never read — only the quarry identifies the row a prospective crew would
+/// be joining. Spelled rather than passed through because two of the three asks carry no floor.
+const SOURCE_IS_KEYED_BY_QUARRY_ALONE: f32 = 0.0;
+
+/// Resolve an [`AskedQuarry`] against the live world, or answer with the token that says which part
+/// of the ask failed.
 ///
 /// Shared by the two party-priced verbs and by the crew-take curve, so *"which band is asking"* and
 /// *"is that a hunt kit"* cannot come to be answered two ways. It deliberately stops short of
 /// building the party: the curve resolves one **per crew size** (coverage depends on how many people
-/// the kit has to stretch over) and at the **base** tuning rather than the expedition's.
+/// the kit has to stretch over, and on how many of them the rows beside it have already claimed) and
+/// at the **base** tuning rather than the expedition's.
 fn resolve_quarry_and_kit(
     world: &mut World,
     faction_id: u32,
     band_id: u64,
     herd_id: &str,
     kit_id: &str,
-) -> Result<(Herd, BandEquipment, crate::equipment_config::KitChoice), QueryReply> {
+) -> Result<AskedQuarry, QueryReply> {
     // The herd, cloned: the projections run on a private copy of the quarry anyway, and holding a
     // borrow of the registry across the resource reads below would fight the borrow checker for
     // nothing.
@@ -152,7 +191,7 @@ fn resolve_quarry_and_kit(
         return Err(query_failure(query_error::UNKNOWN_HERD));
     };
 
-    let Some(wear) = band_equipment(world, FactionId(faction_id), band_id) else {
+    let Some((wear, allocation)) = band_gear(world, FactionId(faction_id), band_id) else {
         return Err(query_failure(query_error::UNKNOWN_BAND));
     };
 
@@ -169,28 +208,57 @@ fn resolve_quarry_and_kit(
             return Err(query_failure(query_error::KIT_WRONG_JOB))
         }
     };
-    Ok((herd, wear, kit))
+    // **The competing claims on that ledger**, with this herd's own row excluded — see
+    // [`AskedQuarry::other_rows`].
+    let other_rows = allocation
+        .map(|allocation| {
+            allocation.rows_excluding_source(
+                &equipment,
+                &crate::components::LaborTarget::Hunt {
+                    fauna_id: herd_id.to_string(),
+                    floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
+                },
+            )
+        })
+        .unwrap_or_default();
+    Ok(AskedQuarry {
+        herd,
+        wear,
+        kit,
+        other_rows,
+    })
 }
 
-/// The asking band's live wear ledger — `None` if no band of `faction` carries `band_id`.
+/// The asking band's live wear ledger **and its work rows** — `None` if no band of `faction` carries
+/// `band_id`.
 ///
 /// **A band with no [`BandEquipment`] component reads as ZERO WEAR, not as "no such band."** That is
 /// the component's own convention (`Default` is an empty ledger, which is what makes a band start
 /// kitted for free), so a band that has simply never worn anything must answer like a fresh one
-/// rather than fall through to a refusal.
-fn band_equipment(world: &mut World, faction: FactionId, band_id: u64) -> Option<BandEquipment> {
+/// rather than fall through to a refusal. The allocation is returned as an `Option` for the same
+/// reason one step on: a band with none is a band with no competing rows, not an unknown band.
+///
+/// **One walk of the roster answers both**, so *"which band is asking"* cannot be decided twice.
+fn band_gear(
+    world: &mut World,
+    faction: FactionId,
+    band_id: u64,
+) -> Option<(BandEquipment, Option<crate::components::LaborAllocation>)> {
     let wanted = BandId(band_id);
     let mut query = world.query::<(bevy::prelude::Entity, &BandId, &PopulationCohort)>();
     let entity = query
         .iter(world)
         .find(|(_, id, cohort)| **id == wanted && cohort.faction == faction)
         .map(|(entity, _, _)| entity)?;
-    Some(
+    Some((
         world
             .get::<BandEquipment>(entity)
             .cloned()
             .unwrap_or_default(),
-    )
+        world
+            .get::<crate::components::LaborAllocation>(entity)
+            .cloned(),
+    ))
 }
 
 /// **The party the answer is quoted for** — the same four `equipment.*` seams
@@ -598,7 +666,12 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
     if ask.max_workers > MAX_CREW_TAKE_WORKERS {
         return query_failure(query_error::INVALID_CREW);
     }
-    let (herd, wear, kit) = match resolve_quarry_and_kit(
+    let AskedQuarry {
+        herd,
+        wear,
+        kit,
+        other_rows,
+    } = match resolve_quarry_and_kit(
         world,
         ask.faction_id,
         ask.band_id,
@@ -621,6 +694,10 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         equipment: &equipment,
         kit: &kit,
         wear: &wear,
+        // **The rows this crew competes with for that ledger**, so every row of the curve is armed
+        // from its own share of it — the share moves with the crew size, which is why the rows
+        // travel rather than a budget (`fauna::HuntCrewCurveInputs::other_rows`).
+        other_rows: &other_rows,
         intrinsic,
         // **BASE, not `expedition_tuning`** — see this function's doc.
         tuning: combat.tuning(),

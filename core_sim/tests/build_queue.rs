@@ -3263,3 +3263,369 @@ fn a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it() {
          the stranded entry actually caused"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// (15) THE BUILDERS ROW'S PUBLISHED REACH IS THE ONE THE TURN ACTUALLY ARMS
+// ---------------------------------------------------------------------------------------------
+
+/// The one item `tillage` puts in a builder's hands. Because that kit serves **both** `builders`
+/// and `agriculture` (`equipment.json` → `kits[].jobs`), it is also the one thing on the shipped
+/// roster a builders row and a role row can reach for at the same time — which is what makes the
+/// two claims below comparable at all.
+const SHARED_TOOL: &str = "hoes";
+
+/// **Fewer hoes than the two claimants ask for.** The budget's denominator only bites when the band
+/// is genuinely short, so a stock at or above the demand would make every arm read alike whatever
+/// the seam did.
+const HOES_FOR_A_SHORT_BAND: u32 = 2;
+
+/// **The keeping row's head count in the short arms, and it is deliberately SHORT OF THE BILL.**
+///
+/// `distribute_upkeep_pool` hands a single claim `min(worker_need, keepers)` hands, so a pool that
+/// covers its bill publishes `upkeepSupplied == upkeepDemand` whatever tool it holds — the keeping
+/// take would be gear-blind and the conservation claim below unmeasurable. Under the bill the hands
+/// are the *whole* pool, so `upkeepSupplied` is `keepers × the rate the gear bought` and the tool is
+/// readable straight off the wire. The fixture asserts the shortfall rather than assuming it.
+const KEEPERS_SHORT_OF_THE_BILL: u32 = 1;
+
+/// No keeping row staffed at all — the **control**: the builders' pool with nothing in the band
+/// competing for its hoes.
+///
+/// It is a head count and not a bare kit, because the `agriculture` row's kit is **not** an input:
+/// `assign_labor` refuses a `kit` token there and `LaborAllocation::row_kit` derives the web's
+/// keeping kit for it, so *"the keepers hold nothing"* is not a state the game can be in. What a
+/// band can genuinely have is nobody on the role.
+const NO_KEEPING_ROW: u32 = 0;
+
+/// One hoe per hand across both claimants — the arm where "no hand is armed twice" is a claim about
+/// a number rather than about a clamp.
+const HOES_FOR_EVERY_HAND: u32 = BUILDERS + KEEPERS_SHORT_OF_THE_BILL;
+
+/// **How far up the rung the fixture seats the meter before the turn** — high enough that the
+/// interpolated keeping bill outruns one keeper, low enough that the build does not complete and
+/// hand the pool away mid-fixture.
+const MOSTLY_BUILT: f32 = 0.9;
+
+/// **What one hoed worker adds to its own output per turn**, read off the shipped roster so a
+/// retune of the tool moves the fixture with the game. It is the divisor that turns a published
+/// work figure back into *hands holding a hoe*.
+fn build_work_per_hoed_worker() -> f32 {
+    let config = core_sim::EquipmentConfig::builtin();
+    let worth = config.build_work_per_worker(
+        &plant_build_kit(),
+        &core_sim::BandEquipment::start_stocked(&config),
+        core_sim::RungBranch::Plant,
+        None,
+    );
+    assert!(
+        worth > 0.0,
+        "fixture: the plant builders kit must declare a build contribution, or every division \
+         below is by zero — got {worth}"
+    );
+    worth
+}
+
+/// A queued plant build whose **pool** and whose **keeping row** both draw on `tillage`, over a band
+/// owning exactly `hoes` units of the one item that kit uses.
+fn a_band_whose_pool_and_keepers_share_the_tillage(
+    hoes: u32,
+    keepers: u32,
+) -> (App, Entity, UVec2) {
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let staffed: u32 = {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        assert!(
+            allocation
+                .set_build_entry_kit(&BuildSource::Patch(sources[0]), Some(plant_build_kit())),
+            "fixture: the head entry must carry the tillage kit, or the pool reaches for nothing"
+        );
+        let row = allocation
+            .assignments
+            .iter_mut()
+            .find(|row| matches!(row.target, LaborTarget::Agriculture))
+            .expect("the fixture staffs a keeping row");
+        row.workers = keepers;
+        allocation.assignments.iter().map(|row| row.workers).sum()
+    };
+    // The cohort is sized to exactly what it staffs, so `normalize` never trims a row under test.
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band has a cohort")
+        .working = scalar_from_f32(staffed as f32);
+    stock_the_band(&mut app, band);
+    {
+        let tier = core_sim::EquipmentConfig::builtin()
+            .item(SHARED_TOOL)
+            .expect("the shipped roster carries the tillage tool")
+            .default_tier()
+            .id
+            .clone();
+        let mut ledger = app
+            .world
+            .get_mut::<core_sim::BandEquipment>(band)
+            .expect("the fixture band carries a ledger");
+        ledger.restore_batches(SHARED_TOOL, Vec::new());
+        ledger.stock(SHARED_TOOL, hoes, &tier, None);
+    }
+    // ⛔ **THE METER IS RUN UP SO THE KEEPING BILL IS REAL.** A plant rung's upkeep demand
+    // interpolates on the work standing in the ground, so a first-turn build owes a few hundredths
+    // of a work unit — which one keeper covers at any gear, publishing `upkeepSupplied ==
+    // upkeepDemand` and saying nothing about the tool. Near the rung's top the bill outruns a lone
+    // keeper's whole output, and the hands the split funds are the whole pool.
+    {
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        let cost = ladder
+            .rung(RungKey::PlantTended)
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("the tended rung has a build meter");
+        let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
+        registry
+            .patch_mut(sources[0])
+            .expect("the fixture patch is there")
+            .set_ladder_position(cost * MOSTLY_BUILT, &ladder);
+    }
+    resolve_a_turn(&mut app);
+    (app, band, sources[0])
+}
+
+/// **HOW MANY OF THIS BAND'S BUILDERS THE TURN ACTUALLY ARMED** — read back out of the take.
+///
+/// `buildWorkFromGear` **is** `BuildersGear::for_source`'s coverage weighted into work
+/// (`gear_work_supply(work_per_worker, builders)`), so dividing by one hoed worker's worth inverts
+/// it to the head count the pool was issued. Nothing here reads the published reach.
+fn builders_the_turn_armed(app: &App, patch: UVec2) -> f32 {
+    published(app, patch, |patch| patch.buildWorkFromGear()) / build_work_per_hoed_worker()
+}
+
+/// **HOW MANY OF THIS BAND'S KEEPERS THE TURN ACTUALLY ARMED** — read back out of the take, the
+/// builders' twin one account over.
+///
+/// `upkeepSupplied` is `hands × (PER_WORKER_OUTPUT + what the kit delivers)`, and the fixture holds
+/// the pool **under** its bill so the hands are all of it — which the caller pins through
+/// [`the_keepers_are_short_of_their_bill`] rather than assuming.
+fn keepers_the_turn_armed(app: &App, patch: UVec2, keepers: u32) -> f32 {
+    let supplied = published(app, patch, |patch| patch.upkeepSupplied());
+    let bare = keepers as f32 * core_sim::PER_WORKER_OUTPUT;
+    (supplied - bare) / build_work_per_hoed_worker()
+}
+
+/// **The keeping pool did not cover its bill**, so every hand it has was funded and
+/// [`keepers_the_turn_armed`]'s inversion is exact.
+fn the_keepers_are_short_of_their_bill(app: &App, patch: UVec2) -> bool {
+    published(app, patch, |patch| patch.upkeepSupplied())
+        < published(app, patch, |patch| patch.upkeepDemand())
+}
+
+/// **One published field of this band's `builders` row, off the ENCODED buffer.**
+fn published_builders_row<T>(
+    app: &App,
+    band: Entity,
+    read: impl Fn(&shadow_scale_flatbuffers::generated::shadow_scale::sim::LaborAssignment<'_>) -> T,
+) -> T {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .laborAssignments()
+        .expect("a staffed band publishes its work rows")
+        .iter()
+        .find(|row| row.kind() == Some(LaborTarget::Builders.kind()))
+        .expect("the fixture staffs a builders row");
+    read(&row)
+}
+
+/// One item's published `(workersHolding, count)` — how many of this band's people the wire says
+/// are holding it, and how many units the band owns.
+fn published_holding_and_stock(app: &App, band: Entity, item: &str) -> (f32, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .kitItemConditions()
+        .expect("the band publishes a condition row per config item")
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| (row.workersHolding(), row.count()))
+        .unwrap_or_else(|| panic!("the config carries '{item}', so it has a row"))
+}
+
+/// **⛔ ONE BAND, ONE SET OF GEAR — THE BUILDERS' POOL AND A KEEPING ROW CANNOT, BETWEEN THEM, ARM
+/// MORE HANDS THAN THE BAND OWNS.**
+///
+/// `tillage` serves `builders` **and** `agriculture`, so the pool's queue-derived kit and the plant
+/// keeping pool's derived kit are the same kit and reach for one stock of hoes. While both were
+/// outside the band's item budget they each armed off the **whole** ledger: six hoes armed six
+/// builders *and* six keepers, which is a stock issued twice with nothing anywhere saying the band
+/// was short.
+///
+/// # It is asserted on the TAKE, from both ends
+///
+/// Neither number here is the published reach. `buildWorkFromGear` **is**
+/// `BuildersGear::for_source`'s coverage weighted into work, and `upkeepSupplied` **is**
+/// `keeping_rates`' rate times the hands it funded — so inverting each by one hoed worker's worth
+/// recovers the head counts the turn really armed, and their sum is what the ledger has to bound.
+#[test]
+fn a_builders_pool_and_a_keeping_row_cannot_arm_more_hands_than_the_band_owns() {
+    let (app, _, patch) = a_band_whose_pool_and_keepers_share_the_tillage(
+        HOES_FOR_A_SHORT_BAND,
+        KEEPERS_SHORT_OF_THE_BILL,
+    );
+
+    assert!(
+        the_keepers_are_short_of_their_bill(&app, patch),
+        "fixture: the keeping pool must fall short of its bill, or `upkeepSupplied` saturates at \
+         the demand and says nothing about the tool"
+    );
+    let armed_builders = builders_the_turn_armed(&app, patch);
+    let armed_keepers = keepers_the_turn_armed(&app, patch, KEEPERS_SHORT_OF_THE_BILL);
+    assert!(
+        armed_builders > 0.0 && armed_keepers > 0.0,
+        "liveness: both claimants must really be geared, or the sum below is a sum of zeros — \
+         builders {armed_builders}, keepers {armed_keepers}"
+    );
+
+    assert!(
+        (armed_builders + armed_keepers - HOES_FOR_A_SHORT_BAND as f32).abs() < 1e-4,
+        "the two claims together are exactly the band's stock of hoes: {armed_builders} builders \
+         + {armed_keepers} keepers against {HOES_FOR_A_SHORT_BAND} held"
+    );
+    // …and pro-rata by head count, which is the split rule rather than a second one.
+    let claimants = (BUILDERS + KEEPERS_SHORT_OF_THE_BILL) as f32;
+    assert!(
+        (armed_builders - HOES_FOR_A_SHORT_BAND as f32 * BUILDERS as f32 / claimants).abs() < 1e-4,
+        "the pool's share is its head count's share of the demand, not a priority — got \
+         {armed_builders}"
+    );
+}
+
+/// **⛔ THE BUILDERS ROW PUBLISHES THE REACH THE TURN ARMS — and that reach now MOVES with the row
+/// beside it.**
+///
+/// # What changed, and why it is the intended new truth
+///
+/// This test used to assert the pair was **indifferent** to a keeping row on the same kit: the pool
+/// armed off the whole ledger, so `buildWorkFromGear` was identical across the two arms and the wire
+/// was held to that same indifference. That indifference *was* the double-issue — the keeping row
+/// beside it armed off the whole ledger too. The pool is a budgeted claimant now
+/// (`LaborAllocation::row_kit` registers the head entry's kit over the whole pool, and
+/// `BuildersGear::for_source` cuts from that row's share), so the take **falls** when a keeping row
+/// reaches for the same hoes.
+///
+/// **Wire equals take is unmoved and is still the claim**; only the shared number moved, from the
+/// whole ledger to the row's share of it.
+#[test]
+fn a_builders_row_and_a_keeping_row_sharing_one_tool_publish_the_reach_the_turn_arms() {
+    let (competing, competing_band, competing_patch) =
+        a_band_whose_pool_and_keepers_share_the_tillage(
+            HOES_FOR_A_SHORT_BAND,
+            KEEPERS_SHORT_OF_THE_BILL,
+        );
+    let (alone, alone_band, alone_patch) =
+        a_band_whose_pool_and_keepers_share_the_tillage(HOES_FOR_A_SHORT_BAND, NO_KEEPING_ROW);
+
+    let armed_alone = builders_the_turn_armed(&alone, alone_patch);
+    assert_eq!(
+        armed_alone, BUILDERS as f32,
+        "with nobody competing the pool still arms every builder — the stock covers them and the \
+         budget's `min` against the row's own people is what says so; got {armed_alone}"
+    );
+    let armed_competing = builders_the_turn_armed(&competing, competing_patch);
+    assert!(
+        armed_competing < armed_alone,
+        "THE ASSERTION THAT MOVED: the take is no longer indifferent to the row beside it — a \
+         keeping row reaching for the same hoes cuts the pool's share. got {armed_competing} \
+         against {armed_alone}"
+    );
+
+    // **Wire equals take, in both arms** — the row's published reach is the head count the turn
+    // armed, not a second resolution of the same row.
+    assert!(
+        (published_builders_row(&alone, alone_band, |row| row.kitWorkersHolding()) - armed_alone)
+            .abs()
+            < 1e-4,
+        "the control arm's wire must state the reach its take arms"
+    );
+    assert!(
+        (published_builders_row(&competing, competing_band, |row| row.kitWorkersHolding())
+            - armed_competing)
+            .abs()
+            < 1e-4,
+        "…and so must the short arm's, at the smaller number"
+    );
+}
+
+/// **A BAND THAT IS NOT SHORT IS UNMOVED** — the abundant control, and the property that makes the
+/// cut a rationing rule rather than a retune.
+///
+/// Where the claimants do not saturate the stock, every row's share still exceeds what its own
+/// people can hold and coverage's `min` against the head count clamps it — so the pool arms in full
+/// and so do the keepers, exactly as each would standing alone.
+#[test]
+fn a_band_that_is_not_short_arms_both_pools_in_full() {
+    let (unshort, unshort_band, unshort_patch) = a_band_whose_pool_and_keepers_share_the_tillage(
+        HOES_FOR_EVERY_HAND,
+        KEEPERS_SHORT_OF_THE_BILL,
+    );
+    let (pool_alone, _, pool_alone_patch) =
+        a_band_whose_pool_and_keepers_share_the_tillage(HOES_FOR_EVERY_HAND, NO_KEEPING_ROW);
+
+    assert_eq!(
+        builders_the_turn_armed(&unshort, unshort_patch),
+        builders_the_turn_armed(&pool_alone, pool_alone_patch),
+        "a pool that is not short takes exactly what it would take alone"
+    );
+    assert_eq!(
+        builders_the_turn_armed(&unshort, unshort_patch),
+        BUILDERS as f32,
+        "…which is every builder"
+    );
+    assert!(
+        (keepers_the_turn_armed(&unshort, unshort_patch, KEEPERS_SHORT_OF_THE_BILL)
+            - KEEPERS_SHORT_OF_THE_BILL as f32)
+            .abs()
+            < 1e-4,
+        "…and every keeper beside them"
+    );
+
+    let (holding, owned) = published_holding_and_stock(&unshort, unshort_band, SHARED_TOOL);
+    assert_eq!(
+        (holding, owned),
+        (HOES_FOR_EVERY_HAND as f32, HOES_FOR_EVERY_HAND),
+        "the pool and the keepers together are issued exactly the band's stock of hoes"
+    );
+}

@@ -245,10 +245,17 @@ const KIT_UNITS_UNSTATED := -1
 ## > coverage readout on a worked row reads.
 ##
 ## **The one thing it may answer is a PRE-COMMIT question**, which the sim's people-counts cannot:
-## `workers_on_quoted_job` is the allocation's head count, so on a compose sheet where nobody is
-## assigned yet both published counts are `0` and say nothing about the crew being composed. Counting
-## UNITS against that composed crew is the only honest reading left, and it is exact for every item
-## the game ships (`workers_per_unit` defaults to 1 and no shipped item overrides it).
+## `workers_on_quoted_job` is summed over the STAFFED rows that carry the item, so on a compose sheet
+## where nobody is assigned yet both published counts are `0` and say nothing about the crew being
+## composed. Counting UNITS against that composed crew is the only honest reading left, and it is
+## exact for every item the game ships (`workers_per_unit` defaults to 1 and no shipped item
+## overrides it).
+##
+## ⛔ **THE STOCK IS NOT ALL FREE, AND A PRE-COMMIT READING MUST NET IT.** Units already reaching the
+## band's committed rows are `KIT_ITEM_WORKERS_HOLDING_KEY`, and a sheet quoting the whole store
+## against its own crew tells a player a second trapping party is covered by the traps the first one
+## is carrying. `KitRoster.shortfall_line` is where that subtraction lives; this accessor stays the
+## raw ledger, which is what the netting is done FROM.
 static func kit_units_owned(band: Dictionary, item_id: String) -> int:
     if item_id.is_empty():
         return KIT_UNITS_UNSTATED
@@ -265,14 +272,23 @@ static func kit_units_owned(band: Dictionary, item_id: String) -> int:
 # the band: `count` is UNITS and this is PEOPLE, and the two part company the moment the band is
 # short of an item (or holds the spawn's reserve above its head count).
 #
+# ⛔ **IT IS SUMMED OVER EVERY LABOR ROW WHOSE RESOLVED KIT CARRIES THE ITEM — not a job's default
+# kit** (`snapshot.fbs` → `KitItemCondition.workersHolding`). The field kept its name when its
+# meaning changed: it used to be quoted at `default_kits.<job>`, which on a band running anything
+# else lied in BOTH directions at once — two staffed `trapping` rows published a `spears` shortfall
+# over the whole hunt job's head count, gear no row was using, while `traps`, the thing the band was
+# actually short of, read the *"nobody is staffed"* `0 of 0`. An item no row carries reads `0`, and
+# that reading is correct and silent.
+#
 # **IT CANNOT BE COMPUTED HERE** and must never be inferred from `count` — `workers_per_unit` is a
 # per-item config number the wire does not carry (a four-worker net is the first item that is not
-# `1`, and a unit needs its FULL crew), and which job is staffed is sim-side too.
+# `1`, and a unit needs its FULL crew), and which rows are staffed on which kit is sim-side too.
 const KIT_ITEM_WORKERS_HOLDING_KEY := "workers_holding"
 
 # **ITS DENOMINATOR, AND THE PAIR IS ONE SENTENCE** — *"`workers_holding` of `workers_on_quoted_job`"*.
-# The head count of the job the row is quoted at, off the SAME coverage the numerator came from, so
-# the two can never describe different jobs. It is what lets a BASKET, a CLUB or a WAYFINDING
+# The head count of the ROWS the item is quoted over — `Σ workers` across exactly the assignments
+# whose resolved kit carries it — folded out of the same per-row coverages the numerator is, so the
+# two can never describe two different sets of rows. It is what lets a BASKET, a CLUB or a WAYFINDING
 # shortfall be stated at all: before it, `Σ hunt_crews.workers` was the only job head count on the
 # wire and the other three jobs were silent.
 #
@@ -3074,23 +3090,31 @@ static func band_hunt_headcount(band: Dictionary) -> float:
 # [`KIT_ITEM_WORKERS_HOLDING_KEY`] itself against a published denominator, which is the only reading
 # that separates those three sentences. The KEY is live and stays; only this accessor went.
 
-## **HOW FAR AN ITEM REACHES INTO THE JOB THAT USES IT** — `{stated, holding, short, headcount}`, all
+## **HOW FAR AN ITEM REACHES INTO THE ROWS THAT USE IT** — `{stated, holding, short, headcount}`, all
 ## three counts WHOLE PEOPLE, `stated` false when there is nothing to say.
 ##
-## **THE DENOMINATOR IS PUBLISHED, NOT DERIVED — AND ALL FOUR JOBS COME THROUGH HERE.**
-## `workers_on_quoted_job` is the head count of the job the row is quoted at, resolved off the SAME
-## coverage that produced `workers_holding`, so the pair provably describes ONE job and a basket's
-## shortfall is stated exactly the way a spears shortfall is. The hunt had a private path while
+## **THE DENOMINATOR IS PUBLISHED, NOT DERIVED — AND EVERY JOB COMES THROUGH HERE.**
+## `workers_on_quoted_job` is the head count of the rows the item is quoted over — every assignment
+## whose RESOLVED kit carries it — folded out of the SAME per-row coverages that produced
+## `workers_holding`, so the pair provably describes ONE set of rows and a basket's shortfall is
+## stated exactly the way a spears shortfall is. The hunt had a private path while
 ## `Σ hunt_crews.workers` was the only job head count on the wire; it does not any more, and it must
 ## not grow one back — a second denominator is a second answer.
 ##
+## ⛔ **THE PAIR IS NO LONGER QUOTED AT A JOB'S DEFAULT KIT, AND THE NAMES DID NOT CHANGE WITH IT.**
+## Both fields used to be resolved against `default_kits.<job>` and tie-broken by the cohort's
+## `kit_id`. A band running two `trapping` hunt rows therefore read `4 of 8` on SPEARS — gear no row
+## was carrying — and `0 of 0` on TRAPS, which this very contract defines as *nobody is staffed*. The
+## same band reads `traps 4 of 8` and a silent `spears 0 of 0` now, and nothing here had to change to
+## get it: the fields are summed over the carrying rows sim-side.
+##
 ## **THE ZEROS ARE A RENDERING CONTRACT** (`.claude/rules/core_sim/equipment.md`):
-## - `workers_on_quoted_job == 0` → **NOBODY IS STAFFED on that job.** `0 of 0` is not a shortfall —
-##   a band with no gatherers needed no basket and none went unheld — so it must not tint anything,
-##   and **nothing may divide by it**. That is this function's early return, and it is also what an
-##   item NO quoted kit carries (a bench tool) reads.
+## - `workers_on_quoted_job == 0` → **NOBODY IS STAFFED on a row that carries it.** `0 of 0` is not a
+##   shortfall — a band with no gatherers needed no basket and none went unheld — so it must not tint
+##   anything, and **nothing may divide by it**. That is this function's early return, and it is also
+##   what an item NO row carries (a bench tool; `spears` on a band with no big-game row) reads.
 ## - a POSITIVE denominator with `workers_holding == 0` → the real shortfall, and the sharpest one:
-##   the job is staffed and every worker on it is at the unequipped tier. It renders `0 of 4`.
+##   those rows are staffed and every worker on them is at the unequipped tier. It renders `0 of 4`.
 ##
 ## **THE THREE COUNTS ARE APPORTIONED, NOT ROUNDED INDEPENDENTLY.** Both halves are fractional, and
 ## rounding each on its own gives a `4 of 17` whose remainder is 13 — the largest-remainder split is
@@ -3104,7 +3128,7 @@ static func kit_coverage(band: Dictionary, item_id: String) -> Dictionary:
         if staffed <= HUNT_CREW_WORKER_EPSILON:
             return blank
         var holding := minf(maxf(float(row.get(KIT_ITEM_WORKERS_HOLDING_KEY, 0.0)), 0.0), staffed)
-        # The two halves partition the job's own head count, so that is the target they must sum to.
+        # The two halves partition those rows' own head count, so that is the target they must sum to.
         var parts := HudFormat.apportion_people_to(
             [holding, staffed - holding], int(round(staffed)))
         return {"stated": true, "holding": parts[0], "short": parts[1],

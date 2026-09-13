@@ -352,6 +352,28 @@ pub struct LaborAssignmentState {
     /// (append-only).
     #[serde(default)]
     pub material: String,
+    /// **WORKERS ON THIS ROW HOLDING A COMPLETE [`Self::kit_id`] KIT** — how far this row's gear
+    /// actually reaches, over the denominator already on the row ([`Self::workers`]).
+    ///
+    /// Before it a work row structurally could not say it was short: it named its kit and nothing
+    /// about how far that kit went, so a band with four traps and eight hunters staffed across two
+    /// `trapping` rows was told nothing, anywhere, and all eight were priced as if armed.
+    ///
+    /// **A COMPLETE OUTFIT, not a per-item count** — the `min` over the kit's items of the workers
+    /// holding each, because three spears and no sled field *zero* stalking kits rather than three.
+    /// The per-item reading is [`KitItemConditionState::workers_holding`] on the cohort, which is
+    /// where a readout goes to name *which* thing is missing.
+    ///
+    /// ⛔ **One band, one set of gear.** Every row is cut from the band's ledger once, pro-rata by
+    /// head count over the rows that reach for each item — so two rows naming `trapping` against
+    /// four traps read `2` each, not `4` each, and rows sharing an item (the sled is in both
+    /// `big_game` and `trapping`) share its scarcity however they named it.
+    ///
+    /// **`== workers` when the kit carries nothing** — the `none` kit has nothing to be short of,
+    /// and a `0` there would read as *everybody short*. Derived per-turn at capture. Appended last
+    /// (append-only).
+    #[serde(default)]
+    pub kit_workers_holding: f32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and
@@ -401,24 +423,29 @@ pub struct KitItemConditionState {
     /// through; a client cannot compute it, because `workers_per_unit` and which job is staffed are
     /// both sim-side.
     ///
-    /// **Quoted at the job whose kit carries the item**, and at the one
-    /// [`PopulationCohortState::kit_id`] names for an item several jobs' kits carry — the same
-    /// convention [`PopulationCohortState::hunt_carry_per_worker_biomass`] already follows. An item
-    /// no quoted kit carries reads `0`, a bench tool included.
+    /// **Quoted over every assignment whose resolved kit carries the item**, summed — not at a
+    /// job's default kit. The per-row terms are the very coverages
+    /// [`LaborAssignmentState::kit_workers_holding`] publishes, off the one band-wide item budget
+    /// the sim armed those crews from, so this row and the take cannot disagree. An item **no**
+    /// assignment carries reads `0` — a bench tool, and `spears` on a band with no big-game row.
+    ///
+    /// A detached **party** carries one kit across every job, so its rows are quoted at that kit
+    /// over the whole party head count.
     #[serde(default)]
     pub workers_holding: f32,
-    /// **The denominator of [`Self::workers_holding`]** — the head count of the job this row is
-    /// quoted at, so the two are one sentence: *"`workers_holding` of `workers_on_quoted_job`"*.
+    /// **The denominator of [`Self::workers_holding`]** — the head count of the rows this item is
+    /// quoted over, so the two are one sentence: *"`workers_holding` of `workers_on_quoted_job`"*.
     ///
     /// Published rather than re-derived, and it is the very number the resolving pass divided
     /// against — only the hunt has a head count on the wire otherwise
     /// ([`PopulationCohortState::hunt_crews`]), so a spears shortfall could be stated and a basket's
-    /// or a club's could not.
+    /// or a club's could not. Both halves are folded out of **one** set of per-row coverages, so
+    /// they cannot describe two different sets of rows.
     ///
-    /// **Two zeros a reader must not confuse.** `0` here means **nobody is staffed** on that job —
-    /// *"0 of 0"* is not a shortfall, and nothing may divide by it. A positive value with
-    /// `workers_holding == 0` is the real one: the job is staffed and every worker on it is at the
-    /// unequipped tier.
+    /// **Two zeros a reader must not confuse.** `0` here means **nobody is staffed** on a row
+    /// carrying the item — *"0 of 0"* is not a shortfall, and nothing may divide by it. A positive
+    /// value with `workers_holding == 0` is the real one: those rows are staffed and every worker
+    /// on them is at the unequipped tier.
     #[serde(default)]
     pub workers_on_quoted_job: f32,
 }

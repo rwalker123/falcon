@@ -1493,6 +1493,33 @@ func _ready() -> void:
 	_assert_note_renders_in_full("band_panel_work_material_short", _material_short_sentence())
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
+	# **HOW FAR EACH ROW'S GEAR REACHES — THE THREE READINGS ON ONE BOARD**
+	# (`LaborAssignment.kitWorkersHolding`). Reported from play: a band outfitted with four trapping
+	# kits staffed two 4-hunter rows that both resolved `trapping`, each row armed two of its four,
+	# and **the game said nothing anywhere**. The CONTRAST is the frame: a short row, a row covered in
+	# full, and a row on the itemless kit — a mark on all three would prove nothing, and a `0` on the
+	# itemless one is the specific mis-read the sim's `== workers` contract exists to prevent.
+	#
+	# The inspector is opened on the SHORT row, because the full pair is drawn in the KITS section
+	# beside the picker that chose the kit and the board row carries only the hover and the ⚠.
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_kit_short_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	_open_work_inspector_for_herd(KIT_SHORT_WORK_HERD_ID)
+	await _settle()
+	await _save("band_panel_work_kit_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_kit_short_notes()
+	_assert_kit_short_marks()
+	# ⛔ **NOT `_assert_note_renders_in_full` — it requires a WRAPPED sentence and this one no longer
+	# wraps** (the remedy clause is retired). The readability half it made moved into the ink guard,
+	# which asks the same questions of the drawn label minus the line-count floor.
+	_assert_kit_short_note_ink(_kit_short_sentence())
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+
 	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
 	# and the CONTRAST is what the frame is for: a tended patch on willing ground offers `⌃▦`, a fully
 	# tamed "pen"-ceiling herd offers `⌃🐄`, and a wild-ceiling herd offers nothing however much the
@@ -3693,6 +3720,28 @@ func _render_upkeep_mode_states() -> void:
 	_report_zone_content_extent("band_panel_upkeep_mode_priority")
 	_assert_pools_block("the tall LEFT dock", true)
 	_assert_pool_cards_are_level("the tall LEFT dock")
+
+	# **A STANDING POOL CAN BE SHORT OF ITS TOOLS, AND UNTIL NOW IT SAID SO NOWHERE.** The sim folded
+	# the pools into the band item budget, so `agriculture` / `husbandry` / `builders` publish a
+	# DERIVED keeping kit and a real hoe/crook reach — and those rows are filtered off the work board,
+	# so the `kit_note` path that states a shortfall on a forage or hunt row never sees them. This is
+	# the same *"I am getting no messages anywhere"* the arc began with, one surface over.
+	#
+	# **FOUR CARDS, FOUR DIFFERENT ANSWERS, ONE FRAME** — which is the claim, because a client that
+	# marked every card and one that marked none are the same picture at a glance.
+	_push_bands([_pool_gear_band_fixture()])
+	await _settle()
+	await _save("band_panel_pool_kit_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_pool_cards_are_level("the pool gear frame")
+	_assert_pool_kit_marks()
+	# ⛔ **THE BAND GOES BACK, because the dock states below re-render the POOLS block and push NO
+	# band of their own.** Order is load-bearing in this file: leaving this fixture standing had the
+	# BOTTOM-dock and TWO-COLUMN claims measuring a band they were never written about, and they
+	# failed there rather than here — several hundred lines from the state that changed.
+	_push_bands([_keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_PRIORITY)])
+	await _settle()
 	# …and the BOTTOM dock, so the block's height is in the MEASURED budget rather than only in the
 	# arithmetic — that is the 300px box the work zone's whole chrome has to fit inside.
 	#
@@ -4326,6 +4375,12 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# terms list IS the model's field: `RungLadder.upkeep_price_terms` composed it once, and a fixture
 	# that re-derived it through the code under test would agree with it by construction.
 	model["upkeep_price_terms"] = WORST_CASE_INSPECTOR_UPKEEP_TERMS
+	# **AND THE ROW'S GEAR DOES NOT REACH ITS CREW**, which is the KITS section's OTHER conditional
+	# line and is charged apart from the Upkeep pair above (`WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT`).
+	# Without it staged, the reservation would sit BELOW the documented ceiling and the excess-lines
+	# claim below would fail on a negative — which is exactly how a term added to the ceiling and to
+	# nothing else is caught.
+	model["kit_note"] = WORST_CASE_INSPECTOR_KIT_NOTE
 	# ⛔ **THERE IS NO PICKER TO STAGE ANY MORE, and that is what §4.9 item 12d's second pass did to
 	# this fixture.** It used to set `_work_picker_open = WORK_PICKER_PRIORITY` here, because the
 	# ceiling was a MAX and the priority arm was the tallest of three: *"staging the FLOOR picker here
@@ -4415,6 +4470,18 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 ## it really does wrap before it measures anything.
 const WORST_CASE_INSPECTOR_NOTE := \
     "Short of hurdles — 0.03 of the 0.05 a turn it needs. The bench or a trade, not more hands."
+
+## …and the KITS section's gear-shortfall line, in the shape `KitRoster.shortfall_sentence` composes:
+## `HudComposeVocab.KIT_SHORTFALL_FORMAT` filled with a count, a total and a kit name.
+##
+## ⛔ **IT NO LONGER WRAPS, and that is the point of the edit that shortened it.** It read
+## `"2 of 4 Trapping kits available. " + HudWorkVocab.KIT_SHORT_REMEDY` and took two lines; the remedy
+## clause is retired (Ray: *"We don't need all the AI gibberish after the '1 of 2 ..... available'"*),
+## so this term now costs the card ONE line and the reservation's wrap overflow for it is zero. The
+## worst case is still genuinely wrapped — `WORST_CASE_INSPECTOR_NOTE` and
+## `WORST_CASE_INSPECTOR_MUTED_NOTE` both take their second line, which is what
+## `_assert_work_inspector_worst_case_fits` reads off the DRAWN label before it measures anything.
+const WORST_CASE_INSPECTOR_KIT_NOTE := "2 of 4 Trapping kits available"
 
 ## …and the standing bill that makes the KITS section draw its Upkeep row and the line under it. Both
 ## currencies, because the worst case is the shape that states both terms.
@@ -4640,6 +4707,127 @@ func _keeping_pool_herd_fixtures() -> Array:
 	_set_keeper_demand(herds[0], KEEPING_POOL_HERD_DEMAND, KEEPING_POOL_HERD_SUPPLIED)
 	return herds
 
+## The four pool rows the gear frame is built from, each staging ONE of the four answers a card can
+## give. They ride `_keeping_pool_band_fixture`'s world, which is short of KEEPERS on both webs — so
+## the work-bill `⚠` is already live on the two keeping cards and the gear mark has something to be
+## told apart FROM.
+##
+## ⛔ **`ROADWORK` IS THE CONFIRMATION, NOT A SPECIAL CASE.** `LaborAllocation::row_kit` leaves it on
+## `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers` for it and the
+## client falls silent on the EQUALITY — the same test that silences a covered pool. If it ever
+## marked, the equality contract would be what broke, not a missing branch naming this role.
+const POOL_GEAR_KEEPER_CREW := 1
+## The BUILDERS pool: three hands, one complete Tillage kit. It is the card that wears the gear mark
+## ALONE — `_build_pools_block` passes it no `cover` at all, so it can never fly the work-bill one.
+const POOL_GEAR_BUILDERS_CREW := 3
+const POOL_GEAR_BUILDERS_ARMED := 1.0
+const POOL_GEAR_ROADWORK_CREW := 2
+
+## The band those four rows belong to. It keeps `_keeping_pool_band_fixture`'s source rows and its
+## short keeping demand; what it adds is the per-row gear pair the sim now publishes on a pool.
+func _pool_gear_band_fixture() -> Dictionary:
+	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
+	band["entity"] = 963
+	band["id"] = "Band 25"
+	var rows: Array = []
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
+		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
+			# HANDS SHORT, TOOLS FINE — every keeper on it holds a Tillage kit.
+			row["kit_id"] = BandFx.KIT_ID_TILLAGE
+			row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = float(POOL_GEAR_KEEPER_CREW)
+		elif String(row.get("kind", "")) == HudConst.LABOR_KIND_HUSBANDRY:
+			# SHORT OF BOTH — the card that has to say two things at once.
+			row["kit_id"] = BandFx.KIT_ID_HURDLING
+			row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = 0.0
+		rows.append(row)
+	# The two pools `_keeping_pool_band_fixture` does not staff, added here because the frame is about
+	# what a POOL card says and an unstaffed pool has no row to say it with.
+	rows.append({"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_GEAR_ROADWORK_CREW,
+		"kit_id": BandFx.KIT_ID_NONE,
+		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(POOL_GEAR_ROADWORK_CREW)})
+	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW,
+		"kit_id": BandFx.KIT_ID_TILLAGE,
+		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: POOL_GEAR_BUILDERS_ARMED})
+	band["labor_assignments"] = rows
+	return band
+
+## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
+## `KitRoster.shortfall_sentence`** — the material-short guard's rule: an expectation re-derived
+## through the code under test collapses with it. It is also what pins *"one phrasing wherever gear
+## runs short"*, this being the compose sheets' and the work rows' own `KIT_SHORTFALL_FORMAT`.
+func _pool_gear_sentence(held: int, crew: int, kit_id: String) -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [held, crew,
+		KitRoster.display_name_for_id(BandFx.kit_roster_fixture(), kit_id)
+			+ HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+
+## What one pool card is flying, as the pair of answers it publishes: `{work, gear}` — the work-bill
+## boolean and the gear SENTENCE. Read off the card's own metas, never off the glyphs, which is
+## `_assert_pool_card_marks`' rule and for its reason.
+func _pool_card_answers(role_name: String) -> Dictionary:
+	var card := _find_pool_card(role_name)
+	if card == null:
+		return {}
+	return {
+		"work": bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)),
+		"gear": String(card.get_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, "")),
+	}
+
+## GUARD: **THE FOUR ANSWERS A POOL CARD CAN GIVE, ASSERTED AS A SET ON ONE FRAME.**
+##
+## A pool can be short of HANDS and short of TOOLS at once, and the two have opposite remedies — one
+## is a stepper away, the other is the bench — so they are two marks and not one. Any one of these
+## claims alone passes a client that marks everything or nothing; together they are the picture.
+##
+## ⛔ **AND THE GEAR GLYPH IS THE WORK ROWS’, NOT A SECOND ONE INVENTED FOR THIS SURFACE.** Asserted
+## against `HudWorkVocab.KIT_SHORT_MARK` and against its being distinct from the work-bill mark: one
+## thing means *short of gear* across this client, which is why that glyph twins nothing else.
+func _assert_pool_kit_marks() -> void:
+	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
+	var both := _pool_card_answers(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	var itemless := _pool_card_answers(HudWorkVocab.ROLE_NAME_ROADWORK)
+	var gear := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
+	if hands.is_empty() or both.is_empty() or itemless.is_empty() or gear.is_empty():
+		_fail("pool gear — the POOLS block is missing one of its four cards")
+		return
+	var want_gear := _pool_gear_sentence(int(POOL_GEAR_BUILDERS_ARMED), POOL_GEAR_BUILDERS_CREW,
+		BandFx.KIT_ID_TILLAGE)
+	_assert_band_panel("pool gear — a pool short of its TOOL states the count: \"%s\" (got \"%s\")"
+		% [want_gear, String(gear["gear"])], String(gear["gear"]) == want_gear)
+	_assert_band_panel("pool gear — …and that card flies NO work-bill mark, the two being different news",
+		not bool(gear["work"]))
+	_assert_band_panel("pool gear — a pool short of HANDS flies the work mark and no gear one (\"%s\")"
+		% String(hands["gear"]), bool(hands["work"]) and String(hands["gear"]) == "")
+	var want_both := _pool_gear_sentence(0, POOL_GEAR_KEEPER_CREW, BandFx.KIT_ID_HURDLING)
+	_assert_band_panel("pool gear — a pool short of BOTH flies both, distinguishably: \"%s\" (got \"%s\")"
+		% [want_both, String(both["gear"])],
+		bool(both["work"]) and String(both["gear"]) == want_both)
+	_assert_band_panel("pool gear — …and a pool on an ITEMLESS kit flies neither (\"%s\")"
+		% String(itemless["gear"]),
+		not bool(itemless["work"]) and String(itemless["gear"]) == "")
+	# **THE GLYPH IS THE WORK ROWS’ OWN**, and it is not the work-bill mark. Both halves, because a
+	# surface that reused `⚠` here would satisfy every claim above.
+	_assert_band_panel("pool gear — …and the mark is the client’s ONE gear glyph, not the work-bill ⚠",
+		HudWorkVocab.KIT_SHORT_MARK != HudWorkVocab.UPKEEP_POOL_SHORT_MARK)
+	# ⛔ **AND THE CARD SAYS SO AT A GLANCE IN ITS TITLE'S INK, because the GLYPH DOES NOT FIT.** The
+	# intent was the work rows' `◆` beside the name; three placements were built and measured on the
+	# drawn card — two `Label`s (96px), one packed run (92px), the stepper row (94px) — against this
+	# block's 83px floor, and each took the four-card row past the left dock's 356px box. The sentence
+	# and the mark are on the hover; what costs no width is the ink, so that is what is asserted here.
+	var builders_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS),
+		HudWorkVocab.ROLE_NAME_BUILDERS)
+	_assert_band_panel("pool gear — …and the gear-short card's NAME takes the WARN amber (%s)"
+			% ("found" if builders_title != null else "no title Label on the card"),
+		builders_title != null \
+			and builders_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
+	# …and the calm card's does not, or "the ink says short" is satisfied by a block that reddens
+	# every title it draws.
+	var roadwork_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK),
+		HudWorkVocab.ROLE_NAME_ROADWORK)
+	_assert_band_panel("pool gear — …while the card with nothing to say keeps the calm ink",
+		roadwork_title != null \
+			and roadwork_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK))
+
 ## GUARD: the fund-mode control states the band's OWN mode, offers both, and quotes the pool's
 ## arithmetic — asserted together, since a control that lit no button and one that lit both are the
 ## same picture at a glance, and a note that had stopped rendering leaves a pair of bare buttons.
@@ -4823,6 +5011,240 @@ func _material_short_band_fixture() -> Dictionary:
 			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_SUPPLIED}]})
 	band["labor_assignments"] = rows
 	return band
+
+## The three rows the kit-coverage frame is built from — the SHORT one, the covered one, and the one
+## on the kit that carries nothing. `game_deer_07` / `game_deer_79` are the world's own herds
+## (`_herd_fixtures`), so the board renders against the same quarry every other frame in this file
+## does and nothing about the herds is part of the claim.
+const KIT_SHORT_WORK_HERD_ID := "game_deer_07"
+const KIT_SHORT_WORK_CREW := 4
+## Two of that row's four hunters are outfitted. A FLOAT, as the wire carries it — coverage counts
+## workers in fractions — and a whole one here so the rendered figures are the fixture's own and the
+## apportionment is not what is under test.
+const KIT_SHORT_WORK_ARMED := 2.0
+## …and how many of them bring anything home, which is the OTHER note. It is deliberately short of
+## the crew as well: the row is understaffed AND short of kits at once, which is the whole reason
+## `kit_note` is a slot of its own rather than sharing `note`.
+const KIT_SHORT_WORK_NEEDED := 3
+const KIT_COVERED_WORK_HERD_ID := "game_deer_79"
+const KIT_COVERED_WORK_CREW := 3
+## The itemless row's crew. The sim hands a `none` kit back the row's WHOLE head count on purpose, so
+## the fixture states the equality rather than a zero — a zero there is *everybody short*.
+const KIT_NONE_WORK_CREW := 2
+
+## The band that works all three. It keeps `_band_fixture`'s ledger and chrome; what it states is the
+## per-row coverage the sim cuts from that one ledger.
+func _kit_short_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 957
+	band["id"] = "Band 23"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": KIT_SHORT_WORK_CREW,
+			"workers_needed": KIT_SHORT_WORK_NEEDED, "floor": 0.5,
+			"fauna_id": KIT_SHORT_WORK_HERD_ID, "target_x": 70, "target_y": 17,
+			"actual_yield": 0.46, "sustainable_yield": 0.46,
+			"kit_id": BandFx.KIT_DEFAULT_HUNT,
+			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: KIT_SHORT_WORK_ARMED},
+		{"kind": "forage", "workers": KIT_COVERED_WORK_CREW,
+			"workers_needed": KIT_COVERED_WORK_CREW, "floor": 0.5,
+			"target_x": 71, "target_y": 18,
+			"actual_yield": 0.48, "sustainable_yield": 0.48,
+			"kit_id": BandFx.KIT_DEFAULT_FORAGE,
+			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(KIT_COVERED_WORK_CREW)},
+		{"kind": "hunt", "workers": KIT_NONE_WORK_CREW,
+			"workers_needed": KIT_NONE_WORK_CREW, "floor": 0.5,
+			"fauna_id": KIT_COVERED_WORK_HERD_ID, "target_x": 64, "target_y": 11,
+			"actual_yield": 0.20, "sustainable_yield": 0.20,
+			"kit_id": BandFx.KIT_ID_NONE,
+			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(KIT_NONE_WORK_CREW)},
+	]
+	return band
+
+## ⛔ **THE SHAPE OF THE CLAUSE THAT WAS CUT, AS A NEEDLE** — not its words. Ray removed the remedy
+## that followed the count (*"The bench or a trade, not more hands — another hand here only goes
+## without."*), and the useful claim is not that THAT sentence is gone but that **nothing** follows
+## the count: any second clause has to be joined to the first somehow, and every joining this file's
+## note vocabulary uses is a full stop and a space. Spelling the punctuation rather than the retired
+## string is what makes the guard catch a DIFFERENT tail, which is the one a later edit would add.
+const RETIRED_CLAUSE_JOINER := ". "
+const RETIRED_CLAUSE_TERMINATOR := "."
+
+## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
+## `KitRoster.shortfall_sentence` OR `HudWorkVocab.kit_short_note`** — the material-short guard's own
+## rule, and for its reason: an expectation re-derived through the code under test collapses with it
+## and asserts nothing. It is also what pins *"one phrasing wherever gear runs short"*: this is the
+## compose sheets' and the role cards' `KIT_SHORTFALL_FORMAT`, filled here by hand.
+func _kit_short_sentence() -> String:
+	var covered := HudComposeVocab.KIT_SHORTFALL_FORMAT % [int(KIT_SHORT_WORK_ARMED),
+		KIT_SHORT_WORK_CREW, KitRoster.display_name_for_id(BandFx.kit_roster_fixture(),
+			BandFx.KIT_DEFAULT_HUNT) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+	# ⛔ **AND NOTHING FOLLOWS IT — no remedy clause, and no trailing period.** It returned
+	# `"%s. %s" % [covered, HudWorkVocab.KIT_SHORT_REMEDY]` until Ray cut the clause; the row states the
+	# bare sentence now, which is the identical line the compose sheets have always drawn.
+	return covered
+
+## GUARD: **THE THREE READINGS, ASSERTED AS A SET** — a client that marked every row, or none, passes
+## any one of them alone. The covered row and the itemless row are the falsifiers, and the itemless
+## one is the sharper: the sim publishes `kitWorkersHolding == workers` for a kit that carries
+## nothing, so a reader that treated coverage as *"is it less than the crew"* without the equality
+## would flag a row with nothing to be short of.
+##
+## **AND THE TWO NOTE SLOTS COEXIST ON ONE ROW.** The short row is understaffed as well — 3 of its 4
+## bring anything home — so `note` and `kit_note` are both populated in the same frame, which is what
+## says they are two facts and not one slot fought over.
+func _assert_kit_short_notes() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var short_model := {}
+	var covered_model := {}
+	var itemless_model := {}
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		match String(model.get("herd_id", "")):
+			KIT_SHORT_WORK_HERD_ID:
+				short_model = model
+			KIT_COVERED_WORK_HERD_ID:
+				itemless_model = model
+			_:
+				if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+					covered_model = model
+	if short_model.is_empty() or covered_model.is_empty() or itemless_model.is_empty():
+		_fail("work kit note — the board is missing one of the three rows (short %d, covered %d, itemless %d)"
+			% [short_model.size(), covered_model.size(), itemless_model.size()])
+		return
+	var want := _kit_short_sentence()
+	_assert_band_panel("work kit note — the short row states its OWN published pair: \"%s\" (got \"%s\")"
+		% [want, String(short_model.get("kit_note", ""))],
+		String(short_model.get("kit_note", "")) == want)
+	# ⛔ **AND NOTHING FOLLOWS THE COUNT.** The retired claim was *"THE REMEDY NAMES THE BENCH, NOT THE
+	# STEPPER — adding hands here makes it WORSE, the band's ledger being cut pro-rata by head count.
+	# Asserted separately from the sentence so a copy edit that dropped the clause cannot pass on the
+	# figures alone."* Ray cut the clause (*"We don't need all the AI gibberish after the
+	# '1 of 2 ..... available'"*), so the claim inverts: the note must be the bare sentence, ending on
+	# the kit's own name and not on a period. Asserted separately for the retired claim's own reason —
+	# an equality on the whole string passes on a sentence that quietly grew a tail only because the
+	# expectation grew the same tail.
+	var drawn_note := String(short_model.get("kit_note", ""))
+	_assert_band_panel("work kit note — …and NOTHING follows the count — no second clause, no full stop (\"%s\")"
+			% drawn_note,
+		not drawn_note.ends_with(RETIRED_CLAUSE_TERMINATOR)
+			and not drawn_note.contains(RETIRED_CLAUSE_JOINER))
+	_assert_band_panel("work kit note — …and the row wants attention, which is what the ⚠ chip counts",
+		bool(short_model.get("attention", false)))
+	# **BOTH SLOTS AT ONCE.** `note` is the sim's `workers_needed` telemetry and `kit_note` is the gear;
+	# a row can be understaffed and short of kits in the same turn, and one slot would lose one of them.
+	_assert_band_panel("work kit note — …beside the STAFFING note, which it did not displace: \"%s\""
+		% String(short_model.get("note", "")),
+		String(short_model.get("note", "")) != ""
+			and String(short_model.get("note", "")) != String(short_model.get("kit_note", "")))
+	_assert_band_panel("work kit note — …while the fully covered row says NOTHING (\"%s\")"
+		% String(covered_model.get("kit_note", "")),
+		String(covered_model.get("kit_note", "")) == "")
+	_assert_band_panel("work kit note — …and so does the row on the kit that carries nothing (\"%s\")"
+		% String(itemless_model.get("kit_note", "")),
+		String(itemless_model.get("kit_note", "")) == "")
+
+## **WHERE THE COLOUR-EMOJI PLANES BEGIN.** A code point at or above this is drawn from the emoji
+## font in its OWN palette and cannot take a `font_color`; below it, the symbolic blocks (`⚠` at
+## U+26A0, `♻`, `⌈`) are ordinary tintable text. Named because it is the line between a mark whose
+## colour carries meaning and one whose colour is decoration — not an incidental number.
+const EMOJI_PLANE_FLOOR := 0x1F000
+
+## GUARD: **THE BOARD ROW SAYS IT WITHOUT BEING HOVERED, AND SAYS WHICH HAZARD IT IS.**
+##
+## ⛔ **A KIT-SHORT ROW USED TO BE VISUALLY IDENTICAL TO EVERY OTHER MARKED ROW.** The sentence was
+## on the hover and in the inspector card, and the flag it raised was the generic ⚠ — so a player
+## scanning the board had to open every marked row to find out whether it wanted GEAR or HANDS, which
+## are opposite remedies. Reported from play: *"Each individual work tile should also tell me if it is
+## missing kits."*
+##
+## **THE CONTRAST IS THE CLAIM, on the same board and in the same frame**: the short row carries the
+## kit mark, the covered row and the itemless row do not, and the mark is NOT the ⚠ — a client that
+## marked every row, or that reused the warning glyph, passes any one of these alone.
+##
+## **AND THE SPELLING IS THE COMPOSE VOCABULARY'S, asked of it directly.** `HudWorkVocab.
+## KIT_SHORT_MARK` twins `HudComposeVocab.KIT_JOB_GLYPH_FALLBACK` in prose rather than reading it, so
+## this is what holds the two to one glyph.
+func _assert_kit_short_marks() -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var short_marks := ""
+	var covered_marks := ""
+	var itemless_marks := ""
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		match String(model.get("herd_id", "")):
+			KIT_SHORT_WORK_HERD_ID:
+				short_marks = String(model.get("marks", ""))
+			KIT_COVERED_WORK_HERD_ID:
+				itemless_marks = String(model.get("marks", ""))
+			_:
+				if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+					covered_marks = String(model.get("marks", ""))
+	_assert_band_panel("work kit mark — the short row flies a KIT mark on line one (\"%s\")"
+		% short_marks, short_marks.contains(HudWorkVocab.KIT_SHORT_MARK))
+	_assert_band_panel("work kit mark — …and it is NOT the generic ⚠, which says the OTHER remedy",
+		HudWorkVocab.KIT_SHORT_MARK != HudComposeVocab.OVERHUNT_FLAG)
+	# ⛔ **AND IT IS A TEXT-PRESENTATION GLYPH, WHICH IS THE ONE THING THE INK CLAIM BELOW CANNOT
+	# SEE.** `get_theme_color` reads the OVERRIDE; a COLOUR EMOJI ignores it and draws in its own
+	# palette, so the first cut of this mark (`🎒`) rendered RED — the missing-good register, on
+	# the one hazard that stops nothing — with every assertion in this guard passing. A code point
+	# above `EMOJI_PLANE_FLOOR` is the tell, and it is the whole of what separates a mark whose colour
+	# says half of what it means from one whose colour is decoration.
+	for code_point in HudWorkVocab.KIT_SHORT_MARK.to_utf32_buffer().to_int32_array():
+		_assert_band_panel("work kit mark — …and it is TEXT, not a colour emoji, so the amber reaches it (U+%04X)"
+			% code_point, code_point < EMOJI_PLANE_FLOOR)
+	_assert_band_panel("work kit mark — …while the fully covered row flies none (\"%s\")"
+		% covered_marks, not covered_marks.contains(HudWorkVocab.KIT_SHORT_MARK))
+	_assert_band_panel("work kit mark — …and neither does the row on the kit that carries nothing (\"%s\")"
+		% itemless_marks, not itemless_marks.contains(HudWorkVocab.KIT_SHORT_MARK))
+	# **AND IT IS REALLY DRAWN, in the amber that says *look here*.** The model half above is
+	# satisfied by a board that composes the run and never mounts it; the ink half is what stops a
+	# kit-short row — which need be neither overdrawing nor at risk — flying its one mark in the
+	# quiet policy grey. Found by META, never by text: `FoodIcons` spends the same emoji family on
+	# source icons, so a text match finds the row's own icon Label.
+	var drawn := _label_with_meta(_panel, HudWorkVocab.WORK_ROW_MARKS_META,
+		HudWorkVocab.KIT_SHORT_MARK)
+	_assert_band_panel("work kit mark — …and a row on the board really MOUNTS it (%s)"
+			% ("found" if drawn != null else "no marks Label carries it"),
+		drawn != null)
+	if drawn == null:
+		return
+	_assert_band_panel("work kit mark — …in the WARN amber, on a row that is neither overdrawing nor at risk",
+		drawn.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
+
+## The first `Label` under `node` whose `meta` value CONTAINS `needle`, or `null`. The meta-keyed
+## twin of `_label_titled_under`, for the slots this file identifies by handle rather than by glyph.
+func _label_with_meta(node: Node, meta: StringName, needle: String) -> Label:
+	if node is Label and (node as Label).has_meta(meta) \
+			and String((node as Label).get_meta(meta)).contains(needle):
+		return node as Label
+	for child in node.get_children():
+		var found := _label_with_meta(child, meta, needle)
+		if found != null:
+			return found
+	return null
+
+## GUARD: **the drawn kit line is AMBER and is drawn WHOLE.** A missing material stops the work
+## outright; a short kit only makes it dearer — the unequipped share still works, bare-handed — so the
+## two hazards must not be inked alike. Read off the drawn label, the ink being a render-site decision
+## no model claim can see (`_assert_material_note_ink`'s own rule, one arm over).
+##
+## ⛔ **IT CARRIES THE READABILITY CLAIM NOW, because `_assert_note_renders_in_full` CANNOT.** That
+## helper requires `WRAPPED_NOTE_MIN_LINES`, and this sentence no longer wraps: the remedy clause that
+## made it a two-liner is retired. Asking it here would fail for the LENGTH rather than for anything
+## about the render. What still has to hold is what the elided-sentence defect was about — the label
+## is found by its WHOLE text (so a note that lost a clause is not found at all), it trims nothing,
+## and every line it has is on screen.
+func _assert_kit_short_note_ink(note: String) -> void:
+	var label := _find_aside_label(_work_inspector_root(), note)
+	if label == null:
+		_fail("work kit note — the gear-shortfall line is not drawn anywhere in the inspector dialog")
+		return
+	_assert_band_panel("work kit note — the drawn line takes the WARN amber, not the missing-good red",
+		label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
+	_assert_band_panel("work kit note — …and nothing is trimmed off it (overrun %d, %d of %d lines shown)"
+			% [label.text_overrun_behavior, label.get_visible_line_count(), label.get_line_count()],
+		label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING
+			and label.get_visible_line_count() == label.get_line_count())
 
 ## **THREE SHORTFALLS, THREE REMEDIES, AND THEY MUST NOT READ ALIKE.** Asserted over the SAME board's
 ## two rows, because the contrast is the claim: the good-short row names the GOOD and takes the danger

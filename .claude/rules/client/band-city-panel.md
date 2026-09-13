@@ -2563,6 +2563,72 @@ every configuration with the INSPECTOR open and never the queue, while the queue
 strip only at `DOCKROW_CANVAS`, so this was the gap between two disjoint frame families for the fourth
 time in this file's history.
 
+### ⛔ A POOL CAN BE SHORT OF ITS TOOLS, AND IT SAID SO NOWHERE
+
+The sim folded the standing pools into the band item budget, so `agriculture` / `husbandry` /
+`builders` publish a **derived** keeping kit on their labor row (`LaborAllocation::row_kit` — the
+web's `keeping_kit_for`, the queue head's `builders_kit`) and a real hoe/crook reach beside it. **The
+client rendered none of it**: `_work_source_models` admits only forage and hunt rows, so the
+`kit_note` path that states a shortfall on a work row never sees a pool. Same *"I am getting no
+messages anywhere"* the arc began with, one surface over.
+
+- **The producer is the work row's own, with no special case.** `_pool_kit_short_line` hands
+  `HudBandLaborState.role_assignment_of(band, kind)` — the band-wide twin of the three
+  `*_assignment_of` lookups — to `_work_row_kit_note`. Every gate that function already carries is
+  the gate a pool needs: `kitWorkersHolding == workers` is silence, a kit the roster cannot name is
+  silence, and an unstaffed pool has no row for `row_coverage` to read.
+- ⛔ **PENDING IS THE ONE GATE THIS PATH ADDS**, because `role_assignment_of` reads the CONFIRMED
+  row. A work row gets it free (`effective_worker_map` drops the key on a pending source); a pool has
+  no such merge, so a `+` the player just pressed would otherwise be answered with the coverage of
+  the staffing they left behind.
+- **`roadwork` and `quarrywork` fall silent on the EQUALITY, not on a branch naming them.** `row_kit`
+  leaves them on `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers`
+  and the same test that silences a covered pool silences them. Asserted on the frame rather than
+  assumed — if one ever marked, the equality contract is what broke.
+- **`POOL_CARD_KIT_SHORT_META` carries the SENTENCE, not a flag**, and is a second meta rather than a
+  value on `POOL_CARD_SHORT_META` for that meta's own stated reason: it is read as a boolean meaning
+  *is this pool short of HANDS*, and a gear shortfall wearing it would answer yes to a question about
+  the work bill.
+
+#### ⛔ THE `◆` MARK DOES NOT FIT THIS BLOCK — THREE PLACEMENTS, ALL MEASURED
+
+The intent was the work rows' own `◆` beside the name, the way the work-bill `⚠` sits there. **It
+does not fit at any packing.** This block's contract is that a card's minimum is its STEPPER's and
+never its name row's (`_assert_pool_cards_are_level`), which puts the floor at **83px**, and the name
+row is already at that ceiling with one mark:
+
+| Placement | Card | Over the left dock's 356px box |
+|---|---|---|
+| two `Label`s beside the name, row separation between | 96px | 7px |
+| both glyphs packed into ONE run, no separation | 92px | 3px |
+| the gear glyph on the STEPPER row instead | 94px | 16px |
+
+**The block may not grow to make room.** Four cards already ran 42px over at the shared name size —
+which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every `POOL_STEPPER_*` metric — and
+a second row costs 62px the work zone's floor cannot find.
+
+**So the sentence and the mark are both on the HOVER, and what the card says at a glance is its
+TITLE'S INK**, which costs no width: a pool short of its tools reads in the WARN amber exactly as one
+short of hands, or one mid-edit, already does. That is the same rule the work-bill mark on this card
+follows for its own figures (*"the card is a role name over a stepper and has no room for
+arithmetic"*).
+
+> **WHAT THAT COSTS, stated because it is a real gap.** *Short of hands* and *short of tools* have
+> opposite remedies — a stepper against the bench — and on this block they are **not distinguishable
+> without hovering**: a gear-short card and a hands-short card are both an amber name, and only the
+> `⚠` (hands) separates them. On the work rows the two are told apart by glyph (`◆` against `⚠`).
+> Closing it needs either width this block does not have or a substitution rule it was explicitly not
+> given.
+
+**Frame:** `band_panel_pool_kit_short` — four cards, four different answers, one frame, because a
+client that marks every card and one that marks none are the same picture at a glance. Agriculture is
+short of HANDS only, Husbandry of BOTH, Roadwork of neither (the itemless confirmation), Builders of
+TOOLS only — that last one being the card that can never fly the work-bill mark, since
+`_build_pools_block` passes it no `cover` at all. The state re-pushes the fund-mode band afterwards:
+the dock states below it re-render this block and push no band of their own, so leaving the fixture
+standing failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that
+changed.
+
 ## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
 `docs/plan_standing_upkeep.md` §2.5. Maintenance is a band-level standing role now, so the band zone
@@ -4912,6 +4978,120 @@ doing the same thing either way, and the source's own card says which on its run
 Frame: `band_panel_unbuilt_rung` (a part-tamed Aurochs, hunters on it, nobody on the improvement — ⚠
 up, the rung-in-progress `◎60%` mark beside it, and the BUILDERS note in the strip).
 
+
+## THE ROW SAYS WHEN ITS GEAR DOES NOT REACH ITS CREW — `kit_note`, a slot of its own
+
+Reported from play: a band outfitted with four trapping kits staffed two hunt rows of four — Rabbit
+Warren and Wild Fowl, both resolving `trapping` — so each row arms two of its four hunters. **The
+game said nothing anywhere**, and the player had no way to find out which tiles the gear had gone to.
+`LaborAssignment.kitWorkersHolding` is the sim's per-row answer (workers on this row holding a
+COMPLETE kit, over the row's own `workers`); `_work_row_kit_note` turns it into the row's sentence.
+
+- **IT IS NOT THE EXISTING `note`.** That one is the sim's `workers_needed` telemetry — *how many of
+  these hands bring anything home* — and a row can be understaffed **and** short of kits in the same
+  turn. Two independent facts, two remedies, two slots. (`note` and `overstaffed` share ONE slot for
+  the opposite reason: they are mutually exclusive by construction. Follow that comment's LOGIC, not
+  its letter.) `band_panel_work_kit_short` stages a row carrying both at once.
+- **ONE PHRASING WHEREVER GEAR RUNS SHORT, AND IT IS THE WHOLE NOTE.**
+  `KitRoster.shortfall_sentence` → `HudComposeVocab.KIT_SHORTFALL_FORMAT`, the sentence the compose
+  sheets and the role cards already use, passed through `HudWorkVocab.kit_short_note` **unchanged**.
+  No trailing period: the row reads `1 of 2 Harvesting kits available`, identical to the compose
+  sheets' line.
+- ⛔ **RETIRED — THE REMEDY CLAUSE, AND WHAT IT COST.** `kit_short_note` appended
+  `HudWorkVocab.KIT_SHORT_REMEDY` — *"The bench or a trade, not more hands — another hand here only
+  goes without."* — built in `HudSelectionVocab.BUILD_BLOCKED_MATERIALS_FORMAT`'s family, the same
+  two levers refusing the same lever. Reported from play on a Harvest row's inspector card: *"We
+  don't need all the AI gibberish after the '1 of 2 ..... available'. If the same gibberish is on the
+  hunt line, remove that as well."* One producer serves forage, hunt and extract, so one edit covered
+  all three; the compose sheets never carried it.
+
+  **What went with the words:** that clause was the ONLY place the row said that adding workers makes
+  a kit shortfall **worse** rather than better — the band's ledger is cut pro-rata by head count, so
+  each hand added to a short row takes a smaller share and more of the crew ends up bare-handed. It
+  is the very gear-against-hands distinction the note's ink rule below is built on, and **nothing
+  states it in words now.** No shorter replacement was invented: the number alone is what was asked
+  for, and the register survives in the INK and in the row's own `◆` mark.
+- **AMBER, NOT RED** (`HudWorkVocab.KIT_SHORT_SEVERITY`, read through `note_color`). A missing
+  material stops the work outright; a short kit only makes it dearer — the unequipped share still
+  works, at the bare-handed tier.
+- **IT FEEDS `attention`.** The ⚠ chip's count is what answers *how many rows are short* at a glance,
+  which is deliberate: Ray declined a band-level *"you are short N kits"* readout — *"we don't need it
+  if in the work tab we show each row that is short of kits."* The board row carries the sentence on
+  its hover for the reason `overstaffed` does: a row may not wear a mark whose words are nowhere on
+  it.
+- **WHOLE PEOPLE, APPORTIONED.** `kitWorkersHolding` is a float, and `KitRoster.row_coverage` splits
+  it and its complement with `HudFormat.apportion_people_to` against the row's own head count —
+  `DetailFormat.kit_coverage`'s rule, so a `4 of 17` can never have a remainder of 13.
+- **`kitWorkersHolding == workers` IS *NOTHING TO BE SHORT OF*, and that equality is the whole of the
+  `none` case.** The sim hands an itemless kit back the row's entire head count on purpose, so there
+  is no client-side `none` branch to keep in step. Two further silences: a PENDING row publishes no
+  coverage at all (a `+` re-cuts the band's whole ledger, so the settled pair describes a staffing
+  that no longer exists — `HudBandLaborState.effective_worker_map` drops the key, the good-shortfall
+  pair's own treatment), and a `kit_id` this roster cannot name states nothing rather than a
+  shortfall of `""`.
+
+### ⛔ THE ROW FLIES A KIT MARK, AND IT IS NOT A SECOND ⚠
+
+A kit-short row was **visually identical to every other `attention` row**: the sentence lived on the
+hover and in the inspector card, and the flag it raised was the generic ⚠. So a player scanning the
+board had to open every marked row to learn whether it wanted GEAR or HANDS — opposite remedies, and
+the discovery problem the whole arc was reported for. Ray: *"Each individual work tile should also
+tell me if it is missing kits."*
+
+- **`HudWorkVocab.KIT_SHORT_MARK` is `◆`**, appended to the row's existing `marks` run on line one.
+  It is confusable with none of the board's other marks — not the `⚠` triangle, the `♻` ring, the
+  `⌈` chevron, the `▦` field square or the `◎` meter — and it appears nowhere else in `src/`, so it
+  carries no second meaning to collide with.
+- **APPENDED, NEVER SUBSTITUTED.** A row can be overdrawing, at risk **and** short of gear; each is
+  its own mark.
+- ⛔ **IT MUST BE A TEXT-PRESENTATION GLYPH, BECAUSE ITS COLOUR IS HALF OF WHAT IT SAYS.** The first
+  cut was `🎒`, twinned with `HudComposeVocab.KIT_JOB_GLYPH_FALLBACK` on the reasoning that one
+  thing should mean *gear* across the client. **A colour emoji ignores `font_color`**, so it drew RED
+  — the missing-good register, which means the work is STOPPED, on the one hazard that stops nothing
+  — while `KIT_SHORT_SEVERITY` said amber and every assertion passed, `get_theme_color` reading the
+  OVERRIDE rather than the pixels. **The tint requirement outranks the twinning**: the picker draws
+  its fallback large and untinted, which is a different problem. It is the rule
+  `WORK_CHIP_FORAGE_MARK` already states for the `⚠` / `⌈` chips — *their colour is half of what they
+  say* — applied one slot over.
+- **AND NO TOOL PICTOGRAM SURVIVES `WORK_ROW_FONT_SIZE`.** Ten candidates were rendered into the slot
+  and read off the frame at 12×: `⚒` (the crafting launcher's own bench mark) and `⛏` collapse to a
+  smear at 13px, and `⚙` / `⛭` / `⛮` all resolve to a small RING, indistinguishable from the `♻`
+  policy glyph standing beside them on the same row. **Legibility and the correct ink beat literal
+  iconography**; the meaning is carried by the hover and the card, which is the mark's whole job.
+- **THE MARKS RUN GOES AMBER FOR IT TOO.** A kit-short row need be neither `warn` nor `at_risk` — its
+  shortfall costs the band nothing the yield telemetry reports and puts no rung at risk — so without
+  that conjunct in `_build_work_row` the one mark saying *look here* would draw in the quiet policy
+  grey.
+- **IT COST NO WIDTH.** `WORK_ROW_MARKS_WIDTH` is a FLOOR and the run is unclipped, and the narrow
+  dock's tightest content measures 350 of 356 either way — that figure is the POOLS block's, not the
+  board row's. `_assert_zone_content_width_fits` is what says so on the new state.
+- ⛔ **AND THERE IS NO ROW STRIPE FOR IT — asked, and declined.** The stripe is shared with every
+  other warn cause, so lighting it would say *something is wrong here* without saying what, beside a
+  mark whose entire job is to say which. One signal, not two.
+
+**The mark is a POINTER, not the sentence.** 20px of a 356px board cannot hold a clause, and a
+second, shorter wording for one fact is what `KitRoster.shortfall_sentence` exists to prevent.
+`HudWorkVocab.WORK_ROW_MARKS_META` carries the drawn run so a harness reads the slot by handle:
+`FoodIcons` spends the same emoji family on source icons, so a text match finds the row's own icon.
+
+> **THE GUARD THAT WOULD HAVE CAUGHT THE RED BACKPACK is a CODE-POINT test**, not an ink test — every
+> code point of the mark below `band_panel_preview.EMOJI_PLANE_FLOOR` (U+1F000), above which a glyph
+> is drawn from the emoji font in its own palette. The ink assertion beside it reads the override and
+> was green throughout. **The only proof of the rendered colour is a frame read by eye**, which is
+> how this was found and is why the state exists.
+
+**The full pair is DRAWN in the work inspector card's KITS section, directly under the take picker**
+— the control that chose the kit — because a two-line board row has nowhere to put a sentence. It is
+reserved by `WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT`, **charged apart from the Upkeep pair**: the two
+are independent, a WILD source owing no keeping bill and still able to be short of the gear its take
+crew carries. The term is in `WORK_INSPECTOR_CEILING_HEIGHT`, so
+`band_panel_preview._assert_work_inspector_worst_case_fits` stages it — a term added to the ceiling
+and to nothing else fails there on a negative excess.
+
+Frames: `band_panel_work_kit_short` — a short row, a row covered in full and a row on the itemless
+kit on ONE board, with the inspector open on the short one. **The contrast is the claim**: a mark on
+all three would prove nothing, and a `0` on the itemless row is the exact mis-read the sim's
+`== workers` contract exists to prevent.
 
 ## The WORK board's rung-ready mark
 

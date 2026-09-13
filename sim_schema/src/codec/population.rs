@@ -408,6 +408,10 @@ fn create_populations<'a>(
                                 // an empty string, the `species`/`faunaId` convention. Appended
                                 // last.
                                 material,
+                                // **HOW FAR THIS ROW'S GEAR REACHES** — workers on it holding a
+                                // COMPLETE kit, over the `workers` already on the row. Appended
+                                // last.
+                                kitWorkersHolding: assignment.kit_workers_holding,
                             },
                         )
                     })
@@ -1162,6 +1166,7 @@ fn decode_labor_assignment(
         material_upkeep_supplied: decode_material_payoffs(assignment.materialUpkeepSupplied()),
         hunt_useful_workers: assignment.huntUsefulWorkers(),
         priority: to_state_source_priority(assignment.priority())?,
+        kit_workers_holding: assignment.kitWorkersHolding(),
     })
 }
 

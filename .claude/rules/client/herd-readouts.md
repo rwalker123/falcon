@@ -20,7 +20,7 @@ paths:
     — the SAME gate the renderer uses. It's the single chokepoint (roster / herd-selection click /
     hunt-target click / forecast all read herds through `_tile_info_at` → `tile_info.herds`), so
     "you can only hunt and forecast what you can see" is true by construction. Three sibling leaks
-    closed with it: `_herd_at_point` (double-click quick-hunt could hit an undrawn marker), the
+    closed with it: `_herd_at_point` (the double-click quick-hunt, since retired, could hit an undrawn marker), the
     `need == "herd"` targeting glow in `AnnotationRenderer.draw_targeting` (it haloed every huntable herd, fogged ones
     included — the halo WAS the leak), and the `selection_payload` re-resolve of `selected_herd_id`
     (a selected herd that WALKS into fog kept streaming live biomass/ecology + a live forecast; it now

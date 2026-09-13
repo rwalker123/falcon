@@ -3189,6 +3189,12 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     var pending := bool(effective.get("pending", false))
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
     var wants_mark := coverage_line != ""
+    # **AND WHETHER ITS GEAR REACHES THE HANDS ON IT** — a SECOND, independent shortfall on the same
+    # card (`docs/plan_standing_upkeep.md`; the sim folded the standing pools into the band item
+    # budget, so `agriculture` / `husbandry` / `builders` publish a derived keeping kit and a real
+    # hoe/crook reach). It rendered NOWHERE before this: these rows are filtered off the work board,
+    # so the `kit_note` path that states it on a forage or hunt row never sees them.
+    var kit_line := _pool_kit_short_line(band, kind, effective)
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -3199,11 +3205,35 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     card.add_theme_stylebox_override("panel", HudStyle.role_card_stylebox())
     # The coverage sentence joins the role's own description rather than replacing it: what the pool
     # DOES is the answer to "how much do I need", and the figures are meaningless without it.
-    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line])
+    # ⛔ **THE GEAR SHORTFALL IS ON THE HOVER — SENTENCE *AND* MARK — AND THAT IS MEASURED, NOT
+    # PREFERRED.** The intent was the work rows' `◆` beside the name, the way the work-bill `⚠` sits
+    # there. **It does not fit, at any packing.** This block's contract is that a card's minimum is
+    # its STEPPER's and never its name row's (`_assert_pool_cards_are_level`), which puts the floor at
+    # **83px**, and the name row is already at that ceiling with one mark. Three placements were built
+    # and measured on the drawn card:
+    #
+    #   - two `Label`s beside the name, the row's own separation between them — **96px**
+    #   - both glyphs packed into ONE run, no separation — **92px**
+    #   - the gear glyph on the STEPPER row instead — **94px**
+    #
+    # Each took the four-card row past the left dock's 356px box (by 7, 3 and 16px), and each broke
+    # the levelness claim. **The block may not grow to make room**: four cards already ran 42px over
+    # at the shared name size, which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every
+    # `POOL_STEPPER_*` metric, and a second ROW costs 62px the work zone's floor cannot find.
+    #
+    # **WHAT THE CARD DOES SAY AT A GLANCE IS ITS TITLE'S INK** (below), which costs no width: a pool
+    # short of its tools reads in the WARN amber exactly as one short of hands or mid-edit does. The
+    # figures, and which of the two shortfalls it is, are on the hover — the rule the work-bill mark
+    # already follows here (*"the card is a role name over a stepper and has no room for
+    # arithmetic"*).
+    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, kit_line])
     # **THE META IS THE MARK, and the mark is now the coverage answer** — every harness reads it to ask
     # *is this card marked*, which is the question the `⚠` answers, and the composer that decides the
     # sentence is the same one that decides the glyph.
     card.set_meta(POOL_CARD_SHORT_META, wants_mark)
+    # …and the gear answer on its own meta, carrying the SENTENCE rather than a flag: a harness asking
+    # *what does that mark say* must not re-compose the wording it is checking.
+    card.set_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, kit_line)
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     card.add_child(col)
@@ -3214,7 +3244,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
     title.add_theme_color_override("font_color",
-        HudStyle.WARN if pending or wants_mark else HudStyle.INK)
+        HudStyle.WARN if pending or wants_mark or kit_line != "" else HudStyle.INK)
     if not wants_mark:
         col.add_child(title)
     else:
@@ -3225,11 +3255,12 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         var name_row := HBoxContainer.new()
         name_row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
         name_row.add_child(title)
-        var mark := Label.new()
-        mark.text = HudWorkVocab.UPKEEP_POOL_SHORT_MARK
-        mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
-        mark.add_theme_color_override("font_color", HudStyle.WARN)
-        name_row.add_child(mark)
+        # ⛔ **TWO MARKS, APPENDED AND NEVER SUBSTITUTED.** A pool can be short of HANDS and short of
+        # TOOLS in the same turn, and the two have opposite remedies — one is a stepper away, the
+        # other is the bench — so each keeps its own glyph and a card wearing both says both. The
+        # gear one is `HudWorkVocab.KIT_SHORT_MARK`, the SAME `◆` the work rows fly: one thing means
+        # *short of gear* across this client, which is why that glyph was chosen to twin nothing else.
+        name_row.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK))
         col.add_child(name_row)
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
@@ -3251,6 +3282,47 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     })
     col.add_child(stepper)
     return card
+
+## One mark beside a pool card's name, at the name's own size and in the WARN amber both shortfalls
+## wear. Shared so the two cannot be drawn at different sizes on one row.
+##
+## **IT WEARS `WORK_ROW_MARKS_META`, the work row's own handle**, because it is the same kind of node
+## answering the same question — *which marks is this thing flying* — and a harness must identify it
+## by handle rather than by text: the glyph is what is under test, so matching on it would assert the
+## string the caller just passed in.
+func _pool_card_mark(glyph: String) -> Label:
+    var mark := Label.new()
+    mark.text = glyph
+    mark.set_meta(HudWorkVocab.WORK_ROW_MARKS_META, glyph)
+    mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
+    mark.add_theme_color_override("font_color", HudStyle.WARN)
+    mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return mark
+
+## **HOW FAR A STANDING POOL'S OWN GEAR REACHES** — `KitRoster.shortfall_sentence`'s line, or `""`.
+##
+## The sim folded the standing pools into the band item budget, so `agriculture` / `husbandry` /
+## `builders` publish a DERIVED keeping kit on their row and a real hoe/crook reach beside it
+## (`LaborAllocation::row_kit`). **It rendered nowhere**: `_work_source_models` admits only forage and
+## hunt rows, so the `kit_note` path never sees a pool — the same *"I am getting no messages
+## anywhere"* this arc began with, one surface over.
+##
+## **THE ROW'S OWN PRODUCER, WITH NO SPECIAL CASE.** `_work_row_kit_note` is the one that states a
+## work row's shortfall, and every gate it already carries is the gate a pool needs:
+## - **`kit_workers_holding == workers` is silence**, which is also what an ITEMLESS kit publishes —
+##   so `roadwork` and `quarrywork`, whose rows stay on `kit_choice` (`none`), fall silent on the
+##   equality rather than on a branch naming them. That is asserted, not assumed.
+## - **a kit this roster cannot name is silence**, and
+## - **an unstaffed pool has no row at all**, so `row_coverage` answers `{}`.
+##
+## ⛔ **PENDING IS THIS FUNCTION'S OWN GATE, because `role_assignment_of` reads the CONFIRMED row.**
+## The work board gets this free — `effective_worker_map` drops the key on a pending source — and a
+## pool has no such merge, so the `+` the player just pressed would otherwise be answered with the
+## coverage of the staffing they have left behind.
+func _pool_kit_short_line(band: Dictionary, kind: String, effective: Dictionary) -> String:
+    if bool(effective.get("pending", false)):
+        return ""
+    return _work_row_kit_note(HudBandLaborState.role_assignment_of(band, kind))
 
 ## **THE BAND'S BUILD QUEUE, IN THE BAND'S OWN ORDER** — its `PopulationCohortState.buildQueue`
 ## entries joined to the work-source models, in wire order (`docs/plan_standing_upkeep.md` §4.9
@@ -5715,12 +5787,18 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(ready)
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
+    marks.set_meta(HudWorkVocab.WORK_ROW_MARKS_META, marks.text)
     marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
-    # Amber for an overdraw (⚠), an under-KEPT managed herd (its shed ⚠) or a part-built rung nobody
-    # is building (its decay ⚠) — all three are trouble the eye must find; INK_DIM otherwise (a plain
-    # policy glyph).
+    # Amber for an overdraw (⚠), an under-KEPT managed herd (its shed ⚠), a part-built rung nobody
+    # is building (its decay ⚠) — or a row whose GEAR does not reach its crew (its 🎒) — all four are
+    # trouble the eye must find; INK_DIM otherwise (a plain policy glyph).
+    #
+    # **THE KIT ARM IS HERE BECAUSE A KIT-SHORT ROW NEED BE NEITHER OF THE OTHER TWO.** Its gear
+    # shortfall costs the band nothing the yield telemetry reports and puts no rung at risk, so
+    # without this conjunct the one mark that says *look here* would draw in the quiet ink.
     marks.add_theme_color_override("font_color",
         HudStyle.WARN if bool(model.get("warn", false)) or bool(model.get("at_risk", false)) \
+                or String(model.get("kit_note", "")) != "" \
             else HudStyle.INK_DIM)
     marks.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -6084,6 +6162,18 @@ func _build_work_inspector_kits(band: Dictionary, model: Dictionary) -> VBoxCont
     # draws both.
     var take := _build_work_inspector_kit_line(column, _work_inspector_take_key(model))
     take.add_child(_build_work_inspector_take_kit_picker(band, model))
+    # **AND HOW FAR THAT PICK ACTUALLY REACHES, directly under the control that made it** — *"2 of 4
+    # Trapping kits available"*, then the remedy. This is the one surface that draws the pair in
+    # full: the board row carries it on its hover and in the ⚠ chip's count, because a two-line row
+    # has nowhere to put a sentence.
+    #
+    # ⛔ **IT IS NOT INSIDE THE UPKEEP BRANCH BELOW.** The two are independent — a WILD source owes
+    # no keeping bill and can still be short of the gear its take crew carries — which is why the
+    # reservation charges `WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT` separately from the upkeep pair.
+    var kit_note := String(model.get("kit_note", ""))
+    if kit_note != "":
+        column.add_child(HudWidgets.build_wrapping_status_part(kit_note,
+            HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
     if _work_inspector_has_upkeep(model):
         var upkeep := _build_work_inspector_kit_line(column, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY)
         upkeep.add_child(_build_work_inspector_upkeep_kit_picker(band, model))
@@ -6410,6 +6500,13 @@ func _work_inspector_height(model: Dictionary) -> float:
     height += HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT
     if _work_inspector_has_kits(model):
         height += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
+        # …and the gear-shortfall line under the take picker, on the builder's own test verbatim. It
+        # is charged INDEPENDENTLY of the upkeep pair below: a wild source owes no keeping bill and
+        # can still be short of the gear its crew carries, so folding the two into one term would
+        # leave that row drawing a line nothing reserved.
+        if String(model.get("kit_note", "")) != "":
+            height += HudWorkVocab.WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
+                + _work_inspector_wrap_overflow(String(model.get("kit_note", "")))
         # …and the UPKEEP half on top, which a WILD source does not draw: the picker and the bill line
         # under it are one term behind the builder's own second predicate, verbatim.
         if _work_inspector_has_upkeep(model):
@@ -6646,6 +6743,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # missing material stops the work outright, and the two must not read alike. The producer that
         # knows which shortfall it is says so here; neither renderer sniffs the sentence.
         var note_severity := HudWorkVocab.NOTE_SEVERITY_WARN
+        # **AND HOW FAR THIS ROW'S GEAR REACHES, IN A SLOT OF ITS OWN.** It is deliberately NOT the
+        # `note` above: that one is the sim's `workers_needed` telemetry, and a row can be
+        # understaffed AND short of kits in the same turn — two independent facts with two different
+        # remedies. (The `note`/`overstaffed` pair shares one slot for the opposite reason, being
+        # mutually exclusive by construction; `HudWorkVocab`'s kit arm carries the distinction.)
+        var kit_note := _work_row_kit_note(m)
         var rung := _work_source_rung(kind, patch, live_herd)
         # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
         # `rung_glyph` (the rung the source STANDS on). Same `RungGates` answer the map's badge and the
@@ -6802,6 +6905,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # nothing home, and this one says the ground or the flock is being lost.
             note = HudWorkVocab.under_kept_note(kind, material_note)
             note_severity = HudWorkVocab.under_kept_note_severity(material_note)
+        # **AND THE ROW FLIES A MARK OF ITS OWN FOR IT** — a KIT, never a second ⚠. The two hazards
+        # have opposite remedies (the bench against the stepper), so one glyph for both would make a
+        # player hover every marked row to learn which it is: the discovery problem this arc was
+        # reported for. It is APPENDED rather than substituted — a row can be overdrawing, at risk
+        # AND short of gear, and each of those is its own mark.
+        if kit_note != "":
+            marks += " " + HudWorkVocab.KIT_SHORT_MARK
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -6831,6 +6941,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # ⚠ answer to it rather than to the work account alone.
             "at_risk": at_risk,
             "note": note, "note_severity": note_severity,
+            # **THE GEAR SHORTFALL, IN ITS OWN SLOT** — `""` on a row that is not short, on a row
+            # whose kit carries nothing (the sim hands `none` back the whole head count, so the
+            # equality speaks for it) and on a PENDING row, which states no coverage until the
+            # recapture re-cuts the band's ledger. Its ink is `HudWorkVocab.KIT_SHORT_SEVERITY`,
+            # which is amber and not the missing-good red: a short kit makes the work dearer, it
+            # does not stop it.
+            "kit_note": kit_note,
             "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
@@ -7000,6 +7117,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 # cap note above is empty, so without this the attention flag would have no sentence
                 # anywhere on the row explaining what it is for.
                 overstaffed,
+                # **THE KIT SHORTFALL RIDES THE HOVER for the same reason `overstaffed` does**: it
+                # raises the row's attention flag, and a row may not carry a mark whose sentence is
+                # nowhere on it. The board row has no prose line — the full pair is drawn in the
+                # inspector card's KITS section, beside the picker that chose the kit.
+                kit_note,
                 under_kept_hint,
                 ready_tooltip,
                 building_tooltip,
@@ -7010,10 +7132,45 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # `workers_needed` telemetry in figures; `overstaffed` is this client's ceiling reading,
             # emitted only where the wire is silent. So the flag below is raised by whichever one
             # spoke, and the row can never carry both.
+            # **AND A ROW WHOSE GEAR DOES NOT REACH ITS CREW WANTS IT TOO.** This chip's count is
+            # what answers *how many rows are short* at a glance — deliberately, in place of the
+            # band-level *"you are short N kits"* readout Ray declined: *"we don't need it if in the
+            # work tab we show each row that is short of kits."*
             "attention": bool(yld.get("warn", false)) or note != "" or pending
-                or overstaffed != "",
+                or overstaffed != "" or kit_note != "",
         })
     return models
+
+## **HOW FAR THIS ROW'S GEAR REACHES, AS THE ROW'S OWN SENTENCE** — `""` for every row with nothing
+## to report, which is most of them.
+##
+## **THE SIM'S OWN PAIR, NEVER A CLIENT DIVISION** (`LaborAssignment.kitWorkersHolding` over the
+## `workers` beside it). The band's ledger is cut ONCE, pro-rata by head count over every row reaching
+## for each item, so two rows naming `trapping` against four traps arm two hunters each — an answer
+## that depends on the rows BESIDE this one and that no item count on this row could reproduce.
+##
+## Silent in four states, each for its own reason:
+## - **NOT SHORT** — the rule, and the same test states it for an ITEMLESS kit: the sim hands `none`
+##   back the row's whole head count on purpose, so the equality speaks for it and there is no
+##   client-side `none` branch to keep in step.
+## - **NO COVERAGE STATED** — a PENDING row, whose settled pair describes a staffing the `+` has
+##   already moved (`HudBandLaborState.effective_worker_map`).
+## - **A KIT THIS ROSTER DOES NOT CARRY** — an id held over from another world. The sentence names
+##   the kit, and naming it `""` would state a shortfall of nothing.
+##
+## `KitRoster.shortfall_sentence` composes the figures, so this row and the compose sheet that
+## staffed it state one shortfall in one wording.
+func _work_row_kit_note(row: Dictionary) -> String:
+    var coverage := KitRoster.row_coverage(row)
+    if coverage.is_empty() or int(coverage[KitRoster.ROW_COVERAGE_SHORT_KEY]) <= 0:
+        return ""
+    var kit := KitRoster.kit_by_id(_band_labor.kits(),
+        String(row.get("kit_id", KitRoster.NO_KIT_ID)))
+    if kit.is_empty():
+        return ""
+    return HudWorkVocab.kit_short_note(KitRoster.shortfall_sentence(kit,
+        int(coverage[KitRoster.ROW_COVERAGE_HELD_KEY]),
+        int(coverage[KitRoster.ROW_COVERAGE_CREW_KEY])))
 
 ## The source's STANDING RUNG as `{glyph, tooltip}` — `{}` for WILD ground / a wild herd, which is the
 ## honest default and keeps the common row unmarked (see `HudWorkVocab.WORK_ROW_RUNG_TENDED_TOOLTIP`).
@@ -8228,16 +8385,15 @@ func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, ban
     # face is retired (a species constant beside a forecast that already prices the trip), so a fight
     # this party CAN take says nothing here and the sheet's remaining lines are the answer.
     #
-    # **…EXCEPT WHEN THE PARTY IS SPLIT** (issue #520). The gate answers at ONE tier and on a
-    # partly-equipped band that tier is the best-armed crew's, so a cleared gate here is the
-    # reassuring half. Same complement, same builder as the herd drawer's line.
-    #
-    # **ASKED ABOUT `_send_expedition_count`, because BOTH sheets that mount this line have a party
-    # stepper** — the hunting-party form and the denial form. The gear covers a prefix of whoever is
-    # sent, so quoting the band's whole hunt roster here would name more bare hands than the party
-    # has people the moment the party is smaller than the armed run.
+    # ⛔ **AND THE SPLIT-PARTY EXCEPTION IS RETIRED WITH IT** — quoted rather than deleted, because it
+    # was a deliberate arm: *"…EXCEPT WHEN THE PARTY IS SPLIT (issue #520). The gate answers at ONE
+    # tier and on a partly-equipped band that tier is the best-armed crew's, so a cleared gate here is
+    # the reassuring half. Same complement, same builder as the herd drawer's line."* It mounted
+    # `HudWidgets.mount_hunt_crew_split`, and Ray removed it as redundant with the kit line the same
+    # sheet already carries: *"we have the stalking kit message, it seems the second is redundant, you
+    # can remove it."* Both hosts dropped their mount in the same pass; the REFUSAL below is
+    # untouched.
     if not bool(gate["blocked"]):
-        HudWidgets.mount_hunt_crew_split(sheet, band, herd, quarry, kit_id, _send_expedition_count)
         return
     var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
         HudStyle.DANGER_HEX, String(gate["text"])])
@@ -9832,7 +9988,8 @@ func _denial_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, p
     var herd_id := String(herd.get("id", ""))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_DENIAL_RAID, band_id, herd_id)
     # No floor axis, so the key's floor slot is the one value every denial ask carries.
-    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR)
+    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR, band,
+        _band_labor.kits())
     if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_DENIAL_RAID, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -9853,7 +10010,8 @@ func _raid_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, par
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var herd_id := String(herd.get("id", ""))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, floor)
+    var key := ForecastQuery.key_of(subject, kit_id, party, floor, band,
+        _band_labor.kits())
     if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_HUNT_TRIP, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -9901,7 +10059,15 @@ func launched_party_denial_view(exp: Dictionary) -> Dictionary:
         return {}
     var kit_id := String(exp.get("kit_id", ""))
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_DENIAL_RAID, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR)
+    # ⛔ **THE GEAR TERM IS THE PARTY'S OWN LEDGER, NOT ITS HOME BAND'S** — `exp`, the same dict this
+    # whole function takes unchanged, for the reason stated above: an expedition prices its whole life
+    # from the choice made at launch and never re-resolves against the band it left. The sim agrees
+    # and says so (`equipment.md` → *"A DETACHED EXPEDITION IS DELIBERATELY OUTSIDE ALL OF IT — a
+    # launched party carries its own wear ledger and works no source rows"*), so handing the home
+    # band here would invalidate this raid's answer every time a crew back home picked up a spear.
+    # A party that publishes no item ledger keys on the UNSTATED token, which is stable.
+    var key := ForecastQuery.key_of(subject, kit_id, party, DENIAL_QUERY_FLOOR, exp,
+        _band_labor.kits())
     _forecast_query.ask(ForecastQuery.KIND_DENIAL_RAID, subject, key, {
         "faction_id": int(exp.get("faction", HudConst.PLAYER_FACTION_ID)),
         "band_id": band_id,

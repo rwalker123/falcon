@@ -236,9 +236,13 @@ WILD herd's sheet — the header must read `ASSIGN HUNTERS`, not `ASSIGN HERDERS
 `ComposeState` does not clear `_hunt_improvement` on a source change and the eyebrow is built BEFORE
 the re-seed. Its third assertion (the stepper's own axis) deliberately stays PASS under the sabotage
 that fails the other two — the stepper was always right, and the header disagreeing with it IS the
-defect. A PNG-less guard beside `quick_hunt_note` covers the same axis on
-`Hud.quick_assign_hunters`. Both exist because a reviewer found what neither the harness nor a
-screenshot showed.
+defect. ⛔ Its companion is RETIRED: *"a PNG-less guard beside `quick_hunt_note` covers the same axis on
+`Hud.quick_assign_hunters`."* Both existed because a reviewer found what neither the harness nor a
+screenshot showed, and the first one still does — what went is the SHORTCUT, not the axis rule. The
+`quick_hunt_note` frame and that guard left `chapters/tile_panel.gd` with the map's double-click
+quick-hunt (`map-renderers.md` → "RETIRED — the double-click quick-hunt"), taking
+`EXPECTED_CHECKPOINTS` 123 → 120 with them; the axis itself is a property of
+`Hud._emit_assign_labor`, which the herd compose sheet drives through the same seam.
 
 **The CHECKBOX-VISIBILITY pair rides on `herd_corral_ungated`** (#445): the offered box's
 `unchecked` art composited over `HudStyle.PANEL_SOLID` must clear `CHECKBOX_INDICATOR_MIN_CONTRAST`,
@@ -887,10 +891,14 @@ The partly-equipped arc (issue #520) is worth
 - **`band_kit_forage_short` carries three** — the FOUR-JOB denominator (`workersOnQuotedJob`): two
   baskets among four gatherers, asserted beside the claim that the perfectly-equipped SPEARS on the
   same band say nothing, which is what pins that the two rows were divided by different numbers.
-- **`herd_hunt_gate_split` carries four**, counting the two negatives that each cover a different way
-  the split line can be wrong: the UNIFORM control appended to `herd_hunt_gate_effort` (without which
-  the claim passes on a sheet that annotates every band) and the PNG-less re-compose at a party that
-  fits inside the armed run.
+- **`herd_hunt_gate_split` carries ONE**, and it used to carry four. ⛔ The other three were the
+  crew-split sentence and its two negatives — *"the UNIFORM control appended to
+  `herd_hunt_gate_effort` (without which the claim passes on a sheet that annotates every band) and
+  the PNG-less re-compose at a party that fits inside the armed run"* — retired with the line itself
+  (`labor-ui.md` → "RETIRED — the hunt crew-split sentence"). What survives is the KIT line, which
+  is the sentence that replaced it on the same sheet. `chapters/hunt.gd`'s `EXPECTED_CHECKPOINTS`
+  moved 377 → 374 with them — **the floor has to come down when a claim is retired on purpose**, or
+  the chapter reports itself as having died part-way through.
 
 **THREE existing frames moved, and none is a regression**: `band_kit` / `band_kit_expanded` /
 `band_kit_bare` now sit over a STAFFED forage job, so their dry baskets read `(0/4)` and the popover
