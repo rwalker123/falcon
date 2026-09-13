@@ -402,12 +402,18 @@ fired and what the ledger said. The rules, in `propose` order:
   source for the whole crew — and takes
   the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
   are met every candidate closes the same nothing, and without the tiebreak the band took the
-  first one offered). The row to empty first is an **overused** row (`actual_yield >
-  sustainable_yield` — **on a hunt row, or on a patch at or below its floor**: a patch whose
-  `biomass > floor × carrying_capacity` is not overused by a take above its regrowth, that is
-  the room above the floor being taken by design, and the floor protects the stand — without
-  that, a fresh patch read "overused" every other turn and rule 1 shuffled band 2's hands between
-  47,5 and 49,5 for the whole of seed 23's t45–t50), a hunt row the sim marks
+  first one offered). The row to empty first is an **overused** row — the sim's
+  `LaborAssignmentState::overdraws`, **on a hunt row, or on a patch at or below its floor**.
+  `overdraws` and not `actual_yield > sustainable_yield`: the field's doc says it replaces that
+  test, *"which mis-fires on a hunt's lumpy per-turn take (a kill turn cashes a whole banked
+  animal …)"*. It is intent and ability (a floor below the food peak, a crew out-taking the
+  regrowth between that floor and the stock), so a row at Best never reads it. The floor half
+  stays for a row *draw down to survive* set below Best: that row reads `overdraws` while its
+  crew strips the room above the floor on purpose, and a patch whose `biomass > floor ×
+  carrying_capacity` is not overused — rule 1 does not empty the row the drawdown set. (Before
+  the floor half, a fresh patch read "overused" every other turn under the old comparison and
+  rule 1 shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's t45–t50.)
+  Or a hunt row the sim marks
   **`hunt_useful_workers == 0`**, or a **dead row** (below) — those need no gain guard — and
   failing one of those the lowest-paying row, which moves
   only onto ground out-paying it by `food.runway_gain_fraction` per worker **and** whose marginal
@@ -710,7 +716,11 @@ construction and not to every `observe`.
 **The split bookkeeping.** An accepted `Memo::Split` is `pending_splits[parent] = SplitPending {
 tick, target, workers }`. `observe` keeps the own band ids of the last frame (`known_bands`); an
 own band **not among them** standing on the tile of a parent with a pending entry is that split's
-child, and the entry moves to `born_by_split[child] = SplitBirth { tick, target }`. A pending entry
+child, and the entry moves to `born_by_split[child] = SplitBirth { tick, target }`. ⛔ **A band
+never matches its own pending entry**: `forget_after` clears `known_bands` and keeps a pending
+entry stamped at or before the rewind, so the next `observe` reads every own band as new — the
+parent included, on its own split tile — and without the guard the parent landed in
+`born_by_split`. A pending entry
 no child has answered within `split_settle_turns` is a refused split: it is dropped, and
 `split_refused[parent]` records the parent's `working_age` in that frame — what the sim refused
 was a band of that size, and *split to feed* asks again only once the band is larger. The sim's

@@ -296,8 +296,8 @@ impl SeatMemory {
         });
     }
 
-    /// **A new own band standing where a parent with a pending split stands is that split's
-    /// child.** The sim spawns it on the parent's tile the turn after the order
+    /// **A new own band standing where a parent with a pending split stands — and which is not
+    /// that parent — is that split's child.** The sim spawns it on the parent's tile the turn after the order
     /// (`split_band_from_parent`); a pending entry no child has matched within
     /// `split_settle_turns` is a refused split and is dropped. A child is remembered until it
     /// reaches its site, or the horizon passes.
@@ -307,9 +307,14 @@ impl SeatMemory {
             .iter()
             .filter(|band| !self.known_bands.contains(&band.band_id))
         {
+            // ⛔ **A BAND IS NEVER ITS OWN CHILD.** `forget_after` clears `known_bands` and keeps
+            // a pending split stamped at or before the rewind, so on the next `observe` every own
+            // band reads as new — and the parent stands on its own split tile.
             let parent = self.pending_splits.iter().find(|(parent_id, _)| {
-                view.band(**parent_id)
-                    .is_some_and(|parent| band_tile(parent) == band_tile(child))
+                **parent_id != child.band_id
+                    && view
+                        .band(**parent_id)
+                        .is_some_and(|parent| band_tile(parent) == band_tile(child))
             });
             if let Some((parent_id, pending)) = parent.map(|(id, pending)| (*id, *pending)) {
                 self.pending_splits.remove(&parent_id);
@@ -999,6 +1004,62 @@ mod tests {
         );
         memory.forget_after(19);
         assert_eq!(memory.split_refused_at(PARENT), None);
+    }
+
+    /// **A rewind never makes a parent its own child.** `forget_after` keeps a pending split
+    /// stamped at or before the rewind and clears `known_bands`, so the next `observe` reads every
+    /// own band as new — the parent included, standing on its own split tile. It is not matched;
+    /// a genuine child on that tile still is.
+    #[test]
+    fn after_a_rewind_the_parent_is_not_matched_as_its_own_split_child() {
+        const FACTION: u32 = 1;
+        const PARENT: u64 = 7;
+        const CHILD: u64 = 8;
+        const SPLIT_TICK: u64 = 10;
+        let site = Tile::new(3, 1);
+        let band_at = |band_id: u64| PopulationCohortState {
+            faction: FACTION,
+            band_id,
+            current_x: 1,
+            current_y: 1,
+            ..Default::default()
+        };
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut view = a_view_at(SPLIT_TICK);
+        view.snapshot.populations.push(band_at(PARENT));
+        memory.observe(&view, FACTION);
+        memory.record_choices(
+            SPLIT_TICK,
+            [(
+                "food:split:7".to_owned(),
+                Some(Memo::Split {
+                    band: PARENT,
+                    target: site,
+                    workers: 5,
+                }),
+            )]
+            .into_iter(),
+        );
+        // The world republished at the split's tick: only the parent, which reads as new.
+        memory.forget_after(SPLIT_TICK);
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.born_by_split(PARENT), None, "not its own child");
+        assert!(memory.pending_split(PARENT).is_some(), "still waiting");
+        // Rewound again, and the next frame carries the child: both read as new, the child
+        // alone is the birth.
+        memory.forget_after(SPLIT_TICK);
+        view.snapshot.header.tick = SPLIT_TICK + 1;
+        view.snapshot.populations.push(band_at(CHILD));
+        memory.observe(&view, FACTION);
+        assert_eq!(memory.born_by_split(PARENT), None);
+        assert_eq!(
+            memory.born_by_split(CHILD),
+            Some(&SplitBirth {
+                tick: SPLIT_TICK + 1,
+                target: site
+            })
+        );
+        assert_eq!(memory.pending_split(PARENT), None, "answered");
     }
 
     /// The tile a band departed on an accepted move is remembered for the horizon, so *better

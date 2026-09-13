@@ -69,11 +69,13 @@ pub(crate) fn workable_patch_at(view: &SeatView, tile: Tile) -> Option<&ForagePa
 /// intrinsic attack because nothing it holds declares one.
 ///
 /// ⛔ **NO KIT, NO HUNT.** `equipment.json`: *"A SPAWNING BAND OWNS NO EQUIPMENT AT ALL … HUNTING
-/// YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"*, and an AI seat never outfits (the
-/// opening window closes with nothing applied, `starting_loadout::close_opening_window`). So a
-/// herd is not a source for a band that reads `0` here, whatever the herd is forecast to pay: the
-/// twelve hands sent to it were rejected next turn as *no useful crew*, every turn, for the first
-/// ten-odd turns of every bench seed.
+/// YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"*, and a seat whose loadout grants no
+/// hunting kit plays bare-handed (the demand board asks for one only when a herd in reach can be
+/// brought down with it — `Food::outfit_demands`; a window closed with nothing applied leaves the
+/// band bare, `starting_loadout::close_opening_window`). So a herd is not a source for a band that
+/// reads `0` here, whatever the herd is forecast to pay: before this, twelve hands sent to it were
+/// rejected next turn as *no useful crew*, every turn, for the first ten-odd turns of every bench
+/// seed.
 pub(crate) fn hunting_kits_held(view: &SeatView, band: &PopulationCohortState) -> u32 {
     let hunt_kits: Vec<&KitOptionState> = view
         .snapshot

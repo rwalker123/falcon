@@ -1,9 +1,9 @@
 //! **`Food`** — the food loop (`docs/plan_ai_driver.md` §4). Owns `runway_turns`; alarms
 //! `FoodShort` when the minimum own-band runway is below the profile's `food.runway_floor_turns`.
 //!
-//! Five rules ([`rules`]), each a pure function of one band, the view, the plan's goals and the
+//! Seven rules ([`rules`]), each a pure function of one band, the view, the plan's goals and the
 //! memory, each producing at most one proposal per band whose `reason` names the rule and its
-//! subject — the §4 table, as shipped:
+//! subject — the §4 table, as shipped, in `propose` order:
 //!
 //! - *negative income* — income below consumption, or idle hands, reassigns to the sources with
 //!   the highest take per crew; a row that is overused, dead, or no crew is useful on is the row
@@ -14,8 +14,13 @@
 //!   site just out of reach: split toward it, and walk the child there when it appears.
 //! - *spare hands into hunts* — income at or near the goal puts the surplus onto a herd, which is
 //!   what opens penning.
+//! - *hold the ground* — an owned patch whose standing upkeep reads short gets the band's
+//!   `agriculture` pool sized to the summed plant bill; on a completed rung it is a standing bill.
 //! - *upgrade the ground* — the rung known and a worked patch below it: declare the climb and
 //!   staff the builders, priced by the projection ledger ([`ledger`]).
+//! - *draw down to survive* — the plan in force troughs at or below zero: lower a worked forage
+//!   row's harvest floor to the highest that survives, and put it back to Best once the runway
+//!   clears.
 //!
 //! **The goal gap is the score.** Every rule projects the band's book under its change and scores
 //! the progress that projection makes toward the plan's goals ([`ledger::goal_progress`]), times
@@ -29,8 +34,10 @@
 //! not published, so this is an upper bound; a herd of a few animals still ranks below a stand the
 //! whole band can gather, which is the failure a per-worker ranking walked into.
 //!
-//! Every assignment is `assign_labor` with the kit and floor left to the frame's defaults (`None`
-//! means the job's default on the wire) — a specialist names no number the sim already owns.
+//! Every assignment is `assign_labor` with the kit left to the frame's default (`None` means the
+//! job's default on the wire) — a specialist names no number the sim already owns. The floor is
+//! the default too, except where *draw down to survive* states one, and a rule re-issuing a worked
+//! row carries that row's floor ([`Food::assign`]).
 
 pub mod ledger;
 mod rules;
@@ -403,8 +410,9 @@ impl Specialist for Food {
         SPECIALIST_FOOD
     }
 
-    /// The five rules per own band, in the table's order. Each yields at most one proposal per
-    /// band; the arbiter's one-order-per-band rule keeps one, ranked by goal gap closed.
+    /// The seven rules per own band, in the table's order. Each yields at most one proposal per
+    /// band; the arbiter, ranking by goal gap closed, keeps every one whose claims — the labor
+    /// rows it sets and the band's move (`Cost::claimed`) — no higher-ranked proposal has taken.
     fn propose(&mut self, view: &SeatView, plan: &Plan, memory: &SeatMemory) -> Proposals {
         let mut out = Proposals {
             proposals: Vec::new(),

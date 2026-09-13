@@ -246,8 +246,9 @@ impl Food {
         rows
     }
 
-    /// The row *negative income* empties first: one that is overused (`actual_yield >
-    /// sustainable_yield`), a hunt row the sim says no crew is useful on, or a dead row — and
+    /// The row *negative income* empties first: one that is overused (the sim's `overdraws`, on a
+    /// source at its floor — [`Food::at_its_floor`]), a hunt row the sim says no crew is useful on,
+    /// or a dead row — and
     /// failing those, the row paying the least per worker. `true` when the row is one of the
     /// troubled kinds, which need no gain guard to be worth leaving.
     fn row_to_empty<'b>(
@@ -263,7 +264,7 @@ impl Food {
             .filter_map(|row| SourceKey::of_row(row).map(|key| (row, key)))
             .collect();
         for (row, key) in &worked {
-            let why = if row.actual_yield > row.sustainable_yield && Self::at_its_floor(view, row) {
+            let why = if row.overdraws && Self::at_its_floor(view, row) {
                 WHY_OVERUSED
             } else if row.kind == ROLE_HUNT && row.hunt_useful_workers == 0 {
                 WHY_NO_USEFUL_CREW
@@ -322,13 +323,19 @@ impl Food {
         !row_full && take >= self.floors.runway_gain_fraction * moved as f32 * rate
     }
 
-    /// **Whether a row's source is at or below its floor** — where `actual_yield >
-    /// sustainable_yield` is overuse. A patch whose `biomass > floor × carrying_capacity` is not
-    /// overused by a take above its regrowth: that is the room above the floor being taken by
-    /// design, and the floor protects the stand. A hunt row keeps the trigger as it is (the
-    /// herd's floor is its escapement, not priced here). Before this, a fresh patch read
-    /// "overused" every other turn and rule 1 shuffled band 2's hands between 47,5 and 49,5 for
-    /// the whole of seed 23's t45–t50.
+    /// **Whether a row's source is at or below its floor** — where the sim's `overdraws` is
+    /// overuse. The trigger is `LaborAssignmentState::overdraws`, not `actual_yield >
+    /// sustainable_yield`: the field *"replaces the client-derived `actual_yield >
+    /// sustainable_yield` test, which mis-fires on a hunt's lumpy per-turn take (a kill turn cashes
+    /// a whole banked animal …)"*. `overdraws` is intent **and** ability — a floor below the food
+    /// peak and a crew that out-takes the regrowth between that floor and the stock — so a row at
+    /// Best never reads it, which covers a fresh patch at the default floor. It does not cover a
+    /// patch *draw down to survive* set below Best: that row reads `overdraws` while the crew
+    /// strips the room above its floor on purpose, so a patch whose `biomass > floor ×
+    /// carrying_capacity` is still not overused, and rule 1 does not empty the row the drawdown
+    /// set. A hunt row reads `overdraws` alone (the herd's floor is its escapement, not priced
+    /// here). Before the floor half, a fresh patch read "overused" every other turn and rule 1
+    /// shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's t45–t50.
     fn at_its_floor(view: &SeatView, row: &LaborAssignmentState) -> bool {
         if row.kind != ROLE_FORAGE {
             return true;
@@ -2417,6 +2424,7 @@ mod tests {
             band.idle_workers = 0;
             band.labor_assignments = vec![LaborAssignmentState {
                 sustainable_yield: 6.0,
+                overdraws: true,
                 ..forage_row(RICH_PATCH, 17, 26.0)
             }];
         });
@@ -3395,12 +3403,39 @@ mod tests {
         );
     }
 
+    /// **A kill turn is not overuse.** A hunt's take is lumpy — a kill cashes a whole banked
+    /// animal, so `actual_yield` spikes above the steady `sustainable_yield` under any floor. The
+    /// sim's `overdraws` is the verdict: the spike alone flags nothing, and `overdraws` still does.
+    #[test]
+    fn a_hunt_row_on_a_kill_turn_is_overused_only_when_the_sim_says_it_overdraws() {
+        let mut view = a_view();
+        view.snapshot.populations[0].idle_workers = 0;
+        view.snapshot.populations[0].labor_assignments = vec![LaborAssignmentState {
+            sustainable_yield: 2.0,
+            overdraws: false,
+            ..hunt_row(6, 8.0, 6)
+        }];
+        let (row, _, troubled, why) = food()
+            .row_to_empty(&view, &memory(), own_band(&view))
+            .expect("one worked row");
+        assert!(row.actual_yield > row.sustainable_yield, "a kill turn");
+        assert!(!troubled, "{why}");
+        assert_ne!(why, WHY_OVERUSED);
+        view.snapshot.populations[0].labor_assignments[0].overdraws = true;
+        let (_, _, troubled, why) = food()
+            .row_to_empty(&view, &memory(), own_band(&view))
+            .expect("one worked row");
+        assert!(troubled);
+        assert_eq!(why, WHY_OVERUSED);
+    }
+
     #[test]
     fn an_overused_row_is_emptied_first_onto_the_next_best_source() {
         let mut view = a_view();
         view.snapshot.populations[0].idle_workers = 0;
         view.snapshot.populations[0].labor_assignments = vec![LaborAssignmentState {
             sustainable_yield: 2.0,
+            overdraws: true,
             ..hunt_row(6, 8.0, 6)
         }];
         let proposal = food()
