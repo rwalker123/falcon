@@ -3728,7 +3728,8 @@ func _render_upkeep_mode_states() -> void:
 	# the same *"I am getting no messages anywhere"* the arc began with, one surface over.
 	#
 	# **FOUR CARDS, FOUR DIFFERENT ANSWERS, ONE FRAME** — which is the claim, because a client that
-	# marked every card and one that marked none are the same picture at a glance.
+	# marked every card and one that marked none are the same picture at a glance. The triangle flies on
+	# three of the four (hands, tools, both), so each card's HOVER is asserted beside its triangle.
 	_push_bands([_pool_gear_band_fixture()])
 	await _settle()
 	await _save("band_panel_pool_kit_short")
@@ -4514,22 +4515,28 @@ const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
 ## WORKINGS ROSTER block's own head — `_assert_workings_roster_head` is where it is asserted.
 const POOL_CARD_COUNT := 4
 
-## GUARD: **which POOL CARDS fly the shortfall mark, asserted as a PAIR of lists.** A mark on every
-## card and a mark on none are the same picture at a glance, so the claim is which cards carry it AND
-## which do not — and the figure behind it is on that card's own `tooltip_text`, per web, which is the
-## whole reason the summed line under the buttons was retired.
+## GUARD: **which POOL CARDS fly the triangle for a HANDS shortfall, asserted as a PAIR of lists.** A
+## mark on every card and a mark on none are the same picture at a glance, so the claim is which cards
+## carry it AND which do not — and the figure behind it is on that card's own `tooltip_text`, per web,
+## which is the whole reason the summed line under the buttons was retired.
 ##
 ## The card's own `POOL_CARD_SHORT_META` is what is read, never the glyph: the mark is a Label beside
 ## the title and the figure is a hover, neither of which a harness can assert without re-spelling the
-## vocabulary the builder used. This is the builder's own answer to *are you short*.
-func _assert_pool_card_marks(where: String, short_roles: Array, calm_roles: Array) -> void:
-	for role_variant in short_roles:
+## vocabulary the builder used.
+##
+## ⛔ **THAT META IS *THE TRIANGLE IS FLYING*, FOR EITHER REASON** — it stopped meaning *short of hands*
+## when the triangle widened to tool shortfalls. So `hands_short_roles` is asserted as the triangle PLUS
+## the hands figure on the hover, and `calm_roles` as no triangle, no hands figure AND no tool reason:
+## a calm card read off the meta alone would pass on a card flying its triangle for its tools. Every
+## caller stages bands whose pool rows carry no kit holdings, so no card here is tool-short.
+func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles: Array) -> void:
+	for role_variant in hands_short_roles:
 		var role := String(role_variant)
 		var card := _find_pool_card(role)
 		if card == null:
 			_fail("%s — no %s pool card to read" % [where, role])
 			continue
-		_assert_band_panel("%s: the %s card flies the shortfall mark" % [where, role],
+		_assert_band_panel("%s: the %s card flies the triangle" % [where, role],
 			bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
 		# …and the FIGURE is on that card's hover, in ITS OWN WEB'S words — the plant card must not
 		# describe the animal one, which is exactly what one summed line could not avoid doing. Both
@@ -4546,10 +4553,11 @@ func _assert_pool_card_marks(where: String, short_roles: Array, calm_roles: Arra
 		if card == null:
 			_fail("%s — no %s pool card to read" % [where, role])
 			continue
-		_assert_band_panel("%s: …while the %s card wears no mark and quotes no figure (%s)"
+		_assert_band_panel("%s: …while the %s card wears no triangle, quotes no figure and states no tool reason (%s)"
 				% [where, role, card.tooltip_text],
 			not bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false))
-			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE))
+			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
+			and String(card.get_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, "")) == "")
 
 ## **THE SHORTFALL SENTENCE'S OWN MIDDLE, AND THE TAIL THAT NAMES ITS WEB.** The lead was `"Short "`
 ## for one run and it was VACUOUS in both directions: the Agriculture card's ordinary role HINT reads
@@ -4709,16 +4717,16 @@ func _keeping_pool_herd_fixtures() -> Array:
 
 ## The four pool rows the gear frame is built from, each staging ONE of the four answers a card can
 ## give. They ride `_keeping_pool_band_fixture`'s world, which is short of KEEPERS on both webs — so
-## the work-bill `⚠` is already live on the two keeping cards and the gear mark has something to be
-## told apart FROM.
+## the triangle is already flying for HANDS on the two keeping cards, and a tool shortfall has a hands
+## one on the same row to be told apart FROM on the hover.
 ##
 ## ⛔ **`ROADWORK` IS THE CONFIRMATION, NOT A SPECIAL CASE.** `LaborAllocation::row_kit` leaves it on
 ## `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers` for it and the
 ## client falls silent on the EQUALITY — the same test that silences a covered pool. If it ever
 ## marked, the equality contract would be what broke, not a missing branch naming this role.
 const POOL_GEAR_KEEPER_CREW := 1
-## The BUILDERS pool: three hands, one complete Tillage kit. It is the card that wears the gear mark
-## ALONE — `_build_pools_block` passes it no `cover` at all, so it can never fly the work-bill one.
+## The BUILDERS pool: three hands, one complete Tillage kit. It is the card whose triangle flies for
+## its TOOLS alone — `_build_pools_block` passes it no `cover` at all, so it can never be short of hands.
 const POOL_GEAR_BUILDERS_CREW := 3
 const POOL_GEAR_BUILDERS_ARMED := 1.0
 const POOL_GEAR_ROADWORK_CREW := 2
@@ -4761,27 +4769,82 @@ func _pool_gear_sentence(held: int, crew: int, kit_id: String) -> String:
 		KitRoster.display_name_for_id(BandFx.kit_roster_fixture(), kit_id)
 			+ HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
 
-## What one pool card is flying, as the pair of answers it publishes: `{work, gear}` — the work-bill
-## boolean and the gear SENTENCE. Read off the card's own metas, never off the glyphs, which is
-## `_assert_pool_card_marks`' rule and for its reason.
+## What one pool card is flying, as the answers it publishes and draws: `{mark, gear, lines, drawn}` —
+## the triangle (`POOL_CARD_SHORT_META`), the TOOL reason's sentence (`POOL_CARD_KIT_SHORT_META`), its
+## hover split into lines, and how many `⚠` Labels it actually DREW. The drawn count is read by the
+## mark's own `WORK_ROW_MARKS_META` handle, never by glyph, which is `_assert_pool_card_marks`' rule and
+## for its reason — and it is asserted beside the meta so the decision and the render cannot disagree.
 func _pool_card_answers(role_name: String) -> Dictionary:
 	var card := _find_pool_card(role_name)
 	if card == null:
 		return {}
+	var drawn: Array[Control] = []
+	_collect_meta_controls(card, HudWorkVocab.WORK_ROW_MARKS_META, drawn)
 	return {
-		"work": bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)),
+		"mark": bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)),
 		"gear": String(card.get_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, "")),
+		"lines": Array(card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR)),
+		"drawn": drawn.size(),
 	}
+
+## A card short of both still draws ONE triangle — the second glyph was measured and refused.
+const POOL_CARD_MARKS_WHEN_FLYING := 1
+## …and none when nothing is wrong.
+const POOL_CARD_MARKS_WHEN_CALM := 0
+## A hover line the card does not carry.
+const POOL_HOVER_LINE_ABSENT := -1
+
+## The hover line stating the HANDS shortfall, found by the coverage sentence's own middle
+## (`POOL_SHORT_TOOLTIP_NEEDLE`, which no role hint contains), or `POOL_HOVER_LINE_ABSENT`.
+func _pool_hands_line_index(lines: Array) -> int:
+	for i in lines.size():
+		if String(lines[i]).contains(POOL_SHORT_TOOLTIP_NEEDLE):
+			return i
+	return POOL_HOVER_LINE_ABSENT
+
+## The tool sentence's fixed TAIL (` available`), taken off the vocabulary's own format rather than
+## spelled here — the negative half's needle for *no hover line states a tool shortfall*.
+func _pool_tool_line_tail() -> String:
+	return HudComposeVocab.KIT_SHORTFALL_FORMAT.get_slice("%s", 1)
+
+## One card's whole answer: the triangle (meta AND drawn), the tool reason's meta, and the hover's
+## lines — which reason is stated, on a line of its own, in its existing words, hands first.
+func _assert_pool_card_state(label: String, role: String, answers: Dictionary, want_hands: bool,
+		want_gear: String) -> void:
+	var lines: Array = answers["lines"]
+	var want_mark := want_hands or want_gear != ""
+	var want_drawn := POOL_CARD_MARKS_WHEN_FLYING if want_mark else POOL_CARD_MARKS_WHEN_CALM
+	_assert_band_panel("pool gear — %s: the triangle %s (meta %s, %d drawn)"
+			% [label, "flies" if want_mark else "does NOT fly", answers["mark"], answers["drawn"]],
+		bool(answers["mark"]) == want_mark and int(answers["drawn"]) == want_drawn)
+	_assert_band_panel("pool gear — %s: …its TOOL reason meta is \"%s\" (got \"%s\")"
+			% [label, want_gear, answers["gear"]], String(answers["gear"]) == want_gear)
+	var hands_at := _pool_hands_line_index(lines)
+	_assert_band_panel("pool gear — %s: …its hover %s the HANDS shortfall in its own web's words (%s)"
+			% [label, "states" if want_hands else "does NOT state", lines],
+		(hands_at != POOL_HOVER_LINE_ABSENT) == want_hands
+			and (not want_hands or String(lines[hands_at]).contains(_pool_short_tail(role))))
+	if want_gear != "":
+		# BY EQUALITY OVER A WHOLE LINE: its own line, the existing wording, no remedy clause, no period.
+		_assert_band_panel("pool gear — %s: …and states the TOOL shortfall as a line of its own, \"%s\" (%s)"
+				% [label, want_gear, lines], lines.find(want_gear) != POOL_HOVER_LINE_ABSENT)
+	else:
+		var tail := _pool_tool_line_tail()
+		var tool_lines := lines.filter(func(l: Variant) -> bool: return String(l).ends_with(tail))
+		_assert_band_panel("pool gear — %s: …and states NO tool shortfall (%s)" % [label, tool_lines],
+			tool_lines.is_empty())
+	if want_hands and want_gear != "":
+		_assert_band_panel("pool gear — %s: …HANDS first, then TOOLS (hands line %d, tool line %d)"
+				% [label, hands_at, lines.find(want_gear)],
+			hands_at != POOL_HOVER_LINE_ABSENT and hands_at < lines.find(want_gear))
 
 ## GUARD: **THE FOUR ANSWERS A POOL CARD CAN GIVE, ASSERTED AS A SET ON ONE FRAME.**
 ##
-## A pool can be short of HANDS and short of TOOLS at once, and the two have opposite remedies — one
-## is a stepper away, the other is the bench — so they are two marks and not one. Any one of these
-## claims alone passes a client that marks everything or nothing; together they are the picture.
-##
-## ⛔ **AND THE GEAR GLYPH IS THE WORK ROWS’, NOT A SECOND ONE INVENTED FOR THIS SURFACE.** Asserted
-## against `HudWorkVocab.KIT_SHORT_MARK` and against its being distinct from the work-bill mark: one
-## thing means *short of gear* across this client, which is why that glyph twins nothing else.
+## The triangle flies on THREE of them — short of hands, of tools, of both — so its presence alone
+## tells those three apart from nothing but the fine card. What separates them is the hover, so every
+## card is asserted on BOTH halves: the triangle (the meta and the one `⚠` it drew) and which reasons
+## its hover states, each on its own line, hands first. Any one card alone passes a client that marks
+## everything, marks nothing, or states one reason for all three.
 func _assert_pool_kit_marks() -> void:
 	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
 	var both := _pool_card_answers(HudWorkVocab.ROLE_NAME_HUSBANDRY)
@@ -4790,30 +4853,20 @@ func _assert_pool_kit_marks() -> void:
 	if hands.is_empty() or both.is_empty() or itemless.is_empty() or gear.is_empty():
 		_fail("pool gear — the POOLS block is missing one of its four cards")
 		return
-	var want_gear := _pool_gear_sentence(int(POOL_GEAR_BUILDERS_ARMED), POOL_GEAR_BUILDERS_CREW,
-		BandFx.KIT_ID_TILLAGE)
-	_assert_band_panel("pool gear — a pool short of its TOOL states the count: \"%s\" (got \"%s\")"
-		% [want_gear, String(gear["gear"])], String(gear["gear"]) == want_gear)
-	_assert_band_panel("pool gear — …and that card flies NO work-bill mark, the two being different news",
-		not bool(gear["work"]))
-	_assert_band_panel("pool gear — a pool short of HANDS flies the work mark and no gear one (\"%s\")"
-		% String(hands["gear"]), bool(hands["work"]) and String(hands["gear"]) == "")
-	var want_both := _pool_gear_sentence(0, POOL_GEAR_KEEPER_CREW, BandFx.KIT_ID_HURDLING)
-	_assert_band_panel("pool gear — a pool short of BOTH flies both, distinguishably: \"%s\" (got \"%s\")"
-		% [want_both, String(both["gear"])],
-		bool(both["work"]) and String(both["gear"]) == want_both)
-	_assert_band_panel("pool gear — …and a pool on an ITEMLESS kit flies neither (\"%s\")"
-		% String(itemless["gear"]),
-		not bool(itemless["work"]) and String(itemless["gear"]) == "")
-	# **THE GLYPH IS THE WORK ROWS’ OWN**, and it is not the work-bill mark. Both halves, because a
-	# surface that reused `⚠` here would satisfy every claim above.
-	_assert_band_panel("pool gear — …and the mark is the client’s ONE gear glyph, not the work-bill ⚠",
-		HudWorkVocab.KIT_SHORT_MARK != HudWorkVocab.UPKEEP_POOL_SHORT_MARK)
-	# ⛔ **AND THE CARD SAYS SO AT A GLANCE IN ITS TITLE'S INK, because the GLYPH DOES NOT FIT.** The
-	# intent was the work rows' `◆` beside the name; three placements were built and measured on the
-	# drawn card — two `Label`s (96px), one packed run (92px), the stepper row (94px) — against this
-	# block's 83px floor, and each took the four-card row past the left dock's 356px box. The sentence
-	# and the mark are on the hover; what costs no width is the ink, so that is what is asserted here.
+	_assert_pool_card_state("a pool short of HANDS only", HudWorkVocab.ROLE_NAME_AGRICULTURE, hands,
+		true, "")
+	_assert_pool_card_state("a pool short of BOTH", HudWorkVocab.ROLE_NAME_HUSBANDRY, both, true,
+		_pool_gear_sentence(0, POOL_GEAR_KEEPER_CREW, BandFx.KIT_ID_HURDLING))
+	_assert_pool_card_state("a pool on an ITEMLESS kit, short of nothing", HudWorkVocab.ROLE_NAME_ROADWORK,
+		itemless, false, "")
+	_assert_pool_card_state("a pool short of TOOLS only", HudWorkVocab.ROLE_NAME_BUILDERS, gear, false,
+		_pool_gear_sentence(int(POOL_GEAR_BUILDERS_ARMED), POOL_GEAR_BUILDERS_CREW,
+			BandFx.KIT_ID_TILLAGE))
+	# ⛔ **AND THE CARD SAYS SO AT A GLANCE IN ITS TITLE'S INK, beside the one triangle.** A second
+	# glyph (the work rows' `◆`) was built and measured on the drawn card — two `Label`s (96px), one
+	# packed run (92px), the stepper row (94px) — against this block's 83px floor, and each took the
+	# four-card row past the left dock's 356px box. So the existing `⚠` widened to both shortfalls and
+	# the reason is on the hover; what costs no width is the triangle and the ink.
 	var builders_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS),
 		HudWorkVocab.ROLE_NAME_BUILDERS)
 	_assert_band_panel("pool gear — …and the gear-short card's NAME takes the WARN amber (%s)"

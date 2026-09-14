@@ -1377,10 +1377,15 @@ func _build_upkeep_mode_button(band: Dictionary, mode: String, label: String, hi
 const UPKEEP_MODE_BLOCK_META := "upkeep_mode_block"
 const UPKEEP_MODE_BUTTON_META := "upkeep_mode_button"
 
-## …and whether a POOL CARD is flying the shortfall mark. The mark is a glyph inside the title's text
-## and the figure is on a `tooltip_text`, neither of which a harness can assert without re-spelling the
-## vocabulary; this is the card's own answer to *are you short*, so the claim is made against what the
+## …and whether a POOL CARD is flying its `⚠`. The mark is a Label beside the title and the reasons are
+## on a `tooltip_text`, neither of which a harness can assert without re-spelling the vocabulary; this is
+## the card's own answer to *is anything wrong with this pool*, so the claim is made against what the
 ## builder DECIDED rather than against a substring of what it drew.
+##
+## **IT MEANS "THE TRIANGLE IS FLYING", FOR EITHER REASON.** It meant *short of HANDS* until the
+## triangle widened to cover a tool shortfall too; the tool reason is on its own meta
+## (`HudWorkVocab.POOL_CARD_KIT_SHORT_META`) and the hands reason on the hover alone, so a harness asking
+## WHICH reason reads those — never this.
 const POOL_CARD_SHORT_META := "pool_card_short"
 
 ## Emit the band's fund-mode pick. Its own signal rather than a Callable into HudLayer, for
@@ -3172,9 +3177,11 @@ func _queued_keeping_load(queued: Array, labor_kind: String) -> Dictionary:
 ## answers `NO_KIT_ID` on the builders branch deliberately — echoing the DERIVED id back would pin the
 ## pool to whichever web it happened to be building the moment the player pressed `+`.
 ##
-## **AND WHERE ITS WEB DOES NOT COVER WHAT IT IS ASKED FOR IT WEARS A BARE `⚠`, with the figures on
-## the tooltip** (§4.7). The mark is a mark: the card is a role name over a stepper and has no room for
-## arithmetic, and the shortfall is the reason a player would open the hover at all. `cover` is that
+## **AND WHERE SOMETHING IS WRONG WITH THE POOL IT WEARS A BARE `⚠`, with the reason on the tooltip**
+## (§4.7). Two reasons fly it: its web does not cover what it is asked for (short of HANDS), or its
+## gear does not reach the hands on it (short of TOOLS) — and when both hold, the hover states both, on
+## their own lines, hands first. The mark is a mark: the card is a role name over a stepper and has no
+## room for arithmetic, and the reason is why a player would open the hover at all. `cover` is that
 ## web's own `{supply, asked}` (`{}` for the Builders card, which keeps nothing), never the two webs
 ## summed.
 ##
@@ -3188,13 +3195,16 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
-    var wants_mark := coverage_line != ""
     # **AND WHETHER ITS GEAR REACHES THE HANDS ON IT** — a SECOND, independent shortfall on the same
     # card (`docs/plan_standing_upkeep.md`; the sim folded the standing pools into the band item
     # budget, so `agriculture` / `husbandry` / `builders` publish a derived keeping kit and a real
     # hoe/crook reach). It rendered NOWHERE before this: these rows are filtered off the work board,
     # so the `kit_note` path that states it on a forage or hunt row never sees them.
     var kit_line := _pool_kit_short_line(band, kind, effective)
+    # **THE TRIANGLE FLIES ON EITHER REASON.** It was gated on the hands shortfall alone, so a pool
+    # short of tools wore no triangle and one short of both was indistinguishable from one short of
+    # hands. The triangle now says *something is wrong with this pool* and the hover says what.
+    var wants_mark := coverage_line != "" or kit_line != ""
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -3221,18 +3231,22 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # at the shared name size, which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every
     # `POOL_STEPPER_*` metric, and a second ROW costs 62px the work zone's floor cannot find.
     #
-    # **WHAT THE CARD DOES SAY AT A GLANCE IS ITS TITLE'S INK** (below), which costs no width: a pool
-    # short of its tools reads in the WARN amber exactly as one short of hands or mid-edit does. The
-    # figures, and which of the two shortfalls it is, are on the hover — the rule the work-bill mark
-    # already follows here (*"the card is a role name over a stepper and has no room for
-    # arithmetic"*).
+    # **SO THE CARD WIDENS THE `⚠` IT ALREADY HAS INSTEAD OF ADDING A MARK**, which costs no width: the
+    # triangle flies on either shortfall (short of hands, short of tools, or both) and the title takes
+    # the WARN amber with it. Which shortfall it is — and both, when both hold — is on the hover, the
+    # rule the work-bill mark already followed here (*"the card is a role name over a stepper and has
+    # no room for arithmetic"*).
+    #
+    # **THE HOVER IS ORDERING, NOT REWORDING.** Each reason is its own line in the single phrasing the
+    # client uses for that fact everywhere — the hands shortfall first
+    # (`upkeep_pool_coverage_line`), then the tool shortfall (`KitRoster.shortfall_sentence`, no remedy
+    # clause) — and `join_tooltip_lines` drops whichever is empty.
     card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, kit_line])
-    # **THE META IS THE MARK, and the mark is now the coverage answer** — every harness reads it to ask
-    # *is this card marked*, which is the question the `⚠` answers, and the composer that decides the
-    # sentence is the same one that decides the glyph.
+    # **THE META IS THE TRIANGLE** — every harness reads it to ask *is this card marked*, and the two
+    # composers that decide the reasons are the same two that decide the glyph.
     card.set_meta(POOL_CARD_SHORT_META, wants_mark)
-    # …and the gear answer on its own meta, carrying the SENTENCE rather than a flag: a harness asking
-    # *what does that mark say* must not re-compose the wording it is checking.
+    # …and the TOOL reason on its own meta, carrying the SENTENCE rather than a flag: a harness asking
+    # *which reason is the triangle for* must not re-compose the wording it is checking.
     card.set_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, kit_line)
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
@@ -3244,7 +3258,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
     title.add_theme_color_override("font_color",
-        HudStyle.WARN if pending or wants_mark or kit_line != "" else HudStyle.INK)
+        HudStyle.WARN if pending or wants_mark else HudStyle.INK)
     if not wants_mark:
         col.add_child(title)
     else:
@@ -3255,11 +3269,10 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         var name_row := HBoxContainer.new()
         name_row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
         name_row.add_child(title)
-        # ⛔ **TWO MARKS, APPENDED AND NEVER SUBSTITUTED.** A pool can be short of HANDS and short of
-        # TOOLS in the same turn, and the two have opposite remedies — one is a stepper away, the
-        # other is the bench — so each keeps its own glyph and a card wearing both says both. The
-        # gear one is `HudWorkVocab.KIT_SHORT_MARK`, the SAME `◆` the work rows fly: one thing means
-        # *short of gear* across this client, which is why that glyph was chosen to twin nothing else.
+        # ⛔ **ONE MARK FOR BOTH SHORTFALLS.** A second glyph (the work rows' `◆`) was measured and does
+        # not fit this row at any packing, so the one `⚠` stands for *something is wrong with this
+        # pool* and the two opposite remedies — a stepper away, or the bench — are told apart on the
+        # hover, which names each reason on its own line.
         name_row.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK))
         col.add_child(name_row)
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
