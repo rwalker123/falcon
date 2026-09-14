@@ -1167,13 +1167,14 @@ const KIT_SHORT_MARK := "◆"
 const WORK_ROW_MARKS_META := &"work_row_marks"
 
 ## **A POOL CARD'S GEAR-SHORTFALL SENTENCE, ON THE CARD AS META** — `KitRoster.shortfall_sentence`'s
-## line, or `""` for a pool with nothing to be short of. The card DRAWS only the `◆`; the sentence is
-## on its hover, so this is what a harness asks *what does that mark say* without re-composing the
-## wording it is checking.
+## line, or `""` for a pool with nothing to be short of. The card draws no gear glyph of its own — a
+## tool shortfall flies the same `⚠` a hands shortfall does — and the sentence is on its hover, so this
+## is what a harness asks *is the triangle flying for the TOOLS, and what does it say* without
+## re-composing the wording it is checking.
 ##
-## It is a second meta rather than a value on `POOL_CARD_SHORT_META` for that meta's own stated
-## reason: that one is read as a BOOLEAN meaning *is this pool short of HANDS*, and a gear shortfall
-## wearing it would answer yes to a question about the work bill.
+## It is a second meta rather than a value on `BandPanelController.POOL_CARD_SHORT_META` because that
+## one is the BOOLEAN *is the triangle flying*, true for either reason; this one is the tool reason
+## alone. The hands reason has no meta — it is the hover's coverage line.
 const POOL_CARD_KIT_SHORT_META := &"pool_card_kit_short"
 
 const WORK_ROW_MARKS_WIDTH := 20.0

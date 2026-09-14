@@ -2585,10 +2585,14 @@ messages anywhere"* the arc began with, one surface over.
   leaves them on `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers`
   and the same test that silences a covered pool silences them. Asserted on the frame rather than
   assumed — if one ever marked, the equality contract is what broke.
-- **`POOL_CARD_KIT_SHORT_META` carries the SENTENCE, not a flag**, and is a second meta rather than a
+- ⛔ **`POOL_CARD_SHORT_META` MEANS *THE TRIANGLE IS FLYING*, FOR EITHER REASON.** The dead claim:
+  *"`POOL_CARD_KIT_SHORT_META` carries the SENTENCE, not a flag, and is a second meta rather than a
   value on `POOL_CARD_SHORT_META` for that meta's own stated reason: it is read as a boolean meaning
-  *is this pool short of HANDS*, and a gear shortfall wearing it would answer yes to a question about
-  the work bill.
+  'is this pool short of HANDS', and a gear shortfall wearing it would answer yes to a question about
+  the work bill."* The triangle widened to both shortfalls, so the boolean is the triangle and
+  nothing narrower. `POOL_CARD_KIT_SHORT_META` still carries the tool SENTENCE (or `""`); the hands
+  reason has no meta at all — it is the hover's coverage line — so a harness asking WHICH reason reads
+  the kit meta and the hover, never the triangle's.
 
 #### ⛔ THE `◆` MARK DOES NOT FIT THIS BLOCK — THREE PLACEMENTS, ALL MEASURED
 
@@ -2607,24 +2611,49 @@ row is already at that ceiling with one mark:
 which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every `POOL_STEPPER_*` metric — and
 a second row costs 62px the work zone's floor cannot find.
 
-**So the sentence and the mark are both on the HOVER, and what the card says at a glance is its
-TITLE'S INK**, which costs no width: a pool short of its tools reads in the WARN amber exactly as one
-short of hands, or one mid-edit, already does. That is the same rule the work-bill mark on this card
-follows for its own figures (*"the card is a role name over a stepper and has no room for
-arithmetic"*).
+**So the reason is on the HOVER, and what the card says at a glance is its `⚠` and its TITLE'S
+INK**, neither of which costs width: the triangle that already sat beside a hands-short name widened
+to a tool shortfall, and the name takes the WARN amber with it. That is the same rule the work-bill
+mark on this card follows for its own figures (*"the card is a role name over a stepper and has no
+room for arithmetic"*).
 
-> **WHAT THAT COSTS, stated because it is a real gap.** *Short of hands* and *short of tools* have
-> opposite remedies — a stepper against the bench — and on this block they are **not distinguishable
-> without hovering**: a gear-short card and a hands-short card are both an amber name, and only the
-> `⚠` (hands) separates them. On the work rows the two are told apart by glyph (`◆` against `⚠`).
-> Closing it needs either width this block does not have or a substitution rule it was explicitly not
-> given.
+> ⛔ **RETIRED — THE TRIANGLE MEANT SHORT OF HANDS.** The dead note: *"Short of hands and short of
+> tools have opposite remedies — a stepper against the bench — and on this block they are not
+> distinguishable without hovering: a gear-short card and a hands-short card are both an amber name,
+> and only the `⚠` (hands) separates them."* It separated nothing a player could read: a card short
+> of BOTH drew exactly the card short of hands, and a card short of tools alone drew an amber name
+> with no triangle to explain it.
+
+**As built — the triangle flies on all three shortfall states, and the hover says why:**
+
+| Pool state | Name | `⚠` | Hover, after the role hint |
+|---|---|---|---|
+| fine | white | none | nothing |
+| short of hands | amber | yes | the coverage line |
+| short of tools | amber | yes | the tool line |
+| short of both | amber | yes | the coverage line, then the tool line |
+
+- **Two facts, two lines, in their existing words.** The hands line is
+  `HudWorkVocab.upkeep_pool_coverage_line`; the tool line is `KitRoster.shortfall_sentence`'s
+  (`2 of 6 Tillage kits available` — no remedy clause, no trailing period). Neither is reworded, each
+  being the one phrasing the client uses for that fact elsewhere, and `HudFormat.join_tooltip_lines`
+  drops whichever is empty — so the two are ORDERED on the hover, not composed into one sentence.
+- **ONE triangle, never two.** A card short of both draws a single `⚠`; a second glyph is the
+  measured-and-refused placement above.
+- **The gating underneath is unchanged**: nothing flies for a fine pool, an itemless (`none`) kit, an
+  unstaffed pool or a pending row, and `roadwork` / `quarrywork` still fall silent on
+  `kitWorkersHolding == workers`.
+- **What the triangle cannot say at a glance is WHICH remedy.** Hands and tools are told apart on the
+  hover alone; that is the width budget's price.
 
 **Frame:** `band_panel_pool_kit_short` — four cards, four different answers, one frame, because a
-client that marks every card and one that marks none are the same picture at a glance. Agriculture is
-short of HANDS only, Husbandry of BOTH, Roadwork of neither (the itemless confirmation), Builders of
-TOOLS only — that last one being the card that can never fly the work-bill mark, since
-`_build_pools_block` passes it no `cover` at all. The state re-pushes the fund-mode band afterwards:
+client that marks every card and one that marks none are the same picture at a glance, and presence
+alone cannot tell the three shortfall states apart: each card's triangle (its meta AND the one `⚠` it
+drew) and each hover's lines are asserted together. Agriculture is short of HANDS only, Husbandry of
+BOTH (its hands line asserted BEFORE its tool line), Roadwork of neither (the itemless confirmation),
+Builders of TOOLS only — that last one being the card whose triangle can fly for its tools alone,
+since `_build_pools_block` passes it no `cover` at all. The state re-pushes the fund-mode band
+afterwards:
 the dock states below it re-render this block and push no band of their own, so leaving the fixture
 standing failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that
 changed.
