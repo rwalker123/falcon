@@ -246,11 +246,11 @@ impl Food {
         rows
     }
 
-    /// The row *negative income* empties first: one that is overused (the sim's `overdraws`, on a
-    /// source at its floor — [`Food::at_its_floor`]), a hunt row the sim says no crew is useful on,
-    /// or a dead row — and
-    /// failing those, the row paying the least per worker. `true` when the row is one of the
-    /// troubled kinds, which need no gain guard to be worth leaving.
+    /// The row *negative income* empties first: one that is overused ([`Food::overused`] — a hunt
+    /// row the sim says `overdraws`, a forage row whose patch stands at its floor), a hunt row the
+    /// sim says no crew is useful on, or a dead row — and failing those, the row paying the least
+    /// per worker. `true` when the row is one of the troubled kinds, which need no gain guard to
+    /// be worth leaving.
     fn row_to_empty<'b>(
         &self,
         view: &SeatView,
@@ -264,7 +264,7 @@ impl Food {
             .filter_map(|row| SourceKey::of_row(row).map(|key| (row, key)))
             .collect();
         for (row, key) in &worked {
-            let why = if row.overdraws && Self::at_its_floor(view, row) {
+            let why = if Self::overused(view, row) {
                 WHY_OVERUSED
             } else if row.kind == ROLE_HUNT && row.hunt_useful_workers == 0 {
                 WHY_NO_USEFUL_CREW
@@ -323,23 +323,36 @@ impl Food {
         !row_full && take >= self.floors.runway_gain_fraction * moved as f32 * rate
     }
 
-    /// **Whether a row's source is at or below its floor** — where the sim's `overdraws` is
-    /// overuse. The trigger is `LaborAssignmentState::overdraws`, not `actual_yield >
-    /// sustainable_yield`: the field *"replaces the client-derived `actual_yield >
-    /// sustainable_yield` test, which mis-fires on a hunt's lumpy per-turn take (a kill turn cashes
-    /// a whole banked animal …)"*. `overdraws` is intent **and** ability — a floor below the food
-    /// peak and a crew that out-takes the regrowth between that floor and the stock — so a row at
-    /// Best never reads it, which covers a fresh patch at the default floor. It does not cover a
-    /// patch *draw down to survive* set below Best: that row reads `overdraws` while the crew
-    /// strips the room above its floor on purpose, so a patch whose `biomass > floor ×
-    /// carrying_capacity` is still not overused, and rule 1 does not empty the row the drawdown
-    /// set. A hunt row reads `overdraws` alone (the herd's floor is its escapement, not priced
-    /// here). Before the floor half, a fresh patch read "overused" every other turn and rule 1
+    /// **Whether a worked row is overused**, read by job.
+    ///
+    /// A **hunt** row reads the sim's `overdraws`: a kill turn cashes a whole banked animal, so a
+    /// hunt's `actual_yield` spikes above its `sustainable_yield` under any floor, and the field
+    /// *"replaces the client-derived `actual_yield > sustainable_yield` test, which mis-fires on a
+    /// hunt's lumpy per-turn take"*.
+    ///
+    /// A **forage** row reads a take above its regrowth (`actual_yield > sustainable_yield`) on a
+    /// patch at its floor ([`Food::at_its_floor`]): `overdraws` needs `floor <
+    /// MSY_BIOMASS_FRACTION` (the sim's `floor_overdraws`), so it is never true for a row at the
+    /// default floor. Read through `overdraws` alone (80b6c1e8) no forage row was ever the row to
+    /// empty first, rule 1 fell through to the lowest-paying row, moved hands onto stripped
+    /// ground, and the forager seat starved on both bench seeds (seed 19: 1 working, 25 hunger
+    /// deaths; seed 40: 0 working, 26) against a baseline of 16 and 20 working with none.
+    fn overused(view: &SeatView, row: &LaborAssignmentState) -> bool {
+        if row.kind == ROLE_FORAGE {
+            row.actual_yield > row.sustainable_yield && Self::at_its_floor(view, row)
+        } else {
+            row.overdraws
+        }
+    }
+
+    /// **Whether a forage row's patch stands at or below the row's floor**: `biomass ≤ floor ×
+    /// carrying_capacity`, at the floor the row reads on the wire (Best, 0.5, for an assignment
+    /// sent with `floor: None`); a patch the frame does not carry reads at its floor. A take above
+    /// the regrowth on a patch above its floor is the room above the floor being taken, not
+    /// overuse, so a row *draw down to survive* set below Best is not emptied while it strips that
+    /// room. Before the floor half, a fresh patch read "overused" every other turn and rule 1
     /// shuffled band 2's hands between 47,5 and 49,5 for the whole of seed 23's t45–t50.
     fn at_its_floor(view: &SeatView, row: &LaborAssignmentState) -> bool {
-        if row.kind != ROLE_FORAGE {
-            return true;
-        }
         view.patch_at(Tile::new(row.target_x, row.target_y))
             .is_none_or(|patch| patch.biomass <= row.floor * patch.carrying_capacity)
     }
@@ -2444,6 +2457,55 @@ mod tests {
             .expect("one worked row");
         assert!(troubled);
         assert_eq!(why, WHY_OVERUSED);
+    }
+
+    /// **A forage row at the default floor is overused on a take above its regrowth.** The sim's
+    /// `overdraws` is never true there (`floor_overdraws` needs a floor below the food peak), so
+    /// the row reads `actual_yield > sustainable_yield` on a patch at its floor: a take equal to
+    /// the regrowth is not overuse, and neither is any take on a patch above its floor. Read
+    /// through `overdraws` alone this row was never the one to empty first, and the forager seat
+    /// starved on both bench seeds.
+    #[test]
+    fn a_forage_row_at_its_default_floor_is_overused_only_on_a_take_above_its_regrowth() {
+        const REGROWTH: f32 = 2.0;
+        const ABOVE_REGROWTH: f32 = 2.5;
+        let reading = |actual_yield: f32, biomass_over_capacity: f32| {
+            let view = a_view_with(|view| {
+                let band = &mut view.snapshot.populations[0];
+                band.idle_workers = 0;
+                band.labor_assignments = vec![LaborAssignmentState {
+                    sustainable_yield: REGROWTH,
+                    overdraws: false,
+                    ..forage_row(RICH_PATCH, 17, actual_yield)
+                }];
+                for patch in &mut view.snapshot.forage_patches {
+                    if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                        patch.biomass = biomass_over_capacity * patch.carrying_capacity;
+                    }
+                }
+            });
+            let (row, _, troubled, why) = food()
+                .row_to_empty(&view, &memory(), own_band(&view))
+                .expect("one worked row");
+            assert!(!row.overdraws);
+            assert_eq!(row.floor, BEST_FLOOR, "the wire default");
+            (troubled, why)
+        };
+        assert_eq!(
+            reading(ABOVE_REGROWTH, BEST_FLOOR),
+            (true, WHY_OVERUSED),
+            "above its regrowth, at its floor"
+        );
+        assert_ne!(
+            reading(REGROWTH, BEST_FLOOR).1,
+            WHY_OVERUSED,
+            "the regrowth taken exactly"
+        );
+        assert_ne!(
+            reading(ABOVE_REGROWTH, BEST_FLOOR + FLOOR_STEP).1,
+            WHY_OVERUSED,
+            "above its floor"
+        );
     }
 
     // ---- rule 6: draw down to survive ---------------------------------------------------------
