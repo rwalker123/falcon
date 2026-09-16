@@ -44,7 +44,8 @@ mod rules;
 mod sources;
 
 use sim_runtime::{
-    CommandPayload, LaborAssignmentState, PopulationCohortState, FIXED_POINT_SCALE, FOOD_CARGO_KEY,
+    CommandPayload, HerdTelemetryState, LaborAssignmentState, PopulationCohortState,
+    FIXED_POINT_SCALE, FOOD_CARGO_KEY,
 };
 use tracing::debug;
 
@@ -59,7 +60,7 @@ pub(crate) use sources::{
     best_sustained_cluster_within, cluster_take, cluster_take_sustained, foreign_band_at,
     is_food_site, is_walkable, patch_per_worker_yield, ClusterTake, IsDead, SourceKey,
 };
-use sources::{hunting_kits_held, Source};
+use sources::{herd_kit_id, hunting_kits_held, kit_units_held, Source};
 
 /// The `assign_labor` roles this specialist staffs — the `kind` vocabulary of
 /// `LaborAssignmentState` (`sim_runtime/src/command_text.rs`).
@@ -199,29 +200,59 @@ impl Food {
                 tile: Tile::new(patch.x, patch.y),
                 per_worker_yield: patch_per_worker_yield(memory, band, patch),
                 ceiling: patch.biomass * patch.provisions_per_biomass,
+                crew_cap: None,
             })
             .filter(|source| {
                 let forecast = Self::forecast_for(view, &source.key).unwrap_or_default();
                 !self.is_dead(memory, band, &source.key, forecast)
             })
             .collect();
-        // A herd is a source only for a band holding hunting gear ([`hunting_kits_held`]).
+        // A herd is a source only for a band holding a unit of the kit that herd is hunted
+        // under ([`herd_kit_id`], [`kit_units_held`]), and credits no more hands than the units
+        // it holds **less the hands the sim reads as useful on other herds under the same kit**
+        // (`min(workers, hunt_useful_workers)` per row — a row no crew is useful on is the row
+        // rule 1 empties first, and its hands free their units). The units are the band's, not
+        // the herd's, so one spear arms one hunter on one herd, not one on each: the band-wide
+        // "holds any hunting kit" reading sent twelve hands after one spear, and the per-herd
+        // count alone sent a second hunter to the aurochs while the first stood on the deer
+        // (bench seed 19, t2–t3).
         let kits_held = hunting_kits_held(view, band);
+        let kit_of_row = |row: &LaborAssignmentState| {
+            view.snapshot
+                .herds
+                .iter()
+                .find(|herd| herd.id == row.fauna_id)
+                .map(|herd| herd_kit_id(view, herd))
+        };
+        let committed_elsewhere = |herd: &HerdTelemetryState, kit: &str| -> u32 {
+            band.labor_assignments
+                .iter()
+                .filter(|row| row.kind == ROLE_HUNT && row.fauna_id != herd.id)
+                .filter(|row| kit_of_row(row) == Some(kit))
+                .map(|row| row.workers.min(row.hunt_useful_workers))
+                .sum()
+        };
         sources.extend(
             view.snapshot
                 .herds
                 .iter()
-                .filter(|_| kits_held > 0)
                 .filter(|herd| herd.huntable && herd.per_worker_yield > 0.0)
                 .filter(|herd| grid.distance(here, Tile::new(herd.x, herd.y)) <= band.hunt_reach)
-                .map(|herd| {
+                .filter_map(|herd| {
+                    let kit = herd_kit_id(view, herd);
+                    let units = kit_units_held(view, band, kit)
+                        .map(|units| units.saturating_sub(committed_elsewhere(herd, kit)));
+                    if units == Some(0) {
+                        return None;
+                    }
                     let key = SourceKey::Herd(herd.id.clone());
-                    Source {
+                    Some(Source {
                         per_worker_yield: Self::rate(memory, band, &key, herd.per_worker_yield),
                         key,
                         tile: Tile::new(herd.x, herd.y),
                         ceiling: herd.biomass * herd.provisions_per_biomass,
-                    }
+                        crew_cap: units,
+                    })
                 })
                 .filter(|source| {
                     let forecast = Self::forecast_for(view, &source.key).unwrap_or_default();
@@ -238,7 +269,7 @@ impl Food {
             visibility_here = view.visibility(here),
             sources = ?sources
                 .iter()
-                .map(|source| (source.key.describe(), source.per_worker_yield, source.ceiling))
+                .map(|source| (source.key.describe(), source.per_worker_yield, source.ceiling, source.crew_cap))
                 .collect::<Vec<_>>(),
             rows = ?band
                 .labor_assignments
@@ -455,8 +486,8 @@ pub(crate) mod tests {
     use crate::profile::{AiProfiles, NO_MEMORY_DECAY};
     use crate::view::{VISIBILITY_ACTIVE, VISIBILITY_DISCOVERED};
     use sim_runtime::{
-        BandKitTiersState, CohortStoreState, ForagePatchState, HerdTelemetryState, KitOptionState,
-        WorldSnapshot,
+        BandKitTiersState, CohortStoreState, EquipmentBatchState, ForagePatchState,
+        HerdTelemetryState, KitOptionState, WorldSnapshot,
     };
 
     pub const FACTION: u32 = 3;
@@ -482,10 +513,14 @@ pub(crate) mod tests {
     pub const FOUNDING_FLOOR: u32 = 4;
     pub const PARENT_FLOOR: u32 = 6;
     /// The roster's hunting kit and the weapon it carries (`equipment.json` → `big_game`); the
-    /// fixture band's tier under it is a fresh spear's, so a herd is a source for it
-    /// ([`hunting_kits_held`]).
+    /// fixture band's tier under it is a fresh spear's ([`hunting_kits_held`]), and it holds
+    /// [`HUNT_KIT_UNITS`] of the weapon, so the herd is a source for a crew that size
+    /// ([`kit_units_held`]).
     pub const HUNT_KIT: &str = "big_game";
     pub const HUNT_KIT_ITEM: &str = "spears";
+    /// Spears enough for the whole band: the fixture's herd is bounded by its animals, not its
+    /// gear, unless a test says otherwise.
+    pub const HUNT_KIT_UNITS: u32 = 17;
     /// The roster's gathering kit — a kit whose items are not hunting gear.
     pub const FORAGE_KIT: &str = "gathering";
     pub const FORAGE_KIT_ITEM: &str = "baskets";
@@ -562,6 +597,11 @@ pub(crate) mod tests {
                 kit_tier(FORAGE_KIT, BARE_ATTACK),
                 kit_tier(BARE_KIT, BARE_ATTACK),
             ],
+            equipment_batches: vec![EquipmentBatchState {
+                item_id: HUNT_KIT_ITEM.to_owned(),
+                count: HUNT_KIT_UNITS,
+                ..Default::default()
+            }],
             ..Default::default()
         }];
         let kit = |id: &str, jobs: &[&str], items: &[&str], attack: f32| KitOptionState {
@@ -606,6 +646,7 @@ pub(crate) mod tests {
             x: HERD_AT.x,
             y: HERD_AT.y,
             huntable: true,
+            default_kit_id: HUNT_KIT.to_owned(),
             per_worker_yield: 1.5,
             // A few animals: the best per-worker rate in reach, and a ceiling of 2.
             biomass: 2.0,

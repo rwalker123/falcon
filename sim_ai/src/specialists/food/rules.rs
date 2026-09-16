@@ -17,11 +17,12 @@ use sim_runtime::{
 
 use super::ledger::{
     floor_income, goal_progress, ledger_note, project, project_all, project_changes, regrowth_at,
-    survives, Change, PatchBook, Projection, Reassignment, BEST_FLOOR,
+    survives, Book, Change, PatchBook, Projection, Reassignment, BEST_FLOOR,
 };
 use super::sources::{
-    cluster_sites, cluster_take_over, crew_take, patch_per_worker_yield, surplus_hands,
-    sustained_hands, workable_patch_at, Source, SourceKey,
+    cluster_sites, crew_take, deal_free_hands, foreign_band_at, is_walkable,
+    patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at, DealtSite, Source,
+    SourceKey,
 };
 use super::{
     Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT,
@@ -128,6 +129,21 @@ struct Candidate {
     hands: u32,
     change: Reassignment,
     subject: String,
+}
+
+/// A site *split to feed* could send a child to, and what that child would be.
+struct SplitSite {
+    tile: Tile,
+    /// Beyond `split_search_tiles` — the far ring, tried only when the near ring has nothing.
+    far: bool,
+    distance: u32,
+    /// The child's crew: the site's sustained hands, at least the founding floor, within what
+    /// the parent may give up.
+    crew: u32,
+    /// The child's projected net income per turn once the site's series settles.
+    net: f32,
+    /// The site's settled income for the crew — what the reason quotes.
+    income: f32,
 }
 
 /// The rung *upgrade the ground* would declare on a patch.
@@ -359,11 +375,12 @@ impl Food {
 
     /// The reassignments *negative income* chooses among, all within `budget`: (a) the free hands
     /// — the idle ones plus every row's surplus, each donor row reduced to its `workers_needed` —
-    /// **dealt across the sites in reach the way [`cluster_take_over`] deals them** (a band in a
-    /// cluster spreads over it instead of piling onto one site), and, weighed beside it, the same
-    /// hands onto the single best source none of them leave (which may be a herd); (b) the row to
-    /// empty first onto the best other source, when that buys something; (c) both onto the best
-    /// source for the whole crew.
+    /// **dealt across the sites in reach in two passes** ([`deal_free_hands`]: each site's
+    /// sustained crew first, then the room above the floor; a band in a cluster spreads over it
+    /// instead of piling onto one site, and a patch at its floor takes no more), and, weighed
+    /// beside it, the same hands onto the single best source none of them leave (which may be a
+    /// herd, up to the kit units held); (b) the row to empty first onto the best other source,
+    /// when that buys something; (c) both onto the best source for the whole crew.
     fn reassignments(
         &self,
         view: &SeatView,
@@ -380,7 +397,12 @@ impl Food {
         if free.hands > 0 {
             let is_dead =
                 |key: &SourceKey, forecast: f32| self.is_dead(memory, band, key, forecast);
-            let cluster = cluster_take_over(
+            // Only the sites the hands improve take any; the hands a site could not use stay
+            // where they are, so the donors are drawn down only by what is placed.
+            let improves = |tile: Tile, hands: u32, take: f32| {
+                self.improves(view, memory, band, tile, hands, take)
+            };
+            let sites = deal_free_hands(
                 view,
                 memory,
                 band,
@@ -391,32 +413,34 @@ impl Food {
                     (!donors.contains(&SourceKey::Patch(tile)))
                         .then(|| Self::workers_on(band, &SourceKey::Patch(tile)))
                 },
+                &improves,
             );
-            // Only the sites the hands improve take any; the hands a site could not use stay
-            // where they are, so the donors are drawn down only by what is placed.
-            let sites: Vec<&(Tile, u32, f32)> = cluster
-                .sites
-                .iter()
-                .filter(|(tile, hands, take)| {
-                    self.improves(view, memory, band, *tile, *hands, *take)
-                })
-                .collect();
-            let dealt: u32 = sites.iter().map(|(_, hands, _)| hands).sum();
+            let dealt: u32 = sites.iter().map(DealtSite::hands).sum();
             if dealt > 0 {
                 let placed_hands = self.draw(&surplus_rows, &[], dealt, idle);
                 let mut commands = self.reduction_commands(band, &placed_hands);
                 let mut placed = Vec::new();
-                for (tile, hands, _) in &sites {
-                    let key = SourceKey::Patch(*tile);
-                    commands.push(self.assign(band, &key, Self::workers_on(band, &key) + hands));
-                    placed.push(format!("{} ×{hands}", key.describe()));
+                for site in &sites {
+                    let key = SourceKey::Patch(site.tile);
+                    commands.push(self.assign(
+                        band,
+                        &key,
+                        Self::workers_on(band, &key) + site.hands(),
+                    ));
+                    placed.push(format!(
+                        "{} ×{} (sustained {}, surplus {})",
+                        key.describe(),
+                        site.hands(),
+                        site.sustained,
+                        site.surplus
+                    ));
                 }
                 out.push(Candidate {
                     commands,
                     hands: dealt,
                     change: Reassignment {
                         income_lost: 0.0,
-                        income_gained: sites.iter().map(|(_, _, take)| take).sum(),
+                        income_gained: sites.iter().map(|site| site.take).sum(),
                         payoff_turn: 0,
                     },
                     subject: format!(
@@ -430,38 +454,48 @@ impl Food {
                 });
             }
         }
+        // The single best source, sent only the hands it can use (a herd: the kit units held).
         let free_onto = (free.hands > 0)
             .then(|| Self::best_source(sources, free.hands, &donors))
             .flatten()
-            .filter(|best| {
+            .map(|best| {
+                (
+                    best,
+                    best.usable(Self::workers_on(band, &best.key), free.hands),
+                )
+            })
+            .filter(|(best, hands)| {
                 let existing = Self::workers_on(band, &best.key);
-                let take = best.marginal(existing, free.hands);
+                let take = best.marginal(existing, *hands);
                 match &best.key {
                     SourceKey::Patch(tile) => {
-                        self.improves(view, memory, band, *tile, free.hands, take)
+                        self.improves(view, memory, band, *tile, *hands, take)
                     }
                     SourceKey::Herd(_) => {
-                        take >= self.floors.runway_gain_fraction
-                            * free.hands as f32
-                            * best.per_worker_yield
+                        *hands > 0
+                            && take
+                                >= self.floors.runway_gain_fraction
+                                    * *hands as f32
+                                    * best.per_worker_yield
                     }
                 }
             });
-        if let Some(best) = free_onto {
+        if let Some((best, hands)) = free_onto {
             let existing = Self::workers_on(band, &best.key);
-            let mut commands = self.reduction_commands(band, &free);
-            commands.push(self.assign(band, &best.key, existing + free.hands));
+            let sent = self.draw(&surplus_rows, &[], hands, idle);
+            let mut commands = self.reduction_commands(band, &sent);
+            commands.push(self.assign(band, &best.key, existing + sent.hands));
             out.push(Candidate {
                 commands,
-                hands: free.hands,
+                hands: sent.hands,
                 change: Reassignment {
                     income_lost: 0.0,
-                    income_gained: best.marginal(existing, free.hands),
+                    income_gained: best.marginal(existing, sent.hands),
                     payoff_turn: 0,
                 },
                 subject: format!(
                     "{} -> {}",
-                    Self::free_hands_phrase(free.idle, free.hands - free.idle),
+                    Self::free_hands_phrase(sent.idle, sent.hands - sent.idle),
                     best.key.describe()
                 ),
             });
@@ -490,18 +524,23 @@ impl Food {
             .filter(|next| clears(next))
         {
             let existing = Self::workers_on(band, &next.key);
+            // A herd takes only the hands its kit units arm. A troubled row is emptied whatever
+            // the next source can use (its crew earns nothing where it stands); a merely lowest
+            // row gives up only the hands that land somewhere.
+            let placed = next.usable(existing, moved);
+            let leaving = if troubled { moved } else { placed };
             let change = Reassignment {
-                income_lost: low * moved as f32,
-                income_gained: next.marginal(existing, moved),
+                income_lost: low * leaving as f32,
+                income_gained: next.marginal(existing, placed),
                 payoff_turn: 0,
             };
-            if change.income_gained > change.income_lost {
+            if placed > 0 && change.income_gained > change.income_lost {
                 out.push(Candidate {
                     commands: vec![
-                        self.assign(band, &low_key, row.workers - moved),
-                        self.assign(band, &next.key, existing + moved),
+                        self.assign(band, &low_key, row.workers - leaving),
+                        self.assign(band, &next.key, existing + placed),
                     ],
-                    hands: moved,
+                    hands: leaving,
                     change,
                     subject: format!("{why} {} -> {}", low_key.describe(), next.key.describe()),
                 });
@@ -519,8 +558,10 @@ impl Food {
             let mut except: Vec<SourceKey> =
                 free.reductions.iter().map(|(key, _)| key.clone()).collect();
             except.push(low_key.clone());
-            if let Some(best) =
-                Self::best_source(sources, both, &except).filter(|next| clears(next))
+            // Both onto one source: only where that source can use the whole crew.
+            if let Some(best) = Self::best_source(sources, both, &except)
+                .filter(|next| clears(next))
+                .filter(|next| next.usable(Self::workers_on(band, &next.key), both) == both)
             {
                 let existing = Self::workers_on(band, &best.key);
                 let change = Reassignment {
@@ -710,10 +751,9 @@ impl Food {
         let horizon = self.floors.projection_horizon_turns;
         let before = project(&book, &Reassignment::NONE, horizon);
         let mut best: Option<(Drawn, &Source, Projection, f32, Reassignment)> = None;
-        for drawn in [
-            self.draw(&[], &[], idle, idle),
-            self.draw(&[], &staying, budget, idle),
-        ] {
+        let none: [&LaborAssignmentState; 0] = [];
+        for (rows, want) in [(&none[..], idle), (&staying[..], budget)] {
+            let drawn = self.draw(&[], rows, want, idle);
             if drawn.hands == 0 {
                 continue;
             }
@@ -721,6 +761,16 @@ impl Food {
                 continue;
             };
             let existing = Self::workers_on(band, &source.key);
+            // A herd takes only the hands its kit units arm: draw again for what it can use.
+            let usable = source.usable(existing, drawn.hands);
+            if usable == 0 {
+                continue;
+            }
+            let drawn = if usable < drawn.hands {
+                self.draw(&[], rows, usable, idle)
+            } else {
+                drawn
+            };
             let change = Reassignment {
                 income_lost: drawn.income_lost,
                 income_gained: source.marginal(existing, drawn.hands),
@@ -775,21 +825,36 @@ impl Food {
             .map(|(proposal, _)| proposal)
     }
 
-    /// **Rule 3 — split to feed.** After rule 1's change the band's projected runway is still
-    /// below the goal, and a discovered, workable site just outside its reach would feed the
-    /// child crew: split toward it. The child appears on the parent's tile next turn and
-    /// [`Food::settle`] walks it there.
+    /// **Rule 3 — split to feed.** After rule 1's change the band's projected net income is
+    /// still negative, or its projected runway still under the goal, and a discovered, workable,
+    /// walkable site outside its reach would feed a child crew on its own: split toward it. The
+    /// child appears on the parent's tile next turn and [`Food::settle`] walks it there.
     ///
-    /// **The crew is `min(split_band_workers, working_age − founding_parent_min_workers)`, and
-    /// the rule is silent below `founding_min_workers`.** The sim's two split floors cross the
-    /// wire on every cohort (`PopulationCohortState::founding_min_workers` /
-    /// `founding_parent_min_workers` — *"The two floors cross the wire; the verdict does not."*),
-    /// so the child is sized to what the parent may give up, and a crew the sim would refuse as
-    /// too small is not asked for. The refusal memory ([`SeatMemory::split_refused_at`]) stays as
-    /// a belt: a split can still be refused for reasons the floors do not state.
+    /// **The child is sized to the site**: its crew is the site's [`sustained_hands`] at the
+    /// band's rate, at least `founding_min_workers`, capped at `working_age −
+    /// founding_parent_min_workers`; the rule is silent when that cap is under the founding
+    /// floor. The sim's two split floors cross the wire on every cohort
+    /// (`PopulationCohortState::founding_min_workers` / `founding_parent_min_workers` — *"The
+    /// two floors cross the wire; the verdict does not."*), so a crew the sim would refuse as too
+    /// small is not asked for. The refusal memory ([`SeatMemory::split_refused_at`]) stays as a
+    /// belt: a split can still be refused for reasons the floors do not state.
     ///
-    /// Answers the change it priced beside the proposal, so the last rule can project the
-    /// plan in force.
+    /// **Feasible means the child survives on its own** ([`Food::child_projection`]): its share
+    /// of the larder and of the band's consumption, and the site's Best-floor income series for
+    /// its crew, projected over the horizon, must `survives`. Sites in the near ring
+    /// (`split_search_tiles`, the supply-pooling reach) beat sites in the far ring
+    /// (`split_reach_tiles`); within a ring the child's projected net income ranks, nearer first
+    /// on a tie.
+    ///
+    /// **Budget-free.** A split moves people out of the band; it is not labor churn against the
+    /// specialist's share, so its cost claims zero workers — the band-move claim still collides
+    /// with any other move of the band. Charged to the budget it was `over_budget` every turn
+    /// rule 1's shuffle had claimed the hands first (bench seed 19: proposed at t6, rejected,
+    /// silent until t33).
+    ///
+    /// Answers the change it priced beside the proposal — the rows the crew leaves, against the
+    /// mouths that leave with it; the child's take is the child's — so the last rule can project
+    /// the plan in force.
     pub(super) fn split_to_feed_change(
         &self,
         view: &SeatView,
@@ -799,34 +864,53 @@ impl Food {
         carried: &Reassignment,
     ) -> Option<(Proposal, Reassignment)> {
         let goals = plan.food_goals()?;
-        let crew = self.floors.split_band_workers.min(
-            band.working_age
-                .saturating_sub(band.founding_parent_min_workers),
-        );
+        // The most the parent may give up.
+        let cap = band
+            .working_age
+            .saturating_sub(band.founding_parent_min_workers);
         // A split the sim refused at this size is not asked for again until the band has grown.
         let refused_at_this_size = memory
             .split_refused_at(band.band_id)
             .is_some_and(|refused_at| refused_at >= band.working_age);
+        // Not a child still walking to the site it was split toward: its book on the road reads
+        // no income at all, which is the walk, not ground that cannot feed it — the same
+        // reading that keeps *negative income* off it.
         if band.is_traveling
             || memory.pending_split(band.band_id).is_some()
+            || memory.born_by_split(band.band_id).is_some()
             || refused_at_this_size
-            || crew < band.founding_min_workers
+            || cap < band.founding_min_workers
         {
-            return None;
-        }
-        let budget = self.budget_workers(view, plan);
-        if budget < crew {
             return None;
         }
         let book = Self::book(band);
         let horizon = self.floors.projection_horizon_turns;
         let after = project(&book, carried, horizon);
-        if after.runway_at_end >= goals.runway_turns {
+        if after.net_after >= 0.0 && after.runway_at_end >= goals.runway_turns {
             return None;
         }
         let grid = view.grid();
         let here = band_tile(band);
-        let (patch, take, distance) = view
+        // **A site is one child's.** The crew is sized to the site's sustained hands, so a site
+        // another own band already works from (within its `work_range`), or that a split is
+        // pending toward or a child is still walking to, has no room for a second child. The
+        // pending entry clears the turn the child appears, so without this the parent split
+        // toward the same site again the very next turn (bench seed 19: t3, t4 and t16, three
+        // children of four onto a site sustaining four; seed 40: t5 and t8).
+        let claimed = |tile: Tile| {
+            view.own_bands(self.faction)
+                .filter(|other| other.band_id != band.band_id)
+                .any(|other| {
+                    grid.distance(band_tile(other), tile) <= other.work_range
+                        || memory
+                            .pending_split(other.band_id)
+                            .is_some_and(|pending| pending.target == tile)
+                        || memory
+                            .born_by_split(other.band_id)
+                            .is_some_and(|birth| birth.target == tile)
+                })
+        };
+        let mut sites: Vec<SplitSite> = view
             .snapshot
             .forage_patches
             .iter()
@@ -837,58 +921,71 @@ impl Food {
                 let distance = grid.distance(here, tile);
                 (view.is_discovered(tile)
                     && distance > band.work_range
-                    && distance <= self.floors.split_search_tiles)
-                    .then(|| workable_patch_at(view, tile))
-                    .flatten()
-                    .map(|patch| (patch, distance))
+                    && distance <= self.floors.split_reach_tiles
+                    && is_walkable(view, tile)
+                    && !foreign_band_at(view, self.faction, tile)
+                    && !claimed(tile))
+                .then(|| workable_patch_at(view, tile))
+                .flatten()
+                .map(|patch| (patch, distance))
             })
             .filter(|(patch, _)| {
                 let key = SourceKey::Patch(Tile::new(patch.x, patch.y));
                 !self.is_dead(memory, band, &key, patch.per_worker_yield)
             })
-            .map(|(patch, distance)| {
-                let take = crew_take(
+            .filter_map(|(patch, distance)| {
+                let rate = patch_per_worker_yield(memory, band, patch);
+                let crew = sustained_hands(patch, rate)
+                    .max(band.founding_min_workers)
+                    .min(cap);
+                let (projection, income) = self.child_projection(band, patch, crew, horizon);
+                survives(&projection).then_some(SplitSite {
+                    tile: Tile::new(patch.x, patch.y),
+                    far: distance > self.floors.split_search_tiles,
+                    distance,
                     crew,
-                    patch_per_worker_yield(memory, band, patch),
-                    patch.biomass * patch.provisions_per_biomass,
-                );
-                (patch, take, distance)
+                    net: projection.net_after,
+                    income,
+                })
             })
-            .max_by(|(_, a, a_distance), (_, b, b_distance)| {
-                a.total_cmp(b).then_with(|| b_distance.cmp(a_distance))
-            })?;
-        // A child that cannot feed itself is not a fix.
-        let share = band.food_consumption * crew as f32 / band.working_age.max(1) as f32;
-        if take <= share {
-            return None;
-        }
-        let travel = distance.div_ceil(BAND_MOVE_TILES_PER_TURN);
+            .collect();
+        sites.sort_by(|a, b| {
+            a.far
+                .cmp(&b.far)
+                .then_with(|| b.net.total_cmp(&a.net))
+                .then_with(|| a.distance.cmp(&b.distance))
+        });
+        let site = sites.into_iter().next()?;
+        let crew = site.crew;
+        let travel = site.distance.div_ceil(BAND_MOVE_TILES_PER_TURN);
         // The hands leave the parent's rows, lowest-paying first (its idle ones cost nothing).
         let mut rows = Self::rows_ascending(band, ROLE_HUNT);
         rows.extend(Self::rows_ascending(band, ROLE_FORAGE));
         rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
         let drawn = self.draw(&Self::surplus_rows(band), &rows, crew, band.idle_workers);
+        // What the parent keeps: the rows drawn are lost, the mouths that leave are gained.
         let change = Reassignment {
             income_lost: drawn.income_lost,
-            income_gained: take,
-            payoff_turn: travel,
+            income_gained: Self::crew_share(band, crew) * band.food_consumption,
+            payoff_turn: 0,
         };
         let after_split = project_all(&book, &[*carried, change], horizon);
-        let target = Tile::new(patch.x, patch.y);
+        let target = site.tile;
         let commands = vec![CommandPayload::SplitBand {
             faction_id: self.faction,
             band_id: Some(band.band_id),
             workers: crew,
         }];
         let proposal = Proposal {
-            cost: Cost::claimed(crew, band.band_id, &commands),
+            cost: Cost::claimed(0, band.band_id, &commands),
             commands,
             intent: intent_key(SPECIALIST_FOOD, INTENT_SPLIT, band.band_id),
             score: goal_progress(&goals, &after, &after_split) * self.weight,
             reason: format!(
-                "{REASON_SPLIT_TO_FEED}: {crew} toward {},{} taking {take:.1}/turn from t{travel} [{}]",
+                "{REASON_SPLIT_TO_FEED}: {crew} toward {},{} taking {:.1}/turn from t{travel} [{}]",
                 target.x,
                 target.y,
+                site.income,
                 ledger_note(&after_split)
             ),
             memo: Some(Memo::Split {
@@ -899,6 +996,44 @@ impl Food {
             standing: false,
         };
         Some((proposal, change))
+    }
+
+    /// The share of `band` a child of `crew` working-age hands is: what it takes of the larder
+    /// and of the mouths.
+    fn crew_share(band: &PopulationCohortState, crew: u32) -> f32 {
+        crew as f32 / band.working_age.max(1) as f32
+    }
+
+    /// **The child's book, projected on its own**: its share of the parent's larder and
+    /// consumption ([`Food::crew_share`]), no income but the site — the Best-floor income series
+    /// of `patch` worked by `crew` ([`floor_income`]) — over `horizon`. Answers the projection
+    /// and the series' settled income, the sustained take once the room above the floor is
+    /// spent.
+    fn child_projection(
+        &self,
+        band: &PopulationCohortState,
+        patch: &ForagePatchState,
+        crew: u32,
+        horizon: u32,
+    ) -> (Projection, f32) {
+        let share = Self::crew_share(band, crew);
+        let parent = Self::book(band);
+        let child = Book {
+            stock: parent.stock * share,
+            income: 0.0,
+            consumption: parent.consumption * share,
+        };
+        let income = floor_income(&Self::patch_book(patch, crew), BEST_FLOOR, horizon);
+        let settled = income.per_turn.last().copied().unwrap_or(0.0);
+        let projection = project_changes(
+            &child,
+            &[Change::Series {
+                income_lost: 0.0,
+                income_gained: income.per_turn,
+            }],
+            horizon,
+        );
+        (projection, settled)
     }
 
     /// **Rule 3, second half — settle.** A band this seat split off, not yet at its site and
@@ -1045,6 +1180,10 @@ impl Food {
             }) else {
                 break;
             };
+            // Never more hands than the herd's kit units arm.
+            if herd.usable(Self::workers_on(band, &herd.key), hands) < hands {
+                continue;
+            }
             let change = Reassignment {
                 income_lost: drawn.income_lost,
                 income_gained: herd.marginal(Self::workers_on(band, &herd.key), hands),
@@ -1914,7 +2053,7 @@ impl Food {
 mod tests {
     use super::super::tests::{
         a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, ARMED_ATTACK,
-        BAND, BARE_ATTACK, FACTION, FORAGE_KIT, HERD_AT, HERD_ID, HERE, HUNT_KIT, NEAR_PATCH,
+        BAND, BARE_KIT, FACTION, FAR_PATCH, HERD_AT, HERD_ID, HERE, HUNT_KIT, NEAR_PATCH,
         RICH_PATCH, STOCK, TICK,
     };
     use super::*;
@@ -2036,66 +2175,131 @@ mod tests {
     }
 
     /// `equipment.json`: *"HUNTING YIELDS NOTHING AT ANY CREW SIZE until a spear is crafted"* —
-    /// a band whose hunt-kit tier resolves to the bare hand is never sent to a herd, however rich;
-    /// a tier above it and the herd is a source again. The reading is the band's `kit_tiers`, not
-    /// its batches: a sled without a spear resolves to the bare hand and counts for nothing.
+    /// a herd is a source only for a band holding a unit of the kit the herd's row names, and
+    /// for exactly as many hands as it holds units. (Rewritten from the `kit_tiers` reading: the
+    /// gate is now the per-herd kit's units in `equipment_batches`, which also bounds the crew.)
     #[test]
-    fn a_band_with_no_hunting_kit_is_never_sent_to_a_herd() {
-        let mut view = a_view();
-        // The rich patch out of sight, the herd big enough to out-earn the near patch.
-        view.snapshot.visibility_raster.samples[(RICH_PATCH.y * 8 + RICH_PATCH.x) as usize] = 0;
-        view.snapshot.herds[0].biomass = 100.0;
+    fn a_herd_is_a_source_for_exactly_the_kit_units_held() {
+        let spears = |count: u32| {
+            a_view_with(|view| {
+                // The rich patch out of sight, the herd big enough to out-earn the near patch.
+                view.snapshot.visibility_raster.samples
+                    [(RICH_PATCH.y * 8 + RICH_PATCH.x) as usize] = 0;
+                view.snapshot.herds[0].biomass = 100.0;
+                view.snapshot.populations[0].equipment_batches[0].count = count;
+            })
+        };
         let plan = plan_with_food_share(1.0);
-        let assigned_role = |view: &SeatView| {
-            let proposal = food()
-                .negative_income(view, &plan, &memory(), own_band(view))
-                .expect("a proposal");
-            assigned_to(&proposal.commands[0]).0
+        let specialist = food();
+        let herd_source = |view: &SeatView| {
+            specialist
+                .reachable_sources(view, &memory(), own_band(view))
+                .into_iter()
+                .find(|source| matches!(source.key, SourceKey::Herd(_)))
         };
+        // Spears for all: the herd credits every hand, and takes them all.
+        let armed = spears(17);
+        let source = herd_source(&armed).expect("a source");
+        assert_eq!(source.crew_cap, Some(17));
+        let proposal = specialist
+            .negative_income(&armed, &plan, &memory(), own_band(&armed))
+            .expect("a proposal");
         assert_eq!(
-            assigned_role(&view),
-            ROLE_HUNT,
-            "one spear: the herd is a source"
+            assigned_to(&proposal.commands[0]),
+            (ROLE_HUNT.to_owned(), 17, None, Some(HERD_ID.to_owned()))
         );
-        let tier_of = |view: &mut SeatView, kit: &str, attack: f32| {
-            for tier in &mut view.snapshot.populations[0].kit_tiers {
-                if tier.kit_id == kit {
-                    tier.attack = attack;
-                }
-            }
+        // One spear: a source for one hand — the second adds nothing, and is not sent.
+        let one = spears(1);
+        let source = herd_source(&one).expect("a source");
+        assert_eq!(source.crew_cap, Some(1));
+        assert_eq!(source.expected(1), 1.5);
+        assert_eq!(source.expected(12), 1.5, "hands past the unit add nothing");
+        assert_eq!(source.marginal(1, 11), 0.0);
+        assert_eq!(source.usable(0, 12), 1);
+        assert_eq!(source.usable(1, 12), 0);
+        let mut alone = SeatView {
+            snapshot: one.snapshot.clone(),
+            last_acted_tick: None,
         };
-        tier_of(&mut view, HUNT_KIT, BARE_ATTACK);
+        alone.snapshot.forage_patches.clear();
+        let proposal = specialist
+            .negative_income(&alone, &plan, &memory(), own_band(&alone))
+            .expect("the one hand");
         assert_eq!(
-            assigned_role(&view),
-            ROLE_FORAGE,
-            "the spear kit resolves to the bare hand: the herd is not"
+            assigned_to(&proposal.commands[0]),
+            (ROLE_HUNT.to_owned(), 1, None, Some(HERD_ID.to_owned()))
         );
+        assert_eq!(proposal.cost.workers, 1);
+        // The one spear already on this herd: a sibling herd under the same kit is not a source
+        // — the units are the band's, not the herd's.
+        let mut committed = SeatView {
+            snapshot: one.snapshot.clone(),
+            last_acted_tick: None,
+        };
+        let sibling = "herd_10";
+        committed.snapshot.herds.push(HerdTelemetryState {
+            id: sibling.to_owned(),
+            ..committed.snapshot.herds[0].clone()
+        });
+        committed.snapshot.populations[0].labor_assignments = vec![hunt_row(1, 1.5, 1)];
+        committed.snapshot.populations[0].idle_workers = 16;
+        let sources = specialist.reachable_sources(&committed, &memory(), own_band(&committed));
+        let herd_caps: Vec<(String, Option<u32>)> = sources
+            .iter()
+            .filter_map(|source| match &source.key {
+                SourceKey::Herd(id) => Some((id.clone(), source.crew_cap)),
+                SourceKey::Patch(_) => None,
+            })
+            .collect();
+        assert_eq!(herd_caps, vec![(HERD_ID.to_owned(), Some(1))]);
+        // No spear: not a source, for rule 1 or rule 4.
+        let bare = spears(0);
+        assert!(herd_source(&bare).is_none());
+        let proposal = specialist
+            .negative_income(&bare, &plan, &memory(), own_band(&bare))
+            .expect("the near patch");
+        assert_eq!(assigned_to(&proposal.commands[0]).0, ROLE_FORAGE);
         assert!(
-            food()
+            specialist
                 .spare_hands_into_hunts(
-                    &view,
+                    &bare,
                     &plan,
                     &memory(),
-                    own_band(&view),
+                    own_band(&bare),
                     &Reassignment::NONE
                 )
                 .is_none(),
             "nor does rule 4 see it"
         );
-        // A forage kit above the bare hand is not a hunting kit; no tiers published reads bare.
-        tier_of(&mut view, FORAGE_KIT, ARMED_ATTACK);
-        assert_eq!(
-            assigned_role(&view),
-            ROLE_FORAGE,
-            "baskets are not a weapon"
-        );
-        tier_of(&mut view, HUNT_KIT, ARMED_ATTACK);
-        assert_eq!(assigned_role(&view), ROLE_HUNT, "armed again");
-        view.snapshot.populations[0].kit_tiers.clear();
-        assert_eq!(
-            assigned_role(&view),
-            ROLE_FORAGE,
-            "no tiers on the wire: nothing to hunt with"
+        // The kit is the herd's own row, else the hunt job's default; a kit that carries nothing
+        // bounds nothing; a kit the roster does not list arms nobody.
+        let mut fallback = spears(2);
+        fallback.snapshot.herds[0].default_kit_id.clear();
+        fallback.snapshot.default_hunt_kit_id = HUNT_KIT.to_owned();
+        assert_eq!(herd_source(&fallback).map(|s| s.crew_cap), Some(Some(2)));
+        fallback.snapshot.herds[0].default_kit_id = BARE_KIT.to_owned();
+        assert_eq!(herd_source(&fallback).map(|s| s.crew_cap), Some(None));
+        fallback.snapshot.herds[0].default_kit_id = "no_such_kit".to_owned();
+        assert!(herd_source(&fallback).is_none());
+        // The outfit demand is the roster's business, not the batches': bare, the window still
+        // asks for the hunting kit.
+        let mut window = spears(0);
+        window.snapshot.populations[0].loadout_window = Some(sim_runtime::BandLoadoutWindowState {
+            open: true,
+            kit_budget: 17,
+            material_budget: 30,
+            ..Default::default()
+        });
+        window.snapshot.herds[0].regrowth_samples = vec![-1.0, 0.5, 1.0, 1.0, 0.5, 0.0];
+        window.snapshot.herds[0].per_worker_biomass = 40.0;
+        // A defense the roster's spear clears (the saturated fixture's herd is armoured).
+        window.snapshot.herds[0].defense = 5.0;
+        let demands = specialist.outfit_demands(&window, &plan, &memory(), own_band(&window));
+        assert!(
+            demands
+                .iter()
+                .any(|demand| demand.resource == Resource::Kit(HUNT_KIT.to_owned())),
+            "{demands:?}"
         );
     }
 
@@ -2891,16 +3095,24 @@ mod tests {
     /// §4: *"a band standing in a cluster spreads over it"*. Three sites in reach with plateaus
     /// of 8, 6 and 3 hands: seventeen idle hands are dealt 8/6/3, the best rate first — not 17
     /// onto the richest, which would leave nine of them past its plateau.
+    /// Free hands are dealt across the cluster **by the room above each site's floor** when the
+    /// sites send no regrowth curve (a sustained crew of nought): the rich patch's 12 of room at
+    /// 2.0 takes six hands, the near patch's 4 at 1.0 four, the third's 1 at 0.5 two — twelve of
+    /// the seventeen, and the five no site has room for stay idle. (Rewritten from the
+    /// standing-stock plateau: the capacities are cut so the rich patch's standing 16 for all
+    /// seventeen loses to the cluster's 17.)
     #[test]
-    fn free_hands_are_dealt_across_the_cluster_up_to_each_sites_plateau() {
+    fn free_hands_are_dealt_across_the_cluster_up_to_each_sites_surplus_room() {
         let third = Tile::new(2, 1);
         let view = a_view_with(|view| {
             for patch in &mut view.snapshot.forage_patches {
                 let tile = Tile::new(patch.x, patch.y);
-                // The ceiling is `biomass × provisions_per_biomass`; the plateau `ceil(ceiling / rate)`.
+                // The room is `biomass − 0.5 × K`; the surplus plateau `ceil(room / rate)`.
                 if tile == RICH_PATCH {
+                    patch.carrying_capacity = 8.0;
                     patch.biomass = 16.0;
                 } else if tile == NEAR_PATCH {
+                    patch.carrying_capacity = 4.0;
                     patch.biomass = 6.0;
                 }
             }
@@ -2935,7 +3147,7 @@ mod tests {
             proposal
                 .reason
                 .starts_with(&format!(
-                    "{REASON_NEGATIVE_INCOME}: 17 idle hands -> forage 2,3 ×8, forage 4,2 ×6, forage 2,1 ×3 ["
+                    "{REASON_NEGATIVE_INCOME}: 12 idle hands -> forage 2,3 ×6 (sustained 0, surplus 6), forage 4,2 ×4 (sustained 0, surplus 4), forage 2,1 ×2 (sustained 0, surplus 2) ["
                 )),
             "{}",
             proposal.reason
@@ -2951,18 +3163,80 @@ mod tests {
         assert_eq!(
             dealt,
             vec![
-                (8, Some(RICH_PATCH)),
-                (6, Some(NEAR_PATCH)),
-                (3, Some(third))
+                (6, Some(RICH_PATCH)),
+                (4, Some(NEAR_PATCH)),
+                (2, Some(third))
             ]
         );
-        assert_eq!(proposal.cost.workers, 17);
-        // 8 × 2.0 + 6 × 1.0 + 3 × 0.5 = 23.5 a turn, against 16 for all seventeen on the rich patch.
+        assert_eq!(proposal.cost.workers, 12);
+        // 12 + 4 + 1 = 17 a turn, against 16 for all seventeen on the rich patch's standing stock.
         assert!(
             proposal.reason.contains("positive again t0"),
             "{}",
             proposal.reason
         );
+    }
+
+    /// **Pass one before pass two.** The rich patch sustains three hands (regrowth 6 at 2.0) and
+    /// the near patch two (regrowth 2 at 1.0); the rich patch stands 8 above its floor (room for
+    /// four more at 2.0) and the near patch stands *at* its floor. The deal places 3 and 2 first,
+    /// then four surplus hands onto the rich patch and none onto the near one; the other eight
+    /// stay idle. Lifted above its floor by 6, the near patch takes six surplus hands too.
+    #[test]
+    fn free_hands_fill_each_sites_sustained_crew_before_any_surplus_and_a_patch_at_its_floor_takes_none(
+    ) {
+        let curves = |near_biomass: f32| {
+            a_view_with(|view| {
+                view.snapshot.herds.clear();
+                for patch in &mut view.snapshot.forage_patches {
+                    let tile = Tile::new(patch.x, patch.y);
+                    if tile == RICH_PATCH {
+                        patch.carrying_capacity = 12.0;
+                        patch.biomass = 14.0;
+                        patch.regrowth_samples = vec![6.0, 6.0, 6.0, 6.0, 6.0, 6.0];
+                    } else if tile == NEAR_PATCH {
+                        patch.carrying_capacity = 20.0;
+                        patch.biomass = near_biomass;
+                        patch.regrowth_samples = vec![2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
+                    }
+                }
+            })
+        };
+        let dealt_by = |view: &SeatView| {
+            let proposal = food()
+                .negative_income(view, &plan_with_food_share(1.0), &memory(), own_band(view))
+                .expect("a proposal");
+            let dealt: Vec<(u32, Option<Tile>)> = proposal
+                .commands
+                .iter()
+                .map(|command| {
+                    let (_, workers, tile, _) = assigned_to(command);
+                    (workers, tile)
+                })
+                .collect();
+            (proposal, dealt)
+        };
+        let at_floor = curves(10.0);
+        let (proposal, dealt) = dealt_by(&at_floor);
+        assert!(
+            proposal.reason.starts_with(&format!(
+                "{REASON_NEGATIVE_INCOME}: 9 idle hands -> forage 2,3 ×7 (sustained 3, surplus 4), forage 4,2 ×2 (sustained 2, surplus 0) ["
+            )),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(dealt, vec![(7, Some(RICH_PATCH)), (2, Some(NEAR_PATCH))]);
+        assert_eq!(proposal.cost.workers, 9);
+        let above_floor = curves(16.0);
+        let (proposal, dealt) = dealt_by(&above_floor);
+        assert!(
+            proposal.reason.starts_with(&format!(
+                "{REASON_NEGATIVE_INCOME}: 15 idle hands -> forage 2,3 ×7 (sustained 3, surplus 4), forage 4,2 ×8 (sustained 2, surplus 6) ["
+            )),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(dealt, vec![(7, Some(RICH_PATCH)), (8, Some(NEAR_PATCH))]);
     }
 
     /// A hand that would read surplus where it lands stays where it is: seventeen on a site
@@ -3694,15 +3968,25 @@ mod tests {
     const SPLIT_SITE: Tile = Tile::new(6, 2);
     const CHILD: u64 = 7002;
 
+    /// [`add_patch`] with what a child's projection reads: a flat regrowth curve of `regrowth`
+    /// a turn (so the site sustains `ceil(regrowth / rate)` hands) and each hand carrying its
+    /// rate in biomass.
+    fn add_site(view: &mut SeatView, tile: Tile, rate: f32, capacity: f32, regrowth: f32) {
+        add_patch(view, tile, rate, capacity);
+        let patch = view.snapshot.forage_patches.last_mut().unwrap();
+        patch.regrowth_samples = vec![regrowth; 6];
+        patch.per_worker_biomass = rate;
+    }
+
     /// A band short of food with nothing better in reach: twelve hands on the near patch earning
-    /// 12 against 16 eaten, the rich patch no site, and a site three tiles east a band of five
-    /// could work.
+    /// 12 against 16 eaten, the rich patch no site, and a site three tiles east sustaining six
+    /// hands at 1.5 (regrowth 9).
     fn a_short_band() -> SeatView {
         a_view_with(|view| {
             view.snapshot
                 .food_modules
                 .retain(|site| site.x != RICH_PATCH.x || site.y != RICH_PATCH.y);
-            add_patch(view, SPLIT_SITE, 1.5, 20.0);
+            add_site(view, SPLIT_SITE, 1.5, 20.0, 9.0);
             let band = &mut view.snapshot.populations[0];
             band.working_age = 12;
             band.idle_workers = 0;
@@ -3716,6 +4000,8 @@ mod tests {
         })
     }
 
+    /// (The crew reads 6, the site's sustained hands, where it read the profile's 5; the cost
+    /// claims no workers.)
     #[test]
     fn a_band_still_short_after_reassignment_splits_toward_a_site_just_out_of_reach() {
         let view = a_short_band();
@@ -3738,17 +4024,18 @@ mod tests {
         assert!(proposal.reason.contains("6,2"), "{}", proposal.reason);
         assert!(matches!(
             proposal.commands[0],
-            CommandPayload::SplitBand { workers: 5, .. }
+            CommandPayload::SplitBand { workers: 6, .. }
         ));
         assert_eq!(
             proposal.memo,
             Some(Memo::Split {
                 band: BAND,
                 target: SPLIT_SITE,
-                workers: 5
+                workers: 6
             })
         );
-        assert_eq!(proposal.cost.workers, 5);
+        assert_eq!(proposal.cost.workers, 0, "a split is not labor churn");
+        assert_eq!(proposal.cost.moves, vec![BAND]);
         // Nine hands leave 3 over the parent floor of 6, under the founding floor of 4; not with
         // a split already pending.
         let small = a_view_with(|view| view.snapshot.populations[0].working_age = 9);
@@ -3782,23 +4069,27 @@ mod tests {
         assert!(specialist
             .split_to_feed(&later, &plan, &refused, own_band(&later), &carried)
             .is_none());
-        // Grown to seventeen: the refusal was of a band of twelve. (Seventeen rather than
-        // thirteen because this memory has measured the near row at 1.0 a hand, and the web's
-        // prior now rates the site at that rather than its 1.5 forecast — five hands take 5.0,
-        // which must still beat the crew's share of what the band eats.)
+        // Grown to seventeen: the refusal was of a band of twelve. (This memory has measured the
+        // near row at 1.0 a hand, so the web's prior rates the site at that rather than its 1.5
+        // forecast, and the site's nine of regrowth now sustains nine hands.)
         later.snapshot.populations[0].working_age = 17;
-        assert!(specialist
+        let grown = specialist
             .split_to_feed(&later, &plan, &refused, own_band(&later), &carried)
-            .is_some());
-        // A site the split crew could not feed itself on is not a fix.
-        let poor = a_view_with(|_| {});
+            .expect("asked again, larger");
+        assert!(matches!(
+            grown.commands[0],
+            CommandPayload::SplitBand { workers: 9, .. }
+        ));
+        // A site the split crew could not feed itself on is not a fix: half a food a hand
+        // against the crew's share of what the band eats.
         let mut poor = SeatView {
             snapshot: view.snapshot.clone(),
-            last_acted_tick: poor.last_acted_tick,
+            last_acted_tick: None,
         };
         for patch in &mut poor.snapshot.forage_patches {
             if Tile::new(patch.x, patch.y) == SPLIT_SITE {
                 patch.per_worker_yield = 0.5;
+                patch.per_worker_biomass = 0.5;
             }
         }
         assert!(specialist
@@ -3806,11 +4097,12 @@ mod tests {
             .is_none());
     }
 
-    /// The child crew is what the parent may give up, capped at `split_band_workers`, and the
-    /// rule is silent under the founding floor: with parent floor 6 and founding floor 4, ten
-    /// hands split 4, nine split nothing, seventeen split the profile's 5.
+    /// The child crew is the site's sustained hands, at least the founding floor, within what
+    /// the parent may give up — and the rule is silent under the founding floor: with parent
+    /// floor 6, founding floor 4 and a site sustaining six, ten hands split 4, nine split
+    /// nothing, seventeen split the site's 6. (Was "seventeen split the profile's 5".)
     #[test]
-    fn the_split_crew_is_sized_by_the_wires_floors() {
+    fn the_split_crew_is_sized_by_the_site_within_the_wires_floors() {
         let specialist = food();
         let plan = plan_with_food_share(1.0);
         let at = |working_age: u32| {
@@ -3818,8 +4110,9 @@ mod tests {
                 view.snapshot
                     .food_modules
                     .retain(|site| site.x != RICH_PATCH.x || site.y != RICH_PATCH.y);
-                // A site rich enough that any crew the floors allow out-earns its share.
-                add_patch(view, SPLIT_SITE, 2.0, 40.0);
+                // A site rich enough that any crew the floors allow feeds itself: six hands at
+                // 2.0 sustained.
+                add_site(view, SPLIT_SITE, 2.0, 40.0, 12.0);
                 let band = &mut view.snapshot.populations[0];
                 band.working_age = working_age;
                 band.idle_workers = 0;
@@ -3844,7 +4137,7 @@ mod tests {
                 .split_to_feed(&view, &plan, &memory(), band, &carried)
                 .map(|proposal| match proposal.commands[0] {
                     CommandPayload::SplitBand { workers, .. } => {
-                        assert_eq!(proposal.cost.workers, workers);
+                        assert_eq!(proposal.cost.workers, 0);
                         assert!(
                             proposal.reason.contains(&format!("{workers} toward")),
                             "{}",
@@ -3857,7 +4150,185 @@ mod tests {
         };
         assert_eq!(crew_at(10), Some(4), "ten less the parent's six");
         assert_eq!(crew_at(9), None, "three is under the founding floor");
-        assert_eq!(crew_at(17), Some(5), "capped at split_band_workers");
+        assert_eq!(crew_at(17), Some(6), "the site's sustained crew");
+        // A site sustaining fewer than the founding floor (three, at regrowth 6) still gets the
+        // floor — a crew of four the site's six a turn feeds.
+        let mut thin = at(17);
+        for patch in &mut thin.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == SPLIT_SITE {
+                patch.regrowth_samples = vec![6.0; 6];
+            }
+        }
+        let (_, carried) = specialist.assess_income(&thin, &plan, &memory(), own_band(&thin));
+        let proposal = specialist
+            .split_to_feed(&thin, &plan, &memory(), own_band(&thin), &carried)
+            .expect("the founding floor");
+        assert!(matches!(
+            proposal.commands[0],
+            CommandPayload::SplitBand { workers: 4, .. }
+        ));
+    }
+
+    /// The split fires on a negative projected net income even with the runway above the goal
+    /// — a larder does not make a band that eats more than it earns fed — and not when the net
+    /// is non-negative and the runway at the goal. It is budget-free: a plan funding `Food` a
+    /// tenth of the pool (one hand) still gets the split, which claims no workers.
+    #[test]
+    fn the_split_fires_on_negative_net_income_whatever_the_runway_and_needs_no_budget() {
+        let specialist = food();
+        let stocked = |stock: f32, income: f32| {
+            let mut view = a_short_band();
+            let band = &mut view.snapshot.populations[0];
+            band.food_income = income;
+            band.stores = vec![CohortStoreState {
+                item: FOOD_CARGO_KEY.to_owned(),
+                quantity: (stock * FIXED_POINT_SCALE as f32) as i64,
+            }];
+            view
+        };
+        let plan = plan_with_food_share(1.0);
+        // Two thousand in the larder: the runway at the horizon is far past the goal; net −4.
+        let rich_larder = stocked(2000.0, 12.0);
+        let (_, carried) =
+            specialist.assess_income(&rich_larder, &plan, &memory(), own_band(&rich_larder));
+        let after = project(
+            &Food::book(own_band(&rich_larder)),
+            &carried,
+            specialist.floors.projection_horizon_turns,
+        );
+        assert!(after.runway_at_end > goals().runway_turns);
+        assert!(after.net_after < 0.0);
+        assert!(specialist
+            .split_to_feed(
+                &rich_larder,
+                &plan,
+                &memory(),
+                own_band(&rich_larder),
+                &carried
+            )
+            .is_some());
+        // Breaking even on the same larder: nothing to fix.
+        let fed = stocked(2000.0, 16.0);
+        let (_, carried) = specialist.assess_income(&fed, &plan, &memory(), own_band(&fed));
+        assert!(specialist
+            .split_to_feed(&fed, &plan, &memory(), own_band(&fed), &carried)
+            .is_none());
+        // A tenth of the pool funds one hand; the split needs none.
+        let thin_plan = plan_with_food_share(0.1);
+        let short = a_short_band();
+        assert_eq!(specialist.budget_workers(&short, &thin_plan), 1);
+        let (_, carried) =
+            specialist.assess_income(&short, &thin_plan, &memory(), own_band(&short));
+        let proposal = specialist
+            .split_to_feed(&short, &thin_plan, &memory(), own_band(&short), &carried)
+            .expect("budget-free");
+        assert_eq!(proposal.cost.workers, 0);
+    }
+
+    /// A feasible site in the near ring beats a richer one in the far ring; the far ring is
+    /// used when the near ring has nothing feasible; a site the child could not survive on is
+    /// never chosen, whichever ring it is in.
+    #[test]
+    fn the_split_prefers_the_near_ring_and_falls_back_to_the_far_ring() {
+        let specialist = food();
+        let plan = plan_with_food_share(1.0);
+        let view = a_short_band();
+        let grid = view.grid();
+        let (near, far) = (
+            specialist.floors.split_search_tiles,
+            specialist.floors.split_reach_tiles,
+        );
+        assert!(grid.distance(HERE, SPLIT_SITE) <= near);
+        let far_distance = grid.distance(HERE, FAR_PATCH);
+        assert!(far_distance > near && far_distance <= far, "{far_distance}");
+        // The fixture's far patch, given a curve and a carry: nine a hand, sustaining three.
+        let with_far_site = |view: &SeatView| {
+            let mut view = SeatView {
+                snapshot: view.snapshot.clone(),
+                last_acted_tick: None,
+            };
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == FAR_PATCH {
+                    patch.regrowth_samples = vec![27.0; 6];
+                    patch.per_worker_biomass = 9.0;
+                }
+            }
+            view
+        };
+        let target_of = |view: &SeatView| {
+            let (_, carried) = specialist.assess_income(view, &plan, &memory(), own_band(view));
+            specialist
+                .split_to_feed(view, &plan, &memory(), own_band(view), &carried)
+                .map(|proposal| match proposal.memo {
+                    Some(Memo::Split { target, .. }) => target,
+                    other => panic!("not a split memo: {other:?}"),
+                })
+        };
+        // Both feasible: the near site, though the far one pays six times as much.
+        let both = with_far_site(&view);
+        assert_eq!(target_of(&both), Some(SPLIT_SITE));
+        // The near site no longer a gathering site: the far ring.
+        let mut far_only = with_far_site(&view);
+        far_only
+            .snapshot
+            .food_modules
+            .retain(|site| site.x != SPLIT_SITE.x || site.y != SPLIT_SITE.y);
+        assert_eq!(target_of(&far_only), Some(FAR_PATCH));
+        // The far site at a carry the child starves on: nothing, though it is in reach.
+        let mut starving = far_only;
+        for patch in &mut starving.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == FAR_PATCH {
+                patch.per_worker_biomass = 0.1;
+            }
+        }
+        assert_eq!(target_of(&starving), None);
+        // Without the far site's curve the fixture's far patch feeds nobody, and the near site
+        // out of reach of the near ring is the far ring's — nothing without a feasible site.
+        assert_eq!(target_of(&view), Some(SPLIT_SITE));
+        // Water is not settled on: the near site on a water tile is skipped for the far one.
+        let mut flooded = with_far_site(&view);
+        for tile in &mut flooded.snapshot.tiles {
+            if Tile::new(tile.x, tile.y) == SPLIT_SITE {
+                tile.terrain_tags = sim_runtime::TerrainTags::WATER;
+            }
+        }
+        assert_eq!(target_of(&flooded), Some(FAR_PATCH));
+        // A site is one child's: with a child of this seat still walking to the near site, the
+        // parent's next split looks past it to the far ring — and the same with another own
+        // band standing on it.
+        let mut walking = with_far_site(&view);
+        walking.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: CHILD,
+            current_x: HERE.x,
+            current_y: HERE.y,
+            working_age: 4,
+            work_range: 2,
+            ..Default::default()
+        });
+        let memory = memory_with_a_birth(&walking, BAND, CHILD, SPLIT_SITE);
+        let (_, carried) = specialist.assess_income(&walking, &plan, &memory, own_band(&walking));
+        let proposal = specialist
+            .split_to_feed(&walking, &plan, &memory, own_band(&walking), &carried)
+            .expect("the far ring");
+        assert_eq!(
+            proposal.memo.map(|memo| match memo {
+                Memo::Split { target, .. } => target,
+                other => panic!("{other:?}"),
+            }),
+            Some(FAR_PATCH)
+        );
+        let mut settled = with_far_site(&view);
+        settled.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: CHILD,
+            current_x: SPLIT_SITE.x,
+            current_y: SPLIT_SITE.y,
+            working_age: 4,
+            work_range: 2,
+            ..Default::default()
+        });
+        assert_eq!(target_of(&settled), Some(FAR_PATCH));
     }
 
     #[test]

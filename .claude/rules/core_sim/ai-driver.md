@@ -336,13 +336,25 @@ left `None` too, because the field is **retired** —
 NOTHING AT ANY CREW SIZE until a spear is crafted"*; a seat that sends no loadout plays bare-handed
 (the opening window closes with nothing applied, `starting_loadout::close_opening_window`), which
 is what the demand board above now answers on turn one. So a herd is a
-source (`reachable_sources`) only for a band whose `hunting_kits_held` (`sources.rs`) is above 0:
-the hunt-job kits of `WorldSnapshot::kits` whose row in the band's `kit_tiers` (joined on
-`kit_id`) resolves an `attack` above the bare hand's — the bare hand being the row of the hunt-job
-kit that carries no items (`none`), which resolves to the `creatures.json` `person` attack. The
-tiers and not the batches, because `BandKitTiersState` is *"the RESOLVED answer. A client must not
-re-derive it … 'all items dry' keeps it at full tier with only the sled left"*: a sled without a
-spear is bare. Nothing is said in a reason: the rules simply rank forage. Before this, `Food` sent
+source (`reachable_sources`) only for a band holding a unit of **the kit that herd is hunted
+under**, and **credits no more hands than the units it holds**: per herd, the kit is the row's
+`HerdTelemetryState::default_kit_id` (*"the one `assign_labor … hunt <herd> <n>` resolves when
+the player names none"*), else `WorldSnapshot::default_hunt_kit_id` (`herd_kit_id`, `sources.rs`);
+its units are, over the kit's `KitOptionState::item_ids`, the least of the summed `count` of the
+band's `equipment_batches` rows for each item (`kit_units_held` — a party needs every item of the
+kit; an item-less kit bounds nothing, a kit the roster does not list arms nobody), **less the
+hands the sim reads as useful on the band's other hunt rows under the same kit**
+(`min(workers, hunt_useful_workers)` per row: the units are the band's, not the herd's, so one
+spear arms one hunter on one herd, not one on each — and a row nobody is useful on is the row
+rule 1 empties first, so its hands free their units). The `Source`
+carries that as `crew_cap`: `expected` / `marginal` count no hand past it, and `usable(existing,
+more)` is what a rule may *send* — rule 1's single-source candidate, the row-to-empty candidates,
+*feed while moving* and *spare hands into hunts* all assign a herd at most its units. Before
+this the reading was band-wide (`hunting_kits_held`, the hunt-job kits whose `kit_tiers` row
+resolves an `attack` above the bare hand's — kept for the log): a band holding **one** `big_game`
+kit read a deer row at `0.8` a hunter and rule 1 multiplied by twelve hands, three turns running
+on bench seed 19 (t2–t4, the sim's own reading three useful hunters, then one), for no food.
+Nothing is said in a reason: the rules simply rank forage. Before the kit gate at all, `Food` sent
 twelve hands to a herd every turn for the first 10–13 turns of every bench seed, each rejected
 next turn as *no useful crew*.
 
@@ -368,8 +380,15 @@ takes summed and `sites` is `(tile, hands dealt, take)` per site. `cluster_take_
 deal on top of crews already standing (`existing(tile)`, whose take is not counted again; `None`
 strikes a site out); `cluster_sites` is the same site list with its rates, for a caller that
 prices the sites itself (outfitting), and `sustained_hands` is the crew whose take reaches a
-site's Best-floor regrowth. `Land` ranks a standing tile on it and `Food` deals free hands by it,
-so the two specialists read ground the same way. `is_dead` is `Food::is_dead` handed in as a
+site's Best-floor regrowth. `Land` ranks a standing tile on it (`Ceiling::Standing`, the whole
+stand), so the two specialists read ground the same way; `Food` deals its free hands through
+`deal_free_hands`, **two passes of the same deal**: every site up to its sustained crew first
+(`Ceiling::Sustained`), then the hands left up to each site's **surplus** crew
+(`Ceiling::Surplus` — the room above the floor, `max(0, biomass − BEST_FLOOR × K) ×
+provisions_per_biomass`, whose plateau `ceil(room / rate)` counts only the hands *above* the
+sustained crew), each pass through rule 1's `improves` guard. A patch at or below its floor has
+no room and takes no second-pass hand; hands neither pass can place stay idle, which is what
+*split to feed* reads next. `is_dead` is `Food::is_dead` handed in as a
 closure — `Land` holds none of `Food`'s dead-row levers and passes `NEVER_DEAD`; a dead source
 already reads its realized rate, which is what made it dead, so the cluster weighs it down
 without a verdict.
@@ -388,11 +407,15 @@ fired and what the ledger said. The rules, in `propose` order:
   `idle_workers > 0` **or** a row with surplus (idle and surplus hands alike are negative income
   against what they could earn). Weighs three reassignments within budget — (a) the free hands,
   idle plus every row's surplus with each donor row cut to its `workers_needed`, **dealt across
-  the sites in reach the way `cluster_take_over` deals them** (one `assign_labor` per site that
-  changes — a band in a cluster spreads over it instead of piling seventeen onto a site needing
-  eight) and, weighed beside it, the same hands onto the single best source none of them leave
-  (which may be a herd; one site in reach and no herd: nowhere to put them, and the rule is
-  silent) — **either only where the hands improve the take** (`Food::improves`): a site's
+  the sites in reach in two passes** (`deal_free_hands`, above: each site's sustained crew
+  first, then the room above its floor; one `assign_labor` per site that changes, its reason
+  naming both — `forage 30,20 ×9 (sustained 2, surplus 7)` — so a band in a cluster spreads
+  over it instead of piling seventeen onto a site needing eight, and a patch stripped to its
+  floor takes no more; dealt by the standing stock, seed 19's t9 handed eight "surplus" hands
+  to a patch at its floor that took nothing extra) and, weighed beside it, the same hands onto
+  the single best source none of them leave
+  (which may be a herd, up to its kit units; one site in reach and no herd: nowhere to put
+  them, and the rule is silent) — **either only where the hands improve the take** (`Food::improves`): a site's
   marginal take of the hands moved must be at least `food.runway_gain_fraction × moved × rate`,
   the row-empty guard's idiom, *and* the band's row there, if any, must not already read
   `workers ≥ workers_needed` — a hand that would read surplus where it lands stays where it is
@@ -434,16 +457,35 @@ fired and what the ledger said. The rules, in `propose` order:
   the idle hands and the crews of rows that stay in range after the move, onto the best source that
   will not. Never a band `born_by_split` within `food.split_settle_turns` of its birth.
 - **split to feed** (`food:split:<band>`, then `food:settle:<child>`) — after rule 1's change the
-  band's projected runway is still under `goals.runway_turns`, the child crew
-  `min(food.split_band_workers, working_age − founding_parent_min_workers)` is at least
-  `founding_min_workers` — **the sim's two split floors are on every cohort**
-  (`PopulationCohortState::founding_min_workers` / `founding_parent_min_workers`, *"The two floors
-  cross the wire; the verdict does not."*), so the child is sized to what the parent may give up
-  and a crew the sim would refuse as too small is not asked for — no split is pending, **the sim
-  has not refused a split of this band at its current size or larger**
-  (`SeatMemory::split_refused_at`, below), and a discovered, workable, unowned-or-own site within
-  `food.split_search_tiles` but **outside** `work_range` would pay that crew more than its
-  consumption share: `split_band <crew>`, with `Memo::Split { target }`.
+  band's projected **net income is still negative or** its projected runway still under
+  `goals.runway_turns` (a larder does not make a band that eats more than it earns fed), the
+  parent may give up at least `founding_min_workers` (`working_age − founding_parent_min_workers`
+  — **the sim's two split floors are on every cohort**,
+  `PopulationCohortState::founding_min_workers` / `founding_parent_min_workers`, *"The two floors
+  cross the wire; the verdict does not."*, so a crew the sim would refuse as too small is not
+  asked for), no split is pending, the band is not itself a child still walking to its site,
+  **the sim has not refused a split of this band at its current size or larger**
+  (`SeatMemory::split_refused_at`, below), and a discovered, workable, walkable (`is_walkable`:
+  not `WATER`), unowned-or-own, not-dead site **outside** `work_range`, under no foreign band and
+  **not already one child's** — not within another own band's `work_range`, not the target of a
+  pending split or of a child still walking (the pending entry clears the turn the child
+  appears, and without this the parent split toward the same site again the next turn: seed 19
+  sent three children of four to a site sustaining four, t3/t4/t16, and starved them all) —
+  would feed a child on its own. **The child is sized to the site**: its crew is the site's
+  `sustained_hands` at the band's rate, at least `founding_min_workers`, capped at what the
+  parent may give up. **Feasible means the child survives** (`Food::child_projection`): its
+  share of the larder and of the band's consumption (`crew / working_age`), no income but the
+  site's Best-floor series for that crew (`floor_income`, the room above the floor front-loaded
+  then the regrowth), projected over the horizon, must `survives`. **Two rings**: a feasible site
+  within `food.split_search_tiles` (the supply-pooling reach) always beats one beyond it, out to
+  `food.split_reach_tiles`; within a ring the child's projected net income ranks, nearer first on
+  a tie. `split_band <crew>`, with `Memo::Split { target }`. **Budget-free**: the proposal is
+  `Cost::claimed(0, …)` — a split moves people out of the band, it is not labor churn against
+  `Food`'s share, and the band-move claim still collides with any other move of the band; charged
+  to the budget it was `over_budget` on seed 19 every turn rule 1's shuffle claimed the hands
+  first (proposed t6, rejected, silent until t33). The change carried to the ledger is the
+  parent's: the rows the crew leaves are lost, **the mouths that leave with it are gained**
+  (`consumption × crew / working_age`, payoff `0`); the child's take is the child's.
   The child appears on the parent's tile next turn (`split_band_from_parent`,
   `core_sim/src/systems/fission.rs`); `SeatMemory` matches it and **settle** walks it there with
   `move_band` under `food:settle:<child>` every turn until arrival (the commitment bonus), the
@@ -452,7 +494,7 @@ fired and what the ledger said. The rules, in `propose` order:
   do not state, the refusal shows in the failed-command log, the pending entry expires — and the
   memory learns from the frame that a band of *that* size cannot split, so the rule is silent
   until the band has grown. (With the shipped floors `4` / `6`, ten working-age split 4, nine
-  split nothing, seventeen split the profile's 5.)
+  split nothing, seventeen split the site's sustained crew.)
 - **spare hands into hunts** (`food:hunt:<band>`) — projected net after rule 1 is at
   `goals.net_income_per_turn` or within `food.near_positive_fraction` of it, and a live huntable
   herd is in reach: the most hands off the **forage rows** — their surplus first, then the
@@ -772,8 +814,8 @@ and `rover` (expand). Each key has one consumer:
 | `food.poor_yield_fraction` | `Food` | the share of the forecast a row must realize per worker |
 | `food.runway_gain_fraction` | `Food` | the per-worker gain *negative income* must buy before it empties a merely lowest row |
 | `food.projection_horizon_turns` | `Food` (the ledger) | how far ahead a band's stock is projected, and the longest payoff *upgrade the ground* waits for |
-| `food.split_search_tiles` | `Food` | how far from a band *split to feed* looks for a site |
-| `food.split_band_workers` | `Food` | the crew a split gives the new band |
+| `food.split_search_tiles` | `Food` | *split to feed*'s **near ring** — how far from a band a site is looked for first (the supply-pooling reach) |
+| `food.split_reach_tiles` | `Food` | *split to feed*'s **far ring** — the furthest a site is looked for when the near ring has nothing feasible; validated `≥ split_search_tiles` |
 | `food.split_settle_turns` | `SeatMemory`, `Food` | turns a pending split waits for its child; turns after birth a child is exempt from *feed while moving* |
 | `food.near_positive_fraction` | `Food` | how far under the net-income goal *spare hands into hunts* still fires |
 | `food.survival_floor` | `Food` | the lowest harvest floor *draw down to survive* may set, `0 ≤ f ≤ BEST_FLOOR` (the forager's and the rover's are `0`: survival outranks the peak) |

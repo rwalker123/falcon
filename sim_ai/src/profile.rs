@@ -101,10 +101,13 @@ pub struct FoodFloors {
     /// under a proposed reassignment (`specialists::food::ledger::project`), and the longest
     /// payoff *upgrade the ground* will wait for.
     pub projection_horizon_turns: u32,
-    /// *Split to feed*: how far from the band, in hex steps, a site for a new band is looked for.
+    /// *Split to feed*: the **near ring** — how far from the band, in hex steps, a site for a new
+    /// band is looked for first (the supply-pooling reach). A feasible site here always beats one
+    /// in the far ring.
     pub split_search_tiles: u32,
-    /// *Split to feed*: the working-age crew a new band is given (`split_band <workers>`).
-    pub split_band_workers: u32,
+    /// *Split to feed*: the **far ring** — the furthest, in hex steps, a site is looked for when
+    /// the near ring has nothing feasible. At least `split_search_tiles`.
+    pub split_reach_tiles: u32,
     /// *Split to feed*: turns a pending split waits for its child to appear before it is forgotten
     /// (the sim refused it), and the turns after its birth a child is still "freshly split" —
     /// exempt from *feed while moving*, so it does not strip the parent's ground on its way out.
@@ -336,8 +339,11 @@ impl AiProfiles {
                     "profile `{id}`: food.projection_horizon_turns is 0"
                 ));
             }
-            if profile.food.split_band_workers == 0 {
-                return invalid(format!("profile `{id}`: food.split_band_workers is 0"));
+            if profile.food.split_reach_tiles < profile.food.split_search_tiles {
+                return invalid(format!(
+                    "profile `{id}`: food.split_reach_tiles = {} is under food.split_search_tiles = {}",
+                    profile.food.split_reach_tiles, profile.food.split_search_tiles
+                ));
             }
             let near = profile.food.near_positive_fraction;
             if !near.is_finite() || !(0.0..=1.0).contains(&near) {
