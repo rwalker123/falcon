@@ -291,38 +291,35 @@ pub struct LaborConfigs<'w> {
 /// per-source key (a tile's coordinates, a herd's id). Two sources of equal investment therefore
 /// fund in the same order on a restored world as on the original, which is the whole reason the
 /// tie-break exists.
-/// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER FOOD WEB.**
+/// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
 ///
-/// One pool, one queue — but **two kits**, because a hoe and a set of hurdles are tools for
-/// different work and `EquipmentStat::BuildWork` is a per-worker *sum*. Without the split a bundle
-/// carrying both would deliver `0.5 + 0.5` per worker on a plant build, and a single builders kit
-/// would have to
-/// serve every rung on both ladders (which is how the husbandry kit came to be offered for a
-/// Cultivate).
+/// One pool, one queue — but the tools are the **job's**, because a hoe and a set of hurdles are
+/// tools for different work and `EquipmentStat::BuildWork` is a per-worker *sum*. Without that split
+/// a bundle carrying both would deliver `0.5 + 0.5` per worker on a plant build.
 ///
-/// # The kit is DERIVED PER ENTRY, and the ENTRY's own choice OVERRIDES it
+/// # ⛔ THE TOOLS ARE DERIVED FROM THE RUNG, AND THERE IS NO KIT IN IT ANY MORE
 ///
-/// 1. **A kit named on the queue ENTRY wins**, `none` included — that is how a player sends the pool
-///    out bare-handed on one job to conserve gear, and it is the same *"an absent `kitId` means the
-///    job's default"* rule every other selection follows
-///    (`docs/plan_standing_upkeep.md` §4.7a ②).
-/// 2. **Otherwise the roster answers**, per branch, through
-///    [`crate::equipment_config::EquipmentConfig::build_kit_for_branch`] — the shape
-///    `fauna::kit_supplying` already uses for a
-///    penned herd's default kit. ⛔ **No `BuildJob → kit id` match exists in Rust**, so a third build
-///    tool is a roster edit.
-/// 3. **`default_kits.builders` is the fall-back**, not the answer: a roster with no kit serving a
-///    web leaves that web's builds on whatever the job's default is (`none` today).
+/// It resolved a **kit** per entry — the entry's own named choice, else the roster's answer for that
+/// web — and that lookup could not name a rung, so a rung-tied tool was refused outright
+/// (`docs/plan_pool_toe.md` §1). What answers now is
+/// [`crate::equipment_config::EquipmentConfig::pool_toe`] at the branch **and rung in flight**:
+/// every item whose `build_work` serves this build, whatever it is bound to.
 ///
-/// ⛔ **The `builders` ROW's kit is not an input.** It was rule ① until §4.7 and it is the one thing
-/// the derivation cannot express: a single stored id per **band** pinned one web's tool onto every
-/// later build of the other with no way back.
+/// ⛔ **A KIT NAMED ON THE ENTRY IS NO LONGER AN INPUT.** `BuildQueueEntry::kit` and the `build_kit`
+/// command survive for the wire (`LaborAllocation::builders_kit`) and are retired end to end by
+/// #676; nothing here reads them, because *"which tools does this job want"* follows from the job.
+/// The `builders` **row's** kit was never an input and still is not.
 ///
-/// A source's own branch decides which **derived** reading it gets — a patch is plant, a herd is
-/// animal — so the **head** entry is the one whose branch is actually funded, and everything below
-/// it is *dated* at the gear it would be raised with when its turn comes. An entry carrying its own
-/// kit is dated at **that** kit rather than at its web's derived one, which is the whole point of
-/// the override.
+/// # The head is FUNDED and everything below it is DATED
+///
+/// The pool's claim on the band's tools is the **head entry's** lines over the whole pool, settled
+/// band-wide against every other pool's claims (§2.4). So:
+///
+/// - a source whose tools **are** the ones the pool bid for reads its **settled** share, which is
+///   what the turn actually arms;
+/// - any other source — an entry further down the queue, on another web or another rung — claims
+///   nothing this turn and is *dated* at the band's whole live stock, which is what it would be
+///   armed with when the pool reaches it.
 struct BuildersGear<'a> {
     /// The roster every answer is resolved through.
     equipment: &'a crate::equipment_config::EquipmentConfig,
@@ -331,53 +328,27 @@ struct BuildersGear<'a> {
     band_kit: &'a BandEquipment,
     /// The whole pool, since all hands go on the head.
     builders: u32,
-    /// **THE BAND'S OTHER ROWS, THE DEMAND THIS POOL IS RATIONED AGAINST**
-    /// ([`crate::components::LaborAllocation::rows_excluding_source`] at
-    /// [`LaborTarget::Builders`]).
-    ///
-    /// ⛔ **THE POOL IS A BUDGETED CLAIMANT NOW, AND BOTH ENDS MOVED TOGETHER.** It used to arm off
-    /// the band's **whole** ledger while putting no demand into
-    /// [`crate::components::LaborAllocation::item_budget`] — and four shipped kits serve `builders`
-    /// *and* a role job (`tillage`, `hurdling`, `roadbuilding`, `paving`), so six hoes really did
-    /// arm six builders and six keepers at once. Registering the demand without cutting the take
-    /// would have starved the rows beside it; cutting the take without registering the demand would
-    /// have under-armed the pool against a denominator that never counted it. See
-    /// [`crate::components::LaborAllocation::row_kit`] for the one resolution both ends read.
-    ///
-    /// **The row itself is excluded, and the ask is chained on per source**
-    /// ([`crate::equipment_config::BandItemBudget::with_prospective_row`]) — the *"a prospective row
-    /// competes exactly as a committed one does"* seam. On the **head**, whose kit is the one the
-    /// row registered, that is arithmetically the committed budget, so the wire and the take state
-    /// one number. On an entry further down the queue — which banks nothing and is only *dated* —
-    /// it is what that entry would be armed at when the pool reaches it.
-    other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
-    /// **The entries that named a kit of their own**, keyed by source.
-    ///
-    /// A plain `Vec` walked linearly rather than a map: a band's queue is a handful of entries and
-    /// only the overridden ones are here, so the probe is cheaper than hashing a `BuildSource`.
-    overrides: Vec<(BuildSource, crate::equipment_config::KitChoice)>,
+    /// **The band's settled tool plan**, from which the pool reads the head's own fill.
+    tools: &'a PoolToolPlan,
 }
 
-/// One build's answer: the kit the pool works it with, and what that kit is worth over the pool.
+/// One build's answer: the tools the pool works it with, and what they are worth over the pool.
 struct BuildersRungGear {
-    /// **The kit resolved for this web, narrowed to the tools that actually served it** — which is
-    /// what the wear
+    /// **This build's tools, narrowed to the ones that actually served it** — which is what the wear
     /// is charged against ([`crate::equipment_config::EquipmentConfig::build_gear_kit`]).
     ///
-    /// **Wear follows the work actually done.** A player who names `hurdling` on the builders row and
-    /// then raises a Cultivate takes *nothing* off that job — the branch filter zeroes the hurdles'
-    /// contribution — so charging them would run a tool down for work it did not do. The full kit is
-    /// not kept here because nothing downstream may price a build from it: the wire's own copy is
-    /// resolved once, at capture, through [`LaborAllocation::builders_kit`].
+    /// **Wear follows the work actually done**, and since the tools are derived from the rung the
+    /// narrowing is the identity on every line — a tool that did not serve this build was never in
+    /// the requirement to begin with. It stays because a *dead* unit still has to drop out.
     wear_kit: crate::equipment_config::KitChoice,
-    /// **The coverage-weighted per-worker contribution** — what one of these builders' kit adds to
-    /// its own output per turn, on **any** job on this web. The term
+    /// **The coverage-weighted per-worker contribution** — what one of these builders' tools adds to
+    /// its own output per turn on this job. The term
     /// [`crate::intensification::build_work_per_worker_turn`] takes, and therefore the term every
-    /// accrual, balance and projection on this web is struck at.
+    /// accrual, balance and projection on this build is struck at.
     work_per_worker: f32,
     /// **That contribution summed over the whole pool** — a READOUT
     /// ([`crate::intensification::gear_work_supply`], published as `buildWorkFromGear`), and
-    /// nothing divides by it. A kit raises what a builder delivers; it never shrinks the job
+    /// nothing divides by it. A tool raises what a builder delivers; it never shrinks the job
     /// (`docs/plan_standing_upkeep.md` §4.8).
     gear_supply: f32,
 }
@@ -385,43 +356,31 @@ struct BuildersRungGear {
 impl<'a> BuildersGear<'a> {
     fn resolve(
         equipment: &'a crate::equipment_config::EquipmentConfig,
-        build_queue: &[crate::components::BuildQueueEntry],
         builders: u32,
         band_kit: &'a BandEquipment,
-        other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
+        tools: &'a PoolToolPlan,
     ) -> Self {
         Self {
             equipment,
             band_kit,
             builders,
-            other_rows,
-            // **Only the entries that named a kit are recorded** — everything else is served by the
-            // roster's own answer for the job in front of it, which is the same kit it would resolve
-            // to. The *pricing* is not done here: it depends on the rung, which is a fact about the
-            // turn rather than about the queue.
-            overrides: build_queue
-                .iter()
-                .filter_map(|entry| Some((entry.source.clone(), entry.kit.as_ref()?.clone())))
-                .collect(),
+            tools,
         }
     }
 
-    /// **THE GEAR ONE BUILD IS RAISED WITH** — this source's entry's own kit, else the roster's
-    /// answer for the branch **and rung** in front of the pool, priced over the whole builders pool.
+    /// **THE GEAR ONE BUILD IS RAISED WITH** — every tool serving the branch **and rung** in front of
+    /// the pool, priced over the whole builders pool.
     ///
     /// ⛔ **THE RUNG IS THE ONE BEING WORKED THIS TURN, NEVER THE ENTRY'S DESTINATION.** A `pave`
     /// standing on ground below a dirt road is doing *grading* work, so it must resolve the grading
     /// tool and be paid the grading tool's offset; pricing it against where it is *going* would hand
-    /// the paving kit's uplift to earthmoving, which is the whole failure
+    /// the paving tool's uplift to earthmoving, which is the whole failure
     /// [`crate::equipment_config::EquipmentEffect::rung`] exists to prevent. It is the rule
     /// [`crate::equipment_config::EquipmentConfig::build_gear_kit`] already states for wear — *the
     /// work actually done decides* — read one seam earlier.
     ///
     /// **`None` is a real answer and it is the conservative one**: a source nobody has queued is
-    /// climbing nothing, and a rung-bound tool must not be quoted where no rung was named (see
-    /// `serves_build`'s `(Some(_), None)` arm). A tool bound to no rung — every shipped plant and
-    /// animal build tool — answers identically whatever is passed, which is what keeps the two food
-    /// webs byte-identical across this change.
+    /// climbing nothing, so it names no rung and nothing bound to one may be quoted against it.
     ///
     /// **Resolved on demand rather than cached per branch.** The reading was one per ladder while a
     /// branch was the only bound there was; a rung-bound tool makes it one per *rung*, and a build
@@ -434,12 +393,6 @@ impl<'a> BuildersGear<'a> {
         let branch = source_branch(source, rung);
         let key = rung.map(|rung| rung.wire_key());
         let key = key.as_deref();
-        let named = self
-            .overrides
-            .iter()
-            .find(|(source_key, _)| source_key == source)
-            .map(|(_, kit)| kit);
-        let kit = self.equipment.builders_kit_for(named, branch, key);
         // **Nothing here names a ladder, so no tool can serve it** — an unqueued deposit, and the
         // one case `source_branch` cannot answer. The pool still works the source bare-handed
         // ([`crate::intensification::PER_WORKER_OUTPUT`] is not a gear term); what is
@@ -447,28 +400,30 @@ impl<'a> BuildersGear<'a> {
         // rung-bound tool to be quoted against.
         let Some(branch) = branch else {
             return BuildersRungGear {
-                wear_kit: kit,
+                wear_kit: self
+                    .equipment
+                    .default_kit(crate::equipment_config::KitJob::Builders),
                 work_per_worker: crate::intensification::NO_BUILD_GEAR,
                 gear_supply: gear_work_supply(crate::intensification::NO_BUILD_GEAR, self.builders),
             };
         };
-        // **The coverage is over the POOL**, so the rate the wire publishes and the rate the accrual
-        // is struck at are one number for the whole band — **and it is cut from the pool's SHARE of
-        // the band's gear, not from the ledger** ([`Self::other_rows`]). The `builders` row is the
-        // claimant, so it is excluded and the ask chained back on: on the head that is the committed
-        // budget exactly, and everything below it is dated at what it would be armed with.
+        let toe = self.equipment.pool_toe(branch, key);
         let pool = self.builders as f32;
-        let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-            self.other_rows.iter().map(|(kit, workers)| (kit, *workers)),
-            &kit,
-            pool,
-        );
-        let coverage = self.equipment.coverage_from_units(
-            &kit,
-            pool,
-            self.band_kit,
-            budget.share_for(pool, self.band_kit, self.equipment),
-        );
+        // **The coverage is over the POOL**, so the rate the wire publishes and the rate the accrual
+        // is struck at are one number for the whole band.
+        //
+        // ⛔ **THE HEAD READS ITS SETTLED SHARE; EVERYTHING ELSE IS DATED AT THE LIVE STOCK.** The
+        // pool bids on one job — the head's — so that is the only reading the band-wide settlement
+        // has an answer for, and it is the one the turn actually arms. An entry further down the
+        // queue banks nothing, claims nothing, and is quoted at what the band holds, which is what
+        // it would be armed with when the pool reaches it.
+        let coverage = match self.tools.builders_fill(toe.kit()) {
+            Some(fill) => {
+                self.equipment
+                    .coverage_from_units(toe.kit(), pool, self.band_kit, |item| fill.units_of(item))
+            }
+            None => self.equipment.coverage(toe.kit(), pool, self.band_kit),
+        };
         let work_per_worker = coverage.weighted_rate(|crew| {
             self.equipment
                 .build_work_per_worker(crew, self.band_kit, branch, key)
@@ -476,7 +431,7 @@ impl<'a> BuildersGear<'a> {
         BuildersRungGear {
             wear_kit: self
                 .equipment
-                .build_gear_kit(&kit, self.band_kit, branch, key),
+                .build_gear_kit(toe.kit(), self.band_kit, branch, key),
             work_per_worker,
             gear_supply: gear_work_supply(work_per_worker, self.builders),
         }
@@ -549,21 +504,23 @@ fn source_branch(
 /// changes is what a keeper *supplies* against it. That is the build rule's mirror — *the job's work
 /// requirement never changes* — stated about a rate instead of a pile.
 ///
-/// # ⛔ THE KIT IS THE SITE'S, NOT THE BAND'S
+/// # ⛔ THE TOOLS ARE THE SITE'S, AND THEY FOLLOW FROM ITS RUNG
 ///
 /// The band is the pool of workers and goods to draw from; it does not decide which tool a given
-/// site is worked with. So the rate is resolved per **claim** off that claim's own row
-/// ([`crate::components::LaborAssignment::upkeep_kit`]), exactly as a build's is resolved per queue
-/// entry — and `None` on the row is the **web's derived default**
-/// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]), which is what keeps the whole
-/// seam live with no player action. A single stored id on the `agriculture` / `husbandry` role row
-/// could not say *hoes on the Field, bare hands on the scrub beside it*.
+/// site is worked with — and neither does the player. The rate is resolved per **claim** from the
+/// rung that claim stands on ([`crate::equipment_config::EquipmentConfig::pool_toe`]) over the units
+/// the band's settlement gave it ([`keeping_rate_from`]), which is what lets one pool hold a dirt
+/// road and a paved road at two different tools (`docs/plan_pool_toe.md` §2.1).
+///
+/// **It was a stored SELECTION per site** — `LaborAssignment::upkeep_kit`, defaulting to the web's
+/// derived kit — and that lookup named no rung, so it could resolve at most one tool per pool and
+/// refused a rung-bound one outright.
 struct KeepingRate {
     /// **What one of this site's keepers banks per turn**, bare hands included — the `r` a claim's
     /// worker need `demand ÷ r` divides by.
     ///
     /// It cannot be zero: [`crate::intensification::build_work_per_worker_turn`] floors its gear
-    /// term at bare hands and adds a positive `PER_WORKER_OUTPUT`. [`Self::worker_need`] checks
+    /// term at bare hands and adds a positive `PER_WORKER_OUTPUT`. [`toe_worker_need`] checks
     /// anyway, because a division whose safety lives in another module is one config edit from a
     /// `NaN` share.
     per_worker: f32,
@@ -575,27 +532,15 @@ struct KeepingRate {
     wear_kit: crate::equipment_config::KitChoice,
 }
 
-/// **THE KEEPING RATE AT WHICH NOBODY DELIVERS ANYTHING** — the zero
-/// [`KeepingRate::worker_need`] refuses to divide by.
+/// **THE KEEPING RATE AT WHICH NOBODY DELIVERS ANYTHING** — the zero [`toe_worker_need`] refuses to
+/// divide by.
 const NO_KEEPING_RATE: f32 = 0.0;
 
-impl KeepingRate {
-    /// **HOW MANY KEEPERS THIS SITE'S BILL NEEDS** — `demand ÷ r`, and **the unit the pool is split
-    /// in** since the kit became per site.
-    ///
-    /// The split has to be in *workers* rather than in work, because the two stopped being
-    /// interchangeable: with one rate for the whole web, splitting the work pool in proportion to
-    /// demand and splitting the worker pool in proportion to worker-need are the same arithmetic,
-    /// and with two rates they are not. Two sites owing the same demand, one hoed and one bare, ask
-    /// for **different numbers of hands** — which is exactly what a per-site tool means.
-    fn worker_need(&self, demand: f32) -> f32 {
-        if self.per_worker > NO_KEEPING_RATE {
-            demand / self.per_worker
-        } else {
-            NO_UPKEEP_DEMAND
-        }
-    }
-}
+// **RETIRED: `KeepingRate::worker_need`** — *"`demand ÷ r`, the unit the pool is split in"*. The
+// split still runs in worker-need units and for the same reason (two sites owing the same demand,
+// one hoed and one bare, ask for **different numbers of hands**), but it is struck **before** the
+// tools are settled and therefore cannot read a rate the settlement has not produced yet. What
+// answers it is [`toe_worker_need`] at the fully equipped rate — see `docs/plan_pool_toe.md` §2.3.
 
 /// **WHAT ONE ASSIGNMENT ROW WAS AWARDED FROM ITS WEB'S KEEPING POOL THIS TURN** —
 /// [`maintenance_shares`]'s answer, index-aligned with `allocation.assignments`.
@@ -621,161 +566,441 @@ impl Default for KeepingAward {
     }
 }
 
-/// **WHAT EACH CLAIM'S KEEPERS DELIVER, AND WHAT THEIR WORK WEARS** — index-aligned with `claims`.
+/// **WHAT ONE POOL SITE WAS HANDED** — the hands step 1 put on it, the tools its rung wants, and
+/// the units the band's settlement gave it (`docs/plan_pool_toe.md` §2.3).
 ///
-/// # ⛔ SITES SHARING A KIT SHARE ITS SCARCITY
+/// Index-aligned with one pool's own claim list, in that list's own order.
+#[derive(Clone)]
+struct ToeFill {
+    /// **The hands the split put here, as if the lines were filled** — step 1's answer, carried
+    /// forward because step 4 must **not** re-split. How many hands a site gets depends on how fast
+    /// they work, and how fast they work depends on the tools they were issued; re-splitting after
+    /// the settlement is exactly the loop the four-step order exists to cut.
+    hands: f32,
+    /// This site's tools as a kit ([`crate::equipment_config::PoolToe::kit`]) — what the coverage
+    /// partitions and what the wear is billed against.
+    kit: crate::equipment_config::KitChoice,
+    /// What the band's settlement gave this site, per tool. A tool with no entry was settled
+    /// nothing, which coverage reads as **bare hands** on that line.
+    units: Vec<(std::sync::Arc<str>, f32)>,
+}
+
+impl ToeFill {
+    /// This site's settled units of one tool — [`NO_UNITS_SETTLED`] for a tool the settlement did
+    /// not reach.
+    fn units_of(&self, item: &str) -> f32 {
+        self.units
+            .iter()
+            .find(|(id, _)| id.as_ref() == item)
+            .map_or(NO_UNITS_SETTLED, |(_, units)| *units)
+    }
+}
+
+/// **A TOOL THE SETTLEMENT HANDED THIS SITE NONE OF** — named for [`NOTHING_DEMANDED`]'s reason: it
+/// is the exact *"bare-handed on this line"* boundary and not a small quantity of gear.
+const NO_UNITS_SETTLED: f32 = 0.0;
+
+/// **ONE CLAIMANT'S ASK ON THE BAND'S TOOLS** — steps 1 and 2 for a single site, before anything is
+/// settled.
+struct ToeClaim {
+    priority: SourcePriority,
+    hands: f32,
+    kit: crate::equipment_config::KitChoice,
+    /// `hands ÷ workers_per_unit`, per tool.
+    required: Vec<(std::sync::Arc<str>, f32)>,
+}
+
+impl ToeClaim {
+    /// **THIS SITE'S WHOLE REQUIREMENT, FROM ITS HANDS** — one unit of each of its tools per hand,
+    /// divided by what one unit crews (`docs/plan_pool_toe.md` §2.1).
+    fn of(priority: SourcePriority, hands: f32, toe: &crate::equipment_config::PoolToe) -> Self {
+        Self {
+            priority,
+            hands,
+            kit: toe.kit().clone(),
+            required: toe
+                .tools()
+                .iter()
+                .map(|tool| {
+                    (
+                        std::sync::Arc::clone(&tool.item),
+                        hands / tool.workers_per_unit as f32,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn required_of(&self, item: &str) -> f32 {
+        self.required
+            .iter()
+            .find(|(id, _)| id.as_ref() == item)
+            .map_or(NOTHING_DEMANDED, |(_, units)| *units)
+    }
+}
+
+/// **WHAT ONE OF THIS SITE'S KEEPERS WOULD DELIVER WITH ITS TOE LINES FILLED** — step 1's rate, and
+/// the one the hands are split at (`docs/plan_pool_toe.md` §2.3 step 1).
 ///
-/// [`crate::equipment_config::EquipmentConfig::coverage`] answers *"of these workers, how many
-/// actually carry the kit's items, given what the band owns"*. Asked naively per site it
-/// **double-counts**: a band owning three hoes, with two keepers on one patch and three on another,
-/// would arm two on the first and three on the second — five equipped hands off three hoes.
+/// ⛔ **UNCOVERED, AND THAT IS THE WHOLE OF "AS IF FULLY EQUIPPED".** It reads the band's own
+/// ledger for the tools' **tier and condition** — a spent tool is not a filled line — but applies no
+/// coverage: the requirement is struck **from** the hands this rate produces, so a rate that already
+/// knew how many hands the stock could arm would be the loop the four-step order exists to cut.
 ///
-/// So the claims are **grouped by their resolved kit** and coverage is taken **once** per group,
-/// over that group's whole share of the pool. Sites naming different kits do not compete for each
-/// other's gear; sites naming the same one degrade together, exactly as the single band-wide pool
-/// did. With one distinct kit on a branch — which is every branch on the shipped roster — this is
-/// one call over the whole role, bit for bit what shipped before the kit moved to the site.
+/// **It is what makes the change bit-identical in both saturated regimes.** A band that owns a
+/// serving unit of every line plans and works at the geared rate; a band that owns none plans and
+/// works bare — which is exactly what the retired split did for each. They differ only where the
+/// band is *partly* short, and there the shortfall is what lands, by priority, on the sites that
+/// lost the settlement.
+fn fully_equipped_keeper_rate(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    toe: &crate::equipment_config::PoolToe,
+    branch: crate::intensification::RungBranch,
+    rung: Option<&str>,
+) -> f32 {
+    crate::intensification::build_work_per_worker_turn(equipment.build_work_per_worker(
+        toe.kit(),
+        band_kit,
+        branch,
+        rung,
+    ))
+}
+
+/// **THE WORKER-NEED ONE CLAIM PUTS ON ITS POOL** — `demand ÷ what one of its own keepers delivers`,
+/// struck at the fully equipped rate. The unit the split runs in since the tools became per site.
+fn toe_worker_need(rate: f32, demand: f32) -> f32 {
+    if rate > NO_KEEPING_RATE {
+        demand / rate
+    } else {
+        NO_UPKEEP_DEMAND
+    }
+}
+
+/// **ONE POOL'S HANDS, AND WHAT THEY THEREFORE REQUIRE** — steps 1 and 2 of the four-step order for
+/// a single pool (`docs/plan_pool_toe.md` §2.3).
 ///
-/// **THE GROUPING KEY IS THE KIT ID, so two DIFFERENT kits sharing an ITEM still double-count it** —
-/// two plant kits both listing `hoes` would each arm their own group off the same stock. No shipped
-/// kit shares an item with another on its own web, and the band-wide code this replaced had the
-/// identical property across the two branches, so nothing regressed and nothing is reachable today.
-/// Closing it means grouping by the item rather than by the kit, which is a real change to what
-/// "sharing scarcity" means and wants a case in front of it first.
-///
-/// # ⛔ AND THE GROUP IS CUT FROM THE BAND'S SHARE OF THE LEDGER, NOT FROM THE LEDGER
-///
-/// Grouping by kit keeps *this pool's* sites from double-counting each other; it says nothing about
-/// the rows and pools **beside** it. `tillage` and `hurdling` each serve a keeping job **and**
-/// `builders`, so the keeping pool and the builders' pool reach for one stock of hoes — and while
-/// both armed off the whole ledger, six hoes armed six keepers and six builders at once.
-///
-/// So the group's coverage is struck against the band's per-item budget
-/// ([`crate::equipment_config::BandItemBudget`]), exactly as a work row's is. `other_rows` is the
-/// band's rows **excluding this pool's own role row**
-/// ([`crate::components::LaborAllocation::rows_excluding_source`]), and the group's ask is chained
-/// on: the role row registered the web's *derived* kit over the whole pool
-/// ([`crate::components::LaborAllocation::row_kit`]), and what actually went out is this group's kit
-/// over this group's hands — so re-striking is what prices a site that named something else at what
-/// it named. With one group and no override the two are the same pair, and the prospective budget
-/// is the committed one.
-///
-/// ⛔ **THE ROUTE AND DEPOSIT POOLS ARE CUT HERE BUT CANNOT REGISTER**, and the reason is the
-/// roster's rather than this seam's: every tool serving those webs declares a `rung`, a role row
-/// stands on none, and [`crate::equipment_config::EquipmentEffect::serves_build`] refuses a
-/// rung-bound tool where no rung was named. So `roadwork` / `quarrywork` resolve `none` on the row
-/// and the builders' pool does not see those keepers, while those keepers do see the builders.
-///
-/// # THE GROUP'S SHARE OF THE POOL IS STRUCK OFF THE BILL, AND IT HAS TO BE
-///
-/// A group's *rate* depends on how many hands stand in it, and how many hands stand in it depends on
-/// every group's rate — so the coverage read cannot be taken over the split it is an input to. It is
-/// taken over the group's share of the **demand** instead, which is the one measure of *how much of
-/// this band's keeping is this group* that does not mention a kit. The split proper
-/// ([`maintenance_shares`]) then runs in worker-need units against these rates and may land
-/// somewhere else — a group whose tool is efficient needs fewer hands than its share of the bill.
-fn keeping_rates(
+/// The hands are split through the band's own [`crate::intensification::UpkeepFundMode`] by the
+/// existing [`distribute_upkeep_pool`], in each site's own worker-need units — the split the pool
+/// has always made — at the rate each site **would** work at with its tools in hand.
+fn pool_toe_claims(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
     keepers: u32,
+    mode: crate::intensification::UpkeepFundMode,
     claims: &[KeepingClaim],
-    other_rows: &[(crate::equipment_config::KitChoice, f32)],
-) -> Vec<KeepingRate> {
-    let total_demand = keeping_demand(claims);
-    // The distinct kits on this branch, and what each group's sites ask for between them. Keyed by
-    // roster id: an id determines the kit's items, so two claims that resolved the same id are
-    // drawing on the same units and must share one coverage between them.
-    //
-    // ⛔ **THE RUNG IS NOT PART OF THE KEY, AND THAT IS DELIBERATE.** Coverage answers *"how many of
-    // these hands does the band own gear for"* — a fact about the LEDGER — so splitting one kit into
-    // two groups by rung would arm a prefix of each and put two equipped hands behind one tool. What
-    // the rung decides is the RATE, which is why it is applied per claim below against the group's
-    // own partition rather than by re-partitioning.
-    let mut group_kits: Vec<crate::equipment_config::KitChoice> = Vec::new();
-    let mut group_demand: Vec<f32> = Vec::new();
-    let mut group_of_claim: Vec<usize> = Vec::with_capacity(claims.len());
-    for claim in claims {
-        let group = group_kits
-            .iter()
-            .position(|kit| kit.id() == claim.kit.id())
-            .unwrap_or_else(|| {
-                group_kits.push(claim.kit.clone());
-                group_demand.push(NO_UPKEEP_DEMAND);
-                group_kits.len() - 1
-            });
-        group_demand[group] += claim.demand;
-        group_of_claim.push(group);
-    }
-    // **The coverage is over the GROUP**, exactly as the builders' is over their pool: the seam arms
-    // a prefix, so a part-equipped group gets the share it actually carries and the bare hands
-    // beside it still bring their own `PER_WORKER_OUTPUT`. **And over the group's SHARE of the
-    // band's gear**, for the builders' pool's reason — see the note above.
-    let coverage: Vec<crate::equipment_config::KitCoverage> = group_kits
+) -> Vec<ToeClaim> {
+    let toes: Vec<crate::equipment_config::PoolToe> = claims
         .iter()
-        .zip(&group_demand)
-        .map(|(kit, demand)| {
-            let share = if total_demand > NO_UPKEEP_DEMAND {
-                keepers as f32 * (demand / total_demand)
-            } else {
-                NO_UPKEEP_DEMAND
-            };
-            let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-                other_rows.iter().map(|(kit, workers)| (kit, *workers)),
-                kit,
-                share,
-            );
-            equipment.coverage_from_units(
-                kit,
-                share,
-                band_kit,
-                budget.share_for(share, band_kit, equipment),
+        .map(|claim| {
+            let rung_key = claim.rung.map(|rung| rung.wire_key());
+            equipment.pool_toe(claim.branch, rung_key.as_deref())
+        })
+        .collect();
+    let needs: Vec<f32> = claims
+        .iter()
+        .zip(&toes)
+        .map(|(claim, toe)| {
+            let rung_key = claim.rung.map(|rung| rung.wire_key());
+            toe_worker_need(
+                fully_equipped_keeper_rate(
+                    equipment,
+                    band_kit,
+                    toe,
+                    claim.branch,
+                    rung_key.as_deref(),
+                ),
+                claim.demand,
             )
         })
         .collect();
-    // **THE RATE IS PER CLAIM, AT THE RUNG THAT SITE STANDS ON** — the group's partition is shared
-    // (the band owns what it owns) but a rung-bound tool is worth nothing on a rung it does not
-    // serve, so a dirt road and a paved one kept out of one bundle read different rates off the same
-    // coverage. Where nothing in the kit is rung-bound — every plant and animal tool that ships —
-    // every claim in a group reads the identical number and this is the same fold it always was.
-    group_of_claim
-        .into_iter()
-        .zip(claims)
-        .map(|(group, claim)| {
-            let rung_key = claim.rung.map(|rung| rung.wire_key());
-            let rung_key = rung_key.as_deref();
-            // **THE BRANCH IS THE CLAIM'S OWN**, so a pool holding two ladders' sites prices
-            // each at its own — see [`KeepingClaim::branch`].
-            let branch = claim.branch;
-            let gear = coverage[group].weighted_rate(|crew| {
-                equipment.build_work_per_worker(crew, band_kit, branch, rung_key)
-            });
-            KeepingRate {
-                per_worker: crate::intensification::build_work_per_worker_turn(gear),
-                wear_kit: equipment.build_gear_kit(&group_kits[group], band_kit, branch, rung_key),
+    claims
+        .iter()
+        .zip(&toes)
+        .zip(distribute_upkeep_pool(keepers as f32, &needs, mode))
+        .map(|((claim, toe), hands)| ToeClaim::of(claim.priority, hands, toe))
+        .collect()
+}
+
+/// **SERVE THE BAND'S TOOLS ACROSS EVERY POOL CLAIM ON THEM AT ONCE** — step 3, and
+/// [`settle_material_upkeep`]'s shape one account over (`docs/plan_pool_toe.md` §2.2).
+///
+/// # ⛔ THE SETTLEMENT IS BAND-WIDE PER TOOL, AND THE PER-POOL TOE IS THE READOUT OF IT
+///
+/// Stone-dressing gear is wanted by **Roadwork** (paved roads) and by **Quarrywork** (quarries), so
+/// a settlement struck per pool would issue one stock twice — the same double-issue that armed six
+/// builders and six keepers off six hoes. One [`settle_scarce_store`] call per item id, over every
+/// pool's claims together: [`SourcePriority::High`] in full, then `Normal`, then `Low`, and
+/// proportionally within a tier.
+///
+/// Returns one fill per claim, index-aligned with `claims`.
+fn settle_pool_tools(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    claims: &[ToeClaim],
+) -> Vec<ToeFill> {
+    let mut fills: Vec<ToeFill> = claims
+        .iter()
+        .map(|claim| ToeFill {
+            hands: claim.hands,
+            kit: claim.kit.clone(),
+            units: Vec::new(),
+        })
+        .collect();
+    // The union of every id any claimant names, so one call answers for one tool and no id is
+    // settled twice — `settle_material_upkeep`'s own arrangement.
+    let ids: BTreeSet<std::sync::Arc<str>> = claims
+        .iter()
+        .flat_map(|claim| {
+            claim
+                .required
+                .iter()
+                .map(|(id, _)| std::sync::Arc::clone(id))
+        })
+        .collect();
+    for id in &ids {
+        let bids: Vec<(SourcePriority, f32)> = claims
+            .iter()
+            .map(|claim| (claim.priority, claim.required_of(id)))
+            .collect();
+        let settled = settle_scarce_store(&bids, band_kit.live_units(id, equipment) as f32);
+        for (fill, paid) in fills.iter_mut().zip(&settled) {
+            if *paid > NO_UNITS_SETTLED {
+                fill.units.push((std::sync::Arc::clone(id), *paid));
             }
+        }
+    }
+    fills
+}
+
+/// **THE RATE THIS SITE'S HANDS ACTUALLY WORK AT** — step 4: the coverage-weighted worth of the
+/// units the settlement gave them, through the existing
+/// [`crate::equipment_config::EquipmentConfig::coverage_from_units`] seam.
+///
+/// **The hands are NOT re-split.** A site the settlement left short works its own hands slower; it
+/// does not hand them to a site that was served.
+fn keeping_rate_from(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    fill: &ToeFill,
+    branch: crate::intensification::RungBranch,
+    rung: Option<&str>,
+) -> KeepingRate {
+    let coverage =
+        equipment.coverage_from_units(&fill.kit, fill.hands, band_kit, |item| fill.units_of(item));
+    let gear = coverage
+        .weighted_rate(|crew| equipment.build_work_per_worker(crew, band_kit, branch, rung));
+    KeepingRate {
+        per_worker: crate::intensification::build_work_per_worker_turn(gear),
+        wear_kit: equipment.build_gear_kit(&fill.kit, band_kit, branch, rung),
+    }
+}
+
+/// **WHAT EACH OF THIS POOL'S CLAIMS WAS SUPPLIED AND WHAT IT WORE** — `(hands, rate)` per claim,
+/// read back out of the band's settled plan and index-aligned with `claims`.
+fn pool_rates(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    claims: &[KeepingClaim],
+    fills: &[ToeFill],
+) -> Vec<(f32, KeepingRate)> {
+    debug_assert_eq!(
+        claims.len(),
+        fills.len(),
+        "a pool's settled fills are index-aligned with the claim list they were planned from"
+    );
+    claims
+        .iter()
+        .zip(fills)
+        .map(|(claim, fill)| {
+            let rung_key = claim.rung.map(|rung| rung.wire_key());
+            (
+                fill.hands,
+                keeping_rate_from(equipment, band_kit, fill, claim.branch, rung_key.as_deref()),
+            )
         })
         .collect()
 }
 
-/// **HOW MANY KEEPERS ONE WEB'S BILL NEEDS THIS TURN** — the sum of every claim's
-/// [`KeepingRate::worker_need`], and the number [`spare_keepers`] strikes a role's head count
+/// **HOW MANY KEEPERS ONE WEB'S BILL NEEDS THIS TURN** — the sum of every claim's `demand ÷ what one
+/// of its own keepers delivers`, and the number [`spare_keepers`] strikes a role's head count
 /// against.
 ///
-/// **It is struck through the same seam the split is** ([`keeping_rates`]), so *"more keepers than
-/// the bill needs"* and *"what each site is owed"* cannot come from two different readings of the
-/// same gear.
+/// **It is struck at the FULLY EQUIPPED rate**, which is the rate the split itself runs on
+/// (`docs/plan_pool_toe.md` §2.3 step 1) — so *"more keepers than the bill needs"* and *"what each
+/// site is owed"* cannot come from two different readings of the same tools.
 fn keeping_worker_need(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
+    claims: &[KeepingClaim],
+) -> f32 {
+    claims
+        .iter()
+        .map(|claim| {
+            let rung_key = claim.rung.map(|rung| rung.wire_key());
+            let toe = equipment.pool_toe(claim.branch, rung_key.as_deref());
+            toe_worker_need(
+                fully_equipped_keeper_rate(
+                    equipment,
+                    band_kit,
+                    &toe,
+                    claim.branch,
+                    rung_key.as_deref(),
+                ),
+                claim.demand,
+            )
+        })
+        .sum()
+}
+
+/// **THE BAND'S TOOLS, PLANNED AND SETTLED ONCE FOR ALL FIVE STANDING POOLS**
+/// (`docs/plan_pool_toe.md` §2.3).
+///
+/// # ⛔ IT IS BUILT BEFORE ANY POOL IS PAID, BECAUSE THE SETTLEMENT IS BAND-WIDE
+///
+/// Each pool's hands are split first, as if fully equipped; the requirement follows from those
+/// hands; every pool's claims on one tool are then settled **together**; and only then does each
+/// pool read its rate back. A pool that settled its own tools would issue a shared stock twice —
+/// Roadwork's paved roads and Quarrywork's quarries both want stone-dressing gear.
+///
+/// **The fills are index-aligned with each pool's own claim list**, in that list's order, so a pool
+/// looks its share up by the index it is already iterating on. The claim builders are pure
+/// functions of the registries and the allocation, so the list a pool rebuilds at payment time is
+/// the list the plan was struck from.
+pub struct PoolToolPlan {
+    agriculture: Vec<ToeFill>,
+    husbandry: Vec<ToeFill>,
+    roadwork: Vec<ToeFill>,
+    quarrywork: Vec<ToeFill>,
+    /// **The builders' one claim** — the head entry's tool lines over the whole pool (§2.4).
+    /// `None` when nothing is being raised, which is *"no tool is out"* rather than an empty TOE.
+    builders: Option<ToeFill>,
+}
+
+/// **WHAT ONE POOL BRINGS TO THE SETTLEMENT** — its claims, its head count, and nothing else. The
+/// shape [`plan_pool_tools`] takes five of, so adding a sixth pool is one more entry rather than a
+/// sixth parameter triple.
+struct PoolAsk<'a> {
+    claims: &'a [KeepingClaim],
+    keepers: u32,
+}
+
+impl<'a> PoolAsk<'a> {
+    fn new(claims: &'a [KeepingClaim], keepers: u32) -> Self {
+        Self { claims, keepers }
+    }
+}
+
+/// **THE BUILDERS' ASK** — the head entry's branch and in-flight rung, the pool standing on it, and
+/// the rank that entry's own source row carries (`docs/plan_pool_toe.md` §2.2).
+struct BuildersAsk {
+    branch: crate::intensification::RungBranch,
+    rung: Option<String>,
+    builders: u32,
+    priority: SourcePriority,
+}
+
+/// **PLAN AND SETTLE EVERY POOL'S TOOLS FOR ONE BAND** — the four-step order, once
+/// (`docs/plan_pool_toe.md` §2.3).
+///
+/// The claim order handed to [`settle_pool_tools`] is stable — Agriculture, Husbandry, Roadwork,
+/// Quarrywork, **then the builders' single claim last** — which is
+/// [`settle_material_upkeep`]'s own arrangement (every source's upkeep in row order, then the
+/// build's) and is what lets each pool split its fills back off one settled vector.
+fn plan_pool_tools(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    mode: crate::intensification::UpkeepFundMode,
+    pools: [PoolAsk<'_>; 4],
+    builders: Option<BuildersAsk>,
+) -> PoolToolPlan {
+    let mut claims: Vec<ToeClaim> = Vec::new();
+    let mut spans: Vec<usize> = Vec::with_capacity(pools.len());
+    for pool in &pools {
+        let planned = pool_toe_claims(equipment, band_kit, pool.keepers, mode, pool.claims);
+        spans.push(planned.len());
+        claims.extend(planned);
+    }
+    // **The builders' claim goes on LAST**, so the four pools' spans index the head of the vector
+    // and the build's share is the tail — `settle_material_upkeep`'s own convention.
+    let builders_claim = builders.as_ref().map(|ask| {
+        let toe = equipment.pool_toe(ask.branch, ask.rung.as_deref());
+        ToeClaim::of(ask.priority, ask.builders as f32, &toe)
+    });
+    let has_builders = builders_claim.is_some();
+    claims.extend(builders_claim);
+
+    let mut fills = settle_pool_tools(equipment, band_kit, &claims).into_iter();
+    let mut pool_fills = spans
+        .into_iter()
+        .map(|span| fills.by_ref().take(span).collect::<Vec<_>>());
+    let agriculture = pool_fills.next().unwrap_or_default();
+    let husbandry = pool_fills.next().unwrap_or_default();
+    let roadwork = pool_fills.next().unwrap_or_default();
+    let quarrywork = pool_fills.next().unwrap_or_default();
+    PoolToolPlan {
+        agriculture,
+        husbandry,
+        roadwork,
+        quarrywork,
+        builders: has_builders.then(|| fills.next()).flatten(),
+    }
+}
+
+impl PoolToolPlan {
+    fn agriculture(&self) -> &[ToeFill] {
+        &self.agriculture
+    }
+
+    fn husbandry(&self) -> &[ToeFill] {
+        &self.husbandry
+    }
+
+    fn roadwork(&self) -> &[ToeFill] {
+        &self.roadwork
+    }
+
+    fn quarrywork(&self) -> &[ToeFill] {
+        &self.quarrywork
+    }
+
+    /// **THE BUILDERS' SETTLED FILL, IF THIS SITE IS THE ONE THEY CLAIMED FOR** — matched on the
+    /// **tools**, not on the rung key.
+    ///
+    /// ⛔ **THE TOOLS ARE THE RIGHT KEY AND THE RUNG IS NOT.** Every plant and animal tool on the
+    /// shipped roster is rung-free, so one branch's rungs resolve the identical TOE and a rung-key
+    /// match would refuse the head its own settled share whenever a caller quoted it at the entry's
+    /// *destination* rather than at the rung in flight. Comparing the requirement itself asks the
+    /// question that actually matters: *is this the same set of tools the pool bid for*.
+    fn builders_fill(&self, kit: &crate::equipment_config::KitChoice) -> Option<&ToeFill> {
+        self.builders.as_ref().filter(|fill| &fill.kit == kit)
+    }
+}
+
+/// **ONE POOL'S SETTLED FILLS, OR THIS POOL PLANNED ON ITS OWN** — what a `pub` payer resolves when
+/// it was handed no band-wide plan.
+///
+/// ⛔ **IT IS THE SAME ARITHMETIC, NOT A SECOND ONE**: the same [`pool_toe_claims`] and
+/// [`settle_pool_tools`] over this pool's claims alone, which is the correct answer for a band whose
+/// only claimant *is* this pool. The band-wide settlement exists because two pools can want one
+/// tool; with one pool there is nothing to share it with. `core_sim/tests/route_traffic.rs` drives
+/// the route branch and no other pass, which is the case this serves.
+fn pool_or_plan(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    mode: crate::intensification::UpkeepFundMode,
     keepers: u32,
     claims: &[KeepingClaim],
-    other_rows: &[(crate::equipment_config::KitChoice, f32)],
-) -> f32 {
-    keeping_rates(equipment, band_kit, keepers, claims, other_rows)
-        .iter()
-        .zip(claims)
-        .map(|(rate, claim)| rate.worker_need(claim.demand))
-        .sum()
+    planned: Option<&[ToeFill]>,
+) -> Vec<ToeFill> {
+    match planned {
+        Some(fills) if fills.len() == claims.len() => fills.to_vec(),
+        _ => settle_pool_tools(
+            equipment,
+            band_kit,
+            &pool_toe_claims(equipment, band_kit, keepers, mode, claims),
+        ),
+    }
 }
 
 /// **THE ONE SOURCE THIS BAND'S BUILDERS CAN PUT WORK ON THE GROUND FOR THIS TURN**, and the rung it
@@ -1355,24 +1580,34 @@ fn route_head_gate(
 struct KeepingClaim {
     index: usize,
     demand: f32,
+    /// **WHERE THE PLAYER PUT THIS SITE WHEN THE BAND RUNS SHORT** — the rank its bid for the
+    /// band's **tools** is settled at (`docs/plan_pool_toe.md` §2.2), through the same
+    /// [`settle_scarce_store`] the hurdles and the road stone already go through.
+    ///
+    /// It is the **site row's own** on the two food webs and on the deposit branches, because that
+    /// is where the player states it. **A road bids at [`SourcePriority::default`]**: there is no
+    /// per-road labor row to carry a rank, and road *materials* already bid exactly this for
+    /// exactly that reason — roads bid the same for tools rather than inventing a second ordering.
+    priority: SourcePriority,
     /// **THE LADDER THIS SITE IS ON.** It rides the claim rather than the *call* because one pool
     /// can hold sites on **two** branches: the `quarrywork` role keeps both `forestry` and
-    /// `extraction` workings, so a single `branch` argument to [`keeping_rates`] would have to lie
+    /// `extraction` workings, so a single `branch` argument to [`pool_rates`] would have to lie
     /// about half of them.
     ///
-    /// ⛔ **THE COVERAGE MUST STAY WHOLE, WHICH IS WHY THIS IS A FIELD AND NOT A SECOND CALL.**
-    /// Calling `keeping_rates` once per branch would partition the *coverage* by branch too — and
-    /// coverage answers *"how many of these hands does the band own gear for"*, a fact about the
-    /// ledger — so two groups would arm two prefixes off one stock. That is the same failure
-    /// `keeping_rates`' own *"the rung is not part of the key"* note guards against, one axis over.
+    /// ⛔ **AND THE POOL MUST BE PLANNED AS ONE, WHICH IS WHY THIS IS A FIELD AND NOT A SECOND
+    /// CALL.** [`pool_toe_claims`] splits one head count across every site the pool holds; calling
+    /// it once per branch would split the **hands** twice and hand the pool out two whole times.
+    /// The branch is a fact about each *site*, so it belongs on the claim.
     branch: crate::intensification::RungBranch,
-    /// **THE KIT THIS SITE IS KEPT WITH** — its own row's selection, else its web's derivation
-    /// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]). Resolved here, with the
-    /// claim, because the rate a claim is funded at and the wear that rate spends are two readings
-    /// of one choice and must not be taken from two places.
-    kit: crate::equipment_config::KitChoice,
-    /// **THE RUNG THIS SITE STANDS ON** — the bound the kit was resolved at and the one its keeping
-    /// is priced at, so the two cannot come from two readings.
+    /// **THE RUNG THIS SITE STANDS ON** — the bound its tools are resolved at and the one its
+    /// keeping is priced at, so the two cannot come from two readings.
+    ///
+    /// ⛔ **THE CLAIM CARRIES NO KIT ANY MORE.** It used to resolve
+    /// `EquipmentConfig::keeping_kit_for` — one roster entry per site, over a lookup that named no
+    /// rung — and a pool whose sites sit on two rungs cannot be served by one kit at all
+    /// (`docs/plan_pool_toe.md` §1). The tools are derived per site from **this** rung
+    /// ([`crate::equipment_config::EquipmentConfig::pool_toe`]) and carried on the settled
+    /// [`ToeFill`] beside the hands that hold them.
     ///
     /// ⛔ **THE SITE'S OWN RUNG, NEVER A DESTINATION.** A keeper is holding what is there; nothing
     /// about a queued build changes what this turn's keeping is worth, so a Field being widened is
@@ -1385,17 +1620,18 @@ struct KeepingClaim {
 /// **WHAT THIS BAND'S ROWS CLAIM FROM THEIR WEBS' KEEPING POOLS THIS TURN** — the plant claims and
 /// the animal claims, in row order.
 ///
-/// **THE one definition of the band's keeping bill.** [`maintenance_shares`] divides the two pools
-/// against it, and the shedding order's spare-keeper step counts a role's hands against its **sum**
-/// ([`keeping_demand`]) — so *"more keepers than the bill needs"* and *"what each source is owed"*
-/// can never be struck off two different readings of the same ground.
+/// **THE one definition of the band's keeping bill.** [`plan_pool_tools`] splits the two pools'
+/// hands against it and [`maintenance_shares`] pays them, and the shedding order's spare-keeper step
+/// counts a role's hands against the same claims ([`keeping_worker_need`]) — so *"more keepers than
+/// the bill needs"* and *"what each source is owed"* can never be struck off two different readings
+/// of the same ground.
+///
+/// **Sorted most-invested first before it returns** ([`sort_keeping_claims`]), because the tool plan
+/// and the payment read the list by index and the caller must not re-order its own copy.
 #[allow(clippy::too_many_arguments)] // one source, one rung, and every seam its gate is judged by
 fn keeping_claims(
     allocation: &LaborAllocation,
     banking: &SourceBankingFirstWork,
-    // **The roster the site kits resolve against** — a claim carries the kit it is worked with, so
-    // the derivation that answers for a row naming none is read here rather than a seam later.
-    equipment: &crate::equipment_config::EquipmentConfig,
     forage_registry: &ForageRegistry,
     // **The ground under each plant claim**, resolved by coord: the plant demand is quoted per
     // tender-load of the TILE's own `K` (`forage::patch_tender_loads`), so a claim cannot be priced
@@ -1439,11 +1675,7 @@ fn keeping_claims(
                 plant.push(KeepingClaim {
                     index,
                     branch: crate::intensification::RungBranch::Plant,
-                    kit: equipment.keeping_kit_for(
-                        assignment.upkeep_kit.as_ref(),
-                        crate::intensification::RungBranch::Plant,
-                        Some(&rung.wire_key()),
-                    ),
+                    priority: assignment.priority,
                     rung: Some(rung),
                     // **The DEMAND takes no verb any more** — it interpolates on the patch's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
@@ -1482,11 +1714,7 @@ fn keeping_claims(
                 animal.push(KeepingClaim {
                     index,
                     branch: crate::intensification::RungBranch::Animal,
-                    kit: equipment.keeping_kit_for(
-                        assignment.upkeep_kit.as_ref(),
-                        crate::intensification::RungBranch::Animal,
-                        Some(&rung.wire_key()),
-                    ),
+                    priority: assignment.priority,
                     rung: Some(rung),
                     // **The DEMAND takes no verb any more** — it interpolates on the herd's own
                     // position, so there is no step for the one-turn carry to straddle. The verb
@@ -1523,14 +1751,35 @@ fn keeping_claims(
             | LaborTarget::Builders => {}
         }
     }
+    // **MOST-INVESTED FIRST, HERE RATHER THAN AT THE SPLIT** — the total order
+    // [`crate::intensification::UpkeepFundMode::Priority`] funds in, and the order the two food
+    // webs' claim lists carry from now on. It moved out of `maintenance_shares` when the tool
+    // settlement started reading these lists too: the plan's fills are index-aligned with the claim
+    // list, so a caller that sorted its own copy would read another site's share.
+    sort_keeping_claims(&mut plant);
+    sort_keeping_claims(&mut animal);
     (plant, animal)
 }
 
-/// **WHAT ONE WEB'S KEEPING POOL IS BILLED FOR THIS TURN**, in work units — the sum of its claims,
-/// which is the number a keeping role has to cover for nothing to rot.
-fn keeping_demand(claims: &[KeepingClaim]) -> f32 {
-    claims.iter().map(|claim| claim.demand).sum()
+/// **MOST-INVESTED FIRST, TIE-BROKEN ON A STABLE PER-WEB KEY** — the one ordering every pool's
+/// claim list carries, stated once so the three builders cannot each spell it.
+///
+/// It is **total and deterministic**, which is what lets a checkpoint restore the same allocation
+/// ([`crate::intensification::distribute_upkeep_pool`] funds in slice order and the caller owns the
+/// ranking).
+fn sort_keeping_claims(claims: &mut [KeepingClaim]) {
+    claims.sort_by(|a, b| {
+        b.invested
+            .total_cmp(&a.invested)
+            .then_with(|| a.tiebreak.cmp(&b.tiebreak))
+    });
 }
+
+// **RETIRED: `keeping_demand`** — *"the sum of a web's claims, in work units"*. Its one reader was
+// the retired `keeping_rates`, which needed a denominator to cut each kit group's share of the pool
+// with. The tools are settled per **site** now, so there is no group to size against the web's total
+// and nothing left to divide by; the two payers that summed a bill for the wire
+// (`last_roadwork_demand`, `last_quarrywork_demand`) always spelled that sum inline.
 
 /// **HANDS ON A KEEPING ROLE THE BILL DOES NOT NEED** — the largest number that can leave the role
 /// with what remains still covering every claim in full. The shedding order's step 3 spends exactly
@@ -1719,7 +1968,6 @@ fn resolve_shed_facts(
     let (plant_claims, animal_claims) = keeping_claims(
         allocation,
         banking,
-        equipment,
         forage_registry,
         tile_capacity_of,
         forage,
@@ -1805,120 +2053,54 @@ fn resolve_shed_facts(
         threatened: band_is_threatened(band_pos, herds, fauna, width, wrap),
         spare_agriculture_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Agriculture),
-            keeping_worker_need(
-                equipment,
-                band_kit,
-                allocation.workers_on(&LaborTarget::Agriculture),
-                &plant_claims,
-                &allocation.rows_excluding_source(equipment, &LaborTarget::Agriculture),
-            ),
+            keeping_worker_need(equipment, band_kit, &plant_claims),
         ),
         spare_husbandry_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Husbandry),
-            keeping_worker_need(
-                equipment,
-                band_kit,
-                allocation.workers_on(&LaborTarget::Husbandry),
-                &animal_claims,
-                &allocation.rows_excluding_source(equipment, &LaborTarget::Husbandry),
-            ),
+            keeping_worker_need(equipment, band_kit, &animal_claims),
         ),
         spare_roadwork_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Roadwork),
-            keeping_worker_need(
-                equipment,
-                band_kit,
-                allocation.workers_on(&LaborTarget::Roadwork),
-                road_claims,
-                &allocation.rows_excluding_source(equipment, &LaborTarget::Roadwork),
-            ),
+            keeping_worker_need(equipment, band_kit, road_claims),
         ),
         spare_quarrywork_keepers: spare_keepers(
             allocation.workers_on(&LaborTarget::Quarrywork),
-            keeping_worker_need(
-                equipment,
-                band_kit,
-                allocation.workers_on(&LaborTarget::Quarrywork),
-                extraction_claims,
-                &allocation.rows_excluding_source(equipment, &LaborTarget::Quarrywork),
-            ),
+            keeping_worker_need(equipment, band_kit, extraction_claims),
         ),
     }
 }
 
-#[allow(clippy::too_many_arguments)] // one source, one rung, and every seam its gate is judged by
+/// **WHAT EACH WORKED SOURCE WAS SUPPLIED OUT OF ITS WEB'S KEEPING POOL** — step 4, read back off
+/// the band's settled tool plan and written into the per-assignment award vector.
+///
+/// # ⛔ IT NO LONGER SPLITS THE HANDS, AND THAT IS THE ORDER DOING ITS JOB
+///
+/// The split happened in [`plan_pool_tools`], **before** the tools were settled, because the
+/// requirement is struck from the hands (`docs/plan_pool_toe.md` §2.3). All that is left here is
+/// `its hands × the rate the units it was actually issued buy` — so a pool short of tools works its
+/// own sites slower rather than re-planning its hands around the missing gear.
+///
+/// **The claims must be the very lists the plan was struck from**, in their order: the fills are
+/// index-aligned with them.
 fn maintenance_shares(
     allocation: &LaborAllocation,
-    banking: &SourceBankingFirstWork,
-    forage_registry: &ForageRegistry,
-    tile_capacity_of: &dyn Fn(UVec2) -> f32,
-    forage: &crate::labor_config::ForageLaborConfig,
-    herds: &HerdRegistry,
-    fauna: &FaunaConfig,
-    ladder: &LadderConfig,
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
+    plant: &[KeepingClaim],
+    animal: &[KeepingClaim],
+    tools: &PoolToolPlan,
 ) -> Vec<KeepingAward> {
     let mut awards = vec![KeepingAward::default(); allocation.assignments.len()];
-    let (mut plant, mut animal) = keeping_claims(
-        allocation,
-        banking,
-        equipment,
-        forage_registry,
-        tile_capacity_of,
-        forage,
-        herds,
-        fauna,
-        ladder,
-    );
-    let mode = allocation.upkeep_fund_mode;
-    // **The branch rides each claim** ([`KeepingClaim::branch`]), so the loop names only the role
-    // whose pool it is dividing.
-    for (role, claims) in [
-        (LaborTarget::Agriculture, &mut plant),
-        (LaborTarget::Husbandry, &mut animal),
-    ] {
-        claims.sort_by(|a, b| {
-            b.invested
-                .total_cmp(&a.invested)
-                .then_with(|| a.tiebreak.cmp(&b.tiebreak))
-        });
-        // **THE SAME SUPPLY EXPRESSION A BUILD DIVIDES ITS PILE BY** (§4.8) — an equipped keeper
-        // covers more demand than a bare one, and the rung's demand is untouched by either. See
-        // [`KeepingRate`] for where each site's kit comes from.
-        //
-        // # ⛔ WHAT IS SPLIT IS THE WORKERS, AND THE UNIT IS EACH SITE'S OWN WORKER-NEED
-        //
-        // The pool used to be one work total struck at one rate for the whole web, divided in
-        // proportion to **work demand**. With the kit on the site there is no one rate to strike it
-        // at, so the **head count** is what the band actually has to divide and a site's claim on it
-        // is `demand ÷ what one of its own keepers delivers`. What each site is then supplied is
-        // `its hands × its own rate`.
-        //
-        // **It is the same arithmetic wherever the rates agree**, which is every branch on the
-        // shipped roster: with one `r`, `d_i / r` is `d_i` scaled by a constant, `distribute_upkeep_pool`
-        // is homogeneous in that constant under both modes, and `w_i × r` lands exactly on the share
-        // the work-unit split produced. The proof that this change moves nothing that ships is that
-        // equality — see `upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`.
-        let keepers = allocation.workers_on(&role);
-        // **The rows this pool's gear is rationed against** — its own role row excluded, since the
-        // group's ask is chained back on per kit group inside [`keeping_rates`].
-        let other_rows = allocation.rows_excluding_source(equipment, &role);
-        let rates = keeping_rates(equipment, band_kit, keepers, claims, &other_rows);
-        let needs: Vec<f32> = claims
+    // **The branch rides each claim** ([`KeepingClaim::branch`]), so this names only which pool's
+    // fills it is reading.
+    for (claims, fills) in [(plant, tools.agriculture()), (animal, tools.husbandry())] {
+        for (claim, (hands, rate)) in claims
             .iter()
-            .zip(&rates)
-            .map(|(claim, rate)| rate.worker_need(claim.demand))
-            .collect();
-        for ((claim, rate), hands) in
-            claims
-                .iter()
-                .zip(&rates)
-                .zip(distribute_upkeep_pool(keepers as f32, &needs, mode))
+            .zip(pool_rates(equipment, band_kit, claims, fills))
         {
             awards[claim.index] = KeepingAward {
                 work: hands * rate.per_worker,
-                wear_kit: Some(rate.wear_kit.clone()),
+                wear_kit: Some(rate.wear_kit),
             };
         }
     }
@@ -1943,9 +2125,9 @@ fn maintenance_shares(
 /// **The claims carry no assignment index**, unlike [`keeping_claims`]': a road has no labor row of
 /// its own, so `KeepingClaim::index` indexes the returned tile vector instead. That is the only
 /// structural difference between this pool and the two food webs' — everything downstream
-/// ([`keeping_rates`], [`KeepingRate::worker_need`],
-/// [`crate::intensification::distribute_upkeep_pool`]) is the identical seam, which is the point:
-/// **a road keeper is funded exactly as a field or a flock keeper is.**
+/// ([`pool_toe_claims`], [`settle_pool_tools`], [`pool_rates`] and the
+/// [`crate::intensification::distribute_upkeep_pool`] inside the first of them) is the identical
+/// seam, which is the point: **a road keeper is funded exactly as a field or a flock keeper is.**
 ///
 /// Sorted **most-invested first** on the road's own position, tie-broken on the tile coord — the
 /// total order `UpkeepFundMode::Priority` funds in, stated here because `distribute_upkeep_pool`
@@ -1960,7 +2142,6 @@ fn maintenance_shares(
 fn route_keeping_claims(
     registry: &crate::routes::RoadRegistry,
     band: Option<BandId>,
-    equipment: &crate::equipment_config::EquipmentConfig,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     ladder: &LadderConfig,
@@ -1978,11 +2159,10 @@ fn route_keeping_claims(
         claims.push(KeepingClaim {
             index: kept.len(),
             branch: crate::intensification::RungBranch::Route,
-            kit: equipment.keeping_kit_for(
-                None,
-                crate::intensification::RungBranch::Route,
-                Some(&rung.wire_key()),
-            ),
+            // **A road carries no per-row rank for a player to set**, so every road bids at the
+            // default tier — the same answer `bill_and_stock_roads` gives a road's material draw
+            // and `build_priority` gives its build pile.
+            priority: SourcePriority::default(),
             rung: Some(rung),
             // **The stamped bill where this turn's pass has struck one, the live demand where it
             // has not** — `routes::road_keeping_basis`, the plant web's own rule.
@@ -2020,10 +2200,11 @@ fn route_keeping_claims(
 /// animal shares are written straight back into [`maintenance_shares`]' per-assignment award vector.
 /// This pool's shares are not: they land on the **working**, in the `DepositRegistry`, exactly as a
 /// road's land on the road — so the index names the returned key vector, which is
-/// [`route_keeping_claims`]' own arrangement. Everything downstream ([`keeping_rates`],
-/// [`KeepingRate::worker_need`], [`crate::intensification::distribute_upkeep_pool`]) is the
-/// identical seam either way: **a working's keeper is funded exactly as a road, a field or a flock
-/// keeper is.**
+/// [`route_keeping_claims`]' own arrangement. Everything downstream ([`pool_toe_claims`],
+/// [`settle_pool_tools`], [`pool_rates`] and the
+/// [`crate::intensification::distribute_upkeep_pool`] inside the first of them) is the identical
+/// seam either way: **a working's keeper is funded exactly as a road, a field or a flock keeper
+/// is.**
 ///
 /// **The claims carry both branches at once**, which is what [`KeepingClaim::branch`] exists for: one
 /// band can hold a coppice and a quarry, and a single branch argument would have to lie about one of
@@ -2041,7 +2222,6 @@ fn route_keeping_claims(
 fn extraction_keeping_claims(
     allocation: &LaborAllocation,
     deposits: &crate::extraction::DepositRegistry,
-    equipment: &crate::equipment_config::EquipmentConfig,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     extraction: &crate::extraction_config::ExtractionConfig,
@@ -2075,7 +2255,9 @@ fn extraction_keeping_claims(
         claims.push(KeepingClaim {
             index: held.len(),
             branch,
-            kit: equipment.keeping_kit_for(None, branch, Some(&rung.wire_key())),
+            // **The working's own row states the rank**, exactly as a patch's or a herd's does —
+            // this pool's catchment *is* a labor row (`extract`), which is what a road has not got.
+            priority: assignment.priority,
             rung: Some(rung),
             demand,
             // *"Most invested"* on either deposit branch is how far up it the working has been
@@ -2117,12 +2299,18 @@ fn extraction_keeping_claims(
 ///
 /// # (b) THE PAYMENT IS THE SAME SUPPLY EXPRESSION THE OTHER THREE POOLS USE
 ///
-/// [`keeping_rates`] for the per-worker rate and the wear kit,
+/// [`pool_rates`] for the per-worker rate and the wear kit, [`pool_toe_claims`] over
 /// [`crate::intensification::distribute_upkeep_pool`] for the split, and the band's own
 /// `upkeep_fund_mode` for the policy. There is deliberately **no second supply expression**: an
 /// equipped working keeper covers more of a face's bill than a bare one for the same reason an
-/// equipped tender does, and the day a propping set declares a `build_work` stat serving `forestry`
-/// or `extraction` this seam picks it up with no code change.
+/// equipped tender does.
+///
+/// ⛔ **AND A QUARRY'S KEEPERS ARE GEARED NOW, WHICH THEY WERE NOT.** `stone_dressing` declares
+/// `build_work` on `extraction:quarry`, but no roster kit offers the `quarrywork` **job** — so the
+/// retired kit lookup answered `none` and a quarry crew worked bare-handed however many chisels the
+/// band owned. The requirement asks the **rung**, so the tool reaches this pool
+/// (`docs/plan_pool_toe.md` §1). The `forestry` branch is still served by nothing, and the day a
+/// propping set declares one this seam picks it up with no code change.
 ///
 /// **`upkeep_supplied` accumulates (`+=`)**, §2.5's rule: two bands each holding a row on one
 /// working each put a part of its keeping on the ground. It is cleared once per turn by
@@ -2146,6 +2334,10 @@ pub fn settle_bands_extraction(
     ladder: &LadderConfig,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    // **The band's settled tools** ([`PoolToolPlan`]) — this pool shares stone-dressing gear with
+    // `Roadwork`, so its share is cut band-wide rather than here. `None` is a caller that planned
+    // none; see [`pool_or_plan`].
+    tools: Option<&PoolToolPlan>,
 ) {
     // **(c) cleared ahead of every exit below.**
     allocation.last_quarrywork_demand = NO_QUARRYWORK_LEDGER;
@@ -2153,7 +2345,6 @@ pub fn settle_bands_extraction(
     let (held, claims) = extraction_keeping_claims(
         allocation,
         deposits,
-        equipment_cfg,
         tile_registry,
         tiles,
         extraction,
@@ -2173,19 +2364,19 @@ pub fn settle_bands_extraction(
     let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
         BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
     });
-    let other_rows = allocation.rows_excluding_source(equipment_cfg, &LaborTarget::Quarrywork);
-    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims, &other_rows);
-    let needs: Vec<f32> = claims
-        .iter()
-        .zip(&rates)
-        .map(|(claim, rate)| rate.worker_need(claim.demand))
-        .collect();
     let fund_mode = allocation.upkeep_fund_mode;
-    for ((claim, rate), hands) in
+    let fills = pool_or_plan(
+        equipment_cfg,
+        &band_kit,
+        fund_mode,
+        keepers,
+        &claims,
+        tools.map(PoolToolPlan::quarrywork),
+    );
+    for (claim, (hands, rate)) in
         claims
             .iter()
-            .zip(&rates)
-            .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
+            .zip(pool_rates(equipment_cfg, &band_kit, &claims, &fills))
     {
         let supplied = hands * rate.per_worker;
         let (tile, material) = &held[claim.index];
@@ -2195,8 +2386,9 @@ pub fn settle_bands_extraction(
         // **(c) this band's own contribution**, accumulated across the workings it holds.
         allocation.last_quarrywork_supplied += supplied;
         // **The keeper's tools are spent on exactly that work** — billed on what the pool
-        // *supplied*, never on what the rung demanded. Inert with the shipped bare `none` kit, and
-        // wired so a future working kit is a config edit and nothing else.
+        // *supplied*, never on what the rung demanded. The shipped roster declares no keeping tool
+        // on either deposit branch, so the TOE is empty and this is inert; the day a propping set
+        // declares a `build_work` serving `forestry` or `extraction`, it is a config edit.
         charge_keeping_wear(
             band_equipment.as_deref_mut(),
             equipment_cfg,
@@ -2244,13 +2436,11 @@ pub fn settle_bands_extraction(
 pub fn bill_and_stock_roads(
     mut registry: ResMut<crate::routes::RoadRegistry>,
     ladder: Res<LadderConfigHandle>,
-    equipment: Res<EquipmentConfigHandle>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
     mut bands: Query<(&mut PopulationCohort, &BandId), With<BandId>>,
 ) {
     let ladder = ladder.get();
-    let equipment_cfg = equipment.get();
 
     // ## (a) The bill, on every road in the world — **both currencies, in one pass**.
     //
@@ -2269,14 +2459,8 @@ pub fn bill_and_stock_roads(
 
     // ## (b) The STONE, out of each keeper's own stores.
     for (mut cohort, band) in bands.iter_mut() {
-        let (kept, claims) = route_keeping_claims(
-            &registry,
-            Some(*band),
-            &equipment_cfg,
-            &tile_registry,
-            &tiles,
-            &ladder,
-        );
+        let (kept, claims) =
+            route_keeping_claims(&registry, Some(*band), &tile_registry, &tiles, &ladder);
         if claims.is_empty() {
             continue;
         }
@@ -2391,12 +2575,17 @@ pub fn bill_and_stock_roads(
 ///
 /// # (b) THE PAYMENT IS THE SAME SUPPLY EXPRESSION THE OTHER TWO POOLS USE
 ///
-/// [`keeping_rates`] at [`crate::intensification::RungBranch::Route`] for the per-worker rate and
-/// the wear kit, [`crate::intensification::distribute_upkeep_pool`] for the split, and the band's
-/// own [`crate::components::LaborAllocation::upkeep_fund_mode`] for the policy. There is
-/// deliberately **no second supply expression**: an equipped road keeper covers more of a road's
-/// bill than a bare one for the same reason an equipped tender does, and the day a barrow declares a
-/// `build_work` stat serving `route` this seam picks it up with no code change.
+/// [`pool_rates`] for the per-worker rate and the wear kit, [`pool_toe_claims`] over
+/// [`crate::intensification::distribute_upkeep_pool`] for the split, and the band's own
+/// [`crate::components::LaborAllocation::upkeep_fund_mode`] for the policy. There is deliberately
+/// **no second supply expression**: an equipped road keeper covers more of a road's bill than a bare
+/// one for the same reason an equipped tender does.
+///
+/// ⛔ **AND THE TWO ROAD RUNGS ARE WORKED WITH TWO DIFFERENT TOOLS OUT OF THIS ONE POOL** —
+/// `earthmoving` on `route:dirt_road`, `stone_dressing` on `route:paved_road`. Each claim's
+/// requirement is resolved at the rung that road **holds**, so a band keeping one of each needs both
+/// and wears both; the retired kit lookup could name only one of them for the whole pool
+/// (`docs/plan_pool_toe.md` §1).
 ///
 /// **`upkeep_supplied` accumulates (`+=`)**, the §2.5 rule kept unchanged even though a tile now has
 /// exactly one keeper — the split hands a keeper's pool out claim by claim, and the field is cleared
@@ -2437,19 +2626,16 @@ pub fn settle_bands_roadwork(
     ladder: &LadderConfig,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
+    // **The band's settled tools** ([`PoolToolPlan`]) — a paved road and a quarry both want
+    // stone-dressing gear, so this pool's share is cut band-wide rather than here. `None` is a
+    // caller that planned none; see [`pool_or_plan`].
+    tools: Option<&PoolToolPlan>,
 ) {
     // **(c) cleared ahead of every exit below**, so a band that has put its last road down stops
     // republishing a bill it no longer owes.
     allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
     allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
-    let (kept, claims) = route_keeping_claims(
-        registry,
-        Some(band),
-        equipment_cfg,
-        tile_registry,
-        tiles,
-        ladder,
-    );
+    let (kept, claims) = route_keeping_claims(registry, Some(band), tile_registry, tiles, ladder);
     if claims.is_empty() {
         return;
     }
@@ -2465,19 +2651,19 @@ pub fn settle_bands_roadwork(
     let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
         BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
     });
-    let other_rows = allocation.rows_excluding_source(equipment_cfg, &LaborTarget::Roadwork);
-    let rates = keeping_rates(equipment_cfg, &band_kit, keepers, &claims, &other_rows);
-    let needs: Vec<f32> = claims
-        .iter()
-        .zip(&rates)
-        .map(|(claim, rate)| rate.worker_need(claim.demand))
-        .collect();
     let fund_mode = allocation.upkeep_fund_mode;
-    for ((claim, rate), hands) in
+    let fills = pool_or_plan(
+        equipment_cfg,
+        &band_kit,
+        fund_mode,
+        keepers,
+        &claims,
+        tools.map(PoolToolPlan::roadwork),
+    );
+    for (claim, (hands, rate)) in
         claims
             .iter()
-            .zip(&rates)
-            .zip(distribute_upkeep_pool(keepers as f32, &needs, fund_mode))
+            .zip(pool_rates(equipment_cfg, &band_kit, &claims, &fills))
     {
         let supplied = hands * rate.per_worker;
         if let Some(road) = registry.road_mut(kept[claim.index]) {
@@ -2486,8 +2672,9 @@ pub fn settle_bands_roadwork(
         // **(c) this band's own contribution**, accumulated across the roads it keeps.
         allocation.last_roadwork_supplied += supplied;
         // **The keeper's tools are spent on exactly that work** — billed on what the pool
-        // *supplied* to this road, never on what the rung demanded. Inert with the shipped bare
-        // `none` kit, and wired so a future road kit is a config edit and nothing else.
+        // *supplied* to this road, never on what the rung demanded. ⛔ **A DIRT ROAD AND A PAVED
+        // ROAD WEAR DIFFERENT TOOLS OUT OF ONE POOL**, because the TOE is resolved at each road's
+        // own held rung — which is the case one kit per pool could not express at all.
         charge_keeping_wear(
             band_equipment.as_deref_mut(),
             equipment_cfg,
@@ -3546,21 +3733,14 @@ pub fn advance_labor_allocation(
         // and *"what each road is owed"* cannot come from two readings of the same ground. This
         // reading is the **pre-shed** one the shedding order is entitled to; the payment below strikes
         // its own against what survived.
-        let (_, road_claims) = route_keeping_claims(
-            &roads,
-            band_id,
-            &equipment_cfg,
-            &tile_registry,
-            &tiles,
-            &ladder,
-        );
+        let (_, road_claims) =
+            route_keeping_claims(&roads, band_id, &tile_registry, &tiles, &ladder);
         // **And what the WORKINGS this band holds cost it**, on the same rule one branch over: the
         // **pre-shed** reading the shedding order is entitled to, with the payment below striking
         // its own against what survived.
         let (_, extraction_claims) = extraction_keeping_claims(
             &allocation,
             &deposits,
-            &equipment_cfg,
             &tile_registry,
             &tiles,
             &extraction_cfg,
@@ -3628,6 +3808,179 @@ pub fn advance_labor_allocation(
         allocation.last_material_need.clear();
         allocation.last_material_income.clear();
         allocation.last_fodder_drain = NO_FODDER_LEDGER;
+        // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
+        // queue is pruned of anything the band no longer works before a single work unit is aimed,
+        // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
+        // whose entry goes here stops with it ([`fauna::cancel_dropped_rings`]).
+        //
+        // ⛔ **IT RUNS BEFORE THE HEAD IS READ, NOT AFTER.** Everything below reads
+        // `build_queue.first()` — the claim side's verb term, the builders' bid on the band's tools,
+        // the material pile — so a prune underneath them would let a pool claim tools and a pile for
+        // an entry the same turn drops.
+        let pruned_entries =
+            allocation.prune_build_queue(&|tile| band_keeps_road(&roads, band_id, tile));
+        fauna::cancel_dropped_rings(&mut registry, &pruned_entries);
+        // **THE FUNDED HEAD, AND ONLY IF ITS OWN GATE HOLDS** — the claim side's verb term
+        // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
+        // stands there, so letting it claim would dilute the share of everything the band really
+        // holds under the default `Spread`.
+        //
+        // **Re-struck against what SURVIVED the shed**, unlike the pre-shed reading the shedding
+        // order was handed: a band whose builders row was emptied above funds no head at all, and
+        // the split must not fund one it no longer has the hands to bank.
+        let banking = band_banking(
+            &allocation,
+            &forage_registry,
+            &registry,
+            &roads,
+            band_id,
+            faction,
+            &discovery,
+            knowledge_threshold,
+            &ladder,
+            &fauna,
+            &labor,
+            &flora,
+            &extraction_cfg,
+            &food_sites,
+            &tile_registry,
+            &tiles,
+            map_seed,
+            wrap_horizontal,
+        );
+        // **THE BAND'S BUILDERS** — one pool, whose whole output goes on the **head** of the queue
+        // until that entry's meter fills, then on the next (§2.5). It is not a crew on any tile: a
+        // verb declares, and the hands are here.
+        let builders = allocation.workers_on(&LaborTarget::Builders);
+        // **THE HEAD STAYS THE HEAD EVEN WHEN ITS GATE REFUSES.** It is not skipped, not reordered
+        // and not passed over — a stuck head says so loudly (`crate::intensification::BuildTurns::Blocked`) rather than
+        // letting the queue quietly fund something the player did not put first.
+        let head_entry = allocation.build_queue.first().cloned();
+        // The queue as it stands for this turn, read inside the assignment loop (which borrows the
+        // allocation's assignments) and walked again by the chain pass after it.
+        let build_queue = allocation.build_queue.clone();
+        // **THE LEGS THE HEAD STILL HAS TO LAY** — the rung in flight is the first of them, and it
+        // is what the builders' tools, the material pile and the wear are all resolved at.
+        //
+        // **AND THE HEAD MAY BE A RING**, which is why the two arms meet in one pair. A ring is a pen
+        // build — the same rung record prices it, funds it and wears the same tools on it — so it
+        // draws the same pile, laid as [`head_ring_leg`]. `banking` cannot answer for it (it
+        // resolves a *verb*, and a ring names none), so the ring's own gate is asked here instead:
+        // the head entry declares `ExtendPen`, the band has builders, and `Herd::pen_extending` is
+        // set.
+        let (pile_source, pile_legs) = match banking.source.as_ref() {
+            Some((source, improvement)) => (
+                Some(source.clone()),
+                head_build_legs(
+                    source,
+                    BuildJob::Rung(*improvement).destination(),
+                    &forage_registry,
+                    &registry,
+                    &roads,
+                    &deposits,
+                    &ladder,
+                ),
+            ),
+            None => match head_entry.as_ref().filter(|entry| {
+                matches!(entry.declared, BuildJob::ExtendPen) && builders > NO_CREW_ON_THIS_ACTIVITY
+            }) {
+                Some(entry) => (
+                    Some(entry.source.clone()),
+                    head_ring_leg(&entry.source, &registry, &ladder)
+                        .into_iter()
+                        .collect(),
+                ),
+                None => (None, Vec::new()),
+            },
+        };
+        // **The rung the pool is standing on this turn is the FIRST LEG** — the legs are in climb
+        // order and each carries what it still owes, so the head of the list is the one this turn's
+        // work lands in. It is the same rung the arms below charge the wear against.
+        let head_in_flight = pile_legs.first().map(|(rung, _, _)| *rung);
+        // The head row's own rank, so the build competes for the band's stores **and its tools** on
+        // the player's answer for that source rather than on a rank of its own — a ring's included,
+        // so a widening pen queues behind a `High`-marked holding exactly as a fresh pen does.
+        let build_priority = pile_source
+            .as_ref()
+            .and_then(|source| {
+                allocation
+                    .assignments
+                    .iter()
+                    .find(|assignment| BuildSource::of(&assignment.target).as_ref() == Some(source))
+                    .map(|assignment| assignment.priority)
+            })
+            .unwrap_or_default();
+        // **WHAT THIS BAND'S FOUR KEEPING POOLS ARE HOLDING**, struck against what survived the shed
+        // — the lists the tool plan is planned from and the lists every payer below reads its share
+        // off, in their order.
+        let (plant_claims, animal_claims) = keeping_claims(
+            &allocation,
+            &banking,
+            &forage_registry,
+            &tile_capacity_of,
+            &labor.forage,
+            &registry,
+            &fauna,
+            &ladder,
+        );
+        // **Its own claim reading, deliberately.** The two lists above were struck for the shedding
+        // order, off the **pre-shed** allocation; these fund what survived. They are the same numbers
+        // today — a claim is a property of the ROADS and the WORKINGS, not of the allocation — and
+        // keeping them separate is what stops a later change to one silently retuning the other.
+        let (_, road_claims_funded) =
+            route_keeping_claims(&roads, band_id, &tile_registry, &tiles, &ladder);
+        let (_, extraction_claims_funded) = extraction_keeping_claims(
+            &allocation,
+            &deposits,
+            &tile_registry,
+            &tiles,
+            &extraction_cfg,
+            &ladder,
+        );
+        // ## ⛔ THE BAND'S TOOLS, PLANNED AND SETTLED ONCE FOR ALL FIVE POOLS
+        //
+        // `docs/plan_pool_toe.md` §2.3. Every pool's hands are split first, as if fully equipped;
+        // each site's requirement follows from those hands at its own rung; the claims are then
+        // settled **band-wide per tool** by the player's own `SourcePriority`; and only then does
+        // each pool read its rate back. It has to sit here — above the two payers below and above
+        // `maintenance_shares` — because Roadwork's paved roads and Quarrywork's quarries reach for
+        // one stock of stone-dressing gear, and a pool that settled its own would issue it twice.
+        let pool_tools = plan_pool_tools(
+            &equipment_cfg,
+            &band_kit,
+            allocation.upkeep_fund_mode,
+            [
+                PoolAsk::new(
+                    &plant_claims,
+                    allocation.workers_on(&LaborTarget::Agriculture),
+                ),
+                PoolAsk::new(
+                    &animal_claims,
+                    allocation.workers_on(&LaborTarget::Husbandry),
+                ),
+                PoolAsk::new(
+                    &road_claims_funded,
+                    allocation.workers_on(&LaborTarget::Roadwork),
+                ),
+                PoolAsk::new(
+                    &extraction_claims_funded,
+                    allocation.workers_on(&LaborTarget::Quarrywork),
+                ),
+            ],
+            // **The builders bid for the HEAD and nothing else** (§2.4): entries behind it are dated,
+            // not worked, and claim nothing. A pool with nobody on it has no tool out either.
+            pile_source
+                .as_ref()
+                .filter(|_| builders > NO_CREW_ON_THIS_ACTIVITY)
+                .and_then(|source| {
+                    Some(BuildersAsk {
+                        branch: source_branch(source, head_in_flight)?,
+                        rung: head_in_flight.map(|rung| rung.wire_key()),
+                        builders,
+                        priority: build_priority,
+                    })
+                }),
+        );
         // ## ⛔ THE ROADS THIS BAND KEEPS, PAID HERE — AFTER THE SHED AND BEFORE THE QUOTE
         //
         // The third keeping pool ([`settle_bands_roadwork`]), and this seat is the whole of what
@@ -3642,11 +3995,6 @@ pub fn advance_labor_allocation(
         // above left, not the one the player typed. **And it cannot sit any later**: below this line
         // are the two `continue`s, and a band whose whole allocation was shed still owes what its
         // roads cost — the roll-up clears beside the fodder and material ledgers for that reason.
-        //
-        // **Its own claim reading, deliberately.** `road_claims` above was struck for the shedding
-        // order, off the **pre-shed** allocation; this one funds what survived. The two are the same
-        // number today — a claim is a property of the ROADS, not of the allocation — and keeping
-        // them separate is what stops a later change to one silently retuning the other.
         if let Some(band_id) = band_id {
             settle_bands_roadwork(
                 &mut roads,
@@ -3658,6 +4006,7 @@ pub fn advance_labor_allocation(
                 &ladder,
                 &tile_registry,
                 &tiles,
+                Some(&pool_tools),
             );
         }
         // **THE FOURTH KEEPING POOL, AT THE THIRD'S OWN SEAT** — after the shed (the head count it
@@ -3675,6 +4024,7 @@ pub fn advance_labor_allocation(
             &ladder,
             &tile_registry,
             &tiles,
+            Some(&pool_tools),
         );
         if allocation.assignments.is_empty() {
             continue;
@@ -3726,47 +4076,17 @@ pub fn advance_labor_allocation(
         // resolved take — the seed is only the pre-resolution stand-in.
         let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
         // **THE BAND'S MAINTENANCE POOLS, SPLIT ACROSS ITS SOURCES** — one work amount per
-        // assignment index (`maintenance_shares`). Resolved **before** the loop because the split is
-        // a property of the band's *whole* holding on a web: what one patch gets depends on what
-        // every other one asked for, which nothing inside a per-assignment pass can see.
-        // **THE FUNDED HEAD, AND ONLY IF ITS OWN GATE HOLDS** — the claim side's verb term
-        // ([`SourceBankingFirstWork`]). A head the ground refuses banks nothing however long it
-        // stands there, so letting it claim would dilute the share of everything the band really
-        // holds under the default `Spread`.
-        // **Re-struck against what SURVIVED the shed**, unlike the pre-shed reading the shedding
-        // order was handed: a band whose builders row was emptied above funds no head at all, and
-        // the split must not fund one it no longer has the hands to bank.
-        let banking = band_banking(
-            &allocation,
-            &forage_registry,
-            &registry,
-            &roads,
-            band_id,
-            faction,
-            &discovery,
-            knowledge_threshold,
-            &ladder,
-            &fauna,
-            &labor,
-            &flora,
-            &extraction_cfg,
-            &food_sites,
-            &tile_registry,
-            &tiles,
-            map_seed,
-            wrap_horizontal,
-        );
+        // assignment index (`maintenance_shares`). The split itself happened with the tool plan
+        // above, because the band's **whole** holding decides both: what one patch's hands are
+        // depends on what every other site asked for, and what those hands hold depends on what
+        // every other pool asked for.
         let upkeep_shares = maintenance_shares(
             &allocation,
-            &banking,
-            &forage_registry,
-            &tile_capacity_of,
-            &labor.forage,
-            &registry,
-            &fauna,
-            &ladder,
             &equipment_cfg,
             &band_kit,
+            &plant_claims,
+            &animal_claims,
+            &pool_tools,
         );
         // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
         //
@@ -3805,35 +4125,10 @@ pub fn advance_labor_allocation(
             herd.upkeep_materials_demanded =
                 fauna::herd_upkeep_material_demands(herd, &fauna, &ladder);
         }
-        // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
-        // queue is pruned of anything the band no longer works before a single work unit is aimed,
-        // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
-        // whose entry goes here stops with it ([`fauna::cancel_dropped_rings`]).
-        let pruned_entries =
-            allocation.prune_build_queue(&|tile| band_keeps_road(&roads, band_id, tile));
-        fauna::cancel_dropped_rings(&mut registry, &pruned_entries);
-        // **THE BAND'S BUILDERS** — one pool, whose whole output goes on the **head** of the queue
-        // until that entry's meter fills, then on the next (§2.5). It is not a crew on any tile: a
-        // verb declares, and the hands are here.
-        let builders = allocation.workers_on(&LaborTarget::Builders);
-        // **THE HEAD STAYS THE HEAD EVEN WHEN ITS GATE REFUSES.** It is not skipped, not reordered
-        // and not passed over — a stuck head says so loudly (`crate::intensification::BuildTurns::Blocked`) rather than
-        // letting the queue quietly fund something the player did not put first.
-        let head_entry = allocation.build_queue.first().cloned();
-        // The queue as it stands for this turn, read inside the assignment loop (which borrows the
-        // allocation's assignments) and walked again by the chain pass after it.
-        let build_queue = allocation.build_queue.clone();
-        // **THE BUILDERS' OWN GEAR, ONE READING PER FOOD WEB PLUS ONE PER OVERRIDDEN ENTRY.** The
-        // question *"which kit"* is the **entry's** — a queue item is one job — so the two derived
-        // per-web answers serve every entry that named nothing and an entry that named a kit is
-        // resolved on its own (§4.7a ②). See [`BuildersGear`].
-        let builders_gear = BuildersGear::resolve(
-            &equipment_cfg,
-            &build_queue,
-            builders,
-            &band_kit,
-            allocation.rows_excluding_source(&equipment_cfg, &LaborTarget::Builders),
-        );
+        // **THE BUILDERS' OWN TOOLS, DERIVED PER BUILD FROM THE RUNG IT STANDS ON.** The head's
+        // reading is its **settled** share of the band's tools; everything below it in the queue is
+        // dated at what the band holds. See [`BuildersGear`].
+        let builders_gear = BuildersGear::resolve(&equipment_cfg, builders, &band_kit, &pool_tools);
         // **WHAT EACH SOURCE CONTRIBUTED TO THE CHAIN**, recorded as the loop goes and evaluated in
         // **queue order** afterwards — the loop visits assignments, and the queue's order is the
         // player's.
@@ -3879,54 +4174,20 @@ pub fn advance_labor_allocation(
         // `SourcePriority` and then in proportion to demand, and no row's place in `assignments`
         // decides anything (`set_assignment` re-pushes an edited row to the end).
         //
-        // **The build's want is struck against the head entry alone**, and only where its gate holds
-        // — `banking` is that gate, resolved above and shared with the keeping claim, so the pool
-        // cannot draw a pile for work it will not bank.
-        //
-        // **AND THE HEAD MAY BE A RING**, which is why the two arms below meet in one pair. A ring is
-        // a pen build — the same rung record prices it, funds it and wears the same tools on it — so
-        // it draws the same pile, laid as [`head_ring_leg`] and spread by the very same
-        // [`build_material_wants`]. `banking` cannot answer for it (it resolves a *verb*, and a ring
-        // names none), so the ring's own gate is asked here instead: the head entry declares
-        // `ExtendPen`, the band has builders, and `Herd::pen_extending` is set.
-        let (pile_source, pile_legs) = match banking.source.as_ref() {
-            Some((source, improvement)) => (
-                Some(source.clone()),
-                head_build_legs(
-                    source,
-                    BuildJob::Rung(*improvement).destination(),
-                    &forage_registry,
-                    &registry,
-                    &roads,
-                    &deposits,
-                    &ladder,
-                ),
-            ),
-            None => match head_entry.as_ref().filter(|entry| {
-                matches!(entry.declared, BuildJob::ExtendPen) && builders > NO_CREW_ON_THIS_ACTIVITY
-            }) {
-                Some(entry) => (
-                    Some(entry.source.clone()),
-                    head_ring_leg(&entry.source, &registry, &ladder)
-                        .into_iter()
-                        .collect(),
-                ),
-                None => (None, Vec::new()),
-            },
-        };
+        // **The build's want is struck against the head entry alone** — `pile_source` / `pile_legs`
+        // are resolved with the band's tool plan above, off the same `banking` gate the keeping
+        // claim reads, so the pool cannot draw a pile for work it will not bank and cannot be armed
+        // for a job it is not standing on.
         let build_want = match pile_source.as_ref() {
             Some(source) => {
-                // The turn's accrual as the arm will compute it — the whole pool at the entry's own
-                // kit, which is `RungDef::build_accrual`'s body once its gate has held, and the
-                // ring arm's `pen_extend_accrual` on the same terms.
-                // **The rung the pool is standing on this turn is the FIRST LEG** — the legs
-                // are in climb order and each carries what it still owes, so the head of the list
-                // is the one this turn's work lands in. It is the same rung the arm below charges
-                // the wear against.
-                let in_flight = pile_legs.first().map(|(rung, _, _)| *rung);
+                // The turn's accrual as the arm will compute it — the whole pool at the tools the
+                // rung in flight wants, which is `RungDef::build_accrual`'s body once its gate has
+                // held, and the ring arm's `pen_extend_accrual` on the same terms.
                 let accrual = crate::intensification::pool_work_supply(
                     builders,
-                    builders_gear.for_source(source, in_flight).work_per_worker,
+                    builders_gear
+                        .for_source(source, head_in_flight)
+                        .work_per_worker,
                 );
                 BuildMaterialDraw {
                     coverage: FULLY_SERVED,
@@ -3935,19 +4196,6 @@ pub fn advance_labor_allocation(
             }
             None => BuildMaterialDraw::unbilled(),
         };
-        // The head row's own rank, so the build competes for the store on the player's answer for
-        // that source rather than on a rank of its own — a ring's included, so a widening pen queues
-        // for the hurdles behind a `High`-marked holding exactly as a fresh pen does.
-        let build_priority = pile_source
-            .as_ref()
-            .and_then(|source| {
-                allocation
-                    .assignments
-                    .iter()
-                    .find(|assignment| BuildSource::of(&assignment.target).as_ref() == Some(source))
-                    .map(|assignment| assignment.priority)
-            })
-            .unwrap_or_default();
         let material_settlement = settle_material_upkeep(
             &allocation.assignments,
             &forage_registry,
@@ -9848,92 +10096,92 @@ pub fn advance_predator_raids(
 #[cfg(test)]
 mod keeping_split_tests {
     //! The per-site keeping split, at the level the labor loop cannot reach: how many keepers a
-    //! web's bill needs when its sites are worked with different tools
-    //! (`docs/plan_standing_upkeep.md` §2.7).
+    //! pool's bill needs when its sites stand on rungs that want different tools
+    //! (`docs/plan_pool_toe.md` §2.1).
 
     use super::*;
 
-    /// A claim on `demand`, worked with the roster kit `kit_id` — the shape
-    /// [`keeping_claims`] builds and the split consumes.
-    fn claim(index: usize, demand: f32, kit_id: &str) -> KeepingClaim {
+    /// A claim on `demand`, standing on `rung` — the shape [`keeping_claims`] builds and the split
+    /// consumes. **The tools follow from the rung**, so a fixture states the ground and never a kit.
+    fn claim(index: usize, demand: f32, rung: crate::intensification::RungKey) -> KeepingClaim {
         KeepingClaim {
             index,
             demand,
-            // The plant web, because these cases are about the SPLIT and not about a ladder — the
-            // branch only ever reaches a rung-bound tool, and no plant tool is one.
-            branch: crate::intensification::RungBranch::Plant,
-            kit: crate::equipment_config::EquipmentConfig::builtin()
-                .kit(kit_id)
-                .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'")),
-            // These cases are about the SPLIT, which groups on the pair; naming no rung keeps every
-            // claim in one group per kit, exactly as they were before the rung axis existed.
-            rung: None,
+            branch: rung.branch(),
+            priority: SourcePriority::default(),
+            rung: Some(rung),
             invested: demand,
             tiebreak: format!("{index:010}"),
         }
     }
 
-    /// **THE CREW A WEB'S BILL NEEDS IS SUMMED OVER ITS SITES, NOT DIVIDED OUT OF ITS TOTAL.**
+    /// **THE CREW A POOL'S BILL NEEDS IS SUMMED OVER ITS SITES, NOT DIVIDED OUT OF ITS TOTAL.**
     ///
     /// The shedding order spends *spare* keepers before anything that costs output, so *"how many
     /// hands must stay"* has to be struck at the tools the sites are actually worked with. With one
-    /// rate per web the answer was `bill ÷ that rate`; with a tool per site there is no single rate
-    /// to divide by, and a hoed site and a bare one owing the same work need **different numbers of
-    /// hands**.
+    /// kit per pool the answer was `bill ÷ that kit's rate`; with a requirement per **rung** there is
+    /// no single rate to divide by, and two sites owing the same work on rungs that want different
+    /// tools need **different numbers of hands**.
+    ///
+    /// ⛔ **THE `Quarrywork` POOL IS THE CASE, BECAUSE IT HOLDS TWO BRANCHES.** A coppice
+    /// (`forestry`) is served by no shipped tool at all and a quarry (`extraction:quarry`) by
+    /// stone-dressing gear, so one pool genuinely carries two rates — which is the thing one kit
+    /// could not express and which this test would not have been able to state on the plant web,
+    /// where every rung resolves the same hoe.
     ///
     /// **Both halves.** The mixed pair lands strictly between the two uniform answers — which is
     /// what a per-site sum means and what any single-rate reading gets wrong in one direction or the
-    /// other — and the uniform pair still lands exactly on `bill ÷ the one rate`, so the
-    /// generalisation did not move the case that ships.
+    /// other — and the bare pair still lands exactly on `bill ÷ bare hands`.
     #[test]
-    fn a_webs_keeper_need_is_the_sum_of_each_sites_own_and_not_one_division_of_the_bill() {
-        /// Two equal bills, so the only thing that can move the answer is the tool.
+    fn a_pools_keeper_need_is_the_sum_of_each_sites_own_and_not_one_division_of_the_bill() {
+        /// Two equal bills, so the only thing that can move the answer is the tool the rung wants.
         const A_BILL: f32 = 3.0;
-        /// Enough hands that the coverage read arms every keeper — the band's scarcity is the
-        /// grouping test's subject, not this one.
-        const KEEPERS: u32 = 8;
-
-        /// The band has no rows beside the keeping pool under test.
-        const NO_COMPETING_ROWS: &[(crate::equipment_config::KitChoice, f32)] = &[];
 
         let equipment = crate::equipment_config::EquipmentConfig::for_a_stocked_fixture();
-        let stocked = BandEquipment::start_stocked_for(&equipment, KEEPERS as f32);
-        let need = |kits: [&str; 2]| -> f32 {
+        // **The band owns a serving unit of every tool**, so a rung that wants one is planned at the
+        // geared rate and a rung that wants none is planned bare — which is the whole comparison.
+        let stocked = BandEquipment::start_stocked(&equipment);
+        let need = |rungs: [crate::intensification::RungKey; 2]| -> f32 {
             keeping_worker_need(
                 &equipment,
                 &stocked,
-                KEEPERS,
-                &[claim(0, A_BILL, kits[0]), claim(1, A_BILL, kits[1])],
-                // No band rows beside this pool, so nothing competes for the hoes and the group
-                // reads the whole ledger — the `demand == 0` fall-through, stated as a fixture.
-                NO_COMPETING_ROWS,
+                &[claim(0, A_BILL, rungs[0]), claim(1, A_BILL, rungs[1])],
             )
         };
 
-        let bare = need(["none", "none"]);
-        let hoed = need(["tillage", "tillage"]);
-        let mixed = need(["tillage", "none"]);
+        let bare = need([
+            crate::intensification::RungKey::ForestryCoppice,
+            crate::intensification::RungKey::ForestryCoppice,
+        ]);
+        let tooled = need([
+            crate::intensification::RungKey::ExtractionQuarry,
+            crate::intensification::RungKey::ExtractionQuarry,
+        ]);
+        let mixed = need([
+            crate::intensification::RungKey::ExtractionQuarry,
+            crate::intensification::RungKey::ForestryCoppice,
+        ]);
 
         assert_eq!(
             bare,
             2.0 * A_BILL / crate::intensification::PER_WORKER_OUTPUT,
-            "two bare sites need their whole bill in hands — {bare}"
+            "two sites no tool serves need their whole bill in hands — {bare}"
         );
         assert!(
-            hoed < bare,
-            "fixture: the hoes must actually save hands, or every comparison below is vacuous — \
-             {hoed} against {bare}"
+            tooled < bare,
+            "fixture: the quarry rung's tool must actually save hands, or every comparison below is \
+             vacuous — {tooled} against {bare}"
         );
         assert!(
-            mixed > hoed && mixed < bare,
-            "one hoed site and one bare needs strictly between the two uniform answers: {mixed} \
-             against {hoed} and {bare}"
+            mixed > tooled && mixed < bare,
+            "one tooled site and one bare needs strictly between the two uniform answers: {mixed} \
+             against {tooled} and {bare}"
         );
         assert!(
-            (mixed - (hoed + bare) / 2.0).abs() < 1e-5,
+            (mixed - (tooled + bare) / 2.0).abs() < 1e-5,
             "…and exactly each site's own need summed, which for two equal bills is the mean of \
              the uniform pair: {mixed} against {}",
-            (hoed + bare) / 2.0
+            (tooled + bare) / 2.0
         );
     }
 
@@ -10354,40 +10602,26 @@ mod labor_yield_tests {
         declared: BuildJob,
         builders: u32,
     ) {
-        let mut allocation = world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band has an allocation");
-        allocation.assignments.push(LaborAssignment {
-            target: LaborTarget::Builders,
-            // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit is a
-            // property of the queue ENTRY, and `assign_labor` refuses a token here. The isolation
-            // below rides the entry instead.
-            kit: None,
-            workers: builders,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
-        assert!(
-            allocation.enqueue_build(source.clone(), declared),
-            "fixture: a build is declared on a source the band already works"
-        );
-        // ⛔ **THE HARNESS'S BUILDERS GO OUT BARE, AND THAT IS AN ISOLATION RATHER THAN A DEFAULT.**
-        // An absent kit means *derive per entry*, and the roster's answer — `tillage` on a plant
-        // build, `hurdling` on an animal one — adds `+0.5` work **per covered worker per turn** on
-        // top of their own hands. A start-stocked band holds
-        // `ceil(workers × start_stock_fraction)` of each tool, so at [`WORKERS`] hands the whole
-        // pool is armed and delivers `10 × 1.5 = 15` a turn against `10`: every pace fixture below
-        // would run half again as fast as the number it asserts.
-        //
-        // Naming `none` **on the entry** holds the gear axis at its identity so these fixtures
-        // measure the *meter*, exactly as `FaunaConfig::without_retreat` holds the retreat at its
-        // identity across the hunt suites. **The geared default has its own tests** —
-        // `the_builders_pool_derives_its_kit_from_the_head_entry`, and
-        // `equipment_config::tests::a_build_tool_serves_its_own_web_and_two_of_them_do_not_compound`.
-        assert!(
-            allocation.set_build_entry_kit(&source, Some(bare_builders())),
-            "fixture: the entry just declared takes the bare kit"
-        );
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments.push(LaborAssignment {
+                target: LaborTarget::Builders,
+                // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit was
+                // a property of the queue ENTRY, and `assign_labor` refuses a token here. Neither
+                // prices anything now — the isolation below rides the band's ledger.
+                kit: None,
+                workers: builders,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+            assert!(
+                allocation.enqueue_build(source.clone(), declared),
+                "fixture: a build is declared on a source the band already works"
+            );
+        }
+        crate::disarm_the_builders(world, band, declared.destination());
     }
 
     /// **The roster's empty kit** — every predicate reads false, so a party carrying it runs at the
@@ -13697,14 +13931,14 @@ mod labor_yield_tests {
         assert_eq!(fauna_id, HERD_ID, "the same herd");
     }
 
-    /// **Stand up a band taming the shipped herd on one named kit**, and hand back the taming
-    /// progress and the handling gear's condition after one turn.
+    /// **Stand up a band taming the shipped herd, holding its tools or holding none**, and hand back
+    /// the taming progress and the handling gear's condition after one turn.
     ///
     /// A helper rather than two copies, because the whole claim of the tests below is that the
-    /// **kit** is the only thing that differs: written twice, a stray difference in the floor, the
-    /// crew or the herd's seating would be indistinguishable from the effect under test.
-    fn tame_one_turn_on(kit_id: &str) -> (f32, f32) {
-        let turn = tame_one_turn_on_herd_owned_by(kit_id, None);
+    /// **band's tools** are the only thing that differs: written twice, a stray difference in the
+    /// floor, the crew or the herd's seating would be indistinguishable from the effect under test.
+    fn tame_one_turn_on(tools: bool) -> (f32, f32) {
+        let turn = tame_one_turn_on_herd_owned_by(tools, None);
         (turn.progress, turn.gear_wear)
     }
 
@@ -13717,20 +13951,29 @@ mod labor_yield_tests {
     // handling gear. The claim is about the JOB, so it is measured on the job — see part (3) of
     // `the_handling_kit_takes_work_off_the_job_rather_than_speeding_the_crew`.
 
-    /// **The animal web's builders kit** — the `crook` and nothing else. Named because the fixtures
-    /// below put it on the **builders** row, where a build's gear offset is read from. It carried
-    /// `hurdles` until the material half of the standing upkeep made those a **material** the
-    /// `animal:pen` rung eats (`docs/plan_standing_upkeep.md` §4.9 item 12); every gear dial came
-    /// across unchanged, so the fixtures below measure the same pacing they always did.
-    const HURDLING_KIT: &str = "hurdling";
+    /// **THE BAND OWNS ITS TOOLS**, so the pool's requirement is filled and the rung's own tool is
+    /// in every builder's hand.
+    ///
+    /// ⛔ **THE GEAR AXIS IS HELD ON THE LEDGER NOW, NOT ON A KIT NAMED ON THE ENTRY.** These arms
+    /// used to differ in the queue entry's `kit` — `hurdling` against `big_game` — because a build
+    /// resolved one roster kit. A pool's tools follow from the **rung** since
+    /// `docs/plan_pool_toe.md`, so an entry's kit prices nothing and the only thing that can still
+    /// separate a geared crew from a bare one is whether the band actually holds the tool.
+    const HOLDS_ITS_TOOLS: bool = true;
 
-    /// The item that kit carries — what a build's wear is charged against on the animal web.
+    /// **THE BAND OWNS NOTHING**, so every builder works bare-handed however much the rung wants.
+    const HOLDS_NO_TOOLS: bool = false;
+
+    /// The item the animal branch's builds want — what a build's wear is charged against on that
+    /// web. It carried the retired `hurdles` until the material half of the standing upkeep made
+    /// those a **material** the `animal:pen` rung eats (`docs/plan_standing_upkeep.md` §4.9 item
+    /// 12); every gear dial came across unchanged, so the fixtures below measure the same pacing
+    /// they always did.
     const CROOK: &str = "crook";
 
-    /// **The PLANT web's builders kit and its tool.** Named so an animal-build fixture can assert
-    /// that neither is touched: a hoe brought to a `Tame` adds nothing to what its builders
-    /// deliver, so it must be charged nothing.
-    const TILLAGE_KIT: &str = "tillage";
+    /// **The PLANT branch's build tool.** Named so an animal-build fixture can assert it is not
+    /// touched: a hoe serves no animal rung, so it is never in an animal build's requirement and
+    /// must be charged nothing even by a band that owns one.
     const HOES: &str = "hoes";
 
     /// What one turn of a `Tame` assignment left behind — the build meter, the gear it spent, and the
@@ -13760,7 +14003,7 @@ mod labor_yield_tests {
     /// ordinary case — the first accrual claims it), `Some(faction)` seats an owner before the turn
     /// so the ownership rule inside `Herd::accrue_domestication` can be exercised from the labor
     /// system. Parameterised rather than copied so the two arms differ in the owner and nothing else.
-    fn tame_one_turn_on_herd_owned_by(kit_id: &str, owner: Option<FactionId>) -> TameTurn {
+    fn tame_one_turn_on_herd_owned_by(tools: bool, owner: Option<FactionId>) -> TameTurn {
         const BIG_HERD_CAP: f32 = 1_000.0;
         let (mut world, tile) = world_with_source(CAP);
         reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
@@ -13770,9 +14013,6 @@ mod labor_yield_tests {
         }
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
         let builders = animal_builders(&world, RungKey::AnimalPastoral);
-        let kit = equipment
-            .kit(kit_id)
-            .unwrap_or_else(|| panic!("the shipped roster carries the '{kit_id}' kit"));
         // ⛔ **THE TAKE ROW CARRIES A HUNT KIT, NOT THE BUILD KIT UNDER TEST.** It used to carry
         // `kit_id`, which put `hurdling` — a `builders`/`husbandry` kit — on a `hunt` row, a state
         // `assign_labor` refuses by name. It was harmless while the builders' pool armed off the
@@ -13815,18 +14055,17 @@ mod labor_yield_tests {
                 BuildSource::Herd(HERD_ID.to_string()),
                 BuildJob::Rung(Improvement::Tame),
             ));
-            // **THE KIT UNDER TEST RIDES THE QUEUE ENTRY**, which is where a build's gear offset is
-            // read from: naming it on the row is the per-BAND answer §4.7a deleted, and asserting
-            // the offset off that row now would be a guard over a dead term.
-            assert!(
-                allocation.set_build_entry_kit(&BuildSource::Herd(HERD_ID.to_string()), Some(kit),)
-            );
         }
-        // `spawn_band` builds no ledger, and wear is only charged on an item the band owns — an
-        // absent entry is NOT OWNED since the count slice.
-        world
-            .entity_mut(band)
-            .insert(crate::components::BandEquipment::start_stocked(&equipment));
+        // **THE LEDGER UNDER TEST**, and it is the whole of the gear axis: a build's tools follow
+        // from the rung it stands on, so what separates a geared pool from a bare one is whether the
+        // band owns the tool at all. `spawn_band` builds no ledger, and wear is only charged on an
+        // item the band owns — an absent entry is NOT OWNED since the count slice — so a **stated**
+        // empty ledger is what puts the crew genuinely bare-handed.
+        world.entity_mut(band).insert(if tools {
+            crate::components::BandEquipment::start_stocked(&equipment)
+        } else {
+            crate::components::BandEquipment::default()
+        });
 
         regrow_source_herd(&mut world);
         world.run_system_once(advance_labor_allocation);
@@ -13886,22 +14125,17 @@ mod labor_yield_tests {
     #[test]
     fn the_handling_kit_speeds_the_crew_rather_than_shrinking_the_job() {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
-        let declared = equipment.build_work_per_worker(
-            &equipment
-                .kit(HURDLING_KIT)
-                .expect("the shipped roster carries the hurdling kit"),
-            &crate::components::BandEquipment::start_stocked(&equipment),
-            crate::intensification::RungBranch::Animal,
-            None,
-        );
+        let declared = equipment
+            .pool_toe(crate::intensification::RungBranch::Animal, None)
+            .fresh_build_work();
         assert!(
             declared > crate::intensification::NO_BUILD_GEAR,
             "fixture: the hurdling kit must declare a build contribution above neutral, got \
              {declared}"
         );
 
-        let geared = tame_one_turn_on_herd_owned_by(HURDLING_KIT, None);
-        let bare = tame_one_turn_on_herd_owned_by("big_game", None);
+        let geared = tame_one_turn_on_herd_owned_by(HOLDS_ITS_TOOLS, None);
+        let bare = tame_one_turn_on_herd_owned_by(HOLDS_NO_TOOLS, None);
 
         // (1) The ACCRUAL is what the gear moves — the geared pool banks strictly more per turn.
         //
@@ -13993,7 +14227,7 @@ mod labor_yield_tests {
     /// **no build verb** spends none of it over the same turn.
     #[test]
     fn a_build_wears_the_handling_gear_and_a_turn_without_one_does_not() {
-        let (progress, charged) = tame_one_turn_on(HURDLING_KIT);
+        let (progress, charged) = tame_one_turn_on(HOLDS_ITS_TOOLS);
         assert!(
             progress > 0.0,
             "fixture: the crew must actually have built something to be charged for"
@@ -14027,11 +14261,7 @@ mod labor_yield_tests {
                     floor: BUILDER_FLOOR,
                 },
                 workers: WORKERS,
-                kit: Some(
-                    equipment
-                        .kit(HURDLING_KIT)
-                        .expect("the shipped roster carries the hurdling kit"),
-                ),
+                kit: Some(equipment.default_kit(crate::equipment_config::KitJob::Hunt)),
                 priority: SourcePriority::default(),
                 upkeep_kit: None,
             }],
@@ -14059,41 +14289,48 @@ mod labor_yield_tests {
     /// ⛔ **THE OTHER WEB'S TOOL IS NEITHER CREDITED NOR CHARGED** — `wear` follows the work
     /// actually done, and a hoe does none of a `Tame`.
     ///
-    /// The two halves are one rule seen from both ends. `EquipmentEffect::branch` zeroes the hoes'
-    /// contribution to an animal build, so charging them would run a tool down against a job it did
-    /// not move — which is exactly the phantom charge
-    /// [`a_build_the_source_refuses_spends_no_gear`] closes one axis over. The **liveness** arm is
-    /// the hurdling pool beside it: without it, *"the hoes spent nothing"* would also be what a
-    /// fixture that never reached the build seam reported.
+    /// # THE FIXTURE MOVED FROM THE KIT TO THE LEDGER, AND IT IS A STRONGER CASE FOR IT
+    ///
+    /// It used to send the pool out on `tillage` and assert that a build on the **animal** web read
+    /// nothing off it. A pool's tools follow from the rung now (`docs/plan_pool_toe.md` §2.1), so
+    /// *"the builders are carrying the wrong web's kit"* is not a state the game can be in — the
+    /// requirement resolved for `animal:pastoral` names the crook and never the hoes.
+    ///
+    /// What is still reachable, and is what this asserts, is a band that **owns both**: the same
+    /// ledger holds hoes and a crook, the `Tame` takes work off the crook alone, and the hoes are
+    /// charged nothing. That is `EquipmentEffect::branch` doing its job one seam earlier — at the
+    /// requirement rather than at the resolution — and it is the tighter statement, because a band
+    /// holding no hoes would report *"the hoes spent nothing"* for free.
+    ///
+    /// The **liveness** arm is the crook's own pair beside it: without it, two zeroes are also what
+    /// a fixture that never reached the build seam reports.
     #[test]
-    fn a_pool_carrying_the_other_webs_tool_neither_speeds_nor_spends_it() {
-        let hoed = tame_one_turn_on_herd_owned_by(TILLAGE_KIT, None);
+    fn an_animal_build_spends_the_animal_tool_and_never_the_plant_one() {
+        let turn = tame_one_turn_on_herd_owned_by(HOLDS_ITS_TOOLS, None);
         assert!(
-            hoed.progress > 0.0,
-            "fixture: the crew must actually be taming, or both assertions are vacuous"
+            turn.progress > 0.0,
+            "fixture: the crew must actually be taming, or every assertion is vacuous"
         );
-        assert_eq!(
-            hoed.gear_work,
-            crate::intensification::NO_BUILD_GEAR,
-            "a hoe takes nothing off a Tame — the branch qualifier's whole job"
-        );
-        assert_eq!(
-            hoed.hoe_wear, 0.0,
-            "…and so it is charged nothing: wear follows the work actually done"
-        );
-
-        // **Liveness — the animal web's own kit on the same fixture does both.**
-        let hurdled = tame_one_turn_on_herd_owned_by(HURDLING_KIT, None);
+        // **Liveness — the animal branch's own tool does both halves on this very turn.**
         assert!(
-            hurdled.gear_work > crate::intensification::NO_BUILD_GEAR && hurdled.gear_wear > 0.0,
-            "fixture: hurdles on the same Tame must take work off it AND be spent for it, or the \
-             two zeroes above prove nothing (took {} spent {})",
-            hurdled.gear_work,
-            hurdled.gear_wear
+            turn.gear_work > crate::intensification::NO_BUILD_GEAR && turn.gear_wear > 0.0,
+            "fixture: the crook must take work off the Tame AND be spent for it, or the zero below \
+             proves nothing (took {} spent {})",
+            turn.gear_work,
+            turn.gear_wear
+        );
+        // …and the band is genuinely holding the other web's tool while it happens.
+        let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        let stocked = crate::components::BandEquipment::start_stocked(&equipment);
+        assert!(
+            stocked.live_units(HOES, &equipment) > 0,
+            "fixture: a start-stocked band must actually own hoes, or 'the hoes were not charged' \
+             is true for free"
         );
         assert_eq!(
-            hurdled.hoe_wear, 0.0,
-            "and the hurdling pool holds no hoes at all, so nothing charges them either"
+            turn.hoe_wear, 0.0,
+            "a hoe serves no animal rung, so it is never in the requirement and is charged nothing \
+             — wear follows the work actually done"
         );
     }
 
@@ -14118,7 +14355,7 @@ mod labor_yield_tests {
         /// [`BAND_FACTION`], whose claim the arm would honour.
         const RIVAL_FACTION: FactionId = FactionId(7);
 
-        let refused = tame_one_turn_on_herd_owned_by(HURDLING_KIT, Some(RIVAL_FACTION));
+        let refused = tame_one_turn_on_herd_owned_by(HOLDS_ITS_TOOLS, Some(RIVAL_FACTION));
         assert_eq!(
             refused.progress, 0.0,
             "a herd another faction owns banks none of the offered accrual"
@@ -14141,7 +14378,7 @@ mod labor_yield_tests {
         );
 
         // **Liveness — the same fixture on the band's OWN herd both accrues and spends.**
-        let owned = tame_one_turn_on_herd_owned_by(HURDLING_KIT, Some(BAND_FACTION));
+        let owned = tame_one_turn_on_herd_owned_by(HOLDS_ITS_TOOLS, Some(BAND_FACTION));
         assert!(
             owned.progress > 0.0,
             "fixture: the same crew on its own herd must actually tame it"

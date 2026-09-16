@@ -643,74 +643,85 @@ fn published_patch_field<T>(
 }
 
 /// **The patch row's `buildTurnsRemaining`, off the encoded buffer.**
-/// ⛔ **A HOE SPEEDS A CULTIVATE AND HURDLES DO NOTHING FOR ONE — and the pool picks the tool off
-/// the ENTRY, not off a stored id.**
+/// ⛔ **A HOE SPEEDS A CULTIVATE, HURDLES DO NOTHING FOR ONE — and the pool takes the tool off the
+/// RUNG, not off a kit anybody named.**
 ///
-/// Four arms on one fixture, read off the encoded patch row's `buildWorkFromGear`, which is the
+/// Three arms on one fixture, read off the encoded patch row's `buildWorkFromGear`, which is the
 /// number the sim actually struck the bar with:
 ///
-/// | the `builders` row says | the pool works with | why |
+/// | the band owns | the pool works with | why |
 /// |---|---|---|
-/// | nothing | `tillage` | an absent kit means *derive per entry*, and the head is a patch |
-/// | `tillage` | `tillage` | an explicit choice wins, and here it agrees |
-/// | `hurdling` | `hurdling`, worth **nothing** | hurdles are animal-handling gear; `build_work` names its web |
-/// | `none` | nothing | going bare is a real selection, and it must not fall back to the derivation |
+/// | everything | the hoe | `plant:tended`'s requirement names it, and the band holds one |
+/// | no hoe | nothing | a requirement the band cannot fill is worked bare-handed |
+/// | the crook but no hoe | nothing | the crook serves no plant rung, so it is never in the requirement |
 ///
 /// **The first arm is the liveness half and it is not optional**: a branch filter that zeroed
-/// *everything* would pass arms three and four on its own, and a derivation that ignored the entry
-/// would pass arm two. Every arm is compared against the *same* fixture, so the only thing that
-/// differs between them is the kit.
+/// *everything* would pass the other two on its own. And the third is what the second cannot state —
+/// a band that owns nothing would also report `0` for a model that read whichever tool it found.
+///
+/// ⛔ **THE KIT NAMED ON THE ENTRY IS GONE FROM THIS TEST.** It used to carry a fourth arm — `none`
+/// on the entry, *"going out bare is a real selection"* — and `docs/plan_pool_toe.md` retires that
+/// lever: a pool's tools follow from the rung, so an entry's kit prices nothing. The loss is stated
+/// in §3 rather than hidden, and the `build_kit` command is retired end to end by #676.
 #[test]
-fn a_plant_build_is_geared_by_the_hoe_and_by_nothing_else() {
+fn a_plant_build_is_geared_by_the_rungs_own_tool_and_by_nothing_else() {
     /// The pool raising the Cultivate. More than one, so a per-worker sum is visible as a sum.
     const BUILDERS: u32 = 2;
 
-    let published = |kit_id: Option<&str>| -> f32 {
+    // **Take these items off every band in the world.** The start profile's own band is in this
+    // world too, and the fixture band is found by its **queue entry** — so the strip walks the
+    // allocations rather than guessing which entity is which.
+    let published = |strip: &[&str]| -> f32 {
         let (mut app, source) = world_with_a_patch(BUILDERS, HALF_BUILT);
-        if let Some(kit_id) = kit_id {
-            let kit = core_sim::EquipmentConfig::builtin()
-                .kit(kit_id)
-                .unwrap_or_else(|| panic!("the shipped roster carries '{kit_id}'"));
-            // **The FIXTURE band, found by its QUEUE ENTRY** — the start profile's own band is in
-            // this world too, and re-kitting that one would leave the measurement untouched. The
-            // kit rides the entry rather than the `builders` row, which carries none at all since
-            // `docs/plan_standing_upkeep.md` §4.7a ②.
-            let mut query = app.world.query::<&mut LaborAllocation>();
-            let mut found = false;
-            for mut allocation in query.iter_mut(&mut app.world) {
-                for entry in allocation.build_queue.iter_mut() {
-                    entry.kit = Some(kit.clone());
-                    found = true;
+        if !strip.is_empty() {
+            let equipment = app
+                .world
+                .resource::<core_sim::EquipmentConfigHandle>()
+                .get();
+            let mut query = app
+                .world
+                .query::<(bevy::prelude::Entity, &LaborAllocation)>();
+            let building: Vec<bevy::prelude::Entity> = query
+                .iter(&app.world)
+                .filter(|(_, allocation)| !allocation.build_queue.is_empty())
+                .map(|(entity, _)| entity)
+                .collect();
+            assert!(
+                !building.is_empty(),
+                "the fixture band carries a queue entry"
+            );
+            for band in building {
+                let mut ledger = core_sim::BandEquipment::start_stocked(&equipment);
+                for item in strip {
+                    ledger.restore_batches(item, Vec::new());
                 }
+                app.world.entity_mut(band).insert(ledger);
             }
-            assert!(found, "the fixture band carries a queue entry");
         }
         core_sim::run_turn(&mut app);
         recapture_snapshot_in_place(&mut app.world);
         published_patch_field(&app, source, |patch| patch.buildWorkFromGear())
     };
 
-    let derived = published(None);
+    const NOTHING_TAKEN: &[&str] = &[];
+    const THE_PLANT_TOOL: &[&str] = &["hoes"];
+    const BOTH_WEBS_TOOLS: &[&str] = &["hoes", "crook"];
+
+    let geared = published(NOTHING_TAKEN);
     assert!(
-        derived > core_sim::NO_BUILD_GEAR,
-        "**LIVENESS**: an entry naming no kit derives the plant web's own, so a Cultivate is \
-         geared — got {derived}"
+        geared > core_sim::NO_BUILD_GEAR,
+        "**LIVENESS**: a band holding the plant branch's own tool gears its Cultivate — got {geared}"
     );
     assert_eq!(
-        published(Some("tillage")),
-        derived,
-        "naming the kit the derivation would have picked changes nothing"
-    );
-    assert_eq!(
-        published(Some("hurdling")),
+        published(BOTH_WEBS_TOOLS),
         core_sim::NO_BUILD_GEAR,
-        "hurdles are animal-handling gear and take NOTHING off a Cultivate — the branch qualifier's \
-         whole job"
+        "a band that owns neither web's build tool works bare-handed"
     );
     assert_eq!(
-        published(Some("none")),
+        published(THE_PLANT_TOOL),
         core_sim::NO_BUILD_GEAR,
-        "going out bare is a real selection and must not fall back to the derived kit"
+        "…and the crook it still holds takes NOTHING off a Cultivate — the branch qualifier's whole \
+         job"
     );
 }
 

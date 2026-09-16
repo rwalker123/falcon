@@ -1,0 +1,713 @@
+//! **A STANDING POOL BUILDS ITS OWN KIT** — `docs/plan_pool_toe.md`, slice 1.
+//!
+//! The five standing pools each work many sites out of one band-wide stock of tools, and each used
+//! to resolve **one** kit through a lookup that asked *"which tool serves this web?"* without naming
+//! a rung. Roads already broke it — a `Roadwork` pool keeping a dirt road and a paved road needs
+//! earthmoving gear **and** stone-dressing gear — and a rung-tied plant tool would have broken it
+//! *silently*: the lookup would resolve nothing, the pool would register no demand, and nothing
+//! would flag it.
+//!
+//! What replaced it: each site requires the tools that serve **its own branch at its own rung**, a
+//! pool's TOE is the sum over its sites, and every pool's claim on one tool is settled **band-wide**
+//! by the player's own `SourcePriority`.
+
+use bevy::prelude::{App, Entity, UVec2, With};
+use core_sim::extraction::{
+    deposit_rung_span, tile_deposit_capacity, DepositRegistry, DepositSource,
+};
+use core_sim::{
+    build_test_app, BandEquipment, BandId, EquipmentConfig, FactionId, LaborAllocation,
+    LaborTarget, LadderConfig, PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry,
+    RungBranch, RungKey, SourcePriority, Tile, TileRegistry, UpkeepFundMode, ViewerFaction,
+};
+use sim_schema::TerrainType;
+
+// ---------------------------------------------------------------------------------------------
+// The tools the shipped roster carries for the branches under test
+// ---------------------------------------------------------------------------------------------
+
+/// The `route:dirt_road` rung's tool.
+const EARTHMOVING: &str = "earthmoving";
+/// The tool `route:paved_road` **and** `extraction:quarry` both want — the one item two pools reach
+/// for, and therefore the whole reason the settlement is band-wide.
+const STONE_DRESSING: &str = "stone_dressing";
+/// The plant branch's tool. It names no rung, so every plant rung wants it.
+const HOES: &str = "hoes";
+
+// ---------------------------------------------------------------------------------------------
+// (1) A POOL'S TOE IS BUILT FROM ITS SITES
+// ---------------------------------------------------------------------------------------------
+
+/// Every tool this rung wants, as ids in roster order.
+fn tools_for(config: &EquipmentConfig, rung: RungKey) -> Vec<String> {
+    config
+        .pool_toe(rung.branch(), Some(&rung.wire_key()))
+        .tools()
+        .iter()
+        .map(|tool| tool.item.to_string())
+        .collect()
+}
+
+/// ⛔ **A `Roadwork` POOL KEEPING A DIRT ROAD AND A PAVED ROAD REQUIRES BOTH TOOLS — the case one
+/// kit per pool cannot express at all.**
+///
+/// `earthmoving` is bound to `route:dirt_road` and `stone_dressing` to `route:paved_road`, so a
+/// lookup that answers with **one** roster entry per pool must be wrong about one of the two roads
+/// whichever entry it picks. Asked per site, at the site's own held rung, the question has a
+/// complete answer and the pool's TOE is their sum.
+///
+/// **Stated from both ends.** The two rungs want **different** tools (a per-rung answer, not a
+/// per-branch one), and the pool's requirement over a band keeping one of each is **both**.
+#[test]
+fn a_roadwork_pool_keeping_both_rungs_requires_both_tools() {
+    let config = EquipmentConfig::builtin();
+
+    assert_eq!(
+        tools_for(&config, RungKey::RouteDirtRoad),
+        vec![EARTHMOVING.to_string()],
+        "a dirt road wants the earthmoving gear and nothing else"
+    );
+    assert_eq!(
+        tools_for(&config, RungKey::RoutePavedRoad),
+        vec![STONE_DRESSING.to_string()],
+        "…and a paved road wants the stone-dressing gear, which is a DIFFERENT tool on the SAME \
+         branch — the pair no single kit per pool can carry"
+    );
+
+    // **The pool's TOE is the sum over its sites**, one unit per hand on each.
+    const HANDS_ON_EACH_ROAD: f32 = 3.0;
+    let required = required_units(
+        &config,
+        &[
+            (RungKey::RouteDirtRoad, HANDS_ON_EACH_ROAD),
+            (RungKey::RoutePavedRoad, HANDS_ON_EACH_ROAD),
+        ],
+    );
+    assert_eq!(
+        required,
+        vec![
+            (EARTHMOVING.to_string(), HANDS_ON_EACH_ROAD),
+            (STONE_DRESSING.to_string(), HANDS_ON_EACH_ROAD),
+        ],
+        "one pool, two rungs, two tool lines — and the pool would register demand for neither \
+         under the retired lookup, because both are rung-bound and a role row stands on no rung"
+    );
+}
+
+/// ⛔ **AND THE POOL REALLY DOES WORK BOTH ROADS WITH BOTH TOOLS — SPENDING EACH ON ITS OWN ROAD.**
+///
+/// The requirement above is a query; this is the turn. One band, one `Roadwork` pool, a dirt road
+/// and a paved road, and one set of each tool. After the turn **both** items have lost condition —
+/// which is a statement one kit per pool cannot make, because whichever kit it picked the other
+/// road's tool was never in anybody's hands.
+///
+/// **The two controls are what make it a statement about the RUNG.** A band keeping only the dirt
+/// road spends earthmoving gear and leaves the chisel untouched, and a band keeping only the paved
+/// road does the reverse — so *"both wore"* above cannot be a pool that simply spends everything it
+/// owns.
+#[test]
+fn a_roadwork_pool_spends_each_roads_own_tool_and_only_on_that_road() {
+    let both = a_roadwork_turn(&[RungKey::RouteDirtRoad, RungKey::RoutePavedRoad]);
+    assert!(
+        both.earthmoving_worn > 0.0 && both.stone_dressing_worn > 0.0,
+        "one pool keeping both rungs works both tools: earthmoving {} chisel {}",
+        both.earthmoving_worn,
+        both.stone_dressing_worn
+    );
+
+    let dirt_only = a_roadwork_turn(&[RungKey::RouteDirtRoad]);
+    assert!(
+        dirt_only.earthmoving_worn > 0.0,
+        "fixture: a dirt road alone must still work the earthmoving gear, or the control below \
+         says nothing"
+    );
+    assert_eq!(
+        dirt_only.stone_dressing_worn, 0.0,
+        "…and the chisel it also owns is never in that road's requirement, so it is charged nothing"
+    );
+
+    let paved_only = a_roadwork_turn(&[RungKey::RoutePavedRoad]);
+    assert!(
+        paved_only.stone_dressing_worn > 0.0,
+        "fixture: a paved road alone must work the chisel"
+    );
+    assert_eq!(
+        paved_only.earthmoving_worn, 0.0,
+        "…and the earthmoving gear beside it is charged nothing"
+    );
+}
+
+/// What one `Roadwork` turn spent, per tool.
+struct RoadworkTurn {
+    earthmoving_worn: f32,
+    stone_dressing_worn: f32,
+}
+
+/// **A band keeping one road per named rung, holding one set of BOTH road tools.** Owning both is
+/// the point: a pool that spends only what its rungs want has to be handed more than it wants.
+fn a_roadwork_turn(rungs: &[RungKey]) -> RoadworkTurn {
+    /// Enough hands that every road gets some, and enough tools that the settlement fills every
+    /// line — this fixture is about *which* tool is spent, never about scarcity.
+    const KEEPERS: u32 = 4;
+    const A_LONG_HAUL: f32 = 12.0;
+
+    let mut app = spawn_world();
+    let (band, _, band_id, home) = first_band(&mut app);
+    for (step, rung) in rungs.iter().enumerate() {
+        let tile = tile_east_of(&app, home, step as u32 + 1);
+        seat_road(&mut app, tile, *rung, band_id, A_LONG_HAUL);
+    }
+    staff_one_role(
+        &mut app,
+        band,
+        LaborTarget::Roadwork,
+        KEEPERS,
+        UpkeepFundMode::Spread,
+    );
+    let fresh = stock_exactly(
+        &mut app,
+        band,
+        &[(EARTHMOVING, KEEPERS), (STONE_DRESSING, KEEPERS)],
+    );
+
+    app.update();
+
+    let worn = app
+        .world
+        .get::<BandEquipment>(band)
+        .expect("the fixture band keeps its ledger");
+    RoadworkTurn {
+        earthmoving_worn: worn.wear_of(EARTHMOVING) - fresh.wear_of(EARTHMOVING),
+        stone_dressing_worn: worn.wear_of(STONE_DRESSING) - fresh.wear_of(STONE_DRESSING),
+    }
+}
+
+/// **A POOL'S TOE, SUMMED OVER ITS SITES** — `hands ÷ workers_per_unit` per tool
+/// (`docs/plan_pool_toe.md` §2.1), sorted by item id so a comparison is order-free.
+fn required_units(config: &EquipmentConfig, sites: &[(RungKey, f32)]) -> Vec<(String, f32)> {
+    let mut lines: Vec<(String, f32)> = Vec::new();
+    for (rung, hands) in sites {
+        for tool in config
+            .pool_toe(rung.branch(), Some(&rung.wire_key()))
+            .tools()
+        {
+            let want = hands / tool.workers_per_unit as f32;
+            match lines.iter_mut().find(|(id, _)| id == tool.item.as_ref()) {
+                Some((_, units)) => *units += want,
+                None => lines.push((tool.item.to_string(), want)),
+            }
+        }
+    }
+    lines.sort_by(|a, b| a.0.cmp(&b.0));
+    lines
+}
+
+/// ⛔ **A RUNG-TIED PLANT TOOL RESOLVES PER SITE INSTEAD OF SILENTLY RESOLVING NOTHING.**
+///
+/// This is the failure the arc exists to make unreachable, and it is **not** reachable on the
+/// shipped roster — a hoe serves every plant rung, so the retired lookup found it. The first plant
+/// tool bound to a rung would have refused a lookup that named none
+/// ([`core_sim::EquipmentEffect::serves_build`]'s `(Some(_), None)` arm), the pool would have
+/// resolved no kit, registered no demand for its tools, and nothing anywhere would have said so.
+///
+/// So the plough is a **fixture item**: no plough ships, and one is minted here from the hoes with a
+/// `plant:field` bound added.
+///
+/// **The worked example from §2.1 is asserted literally** — Agriculture with 4 hands on tended
+/// patches and 2 on a Field reads **6 hoes, 2 ploughs** — because that is the arithmetic the whole
+/// model rests on, and a requirement that merely *mentioned* both tools would pass a weaker check.
+#[test]
+fn a_rung_tied_plant_tool_resolves_per_site_instead_of_nothing() {
+    const PLOUGH: &str = "plough";
+    /// §2.1's own worked example.
+    const HANDS_ON_TENDED_PATCHES: f32 = 4.0;
+    const HANDS_ON_A_FIELD: f32 = 2.0;
+
+    let config = a_roster_with_a_plough(PLOUGH);
+
+    // **(a) THE SILENT FAILURE, STATED.** No kit carries the plough, and the roster lookup the model
+    // replaced answers with a *kit* — so the tool is invisible to it however loudly it declares
+    // itself.
+    assert!(
+        !config.item_is_kit_carried(PLOUGH),
+        "fixture: the plough must be in no kit, which is the state a rung-tied tool arrives in \
+         before anybody adds a roster entry for it"
+    );
+    let derived = config
+        .build_kit_for_branch(RungBranch::Plant, Some(&RungKey::PlantField.wire_key()))
+        .expect("the roster still carries the tillage kit for the plant web");
+    assert!(
+        !derived.uses().any(|item| item == PLOUGH),
+        "the kit lookup cannot see a tool no kit carries — it answers {:?}, and that is the \
+         silent nothing the per-site requirement replaces",
+        derived.id()
+    );
+
+    // **(b) THE REQUIREMENT SEES IT, AT THE RUNG IT SERVES AND NOWHERE ELSE.**
+    assert_eq!(
+        tools_for(&config, RungKey::PlantTended),
+        vec![HOES.to_string()],
+        "a tended patch is served by the hoe alone — the plough is bound to the rung above it"
+    );
+    assert_eq!(
+        tools_for(&config, RungKey::PlantField),
+        vec![HOES.to_string(), PLOUGH.to_string()],
+        "…and a Field wants both, which is the line the retired lookup produced none of"
+    );
+
+    // **(c) §2.1's WORKED EXAMPLE, LITERALLY.**
+    assert_eq!(
+        required_units(
+            &config,
+            &[
+                (RungKey::PlantTended, HANDS_ON_TENDED_PATCHES),
+                (RungKey::PlantField, HANDS_ON_A_FIELD),
+            ],
+        ),
+        vec![
+            (HOES.to_string(), HANDS_ON_TENDED_PATCHES + HANDS_ON_A_FIELD),
+            (PLOUGH.to_string(), HANDS_ON_A_FIELD),
+        ],
+        "4 hands on tended patches and 2 on a Field read 6 hoes and 2 ploughs"
+    );
+}
+
+/// **The shipped roster plus a hypothetical plough bound to `plant:field`.**
+///
+/// It is minted from the **hoes** — same wear, same durability, same worth — so the one thing that
+/// differs between the two items is the `rung` bound, and every reading below is about that bound
+/// rather than about a second tool's dials.
+fn a_roster_with_a_plough(id: &str) -> EquipmentConfig {
+    let mut config = EquipmentConfig::builtin().as_ref().clone();
+    let mut plough = config
+        .items
+        .get(HOES)
+        .expect("the shipped roster carries the hoes")
+        .clone();
+    for tier in plough.tiers.iter_mut() {
+        for effect in tier.effects.iter_mut() {
+            effect.rung = Some(RungKey::PlantField.wire_key());
+        }
+    }
+    config.items.insert(id.to_string(), plough);
+    config
+}
+
+// ---------------------------------------------------------------------------------------------
+// (2) THE SETTLEMENT IS BAND-WIDE PER TOOL, RANKED BY THE PLAYER'S OWN PRIORITY
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **STONE-DRESSING WANTED BY `Roadwork` AND `Quarrywork` IS ONE STOCK, SERVED HIGH FIRST.**
+///
+/// The tool serves `route:paved_road` **and** `extraction:quarry`, so a settlement struck per pool
+/// would issue the band's one unit twice. One settlement, ranked by the player's own
+/// `SourcePriority`: `High` in full, then `Normal`, then `Low`.
+///
+/// **A road bids at the DEFAULT tier and cannot be marked** (`docs/plan_pool_toe.md` §2.2): there is
+/// no per-road labor row to carry a rank, and a road's *materials* already bid exactly this for
+/// exactly that reason. So the mark under test is the **quarry's**, and the road is the `Normal` it
+/// is ranked against — which is what makes the pair a `High`-before-`Low` statement across two
+/// pools rather than within one.
+///
+/// **Both arms, because either alone is satisfied by a model that always serves the same pool.**
+#[test]
+fn stone_dressing_shared_by_roadwork_and_quarrywork_serves_high_first() {
+    let high = a_band_keeping_a_paved_road_and_a_quarry(SourcePriority::High);
+    let low = a_band_keeping_a_paved_road_and_a_quarry(SourcePriority::Low);
+
+    assert!(
+        high.quarry_supplied > low.quarry_supplied,
+        "a quarry marked High takes the band's one chisel ahead of the road, and the same quarry \
+         marked Low does not: {} against {}",
+        high.quarry_supplied,
+        low.quarry_supplied
+    );
+    assert!(
+        low.road_supplied > high.road_supplied,
+        "…and the road — pinned at the default rank — is served the better of the two when the \
+         quarry is marked below it: {} against {}",
+        low.road_supplied,
+        high.road_supplied
+    );
+    // ⛔ **LIVENESS: THE CHISEL IS GENUINELY SCARCE AND GENUINELY WORTH SOMETHING.** Without this
+    // the ordering above is also what two fully-served pools, or two bare ones, would report. One
+    // keeper stands on each pool, so a **bare** one supplies at most `PER_WORKER_OUTPUT` and a
+    // geared one strictly more.
+    assert!(
+        high.quarry_supplied > core_sim::PER_WORKER_OUTPUT,
+        "the High quarry's keeper is armed: {} against a bare hand's {}",
+        high.quarry_supplied,
+        core_sim::PER_WORKER_OUTPUT
+    );
+    assert!(
+        low.quarry_supplied <= core_sim::PER_WORKER_OUTPUT,
+        "…and the Low one's is not, because the band owns exactly one chisel and the road took it:          {} against a bare hand's {}",
+        low.quarry_supplied,
+        core_sim::PER_WORKER_OUTPUT
+    );
+}
+
+/// What one arm of the shared-tool settlement put on the ground.
+struct SharedToolTurn {
+    road_supplied: f32,
+    quarry_supplied: f32,
+}
+
+/// **A band keeping a paved road and holding a quarry, with exactly ONE set of stone-dressing gear**
+/// — the two pools that reach for that tool, and a stock that cannot arm both.
+fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> SharedToolTurn {
+    const ONE_CHISEL: u32 = 1;
+    const ONE_KEEPER: u32 = 1;
+    const A_TAKE_CREW: u32 = 1;
+
+    let mut app = spawn_world();
+    let (band, _, band_id, home) = first_band(&mut app);
+    let road_tile = tile_east_of(&app, home, 1);
+    let quarry_tile = tile_east_of(&app, home, 2);
+
+    // ⛔ **THE ROAD IS A LONG HAUL, SO ITS OWN ASK TAKES THE WHOLE CHISEL.** A route rung's upkeep
+    // scales with the keeper's remoteness; kept from next door it wants well under one keeper's
+    // worth, which leaves a remainder for the `Low` tier and softens the very ordering under test.
+    const A_LONG_HAUL: f32 = 12.0;
+    seat_road(
+        &mut app,
+        road_tile,
+        RungKey::RoutePavedRoad,
+        band_id,
+        A_LONG_HAUL,
+    );
+    let material = seat_a_quarry(&mut app, quarry_tile);
+
+    let staffed = {
+        let mut allocation = LaborAllocation::default();
+        allocation.assignments.push(core_sim::LaborAssignment {
+            target: LaborTarget::Extract {
+                tile: quarry_tile,
+                material: material.clone(),
+                floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            workers: A_TAKE_CREW,
+            kit: None,
+            priority: quarry_rank,
+            upkeep_kit: None,
+        });
+        for role in [LaborTarget::Roadwork, LaborTarget::Quarrywork] {
+            allocation.assignments.push(core_sim::LaborAssignment {
+                target: role,
+                workers: ONE_KEEPER,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+        }
+        let staffed: u32 = allocation.assignments.iter().map(|row| row.workers).sum();
+        app.world.entity_mut(band).insert(allocation);
+        staffed
+    };
+    size_the_band(&mut app, band, staffed);
+    stock_exactly(&mut app, band, &[(STONE_DRESSING, ONE_CHISEL)]);
+
+    app.update();
+
+    let road_supplied = app
+        .world
+        .resource::<RoadRegistry>()
+        .road(road_tile)
+        .expect("the seated road survives the turn")
+        .upkeep_supplied;
+    let quarry_supplied = app
+        .world
+        .resource::<DepositRegistry>()
+        .source(quarry_tile, &material)
+        .expect("the seated working survives the turn")
+        .upkeep_supplied;
+    SharedToolTurn {
+        road_supplied,
+        quarry_supplied,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// (3) A POOL THAT IS NOT SHORT OF TOOLS IS BIT-IDENTICAL TO THE RETIRED SPLIT
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **A BAND THAT IS NOT SHORT OF TOOLS SPLITS ITS POOL EXACTLY AS IT ALWAYS DID.**
+///
+/// The four-step order (§2.3) plans the hands *before* the tools are settled, at the rate each site
+/// would work with its lines filled — so where the settlement then fills them, both the hands and
+/// the supply are the retired arithmetic to the bit.
+///
+/// This restates `forage_cultivation::upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`
+/// on the branch the arc actually changed, and it asserts against **the retired seam itself**:
+/// `EquipmentConfig::keeping_kit_for` — the per-site *kit* lookup the requirement replaced — over
+/// `EquipmentConfig::coverage`, which is what `keeping_rates` resolved a claim's rate through. That
+/// is the claim in its falsifiable form: on a rung the kit lookup could answer for, the requirement
+/// resolves the **same tools at the same worth**, so nothing moves.
+///
+/// **Both roads on ONE rung**, so every site's rate is equal and any difference would be the model
+/// rather than the ground. Both fund modes, because `upkeep_fund_mode` still governs the split and
+/// the two are different arithmetic: `Spread` scales every need by one coverage, `Priority` walks
+/// the slice.
+///
+/// **Exactly, not nearly.** A tolerance here would pass for a model that had quietly changed the
+/// pacing by a percent, which is the one outcome this change was not allowed to have.
+#[test]
+fn a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_did() {
+    /// Short of what the two roads want between them, so the split is a live division rather than
+    /// two saturated bills that would agree under any model.
+    const ONE_KEEPER: u32 = 1;
+    /// One tool per hand — the band is **not short**, which is the case under test.
+    const A_TOOL_PER_HAND: u32 = ONE_KEEPER;
+    /// ⛔ **A LONG HAUL, so the two bills genuinely outrun one keeper.** A route rung's upkeep scales
+    /// with the keeper's own remoteness, and at the near reading a dirt road costs well under what
+    /// one geared hand delivers — which would saturate the split and make the comparison agree under
+    /// any model at all. Distance is a cost on this branch, never a wall.
+    const A_LONG_HAUL: f32 = 12.0;
+
+    for mode in [UpkeepFundMode::Spread, UpkeepFundMode::Priority] {
+        let mut app = spawn_world();
+        let (band, _, band_id, home) = first_band(&mut app);
+        let near = tile_east_of(&app, home, 1);
+        let far = tile_east_of(&app, home, 2);
+        seat_road(&mut app, near, RungKey::RouteDirtRoad, band_id, A_LONG_HAUL);
+        seat_road(&mut app, far, RungKey::RouteDirtRoad, band_id, A_LONG_HAUL);
+        staff_one_role(&mut app, band, LaborTarget::Roadwork, ONE_KEEPER, mode);
+        let ledger = stock_exactly(&mut app, band, &[(EARTHMOVING, A_TOOL_PER_HAND)]);
+
+        // The two bills, read before the turn spends against them. The claims are sorted
+        // most-invested first and tie-broken on `(y, x)`; these two stand on one rung at one
+        // position on one row, so the order is west to east.
+        let bills = [road_bill(&app, near), road_bill(&app, far)];
+        assert!(
+            bills[0] > 0.0 && bills[1] > 0.0,
+            "fixture: both roads must owe something, or the split has nothing to divide: {bills:?}"
+        );
+
+        // **THE RETIRED SEAM, ASKED DIRECTLY.** `keeping_kit_for` is the per-site kit lookup the
+        // requirement replaced, and `coverage` is how `keeping_rates` turned it into a rate. The
+        // split it fed was already in **worker-need** units (the kit moved to the site in
+        // `plan_standing_upkeep.md` §2.7), which is why the comparison is made there rather than in
+        // work units: `demand ÷ r × r` is a float round trip, and a work-unit form would differ by
+        // an ULP for a reason that predates this arc entirely.
+        let equipment = EquipmentConfig::builtin();
+        let rung = RungKey::RouteDirtRoad.wire_key();
+        let retired_kit = equipment.keeping_kit_for(None, RungBranch::Route, Some(&rung));
+        let retired_rate = core_sim::build_work_per_worker_turn(
+            equipment
+                .coverage(&retired_kit, ONE_KEEPER as f32, &ledger)
+                .weighted_rate(|crew| {
+                    equipment.build_work_per_worker(crew, &ledger, RungBranch::Route, Some(&rung))
+                }),
+        );
+        assert!(
+            retired_rate > core_sim::PER_WORKER_OUTPUT,
+            "fixture: the retired lookup must actually find the road tool on this rung, or the \
+             comparison is between two bare-handed splits — got {retired_rate}"
+        );
+        let needs: Vec<f32> = bills.iter().map(|bill| bill / retired_rate).collect();
+        let retired: Vec<f32> = core_sim::distribute_upkeep_pool(ONE_KEEPER as f32, &needs, mode)
+            .into_iter()
+            .map(|hands| hands * retired_rate)
+            .collect();
+        assert!(
+            needs[0] + needs[1] > ONE_KEEPER as f32,
+            "fixture: the pool must be SHORT of both bills under {mode:?}, or a saturated split \
+             would agree under any model — {needs:?} against {ONE_KEEPER} keeper"
+        );
+
+        app.update();
+        let supplied = [road_supplied(&app, near), road_supplied(&app, far)];
+        assert_eq!(
+            supplied[0], retired[0],
+            "the per-site requirement must land bit for bit on the retired kit lookup's split \
+             under {mode:?}: {supplied:?} against {retired:?}"
+        );
+        assert_eq!(
+            supplied[1], retired[1],
+            "…and so must the second road's share under {mode:?}: {supplied:?} against {retired:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------------------------
+
+fn spawn_world() -> App {
+    let mut app = build_test_app();
+    app.update();
+    app
+}
+
+/// The campaign's first resident band: entity, faction, `BandId` and the tile it stands on.
+fn first_band(app: &mut App) -> (Entity, FactionId, BandId, UVec2) {
+    let (entity, faction, band, tile) = {
+        let mut query = app
+            .world
+            .query_filtered::<(Entity, &PopulationCohort, &BandId), With<ResidentBand>>();
+        let (entity, cohort, band) = query
+            .iter(&app.world)
+            .next()
+            .expect("the campaign spawns at least one resident band");
+        (entity, cohort.faction, *band, cohort.current_tile)
+    };
+    let position = app
+        .world
+        .get::<Tile>(tile)
+        .expect("a band stands on a real tile")
+        .position;
+    app.world.insert_resource(ViewerFaction(faction));
+    (entity, faction, band, position)
+}
+
+fn tile_east_of(app: &App, head: UVec2, steps: u32) -> UVec2 {
+    let width = app.world.resource::<TileRegistry>().width;
+    UVec2::new((head.x + steps) % width, head.y)
+}
+
+/// **Seat a road at the top of `rung`, `remoteness` tiles from the band that keeps it.**
+///
+/// ⛔ **THE KEEPER GOES IN FIRST AND THE SPAN IS READ AT ITS OWN REMOTENESS.** A route rung's span
+/// is priced at `keeper_remoteness` (`routes::road_rung_span`), so a position computed at the near
+/// reading lands lower on a remote ladder — possibly back inside the free floor, where
+/// `set_position` releases the keeper and the fixture silently seats an unkept road.
+fn seat_road(app: &mut App, tile: UVec2, rung: RungKey, keeper: BandId, remoteness: f32) {
+    let ladder = LadderConfig::builtin();
+    let (base, width) = core_sim::road_rung_span(rung, &ladder, remoteness);
+    let faction = app.world.resource::<ViewerFaction>().0;
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    let road = roads.road_or_trail(tile, &ladder);
+    road.take_keeper(
+        RoadKeeper {
+            faction,
+            band: keeper,
+        },
+        remoteness,
+        &ladder,
+    );
+    road.set_position(base + width, &ladder);
+    assert_eq!(
+        road.held_rung(),
+        rung,
+        "fixture: the road must stand on the rung it was seated at"
+    );
+    assert!(
+        road.keeper.is_some(),
+        "fixture: the road must still be this band's job — `set_position` releases a keeper inside          the free floor"
+    );
+}
+
+/// **Seat a quarry on `tile`**, re-grounding it first so the fixture does not depend on what the
+/// generated map put there. Returns the material the working holds.
+fn seat_a_quarry(app: &mut App, tile: UVec2) -> String {
+    const STONE: &str = "stone";
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("the fixture tile is on the map");
+    app.world
+        .get_mut::<Tile>(entity)
+        .expect("the fixture tile carries terrain")
+        .terrain = TerrainType::AlpineMountain;
+    let ladder = LadderConfig::builtin();
+    let config = core_sim::ExtractionConfig::builtin();
+    let ground = app
+        .world
+        .get::<Tile>(entity)
+        .expect("the fixture tile carries terrain");
+    let capacity = tile_deposit_capacity(&config, STONE, ground);
+    assert!(capacity > 0.0, "fixture: that ground must hold stone");
+    let mut working =
+        DepositSource::opening(tile, STONE, capacity, RungKey::ExtractionQuarry.branch());
+    let (base, width) = deposit_rung_span(RungKey::ExtractionQuarry, &ladder);
+    working.set_ladder_position(base + width, &ladder, RungKey::ExtractionQuarry.branch());
+    assert_eq!(
+        working.rung(),
+        RungKey::ExtractionQuarry,
+        "fixture: seated on the wrong rung"
+    );
+    app.world.resource_mut::<DepositRegistry>().insert(working);
+    STONE.to_string()
+}
+
+/// Put `keepers` hands on one standing role and nothing else, under `mode`.
+fn staff_one_role(
+    app: &mut App,
+    band: Entity,
+    role: LaborTarget,
+    keepers: u32,
+    mode: UpkeepFundMode,
+) {
+    let mut allocation = LaborAllocation {
+        upkeep_fund_mode: mode,
+        ..Default::default()
+    };
+    allocation.assignments.push(core_sim::LaborAssignment {
+        target: role,
+        workers: keepers,
+        kit: None,
+        priority: SourcePriority::default(),
+        upkeep_kit: None,
+    });
+    app.world.entity_mut(band).insert(allocation);
+    size_the_band(app, band, keepers);
+}
+
+/// **Size the cohort to exactly what it staffs**, so `LaborAllocation::normalize` never trims a row
+/// under test.
+fn size_the_band(app: &mut App, band: Entity, staffed: u32) {
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band has a cohort")
+        .working = core_sim::scalar_from_f32(staffed as f32);
+}
+
+/// **Give the band a ledger holding exactly these units and nothing else** — the scarcity every
+/// settlement claim below is struck against. Without an explicit ledger the labour pass invents one
+/// sized to the band's head count, which is never short.
+fn stock_exactly(app: &mut App, band: Entity, units: &[(&str, u32)]) -> BandEquipment {
+    let config = EquipmentConfig::builtin();
+    let mut ledger = BandEquipment::default();
+    for (item, count) in units {
+        let tier = config
+            .item(item)
+            .unwrap_or_else(|| panic!("the shipped item table carries '{item}'"))
+            .default_tier()
+            .id
+            .clone();
+        ledger.stock(item, *count, &tier, None);
+    }
+    app.world.entity_mut(band).insert(ledger.clone());
+    ledger
+}
+
+/// **What one road owes its keeper this turn**, in work units.
+fn road_bill(app: &App, tile: UVec2) -> f32 {
+    let ladder = LadderConfig::builtin();
+    let road = app
+        .world
+        .resource::<RoadRegistry>()
+        .road(tile)
+        .expect("the road is in the registry");
+    let terrain = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .and_then(|entity| app.world.get::<Tile>(entity))
+        .expect("a seated road stands on a real tile")
+        .terrain;
+    core_sim::road_upkeep_demand(
+        road,
+        core_sim::road_upkeep_measure(terrain, road.keeper_remoteness),
+        &ladder,
+    )
+}
+
+fn road_supplied(app: &App, tile: UVec2) -> f32 {
+    app.world
+        .resource::<RoadRegistry>()
+        .road(tile)
+        .expect("the seated road survives the turn")
+        .upkeep_supplied
+}

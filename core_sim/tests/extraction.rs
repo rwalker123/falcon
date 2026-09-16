@@ -2529,6 +2529,19 @@ mod wire {
             A_TAKE_CREW,
             TOO_FEW_KEEPERS,
         );
+        // ⛔ **THE BAND HOLDS NO STONE-DRESSING GEAR, AND THAT IS WHAT KEEPS ONE KEEPER SHORT.**
+        // `extraction:quarry`'s tool declares `build_work 2.0`, so a keeper holding one delivers
+        // `1 + 2 = 3` a turn — comfortably past this working's bill — and the published quad would
+        // be `demand == supplied` with a zero shortfall, which is the one shape the identity below
+        // cannot be read off.
+        //
+        // **The tool reaching this pool at all is new** (`docs/plan_pool_toe.md`): the kit lookup it
+        // replaced asked for a roster entry offering the `quarrywork` **job**, and the `paving` kit
+        // that carries the tool offers `builders` and `roadwork` only — so a quarry's keepers were
+        // silently bare-handed however many chisels the band owned. A quarry crew that owns the tool
+        // is now geared by it, which is a real pacing move and is the arc's point rather than a side
+        // effect.
+        core_sim::disarm_the_builders(&mut app.world, band, RungKey::ExtractionQuarry);
         app.update();
         (app, home, rock)
     }

@@ -810,6 +810,38 @@ impl ItemDefinition {
             .expect("validate guarantees every item declares at least one tier")
     }
 
+    /// **Every `build_work` this item declares that serves this build**, across its shared effects
+    /// and every tier — the declaration query [`EquipmentConfig::pool_toe`] builds a site's tool
+    /// requirement from.
+    ///
+    /// ⛔ **IT SCANS EVERY TIER, NOT THE SERVING BATCH'S.** *Which* builds a tool is for is a
+    /// property of the roster; *how worn this band's are* is a property of the ledger. Asking the
+    /// ledger here would make a pool's requirement disappear the moment its last unit wore out —
+    /// which is precisely the turn it needs to be asking for one.
+    pub fn build_work_serving<'a>(
+        &'a self,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&'a str>,
+    ) -> impl Iterator<Item = f32> + 'a {
+        self.effects
+            .iter()
+            .chain(self.tiers.iter().flat_map(|tier| tier.effects.iter()))
+            .filter(move |effect| {
+                effect.stat == EquipmentStat::BuildWork && effect.serves_build(branch, rung)
+            })
+            .map(|effect| effect.tier.value())
+    }
+
+    /// **Is this item one of the tools this build wants?** — [`Self::build_work_serving`] as a
+    /// predicate.
+    pub fn declares_build_work_serving(
+        &self,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> bool {
+        self.build_work_serving(branch, rung).next().is_some()
+    }
+
     /// The tier with this id, or `None`.
     pub fn tier(&self, id: &str) -> Option<&EquipmentTier> {
         self.tiers.iter().find(|tier| tier.id == id)
@@ -1437,6 +1469,55 @@ impl BandItemBudget {
     }
 }
 
+/// **ONE LINE OF A POOL'S TOE** — a tool a site's hands want, and how many hands one unit of it
+/// serves ([`EquipmentConfig::pool_toe`]).
+///
+/// A site requires `hands ÷ workers_per_unit` units of it; a pool's TOE is that sum over its sites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolTool {
+    /// The `equipment.json` item id.
+    pub item: Arc<str>,
+    /// [`ItemDefinition::workers_per_unit`] — the divisor, carried here so a caller counting units
+    /// never has to re-probe the item table row by row.
+    pub workers_per_unit: u32,
+}
+
+/// **THE ROSTER ID A POOL'S DERIVED TOOLS CARRY — DELIBERATELY EMPTY.**
+///
+/// A pool's tools are derived per site from the rung it stands on, so the choice names **no roster
+/// entry**. A synthetic id would read as a kit a player could pick and would put a string on the
+/// wire no roster carries; the empty id is the honest statement that there is nothing to name.
+pub const POOL_TOE_KIT_ID: &str = "";
+
+/// **WHAT A STANDING POOL'S SITE NEEDS IN ITS HANDS** — [`EquipmentConfig::pool_toe`]'s answer, in
+/// the three shapes the turn asks it in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoolToe {
+    kit: KitChoice,
+    tools: Vec<PoolTool>,
+    fresh_build_work: f32,
+}
+
+impl PoolToe {
+    /// **The tools as a KIT**, so the existing coverage, rate and wear seams answer for a derived
+    /// requirement with no arm of their own. Its id is [`POOL_TOE_KIT_ID`].
+    pub fn kit(&self) -> &KitChoice {
+        &self.kit
+    }
+
+    /// One line per tool, in roster order.
+    pub fn tools(&self) -> &[PoolTool] {
+        &self.tools
+    }
+
+    /// **What one hand adds per turn with every line FILLED** — the planning rate the pool's hands
+    /// are split at before anything is settled (`docs/plan_pool_toe.md` §2.3 step 1), read off the
+    /// fresh tier. [`NO_BUILD_GEAR`] where nothing serves this build, which is bare hands.
+    pub fn fresh_build_work(&self) -> f32 {
+        self.fresh_build_work
+    }
+}
+
 /// **A chosen kit, resolved once against the roster** — an id plus the set of items it stands for.
 ///
 /// It is the **only** way anything asks "is this gear serving?": [`Self::item_live`] is
@@ -1822,6 +1903,61 @@ impl EquipmentConfig {
         rung: Option<&str>,
     ) -> Option<KitChoice> {
         self.work_kit_for(KitJob::Builders, branch, rung)
+    }
+
+    /// **EVERY TOOL THIS BUILD WANTS, AT THIS RUNG** — the per-site tool requirement a standing
+    /// pool's TOE is summed from (`docs/plan_pool_toe.md` §2.1).
+    ///
+    /// # ⛔ IT ANSWERS WITH ITEMS, NOT WITH A KIT, AND THAT IS THE WHOLE POINT
+    ///
+    /// [`Self::work_kit_for`] asks *"which roster entry serves this web"* and answers with **one**
+    /// kit, which is only ever right where a pool's sites all want the same tool. They do not: a
+    /// `Roadwork` pool keeping a dirt road and a paved road wants earthmoving gear **and**
+    /// stone-dressing gear, and one kit cannot say so. Asked per site, at the site's own rung, the
+    /// question has a complete answer — and the rung-tied refusal that made the kit lookup fail
+    /// *silently* ([`EquipmentEffect::serves_build`]'s `(Some(_), None)` arm) cannot be reached,
+    /// because a site always knows the rung it stands on.
+    ///
+    /// **It is built on that same `serves_build` predicate**, so the bound being fixed is the one
+    /// the resolution already runs on rather than a second reading beside it.
+    ///
+    /// **A build nothing serves requires nothing and is worked bare-handed.** That is the correct
+    /// answer, not an error — it is every rung on the shipped ladder that declares no tool.
+    ///
+    /// Roster order, which is `items`' own `BTreeMap` order and therefore stable.
+    pub fn pool_toe(
+        &self,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> PoolToe {
+        let tools: Vec<PoolTool> = self
+            .items
+            .iter()
+            .filter(|(_, item)| item.declares_build_work_serving(branch, rung))
+            .map(|(id, item)| PoolTool {
+                item: Arc::from(id.as_str()),
+                workers_per_unit: item.workers_per_unit,
+            })
+            .collect();
+        // **The rate a filled line buys, read off the FRESH tier** — the same tier
+        // [`Self::work_kit_for`] resolves a derivation at, and for the same reason: what a tool is
+        // worth to a pool that holds it is a property of the roster, not of how worn this band's
+        // are. `build_work` is the **max** of what the live items declare (a worker uses the better
+        // tool; two do not compound), so this folds the same way.
+        let fresh_build_work = self
+            .items
+            .iter()
+            .filter(|(_, item)| item.declares_build_work_serving(branch, rung))
+            .flat_map(|(_, item)| item.build_work_serving(branch, rung))
+            .fold(NO_BUILD_GEAR, f32::max);
+        PoolToe {
+            kit: KitChoice {
+                id: Arc::from(POOL_TOE_KIT_ID),
+                uses: tools.iter().map(|tool| Arc::clone(&tool.item)).collect(),
+            },
+            tools,
+            fresh_build_work,
+        }
     }
 
     /// **THE KEEPING ROLE THIS FOOD WEB'S UPKEEP IS STAFFED ON** — plant → `agriculture`, animal →
