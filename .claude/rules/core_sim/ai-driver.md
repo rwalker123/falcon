@@ -531,11 +531,17 @@ fired and what the ledger said. The rules, in `propose` order:
   to `0` off the wire). Knowledge is `snapshot.intensification_knowledge[faction].knowledges[id]
   .progress >= KNOWLEDGE_COMPLETE` (1.0) — the row is *"0..1 (1.0 = known)"*, there is no `known`
   flag on the ladder row (`CraftKnowledgeState` has one; `LadderKnowledgeProgress` does not), and
-  `FloraShareInfo::can_cultivate` is the **species ceiling**, not the gate. Tended if the patch is
+  `FloraShareInfo::can_cultivate` is the **species ceiling**, not the gate. **The crop is the
+  best-paying plant the rung admits** (`Food::climb_payoff`: the greatest `cultivate_payoff` /
+  `sow_payoff`, ties by the greater share then the lower species id); a species the patch is
+  already **committed** to still wins. The payoff is the **provisions account alone**, so a cash
+  crop's material product is not counted — `tobacco`, `cotton`, `flax`, `tea`, `grapevine` and
+  `hay_grass` are cultivable and pay no provisions, and ranking by share instead committed seed
+  40's 25,25 to tobacco at 0.1523 where wild_rice on the same patch paid 0.5484. Tended if the patch is
   not `is_cultivated` and `cultivation` is known; field if the goal is `field`, the patch is
   cultivated, `seed_selection` is known and `sow_site_refusal` is empty. Priced by the ledger:
-  `income_gained` = the committed (else largest legal share) plant's `cultivate_payoff` /
-  `sow_payoff` minus the row's take today; `income_lost` = the builders' rows; `payoff_turn` =
+  `income_gained` = the committed (else best-paying) plant's `cultivate_payoff` / `sow_payoff`
+  minus the row's take today; `income_lost` = the builders' rows; `payoff_turn` =
   `ceil((work_cost − work_done) / (builders × build_work_per_worker_turn + min(builders, armed) ×
   kit_work))`. `build_work_per_worker_turn` is published bare, so the band's hoes are added:
   `kit_work` is the band's `kit_tiers` row for the plant builders kit (`Food::held_plant_build_gear`)

@@ -1137,9 +1137,15 @@ impl Food {
             .is_some_and(|knowledge| knowledge.progress >= KNOWLEDGE_COMPLETE)
     }
 
-    /// The plant a climb commits `patch` to: what it is already committed to, else the largest
-    /// share that may climb the rung — and what that plant pays once the rung is complete
-    /// (`FloraShareInfo::cultivate_payoff` / `sow_payoff`).
+    /// The plant a climb commits `patch` to: what it is already committed to, else the **best
+    /// paying** plant the rung admits — and what it pays once the rung is complete
+    /// (`FloraShareInfo::cultivate_payoff` / `sow_payoff`). Ties by the greater share, then the
+    /// lower species id, so the pick is stable.
+    ///
+    /// **The payoff is the provisions account alone.** Six cultivable species pay no provisions at
+    /// all — `tobacco`, `cotton`, `flax`, `tea`, `grapevine` (materials) and `hay_grass` (fodder) —
+    /// so a cash crop's own product is not counted here; ranking by share instead committed seed
+    /// 40's 25,25 to tobacco at `0.1523` where wild_rice on the same patch paid `0.5484`.
     fn climb_payoff(patch: &ForagePatchState, climb: Climb) -> Option<(&FloraShareInfo, f32)> {
         let legal = |plant: &FloraShareInfo| match climb {
             Climb::Tended => plant.can_cultivate,
@@ -1161,7 +1167,12 @@ impl Food {
                 .composition
                 .iter()
                 .filter(|plant| legal(plant))
-                .max_by(|a, b| a.share.total_cmp(&b.share))
+                .max_by(|a, b| {
+                    payoff(a)
+                        .total_cmp(&payoff(b))
+                        .then_with(|| a.share.total_cmp(&b.share))
+                        .then_with(|| b.species.cmp(&a.species))
+                })
         })?;
         Some((plant, payoff(plant)))
     }
@@ -3199,6 +3210,57 @@ mod tests {
             reason(3).contains("with 9 builders, payoff turn 5"),
             "{}",
             reason(3)
+        );
+    }
+
+    /// **The climb names the best payer the rung admits, not the biggest share.** Hazel holds
+    /// twice the share and pays 35 where wild_rice pays 40; a patch already committed to hazel
+    /// still climbs as hazel.
+    #[test]
+    fn the_climb_names_the_best_paying_plant_the_rung_admits() {
+        let reason = |committed: &str| {
+            let mut view = a_parked_band();
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                    patch.committed_species = committed.to_owned();
+                    patch.composition = Arc::from(vec![
+                        FloraShareInfo {
+                            species: "hazel".to_owned(),
+                            share: 0.6,
+                            can_cultivate: true,
+                            cultivate_payoff: 35.0,
+                            ..Default::default()
+                        },
+                        FloraShareInfo {
+                            species: "wild_rice".to_owned(),
+                            share: 0.3,
+                            can_cultivate: true,
+                            cultivate_payoff: 40.0,
+                            ..Default::default()
+                        },
+                    ]);
+                }
+            }
+            food()
+                .upgrade_the_ground(
+                    &view,
+                    &plan_with_food_share(1.0),
+                    &memory(),
+                    own_band(&view),
+                    &Reassignment::NONE,
+                )
+                .expect("a climb")
+                .reason
+        };
+        assert!(
+            reason("").contains("cultivate 2,3 (wild_rice)"),
+            "{}",
+            reason("")
+        );
+        assert!(
+            reason("hazel").contains("cultivate 2,3 (hazel)"),
+            "{}",
+            reason("hazel")
         );
     }
 
