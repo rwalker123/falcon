@@ -2694,23 +2694,30 @@ fn plant_build_kit() -> core_sim::KitChoice {
         .expect("the shipped roster carries the plant builders kit")
 }
 
-/// **THE WIRE STATES THE KIT A SITE IS ACTUALLY KEPT WITH, AND WHETHER A BAND NAMED IT**
-/// (`docs/plan_standing_upkeep.md` §2.7).
+/// **A SITE NAMES NO KEEPING KIT, AND THE WIRE SAYS SO — EVEN WHERE A BAND NAMED ONE**
+/// (`docs/plan_pool_toe.md` §4).
 ///
-/// # THE PAIR IS ONE READING, AND NEITHER HALF ANSWERS FOR THE OTHER
+/// # WHAT THIS TEST USED TO PIN, AND WHY IT INVERTED
 ///
-/// **The id is RESOLVED**, never *"the player named none"* — `buildKitId`'s standing rule, and it
-/// matters here for its reason one account over: the keeping default is derived from the site's own
-/// food web, so a row that named nothing would publish `""` while its keepers were out with hoes.
+/// It was `the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_was_named`,
+/// and it asserted the pair was **one reading whose halves cannot answer for each other**: a
+/// **resolved** id, never *"the player named none"*, beside a flag saying whether that id was a
+/// stated override or the web's derivation.
 ///
-/// **And `named` is not recoverable from the id**, because a player may name the very kit the
-/// derivation would have picked. Without it a picker cannot draw its `(default)` mark or offer *back
-/// to default* — which is the whole reason the flag rides the wire instead of being re-derived.
+/// A site's keeping tools follow from its own **rung** now — a pool's whole TOE is derived per site
+/// and settled band-wide by priority — so there is no per-site kit left to resolve. Both halves
+/// publish their absence: the id empty, the flag `false`.
+///
+/// ⛔ **THE SECOND SITE STILL NAMES ONE, AND THAT IS THE WHOLE TEST.** A row publishing `""` because
+/// nothing was ever picked would pass a weaker assertion while the pick was still live. The pick is
+/// made here, survives on `LaborAssignment::upkeep_kit` until #676 retires the command, and the wire
+/// states nothing about it — which is the retirement, rather than a derivation that happens to
+/// answer nothing.
 ///
 /// Asserted on the **encoded** row rather than on the in-process state, because what a client reads
 /// is the FlatBuffer.
 #[test]
-fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_was_named() {
+fn a_sites_upkeep_kit_publishes_empty_even_where_a_band_named_one() {
     let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
     let published_kit = |app: &App, source: UVec2| -> (String, bool) {
         published(app, source, |patch| {
@@ -2725,8 +2732,8 @@ fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
-        // The first site names nothing — its web's derivation answers for it.
-        // …and the second names the bare kit, which is a selection and not an absence.
+        // The first site names nothing; the second names the bare kit, which was a selection and
+        // not an absence.
         assert!(allocation.set_upkeep_kit(
             &LaborTarget::Forage {
                 tile: sources[1],
@@ -2741,15 +2748,15 @@ fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_
 
     assert_eq!(
         published_kit(&app, sources[0]),
-        (plant_build_kit().id().to_string(), false),
-        "a site naming nothing publishes the kit its own web wants, marked as the DERIVATION — a \
-         row publishing the empty string would say 'no kit' while the keepers were out with hoes"
+        (String::new(), false),
+        "a site names no keeping kit at all — its tenders carry what its own rung wants, out of the \
+         agriculture pool's settled TOE"
     );
     assert_eq!(
         published_kit(&app, sources[1]),
-        (bare_builders().id().to_string(), true),
-        "…and an explicit bare-handed pick crosses as the roster's own bare id, marked as a NAMED \
-         override: the two are different statements and the flag is what keeps them apart"
+        (String::new(), false),
+        "…and a site a band DID name one on publishes exactly the same nothing: the id is retired, \
+         not merely underived, and the flag has no override left to report"
     );
 }
 
@@ -2806,10 +2813,17 @@ fn re_declaring_a_queued_source_keeps_the_kit_its_entry_carries() {
 // `buildKitId`) and are retired end to end by #676, so the two tests immediately below — which read
 // the published id and the checkpoint round trip — are untouched and still pass.
 
-/// **THE WIRE STATES THE RESOLVED KIT, NEVER "the player named none"** — and `""` means *"nobody has
-/// this queued"*, which is a different statement from the roster's own bare kit.
+/// **AN ENTRY NAMES NO BUILD KIT, AND THE WIRE SAYS SO — EVEN WHERE THE ENTRY NAMES ONE**
+/// (`docs/plan_pool_toe.md` §4), the builders' twin of
+/// [`a_sites_upkeep_kit_publishes_empty_even_where_a_band_named_one`].
+///
+/// It was `the_published_build_kit_is_the_one_the_entry_resolves_to`, and it pinned the opposite: a
+/// **resolved** id whatever the entry named, with `""` reserved for *"nobody has this queued"*. The
+/// builders' tools follow from the rung the leg in flight stands on now, so every row publishes the
+/// empty id — and the queued/unqueued distinction the empty string used to carry is asserted here on
+/// the field that owns it, because a retired field must not take a live reading down with it.
 #[test]
-fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
+fn an_entrys_build_kit_publishes_empty_even_where_the_entry_names_one() {
     let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
     let published_kit = |app: &App, source: UVec2| -> String {
         published(app, source, |patch| {
@@ -2821,34 +2835,35 @@ fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
-        // The head names nothing — the derivation answers for it.
+        // The head names nothing; the tail names the bare kit, which was a selection and not an
+        // absence.
         assert!(allocation.set_build_entry_kit(&BuildSource::Patch(sources[0]), None));
-        // …and the tail names the bare kit, which is a selection and not an absence.
         assert!(
             allocation.set_build_entry_kit(&BuildSource::Patch(sources[1]), Some(bare_builders()))
         );
-        // Nothing is queued on the third source at all.
-        allocation.build_queue.retain(|entry| {
-            entry.source == BuildSource::Patch(sources[0])
-                || entry.source == BuildSource::Patch(sources[1])
-        });
     }
     resolve_a_turn(&mut app);
 
     assert_eq!(
         published_kit(&app, sources[0]),
-        plant_build_kit().id(),
-        "an entry naming nothing publishes the kit its own web wants — a row that published the \
-         empty string would say 'no kit' while the pool was out with hoes"
+        "",
+        "an entry naming nothing names nothing on the wire either — the pool's tools come from the \
+         rung and are published per pool as `poolToe`"
     );
     assert_eq!(
         published_kit(&app, sources[1]),
-        bare_builders().id(),
-        "…and an explicit bare kit publishes the roster's own bare id, which reads differently \
-         from the empty string below"
+        "",
+        "…and so does an entry that DID name a kit: the id is retired rather than underived"
     );
 
-    // **An unqueued source says so with the empty string.** Withdraw one and re-publish.
+    // **WHAT THE EMPTY ID STOPPED SAYING, THE MEMBERSHIP FIELD STILL SAYS.** `""` used to mean
+    // "nobody has this queued"; every row reads it now, so the queued/unqueued distinction is
+    // asserted where it still lives. Withdraw the tail and re-publish.
+    assert_ne!(
+        published_position(&app, sources[1]),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "the tail holds a place in the line while it is in the band's queue"
+    );
     assert!(app
         .world
         .get_mut::<LaborAllocation>(band)
@@ -2856,9 +2871,9 @@ fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
         .unqueue_build(&BuildSource::Patch(sources[1])));
     resolve_a_turn(&mut app);
     assert_eq!(
-        published_kit(&app, sources[1]),
-        "",
-        "a source in nobody's queue is being raised with nothing at all"
+        published_position(&app, sources[1]),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "a source in nobody's queue says so on its place in the line, which is where it says it now"
     );
 }
 
@@ -3230,10 +3245,10 @@ const KEEPERS_SHORT_OF_THE_BILL: u32 = 1;
 /// No keeping row staffed at all — the **control**: the builders' pool with nothing in the band
 /// competing for its hoes.
 ///
-/// It is a head count and not a bare kit, because the `agriculture` row's kit is **not** an input:
-/// `assign_labor` refuses a `kit` token there and `LaborAllocation::row_kit` derives the web's
-/// keeping kit for it, so *"the keepers hold nothing"* is not a state the game can be in. What a
-/// band can genuinely have is nobody on the role.
+/// It is a head count and not a bare kit, because a standing pool's kit is **not** an input:
+/// `assign_labor` refuses a `kit` token on the `agriculture` row, and what the keepers hold follows
+/// from each site's own rung — so *"the keepers hold nothing"* is not a state the game can be in.
+/// What a band can genuinely have is nobody on the role.
 const NO_KEEPING_ROW: u32 = 0;
 
 /// One hoe per hand across both claimants — the arm where "no hand is armed twice" is a claim about
@@ -3363,6 +3378,59 @@ fn the_keepers_are_short_of_their_bill(app: &App, patch: UVec2) -> bool {
 // Its one reader asserted `kitWorkersHolding` equalled the head count the turn armed, and a pool
 // row's published reach is a number no surface should be read against until #675 replaces it with
 // `poolToe`. See `a_builders_pools_take_falls_when_a_keeping_row_reaches_for_the_same_tool`.
+
+/// **NOTHING QUOTES A POOL'S TOOL ON THE PER-ITEM PAIR.** `kitItemConditions` sums over the rows
+/// whose **kit** carries the item, and a standing pool row publishes the empty kit
+/// (`docs/plan_pool_toe.md` §4) — so a tool only the pools reach for reads `0 of 0` there, which is
+/// *not applicable* rather than *nobody is holding one*. The pools' own reading is `poolToe`.
+const NO_ROW_QUOTES_A_POOLS_TOOL: f32 = 0.0;
+
+/// One published `poolToe` line — see [`published_pool_toe`].
+#[derive(Debug)]
+struct PublishedToeLine {
+    pool: String,
+    item: String,
+    required: f32,
+    filled: f32,
+}
+
+/// **THIS BAND'S PUBLISHED POOL TOEs**, in wire order — what each standing pool's sites required
+/// this turn and what the band's settlement gave them.
+fn published_pool_toe(app: &App, band: Entity) -> Vec<PublishedToeLine> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire")
+        .poolToe()
+        .map(|lines| {
+            lines
+                .iter()
+                .map(|line| PublishedToeLine {
+                    pool: line.pool().unwrap_or_default().to_string(),
+                    item: line.itemId().unwrap_or_default().to_string(),
+                    required: line.required(),
+                    filled: line.filled(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// One item's published `(workersHolding, count)` — how many of this band's people the wire says
 /// are holding it, and how many units the band owns.
@@ -3525,10 +3593,37 @@ fn a_band_that_is_not_short_arms_both_pools_in_full() {
         "…and every keeper beside them"
     );
 
+    // **AND THE WIRE SAYS SO, THROUGH `poolToe`** (`docs/plan_pool_toe.md` §4). The conservation
+    // claim used to be read off `kitItemConditions`' per-row pair; a pool row carries no kit any
+    // more, so no row quotes the hoes there and the pair reads `0 of 0` — *not applicable*, with the
+    // band's `count` beside it saying the stock is real. What states a pool's gear now is its TOE,
+    // and the two pools' filled lines are exactly the band's stock.
     let (holding, owned) = published_holding_and_stock(&unshort, unshort_band, SHARED_TOOL);
     assert_eq!(
         (holding, owned),
-        (HOES_FOR_EVERY_HAND as f32, HOES_FOR_EVERY_HAND),
-        "the pool and the keepers together are issued exactly the band's stock of hoes"
+        (NO_ROW_QUOTES_A_POOLS_TOOL, HOES_FOR_EVERY_HAND),
+        "a pool row carries no kit, so the per-row quote for a pool's own tool is `0 of 0` beside a \
+         stock the band really holds"
+    );
+    let toe = published_pool_toe(&unshort, unshort_band);
+    let hoes: Vec<_> = toe.iter().filter(|line| line.item == SHARED_TOOL).collect();
+    assert_eq!(
+        hoes.iter()
+            .map(|line| line.pool.as_str())
+            .collect::<Vec<_>>(),
+        vec!["agriculture", "builders"],
+        "both pools reach for the hoes, so both state a line: got {toe:?}"
+    );
+    for line in &hoes {
+        assert!(
+            (line.filled - line.required).abs() < 1e-4,
+            "a band that is not short fills every line it states: {line:?}"
+        );
+    }
+    let filled: f32 = hoes.iter().map(|line| line.filled).sum();
+    assert!(
+        (filled - HOES_FOR_EVERY_HAND as f32).abs() < 1e-4,
+        "the pool and the keepers together are issued exactly the band's stock of hoes: got \
+         {filled} against {HOES_FOR_EVERY_HAND}"
     );
 }

@@ -306,9 +306,10 @@ pub struct LaborConfigs<'w> {
 /// every item whose `build_work` serves this build, whatever it is bound to.
 ///
 /// ⛔ **A KIT NAMED ON THE ENTRY IS NO LONGER AN INPUT.** `BuildQueueEntry::kit` and the `build_kit`
-/// command survive for the wire (`LaborAllocation::builders_kit`) and are retired end to end by
-/// #676; nothing here reads them, because *"which tools does this job want"* follows from the job.
-/// The `builders` **row's** kit was never an input and still is not.
+/// command still exist and are retired end to end by #676; nothing here reads them, and nothing on
+/// the wire states them either — a source row's `buildKitId` publishes empty
+/// (`snapshot::subsistence::NO_SITE_KIT_ID`) — because *"which tools does this job want"*
+/// follows from the job. The `builders` **row's** kit was never an input and still is not.
 ///
 /// # The head is FUNDED and everything below it is DATED
 ///
@@ -580,6 +581,10 @@ struct ToeFill {
     /// This site's tools as a kit ([`crate::equipment_config::PoolToe::kit`]) — what the coverage
     /// partitions and what the wear is billed against.
     kit: crate::equipment_config::KitChoice,
+    /// **What this site asked for**, carried through from its [`ToeClaim`] so the pool's published
+    /// TOE states the requirement the settlement was actually struck against
+    /// ([`PoolToolPlan::toe_lines`]) rather than a second reading of it taken at capture.
+    required: Vec<(std::sync::Arc<str>, f32)>,
     /// What the band's settlement gave this site, per tool. A tool with no entry was settled
     /// nothing, which coverage reads as **bare hands** on that line.
     units: Vec<(std::sync::Arc<str>, f32)>,
@@ -744,6 +749,7 @@ fn settle_pool_tools(
         .map(|claim| ToeFill {
             hands: claim.hands,
             kit: claim.kit.clone(),
+            required: claim.required.clone(),
             units: Vec::new(),
         })
         .collect();
@@ -975,6 +981,84 @@ impl PoolToolPlan {
     fn builders_fill(&self, kit: &crate::equipment_config::KitChoice) -> Option<&ToeFill> {
         self.builders.as_ref().filter(|fill| &fill.kit == kit)
     }
+
+    /// **EVERY POOL'S TABLE OF EQUIPMENT AS THIS TURN SETTLED IT** — the readout the wire publishes
+    /// (`docs/plan_pool_toe.md` §4), one line per `(pool, item)`.
+    ///
+    /// ⛔ **IT REPORTS, IT DOES NOT RE-DERIVE.** Both figures are read off the fills this plan
+    /// already holds — the requirement the claims were struck with and the units
+    /// [`settle_pool_tools`] paid them — so the pool card and the hands that worked cannot come to
+    /// two answers about the same tools.
+    ///
+    /// **A line is published only where the pool requires something.** A pool that asked for nothing
+    /// of an item has no line at all, and a pool whose lines were all filled keeps them with
+    /// `filled == required`: a reader that saw only shortfalls could not tell *satisfied* from *not
+    /// applicable*.
+    ///
+    /// Summed per item across the pool's sites, in item-id order, so a pool holding a dirt road and
+    /// a paved road states one earthmoving line and one stone-dressing line rather than one per
+    /// road.
+    pub fn toe_lines(&self) -> Vec<crate::components::PoolToeLine> {
+        [
+            (
+                crate::equipment_config::KitJob::Agriculture,
+                &self.agriculture[..],
+            ),
+            (
+                crate::equipment_config::KitJob::Husbandry,
+                &self.husbandry[..],
+            ),
+            (
+                crate::equipment_config::KitJob::Roadwork,
+                &self.roadwork[..],
+            ),
+            (
+                crate::equipment_config::KitJob::Quarrywork,
+                &self.quarrywork[..],
+            ),
+            (
+                crate::equipment_config::KitJob::Builders,
+                self.builders.as_slice(),
+            ),
+        ]
+        .into_iter()
+        .flat_map(|(pool, fills)| pool_toe_lines(pool, fills))
+        .collect()
+    }
+}
+
+/// **ONE POOL'S LINES** — [`PoolToolPlan::toe_lines`]'s body for a single pool, summed per item over
+/// the sites the pool holds.
+///
+/// The `BTreeMap` is the item-id ordering the rest of the settlement already runs in
+/// ([`settle_pool_tools`]'s own union), so a frame's lines are stable and a delta diffs them out
+/// when nothing moved.
+fn pool_toe_lines(
+    pool: crate::equipment_config::KitJob,
+    fills: &[ToeFill],
+) -> Vec<crate::components::PoolToeLine> {
+    let mut totals: BTreeMap<std::sync::Arc<str>, (f32, f32)> = BTreeMap::new();
+    for fill in fills {
+        for (item, required) in &fill.required {
+            let line = totals
+                .entry(std::sync::Arc::clone(item))
+                .or_insert((NOTHING_DEMANDED, NO_UNITS_SETTLED));
+            line.0 += required;
+            line.1 += fill.units_of(item);
+        }
+    }
+    totals
+        .into_iter()
+        .filter(|(_, (required, _))| *required > NOTHING_DEMANDED)
+        .map(
+            |(item, (required, filled))| crate::components::PoolToeLine {
+                pool,
+                item: item.to_string(),
+                required,
+                filled,
+            },
+        )
+        .collect()
 }
 
 /// **ONE POOL'S SETTLED FILLS, OR THIS POOL PLANNED ON ITS OWN** — what a `pub` payer resolves when
@@ -3808,6 +3892,10 @@ pub fn advance_labor_allocation(
         allocation.last_material_need.clear();
         allocation.last_material_income.clear();
         allocation.last_fodder_drain = NO_FODDER_LEDGER;
+        // **THE POOLS' TOOLS RIDE THE SAME CYCLE AND THE SAME EARLY-EXIT RULE** — cleared ahead of
+        // the shed's `continue`s and rewritten below from the plan this turn actually settled, so a
+        // band that loses its last worker stops publishing a TOE for sites it no longer holds.
+        allocation.last_pool_toe.clear();
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
         // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
@@ -3981,6 +4069,11 @@ pub fn advance_labor_allocation(
                     })
                 }),
         );
+        // **AND THE PLAN IS WHAT THE WIRE STATES** (`docs/plan_pool_toe.md` §4). Published from the
+        // settled plan rather than re-derived at capture: the capture holds no claim lists, and a
+        // second derivation there would be free to disagree with the tools these hands actually
+        // worked with.
+        allocation.last_pool_toe = pool_tools.toe_lines();
         // ## ⛔ THE ROADS THIS BAND KEEPS, PAID HERE — AFTER THE SHED AND BEFORE THE QUOTE
         //
         // The third keeping pool ([`settle_bands_roadwork`]), and this seat is the whole of what

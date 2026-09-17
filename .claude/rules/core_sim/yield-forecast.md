@@ -967,12 +967,12 @@ back to `NOT_IN_ANY_BUILD_QUEUE` every turn along with `build_turns_remaining` i
 
 | term | what it rules out |
 |---|---|
-| the source is in a band's **live** queue (`BuildKitIds::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared place, reading as a build about to start |
+| the source is in a band's **live** queue (`QueuedBuildSources::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared place, reading as a build about to start |
 | its stamped place is still `NOT_IN_ANY_BUILD_QUEUE` | a genuinely stalled entry, which *is* live-queued, reading the same way |
 
 The queue membership is read **live off the bands' own `build_queue`s** rather than off the
 turn-written row, for the reason `buildKitId` beside it already is: the row's scratch lags a command
-by a whole turn, and this state exists precisely in the frame before that turn. `BuildKitIds` was
+by a whole turn, and this state exists precisely in the frame before that turn. `QueuedBuildSources` was
 already that index, so it grew a membership predicate rather than a second walk.
 
 **The legs keep `-1`.** `published_build_legs` maps an undated leg to `NO_BUILD_TURNS_ESTIMATE` and

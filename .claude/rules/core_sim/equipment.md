@@ -414,11 +414,11 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >   `extraction:quarry` and no kit offers `quarrywork`. They are geared now, which is a real pacing
 >   move on that branch and is the arc's point rather than a side effect.
 > - **the per-site / per-entry SELECTION.** `LaborAssignment::upkeep_kit` and `BuildQueueEntry::kit`
->   still exist, still ride the wire and are still set by `upkeep_kit` / `build_kit` — and **nothing
->   in the turn prices a pool from either**. The lever they carried is genuinely lost: there is no
->   longer a way to keep a site or a job bare on purpose to spare the band's tools. A site marked
->   **Low** is served last when tools run short, which is what replaces it. The commands and the
->   fields retire end to end in #676.
+>   still exist and are still set by `upkeep_kit` / `build_kit` — and **nothing in the turn prices a
+>   pool from either, nor does anything on the wire state them** (see "A SITE NAMES NO KIT" below).
+>   The lever they carried is genuinely lost: there is no longer a way to keep a site or a job bare
+>   on purpose to spare the band's tools. A site marked **Low** is served last when tools run short,
+>   which is what replaces it. The commands retire end to end in #676.
 >
 > #### THE FOUR-STEP ORDER, WHICH IS WHAT KEEPS IT FROM BEING A LOOP
 >
@@ -458,12 +458,49 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > count** and the settlement splits **by priority**. Take crews are untouched, because pool tools and
 > take/role tools are disjoint on the shipped roster.
 >
-> ⛔ **THE WIRE IS UNCHANGED IN SHAPE AND WRONG IN ONE VALUE, AND #675 OWNS IT.**
-> `LaborAllocation::row_kit` keeps its five pool arms for the capture alone — a pool row still
-> publishes a `kitId` and a `kitWorkersHolding` — but the capture strikes that coverage from the
-> budget the pools have just left, so a pool row's published reach is the band's whole live stock
-> while the take reads the settled share. Slice 2 appends `poolToe` and publishes those two as
-> *"nothing to be short of"*; **until then no surface may be read against a pool row's reach.**
+> #### ON THE WIRE: `poolToe`, AND THE THREE FIELDS IT RETIRES
+>
+> `PopulationCohortState.poolToe` is the readout of the settlement above — one `PoolToeLine` per
+> `(pool, item)`, carrying `required` and `filled`, appended last on `PopulationCohortState` with the
+> table appended last in `snapshot.fbs`. The `pool` token is `KitJob::as_str()`, which is the same
+> spelling `LaborAssignment.kind` publishes for the row, so a client joins a line to its pool card
+> without a table of its own.
+>
+> **It is REPORTED, never re-derived at capture.** `PoolToolPlan::toe_lines` reads the fills the turn
+> settled and `advance_labor_allocation` parks them on `LaborAllocation::last_pool_toe`, cleared
+> ahead of the shed's early exits like every other per-turn ledger. The capture holds no claim lists
+> and could only strike a second answer, free to disagree with the tools the work was priced at.
+>
+> ⛔ **A LINE EXISTS ONLY WHERE `required > 0`, AND A FILLED LINE KEEPS ITS ROW.** A pool that wants
+> nothing of an item has no row at all; a pool whose requirement was met keeps its row with
+> `filled == required`. The distinction is the readout: a surface shows no tool line when every line
+> is filled, and it cannot tell *satisfied* from *not applicable* off an absent row.
+>
+> **Three fields stop carrying meaning, and publish their absence rather than being deleted** —
+> FlatBuffers ids are positional, so the slots stay:
+>
+> | field | now publishes | because |
+> |---|---|---|
+> | a **pool row's** `LaborAssignment.kitId` | `""` | the capture resolves `EquipmentConfig::no_kit` for a `LaborTarget::is_standing_pool` row. One kit id has room for one tool, and a Roadwork pool keeping a dirt road and a paved road wants two |
+> | a **pool row's** `kitWorkersHolding` | `== workers` | the *nothing to be short of* reading, and it **falls out** of the empty kit rather than being special-cased: `KitCoverage::workers_holding_whole_kit` folds a `min` over the kit's items and an empty kit has none. No existing reader sees a shortfall on a pool row; the shortfall is `poolToe`'s |
+> | per-site `buildKitId` / `upkeepKitId` / `upkeepKitNamed` on patches, herds and workings | `""` / `""` / `false` | `snapshot::subsistence::NO_SITE_KIT_ID` and its named twin. A site's tools follow from its own rung, so there is no per-site answer left to state — and with no pick to state there is no override for the flag to report |
+>
+> **The two capture-side indexes lost their values and kept their MEMBERSHIP.** `BuildKitIds` and
+> `UpkeepKitIds` were maps from a source to a kit id; they are `QueuedBuildSources` and
+> `WorkedSources` now, sets answering *"is this source in somebody's live queue"* and *"does one of
+> the viewer's bands work it"*. Those two questions were never about the kit — they are the
+> `queued_live` term of the build countdown and the pair `factions.md`'s rule ② gates a rival's build
+> scratch on — and they are still read live off the bands' queues and rows rather than off the
+> turn-written scratch. The claims arbitration went with the kit: it existed only to pick *whose* kit
+> a source several bands share should publish, and a set has no such question.
+>
+> **`LaborAllocation::row_kit` is retired with them.** Its five pool arms were wire-facing only once
+> the pools left the item budget, and with the pool row publishing the empty kit there is no caller
+> left: every other row's kit is `LaborAssignment::kit_choice`, called directly.
+>
+> **`SAVE_FORMAT_VERSION` went to 9.** A band's whole `LaborAllocation` rides `BandRecord::labor`, so
+> the new field changes the bincode shape and a version-8 blob has to be refused by the version gate
+> rather than by a decoder running off the end of a record.
 >
 > **A FIXTURE HOLDS THE GEAR AXIS ON THE LEDGER NOW, NOT ON THE ENTRY.** `bare_builders()` on a
 > `BuildQueueEntry` held nothing the moment the entry's kit stopped pricing; `core_sim::disarm_the_builders`
@@ -476,8 +513,8 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > describes the per-entry *kit* derivation the per-site *requirement* replaced. It is kept because
 > the arguments it makes are still live one level down — *a queue item is one job*, *a single stored
 > id per band cannot be right for both webs*, *wear follows the work actually done* — and because
-> `BuildQueueEntry::kit` and the `build_kit` command survive on the wire until #676. **Nothing in the
-> turn prices a build from them.**
+> `BuildQueueEntry::kit` and the `build_kit` command survive until #676 retires them. **Nothing in
+> the turn prices a build from them, and the wire states nothing about them.**
 >
 > **A queue item is one job, so a kit per job is exactly following the row.** With two builders kits
 > a single stored id cannot be right for both webs, and the hunt had already solved the same problem
@@ -513,10 +550,11 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > > pinning it replaces.
 >
 > > ⛔ **~~AND THE KEEPING KIT IS PER WORK SITE~~ — SUPERSEDED BY THE PER-SITE REQUIREMENT.** A site's
-> > tools follow from its own **rung** now, so `LaborAssignment::upkeep_kit` prices nothing and the
-> > `upkeep_kit` command retires in #676. What survives is the argument, which the requirement makes
-> > more strongly: *the band does not decide which tool a given site is worked with*. The rest of this
-> > callout describes the retired selection and its wire.
+> > tools follow from its own **rung** now, so `LaborAssignment::upkeep_kit` prices nothing, the wire
+> > states nothing about it (`upkeepKitId` and `upkeepKitNamed` publish `""` / `false` on every row —
+> > see "ON THE WIRE" above), and the `upkeep_kit` command retires in #676. What survives is the
+> > argument, which the requirement makes more strongly: *the band does not decide which tool a given
+> > site is worked with*. The rest of this callout describes the retired selection and its wire.
 > >
 > > ⛔ **AND THE KEEPING KIT IS PER WORK SITE, ON THE SAME ARGUMENT** (§2.7). The band is the pool of
 > > workers and goods to draw from; it does not decide which tool a given site is worked with. So

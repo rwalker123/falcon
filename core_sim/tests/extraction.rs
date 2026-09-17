@@ -3076,9 +3076,16 @@ mod wire {
             sim_schema::NO_BUILD_TURNS_ESTIMATE,
             "a rung nobody ordered has no quote, and never a 0 that renders as finished: {rock:?}"
         );
+        // **A WORKING NAMES NO KEEPING KIT** (`docs/plan_pool_toe.md` §4). This asserted the
+        // opposite — that a worked working always resolved one, the bare-handed kit included — and
+        // the resolution it pinned is retired: a site's tools follow from its own rung, are settled
+        // band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`.
+        // The `quarrywork` pool is the one this working's keepers are drawn from, and it is where
+        // the chisels are now stated.
         assert!(
-            !rock.upkeep_kit_id.is_empty(),
-            "a worked working resolves a keeping kit, the bare-handed one included: {rock:?}"
+            rock.upkeep_kit_id.is_empty(),
+            "a working names no keeping kit; its keepers' tools ride the quarrywork pool's TOE: \
+             {rock:?}"
         );
     }
 

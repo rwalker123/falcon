@@ -103,7 +103,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 6 | `WorldStatics.factions` (`FactionRegistry`) gained `control` — the roster now carries how each faction is driven, and that map has no serde default, so without the bump a version-5 blob dies on the missing field inside the decoder and reads as `unreadable` rather than as the wrong version |
 /// | 7 | `WorldStatics.start_location` (`StartLocation`) became a **per-faction map** — one `Option<UVec2>` replaced by a `FactionId`-keyed table, because worldgen now places every registered faction at its own start, and a rival founding a settlement must not move your marker |
 /// | 8 | `SimState.victory` (`VictoryState.modes`) became a **per-faction map** — one mode list replaced by a `FactionId`-keyed table, because a victory threshold measures one people and the world's totals were scoring everybody's; `SimulationMetrics` gained its per-faction twins in the same change |
-pub const SAVE_FORMAT_VERSION: u32 = 8;
+/// | 9 | `LaborAllocation` gained `last_pool_toe` — the five standing pools' settled tables of equipment, which the wire publishes as `PopulationCohortState.poolToe`. A band's whole allocation rides `BandRecord::labor`, so a version-8 blob has no such field and a bincode decode of one runs off the end of the record rather than reporting a version |
+pub const SAVE_FORMAT_VERSION: u32 = 9;
 
 /// gzip level for the payload document.
 ///

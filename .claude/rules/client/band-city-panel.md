@@ -6828,15 +6828,21 @@ perfectly useless control that photographs as an ordinary card.
 - **The TAKE picker's fallback is the JOB's default, not a field off the source.** The full autopsy —
   the pending overlay's dropped `kit_id`, the plant web's absent `default_kit_id`, and why the hunt
   web only looked immune — is in `labor-ui.md` → "THE KIT RIDES EVERY CREW EDIT".
-- **The UPKEEP picker falls through to `KitRoster.keeping_kit_for`, and the state it answers for is
-  REACHABLE.** `resolve_upkeep_kits` walks the BANDS' LABOR ROWS, so a source no band works yet is
-  absent from that map and publishes `""` — while the BILL this row is gated on comes off the
-  source's own RUNG and is there regardless. A brand-new PENDING assignment on a kept source
-  therefore drew the Upkeep row blank. **That fall-through is not a missing-field guard**: it is the
-  client's own copy of the derivation the sim applies the moment the assignment lands, and it is
-  already what a NAMED row's `(default)` mark is measured against. With nothing stated the derivation
-  IS both the selection and the default, which is exactly what an UNNAMED row means — so the ⛔ above
-  about the mark coming off `upkeep_kit_named` still holds and no second derivation was introduced.
+- **The UPKEEP picker falls through to `KitRoster.keeping_kit_for`, and that fall-through is now the
+  ONLY path.** It used to be reachable but narrow: `resolve_upkeep_kits` walked the BANDS' LABOR
+  ROWS, so a source no band works yet was absent from that map and published `""`, and a brand-new
+  PENDING assignment on a kept source therefore drew the Upkeep row blank. **The map is gone**
+  (`docs/plan_pool_toe.md` §4) — its successor `resolve_worked_sources` is a membership set carrying
+  no kit, and every patch, herd and working publishes `upkeep_kit_id` `""` with `upkeep_kit_named`
+  `false`, a site's keeping tools following from its own rung — so every row takes the fall-through
+  and every row reads as UNNAMED. The BILL this row is gated on comes off the source's own RUNG and
+  is there regardless. **That fall-through was not a missing-field guard**: it was this client's copy
+  of the derivation the sim applied the moment the assignment landed, and it is what a NAMED row's
+  `(default)` mark is measured against. With nothing stated the derivation IS both the selection and
+  the default, which is exactly what an UNNAMED row means — so the ⛔ above about the mark coming off
+  `upkeep_kit_named` still holds. **What no longer stands behind it is the sim's half**: nothing
+  sim-side resolves a keeping kit per site any more, so the face this picker shows is the client's
+  own answer and nothing on the wire can contradict — or confirm — it.
 - **Every kit assertion in `band_panel_preview` asked whether a picker EXISTED and what its ROSTER
   held; none asked what it was SHOWING**, which is why a dead control passed every claim the harness
   had. `_assert_kit_pickers_state_a_selection` is the one that was missing — entries, a lit index and

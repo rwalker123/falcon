@@ -1372,14 +1372,15 @@ impl KitCoverage {
 /// allocation is empty, and which works no source rows — reading exactly what the ledger-wide
 /// [`EquipmentConfig::coverage`] gave it.
 ///
-/// ⛔ **THE BUILDERS' POOL USED TO BE THE SECOND EXAMPLE HERE, AND IS NOT ONE.** This paragraph read
-/// *"…and the builders' pool (whose kit is resolved from the build queue rather than from a row)"*,
-/// which was true only while `kitted_rows` resolved that row through
-/// [`crate::components::LaborAssignment::kit_choice`] and got `default_kits.builders` — `none`. The
-/// pool is a budgeted claimant now: [`crate::components::LaborAllocation::row_kit`] registers the
-/// head entry's kit over the whole pool and `systems::labor::BuildersGear::for_source` cuts from
-/// that row's share. Four shipped kits serve `builders` **and** a role job, so leaving it here
-/// issued one stock twice.
+/// ⛔ **THE BUILDERS' POOL USED TO BE THE SECOND EXAMPLE HERE, AND NO POOL IS ONE.** This paragraph
+/// read *"…and the builders' pool (whose kit is resolved from the build queue rather than from a
+/// row)"*, which was true only while that row resolved through
+/// [`crate::components::LaborAssignment::kit_choice`] and got `default_kits.builders` — `none` — so
+/// a pool that really was holding gear put **no demand** on it and every take row divided a stock
+/// the builders were already spending. The five standing pools are out of this budget entirely now
+/// ([`crate::components::LaborTarget::is_standing_pool`]): their tools are settled band-wide by
+/// `SourcePriority` in `systems::labor::settle_pool_tools`, so they are rationed there instead, and
+/// leaving them here as well would ration one stock twice.
 #[derive(Debug, Clone, Default)]
 pub struct BandItemBudget {
     /// Workers wanting each item, summed over the rows that carry it. A `Vec` walked linearly

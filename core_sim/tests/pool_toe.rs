@@ -530,6 +530,212 @@ fn a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_
 }
 
 // ---------------------------------------------------------------------------------------------
+// (4) THE WIRE — `poolToe`, and the two fields it retires
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **THE POOL'S TOOLS CROSS THE WIRE AS A TABLE, AND EVERY LINE STATES BOTH TERMS**
+/// (`docs/plan_pool_toe.md` §4).
+///
+/// One `Roadwork` pool keeping a dirt road and a paved road wants two tools. The band is stocked
+/// with the earthmoving gear and **none** of the stone-dressing gear, so one line is filled and one
+/// is not — which is the pair a reader has to be able to tell apart:
+///
+/// - **a filled line KEEPS its row**, `filled == required`. A surface shows no tool line when every
+///   line is filled, and it cannot tell *satisfied* from *not applicable* off an absent row;
+/// - **a line the settlement reached with nothing reads `filled == 0` beside a positive
+///   `required`** — the shortfall, in the client's own `N of M` terms.
+///
+/// **And a pool that requires nothing has no row at all**, which is the other half of the same
+/// distinction: this band staffs no `agriculture`, so the whole pool is absent rather than present
+/// at zero.
+///
+/// Asserted on the **encoded** frame, because what a client reads is the FlatBuffer.
+#[test]
+fn a_pools_toe_crosses_the_wire_with_both_terms_on_every_line() {
+    const ONE_KEEPER: u32 = 1;
+    const ONE_TOOL: u32 = 1;
+    let app = a_band_keeping_a_dirt_and_a_paved_road(&[(EARTHMOVING, ONE_TOOL)], ONE_KEEPER);
+    let toe = published_pool_toe(&app);
+
+    let earthmoving = toe
+        .iter()
+        .find(|line| line.pool == "roadwork" && line.item == EARTHMOVING)
+        .unwrap_or_else(|| panic!("the dirt road's tool is a line of the roadwork TOE: {toe:?}"));
+    assert!(
+        earthmoving.required > 0.0,
+        "a published line always states a real requirement: {earthmoving:?}"
+    );
+    assert_eq!(
+        earthmoving.filled, earthmoving.required,
+        "the band holds the earthmoving gear, and a filled line KEEPS its row rather than dropping \
+         out of the table: {earthmoving:?}"
+    );
+
+    let dressing = toe
+        .iter()
+        .find(|line| line.pool == "roadwork" && line.item == STONE_DRESSING)
+        .unwrap_or_else(|| panic!("the paved road's tool is a line of the same TOE: {toe:?}"));
+    assert!(
+        dressing.required > 0.0,
+        "the paved road requires its own tool whether or not the band owns one: {dressing:?}"
+    );
+    assert_eq!(
+        dressing.filled, 0.0,
+        "…and the band owns none, so the settlement reached it with nothing: {dressing:?}"
+    );
+
+    assert!(
+        !toe.iter().any(|line| line.pool == "agriculture"),
+        "a pool that requires nothing has NO line — not a line at zero, which a reader could not \
+         tell from an unmet one: {toe:?}"
+    );
+}
+
+/// ⛔ **A POOL ROW PUBLISHES NO KIT, AND NOTHING TO BE SHORT OF** (`docs/plan_pool_toe.md` §4).
+///
+/// `LaborAssignment.kitId` and `kitWorkersHolding` described one kit over one row, which is the
+/// shape a pool cannot have: the band above is short of a tool its pool genuinely wants, and the
+/// pair would have to say so about *one* of the two. It does not try — the id is empty and the reach
+/// equals the row's own head count — and the shortfall is stated on `poolToe` instead, which the
+/// test above reads.
+///
+/// **The band IS short**, asserted here off the same frame, so this is not the trivially-satisfied
+/// reading a fully-equipped band would give.
+#[test]
+fn a_pool_row_publishes_no_kit_and_no_shortfall() {
+    const KEEPERS: u32 = 2;
+    const ONE_TOOL: u32 = 1;
+    let app = a_band_keeping_a_dirt_and_a_paved_road(&[(EARTHMOVING, ONE_TOOL)], KEEPERS);
+
+    assert!(
+        published_pool_toe(&app)
+            .iter()
+            .any(|line| line.pool == "roadwork" && line.filled < line.required),
+        "fixture: the pool must be short of something, or the row below has nothing to have \
+         reported"
+    );
+    let row = published_pool_row(&app, "roadwork");
+    assert_eq!(
+        row.0, "",
+        "a pool row names no kit: its tools are its sites', and they ride `poolToe`"
+    );
+    assert_eq!(
+        row.1, KEEPERS as f32,
+        "…and every hand on it reads as holding what it carries, which is the `nothing to be short \
+         of` reading: a reader of this pair must not see a shortfall on a pool row"
+    );
+}
+
+/// **A `Roadwork` band keeping one dirt road and one paved road**, holding exactly `stock`.
+///
+/// The two rungs want different tools ([`a_roadwork_pool_keeping_both_rungs_requires_both_tools`]),
+/// so one pool's TOE is two lines and the caller decides which of them the band can fill.
+fn a_band_keeping_a_dirt_and_a_paved_road(stock: &[(&str, u32)], keepers: u32) -> App {
+    /// A haul long enough that the pool is genuinely short of the two bills — the same reading the
+    /// settlement fixtures above take, and for the same reason.
+    const A_LONG_HAUL: f32 = 12.0;
+
+    let mut app = spawn_world();
+    let (band, _, band_id, home) = first_band(&mut app);
+    let dirt = tile_east_of(&app, home, 1);
+    let paved = tile_east_of(&app, home, 2);
+    seat_road(&mut app, dirt, RungKey::RouteDirtRoad, band_id, A_LONG_HAUL);
+    seat_road(
+        &mut app,
+        paved,
+        RungKey::RoutePavedRoad,
+        band_id,
+        A_LONG_HAUL,
+    );
+    staff_one_role(
+        &mut app,
+        band,
+        LaborTarget::Roadwork,
+        keepers,
+        UpkeepFundMode::Spread,
+    );
+    stock_exactly(&mut app, band, stock);
+    app.update();
+    app
+}
+
+/// One published `poolToe` line — see [`published_pool_toe`].
+#[derive(Debug)]
+struct PublishedToeLine {
+    pool: String,
+    item: String,
+    required: f32,
+    filled: f32,
+}
+
+/// **THE FIRST BAND'S PUBLISHED POOL TOEs**, decoded off the encoded frame in wire order.
+fn published_pool_toe(app: &App) -> Vec<PublishedToeLine> {
+    with_published_cohort(app, |cohort| {
+        cohort
+            .poolToe()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| PublishedToeLine {
+                        pool: line.pool().unwrap_or_default().to_string(),
+                        item: line.itemId().unwrap_or_default().to_string(),
+                        required: line.required(),
+                        filled: line.filled(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// **A standing pool row's published `(kitId, kitWorkersHolding)`**, by the row's `kind` token.
+fn published_pool_row(app: &App, pool: &str) -> (String, f32) {
+    with_published_cohort(app, |cohort| {
+        cohort
+            .laborAssignments()
+            .expect("the band publishes its rows")
+            .iter()
+            .find(|row| row.kind() == Some(pool))
+            .map(|row| {
+                (
+                    row.kitId().unwrap_or_default().to_string(),
+                    row.kitWorkersHolding(),
+                )
+            })
+            .unwrap_or_else(|| panic!("the band staffs a '{pool}' row"))
+    })
+}
+
+/// The one decode of the published frame both readers above go through — the first cohort of the
+/// latest capture, read through the accessor chain a client uses.
+fn with_published_cohort<T>(
+    app: &App,
+    read: impl FnOnce(
+        shadow_scale_flatbuffers::generated::shadow_scale::sim::PopulationCohortState,
+    ) -> T,
+) -> T {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .get(0);
+    read(cohort)
+}
+
+// ---------------------------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------------------------
 

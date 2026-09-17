@@ -979,15 +979,21 @@ The unqueued tail takes the **food webs'** arm rather than the road's silence �
 cuts but has not queued is dated at the back of the line, which is where a build ordered now would
 actually go.
 
-### The kit indexes carry both halves
+### The capture indexes carry the working's membership
 
-`BuildKitIds` gains `deposits: HashMap<(UVec2, String), String>` — **a map where the road's is a
-set**, because a working publishes its kit *and* its membership on its own row, so the map's presence
-is `isQueued` and its value is `buildKitId`. One index answers both rather than two that could
-disagree, and membership cannot be replaced by a `buildKitId != ""` test: a resolved builders kit is
-never the empty string. `UpkeepKitIds` gains the same key for `upkeepKitId` / `upkeepKitNamed`, and
-`resolve_upkeep_kits` reads the working's branch off the **source's own rung** rather than off the
-row, because one row kind serves both ladders.
+`QueuedBuildSources` gains `deposits: HashSet<(UVec2, String)>`, keyed both ways because one tile can
+hold two workings and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
+Its presence is the row's `isQueued` **and** the `queued_live` term of the build countdown — one
+index answering both rather than two that could disagree.
+
+> **It was a MAP from a working to a kit id**, whose value was this row's `buildKitId`, and
+> `UpkeepKitIds` carried the same key for `upkeepKitId` / `upkeepKitNamed` — resolving the working's
+> branch off the **source's own rung** rather than off the row, because one row kind serves both
+> ladders. `docs/plan_pool_toe.md` §4 retires both ids: a site's tools follow from its rung, are
+> settled band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`. A
+> working's `buildKitId` / `upkeepKitId` publish empty, the values went, and only the membership
+> stayed. **A worked-deposit set went with them** — the deposit row gates its build scratch on the
+> queue alone, so `WorkedSources` indexes the two food webs and nothing else.
 
 ### The rung catalog — what a wood or a rock body MAY become, once per world
 

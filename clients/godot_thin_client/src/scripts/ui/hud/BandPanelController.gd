@@ -6352,18 +6352,21 @@ func _build_work_inspector_take_kit_picker(band: Dictionary, model: Dictionary) 
 ## UNNAMED row's default IS the id it is showing, and only a NAMED one has to ask
 ## `KitRoster.keeping_kit_for` what the derivation would have been.
 ##
-## ⛔ **AN UNSTATED KIT FALLS THROUGH TO THAT DERIVATION RATHER THAN RENDERING A BLANK CONTROL, and
-## the state it answers for is REACHABLE.** `resolve_upkeep_kits` walks the bands' LABOR ROWS, so a
-## source no band works yet is absent from that map and publishes `""` — while `upkeep_price_terms`
-## comes off the source's own RUNG, which exists regardless. A brand-new **pending** assignment on a
-## kept source therefore drew the Upkeep row with an empty face and nothing lit, the take picker's
-## reported defect arriving through the other control. The fall-through is not a missing-field guard:
-## `keeping_kit_for` is this client's own copy of the very derivation the sim will apply the moment
-## the assignment lands, and it is already what a NAMED row's `(default)` mark is measured against.
+## ⛔ **THE FALL-THROUGH IS THE ONLY PATH NOW, AND THE MARK NO LONGER DISCRIMINATES.**
+## `docs/plan_pool_toe.md` §4 retired the per-site keeping kit: every patch, herd and working
+## publishes `upkeepKitId` `""` and `upkeepKitNamed` `false`, so `selected` is always empty here and
+## always resolves through `KitRoster.keeping_kit_for`. The two readings this block was written to
+## keep apart — a player's stated pick against the web's derivation — are one reading, and **every
+## Upkeep row therefore marks its entry `(default)`, including straight after a pick**.
 ##
-## **The mark stays honest across it.** With nothing stated the derivation IS both the selection and
-## the default, which is exactly what an UNNAMED row means — so the entry is marked `(default)` and
-## no second client derivation has been introduced.
+## The retired claim, kept because it is the sentence that would justify re-deriving the mark: it
+## read *"the state it answers for is REACHABLE — `resolve_upkeep_kits` walks the bands' LABOR ROWS,
+## so a source no band works yet is absent from that map and publishes `""`."* That resolver is a
+## membership set called `resolve_worked_sources` now and holds no kit ids at all; the narrow
+## pending-assignment case it described is simply every case.
+##
+## **Do not answer this with a second client derivation.** The id cannot recover what the flag used
+## to say, because the sim no longer decides it — the site's own rung does.
 func _build_work_inspector_upkeep_kit_picker(band: Dictionary, model: Dictionary) -> OptionButton:
     var kits := _band_labor.kits()
     var job := _work_inspector_upkeep_job(model)

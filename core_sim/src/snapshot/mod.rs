@@ -1008,8 +1008,8 @@ mod tests {
             penned_parties: &HashMap::new(),
             fallback_party: &fallback,
             // The fog fixtures queue nothing, so no source names a builders kit.
-            build_kits: &crate::snapshot::subsistence::BuildKitIds::default(),
-            upkeep_kits: &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            build_kits: &crate::snapshot::subsistence::QueuedBuildSources::default(),
+            upkeep_kits: &crate::snapshot::subsistence::WorkedSources::default(),
         })
     }
 
@@ -1515,6 +1515,7 @@ mod tests {
             last_roadwork_supplied: 0.0,
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
+            last_pool_toe: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -1626,6 +1627,7 @@ mod tests {
             last_roadwork_supplied: 0.0,
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
+            last_pool_toe: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -1689,6 +1691,7 @@ mod tests {
             last_roadwork_supplied: 0.0,
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
+            last_pool_toe: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -2335,8 +2338,8 @@ mod tests {
             // basket.
             &FloraQuoteCache::default(),
             // Nothing is queued in this fixture, so no patch names a builders kit.
-            &crate::snapshot::subsistence::BuildKitIds::default(),
-            &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            &crate::snapshot::subsistence::QueuedBuildSources::default(),
+            &crate::snapshot::subsistence::WorkedSources::default(),
             // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
             // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
             // must not stand between the assertion and the field it is about.
@@ -2399,8 +2402,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &FloraQuoteCache::default(),
-            &crate::snapshot::subsistence::BuildKitIds::default(),
-            &crate::snapshot::subsistence::UpkeepKitIds::default(),
+            &crate::snapshot::subsistence::QueuedBuildSources::default(),
+            &crate::snapshot::subsistence::WorkedSources::default(),
             // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
             // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
             // must not stand between the assertion and the field it is about.
@@ -2905,8 +2908,8 @@ mod tests {
                 &HashMap::new(),
                 &tile_capacities,
                 &FloraQuoteCache::default(),
-                &crate::snapshot::subsistence::BuildKitIds::default(),
-                &crate::snapshot::subsistence::UpkeepKitIds::default(),
+                &crate::snapshot::subsistence::QueuedBuildSources::default(),
+                &crate::snapshot::subsistence::WorkedSources::default(),
                 // Fog OFF — see the sibling fixtures above.
                 FactionId(0),
                 &crate::visibility::VisibilityLedger::default(),
