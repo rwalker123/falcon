@@ -21,6 +21,7 @@ use sim_runtime::{
 
 use crate::brain::BrainLens;
 use crate::geometry::Tile;
+use crate::ground::{GroundLevers, Reading, Shape, Site, StartKind};
 use crate::instruments::decisions::GoalsRecord;
 use crate::instruments::scoreboard::ScoreRow;
 use crate::specialists::food::{
@@ -228,6 +229,74 @@ pub struct GroundObservation {
     pub best_sustained_cluster_in_horizon: f32,
 }
 
+/// **The land reading** (`ground.rs`), taken for the seat's largest own band: the sites the
+/// faction could work, the four coverings — the band's own hex, the near ring, the far ring,
+/// everything discovered — and the kind of start they say this is. Present only on a seat whose
+/// brain carries the profile's levers (`BrainLens::ground`); the bench's `ground.people*`
+/// measures and `ground.start_kind` are read off the first record's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroundRecord {
+    pub band_id: u64,
+    pub x: u32,
+    pub y: u32,
+    pub population: u32,
+    pub working_age: u32,
+    /// The most bands the population could be, by the sim's split floors.
+    pub k_max: u32,
+    pub per_person_consumption: f32,
+    pub sites: Vec<Site>,
+    pub kind: StartKind,
+    pub stay: Shape,
+    pub local: Shape,
+    pub far: Shape,
+    pub visible: Shape,
+    /// The far covering's "move everyone" target, and its distance from the band (0 = none).
+    pub move_target: Option<TilePos>,
+    pub move_target_distance: u32,
+    /// The near-ring covering around the move target, when there is one.
+    pub around_target: Option<Shape>,
+}
+
+impl GroundRecord {
+    /// The reading for the largest own band in `own_bands`, shaped by `levers`.
+    fn capture(
+        view: &SeatView,
+        memory: &SeatMemory,
+        own_bands: &[&PopulationCohortState],
+        levers: &GroundLevers,
+    ) -> Option<Self> {
+        let band = own_bands
+            .iter()
+            .copied()
+            .max_by_key(|band| (band.size, std::cmp::Reverse(band.band_id)))?;
+        let reading = Reading::read(view, memory, band);
+        let classified = reading.classify(levers);
+        let move_target = classified.move_target_tile();
+        Some(Self {
+            band_id: band.band_id,
+            x: band.current_x,
+            y: band.current_y,
+            population: reading.population,
+            working_age: reading.working_age,
+            k_max: reading.k_max(),
+            per_person_consumption: reading.per_person_consumption,
+            sites: reading.sites,
+            kind: classified.kind,
+            stay: classified.stay,
+            local: classified.local,
+            far: classified.far,
+            visible: classified.visible,
+            move_target: move_target.map(|tile| TilePos {
+                x: tile.x,
+                y: tile.y,
+            }),
+            move_target_distance: move_target
+                .map_or(0, |tile| view.grid().distance(band_tile(band), tile)),
+            around_target: classified.around_target,
+        })
+    }
+}
+
 /// One discovered tile within the radius of an own band.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TileObservation {
@@ -271,6 +340,10 @@ pub struct Observation {
     pub ledger: Ledger,
     pub bands: Vec<BandObservation>,
     pub neighborhood: Vec<TileObservation>,
+    /// The land reading; `None` on a seat whose lens carries no levers, and on a log written
+    /// before the reading existed (`default`).
+    #[serde(default)]
+    pub ground: Option<GroundRecord>,
 }
 
 impl Observation {
@@ -402,6 +475,10 @@ impl Observation {
             })
             .collect();
         neighborhood.sort_by_key(|tile| (tile.y, tile.x));
+        let ground = lens
+            .ground
+            .as_ref()
+            .and_then(|levers| GroundRecord::capture(view, memory, &own_bands, levers));
 
         Self {
             tick: row.tick,
@@ -445,6 +522,7 @@ impl Observation {
             },
             bands,
             neighborhood,
+            ground,
         }
     }
 }
@@ -612,7 +690,7 @@ mod tests {
     use crate::orchestrator::{
         Alarm, AlarmKind, Budget, FoodGoals, Goals, GroundRung, Plan, Stance,
     };
-    use crate::profile::NO_MEMORY_DECAY;
+    use crate::profile::{AiProfiles, NO_MEMORY_DECAY};
     use crate::specialists::food::tests::{a_view, BAND, FACTION, HERE, NEAR_PATCH, TICK};
     use crate::specialists::land::INTENT_MOVE;
     use crate::specialists::{intent_key, Memo, SPECIALIST_FOOD, SPECIALIST_LAND};
@@ -705,6 +783,11 @@ mod tests {
         }
     }
 
+    /// The forager's levers, as the shipped profile states them.
+    fn levers() -> GroundLevers {
+        GroundLevers::of(AiProfiles::builtin().profile("forager").unwrap())
+    }
+
     fn capture(view: &SeatView, memory: &SeatMemory) -> Observation {
         let plan = a_plan();
         let alarms = [Alarm {
@@ -721,8 +804,64 @@ mod tests {
                 alarms: &alarms,
                 memory: Some(memory),
                 horizon_tiles: HORIZON,
+                ground: Some(levers()),
             },
         )
+    }
+
+    /// The land reading rides the record when the lens carries levers, for the largest own
+    /// band, and agrees with the module's own classification of the same view; it is absent
+    /// from a lens without them.
+    #[test]
+    fn the_ground_reading_is_captured_for_the_largest_band_and_matches_the_module() {
+        const NEAR_REGROWTH: f32 = 6.0;
+        let mut view = a_view();
+        for patch in &mut view.snapshot.forage_patches {
+            patch.regrowth_samples = vec![NEAR_REGROWTH; 3];
+        }
+        view.snapshot.herds[0].regrowth_samples = vec![1.0; 3];
+        view.snapshot.herds[0].per_worker_biomass = 1.0;
+        // A smaller second own band elsewhere: the reading is the first band's.
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND + 1,
+            current_x: 0,
+            current_y: 0,
+            size: 5,
+            working_age: 3,
+            ..view.snapshot.populations[0].clone()
+        });
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let observation = capture(&view, &memory);
+        let ground = observation
+            .ground
+            .as_ref()
+            .expect("the reading is captured");
+        assert_eq!(ground.band_id, BAND);
+        assert_eq!(ground.population, 30);
+        assert_eq!(
+            ground.k_max, 3,
+            "17 hands: the parent's 6, then two crews of 4"
+        );
+        assert_eq!(ground.per_person_consumption, 6.0 / 30.0);
+        let expected = Reading::read(&view, &memory, &view.snapshot.populations[0]);
+        assert_eq!(ground.sites, expected.sites);
+        let classified = expected.classify(&levers());
+        assert_eq!(ground.kind, classified.kind);
+        assert_eq!(ground.stay, classified.stay);
+        assert_eq!(ground.visible, classified.visible);
+        // Three patches plus a herd are in the reading; the far patch is a site too.
+        assert_eq!(ground.sites.len(), 4, "{:?}", ground.sites);
+        assert!(ground.sites.iter().any(|site| site.herd_id.is_some()));
+        assert!(ground.stay.people_fed > 0.0);
+        // The record round-trips with its reading.
+        let line = serde_json::to_string(&observation).unwrap();
+        let back: Observation = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.ground, observation.ground);
+        // No levers, no reading.
+        let row = ScoreRow::from_snapshot(&view.snapshot, FACTION);
+        let bare = Observation::capture(&view, &row, &BrainLens::default());
+        assert_eq!(bare.ground, None);
     }
 
     #[test]

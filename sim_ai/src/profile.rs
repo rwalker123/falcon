@@ -155,6 +155,13 @@ pub struct LandFloors {
     /// `food.runway_gain_fraction`: distinctness is not improvement, and without a margin a band
     /// walked between two tiles paying nearly the same, dropping its rows on every arrival.
     pub better_ground_gain_fraction: f32,
+    /// The land reading (`ground.rs`): the band's own hex is kept as the first planned band when
+    /// its value is within this fraction of the best hex's, and a "move everyone" target must
+    /// beat the first planned band by more than it. A fraction, `≥ 0`.
+    pub stay_tolerance: f32,
+    /// The land reading: a candidate hex within `food.split_search_tiles` (the supply-pooling
+    /// reach) of a hex already chosen has its value multiplied by `1 + this`. `≥ 0`.
+    pub pooling_weight: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -317,6 +324,18 @@ impl AiProfiles {
             if !better.is_finite() || !(0.0..=1.0).contains(&better) || better <= 0.0 {
                 return invalid(format!(
                     "profile `{id}`: land.better_ground_gain_fraction = {better} is not a positive share"
+                ));
+            }
+            let stay = profile.land.stay_tolerance;
+            if !stay.is_finite() || stay < 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: land.stay_tolerance = {stay} is not a non-negative fraction"
+                ));
+            }
+            let pooling = profile.land.pooling_weight;
+            if !pooling.is_finite() || pooling < 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: land.pooling_weight = {pooling} is not a non-negative weight"
                 ));
             }
             if profile.food.dead_row_turns == 0 {

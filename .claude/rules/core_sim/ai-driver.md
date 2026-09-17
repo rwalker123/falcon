@@ -740,6 +740,72 @@ turn 30 reads `population_working 0` with `hunger_deaths_total 0`. *Better groun
 visible foreign band stands on; it cannot see a rival the fog hides, and it does not model sight
 range, so the exposure remains.
 
+### The land reading (`ground.rs`)
+
+**What the discovered ground would feed, and the shape of the band that would feed on it, read
+before any rule runs** — a crate-level pure computation the instruments publish; `Food` and `Land`
+do not consume it yet, so no decision moves on it. Two layers. The **site layer** (`Site`): every
+discovered site the faction could work — a forage patch that is a gathering site
+(`workable_patch_at`), unowned or its own, walkable, under no foreign band, forecast above zero;
+or a `huntable` herd forecast above zero, under no foreign band — with `sustained_food`
+(`regrowth_at(regrowth_samples, BEST_FLOOR) × provisions_per_biomass`, the same arithmetic the
+ledger and `cluster_take_sustained` use; a herd's regrowth clamped at zero, its low samples being
+the Allee decline), `sustained_hands` (a patch: `food::sustained_hands` at the band's
+`patch_per_worker_yield`; a herd: `ceil(regrowth_biomass / per_worker_biomass)`, at least one
+hunter), and the farmed pair off the patch row's own quotes — `tended_food` is `tended_yield`,
+`field_food` is `field_yield` or `0` where `sow_site_refusal` names a reason. **Both quotes are the
+patch's MSY skim on the rung's curve** (`forage::rung_payoff`, crew-free patch totals), so their
+take crew is `ceil(yield / rate)` like the wild one, plus the keeping crew
+`ceil(*_upkeep_demand / build_work_per_worker_turn)` bare-handed and, as a second number,
+hoed at `build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated from
+`equipment.json` → `hoes`, the tillage kit's `build_work`). A herd site also carries `kit_needed`
+(`herd_kit_id`) and `kit_units_held`. The **hex layer** (`Hex`): every discovered, walkable,
+unoccupied hex within some site's reach, with the patches within `work_range` and the herds
+within `hunt_reach` of it (both read off the band) — the site layer convolved with the two ranges.
+`people_fed = food / (food_consumption / size)`, the band's own per-person consumption.
+
+**The shape** (`Reading::plan(levers, anchor, bound)`): standing hexes for up to `k_max = 1 +
+floor((working_age − founding_parent_min_workers) / founding_min_workers)` bands (the sim's two
+split floors off the cohort row; `1` when the band cannot spare a founding crew), chosen from the
+candidate hexes within `bound` steps of `anchor`, maximising people fed with each site counted
+once — greedy maximum coverage (Nemhauser, Wolsey & Fisher 1978) then a Teitz–Bart (1968)
+interchange: (1) the hex with the greatest uncovered value, a candidate within
+`food.split_search_tiles` of a hex already chosen weighed up by `1 + land.pooling_weight`, the
+anchor tried first and **kept** when within `land.stay_tolerance` of the best, and after the first
+band a hex must add a founding crew's people (`founding_min_workers × size / working_age`) to be a
+band; (2) each chosen hex swapped against each unchosen candidate while a swap raises the wild food
+covered, a kept anchor never swapped out; (3) each band claims the sites it is the first to cover,
+its `hands` are their `sustained_hands` clamped to the floors (the first band at least the
+parent's, the rest at least the founding floor, none above `working_age`), `people = hands × size
+/ working_age`, `people_uncovered = size − Σ people`, and the farmed sums take each patch at
+`max(tended_food, sustained_food)` / `max(field_food, sustained_food)` with herds as they are.
+`move_target` is the best single hex anywhere discovered when it beats the first planned band by
+more than `stay_tolerance` **and** lies beyond `food.split_reach_tiles` of the band's current hex.
+Greedy is not monotone in the candidate set: a wider bound can pick one large hex whose leftovers
+are each under a founding crew's worth where a narrower one placed two (seed 55 at t1: local 37.2
+people, far 34.4).
+
+**The classification** (`Reading::classify` → `StartKind`): the covering at four bounds — `stay`
+(the band's own hex, bound 0), `local` (`split_search_tiles`), `far` (`split_reach_tiles`),
+`visible` (everything discovered) — and the kind is the first that feeds the whole band on wild
+food: `Stay`, `SplitLocal`, `SplitFar`, then `MoveAll` when the far covering names a `move_target`
+and the near-ring covering around it feeds everyone, else `Short`. Wild here means the sustained
+take of patches **and herds** — a herd counts whether or not the band holds its kit (outfitting is
+the next step, not the reading's), and at t1 every bench band holds `0` units of `big_game` and
+`trapping`. On the sixty bench seeds at t1 that is the whole verdict: `hunt_reach` 5 puts five to
+thirteen herds inside a standing hex, and no seed's patches alone feed thirty from any covering
+(the best is seed 40's 43.5 people over everything discovered; 34 seeds read `Stay` on herds).
+`tended_yield` reads equal to the wild regrowth on every patch because `labor_config.json`'s
+`tended_regrowth_gain` is `1.0` — rung 2 buys no yield on the shipped dials; `field_yield` is
+~6.4× it. No seed names a `move_target` at t1: the discovered ground rarely reaches past the far
+ring, and where it does no single hex beats the first band by the tolerance.
+
+**Published**: the observation's `ground` block (`GroundRecord`, present only on a seat whose
+`BrainLens::ground` carries the profile's levers — the utility brain; `null` on Pass and
+Scripted) is the reading for the seat's **largest own band**: its numbers, `k_max`, the site rows,
+`kind`, the four shapes, `move_target` with its distance, and `around_target`. Off the first such
+record the bench reads the `ground.people*` measures and the `ground.start_kind` label.
+
 ### `SeatMemory` (`view.rs`)
 
 A pure function of the frames received, dropped past a full frame's tick. Per tile, the last tick
@@ -827,6 +893,8 @@ and `rover` (expand). Each key has one consumer:
 | `land.horizon_tiles` | `Land` | how far *blind* counts and *better ground* looks |
 | `land.scout_workers` | `Land` | how many scouts *blind* posts |
 | `land.better_ground_gain_fraction` | `Land` | the per-worker gain, as a share of the target's rate, *better ground* must buy before it moves a band |
+| `land.stay_tolerance` | the land reading (`ground.rs`) | the band's own hex is kept as the first planned band when within this fraction of the best hex's value, and a `move_target` must beat the first planned band by more than it; `≥ 0`, default `0.1` |
+| `land.pooling_weight` | the land reading | a candidate hex within `food.split_search_tiles` of a hex already chosen has its value multiplied by `1 + this`; `≥ 0`, default `0.25` |
 
 | Difficulty key | Consumer | Effect |
 |---|---|---|
@@ -916,7 +984,9 @@ number `Food` and `Land` actually rank on), `owner`, `cultivated`, `field`,
 rung is named), `upkeep` (`demand`, `supplied`, `shortfall`, `workers_needed`, `kit_id`; null when
 the source demands nothing), `herd` (`id`, `species`, `biomass`, `per_worker_yield`, `huntable`,
 `corralled`, `corral_progress`, and its own `build` / `upkeep`; the first herd on the tile),
-`last_seen_tick` (`SeatMemory::last_seen`, undecayed) and `nearest_own_band_distance`. The
+`last_seen_tick` (`SeatMemory::last_seen`, undecayed) and `nearest_own_band_distance`; and
+`ground` — the land reading for the largest own band (`GroundRecord`, "The land reading" above),
+`null` on a brain whose lens carries no levers. The
 `ledger` also counts the seat's improved ground over the **whole frame** — `patches_owned`,
 `patches_cultivated`, `patches_field` — because an owned patch may sit outside the radius. A tile
 the seat has never discovered is **absent**, not null — the specialists filter on `is_discovered`
@@ -1002,6 +1072,7 @@ resolve on the rivals' `ready` alone (`SeatTurnGate` → `TurnWait::Resolve`).
 | orchestrator | `orchestrator.stance_switches_per_100_turns`, `orchestrator.alarm_latency_turns` (mean ticks from an `alarm` to the next `plan` whose budgets differ from the one in force) — `null` on a seat whose brain writes no `plan`/`alarm` records (Pass, Scripted) |
 | the demand board | `board.posted`, `board.expired`, `board.fulfilment_rate`, `board.latency_turns`, `board.<requester>.fulfilment_rate` (the board section above); reported, not ratcheted |
 | the ground at the start | `ground.sustained_take_at_start` (what the start band's sites give per turn at the Best floor's regrowth from the tile it stands on — `food::cluster_take_sustained`, the cluster dealt with each site capped at its sustained regrowth and its `sustained_hands`), `ground.best_cluster_in_horizon` (the best such reading over the discovered, walkable tiles within `land.horizon_tiles`), `ground.consumption_at_start` (the first row's `food_consumption`); off the **first `observations.jsonl` record** (`GroundObservation` on every band observation), read there and not off the scoreboard row because the reading needs the seat's memory and the profile's horizon; `None` on a seat with no observation log; reported, not ratcheted — the world sets them, and they are what the default seeds are chosen by |
+| the land reading at the start | off the **first observation carrying a `ground` block** (`GroundRecord`, the utility brain's): `ground.people` (the largest band's size), `ground.people_fed_wild_stay` / `_local` / `_far` / `_visible` (the people its wild ground feeds under each covering), `ground.people_fed_tended_local` / `ground.people_fed_field_local` (the near-ring ground farmed), `ground.planned_bands_local`, `ground.move_target_distance` (0 = none); and the label `ground.start_kind` (`stay` / `split_local` / `split_far` / `move_all` / `short`), carried in `report.json`'s `labels: {seed: {seat: {name: word}}}` and printed as a table row, since a measure is a number; reported, not ratcheted; absent on a seat whose brain carries no levers |
 | link | `link.turns_observed` (distinct scoreboard ticks), `link.turns_lost_to_timeout` (observed ticks with no `ready`), `link.reconnects` (`command_reconnect` records; a stream reopen is not one) |
 
 **`--compare`** requires the same seeds, turns and seat **factions** (the brains may differ —

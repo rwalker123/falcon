@@ -58,9 +58,10 @@ use ledger::{Book, Reassignment};
 
 pub(crate) use sources::{
     best_sustained_cluster_within, cluster_take, cluster_take_sustained, foreign_band_at,
-    is_food_site, is_walkable, patch_per_worker_yield, ClusterTake, IsDead, SourceKey,
+    herd_kit_id, is_food_site, is_walkable, kit_units_held, patch_per_worker_yield,
+    sustained_hands, workable_patch_at, ClusterTake, IsDead, SourceKey,
 };
-use sources::{herd_kit_id, hunting_kits_held, kit_units_held, Source};
+use sources::{hunting_kits_held, Source};
 
 /// The `assign_labor` roles this specialist staffs — the `kind` vocabulary of
 /// `LaborAssignmentState` (`sim_runtime/src/command_text.rs`).

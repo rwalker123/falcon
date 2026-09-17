@@ -21,6 +21,7 @@ use sim_runtime::{render_command_line, StartingKitAllocation, StartingMaterialAl
 
 use crate::arbiter::{Arbiter, Offered};
 use crate::board::{Board, Entry, Resource};
+use crate::ground::GroundLevers;
 use crate::instruments::decisions::{
     AlarmRecord, Decision, DecisionRecord, DecisionSink, Outcome, PlanRecord,
 };
@@ -80,6 +81,9 @@ pub struct BrainLens<'a> {
     pub memory: Option<&'a SeatMemory>,
     /// The profile's `land.horizon_tiles`: how far `Land` looks, and the observation's radius floor.
     pub horizon_tiles: u32,
+    /// The levers the land reading (`ground.rs`) is shaped by; `None` on a brain with no
+    /// profile, whose observation then carries no reading.
+    pub ground: Option<GroundLevers>,
 }
 
 /// Submits end-turn and nothing else.
@@ -351,6 +355,7 @@ impl Brain for Composite {
             alarms: self.memory.pending_alarms(),
             memory: Some(&self.memory),
             horizon_tiles: self.profile.land.horizon_tiles,
+            ground: Some(GroundLevers::of(&self.profile)),
         }
     }
 

@@ -15,7 +15,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::measures::{
-    Measures, LIVE, M_ACCEPTED, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX,
+    Labels, Measures, LIVE, M_ACCEPTED, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX,
     M_FOOD_STOCK, M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX,
     M_POPULATION_CHILDREN, M_POPULATION_ELDERS, M_POPULATION_WORKING, M_RECONNECTS,
     M_SPECIALIST_PREFIX, M_STANCE_SWITCHES, M_TURNS_LOST, M_VICTORY_PREFIX, NOT_LIVE,
@@ -128,6 +128,8 @@ const TABLE_NULL: &str = "-";
 
 /// seed → seat → measures.
 pub type RunMeasures = BTreeMap<String, BTreeMap<String, Measures>>;
+/// seed → seat → labels.
+pub type RunLabels = BTreeMap<String, BTreeMap<String, Labels>>;
 
 /// `report.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +141,10 @@ pub struct Report {
     /// Wall-clock seconds per seed, for the record.
     pub wall_seconds: BTreeMap<String, f64>,
     pub measures: RunMeasures,
+    /// What a seat answers with a word (`ground.start_kind`); reported beside the measures,
+    /// never compared or checked. Absent from a report written before labels existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: RunLabels,
     /// `this − other` per seed, seat and measure, when `--compare` was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compare: Option<RunMeasures>,
@@ -539,6 +545,27 @@ impl Report {
                 }
                 let _ = writeln!(out);
             }
+            // The labels, one row each, a word per seat where the seat answered.
+            if let Some(seat_labels) = self.labels.get(seed) {
+                let names: std::collections::BTreeSet<&String> = seat_labels
+                    .values()
+                    .flat_map(|labels| labels.keys())
+                    .collect();
+                for name in names {
+                    let _ = write!(out, "{name:<TABLE_NAME_WIDTH$}");
+                    for seat in seats.keys() {
+                        let word = seat_labels
+                            .get(seat)
+                            .and_then(|labels| labels.get(name))
+                            .map_or(TABLE_NULL, String::as_str);
+                        let _ = write!(out, "{word:>TABLE_VALUE_WIDTH$}");
+                        if self.compare.is_some() {
+                            let _ = write!(out, "{TABLE_NULL:>TABLE_VALUE_WIDTH$}");
+                        }
+                    }
+                    let _ = writeln!(out);
+                }
+            }
             let _ = writeln!(
                 out,
                 "({} rows omitted from the table; see {REPORT_FILE})",
@@ -814,6 +841,7 @@ mod tests {
                 SEED.to_owned(),
                 BTreeMap::from([(SEAT.to_owned(), measures)]),
             )]),
+            labels: BTreeMap::new(),
             compare: None,
             check: None,
         }
@@ -1114,6 +1142,7 @@ mod tests {
             seats: vec![UTILITY_SEAT_SPEC.to_owned()],
             wall_seconds: BTreeMap::new(),
             measures,
+            labels: BTreeMap::new(),
             compare: None,
             check: None,
         };

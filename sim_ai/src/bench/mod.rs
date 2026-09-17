@@ -46,8 +46,8 @@ use tracing::info;
 
 use crate::link::{Endpoints, Link, UnseatedConnection};
 use crate::BrainKind;
-use measures::{measures_for_seat, Measures};
-use ratchet::{BaselinesFile, CheckOutcome, Report, RunMeasures, REPORT_FILE};
+use measures::{measures_for_seat, Labels, Measures};
+use ratchet::{BaselinesFile, CheckOutcome, Report, RunLabels, RunMeasures, REPORT_FILE};
 
 // =================================================================================================
 // The world
@@ -414,19 +414,26 @@ pub fn run(args: BenchArgs) -> Result<(), BenchError> {
     fs::create_dir_all(&args.out).map_err(|source| io_at(&args.out, source))?;
 
     let mut measures: RunMeasures = BTreeMap::new();
+    let mut labels: RunLabels = BTreeMap::new();
     let mut wall_seconds = BTreeMap::new();
     for &seed in &args.seeds {
         let started = Instant::now();
         let seed_dir = args.out.join(seed.to_string());
         run_seed(&server, &base_config, seed, &args, &seed_dir)?;
         let mut seats: BTreeMap<String, Measures> = BTreeMap::new();
+        let mut seat_labels: BTreeMap<String, Labels> = BTreeMap::new();
         for seat in &args.seats {
-            seats.insert(
-                seat.faction.to_string(),
-                measures_for_seat(&seat_dir(&seed_dir, seat.faction))?,
-            );
+            let (seat_measures, seat_labels_read) =
+                measures_for_seat(&seat_dir(&seed_dir, seat.faction))?;
+            seats.insert(seat.faction.to_string(), seat_measures);
+            if !seat_labels_read.is_empty() {
+                seat_labels.insert(seat.faction.to_string(), seat_labels_read);
+            }
         }
         measures.insert(seed.to_string(), seats);
+        if !seat_labels.is_empty() {
+            labels.insert(seed.to_string(), seat_labels);
+        }
         wall_seconds.insert(seed.to_string(), started.elapsed().as_secs_f64());
         info!(seed, seconds = started.elapsed().as_secs_f64(), "seed done");
     }
@@ -437,6 +444,7 @@ pub fn run(args: BenchArgs) -> Result<(), BenchError> {
         seats: args.seats.iter().map(ToString::to_string).collect(),
         wall_seconds,
         measures,
+        labels,
         compare: None,
         check: None,
     };
