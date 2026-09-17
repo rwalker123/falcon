@@ -255,6 +255,12 @@ pub struct GroundRecord {
     pub move_target_distance: u32,
     /// The near-ring covering around the move target, when there is one.
     pub around_target: Option<Shape>,
+    /// **The same classification with the herds struck out** (`Reading::patches_only`) — what
+    /// the ground feeds with no hunt kit, beside the full one — with its near-ring and
+    /// everything-discovered coverings.
+    pub kind_patches: StartKind,
+    pub local_patches: Shape,
+    pub visible_patches: Shape,
 }
 
 impl GroundRecord {
@@ -271,6 +277,7 @@ impl GroundRecord {
             .max_by_key(|band| (band.size, std::cmp::Reverse(band.band_id)))?;
         let reading = Reading::read(view, memory, band);
         let classified = reading.classify(levers);
+        let patches = reading.patches_only().classify(levers);
         let move_target = classified.move_target_tile();
         Some(Self {
             band_id: band.band_id,
@@ -293,6 +300,9 @@ impl GroundRecord {
             move_target_distance: move_target
                 .map_or(0, |tile| view.grid().distance(band_tile(band), tile)),
             around_target: classified.around_target,
+            kind_patches: patches.kind,
+            local_patches: patches.local,
+            visible_patches: patches.visible,
         })
     }
 }

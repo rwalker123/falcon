@@ -147,8 +147,8 @@ struct SplitSite {
 }
 
 /// The rung *upgrade the ground* would declare on a patch.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Climb {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Climb {
     Tended,
     Field,
 }
@@ -1236,8 +1236,12 @@ impl Food {
 
     /// The plant a climb commits `patch` to: what it is already committed to, else the largest
     /// share that may climb the rung — and what that plant pays once the rung is complete
-    /// (`FloraShareInfo::cultivate_payoff` / `sow_payoff`).
-    fn climb_payoff(patch: &ForagePatchState, climb: Climb) -> Option<(&FloraShareInfo, f32)> {
+    /// (`FloraShareInfo::cultivate_payoff` / `sow_payoff`). The land reading (`ground.rs`)
+    /// quotes a patch's farmed rungs through this same selection.
+    pub(crate) fn climb_payoff(
+        patch: &ForagePatchState,
+        climb: Climb,
+    ) -> Option<(&FloraShareInfo, f32)> {
         let legal = |plant: &FloraShareInfo| match climb {
             Climb::Tended => plant.can_cultivate,
             Climb::Field => plant.can_sow,

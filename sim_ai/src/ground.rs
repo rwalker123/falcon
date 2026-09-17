@@ -4,7 +4,7 @@
 //! Two layers. The **site layer** ([`Site`]): every discovered site the faction could work — a
 //! gathering patch or a huntable herd — with what it gives per turn at the Best floor's regrowth
 //! (`sustained_food`), the crew that take needs (`sustained_hands`), and the same pair for the
-//! tended and field rungs off the patch row's own quotes. The **hex layer** ([`Hex`]): every
+//! tended and field rungs at the best committable crop's payoff. The **hex layer** ([`Hex`]): every
 //! discovered walkable hex a band could stand on, with the sites within its `work_range` (patches)
 //! and `hunt_reach` (herds) — the site layer convolved with the band's two ranges, which is the
 //! heat map a standing choice is read off.
@@ -34,7 +34,7 @@ use crate::profile::AiProfile;
 use crate::specialists::food::ledger::{regrowth_at, BEST_FLOOR};
 use crate::specialists::food::{
     foreign_band_at, herd_kit_id, is_walkable, kit_units_held, patch_per_worker_yield,
-    sustained_hands, workable_patch_at,
+    sustained_hands, workable_patch_at, Climb, Food,
 };
 use crate::view::{band_tile, SeatMemory, SeatView};
 
@@ -84,13 +84,17 @@ pub struct Site {
     pub sustained_food: f32,
     /// The crew that take needs.
     pub sustained_hands: u32,
-    /// The patch row's `tended_yield` — the tended rung's sustainable skim; `0` on a herd.
+    /// What the tended rung pays here with its best committable crop —
+    /// `FloraShareInfo::cultivate_payoff` of the committed plant, else of the largest share that
+    /// can climb (`Food::climb_payoff`, the upgrade rule's own selection); `0` on a herd and where
+    /// no plant can.
     pub tended_food: f32,
     /// The take crew for that plus the keeping crew for the tended rung's bill, bare-handed.
     pub tended_hands: u32,
     /// The same with the keepers holding hoes ([`HOE_BUILD_WORK_PER_WORKER`]).
     pub tended_hands_hoed: u32,
-    /// The patch row's `field_yield`; `0` where `sow_site_refusal` names a reason, and on a herd.
+    /// The Field rung's twin, off `FloraShareInfo::sow_payoff`; `0` where `sow_site_refusal`
+    /// names a reason, on a herd, and where no plant can climb.
     pub field_food: f32,
     pub field_hands: u32,
     pub field_hands_hoed: u32,
@@ -158,6 +162,13 @@ pub struct PlannedBand {
     pub field_food: f32,
     /// Hex steps to the nearest other planned band; `None` when it is the only one.
     pub nearest_planned_distance: Option<u32>,
+    /// **The kits this band would want**: baskets for every sustained patch hand (Σ
+    /// `sustained_hands` over its patch sites) …
+    pub baskets: u32,
+    /// … and, per hunt kit id (`Site::kit_needed`), the hunter hands over the herds it claims.
+    /// Read off the roster's kit for the herd, never the units held: at tick 1 every band holds
+    /// `0` of every hunt kit — the outfit lands after the tick-1 command.
+    pub hunt_kits: BTreeMap<String, u32>,
 }
 
 impl PlannedBand {
@@ -366,6 +377,41 @@ impl Reading {
                 .map(|((y, x), sites)| Hex {
                     tile: Tile::new(x, y),
                     sites,
+                })
+                .collect(),
+        }
+    }
+
+    /// **The same reading with the herds struck out** — the patches alone, every hex re-read
+    /// over them (a hex that reached only herds is no candidate now). What the ground feeds
+    /// with no hunt kit at all, which is how every band starts.
+    pub fn patches_only(&self) -> Self {
+        let kept: Vec<usize> = (0..self.sites.len())
+            .filter(|&index| self.sites[index].herd_id.is_none())
+            .collect();
+        let new_index = |old: usize| kept.iter().position(|&index| index == old);
+        Self {
+            grid: self.grid,
+            here: self.here,
+            population: self.population,
+            working_age: self.working_age,
+            founding_min_workers: self.founding_min_workers,
+            founding_parent_min_workers: self.founding_parent_min_workers,
+            per_person_consumption: self.per_person_consumption,
+            sites: kept
+                .iter()
+                .map(|&index| self.sites[index].clone())
+                .collect(),
+            hexes: self
+                .hexes
+                .iter()
+                .filter_map(|hex| {
+                    let sites: Vec<usize> =
+                        hex.sites.iter().filter_map(|&old| new_index(old)).collect();
+                    (!sites.is_empty()).then_some(Hex {
+                        tile: hex.tile,
+                        sites,
+                    })
                 })
                 .collect(),
         }
@@ -604,6 +650,15 @@ impl Reading {
             } else {
                 0
             };
+            let mut baskets = 0;
+            let mut hunt_kits: BTreeMap<String, u32> = BTreeMap::new();
+            for &site in &claimed {
+                let site = &self.sites[site];
+                match &site.kit_needed {
+                    Some(kit) => *hunt_kits.entry(kit.clone()).or_insert(0) += site.sustained_hands,
+                    None => baskets += site.sustained_hands,
+                }
+            }
             bands.push(PlannedBand {
                 x: hex.tile.x,
                 y: hex.tile.y,
@@ -614,6 +669,8 @@ impl Reading {
                 tended_food: sums.tended,
                 field_food: sums.field,
                 nearest_planned_distance: None,
+                baskets,
+                hunt_kits,
             });
         }
         let tiles: Vec<Tile> = bands.iter().map(PlannedBand::tile).collect();
@@ -697,8 +754,13 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
     let rate = patch_per_worker_yield(memory, band, patch);
     let sustained_food =
         regrowth_at(&patch.regrowth_samples, BEST_FLOOR) * patch.provisions_per_biomass;
+    // The farmed quotes are the best committable crop's, through the selection *upgrade the
+    // ground* declares with — the committed plant, else the largest share that may climb —
+    // not the patch row's own `tended_yield` / `field_yield`, which are species-blind and read
+    // the crop already committed (nothing, at the start).
+    let tended_food = Food::climb_payoff(patch, Climb::Tended).map_or(0.0, |(_, payoff)| payoff);
     let field_food = if patch.sow_site_refusal.is_empty() {
-        patch.field_yield
+        Food::climb_payoff(patch, Climb::Field).map_or(0.0, |(_, payoff)| payoff)
     } else {
         0.0
     };
@@ -711,10 +773,10 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
         reach: band.work_range,
         sustained_food,
         sustained_hands: sustained_hands(patch, rate),
-        tended_food: patch.tended_yield,
-        tended_hands: crew_for(patch.tended_yield, rate)
+        tended_food,
+        tended_hands: crew_for(tended_food, rate)
             + crew_for(patch.cultivation_upkeep_demand, per_turn),
-        tended_hands_hoed: crew_for(patch.tended_yield, rate)
+        tended_hands_hoed: crew_for(tended_food, rate)
             + crew_for(patch.cultivation_upkeep_demand, hoed),
         field_food,
         field_hands: crew_for(field_food, rate) + crew_for(patch.field_upkeep_demand, per_turn),
@@ -973,6 +1035,55 @@ mod tests {
         assert!(hexes.contains(&Tile::new(6, 4)), "{hexes:?}");
         assert!(hexes.contains(&Tile::new(11, 4)), "{hexes:?}");
         assert_eq!(shape.people_fed, 60.0);
+    }
+
+    /// A herd site under the `big_game` kit beside two patches: the full reading's first band
+    /// wants baskets for the patch hands and two spears' worth of hunters; struck out, the
+    /// patches-only reading re-indexes the sites, drops the hex that reached only the herd,
+    /// and feeds fewer.
+    #[test]
+    fn a_planned_band_names_its_kits_and_patches_only_strikes_the_herds_out() {
+        let herd_at = Tile::new(14, 8);
+        let herd = Site {
+            x: herd_at.x,
+            y: herd_at.y,
+            herd_id: Some("herd_9".to_owned()),
+            reach: 5,
+            sustained_food: 2.0,
+            sustained_hands: 2,
+            tended_food: 0.0,
+            tended_hands: 0,
+            tended_hands_hoed: 0,
+            field_food: 0.0,
+            field_hands: 0,
+            field_hands_hoed: 0,
+            kit_needed: Some("big_game".to_owned()),
+            kit_units_held: Some(0),
+        };
+        let reading = a_reading(vec![
+            patch(Tile::new(9, 8), 2.0, 0.5),
+            herd,
+            patch(Tile::new(11, 8), 1.0, 0.5),
+        ]);
+        let shape = reading.plan(&LEVERS, HERE, Some(0));
+        assert_eq!(shape.bands.len(), 1);
+        let band = &shape.bands[0];
+        assert_eq!(band.sites, vec![0, 1, 2]);
+        assert_eq!(band.baskets, 4 + 2);
+        assert_eq!(band.hunt_kits, BTreeMap::from([("big_game".to_owned(), 2)]));
+        assert_eq!(shape.people_fed, 25.0);
+        let patches = reading.patches_only();
+        assert_eq!(patches.sites.len(), 2);
+        assert!(patches.sites.iter().all(|site| site.herd_id.is_none()));
+        // A hex five steps from the herd and out of reach of both patches is gone.
+        assert!(reading.hex_at(Tile::new(19, 8)).is_some());
+        assert!(patches.hex_at(Tile::new(19, 8)).is_none());
+        let shape = patches.plan(&LEVERS, HERE, Some(0));
+        assert_eq!(shape.bands[0].sites, vec![0, 1], "re-indexed");
+        assert_eq!(shape.bands[0].hunt_kits, BTreeMap::new());
+        assert_eq!(shape.people_fed, 15.0);
+        assert_eq!(reading.classify(&LEVERS).kind, StartKind::Short);
+        assert_eq!(patches.classify(&LEVERS).kind, StartKind::Short);
     }
 
     /// The band's own hex is kept when within the tolerance of the best, and not otherwise.

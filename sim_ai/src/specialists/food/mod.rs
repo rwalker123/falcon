@@ -43,6 +43,8 @@ pub mod ledger;
 mod rules;
 mod sources;
 
+pub(crate) use rules::Climb;
+
 use sim_runtime::{
     CommandPayload, HerdTelemetryState, LaborAssignmentState, PopulationCohortState,
     FIXED_POINT_SCALE, FOOD_CARGO_KEY,

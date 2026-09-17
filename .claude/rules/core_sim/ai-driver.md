@@ -752,14 +752,21 @@ or a `huntable` herd forecast above zero, under no foreign band — with `sustai
 ledger and `cluster_take_sustained` use; a herd's regrowth clamped at zero, its low samples being
 the Allee decline), `sustained_hands` (a patch: `food::sustained_hands` at the band's
 `patch_per_worker_yield`; a herd: `ceil(regrowth_biomass / per_worker_biomass)`, at least one
-hunter), and the farmed pair off the patch row's own quotes — `tended_food` is `tended_yield`,
-`field_food` is `field_yield` or `0` where `sow_site_refusal` names a reason. **Both quotes are the
-patch's MSY skim on the rung's curve** (`forage::rung_payoff`, crew-free patch totals), so their
-take crew is `ceil(yield / rate)` like the wild one, plus the keeping crew
-`ceil(*_upkeep_demand / build_work_per_worker_turn)` bare-handed and, as a second number,
-hoed at `build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated from
-`equipment.json` → `hoes`, the tillage kit's `build_work`). A herd site also carries `kit_needed`
-(`herd_kit_id`) and `kit_units_held`. The **hex layer** (`Hex`): every discovered, walkable,
+hunter), and the farmed pair **at the best committable crop** — `Food::climb_payoff`, the
+selection *upgrade the ground* declares with (the patch's `committed_species` plant if it may
+climb, else the largest `share` in `composition` whose `can_cultivate` / `can_sow` holds), whose
+`FloraShareInfo::cultivate_payoff` is `tended_food` and whose `sow_payoff` is `field_food`
+(`0` where `sow_site_refusal` names a reason). ⛔ Not the patch row's `tended_yield` /
+`field_yield`: those are **species-blind** — they quote whatever crop the patch is already
+committed to, which at the start is nothing, so `tended_yield` read equal to the wild regrowth on
+every patch of the first sweep (`FloraShareInfo::cultivate_payoff`'s doc: *"the shipped
+per-patch quotes are species-blind: they read whatever the patch is already committed to
+(usually nothing)"*). Each payoff is a crew-free patch total, so its take crew is `ceil(yield /
+rate)` like the wild one, plus the keeping crew `ceil(*_upkeep_demand /
+build_work_per_worker_turn)` bare-handed and, as a second number, hoed at
+`build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated from `equipment.json`
+→ `hoes`, the tillage kit's `build_work`). A herd site also carries `kit_needed` (`herd_kit_id`)
+and `kit_units_held`. The **hex layer** (`Hex`): every discovered, walkable,
 unoccupied hex within some site's reach, with the patches within `work_range` and the herds
 within `hunt_reach` of it (both read off the band) — the site layer convolved with the two ranges.
 `people_fed = food / (food_consumption / size)`, the band's own per-person consumption.
@@ -777,8 +784,13 @@ band; (2) each chosen hex swapped against each unchosen candidate while a swap r
 covered, a kept anchor never swapped out; (3) each band claims the sites it is the first to cover,
 its `hands` are their `sustained_hands` clamped to the floors (the first band at least the
 parent's, the rest at least the founding floor, none above `working_age`), `people = hands × size
-/ working_age`, `people_uncovered = size − Σ people`, and the farmed sums take each patch at
-`max(tended_food, sustained_food)` / `max(field_food, sustained_food)` with herds as they are.
+/ working_age`, `people_uncovered = size − Σ people`, the farmed sums take each patch at
+`max(tended_food, sustained_food)` / `max(field_food, sustained_food)` with herds as they are,
+and **the kits the band would want** are summed per band — `baskets` (Σ `sustained_hands` over
+its patch sites) and `hunt_kits` (per `kit_needed`, Σ hunter hands over its herds). Those read
+the roster's kit for the herd and never the units held: **at tick 1 every band holds `0` of
+every hunt kit**, because the outfit lands after the tick-1 command, so a plan made at tick 1
+reasons about the kits the roster offers, not the ones in hand.
 `move_target` is the best single hex anywhere discovered when it beats the first planned band by
 more than `stay_tolerance` **and** lies beyond `food.split_reach_tiles` of the band's current hex.
 Greedy is not monotone in the candidate set: a wider bound can pick one large hex whose leftovers
@@ -792,19 +804,27 @@ food: `Stay`, `SplitLocal`, `SplitFar`, then `MoveAll` when the far covering nam
 and the near-ring covering around it feeds everyone, else `Short`. Wild here means the sustained
 take of patches **and herds** — a herd counts whether or not the band holds its kit (outfitting is
 the next step, not the reading's), and at t1 every bench band holds `0` units of `big_game` and
-`trapping`. On the sixty bench seeds at t1 that is the whole verdict: `hunt_reach` 5 puts five to
-thirteen herds inside a standing hex, and no seed's patches alone feed thirty from any covering
-(the best is seed 40's 43.5 people over everything discovered; 34 seeds read `Stay` on herds).
-`tended_yield` reads equal to the wild regrowth on every patch because `labor_config.json`'s
-`tended_regrowth_gain` is `1.0` — rung 2 buys no yield on the shipped dials; `field_yield` is
-~6.4× it. No seed names a `move_target` at t1: the discovered ground rarely reaches past the far
-ring, and where it does no single hex beats the first band by the tolerance.
+`trapping` — which is why the patches-only classification is published beside it. On the sixty
+bench seeds at t1, `--map-size standard`, the full reading says 24 `Stay` / 26 `SplitLocal` / 6
+`SplitFar` / 0 `MoveAll` / 4 `Short`; the patches alone say 0 / 3 / 16 / 0 / 41 — `hunt_reach` 5
+puts five to thirteen herds inside a standing hex, and on no size does a band's own hex feed
+thirty from patches. Sizes shift the verdict the way the land does: on Tiny 34 seeds read `Stay`
+and 13 `Short`, on Huge 7 and 7 with 32 `SplitLocal` and 14 `SplitFar` (a bigger world spreads
+the sites, so the second band's ground is farther). `MoveAll` needs a `move_target` and only
+seed 13 on Standard names one (7 steps): the discovered ground rarely reaches past the far ring at
+t1, and where it does no single hex beats the first band by the tolerance — so a seed whose
+`visible` covering feeds everyone with no move target still reads `Short` (seed 60 on Standard:
+visible 40.6 people, kind `short`).
 
 **Published**: the observation's `ground` block (`GroundRecord`, present only on a seat whose
 `BrainLens::ground` carries the profile's levers — the utility brain; `null` on Pass and
 Scripted) is the reading for the seat's **largest own band**: its numbers, `k_max`, the site rows,
-`kind`, the four shapes, `move_target` with its distance, and `around_target`. Off the first such
-record the bench reads the `ground.people*` measures and the `ground.start_kind` label.
+`kind`, the four shapes, `move_target` with its distance, `around_target`, and **the same
+classification with the herds struck out** (`Reading::patches_only` → `kind_patches`,
+`local_patches`, `visible_patches`) — what the ground feeds with no hunt kit at all, beside the
+full one. Off the first such record the bench reads the `ground.people*` measures
+(`…_local_patches` / `…_visible_patches` for the patches-only coverings) and the
+`ground.start_kind` / `ground.start_kind_patches` labels.
 
 ### `SeatMemory` (`view.rs`)
 
@@ -998,8 +1018,9 @@ the record derives nothing the client would have to (`labor-ui.md` → "THE ⚠ 
 
 ## The bench (`sim_ai bench`)
 
-`sim_ai bench [--seeds <u64,…>] [--turns <n>] --seats <spec> … --out <dir> [--server <path>]
-[--config <path>] [--compare <other-out-dir>] [--check <baselines.json>] [--write-baselines <path>]`.
+`sim_ai bench [--seeds <u64,…>] [--turns <n>] [--map-size tiny|small|standard|large|huge]
+--seats <spec> … --out <dir> [--server <path>] [--config <path>] [--compare <other-out-dir>]
+[--check <baselines.json>] [--write-baselines <path>]`.
 `--seeds` defaults to **`19,40`** (`DEFAULT_SEEDS`): of seeds 1–60 at `@hard`, the two starts
 the forager brings through sixty turns with no hunger death that have the best ground by the
 bench's own reading — `ground.best_cluster_in_horizon` 2.72 and 2.22 food/turn against a start
@@ -1035,18 +1056,24 @@ set and `SIM_PORT_BASE` removed, exactly as `core_sim/tests/query_seat_gate.rs` 
 same executable, spawned with `--turns n --log-dir <out>/<seed>/seat_<f>`. The server is killed on
 drop, panic or early return included.
 
-**The world is one a player can select** (`plan_ai_driver.md` §8.4): the `earthlike` preset at the
-New Game menu's smallest size, **Tiny = 56×36** (`MAP_WIDTH` / `MAP_HEIGHT`, restated from
-`clients/godot_thin_client/src/scripts/MapSizes.gd`, which is the authority), start profile
-`late_forager_tribe`, the shipped separation, seed pinned per run. Before `new_game` the harness
-asks the server `FactionCapacity { width, height }` on the same unseated connection
-(`UnseatedConnection::ask`) and fails the run with `WorldTooSmall` naming both numbers if
-`max_ai_faction_count` is below the seats requested — the alternative is a clamped roster and a
-rival waiting forever on `unknown_seat`. Then `new_game` is sent and synchronised by a `ListSaves`
-question behind it. A 30-turn seed on Tiny is ~3–3.6 s wall (both shipped seat sets, debug build).
+**The world is one a player can select** (`plan_ai_driver.md` §8.4): the `earthlike` preset at
+one of the New Game menu's sizes — `--map-size`, **default `standard`** (the size the project
+standardises on): `MAP_SIZES` in `bench/mod.rs` restates `MapSizes.gd`'s `OPTIONS`
+(`clients/godot_thin_client/src/scripts/MapSizes.gd`, the authority) as tiny 56×36, small 66×42,
+standard 80×52, large 104×64, huge 128×80, and `the_map_sizes_match_the_clients_registry` parses
+the script's `OPTIONS` block and holds the table to it — start profile `late_forager_tribe`, the
+shipped separation, seed pinned per run. The size is written to `report.json` (`map_size`, top
+level) and nowhere else: the observation already carries the grid's `width`/`height`, and the
+scoreboard row has no header. Before `new_game` the harness asks the server `FactionCapacity {
+width, height }` on the same unseated connection (`UnseatedConnection::ask`) and fails the run
+with `WorldTooSmall` naming the size and both numbers if `max_ai_faction_count` is below the seats
+requested — the alternative is a clamped roster and a rival waiting forever on `unknown_seat`.
+Then `new_game` is sent and synchronised by a `ListSaves` question behind it. A 3-turn seed is
+~3.5 s wall on Tiny and ~13 s on Huge (release build; the world generation dominates).
 
 **The New Game recipe** — to open the world a bench seed played, from the client menu: preset
-*Earthlike*, size *Tiny*, seed = the bench seed (`19` or `40` for the shipped baselines), start
+*Earthlike*, size = the run's `--map-size` (*Tiny* for the shipped baselines), seed = the bench
+seed (`19` or `40` for the shipped baselines), start
 profile *late_forager_tribe*, rivals = the number of `--seats` (2 for the shipped set). The
 human holds seat 0 — the seat the bench only *holds* and never plays — and the rivals are seats 1
 and 2 in `--seats` order; the AI played seat 1 (`1=utility:forager@hard`), seat 2 was Pass. The
@@ -1072,22 +1099,28 @@ resolve on the rivals' `ready` alone (`SeatTurnGate` → `TurnWait::Resolve`).
 | orchestrator | `orchestrator.stance_switches_per_100_turns`, `orchestrator.alarm_latency_turns` (mean ticks from an `alarm` to the next `plan` whose budgets differ from the one in force) — `null` on a seat whose brain writes no `plan`/`alarm` records (Pass, Scripted) |
 | the demand board | `board.posted`, `board.expired`, `board.fulfilment_rate`, `board.latency_turns`, `board.<requester>.fulfilment_rate` (the board section above); reported, not ratcheted |
 | the ground at the start | `ground.sustained_take_at_start` (what the start band's sites give per turn at the Best floor's regrowth from the tile it stands on — `food::cluster_take_sustained`, the cluster dealt with each site capped at its sustained regrowth and its `sustained_hands`), `ground.best_cluster_in_horizon` (the best such reading over the discovered, walkable tiles within `land.horizon_tiles`), `ground.consumption_at_start` (the first row's `food_consumption`); off the **first `observations.jsonl` record** (`GroundObservation` on every band observation), read there and not off the scoreboard row because the reading needs the seat's memory and the profile's horizon; `None` on a seat with no observation log; reported, not ratcheted — the world sets them, and they are what the default seeds are chosen by |
-| the land reading at the start | off the **first observation carrying a `ground` block** (`GroundRecord`, the utility brain's): `ground.people` (the largest band's size), `ground.people_fed_wild_stay` / `_local` / `_far` / `_visible` (the people its wild ground feeds under each covering), `ground.people_fed_tended_local` / `ground.people_fed_field_local` (the near-ring ground farmed), `ground.planned_bands_local`, `ground.move_target_distance` (0 = none); and the label `ground.start_kind` (`stay` / `split_local` / `split_far` / `move_all` / `short`), carried in `report.json`'s `labels: {seed: {seat: {name: word}}}` and printed as a table row, since a measure is a number; reported, not ratcheted; absent on a seat whose brain carries no levers |
+| the land reading at the start | off the **first observation carrying a `ground` block** (`GroundRecord`, the utility brain's): `ground.people` (the largest band's size), `ground.people_fed_wild_stay` / `_local` / `_far` / `_visible` (the people its wild ground feeds under each covering), `ground.people_fed_tended_local` / `ground.people_fed_field_local` (the near-ring ground farmed), `ground.planned_bands_local`, `ground.move_target_distance` (0 = none), `ground.people_fed_wild_local_patches` / `ground.people_fed_wild_visible_patches` (the herds struck out); and the labels `ground.start_kind` and `ground.start_kind_patches` (`stay` / `split_local` / `split_far` / `move_all` / `short`), carried in `report.json`'s `labels: {seed: {seat: {name: word}}}` and printed as table rows, since a measure is a number; reported, not ratcheted; absent on a seat whose brain carries no levers |
 | link | `link.turns_observed` (distinct scoreboard ticks), `link.turns_lost_to_timeout` (observed ticks with no `ready`), `link.reconnects` (`command_reconnect` records; a stream reopen is not one) |
 
-**`--compare`** requires the same seeds, turns and seat **factions** (the brains may differ —
-that is what a comparison is for) and writes `this − other` per measure (`null` where either side
-is) into the report's `compare` and a delta column, plus `intent_distance_l1` per seat: Σ |Δ| over
-the two runs' `intent.*` shares (0 = the same behaviour, 2 = disjoint) — the number "two profiles
-that visibly differ" resolves to. **`--check`** loads `{ runs: { "<seats joined by a space>": {
-seeds, turns, seats, measures: {seed: {seat: {measure}}}, tolerance: {measure: abs} } } }`, finds
+**`--compare`** requires the same seeds, turns, map size and seat **factions** (the brains may
+differ — that is what a comparison is for) and writes `this − other` per measure (`null` where
+either side is) into the report's `compare` and a delta column, plus `intent_distance_l1` per
+seat: Σ |Δ| over the two runs' `intent.*` shares (0 = the same behaviour, 2 = disjoint) — the
+number "two profiles that visibly differ" resolves to. **`--check`** loads `{ map_size, runs: {
+"<seats joined by a space>": { seeds, turns, seats, measures: {seed: {seat: {measure}}},
+tolerance: {measure: abs} } } }`, **refuses first** — one line, no table — when the file's
+`map_size` is not the run's (`BaselinesFile::same_map_size`: *"the baselines are for a tiny world
+and this run is standard; pass --map-size tiny or write baselines for standard to another file"*;
+a Tiny start and a Standard one are different worlds, so there is nothing to tabulate), finds
 the entry with this run's exact seeds, turns and seat specs (none is a mismatch naming what the
 file holds), and lists every violation then exits 1: a measure in `tolerance` fails **below**
 `baseline − tolerance`, except the lower-is-better set (`hunger_deaths_total`, `deaths.*`,
 `link.turns_lost_to_timeout`, `link.reconnects`, `commands_failed_total`,
 `orchestrator.stance_switches_per_100_turns`) which fails **above** `baseline + tolerance`.
 Measures absent from `tolerance`, or `null` on either side, are reported, never checked.
-**`--write-baselines`** upserts this run's entry into the file (merging, not replacing) with
+**`--write-baselines`** upserts this run's entry into the file (merging, not replacing; a new
+file takes the run's `map_size`, an existing one on another size is refused the same way
+`--check` refuses) with
 tolerance `BASELINE_TOLERANCE` = 0 on the `RATCHETED_MEASURES` — `population_children`,
 `population_working`, `population_elders`, `food_stock`, `hunger_deaths_total`,
 `commands_failed_total`, `orchestrator.stance_switches_per_100_turns`.
@@ -1146,8 +1179,10 @@ never gates on its own.
 
 **`sim_ai/bench/baselines.json`** holds one entry, `1=utility:forager@hard 2=pass` on the
 bench's default seeds `19, 40` for its default 60 turns (`BASELINE_SEEDS` / `BASELINE_TURNS` /
-`BASELINE_SEAT_SETS`; a unit test holds the file to them), recorded on the Tiny `earthlike` world
-above with the outfitting board sizing the loadout by value (`gathering 16, big_game 1` on seed
+`BASELINE_SEAT_SETS`; a unit test holds the file to them), recorded on the **Tiny** `earthlike`
+world — the file's top-level `"map_size": "tiny"` (`BASELINE_MAP_SIZE`, pinned by the same test)
+predates the Standard default, so a `--check` against it needs `--map-size tiny` until the entry
+is regenerated on Standard — with the outfitting board sizing the loadout by value (`gathering 16, big_game 1` on seed
 19, `gathering 15, big_game 2` on 40), conflicts per claim, *hold the ground* a standing bill
 sized to the band's summed plant bill and defaulted on when paying it would starve the band,
 overuse read only at or below a patch's floor and free hands moved only where they improve a

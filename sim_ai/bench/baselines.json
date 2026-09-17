@@ -1,4 +1,5 @@
 {
+  "map_size": "tiny",
   "runs": {
     "1=utility:forager@hard 2=pass": {
       "seeds": [

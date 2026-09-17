@@ -8,9 +8,10 @@
 //! two measured logs into the measures of §8.2 (`measures.rs`), write `report.json`, and print a
 //! table (`ratchet.rs`).
 //!
-//! **The world is one a player can select** (§8.4): the `earthlike` preset at the New Game menu's
-//! smallest size, the shipped start profile, the shipped separation. A fixture world chosen for
-//! speed measures nothing a player will meet.
+//! **The world is one a player can select** (§8.4): the `earthlike` preset at one of the New Game
+//! menu's sizes (`--map-size`, [`MapSize`]; Standard unless told otherwise), the shipped start
+//! profile, the shipped separation. A fixture world chosen for speed measures nothing a player
+//! will meet.
 //!
 //! **No host is needed.** Once every occupied seat has submitted, the server resolves the turn
 //! itself (`SeatTurnGate` → `TurnWait::Resolve`, `core_sim/src/seats.rs`), auto-submitting the
@@ -57,13 +58,72 @@ use ratchet::{BaselinesFile, CheckOutcome, Report, RunLabels, RunMeasures, REPOR
 /// `BUILTIN_SIMULATION_CONFIG` (`core_sim/src/resources.rs`). A file include, not a crate link.
 const SHIPPED_CONFIG: &str = include_str!("../../../core_sim/src/data/simulation_config.json");
 
-/// **The smallest world the New Game menu offers** — `Tiny` in
-/// `clients/godot_thin_client/src/scripts/MapSizes.gd`, restated here because this crate cannot
-/// read a GDScript registry; the client's is the authority. The preset and start profile are the
-/// shipped config's (`map_preset_id`, `start_profile_id`), and the separation is left at the
-/// shipped value, so the world is exactly one a player opens from the menu.
-pub const MAP_WIDTH: u32 = 56;
-pub const MAP_HEIGHT: u32 = 36;
+/// **The map sizes the New Game menu offers** — `MapSizes.gd`'s `OPTIONS`
+/// (`clients/godot_thin_client/src/scripts/MapSizes.gd`), restated here because this crate cannot
+/// read a GDScript registry; the client's is the authority and
+/// `the_map_sizes_match_the_clients_registry` holds this table to it. The preset and start
+/// profile are the shipped config's (`map_preset_id`, `start_profile_id`), and the separation is
+/// left at the shipped value, so the world is exactly one a player opens from the menu.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    clap::ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+#[clap(rename_all = "lowercase")]
+pub enum MapSize {
+    Tiny,
+    Small,
+    /// **The bench's default** — the size the project standardises on.
+    #[default]
+    Standard,
+    Large,
+    Huge,
+}
+
+/// `(size, width, height)`, in the menu's order.
+pub const MAP_SIZES: [(MapSize, u32, u32); 5] = [
+    (MapSize::Tiny, 56, 36),
+    (MapSize::Small, 66, 42),
+    (MapSize::Standard, 80, 52),
+    (MapSize::Large, 104, 64),
+    (MapSize::Huge, 128, 80),
+];
+
+impl MapSize {
+    /// `(width, height)` in tiles.
+    pub fn dimensions(self) -> (u32, u32) {
+        MAP_SIZES
+            .iter()
+            .find(|(size, _, _)| *size == self)
+            .map(|(_, width, height)| (*width, *height))
+            .expect("every size is in the table")
+    }
+
+    /// The menu's key: `tiny`, `small`, `standard`, `large`, `huge`.
+    pub fn key(self) -> &'static str {
+        match self {
+            MapSize::Tiny => "tiny",
+            MapSize::Small => "small",
+            MapSize::Standard => "standard",
+            MapSize::Large => "large",
+            MapSize::Huge => "huge",
+        }
+    }
+}
+
+impl fmt::Display for MapSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
 pub const MAP_PRESET: &str = "earthlike";
 pub const START_PROFILE: &str = "late_forager_tribe";
 /// The seat the bench holds while the rivals claim theirs (`HudConst.PLAYER_FACTION_ID`).
@@ -277,6 +337,9 @@ pub struct BenchArgs {
     /// Turns each seat plays.
     #[arg(long, default_value_t = DEFAULT_TURNS)]
     pub turns: u64,
+    /// The world's size, one of the New Game menu's (`MapSizes.gd`).
+    #[arg(long, value_enum, default_value_t = MapSize::default())]
+    pub map_size: MapSize,
     /// A seat to fill, `<faction>=<brain>[:<script|profile>][@<difficulty>][~<specialist>]*`; repeatable.
     #[arg(long = "seats", required = true)]
     pub seats: Vec<SeatSpec>,
@@ -327,11 +390,14 @@ pub enum BenchError {
     #[error("seed {seed}: the server never published its ports file\n{log}")]
     ServerNotReady { seed: u64, log: String },
     #[error(
-        "seed {seed}: a {MAP_WIDTH}x{MAP_HEIGHT} {MAP_PRESET} world seats at most {max_rivals} \
-         rival(s) at the shipped separation, and {requested} were requested"
+        "seed {seed}: a {map_size} ({width}x{height}) {MAP_PRESET} world seats at most \
+         {max_rivals} rival(s) at the shipped separation, and {requested} were requested"
     )]
     WorldTooSmall {
         seed: u64,
+        map_size: MapSize,
+        width: u32,
+        height: u32,
         requested: u32,
         max_rivals: u32,
     },
@@ -441,6 +507,7 @@ pub fn run(args: BenchArgs) -> Result<(), BenchError> {
     let mut report = Report {
         seeds: args.seeds.clone(),
         turns: args.turns,
+        map_size: args.map_size,
         seats: args.seats.iter().map(ToString::to_string).collect(),
         wall_seconds,
         measures,
@@ -463,8 +530,9 @@ pub fn run(args: BenchArgs) -> Result<(), BenchError> {
         });
     }
     if let Some(path) = &args.write_baselines {
-        // Merged, not replaced: the file holds one entry per seat set.
-        let mut file = BaselinesFile::read_or_empty(path)?;
+        // Merged, not replaced: the file holds one entry per seat set — all on one map size.
+        let mut file = BaselinesFile::read_or_empty(path, args.map_size)?;
+        file.same_map_size(args.map_size, "--write-baselines")?;
         file.upsert(report.as_baselines());
         file.write(path)?;
         info!(path = %path.display(), "baselines written");
@@ -557,12 +625,10 @@ fn run_seed(
         };
         let mut builder = UnseatedConnection::connect(endpoints.command)
             .map_err(|err| world_build(err.to_string()))?;
+        let (width, height) = args.map_size.dimensions();
         let capacity = builder
             .ask(
-                QueryPayload::FactionCapacity(FactionCapacityQuery {
-                    width: MAP_WIDTH,
-                    height: MAP_HEIGHT,
-                }),
+                QueryPayload::FactionCapacity(FactionCapacityQuery { width, height }),
                 CAPACITY_QUERY_TIMEOUT,
             )
             .map_err(|err| world_build(err.to_string()))?;
@@ -577,6 +643,9 @@ fn run_seed(
         if max_rivals < rivals {
             return Err(BenchError::WorldTooSmall {
                 seed,
+                map_size: args.map_size,
+                width,
+                height,
                 requested: rivals,
                 max_rivals,
             });
@@ -584,8 +653,8 @@ fn run_seed(
         builder
             .send(CommandPayload::NewGame {
                 preset_id: MAP_PRESET.to_owned(),
-                width: MAP_WIDTH,
-                height: MAP_HEIGHT,
+                width,
+                height,
                 seed,
                 profile_id: START_PROFILE.to_owned(),
                 ai_faction_count: Some(rivals),
@@ -931,6 +1000,63 @@ mod tests {
         );
         assert_eq!(command.port(), base_port.port() + COMMAND_PORT_OFFSET);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`MAP_SIZES` is `MapSizes.gd`'s `OPTIONS`, parsed out of the shipped script** — located
+    /// relative to `CARGO_MANIFEST_DIR` so it resolves from any worktree (the
+    /// `tuning_manifest_drift.rs` rule). A missing file or a moved block panics: the pin exists to
+    /// notice the registry moving, and a silent skip would leave the bench playing a size the
+    /// menu no longer offers.
+    #[test]
+    fn the_map_sizes_match_the_clients_registry() {
+        const OPEN: &str = "const OPTIONS := [";
+        const CLOSE: &str = "]";
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../clients/godot_thin_client/src/scripts/MapSizes.gd");
+        let script = fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!("read the client's MapSizes at {}: {err}", path.display())
+        });
+        let lines: Vec<&str> = script.lines().map(str::trim).collect();
+        let open = lines
+            .iter()
+            .position(|line| *line == OPEN)
+            .unwrap_or_else(|| panic!("{} declares no `{OPEN}`", path.display()));
+        let close = lines[open..]
+            .iter()
+            .position(|line| *line == CLOSE)
+            .expect("the OPTIONS block closes");
+        // `{"key": "tiny", "label": "Tiny", "width": 56, "height": 36},` — one dictionary a line.
+        let field = |line: &str, name: &str| -> String {
+            let marker = format!("\"{name}\": ");
+            let start = line
+                .find(&marker)
+                .unwrap_or_else(|| panic!("{line}: no {name}"))
+                + marker.len();
+            let rest = &line[start..];
+            let end = rest.find([',', '}']).unwrap_or(rest.len());
+            rest[..end].trim().trim_matches('"').to_owned()
+        };
+        let registry: Vec<(String, u32, u32)> = lines[open + 1..open + close]
+            .iter()
+            .filter(|line| line.contains("\"key\""))
+            .map(|line| {
+                (
+                    field(line, "key"),
+                    field(line, "width").parse().expect("a width"),
+                    field(line, "height").parse().expect("a height"),
+                )
+            })
+            .collect();
+        let ours: Vec<(String, u32, u32)> = MAP_SIZES
+            .iter()
+            .map(|(size, width, height)| (size.key().to_owned(), *width, *height))
+            .collect();
+        assert_eq!(ours, registry, "MAP_SIZES has drifted from MapSizes.gd");
+        for (size, width, height) in MAP_SIZES {
+            assert_eq!(size.dimensions(), (width, height));
+        }
+        assert_eq!(MapSize::default(), MapSize::Standard);
+        assert_eq!(MapSize::Huge.to_string(), "huge");
     }
 
     #[test]

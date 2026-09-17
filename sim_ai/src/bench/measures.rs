@@ -101,6 +101,10 @@ pub const M_GROUND_FED_FIELD_LOCAL: &str = "ground.people_fed_field_local";
 pub const M_GROUND_PLANNED_BANDS_LOCAL: &str = "ground.planned_bands_local";
 pub const M_GROUND_MOVE_TARGET_DISTANCE: &str = "ground.move_target_distance";
 pub const L_GROUND_START_KIND: &str = "ground.start_kind";
+/// The same reading with the herds struck out — the patches alone, no hunt kit assumed.
+pub const M_GROUND_FED_WILD_LOCAL_PATCHES: &str = "ground.people_fed_wild_local_patches";
+pub const M_GROUND_FED_WILD_VISIBLE_PATCHES: &str = "ground.people_fed_wild_visible_patches";
+pub const L_GROUND_START_KIND_PATCHES: &str = "ground.start_kind_patches";
 // --- the demand board -----------------------------------------------------------------------------
 /// `board.*` (`plan_ai_driver.md` §4: *"the board is measurable — fulfilment rate and latency per
 /// requester"*): `posted` (demands posted over the run), `expired`, `fulfilment_rate`
@@ -182,6 +186,10 @@ pub fn labels(observations: &[Observation]) -> Labels {
         labels.insert(
             L_GROUND_START_KIND.to_owned(),
             ground.kind.as_str().to_owned(),
+        );
+        labels.insert(
+            L_GROUND_START_KIND_PATCHES.to_owned(),
+            ground.kind_patches.as_str().to_owned(),
         );
     }
     labels
@@ -308,6 +316,16 @@ fn ground(rows: &[ScoreRow], observations: &[Observation], measures: &mut Measur
             measures,
             M_GROUND_MOVE_TARGET_DISTANCE,
             f64::from(ground.move_target_distance),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_LOCAL_PATCHES,
+            f64::from(ground.local_patches.people_fed),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_VISIBLE_PATCHES,
+            f64::from(ground.visible_patches.people_fed),
         );
     }
 }
@@ -774,6 +792,8 @@ mod tests {
                 tended_food: fed * 0.8,
                 field_food: fed * 1.6,
                 nearest_planned_distance: None,
+                baskets: 6,
+                hunt_kits: BTreeMap::new(),
             }],
             people_fed: fed,
             people_fed_tended: fed * 2.0,
@@ -798,6 +818,9 @@ mod tests {
             move_target: None,
             move_target_distance,
             around_target: None,
+            kind_patches: StartKind::Short,
+            local_patches: shape(people_fed - 1.0),
+            visible_patches: shape(people_fed - 2.0),
         }
     }
 
@@ -846,8 +869,11 @@ mod tests {
         assert_eq!(measures[M_GROUND_FED_FIELD_LOCAL], Some(24.0));
         assert_eq!(measures[M_GROUND_PLANNED_BANDS_LOCAL], Some(1.0));
         assert_eq!(measures[M_GROUND_MOVE_TARGET_DISTANCE], Some(9.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_LOCAL_PATCHES], Some(4.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_VISIBLE_PATCHES], Some(3.0));
         let labels = labels(&observations);
         assert_eq!(labels[L_GROUND_START_KIND], "move_all");
+        assert_eq!(labels[L_GROUND_START_KIND_PATCHES], "short");
     }
 
     fn demand(tick: u64, requester: &str, resource: &str, state: &str) -> DecisionRecord {
