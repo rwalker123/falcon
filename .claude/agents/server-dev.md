@@ -1,5 +1,6 @@
 ---
 name: server-dev
+model: opus
 description: Implements server-side (Rust / core_sim / sim_runtime / sim_schema) code changes in the Falcon workspace. Give it a scoped, well-specified task — new system, bug fix, config wiring, schema change — and it edits the code, self-verifies with fmt+clippy+tests, and returns a terse summary (files touched, what changed, verification result, decisions/questions). Its value is keeping the read/edit/build/test churn out of the orchestrator's context. NOT for open-ended design — hand it a decided spec.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---

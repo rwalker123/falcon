@@ -1,5 +1,6 @@
 ---
 name: client-dev
+model: opus
 description: Implements client-side (Godot / GDScript, and the Rust godot native extension) changes in clients/godot_thin_client. Give it a scoped task — new inspector panel, overlay, HUD wiring, snapshot-field consumption — and it edits the code, self-verifies with the godot-build and the ui_preview PNG harness (it can actually see the rendered HUD), and returns a terse summary (files touched, what changed, verification result, decisions/questions). Its value is keeping the read/edit/build churn out of the orchestrator's context. NOT for open-ended design — hand it a decided spec.
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
