@@ -141,15 +141,21 @@ was handed, not what it did.
 | `ScriptedBrain` | none (`Plan::pass_through`) | `Scripted` | `Arbiter::PassThrough` — every proposal accepted in order, raw = final |
 | `UtilityBrain` | `ConstantStance` | `Food`, `Land` (minus `--disable`) | `Arbiter::Weighing` — the six steps |
 
-**`decide`, in order:** `memory.observe` (sightings, arrivals, what every worked row realized, and
-a `warn!` per command the sim refused last turn — the feed's `… failed` rows); `board.settle` (a
-grant the frame carries is fulfilled, one past its window is expired — below); the orchestrator
-(a `plan` record when it re-plans); every specialist proposes (an `alarm` record per alarm, queued
-for the *next* plan, and its **demands**); `board.post`; for every own band with an open
-outfitting window, `orchestrator.outfit` → `board.plan` and one `set_starting_loadout`; the
-arbiter over the proposals; `memory.record_choices` (the accepted intents and their memos — a
-move target, a pending split); `memory.remember_runways`; the commands are **the loadouts first**,
-then the arbiter's. `on_full_frame(tick)` forgets everything stamped later than `tick` (the
+**`observe`, then `decide`.** `Brain::observe` folds the frame in ahead of the observation
+record: `memory.observe` (sightings, arrivals, what every worked row realized) and **the land
+reading of every own band** (`ground::read_all` → the composite's `ground: GroundReadings`, shown
+on the lens as `readings`), once per tick — the turn loop (`main.rs`) calls it before
+`Observation::capture`, and `decide` calls it again as a no-op on a tick already folded in, so
+the reading the record shows is the one the specialists are handed. **`decide`, in order:**
+`observe`; a `warn!` per command the sim refused last turn — the feed's `… failed` rows;
+`board.settle` (a grant the frame carries is fulfilled, one past its window is expired — below);
+the orchestrator (a `plan` record when it re-plans); every specialist proposes over the plan, the
+memory and the readings (an `alarm` record per alarm, queued for the *next* plan, and its
+**demands**); `board.post`; for every own band with an open outfitting window,
+`orchestrator.outfit` → `board.plan` and one `set_starting_loadout`; the arbiter over the
+proposals; `memory.record_choices` (the accepted intents and their memos — a move target, a
+pending split); `memory.remember_runways`; the commands are **the loadouts first**, then the
+arbiter's. `on_full_frame(tick)` forgets everything stamped later than `tick` (the
 board's entries too), drops a plan adopted after it, **and resets the orchestrator's goal
 cadence** (`Orchestrator::forget_after`) so the dropped plan is re-planned at the new epoch's
 first tick. **It is called only for a full frame that rewinds the seat** (`view::rewinds`: a new
@@ -194,9 +200,12 @@ The middle token is the class the behaviour gate reads: `raid` needs `will_raid`
 
 **The arbiter's rejection set**, fixed: `behavior_gated` (step 1), `outscored` (a second proposal
 under an intent already accepted this turn), `conflict` (a **claim** already taken this turn),
-`over_budget`. **A claim is a move or a row, never a band**: `Cost::moves` is the bands a
-proposal walks or splits (`move_band`, `split_band`), `Cost::rows` the labor rows it sets, keyed
-as `view::row_key` — every `assign_labor` it emits, donors and targets both, a `builders` /
+`over_budget`. **A claim is a move, a split or a row, never a band**: `Cost::moves` is the bands
+a proposal walks (`move_band`), `Cost::splits` the bands it splits (`split_band` — a split
+collides with a move of the band, a band walking does not split, and never with another split of
+it: the sim applies each `split_band` as it arrives against the floors as they then stand, so two
+splits of one band in a turn are two orders, not one claim), `Cost::rows` the labor rows it sets,
+keyed as `view::row_key` — every `assign_labor` it emits, donors and targets both, a `builders` /
 `agriculture` pool as much as a forage row, and the patch's forage row for a `cultivate` / `sow`.
 `Cost::claimed` reads them off the commands themselves, so a proposal cannot claim less than it
 sends. The sim takes several labor orders for one band in a turn, so two proposals on one band
@@ -215,19 +224,26 @@ the turn the rung completed, and the patch unwound.
 
 `docs/plan_ai_driver.md` §4 (*"The demand board — specialists never talk to each other"*, *"The
 board's first customer is outfitting"*) is the design; this is what stands. A specialist posts a
-`Demand { requester, band, resource: Resource::Kit(id) | Resource::Material(id), amount, by_tick,
-priority }` — the loadout's own vocabulary, a kit by `equipment.json` roster id — through
-`Proposals.demands`, and never sees the board again. The board is a field of `Composite`; nothing
-but the composite and the orchestrator touch it.
+`Demand { requester, band, resource: Resource::Kit(id) | Resource::Material(id) | Resource::Craft
+{ item, start_tick }, amount, by_tick, priority }` — the loadout's own vocabulary, a kit by
+`equipment.json` roster id, a material by `materials.json` id, a craft by `recipes.json` recipe
+id with the turn a crafter should start — through `Proposals.demands`, and never sees the board
+again. The board is a field of `Composite`; nothing but the composite and the orchestrator touch
+it.
 
 **The lifecycle**, every transition a `demand` record (`DemandRecord { tick, requester, band,
-resource: "kit:<id>" | "material:<id>", amount, state, granted }`): `posted` (`Board::post`, at
-the tick the specialists proposed); `planned { granted }` (`Board::plan`, the orchestrator's grant
-for the band's open demands **in the order `open_for` gave them** — a grant of zero is `expired`
-at once, since nothing was sent for it); `fulfilled { granted }` (`Board::settle`, at the top of
-`decide` after `observe`, when the frame carries the grant); `expired` (a `planned` entry the frame
-after its window still does not carry — the sim refused the loadout, and the failed-command
-`warn!` says why — or a `posted` entry past its window). **A loadout demand expires with its
+resource: "kit:<id>" | "material:<id>" | "craft:<recipe>@t<start>", amount, state, granted,
+reason }`): `posted` (`Board::post`, at the tick the specialists proposed); `planned { granted }`
+(`Board::plan`, the orchestrator's grant for the band's open demands **in the order `open_for`
+gave them**, the record's `reason` naming the trim when the grant is under the ask); **`declined
+{ reason }`** (a grant of zero — nothing was sent, so nothing can fulfil it — with the
+orchestrator's reason: `kit budget spent`, `material budget spent`, `not on the pick list`,
+`parent cannot supply`, `not on the kit roster`, `the bare kit is never a line`, or `no crafter
+yet` for every craft; terminal, and the requester does not re-post within the frame — the window
+is one frame, and its next turn's rules read what the band holds); `fulfilled { granted }`
+(`Board::settle`, at the top of `decide` after `observe`, when the frame carries the grant);
+`expired` (a `planned` entry the frame after its window still does not carry — the sim refused
+the loadout, and the failed-command `warn!` says why — or a `posted` entry past its window). **A loadout demand expires with its
 window**: the sim opens a band's window for exactly one frame (`close_opening_window` clears every
 window on the turn advance and nothing re-opens one; a splinter's opens the turn it is born, one
 frame long too), so `by_tick` is the window's tick and `open_for(band, tick)` reads only
@@ -278,15 +294,38 @@ species … `0` if unknown"* — against `KitOptionState::attack_min/max_body_ma
 end means unbounded"*); a herd whose mass reads unknown is trusted only to a kit with no upper
 bound. When
 no herd in reach clears any kit, the hands left over ask for baskets too: a spare basket is not
-forfeited budget, an unspent slot is. **`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
+forfeited budget, an unspent slot is.
+
+**Beside the kits, the hoe estimate — posted, not crafted** (`Food::hoe_estimate`, off the land
+reading's shape, "The land reading" below; nothing when the band has no reading). From the
+shape's first planned band that holds a patch with `tended_food > 0`, its richest such patch:
+hoes wanted = `Site::tended_keepers_hoed` (the keeping crew alone, hoed — the take crew gathers
+and needs none) + `founding_min_workers` builders (the wire's founding floor stands in for the
+crew the first cultivate would run with — a crew the sim would let stand on its own), one hoe
+each; materials = `HOE_RECIPE_BONE` (1) bone + `HOE_RECIPE_FIBRE` (2) fibre per hoe
+(`recipes.json` → `hoes`); and a `Resource::Craft { item: "hoes", start_tick }` for that many,
+where the turn cultivation is expected known is `CULTIVATION_LESSON_COST / (LADDER_LEARN_RATE ×
+the patch sites the shape works)` turns from now (`intensification_ladder.json`:
+`lesson_costs.cultivation` 20, `learn_rate` 1.0 per worked source per turn) and the crafter
+starts `hoes × HOE_RECIPE_WORK (5) / (HOE_CRAFT_CREW (1) × CRAFT_PROGRESS_PER_WORKER_TURN (1.0)
+× BARE_HAND_CRAFT_RATE (0.5, bone's `hand_working.rate` — the hoes read bone's `density`, so
+bone is the bench material))` turns before that, never before now. All three at
+`DEMAND_PRIORITY_HOES` (0.6 — after the kits that feed today, before `Land`'s scout). The
+constants are restated in one block at the top of `rules.rs`; the server's config is the
+authority. The orchestrator fulfils the bone and fibre it can from the window's material budget
+(the pre-fill fills what they leave, below) and **declines the craft `no crafter yet`**: nothing
+runs a bench for the seat, so the log carries the ask and its timing and nothing crafts. On the eight Standard bench seeds at t1 every band posts `bone 6, fibre 12,
+craft:hoes ×6` — two hoed keepers on the richest climbable patch plus the founding four.
+**`Land` posts** (`Land::outfit_demands`) `wayfinding` ×
 `land.scout_workers` for a band with an open window that is blind (fewer than
 `known_tiles_floor` known tiles within the horizon), at `DEMAND_PRIORITY_SCOUT` (0.5 — after
 food; it sees farther and nothing eats it).
 
 **The orchestrator resolves** (`ConstantStance::outfit` → `Outfit { band, kits, materials,
-grants }`): the kit demands ranked by `priority × the profile weight of the requester's domain`
-(`WEIGHT_TO_SPECIALIST` inverted: `food` → `food_security`, `land` → `land_claim`; ties by
-requester id), walked granting `min(asked, budget left)`; on a splinter's take
+grants: Vec<(Resource, Grant)> }`, a `Grant { granted, reason }` per demand — `whole`, `trimmed`
+with the reason, or `declined` with it): the kit demands ranked by `priority × the profile weight
+of the requester's domain` (`WEIGHT_TO_SPECIALIST` inverted: `food` → `food_security`, `land` →
+`land_claim`; ties by requester id), walked granting `min(asked, budget left)`; on a splinter's take
 (`parent_band_id != 0`) the cap is the parent's supply of **every item** the kit lists —
 `BandLoadoutSupplyRowState` is *"One cap row … how many units of `id` this take may claim"*,
 keyed per **item**, and the window's doc is explicit: *"A kit row cannot be capped on its own …
@@ -294,10 +333,15 @@ what the sim validates is the expanded item list, whole"* — so a kit's cap is 
 its `item_ids` and each grant draws those items down (the sled both hunting kits carry is one
 supply). Two demands for one kit coalesce into one line; a `none` kit and a kit the roster does
 not name are never lines. Materials the same way against `material_budget` and the pick list;
-**a grant window nobody posted a material demand for takes the campaign pre-fill**
-(`opening_loadout.material_defaults`, the sim's own suggestion) clamped to the budget, and a
-splinter with no material demand takes nothing. Never a total above either budget: the sim
-refuses the whole order for any of these.
+then, on a grant window, **the campaign pre-fill fills whatever material budget the demands
+left** (`ConstantStance::prefill_over`: `opening_loadout.material_defaults`, the sim's own
+suggestion, each row scaled by `min(1, points left / Σ defaults)` and floored — proportional,
+remainder unspent, `clamped_kit_defaults`' rule on the material side), coalesced with the
+demanded lines, so the eight Standard bench seeds' t1 line reads `bone 7, fibre 19, hide 3` (the
+hoe estimate's 6 + 12, then 12 of the 30 points at 3 : 17 : 8). A splinter's take carries no
+pre-fill. Before this a material demand displaced the pre-fill entirely, which left 12 of 30
+points unspent and no hide at all. Never a total above either budget: the sim refuses the whole
+order for any of these.
 
 **The composite emits** (`Composite::outfit_windows`): one `set_starting_loadout` per open window
 with something to send — a window with nothing gets no order, because an empty order on a
@@ -314,9 +358,10 @@ no worker budget and gives no band an order, the two things the steps ration (`a
 log's `commands_text` and a human seat's imported `set_starting_loadout` read the same way.
 
 **Measures** (`board.*`, reported and **not ratcheted** — the ratchet takes the board on once it
-has a second customer): `board.posted`, `board.expired`, `board.fulfilment_rate` (`fulfilled /
-(fulfilled + expired)`, `null` with neither), `board.latency_turns` (mean ticks from a demand's
-`posted` record to its `fulfilled` one), and `board.<requester>.fulfilment_rate`. **The viewer**:
+has a second customer): `board.posted`, `board.expired`, `board.declined` (every hoe craft today),
+`board.fulfilment_rate` (`fulfilled / (fulfilled + expired)`, `null` with neither; a declined
+demand is outside it), `board.latency_turns` (mean ticks from a demand's `posted` record to its
+`fulfilled` one), and `board.<requester>.fulfilment_rate`. **The viewer**:
 the Orchestrator panel's *Demand board* block lists this tick's demand records (`requester ·
 resource ×amount · state (granted)`), and a band's ledger row shows `outfitted: gathering 8 ·
 big_game 9` on the tick its loadout was sent (read off the `orchestrator:outfit` decision); the
@@ -481,7 +526,7 @@ fired and what the ledger said. The rules, in `propose` order:
   `food.split_reach_tiles`; within a ring the child's projected net income ranks, nearer first on
   a tie. `split_band <crew>`, with `Memo::Split { target }`. **Budget-free**: the proposal is
   `Cost::claimed(0, …)` — a split moves people out of the band, it is not labor churn against
-  `Food`'s share, and the band-move claim still collides with any other move of the band; charged
+  `Food`'s share, and its split claim still collides with any move of the band; charged
   to the budget it was `over_budget` on seed 19 every turn rule 1's shuffle claimed the hands
   first (proposed t6, rejected, silent until t33). The change carried to the ledger is the
   parent's: the rows the crew leaves are lost, **the mouths that leave with it are gained**
@@ -692,7 +737,17 @@ comparison *better ground* moves on.
   loses to a tile that reaches four, and a band standing beside ground it can work is not moved
   onto it. The intent persists until arrival while the target's cluster still out-takes the
   band's own: the memory holds the target and re-proposes the same `land:move:<band>` each turn,
-  which is what the commitment bonus rewards.
+  which is what the commitment bonus rewards. **Or the land reading's move-everyone target**
+  (`Land::move_all_target`): when the band's reading classifies as `MoveAll` — the far covering
+  names a `move_target`, the near ring does not feed the population, and the covering around the
+  target does ("The land reading" below) — the move is toward that target under the same
+  `land:move:<band>`, runway falling or not, scored at `MOVE_ALL_SCORE` (1.0 × the weight —
+  *better ground*'s own score is a gain fraction under one, so the whole-band move outranks any
+  in-view gain) with the reason `"move everyone: to 12,7 — the ground around it feeds 30 of 30
+  people, the near ring 18"`, persisting while the reading still names the target. Gated on the
+  kind and not on "a target exists and the near ring is short" alone: that looser reading fired
+  once on the eight Standard bench seeds, on a band of two at t54 of seed 3 toward ground that fed
+  nobody. `MoveAll` reads on no Standard bench seed but 13, so the rule is inert on the eight.
 
 ⛔ **Two guards on *better ground*, because the margin alone does not stop the oscillation.** On
 bench seed 11 the band walked 20,8 → 18,8 (t12) → 20,8 (t17) → 18,8 (t19), and every arrival
@@ -743,8 +798,13 @@ range, so the exposure remains.
 ### The land reading (`ground.rs`)
 
 **What the discovered ground would feed, and the shape of the band that would feed on it, read
-before any rule runs** — a crate-level pure computation the instruments publish; `Food` and `Land`
-do not consume it yet, so no decision moves on it. Two layers. The **site layer** (`Site`): every
+before any rule runs** — a crate-level pure computation, **taken once per own band per tick in
+the composite's `observe`** (`ground::read_all` → `GroundReadings`, a `BandGround { reading,
+classified }` per band id) and handed to every specialist's `propose` and to the observation
+record alike, so what a rule reads and what the log shows are one reading. What consumes it
+today: `Food`'s hoe estimate (the shape's climbable patch and its worked patch count, above) and
+`Land`'s move-everyone target on a `MoveAll` kind; the kit walk and the split rule do not, so no
+food decision moves on it. Two layers. The **site layer** (`Site`): every
 discovered site the faction could work — a forage patch that is a gathering site
 (`workable_patch_at`), unowned or its own, walkable, under no foreign band, forecast above zero;
 or a `huntable` herd forecast above zero, under no foreign band — with `sustained_food`
@@ -765,8 +825,10 @@ per-patch quotes are species-blind: they read whatever the patch is already comm
 rate)` like the wild one, plus the keeping crew `ceil(*_upkeep_demand /
 build_work_per_worker_turn)` bare-handed and, as a second number, hoed at
 `build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated from `equipment.json`
-→ `hoes`, the tillage kit's `build_work`). A herd site also carries `kit_needed` (`herd_kit_id`)
-and `kit_units_held`. The **hex layer** (`Hex`): every discovered, walkable,
+→ `hoes`, the tillage kit's `build_work`); `tended_keepers_hoed` is that hoed keeping crew alone
+(`0` where no plant can climb), the number the hoe estimate counts — `tended_hands_hoed` includes
+the take crew, who gather and need no hoe. A herd site also carries `kit_needed`
+(`herd_kit_id`) and `kit_units_held`. The **hex layer** (`Hex`): every discovered, walkable,
 unoccupied hex within some site's reach, with the patches within `work_range` and the herds
 within `hunt_reach` of it (both read off the band) — the site layer convolved with the two ranges.
 `people_fed = food / (food_consumption / size)`, the band's own per-person consumption.
@@ -801,7 +863,10 @@ people, far 34.4).
 (the band's own hex, bound 0), `local` (`split_search_tiles`), `far` (`split_reach_tiles`),
 `visible` (everything discovered) — and the kind is the first that feeds the whole band on wild
 food: `Stay`, `SplitLocal`, `SplitFar`, then `MoveAll` when the far covering names a `move_target`
-and the near-ring covering around it feeds everyone, else `Short`. Wild here means the sustained
+and the near-ring covering around it feeds everyone, else `Short`. `Classified::shape` is the
+covering the kind was read off — `stay` for `Stay`, `local` for `SplitLocal`, `far` for
+`SplitFar`, the covering around the target for `MoveAll`, `far` for `Short` — and is what the hoe
+estimate reads its patches off. Wild here means the sustained
 take of patches **and herds** — a herd counts whether or not the band holds its kit (outfitting is
 the next step, not the reading's), and at t1 every bench band holds `0` units of `big_game` and
 `trapping` — which is why the patches-only classification is published beside it. On the sixty
@@ -817,8 +882,10 @@ t1, and where it does no single hex beats the first band by the tolerance — so
 visible 40.6 people, kind `short`).
 
 **Published**: the observation's `ground` block (`GroundRecord`, present only on a seat whose
-`BrainLens::ground` carries the profile's levers — the utility brain; `null` on Pass and
-Scripted) is the reading for the seat's **largest own band**: its numbers, `k_max`, the site rows,
+`BrainLens::ground` carries the profile's levers and whose `readings` hold the band — the utility
+brain; `null` on Pass and Scripted) is **the brain's own reading** for the seat's **largest own
+band** — the `BandGround` its specialists are handed that tick, never a second computation — its
+numbers, `k_max`, the site rows,
 `kind`, the four shapes, `move_target` with its distance, `around_target`, and **the same
 classification with the herds struck out** (`Reading::patches_only` → `kind_patches`,
 `local_patches`, `visible_patches`) — what the ground feeds with no hunt kit at all, beside the
@@ -847,10 +914,14 @@ which *better ground* never proposes walking back to; decayed by the horizon, cl
 food.split_settle_turns)`: the settle turns are a fact about the seat, so they are passed once at
 construction and not to every `observe`.
 
-**The split bookkeeping.** An accepted `Memo::Split` is `pending_splits[parent] = SplitPending {
-tick, target, workers }`. `observe` keeps the own band ids of the last frame (`known_bands`); an
-own band **not among them** standing on the tile of a parent with a pending entry is that split's
-child, and the entry moves to `born_by_split[child] = SplitBirth { tick, target }`. ⛔ **A band
+**The split bookkeeping.** An accepted `Memo::Split` is pushed onto `pending_splits[parent]`, a
+**list** in acceptance order (one entry today — *split to feed* proposes once per band per turn —
+but the arbiter admits several splits of one band in a turn, and the sim founds one child per
+order). `observe` keeps the own band ids of the last frame (`known_bands`); an own band **not
+among them** standing on the tile of a parent with a pending entry is that parent's next child,
+matched to the **earliest** pending entry (the sim founds the children in the order the orders
+arrived, and new bands are walked in the frame's ascending-id order), and the entry moves to
+`born_by_split[child] = SplitBirth { tick, target }`. ⛔ **A band
 never matches its own pending entry**: `forget_after` clears `known_bands` and keeps a pending
 entry stamped at or before the rewind, so the next `observe` reads every own band as new — the
 parent included, on its own split tile — and without the guard the parent landed in
@@ -863,7 +934,7 @@ floors do not explain. That entry
 is **kept across the memory horizon** (a refusal is a fact about the sim, not a sighting) and
 cleared by `forget_after`. A birth is dropped when the child stands on its target or the memory
 horizon passes. `forget_after` drops pending entries and births stamped later than the tick and
-clears `known_bands`. `pending_split(band)` and
+clears `known_bands`. `pending_split(band)` (the earliest; `pending_splits(band)` the list) and
 `born_by_split(band)` are what *split to feed* / *settle* / *feed while moving* read; the
 observation's `born_by_split: Option<TilePos>` is the settle target, which the page shows as
 `↳ split, settling to x,y` under the band.
@@ -964,7 +1035,7 @@ reads every death as zero. The cause vocabulary (`hunger` / `cold` / `heat` / `a
 `reason`, `commands`, `commands_text`), `plan` (`tick`, `stance`, `since_tick`, `budgets`,
 `priorities`), `alarm` (`tick`, `specialist`, `alarm`), `ready` (`tick`), `link` (`tick`,
 `event: command_reconnect | stream_reopen`), and `demand` (`tick`, `requester`, `band`,
-`resource`, `amount`, `state`, `granted` — the board's transitions, above). Only `decision`,
+`resource`, `amount`, `state`, `granted`, `reason` — the board's transitions, above). Only `decision`,
 `ready` and `link` are written by the two shipped brains; `plan` and `alarm` are the
 orchestrator's (`plan_ai_driver.md` §3) and `demand` the board's.
 
@@ -1097,7 +1168,7 @@ resolve on the rivals' `ready` alone (`SeatTurnGate` → `TurnWait::Resolve`).
 | whole seat | every `ScoreRow` scalar at the last row; `knowledge.intensification.<id>`, `knowledge.craft.<id>`, `victory.<mode>`; `deaths.<cause>` for **every** cause (0 when none, so two runs always carry the same keys); `hunger_deaths_total` and `commands_failed_total` over the run |
 | per specialist (`specialist.<name>.`) | `accepted`, `rejected.<rejected_by>`, `acceptance_rate`, `liveness` (1.0 iff accepted > 0 in **every** window of `LIVENESS_WINDOW_TURNS` = 10 over the run's tick span), `intent_churn` (mean distinct accepted intents per window); and `intent.<specialist>:<kind>`, the share of every accepted decision under each intent class |
 | orchestrator | `orchestrator.stance_switches_per_100_turns`, `orchestrator.alarm_latency_turns` (mean ticks from an `alarm` to the next `plan` whose budgets differ from the one in force) — `null` on a seat whose brain writes no `plan`/`alarm` records (Pass, Scripted) |
-| the demand board | `board.posted`, `board.expired`, `board.fulfilment_rate`, `board.latency_turns`, `board.<requester>.fulfilment_rate` (the board section above); reported, not ratcheted |
+| the demand board | `board.posted`, `board.expired`, `board.declined`, `board.fulfilment_rate`, `board.latency_turns`, `board.<requester>.fulfilment_rate` (the board section above); reported, not ratcheted |
 | the ground at the start | `ground.sustained_take_at_start` (what the start band's sites give per turn at the Best floor's regrowth from the tile it stands on — `food::cluster_take_sustained`, the cluster dealt with each site capped at its sustained regrowth and its `sustained_hands`), `ground.best_cluster_in_horizon` (the best such reading over the discovered, walkable tiles within `land.horizon_tiles`), `ground.consumption_at_start` (the first row's `food_consumption`); off the **first `observations.jsonl` record** (`GroundObservation` on every band observation), read there and not off the scoreboard row because the reading needs the seat's memory and the profile's horizon; `None` on a seat with no observation log; reported, not ratcheted — the world sets them, and they are what the default seeds are chosen by |
 | the land reading at the start | off the **first observation carrying a `ground` block** (`GroundRecord`, the utility brain's): `ground.people` (the largest band's size), `ground.people_fed_wild_stay` / `_local` / `_far` / `_visible` (the people its wild ground feeds under each covering), `ground.people_fed_tended_local` / `ground.people_fed_field_local` (the near-ring ground farmed), `ground.planned_bands_local`, `ground.move_target_distance` (0 = none), `ground.people_fed_wild_local_patches` / `ground.people_fed_wild_visible_patches` (the herds struck out); and the labels `ground.start_kind` and `ground.start_kind_patches` (`stay` / `split_local` / `split_far` / `move_all` / `short`), carried in `report.json`'s `labels: {seed: {seat: {name: word}}}` and printed as table rows, since a measure is a number; reported, not ratcheted; absent on a seat whose brain carries no levers |
 | link | `link.turns_observed` (distinct scoreboard ticks), `link.turns_lost_to_timeout` (observed ticks with no `ready`), `link.reconnects` (`command_reconnect` records; a stream reopen is not one) |
@@ -1448,7 +1519,11 @@ asserts no
 `commands_text[0]` starts `set_starting_loadout`; for that band a `demand` resource whose records
 read `posted`, then `planned`, then `fulfilled` in that order; and, reading the rival's world back
 through seat 1 after the AI has released it, that for every `kit <id> <n>` on the loadout line the
-band's `equipment_batches` hold at least `n` of every item the roster's kit lists.
+`equipment_batches` of the band **and every resident band of its faction** together hold at
+least `n` of every item the roster's kit lists — on the harness world *split to feed* fires at
+tick 1 and the splinter's outfitting window takes its proportional share of the grant, a
+transfer inside the faction (`fission.md`), so the family is what holds it; with no split the
+family is the parent alone.
 
 `ai_record_import.rs` starts the server with `SIM_RECORD_DIR` set, seats the scripted `sim_ai` for
 3 turns **without** `--log-dir` (standing in for the human), and asserts: `run.json` carries the

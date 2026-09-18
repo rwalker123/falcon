@@ -15,6 +15,10 @@
 //!   the ground it could work is not moved onto it. The rate under the reading is `Food::rate` —
 //!   the crew's take, never `carrying_capacity` — and the sites are the ones `Food` will work
 //!   (`food::workable_patch_at`), so the two specialists cannot disagree about ground.
+//!   **Or the land reading's move-everyone target** (`ground.rs`): when the band's reading names
+//!   a `move_target` and its near-ring covering does not feed the population, the move is toward
+//!   that target, scored above any in-view gain, whatever the runway is doing — the whole band
+//!   walks to ground that feeds it rather than splitting toward ground that does not.
 //! - *room* — under `Expand`, a band above `land.split_size` on ground the faction owns proposes
 //!   `split_band` with half its workers.
 
@@ -26,6 +30,7 @@ use super::{
 };
 use crate::board::{Demand, Resource};
 use crate::geometry::Tile;
+use crate::ground::{BandGround, GroundReadings, StartKind};
 use crate::orchestrator::{Alarm, AlarmKind, Plan, Stance};
 use crate::profile::LandFloors;
 use crate::view::{band_tile, SeatMemory, SeatView};
@@ -37,7 +42,12 @@ pub const INTENT_MOVE: &str = "move";
 pub const INTENT_SPLIT: &str = "split";
 const REASON_BLIND: &str = "few known tiles";
 const REASON_BETTER_GROUND: &str = "better ground in view";
+const REASON_MOVE_ALL: &str = "move everyone";
 const REASON_ROOM: &str = "room to split";
+/// **The score of the reading's move-everyone move**, before the weight: *better ground*'s own
+/// score is the gain as a fraction of the target's take, always under one, so a whole-band move
+/// the reading asked for outranks any in-view gain.
+const MOVE_ALL_SCORE: f32 = 1.0;
 /// A split gives the new band this share of the parent's workers.
 const SPLIT_SHARE_DIVISOR: u32 = 2;
 /// **A scout's kit, after food**: a blind band sees farther with it and nothing eats it, so it
@@ -211,32 +221,72 @@ impl Land {
         })
     }
 
+    /// **The reading's move-everyone target**, when the reading's kind is `MoveAll` — the far
+    /// covering names a hex, the near ring does not feed the population, and the covering around
+    /// the target does: the whole band walks there. `None` otherwise, or when a foreign band
+    /// stands on the target. Gated on the kind rather than on "a target exists and the near ring
+    /// is short" alone: that looser reading fired once on the eight Standard bench seeds, on a
+    /// band of two at t54 of seed 3 toward ground that fed nobody.
+    fn move_all_target(&self, view: &SeatView, ground: Option<&BandGround>) -> Option<Tile> {
+        ground
+            .filter(|ground| ground.classified.kind == StartKind::MoveAll)
+            .and_then(|ground| ground.classified.move_target_tile())
+            .filter(|target| !foreign_band_at(view, self.faction, *target))
+    }
+
     /// *Better ground*: a tile whose cluster out-takes the band's own while the runway falls —
     /// or the target the band is already walking to, while its cluster still out-takes the
-    /// band's own.
+    /// band's own. **Or the reading's move-everyone target** ([`Self::move_all_target`]), scored
+    /// at [`MOVE_ALL_SCORE`] and persisting while the reading still names it.
     pub fn better_ground(
         &self,
         view: &SeatView,
         memory: &SeatMemory,
         band: &PopulationCohortState,
+        ground: Option<&BandGround>,
     ) -> Option<Proposal> {
         let here = band_tile(band);
         let own = Self::cluster_at(view, memory, band, here).total;
-        let (target, cluster) = match memory.move_target(band.band_id) {
-            // Persist until arrival, while the ground is still worth it.
+        let move_all = self.move_all_target(view, ground);
+        let (target, score, reason) = match memory.move_target(band.band_id) {
+            // Persist until arrival, while the ground is still worth it — or while the reading
+            // still says everyone should go.
             Some(target) => {
                 if foreign_band_at(view, self.faction, target) {
                     return None;
                 }
-                let cluster = Self::cluster_at(view, memory, band, target);
-                (cluster.total > own).then_some((target, cluster))?
-            }
-            None => {
-                if !memory.runway_falling(band.band_id, band.turns_of_food) {
-                    return None;
+                if move_all == Some(target) {
+                    (
+                        target,
+                        MOVE_ALL_SCORE,
+                        Self::move_all_reason(ground, target),
+                    )
+                } else {
+                    let cluster = Self::cluster_at(view, memory, band, target);
+                    if cluster.total <= own {
+                        return None;
+                    }
+                    let score = (cluster.total - own) / cluster.total;
+                    let reason = Self::better_ground_reason(&cluster, target, own);
+                    (target, score, reason)
                 }
-                self.better_cluster(view, memory, band, own)?
             }
+            None => match move_all {
+                Some(target) => (
+                    target,
+                    MOVE_ALL_SCORE,
+                    Self::move_all_reason(ground, target),
+                ),
+                None => {
+                    if !memory.runway_falling(band.band_id, band.turns_of_food) {
+                        return None;
+                    }
+                    let (target, cluster) = self.better_cluster(view, memory, band, own)?;
+                    let score = (cluster.total - own) / cluster.total;
+                    let reason = Self::better_ground_reason(&cluster, target, own);
+                    (target, score, reason)
+                }
+            },
         };
         let commands = vec![CommandPayload::MoveBand {
             faction_id: self.faction,
@@ -248,14 +298,8 @@ impl Land {
             cost: Cost::claimed(0, band.band_id, &commands),
             commands,
             intent: intent_key(SPECIALIST_LAND, INTENT_MOVE, band.band_id),
-            score: (cluster.total - own) / cluster.total * self.weight,
-            reason: format!(
-                "{REASON_BETTER_GROUND}: {} sites at {},{} take {:.1}/turn vs {own:.1} here",
-                cluster.sites.len(),
-                target.x,
-                target.y,
-                cluster.total
-            ),
+            score: score * self.weight,
+            reason,
             memo: Some(Memo::Move {
                 band: band.band_id,
                 target,
@@ -263,6 +307,35 @@ impl Land {
             }),
             standing: false,
         })
+    }
+
+    fn better_ground_reason(cluster: &ClusterTake, target: Tile, own: f32) -> String {
+        format!(
+            "{REASON_BETTER_GROUND}: {} sites at {},{} take {:.1}/turn vs {own:.1} here",
+            cluster.sites.len(),
+            target.x,
+            target.y,
+            cluster.total
+        )
+    }
+
+    /// `"move everyone: to 12,7 — the far ring feeds 30 of 30 people, the near ring 18"`.
+    fn move_all_reason(ground: Option<&BandGround>, target: Tile) -> String {
+        let (far, local, population) = ground.map_or((0.0, 0.0, 0), |ground| {
+            (
+                ground
+                    .classified
+                    .around_target
+                    .as_ref()
+                    .map_or(0.0, |around| around.people_fed),
+                ground.classified.local.people_fed,
+                ground.reading.population,
+            )
+        });
+        format!(
+            "{REASON_MOVE_ALL}: to {},{} — the ground around it feeds {far:.0} of {population} people, the near ring {local:.0}",
+            target.x, target.y
+        )
     }
 
     /// *Room*: under `Expand`, a large band on owned ground splits.
@@ -327,7 +400,13 @@ impl Specialist for Land {
         SPECIALIST_LAND
     }
 
-    fn propose(&mut self, view: &SeatView, plan: &Plan, memory: &SeatMemory) -> Proposals {
+    fn propose(
+        &mut self,
+        view: &SeatView,
+        plan: &Plan,
+        memory: &SeatMemory,
+        ground: &GroundReadings,
+    ) -> Proposals {
         let mut out = Proposals {
             proposals: Vec::new(),
             alarm: self.alarm(view, memory),
@@ -336,7 +415,8 @@ impl Specialist for Land {
         for band in view.own_bands(self.faction) {
             out.demands.extend(self.outfit_demands(view, memory, band));
             out.proposals.extend(self.blind(view, memory, band));
-            out.proposals.extend(self.better_ground(view, memory, band));
+            out.proposals
+                .extend(self.better_ground(view, memory, band, ground.get(&band.band_id)));
             out.proposals.extend(self.room(view, plan, band));
         }
         out
@@ -545,7 +625,7 @@ mod tests {
         let view = a_cluster_north_and_a_rich_patch_east();
         let specialist = land("forager");
         let proposal = specialist
-            .better_ground(&view, &falling(&view), own_band(&view))
+            .better_ground(&view, &falling(&view), own_band(&view), None)
             .expect("the cluster");
         assert_eq!(move_target(&proposal), NORTH, "{}", proposal.reason);
         assert_eq!(
@@ -569,7 +649,7 @@ mod tests {
             .forage_patches
             .retain(|patch| Tile::new(patch.x, patch.y) == EAST);
         let proposal = specialist
-            .better_ground(&only_east, &falling(&only_east), own_band(&only_east))
+            .better_ground(&only_east, &falling(&only_east), own_band(&only_east), None)
             .expect("the east patch");
         let target = move_target(&proposal);
         let grid = only_east.grid();
@@ -590,7 +670,7 @@ mod tests {
         standing.snapshot.populations[0].current_x = NORTH.x;
         standing.snapshot.populations[0].current_y = NORTH.y;
         assert!(specialist
-            .better_ground(&standing, &falling(&standing), own_band(&standing))
+            .better_ground(&standing, &falling(&standing), own_band(&standing), None)
             .is_none());
     }
 
@@ -616,14 +696,14 @@ mod tests {
         let close = view_with_east(6.0);
         assert!(
             specialist
-                .better_ground(&close, &falling(&close), own_band(&close))
+                .better_ground(&close, &falling(&close), own_band(&close), None)
                 .is_none(),
             "distinctness is not improvement"
         );
         // East pays 30 to ten hands and the other seven take 7 here: 37 against 17 clears it.
         let clear = view_with_east(30.0);
         let proposal = specialist
-            .better_ground(&clear, &falling(&clear), own_band(&clear))
+            .better_ground(&clear, &falling(&clear), own_band(&clear), None)
             .expect("a margin's worth better");
         let target = move_target(&proposal);
         let grid = clear.grid();
@@ -668,12 +748,12 @@ mod tests {
         // the departure is remembered.
         just_left.observe(&clear, FACTION);
         let elsewhere = specialist
-            .better_ground(&clear, &just_left, own_band(&clear))
+            .better_ground(&clear, &just_left, own_band(&clear), None)
             .expect("another tile reaches the east patch");
         assert_ne!(move_target(&elsewhere), target, "{}", elsewhere.reason);
         assert!(
             specialist
-                .better_ground(&clear, &falling(&clear), own_band(&clear))
+                .better_ground(&clear, &falling(&clear), own_band(&clear), None)
                 .is_some(),
             "with no departure remembered, the same ground is offered"
         );
@@ -687,7 +767,7 @@ mod tests {
         let specialist = land("forager");
         assert!(
             specialist
-                .better_ground(&view, &memory, own_band(&view))
+                .better_ground(&view, &memory, own_band(&view), None)
                 .is_none(),
             "no runway remembered, so it is not falling"
         );
@@ -695,7 +775,7 @@ mod tests {
         let mut later = view.clone_view();
         later.snapshot.populations[0].turns_of_food -= 1.0;
         let proposal = specialist
-            .better_ground(&later, &memory, own_band(&later))
+            .better_ground(&later, &memory, own_band(&later), None)
             .expect("a cluster in view");
         assert_eq!(proposal.intent, "land:move:7001");
         assert_eq!(proposal.cost.moves, vec![BAND]);
@@ -704,7 +784,7 @@ mod tests {
         // Accepted: the memory learns the target and the intent persists, runway or no runway.
         memory.record_choices(TICK, [(proposal.intent.clone(), proposal.memo)].into_iter());
         let again = specialist
-            .better_ground(&view, &memory, own_band(&view))
+            .better_ground(&view, &memory, own_band(&view), None)
             .expect("persists");
         assert_eq!(again.intent, proposal.intent);
         assert_eq!(again.commands, proposal.commands);
@@ -714,7 +794,7 @@ mod tests {
         arrived.snapshot.populations[0].current_y = NORTH.y;
         memory.observe(&arrived, FACTION);
         assert!(specialist
-            .better_ground(&arrived, &memory, own_band(&arrived))
+            .better_ground(&arrived, &memory, own_band(&arrived), None)
             .is_none());
     }
 
@@ -730,7 +810,7 @@ mod tests {
             }
         }
         let proposal = land("forager")
-            .better_ground(&view, &falling(&view), own_band(&view))
+            .better_ground(&view, &falling(&view), own_band(&view), None)
             .expect("a dry tile reaching the cluster");
         let target = move_target(&proposal);
         assert_ne!(target, NORTH, "{}", proposal.reason);
@@ -742,6 +822,97 @@ mod tests {
             "{}",
             proposal.reason
         );
+    }
+
+    /// The reading for the band with no sites, whose far covering names `target` as the
+    /// move-everyone hex and whose near ring feeds `local_feeds` people.
+    fn move_all_ground(view: &SeatView, target: Tile, local_feeds: f32) -> BandGround {
+        use crate::ground::{Classified, Reading, Shape};
+        let band = own_band(view);
+        let reading = Reading::from_sites(
+            view.grid(),
+            band_tile(band),
+            band.size,
+            band.working_age,
+            (band.founding_min_workers, band.founding_parent_min_workers),
+            band.food_consumption / band.size.max(1) as f32,
+            Vec::new(),
+            Vec::new(),
+        );
+        let empty = Shape {
+            bands: Vec::new(),
+            people_fed: 0.0,
+            people_fed_tended: 0.0,
+            people_fed_field: 0.0,
+            people_uncovered: band.size,
+            move_target: None,
+        };
+        let classified = Classified {
+            kind: StartKind::MoveAll,
+            stay: empty.clone(),
+            local: Shape {
+                people_fed: local_feeds,
+                ..empty.clone()
+            },
+            far: Shape {
+                move_target: Some((target.x, target.y)),
+                ..empty.clone()
+            },
+            visible: empty.clone(),
+            move_target: Some((target.x, target.y)),
+            around_target: Some(Shape {
+                people_fed: band.size as f32,
+                ..empty
+            }),
+        };
+        BandGround {
+            reading,
+            classified,
+        }
+    }
+
+    /// **The reading's move-everyone target is `Land`'s move.** With the near ring unable to
+    /// feed the band and the far covering naming a hex, the band is walked there — runway
+    /// falling or not, at the whole-band score — and the intent persists while the reading
+    /// still says so; a near ring that feeds everyone leaves the usual rule in charge, which has
+    /// nothing to say here.
+    #[test]
+    fn a_shape_with_a_move_target_and_a_short_near_ring_moves_everyone() {
+        let mut view = bare();
+        add_site(&mut view, EAST, 3.0, 15.0);
+        let specialist = land("forager");
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        memory.observe(&view, FACTION);
+        let short = move_all_ground(&view, EAST, 10.0);
+        let proposal = specialist
+            .better_ground(&view, &memory, own_band(&view), Some(&short))
+            .expect("the whole band moves");
+        assert_eq!(move_target(&proposal), EAST);
+        assert_eq!(proposal.intent, "land:move:7001");
+        assert!(
+            (proposal.score - MOVE_ALL_SCORE * specialist.weight).abs() < 1e-6,
+            "{}",
+            proposal.score
+        );
+        assert_eq!(
+            proposal.reason,
+            "move everyone: to 5,0 — the ground around it feeds 30 of 30 people, the near ring 10"
+        );
+        assert_eq!(proposal.cost.moves, vec![BAND]);
+        // Accepted: the intent persists while the reading still names the target.
+        memory.record_choices(TICK, [(proposal.intent.clone(), proposal.memo)].into_iter());
+        let again = specialist
+            .better_ground(&view, &memory, own_band(&view), Some(&short))
+            .expect("persists");
+        assert_eq!(again.commands, proposal.commands);
+        // The near ring feeds everyone — the reading's kind is not `MoveAll` — so no
+        // move-everyone, and with the runway not falling the usual rule proposes nothing.
+        let mut fed = move_all_ground(&view, EAST, 30.0);
+        fed.classified.kind = StartKind::SplitLocal;
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        assert!(specialist
+            .better_ground(&view, &memory, own_band(&view), Some(&fed))
+            .is_none());
     }
 
     #[test]
@@ -869,7 +1040,7 @@ mod tests {
         view.snapshot.populations[0].turns_of_food -= 1.0;
         assert!(
             specialist
-                .better_ground(&view, &memory, own_band(&view))
+                .better_ground(&view, &memory, own_band(&view), None)
                 .is_none(),
             "a falling runway, and still nowhere the band could gather"
         );
@@ -882,7 +1053,7 @@ mod tests {
         // The same patch, now a gathering site: both answers flip.
         make_a_gathering_site(&mut view, EAST);
         let proposal = specialist
-            .better_ground(&view, &memory, own_band(&view))
+            .better_ground(&view, &memory, own_band(&view), None)
             .expect("a workable patch is better ground");
         assert!(
             view.grid().distance(move_target(&proposal), EAST) <= WORK_RANGE,
@@ -946,7 +1117,7 @@ mod tests {
         add_site(&mut view, EAST, 0.56, 105.0);
         add_site(&mut view, west, 0.30, 225.0);
         let proposal = land("forager")
-            .better_ground(&view, &falling(&view), own_band(&view))
+            .better_ground(&view, &falling(&view), own_band(&view), None)
             .expect("two tiles in reach pay a worker more than this one does");
         let target = move_target(&proposal);
         let grid = view.grid();

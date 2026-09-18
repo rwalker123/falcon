@@ -21,7 +21,7 @@ use sim_runtime::{
 
 use crate::brain::BrainLens;
 use crate::geometry::Tile;
-use crate::ground::{GroundLevers, Reading, Shape, Site, StartKind};
+use crate::ground::{GroundLevers, GroundReadings, Shape, Site, StartKind};
 use crate::instruments::decisions::GoalsRecord;
 use crate::instruments::scoreboard::ScoreRow;
 use crate::specialists::food::{
@@ -264,19 +264,23 @@ pub struct GroundRecord {
 }
 
 impl GroundRecord {
-    /// The reading for the largest own band in `own_bands`, shaped by `levers`.
+    /// The reading for the largest own band in `own_bands` — **the brain's own** (`readings`,
+    /// taken in its `observe` and handed to its specialists this tick), so the record and the
+    /// decisions are one reading; the patches-only classification is derived from it with the
+    /// same `levers`. `None` for a band the brain has no reading of.
     fn capture(
         view: &SeatView,
-        memory: &SeatMemory,
         own_bands: &[&PopulationCohortState],
         levers: &GroundLevers,
+        readings: &GroundReadings,
     ) -> Option<Self> {
         let band = own_bands
             .iter()
             .copied()
             .max_by_key(|band| (band.size, std::cmp::Reverse(band.band_id)))?;
-        let reading = Reading::read(view, memory, band);
-        let classified = reading.classify(levers);
+        let ground = readings.get(&band.band_id)?;
+        let reading = &ground.reading;
+        let classified = &ground.classified;
         let patches = reading.patches_only().classify(levers);
         let move_target = classified.move_target_tile();
         Some(Self {
@@ -287,19 +291,19 @@ impl GroundRecord {
             working_age: reading.working_age,
             k_max: reading.k_max(),
             per_person_consumption: reading.per_person_consumption,
-            sites: reading.sites,
+            sites: reading.sites.clone(),
             kind: classified.kind,
-            stay: classified.stay,
-            local: classified.local,
-            far: classified.far,
-            visible: classified.visible,
+            stay: classified.stay.clone(),
+            local: classified.local.clone(),
+            far: classified.far.clone(),
+            visible: classified.visible.clone(),
             move_target: move_target.map(|tile| TilePos {
                 x: tile.x,
                 y: tile.y,
             }),
             move_target_distance: move_target
                 .map_or(0, |tile| view.grid().distance(band_tile(band), tile)),
-            around_target: classified.around_target,
+            around_target: classified.around_target.clone(),
             kind_patches: patches.kind,
             local_patches: patches.local,
             visible_patches: patches.visible,
@@ -488,7 +492,10 @@ impl Observation {
         let ground = lens
             .ground
             .as_ref()
-            .and_then(|levers| GroundRecord::capture(view, memory, &own_bands, levers));
+            .zip(lens.readings)
+            .and_then(|(levers, readings)| {
+                GroundRecord::capture(view, &own_bands, levers, readings)
+            });
 
         Self {
             tick: row.tick,
@@ -697,6 +704,7 @@ const UNTARGETED_ROLES: [&str; 7] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ground::{read_all, Reading};
     use crate::orchestrator::{
         Alarm, AlarmKind, Budget, FoodGoals, Goals, GroundRung, Plan, Stance,
     };
@@ -806,6 +814,7 @@ mod tests {
             since_tick: TICK - 1,
         }];
         let row = ScoreRow::from_snapshot(&view.snapshot, FACTION);
+        let readings = read_all(view, memory, FACTION, &levers());
         Observation::capture(
             view,
             &row,
@@ -815,6 +824,7 @@ mod tests {
                 memory: Some(memory),
                 horizon_tiles: HORIZON,
                 ground: Some(levers()),
+                readings: Some(&readings),
             },
         )
     }
@@ -857,6 +867,10 @@ mod tests {
         let expected = Reading::read(&view, &memory, &view.snapshot.populations[0]);
         assert_eq!(ground.sites, expected.sites);
         let classified = expected.classify(&levers());
+        assert_eq!(
+            ground.local, classified.local,
+            "the record is the brain's own reading, which is the module's"
+        );
         assert_eq!(ground.kind, classified.kind);
         assert_eq!(ground.stay, classified.stay);
         assert_eq!(ground.visible, classified.visible);

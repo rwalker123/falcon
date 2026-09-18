@@ -11,11 +11,13 @@
 //!    is walked before every bid, in score order among the bills, so a bid never outscores a
 //!    bill; the bills are still subject to the budget and to the claims among themselves.
 //! 5. **Feasibility** — walking that order: a repeated intent is `outscored`; a **claim already
-//!    taken this turn** is `conflict` — a claim is a band's move (`Cost::moves`: `move_band`,
-//!    `split_band`) or a labor row it sets (`Cost::rows`, keyed as `view::row_key`), never the
-//!    band itself, because the sim takes several labor orders for one band in a turn and two
-//!    proposals on one band collide only where they set the same row or both walk it; workers
-//!    past the specialist's share of the working-age pool is `over_budget`.
+//!    taken this turn** is `conflict` — a claim is a band's move (`Cost::moves`: `move_band`),
+//!    a split of it (`Cost::splits`: `split_band`, which collides with a move of the band and
+//!    not with another split — the shape splits a band several ways in one turn) or a labor row
+//!    it sets (`Cost::rows`, keyed as `view::row_key`), never the band itself, because the sim
+//!    takes several labor orders for one band in a turn and two proposals on one band collide
+//!    only where they set the same row or both walk it; workers past the specialist's share of
+//!    the working-age pool is `over_budget`.
 //! 6. **Emit** — the accepted proposals' commands, in order. `ready` is the loop's, and always
 //!    follows.
 //!
@@ -200,22 +202,29 @@ fn weigh(
     accepted
 }
 
-/// **The turn's conflict set**: every move and every labor row an accepted proposal has claimed
-/// (`Cost::moves`, `Cost::rows`). A proposal collides when any one of its claims is here.
+/// **The turn's conflict set**: every move, every split and every labor row an accepted proposal
+/// has claimed (`Cost::moves`, `Cost::splits`, `Cost::rows`). A proposal collides when any one of
+/// its claims is here — a move against a move or a split of the band, a split against a move of
+/// it (a band walking does not split), a row against the same row.
 #[derive(Default)]
 struct Claims {
     moves: BTreeSet<u64>,
+    splits: BTreeSet<u64>,
     rows: BTreeSet<String>,
 }
 
 impl Claims {
     fn collides(&self, cost: &Cost) -> bool {
-        cost.moves.iter().any(|band| self.moves.contains(band))
+        cost.moves
+            .iter()
+            .any(|band| self.moves.contains(band) || self.splits.contains(band))
+            || cost.splits.iter().any(|band| self.moves.contains(band))
             || cost.rows.iter().any(|row| self.rows.contains(row))
     }
 
     fn take(&mut self, cost: &Cost) {
         self.moves.extend(cost.moves.iter().copied());
+        self.splits.extend(cost.splits.iter().copied());
         self.rows.extend(cost.rows.iter().cloned());
     }
 }
@@ -559,6 +568,58 @@ mod tests {
             accepted.len(),
             2,
             "a move and an assignment do not collide by band"
+        );
+    }
+
+    /// **A band splits several ways in one turn, and a band walking does not split.** Two
+    /// splits of one band under distinct intents are both accepted; a move of the band after a
+    /// split, or a split after a move, is `conflict`.
+    #[test]
+    fn two_splits_of_one_band_both_go_and_a_split_collides_only_with_a_move() {
+        let memory = SeatMemory::default();
+        let split = |intent: &str, score: f32, workers: u32| {
+            offer_with(
+                SPECIALIST_FOOD,
+                intent,
+                score,
+                0,
+                BAND_A,
+                vec![CommandPayload::SplitBand {
+                    faction_id: 1,
+                    band_id: Some(BAND_A),
+                    workers,
+                }],
+                false,
+            )
+        };
+        let offered = vec![
+            split("food:split:1@6,2", 0.9, 6),
+            split("food:split:1@3,5", 0.8, 5),
+            offer(SPECIALIST_LAND, "land:move:1", 0.5, 0, BAND_A),
+        ];
+        let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &memory);
+        assert_eq!(
+            accepted
+                .iter()
+                .map(|accepted| accepted.intent.as_str())
+                .collect::<Vec<_>>(),
+            vec!["food:split:1@6,2", "food:split:1@3,5"]
+        );
+        assert_eq!(
+            rejection(&decisions, "land:move:1"),
+            Some(REJECTED_CONFLICT),
+            "a band splitting does not walk"
+        );
+        let offered = vec![
+            offer(SPECIALIST_LAND, "land:move:1", 0.9, 0, BAND_A),
+            split("food:split:1@6,2", 0.5, 6),
+        ];
+        let (accepted, decisions) = run(offered, ARGMAX_TOP_K, &memory);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(
+            rejection(&decisions, "food:split:1@6,2"),
+            Some(REJECTED_CONFLICT),
+            "a band walking does not split"
         );
     }
 

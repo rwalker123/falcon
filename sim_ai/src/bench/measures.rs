@@ -16,7 +16,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::board::{DEMAND_STATE_EXPIRED, DEMAND_STATE_FULFILLED, DEMAND_STATE_POSTED};
+use crate::board::{
+    DEMAND_STATE_DECLINED, DEMAND_STATE_EXPIRED, DEMAND_STATE_FULFILLED, DEMAND_STATE_POSTED,
+};
 use crate::instruments::decisions::{
     DecisionRecord, DemandRecord, LinkEventKind, Outcome, DECISIONS_FILE,
 };
@@ -114,6 +116,9 @@ pub const L_GROUND_START_KIND_PATCHES: &str = "ground.start_kind_patches";
 pub const M_BOARD_PREFIX: &str = "board.";
 pub const M_BOARD_POSTED: &str = "board.posted";
 pub const M_BOARD_EXPIRED: &str = "board.expired";
+/// Demands the orchestrator refused with a reason (`board::DemandState::Declined`) — every hoe
+/// craft today, since nothing crafts; neither fulfilled nor expired, so outside the rate.
+pub const M_BOARD_DECLINED: &str = "board.declined";
 pub const M_BOARD_FULFILMENT_RATE: &str = "board.fulfilment_rate";
 pub const M_BOARD_LATENCY: &str = "board.latency_turns";
 const M_FULFILMENT_RATE: &str = "fulfilment_rate";
@@ -617,8 +622,10 @@ fn board(records: &[DecisionRecord], measures: &mut Measures) {
     let posted = with_state(DEMAND_STATE_POSTED);
     let fulfilled = with_state(DEMAND_STATE_FULFILLED);
     let expired = with_state(DEMAND_STATE_EXPIRED);
+    let declined = with_state(DEMAND_STATE_DECLINED);
     put(measures, M_BOARD_POSTED, posted.len() as f64);
     put(measures, M_BOARD_EXPIRED, expired.len() as f64);
+    put(measures, M_BOARD_DECLINED, declined.len() as f64);
     measures.insert(
         M_BOARD_FULFILMENT_RATE.to_owned(),
         fulfilment_rate(fulfilled.len(), expired.len()),
@@ -884,7 +891,11 @@ mod tests {
             resource: resource.to_owned(),
             amount: 8,
             state: state.to_owned(),
-            granted: (state != DEMAND_STATE_POSTED && state != DEMAND_STATE_EXPIRED).then_some(8),
+            granted: (state != DEMAND_STATE_POSTED
+                && state != DEMAND_STATE_EXPIRED
+                && state != DEMAND_STATE_DECLINED)
+                .then_some(8),
+            reason: (state == DEMAND_STATE_DECLINED).then(|| "no crafter yet".to_owned()),
         })
     }
 
@@ -905,10 +916,14 @@ mod tests {
                 "kit:gathering",
                 DEMAND_STATE_FULFILLED,
             ),
+            // A declined craft is counted, and is neither fulfilled nor expired.
+            demand(FIRST_TICK, "food", "craft:hoes@t9", DEMAND_STATE_POSTED),
+            demand(FIRST_TICK, "food", "craft:hoes@t9", DEMAND_STATE_DECLINED),
         ];
         let measures = compute(&rows, &records, &[]);
-        assert_eq!(measures[M_BOARD_POSTED], Some(2.0));
+        assert_eq!(measures[M_BOARD_POSTED], Some(3.0));
         assert_eq!(measures[M_BOARD_EXPIRED], Some(1.0));
+        assert_eq!(measures[M_BOARD_DECLINED], Some(1.0));
         assert_eq!(measures[M_BOARD_FULFILMENT_RATE], Some(0.5));
         assert_eq!(measures[M_BOARD_LATENCY], Some(1.0));
         assert_eq!(measures["board.food.fulfilment_rate"], Some(1.0));
@@ -916,6 +931,7 @@ mod tests {
         // No demand records at all: nothing to rate.
         let none = compute(&rows, &[], &[]);
         assert_eq!(none[M_BOARD_POSTED], Some(0.0));
+        assert_eq!(none[M_BOARD_DECLINED], Some(0.0));
         assert_eq!(none[M_BOARD_FULFILMENT_RATE], None);
         assert_eq!(none[M_BOARD_LATENCY], None);
     }

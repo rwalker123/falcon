@@ -345,8 +345,11 @@ fn run(args: Args) -> Result<(), RunError> {
             continue;
         }
 
+        // The brain folds the frame in first — its memory and the land reading of every band —
+        // so the observation records the reading `decide` is about to size the turn by.
+        brain.observe(view);
         // The row first, so a process that dies mid-turn still leaves the tick it saw behind —
-        // and the observation beside it, read off the same view before `decide` touches anything.
+        // and the observation beside it, read off the same view before `decide` chooses anything.
         if let Some(instruments) = instruments.as_mut() {
             let row = ScoreRow::from_snapshot(&view.snapshot, faction);
             if let Err(err) = instruments.record_score(&row) {

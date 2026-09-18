@@ -197,8 +197,10 @@ pub struct SeatMemory {
     move_targets: BTreeMap<u64, (Tile, String)>,
     /// The own bands the last observed frame carried, so a band not among them is *new*.
     known_bands: BTreeSet<u64>,
-    /// Splits accepted and not yet matched to a child, by parent band.
-    pending_splits: BTreeMap<u64, SplitPending>,
+    /// Splits accepted and not yet matched to a child, by parent band — **several per parent**
+    /// when the shape split it several ways in one turn, in the order they were accepted, which
+    /// is the order the sim founds the children in (each `split_band` applies as it arrives).
+    pending_splits: BTreeMap<u64, Vec<SplitPending>>,
     /// Children this seat split off and their sites, by child band.
     born_by_split: BTreeMap<u64, SplitBirth>,
     /// **The working-age a band had when the sim refused to split it.** The sim's floors
@@ -297,10 +299,12 @@ impl SeatMemory {
     }
 
     /// **A new own band standing where a parent with a pending split stands — and which is not
-    /// that parent — is that split's child.** The sim spawns it on the parent's tile the turn after the order
-    /// (`split_band_from_parent`); a pending entry no child has matched within
-    /// `split_settle_turns` is a refused split and is dropped. A child is remembered until it
-    /// reaches its site, or the horizon passes.
+    /// that parent — is that split's child**, matched to the parent's **earliest** pending entry:
+    /// the sim spawns children on the parent's tile the turn after the orders
+    /// (`split_band_from_parent`), one per `split_band` in the order they arrived, and new bands
+    /// are walked in the frame's (ascending id) order. A pending entry no child has matched
+    /// within `split_settle_turns` is a refused split and is dropped. A child is remembered until
+    /// it reaches its site, or the horizon passes.
     fn observe_births(&mut self, view: &SeatView, faction: u32, tick: u64) {
         let own: Vec<&PopulationCohortState> = view.own_bands(faction).collect();
         for child in own
@@ -310,14 +314,30 @@ impl SeatMemory {
             // ⛔ **A BAND IS NEVER ITS OWN CHILD.** `forget_after` clears `known_bands` and keeps
             // a pending split stamped at or before the rewind, so on the next `observe` every own
             // band reads as new — and the parent stands on its own split tile.
-            let parent = self.pending_splits.iter().find(|(parent_id, _)| {
-                **parent_id != child.band_id
-                    && view
-                        .band(**parent_id)
-                        .is_some_and(|parent| band_tile(parent) == band_tile(child))
-            });
-            if let Some((parent_id, pending)) = parent.map(|(id, pending)| (*id, *pending)) {
-                self.pending_splits.remove(&parent_id);
+            let parent = self
+                .pending_splits
+                .iter()
+                .filter(|(_, pending)| !pending.is_empty())
+                .find(|(parent_id, _)| {
+                    **parent_id != child.band_id
+                        && view
+                            .band(**parent_id)
+                            .is_some_and(|parent| band_tile(parent) == band_tile(child))
+                })
+                .map(|(id, _)| *id);
+            if let Some(parent_id) = parent {
+                let pending = self
+                    .pending_splits
+                    .get_mut(&parent_id)
+                    .map(|list| list.remove(0))
+                    .expect("a non-empty list was found");
+                if self
+                    .pending_splits
+                    .get(&parent_id)
+                    .is_some_and(Vec::is_empty)
+                {
+                    self.pending_splits.remove(&parent_id);
+                }
                 self.born_by_split.insert(
                     child.band_id,
                     SplitBirth {
@@ -328,14 +348,16 @@ impl SeatMemory {
             }
         }
         let settle = u64::from(self.split_settle_turns);
-        let expired: Vec<u64> = self
-            .pending_splits
-            .iter()
-            .filter(|(_, pending)| tick.saturating_sub(pending.tick) > settle)
-            .map(|(parent, _)| *parent)
-            .collect();
-        for parent in expired {
-            self.pending_splits.remove(&parent);
+        let mut refused: Vec<u64> = Vec::new();
+        for (parent, list) in self.pending_splits.iter_mut() {
+            let before = list.len();
+            list.retain(|pending| tick.saturating_sub(pending.tick) <= settle);
+            if list.len() < before {
+                refused.push(*parent);
+            }
+        }
+        self.pending_splits.retain(|_, list| !list.is_empty());
+        for parent in refused {
             // No child came: the sim refused the split. What it refused is a band of *this*
             // size, so the size is what is remembered.
             if let Some(band) = view.band(parent) {
@@ -357,9 +379,15 @@ impl SeatMemory {
         self.known_bands = own.iter().map(|band| band.band_id).collect();
     }
 
-    /// The split accepted on `band_id` that no child has yet appeared for.
+    /// The splits accepted on `band_id` that no child has yet appeared for, in the order they
+    /// were accepted; empty when none is pending.
+    pub fn pending_splits(&self, band_id: u64) -> &[SplitPending] {
+        self.pending_splits.get(&band_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// The earliest split accepted on `band_id` that no child has yet appeared for.
     pub fn pending_split(&self, band_id: u64) -> Option<&SplitPending> {
-        self.pending_splits.get(&band_id)
+        self.pending_splits(band_id).first()
     }
 
     /// The birth record of `band_id`, if this seat split it off and it has not reached its site.
@@ -438,14 +466,14 @@ impl SeatMemory {
                     target,
                     workers,
                 }) => {
-                    self.pending_splits.insert(
-                        band,
-                        SplitPending {
+                    self.pending_splits
+                        .entry(band)
+                        .or_default()
+                        .push(SplitPending {
                             tick,
                             target,
                             workers,
-                        },
-                    );
+                        });
                 }
                 None => {}
             }
@@ -518,8 +546,10 @@ impl SeatMemory {
         self.previous_runway.clear();
         self.realized.clear();
         self.realized_by_kind.clear();
-        self.pending_splits
-            .retain(|_, pending| pending.tick <= tick);
+        for list in self.pending_splits.values_mut() {
+            list.retain(|pending| pending.tick <= tick);
+        }
+        self.pending_splits.retain(|_, list| !list.is_empty());
         self.born_by_split.retain(|_, birth| birth.tick <= tick);
         self.known_bands.clear();
         self.split_refused.clear();

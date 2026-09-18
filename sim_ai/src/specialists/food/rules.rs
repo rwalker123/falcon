@@ -31,6 +31,7 @@ use super::{
 };
 use crate::board::{Demand, Resource, BARE_KIT_ID};
 use crate::geometry::Tile;
+use crate::ground::{BandGround, Shape, Site};
 use crate::orchestrator::{GroundRung, Plan};
 use crate::specialists::{intent_key, Cost, Memo, Proposal, SPECIALIST_FOOD};
 use crate::view::{band_tile, SeatMemory, SeatView};
@@ -92,14 +93,55 @@ pub(super) const DEMAND_PRIORITY_GATHERING: f32 = 1.0;
 /// **Hunting is what opens penning**, second to the sites: a spear for every hand the sites in
 /// reach cannot use, when a herd in reach can be brought down with it.
 pub(super) const DEMAND_PRIORITY_HUNTING: f32 = 0.8;
+/// **The hoe estimate comes after the kits that feed today**: the tended rung is a cadence away
+/// (the lesson has to be practised first), so its bone, fibre and craft rank under both kits at
+/// the board and above `Land`'s scout.
+pub(super) const DEMAND_PRIORITY_HOES: f32 = 0.6;
 /// The roster's gathering kit (`equipment.json` → `gathering`, jobs `forage`, baskets).
 const GATHERING_KIT_ID: &str = "gathering";
+
+// ---- The hoe estimate's terms, restated in one place: this crate cannot link the server's
+// config, and the server's values are the authority.
+/// The tillage kit's recipe id (`recipes.json` → `hoes`), the item a `craft` demand names.
+const HOES_RECIPE_ID: &str = "hoes";
+/// One hoe's bone (`recipes.json` → `hoes.inputs[material == "bone"].amount`, `1`).
+const HOE_RECIPE_BONE: u32 = 1;
+/// One hoe's fibre (`recipes.json` → `hoes.inputs[material == "fibre"].amount`, `2`).
+const HOE_RECIPE_FIBRE: u32 = 2;
+/// One hoe's bench work in worker-turns (`recipes.json` → `hoes.work`, `5`).
+const HOE_RECIPE_WORK: f32 = 5.0;
+/// What a worker-turn at the bench is worth (`recipes.json` → `crafting.progress_per_worker_turn`,
+/// `1.0`).
+const CRAFT_PROGRESS_PER_WORKER_TURN: f32 = 1.0;
+/// The bare hand's craft speed on the hoes' bench material (`materials.json` → `bone`
+/// `hand_working.rate`, `0.5` — the hoes read bone's `density`, so bone is the bench material
+/// and its rate applies with no tool).
+const BARE_HAND_CRAFT_RATE: f32 = 0.5;
+/// The crafter crew the estimate is timed for: one hand at the bench.
+const HOE_CRAFT_CREW: u32 = 1;
+/// What the cultivation lesson costs in practice units (`intensification_ladder.json` →
+/// `knowledge.lesson_costs.cultivation`, `20`).
+const CULTIVATION_LESSON_COST: f32 = 20.0;
+/// What one worked turn of one source is worth in practice units
+/// (`intensification_ladder.json` → `knowledge.learn_rate`, `1.0`) — charged once per source
+/// per turn, so the shape's patch sites each teach it.
+const LADDER_LEARN_RATE: f32 = 1.0;
+/// The two materials a hoe is made of, by `materials.json` id.
+const MATERIAL_BONE: &str = "bone";
+const MATERIAL_FIBRE: &str = "fibre";
 /// A herd whose `body_mass` reads this has none on the wire — *"`0` if unknown"*
 /// (`HerdTelemetryState::body_mass`) — and only a kit with no upper mass bound is trusted on it.
 const BODY_MASS_UNKNOWN: f32 = 0.0;
 /// A kit whose mass bound reads this has none — *"`0` on either end means unbounded"*
 /// (`KitOptionState::attack_min_body_mass`).
 const MASS_UNBOUNDED: f32 = 0.0;
+
+/// [`Food::hoe_estimate`]'s answer: the hoes wanted and the turn a crafter should start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HoeEstimate {
+    hoes: u32,
+    start_tick: u64,
+}
 
 /// **Which of two changes a rule prefers**: the one closing more goal gap, and between two that
 /// close the same — which is every pair once the goals are met, since a met goal has no gap
@@ -1450,14 +1492,18 @@ impl Food {
     /// hand when a huntable herd
     /// within `hunt_reach` can be brought down with it ([`Food::hunting_kit_for`]), at
     /// [`DEMAND_PRIORITY_HUNTING`]; and when no herd in reach clears any kit, those hands ask for
-    /// baskets too — a spare basket is not forfeited budget, an unspent slot is. A window that
-    /// is not open asks for nothing.
+    /// baskets too — a spare basket is not forfeited budget, an unspent slot is. Beside the kits,
+    /// **the hoe estimate, posted not crafted** ([`Food::hoe_estimate`], off the land reading's
+    /// shape when `ground` carries one): the bone and fibre for the hoes the first cultivate would
+    /// want, and a `craft` demand for them with the turn a crafter should start, at
+    /// [`DEMAND_PRIORITY_HOES`] — the orchestrator declines the craft (`no crafter yet`) and the
+    /// log carries the ask. A window that is not open asks for nothing.
     pub fn outfit_demands(
         &self,
         view: &SeatView,
-        _plan: &Plan,
         memory: &SeatMemory,
         band: &PopulationCohortState,
+        ground: Option<&BandGround>,
     ) -> Vec<Demand> {
         if !band
             .loadout_window
@@ -1496,7 +1542,79 @@ impl Food {
         if let Some(kit) = hunting {
             demands.push(demand(Resource::Kit(kit), spare, DEMAND_PRIORITY_HUNTING));
         }
+        if let Some(estimate) = ground.and_then(|ground| {
+            Self::hoe_estimate(ground.shape(), &ground.reading.sites, band, tick)
+        }) {
+            demands.push(demand(
+                Resource::Material(MATERIAL_BONE.to_owned()),
+                estimate.hoes * HOE_RECIPE_BONE,
+                DEMAND_PRIORITY_HOES,
+            ));
+            demands.push(demand(
+                Resource::Material(MATERIAL_FIBRE.to_owned()),
+                estimate.hoes * HOE_RECIPE_FIBRE,
+                DEMAND_PRIORITY_HOES,
+            ));
+            demands.push(demand(
+                Resource::Craft {
+                    item: HOES_RECIPE_ID.to_owned(),
+                    start_tick: estimate.start_tick,
+                },
+                estimate.hoes,
+                DEMAND_PRIORITY_HOES,
+            ));
+        }
         demands
+    }
+
+    /// **The hoes the first cultivate would want, and when to start making them.** From the
+    /// shape's first planned band that holds a patch with `tended_food > 0`, its richest such
+    /// patch: `tended_keepers_hoed` keepers plus `founding_min_workers` builders (the wire's
+    /// founding floor stands in for the crew the first cultivate would run with — a crew the sim
+    /// would let stand on its own), one hoe each. The turn cultivation is expected known is
+    /// `CULTIVATION_LESSON_COST / (LADDER_LEARN_RATE × the patch sites the shape works)` turns
+    /// from now — the ladder charges one lesson per worked source per turn — and a crafter should
+    /// start `hoes × HOE_RECIPE_WORK / (HOE_CRAFT_CREW × CRAFT_PROGRESS_PER_WORKER_TURN ×
+    /// BARE_HAND_CRAFT_RATE)` turns before that, never before now. `None` when no planned band
+    /// holds a climbable patch or the shape works no patch.
+    fn hoe_estimate(
+        shape: &Shape,
+        sites: &[Site],
+        band: &PopulationCohortState,
+        tick: u64,
+    ) -> Option<HoeEstimate> {
+        let patch_sites_worked = shape
+            .bands
+            .iter()
+            .flat_map(|planned| planned.sites.iter())
+            .filter(|&&index| sites[index].herd_id.is_none())
+            .count() as u32;
+        if patch_sites_worked == 0 {
+            return None;
+        }
+        let patch = shape.bands.iter().find_map(|planned| {
+            planned
+                .sites
+                .iter()
+                .map(|&index| &sites[index])
+                .filter(|site| site.herd_id.is_none() && site.tended_food > 0.0)
+                .max_by(|a, b| a.tended_food.total_cmp(&b.tended_food))
+        })?;
+        let hoes = patch.tended_keepers_hoed + band.founding_min_workers;
+        if hoes == 0 {
+            return None;
+        }
+        let turns_to_known = (CULTIVATION_LESSON_COST
+            / (LADDER_LEARN_RATE * patch_sites_worked as f32))
+            .ceil() as u64;
+        let craft_turns = (hoes as f32 * HOE_RECIPE_WORK
+            / (HOE_CRAFT_CREW as f32 * CRAFT_PROGRESS_PER_WORKER_TURN * BARE_HAND_CRAFT_RATE))
+            .ceil() as u64;
+        let expected_known = tick + turns_to_known;
+        Some(HoeEstimate {
+            hoes,
+            start_tick: expected_known.saturating_sub(craft_turns).max(tick),
+        })
     }
 
     /// **The basket / spear split, by value** (the outfitting reading that shipped): the band's
@@ -2057,11 +2175,13 @@ impl Food {
 mod tests {
     use super::super::tests::{
         a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, ARMED_ATTACK,
-        BAND, BARE_KIT, FACTION, FAR_PATCH, HERD_AT, HERD_ID, HERE, HUNT_KIT, NEAR_PATCH,
-        RICH_PATCH, STOCK, TICK,
+        BAND, BARE_KIT, FACTION, FAR_PATCH, FORAGE_KIT, HERD_AT, HERD_ID, HERE, HUNT_KIT,
+        NEAR_PATCH, RICH_PATCH, STOCK, TICK, WORK_RANGE,
     };
     use super::*;
+    use crate::ground::{Classified, GroundReadings, PlannedBand, Reading, StartKind};
     use crate::orchestrator::Plan;
+    use crate::profile::AiProfiles;
     use crate::specialists::Specialist;
     use sim_runtime::{
         CohortStoreState, HerdTelemetryState, IntensificationKnowledgeState,
@@ -2298,7 +2418,7 @@ mod tests {
         window.snapshot.herds[0].per_worker_biomass = 40.0;
         // A defense the roster's spear clears (the saturated fixture's herd is armoured).
         window.snapshot.herds[0].defense = 5.0;
-        let demands = specialist.outfit_demands(&window, &plan, &memory(), own_band(&window));
+        let demands = specialist.outfit_demands(&window, &memory(), own_band(&window), None);
         assert!(
             demands
                 .iter()
@@ -2341,12 +2461,7 @@ mod tests {
     #[test]
     fn an_open_window_asks_for_baskets_for_the_cluster_and_spears_for_the_rest() {
         let view = a_band_at_its_window(5.0);
-        let demands = food().outfit_demands(
-            &view,
-            &plan_with_food_share(1.0),
-            &memory(),
-            own_band(&view),
-        );
+        let demands = food().outfit_demands(&view, &memory(), own_band(&view), None);
         let asked: Vec<(String, u32, f32)> = demands
             .iter()
             .map(|d| (d.resource.to_string(), d.amount, d.priority))
@@ -2361,12 +2476,7 @@ mod tests {
         assert!(demands.iter().all(|d| d.band == BAND && d.by_tick == TICK));
         // The herd too tough for a fresh spear: every hand asks for a basket.
         let tough = a_band_at_its_window(40.0);
-        let demands = food().outfit_demands(
-            &tough,
-            &plan_with_food_share(1.0),
-            &memory(),
-            own_band(&tough),
-        );
+        let demands = food().outfit_demands(&tough, &memory(), own_band(&tough), None);
         assert_eq!(
             demands
                 .iter()
@@ -2386,24 +2496,193 @@ mod tests {
             ..Default::default()
         });
         heavy.snapshot.herds[0].body_mass = 300.0;
-        let demands = food().outfit_demands(
-            &heavy,
-            &plan_with_food_share(1.0),
-            &memory(),
-            own_band(&heavy),
-        );
+        let demands = food().outfit_demands(&heavy, &memory(), own_band(&heavy), None);
         assert_eq!(demands[1].resource.to_string(), format!("kit:{HUNT_KIT}"));
         // No window: nothing asked.
         let mut closed = a_band_at_its_window(5.0);
         closed.snapshot.populations[0].loadout_window = None;
         assert!(food()
-            .outfit_demands(
-                &closed,
-                &plan_with_food_share(1.0),
-                &memory(),
-                own_band(&closed)
-            )
+            .outfit_demands(&closed, &memory(), own_band(&closed), None)
             .is_empty());
+    }
+
+    // ---- the hoe estimate ----------------------------------------------------------------------
+
+    /// A patch site at `tile` sustaining `hands` at `food` a turn; `tended_food` and its hoed
+    /// keepers say whether it can climb.
+    fn patch_site(tile: Tile, food: f32, hands: u32, tended_food: f32, keepers: u32) -> Site {
+        Site {
+            x: tile.x,
+            y: tile.y,
+            herd_id: None,
+            reach: WORK_RANGE,
+            sustained_food: food,
+            sustained_hands: hands,
+            tended_food,
+            tended_hands: hands + keepers,
+            tended_hands_hoed: hands + keepers,
+            tended_keepers_hoed: keepers,
+            field_food: 0.0,
+            field_hands: 0,
+            field_hands_hoed: 0,
+            kit_needed: None,
+            kit_units_held: None,
+        }
+    }
+
+    /// A planned band standing on `tile` claiming `claimed` of `sites`, with `hands`.
+    fn planned(tile: Tile, sites: &[Site], claimed: Vec<usize>, hands: u32) -> PlannedBand {
+        let baskets = claimed
+            .iter()
+            .map(|&index| sites[index].sustained_hands)
+            .sum();
+        let food = claimed
+            .iter()
+            .map(|&index| sites[index].sustained_food)
+            .sum();
+        PlannedBand {
+            x: tile.x,
+            y: tile.y,
+            sites: claimed,
+            hands,
+            people: hands * 30 / 17,
+            food,
+            tended_food: food,
+            field_food: food,
+            nearest_planned_distance: None,
+            baskets,
+            hunt_kits: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The reading for `band` over `sites` with `bands` planned, classified `Stay` with that
+    /// shape as every covering — what a fixture hands the outfit where the composite hands the
+    /// turn's reading.
+    fn shaped(view: &SeatView, sites: Vec<Site>, bands: Vec<PlannedBand>) -> BandGround {
+        let band = own_band(view);
+        let candidates: Vec<Tile> = bands.iter().map(PlannedBand::tile).collect();
+        let reading = Reading::from_sites(
+            view.grid(),
+            band_tile(band),
+            band.size,
+            band.working_age,
+            (band.founding_min_workers, band.founding_parent_min_workers),
+            band.food_consumption / band.size.max(1) as f32,
+            sites,
+            candidates,
+        );
+        let people: u32 = bands.iter().map(|planned| planned.people).sum();
+        let food: f32 = bands.iter().map(|planned| planned.food).sum();
+        let shape = Shape {
+            people_fed: reading.people_fed(food),
+            people_fed_tended: reading.people_fed(food),
+            people_fed_field: reading.people_fed(food),
+            people_uncovered: band.size.saturating_sub(people),
+            move_target: None,
+            bands,
+        };
+        let classified = Classified {
+            kind: StartKind::Stay,
+            stay: shape.clone(),
+            local: shape.clone(),
+            far: shape.clone(),
+            visible: shape,
+            move_target: None,
+            around_target: None,
+        };
+        BandGround {
+            reading,
+            classified,
+        }
+    }
+
+    /// Beside the value walk's kits, the hoe estimate: the shape's climbable patch's 2 hoed
+    /// keepers plus the 4-hand founding crew, one hoe each — 6 bone, 12 fibre, and a craft of 6
+    /// timed from the lesson (20 practice over 2 worked patches = 10 turns) less the bench time
+    /// (6 × 5 work at 0.5 a turn = 60 turns, so now) — which the orchestrator declines: nothing
+    /// crafts. A shape with no climbable patch, or no reading at all, posts the kits alone.
+    #[test]
+    fn an_open_window_posts_the_hoe_estimate_beside_the_kits_and_the_craft_is_declined() {
+        use crate::board::{DemandState, Entry, Grant};
+        use crate::orchestrator::constant::{ConstantStance, DECLINED_NO_CRAFTER};
+        use crate::orchestrator::Orchestrator;
+        let mut view = a_band_at_its_window(5.0);
+        view.snapshot.opening_loadout.pickable_materials =
+            vec!["bone".to_owned(), "fibre".to_owned()];
+        // No pre-fill on this fixture: the line is the estimate's alone.
+        view.snapshot.opening_loadout.material_defaults.clear();
+        let sites = vec![
+            patch_site(NEAR_PATCH, 3.0, 3, 8.0, 2),
+            patch_site(RICH_PATCH, 2.0, 2, 0.0, 0),
+        ];
+        let bands = vec![planned(HERE, &sites, vec![0, 1], 6)];
+        let ground = shaped(&view, sites, bands);
+        let demands = food().outfit_demands(&view, &memory(), own_band(&view), Some(&ground));
+        let asked: Vec<(String, u32, f32)> = demands
+            .iter()
+            .map(|d| (d.resource.to_string(), d.amount, d.priority))
+            .collect();
+        assert_eq!(
+            asked,
+            vec![
+                ("kit:gathering".to_owned(), 16, DEMAND_PRIORITY_GATHERING),
+                (format!("kit:{HUNT_KIT}"), 1, DEMAND_PRIORITY_HUNTING),
+                ("material:bone".to_owned(), 6, DEMAND_PRIORITY_HOES),
+                ("material:fibre".to_owned(), 12, DEMAND_PRIORITY_HOES),
+                (format!("craft:hoes@t{TICK}"), 6, DEMAND_PRIORITY_HOES),
+            ]
+        );
+        assert!(demands.iter().all(|d| d.band == BAND && d.by_tick == TICK));
+        // The orchestrator: the kits and the materials are granted, the craft is declined.
+        let entries: Vec<Entry> = demands
+            .iter()
+            .cloned()
+            .map(|demand| Entry {
+                demand,
+                posted_tick: TICK,
+                state: DemandState::Posted,
+            })
+            .collect();
+        let borrowed: Vec<&Entry> = entries.iter().collect();
+        let profile = AiProfiles::builtin().profile("forager").unwrap().clone();
+        let mut orchestrator = ConstantStance::new(&[SPECIALIST_FOOD], 1, 0.0);
+        let window = view.snapshot.populations[0].loadout_window.clone().unwrap();
+        let outfit = orchestrator.outfit(&view, &profile, own_band(&view), &window, &borrowed);
+        assert_eq!(
+            outfit.kits,
+            vec![(FORAGE_KIT.to_owned(), 16), (HUNT_KIT.to_owned(), 1)]
+        );
+        assert_eq!(
+            outfit.materials,
+            vec![("bone".to_owned(), 6), ("fibre".to_owned(), 12)]
+        );
+        assert_eq!(outfit.grants[4].1, Grant::declined(DECLINED_NO_CRAFTER));
+        // No climbable patch: the kits alone.
+        let sites = vec![patch_site(NEAR_PATCH, 3.0, 3, 0.0, 0)];
+        let bands = vec![planned(HERE, &sites, vec![0], 6)];
+        let no_climb = shaped(&view, sites, bands);
+        let demands = food().outfit_demands(&view, &memory(), own_band(&view), Some(&no_climb));
+        assert_eq!(demands.len(), 2, "{demands:?}");
+        // The timing: with one worked patch the lesson takes 20 turns, and one hoe (no keepers,
+        // a founding crew of 1) is 10 bench turns — the crafter starts at t+10.
+        let mut one = a_band_at_its_window(5.0);
+        one.snapshot.populations[0].founding_min_workers = 1;
+        let sites = vec![patch_site(NEAR_PATCH, 3.0, 3, 8.0, 0)];
+        let bands = vec![planned(HERE, &sites, vec![0], 6)];
+        let ground = shaped(&one, sites, bands);
+        let demands = food().outfit_demands(&one, &memory(), own_band(&one), Some(&ground));
+        let craft = demands
+            .iter()
+            .find(|d| matches!(d.resource, Resource::Craft { .. }))
+            .expect("a craft demand");
+        assert_eq!(craft.amount, 1);
+        assert_eq!(
+            craft.resource,
+            Resource::Craft {
+                item: "hoes".to_owned(),
+                start_tick: TICK + 20 - 10,
+            }
+        );
     }
 
     // ---- rule 5a: hold the ground ------------------------------------------------------------
@@ -4039,7 +4318,8 @@ mod tests {
             })
         );
         assert_eq!(proposal.cost.workers, 0, "a split is not labor churn");
-        assert_eq!(proposal.cost.moves, vec![BAND]);
+        assert_eq!(proposal.cost.splits, vec![BAND]);
+        assert!(proposal.cost.moves.is_empty(), "a split is not a walk");
         // Nine hands leave 3 over the parent floor of 6, under the founding floor of 4; not with
         // a split already pending.
         let small = a_view_with(|view| view.snapshot.populations[0].working_age = 9);
@@ -4391,7 +4671,7 @@ mod tests {
         assert_eq!(again.intent, proposal.intent);
         // The whole roster: the child's one proposal is the settle, not an assignment.
         let mut specialist = food();
-        let proposals = specialist.propose(&view, &plan, &memory);
+        let proposals = specialist.propose(&view, &plan, &memory, &GroundReadings::default());
         let for_child: Vec<&str> = proposals
             .proposals
             .iter()
@@ -4720,7 +5000,7 @@ mod tests {
         let view = a_working_band(STOCK);
         let plan = plan_with_food_share(1.0);
         let mut specialist = food();
-        let proposals = specialist.propose(&view, &plan, &memory());
+        let proposals = specialist.propose(&view, &plan, &memory(), &GroundReadings::default());
         let reasons: Vec<&str> = proposals
             .proposals
             .iter()

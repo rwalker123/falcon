@@ -119,8 +119,12 @@ fn a_scripted_sim_ai_plays_a_seat_over_the_real_sockets() {
 
 /// **One demand round-trips posted → planned → fulfilled** (`docs/plan_ai_driver.md` §11 row 7):
 /// the utility seat outfits its band on the first turn from the specialists' demands, the server
-/// refuses nothing, and the band's frame after the first advance carries the kit the decisions
-/// log says was sent.
+/// refuses nothing, and the frame after the first advance carries the kit the decisions log says
+/// was sent — **summed over the band and every band it split off**. On this harness world
+/// slice A's site-sized *split to feed* fires at tick 1, and the splinter's outfitting window
+/// takes its proportional share of the parent's grant (`fission.md`): a transfer inside the
+/// faction, not a loss, so the whole family is what holds the grant. With no split the family is
+/// the parent alone and the reading is the old one.
 #[test]
 fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
     let server = start_server("ai_seat_outfit", UTILITY_PORT_BASE, None);
@@ -232,11 +236,21 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
         claim.error
     );
     let after = rival.full_frame_for(server.ports.stream, claim.seat_token);
-    let cohort = after
+    assert!(
+        after
+            .populations
+            .iter()
+            .any(|cohort| cohort.band_id == band),
+        "the outfitted band is still in the world"
+    );
+    // The family: the outfitted band and every resident band of its faction — a splinter of
+    // this turn stands on the parent's tile carrying its share of the grant.
+    let family: Vec<_> = after
         .populations
         .iter()
-        .find(|cohort| cohort.band_id == band)
-        .expect("the outfitted band is still in the world");
+        .filter(|cohort| cohort.faction == RIVAL_SEAT && !cohort.is_expedition)
+        .collect();
+    let family_ids: Vec<u64> = family.iter().map(|cohort| cohort.band_id).collect();
     for (kit_id, count) in granted_kits {
         let kit = after
             .kits
@@ -244,15 +258,15 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
             .find(|kit| kit.id == kit_id)
             .unwrap_or_else(|| panic!("the roster has no kit `{kit_id}`"));
         for item in &kit.item_ids {
-            let held: u32 = cohort
-                .equipment_batches
+            let held: u32 = family
                 .iter()
+                .flat_map(|cohort| cohort.equipment_batches.iter())
                 .filter(|batch| &batch.item_id == item)
                 .map(|batch| batch.count)
                 .sum();
             assert!(
                 held >= count,
-                "band {band} holds {held} `{item}` for {count} `{kit_id}` granted\n--- sim_ai log ---\n{}",
+                "bands {family_ids:?} hold {held} `{item}` for {count} `{kit_id}` granted to band {band}\n--- sim_ai log ---\n{}",
                 log_tail(&ai.log_path)
             );
         }

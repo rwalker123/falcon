@@ -21,8 +21,11 @@
 //! names the first that feeds the whole population. It is a pure function of the reading, so the
 //! bench reads it off the first observation to say what kind of start each seed is.
 //!
-//! Nothing here decides anything yet: `Food` and `Land` run their rules as before, and the
-//! instruments publish the reading beside them.
+//! **It is read once per own band per turn** ([`read_all`], from the composite's `observe`) and the
+//! same [`BandGround`] is handed to `Food` and `Land` and published by the observation, so what a
+//! rule reads and what the record shows are one reading. What consumes it today: `Food`'s hoe
+//! estimate (the shape's climbable patch and its worked patch count) and `Land`'s move-everyone
+//! target on a `MoveAll` kind; the kit walk and the split rule do not.
 
 use std::collections::BTreeMap;
 
@@ -93,6 +96,10 @@ pub struct Site {
     pub tended_hands: u32,
     /// The same with the keepers holding hoes ([`HOE_BUILD_WORK_PER_WORKER`]).
     pub tended_hands_hoed: u32,
+    /// **The keeping crew alone, hoed** — the hands that hold the tended rung's bill with a hoe
+    /// each, which is what the outfit's hoe estimate counts (the take crew gathers and needs
+    /// none). `0` on a herd and where no plant can climb.
+    pub tended_keepers_hoed: u32,
     /// The Field rung's twin, off `FloraShareInfo::sow_payoff`; `0` where `sow_site_refusal`
     /// names a reason, on a herd, and where no plant can climb.
     pub field_food: f32,
@@ -257,6 +264,59 @@ impl Classified {
     pub fn move_target_tile(&self) -> Option<Tile> {
         self.move_target.map(|(x, y)| Tile::new(x, y))
     }
+
+    /// **The shape the kind was read off**: the band's own hex for `Stay`, the near ring for
+    /// `SplitLocal`, the far ring for `SplitFar`, the near ring around the move target for
+    /// `MoveAll`, and the far ring for `Short` (the best the band can reach from where it stands
+    /// when nothing feeds everyone) — what the hoe estimate reads its patches off.
+    pub fn shape(&self) -> &Shape {
+        match self.kind {
+            StartKind::Stay => &self.stay,
+            StartKind::SplitLocal => &self.local,
+            StartKind::SplitFar | StartKind::Short => &self.far,
+            StartKind::MoveAll => self.around_target.as_ref().unwrap_or(&self.far),
+        }
+    }
+}
+
+/// **One band's reading for this turn**: the reading and its classification, taken once in the
+/// composite's `observe` and handed to every specialist and to the observation record alike.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BandGround {
+    pub reading: Reading,
+    pub classified: Classified,
+}
+
+impl BandGround {
+    /// The shape the start kind was read off ([`Classified::shape`]).
+    pub fn shape(&self) -> &Shape {
+        self.classified.shape()
+    }
+}
+
+/// The readings of every own band this turn, by band id.
+pub type GroundReadings = BTreeMap<u64, BandGround>;
+
+/// **Read the ground for every own band of `faction`** — the composite's per-turn reading.
+pub fn read_all(
+    view: &SeatView,
+    memory: &SeatMemory,
+    faction: u32,
+    levers: &GroundLevers,
+) -> GroundReadings {
+    view.own_bands(faction)
+        .map(|band| {
+            let reading = Reading::read(view, memory, band);
+            let classified = reading.classify(levers);
+            (
+                band.band_id,
+                BandGround {
+                    reading,
+                    classified,
+                },
+            )
+        })
+        .collect()
 }
 
 /// `ceil(amount / per)` as a crew; `0` when either is nothing.
@@ -766,6 +826,11 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
     };
     let per_turn = patch.build_work_per_worker_turn;
     let hoed = per_turn + HOE_BUILD_WORK_PER_WORKER;
+    let tended_keepers_hoed = if tended_food > 0.0 {
+        crew_for(patch.cultivation_upkeep_demand, hoed)
+    } else {
+        0
+    };
     Site {
         x: patch.x,
         y: patch.y,
@@ -778,6 +843,7 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
             + crew_for(patch.cultivation_upkeep_demand, per_turn),
         tended_hands_hoed: crew_for(tended_food, rate)
             + crew_for(patch.cultivation_upkeep_demand, hoed),
+        tended_keepers_hoed,
         field_food,
         field_hands: crew_for(field_food, rate) + crew_for(patch.field_upkeep_demand, per_turn),
         field_hands_hoed: crew_for(field_food, rate) + crew_for(patch.field_upkeep_demand, hoed),
@@ -803,6 +869,7 @@ fn herd_site(view: &SeatView, band: &PopulationCohortState, herd: &HerdTelemetry
         tended_food: 0.0,
         tended_hands: 0,
         tended_hands_hoed: 0,
+        tended_keepers_hoed: 0,
         field_food: 0.0,
         field_hands: 0,
         field_hands_hoed: 0,
@@ -847,6 +914,7 @@ mod tests {
             tended_food: food * 2.0,
             tended_hands: crew_for(food * 2.0, rate) + 1,
             tended_hands_hoed: crew_for(food * 2.0, rate) + 1,
+            tended_keepers_hoed: 1,
             field_food: food * 4.0,
             field_hands: crew_for(food * 4.0, rate) + 2,
             field_hands_hoed: crew_for(food * 4.0, rate) + 1,
@@ -1054,6 +1122,7 @@ mod tests {
             tended_food: 0.0,
             tended_hands: 0,
             tended_hands_hoed: 0,
+            tended_keepers_hoed: 0,
             field_food: 0.0,
             field_hands: 0,
             field_hands_hoed: 0,

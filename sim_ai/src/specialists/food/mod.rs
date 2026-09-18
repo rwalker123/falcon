@@ -53,6 +53,7 @@ use tracing::debug;
 
 use super::{Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_FOOD};
 use crate::geometry::Tile;
+use crate::ground::GroundReadings;
 use crate::orchestrator::{Alarm, AlarmKind, Plan};
 use crate::profile::FoodFloors;
 use crate::view::{band_tile, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
@@ -446,8 +447,16 @@ impl Specialist for Food {
 
     /// The seven rules per own band, in the table's order. Each yields at most one proposal per
     /// band; the arbiter, ranking by goal gap closed, keeps every one whose claims — the labor
-    /// rows it sets and the band's move (`Cost::claimed`) — no higher-ranked proposal has taken.
-    fn propose(&mut self, view: &SeatView, plan: &Plan, memory: &SeatMemory) -> Proposals {
+    /// rows it sets, the band's move, its split (`Cost::claimed`) — no higher-ranked proposal has
+    /// taken. `ground` is the turn's land reading per band (`ground::read_all`); only the outfit's
+    /// hoe estimate reads it — the rules do not consume it.
+    fn propose(
+        &mut self,
+        view: &SeatView,
+        plan: &Plan,
+        memory: &SeatMemory,
+        ground: &GroundReadings,
+    ) -> Proposals {
         let mut out = Proposals {
             proposals: Vec::new(),
             alarm: self.alarm(view),
@@ -455,7 +464,7 @@ impl Specialist for Food {
         };
         for band in view.own_bands(self.faction) {
             out.demands
-                .extend(self.outfit_demands(view, plan, memory, band));
+                .extend(self.outfit_demands(view, memory, band, ground.get(&band.band_id)));
             // **The plan in force**: the band's book plus every change rules 1–5 propose this
             // turn, which is what *draw down to survive* projects.
             let (assign, carried) = self.assess_income(view, plan, memory, band);
@@ -734,12 +743,17 @@ pub(crate) mod tests {
     fn the_pass_through_plan_proposes_nothing_from_any_rule() {
         let mut view = a_view();
         view.snapshot.populations[0].turns_of_food = 2.0;
-        let proposals = food().propose(&view, &Plan::pass_through(TICK), &memory());
+        let proposals = food().propose(
+            &view,
+            &Plan::pass_through(TICK),
+            &memory(),
+            &GroundReadings::default(),
+        );
         assert!(proposals.proposals.is_empty(), "{:?}", proposals.proposals);
         // Budget without goals is the same silence.
         let mut plan = plan_with_food_share(1.0);
         plan.goals.clear();
-        let proposals = food().propose(&view, &plan, &memory());
+        let proposals = food().propose(&view, &plan, &memory(), &GroundReadings::default());
         assert!(proposals.proposals.is_empty(), "{:?}", proposals.proposals);
     }
 }
