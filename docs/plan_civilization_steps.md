@@ -84,13 +84,15 @@ Belief is not a resource you spend. It is a value a **tile** accrues (from death
 gatherings held there) that changes what the band will tolerate. It needs no new subsystem because
 two channels already move people:
 
-- **Leaving costs grievance.** A band that walks away from its dead takes a grievance hit scaled by
-  how much is in the ground. The numbers say go; the people say stay. Grievance is already the
-  channel that drives fission drift, so one lever does both jobs.
+- **Leaving costs morale.** A band that walks away from its dead carries a negative morale term
+  scaled by how much is in the ground. The numbers say go; the people say stay. Morale already
+  drives discontent, productivity, migration and grievance, so one lever does every job.
 - **Standing on it raises the cap.** Above the cohesion cap (150 in the video; a config lever for
   us) a band loses people to the surroundings. Belief on the tile you stand on lifts that cap. That
   is how a cluster of local bands around a site becomes a settlement larger than any one band,
   instead of a band with satellites. Writing (step 7) is the second cap-raiser, much later.
+
+The mechanism for both is in "Belief and cohesion" below.
 
 Food stays the keeper of whether you *can* stay. Belief becomes the keeper of whether you *want*
 to, and of whether the place can hold you once you do.
@@ -232,6 +234,79 @@ band's egalitarian pressure resists until the surplus overrides it. We carry per
 and stance vectors in The Telling; that is enough to say *a stored surplus above some level creates a
 leader role, and grievance pushes back*. Not designed further.
 
+## Belief and cohesion (leaning)
+
+How belief becomes something the player feels. Three facts about the existing code and manual
+shape it:
+
+- **Religion is already a trait, not a system.** The manual (§7c) puts it on the culture axes —
+  Secular↔Devout, Rationalist↔Mystical, Syncretic↔Purist — with sect mechanics as event packs.
+  That stands. Belief is not a faith bar.
+- **Morale has empty slots waiting.** `docs/plan_civ_wellbeing.md` reserved `culture`, `crowding`
+  and `leadership` as morale contributors; nothing fills them. Morale already flows into
+  productivity, migration and grievance, and the contributor list *is* the itemized breakdown the
+  player sees.
+- **Shedding along routes already exists.** `advance_population_migration` sends discontented
+  people to the best same-faction band within reach (`.claude/rules/core_sim/campaign.md`,
+  Layer 3b). The lineage and cohesion work feeds it; it does not build it.
+
+### Belief is a property of a place
+
+A tile accrues belief from three sources, in the order the contact chain gives them:
+
+1. **Deaths** while a band stands there (the cemetery — evidence of returning).
+2. **Gatherings** held there — the contact event from the lineage model.
+3. **A monument** — a work-costed improvement whose output is belief, not food. The Göbekli Tepe
+   move: it comes *before* walls (step 6), and it is the first improvement in the catalog with no
+   yield, which is a new kind of thing for the catalog.
+
+Belief does not decay. An abandoned place keeps its dead.
+
+### Cohesion is a property of a group
+
+A co-located group — a band, or the cluster on one site — has a cohesion ceiling (the video's
+~150; config). Belief on the tile it stands on raises it. This is the second row of the ceiling
+ladder, and it is soft: nothing stops at 150, the leak starts there.
+
+### What belief does, through seams that exist
+
+| Effect | Seam | What the player sees |
+|---|---|---|
+| Standing on or within reach of your belief is a positive morale term; being away is a negative one, scaled by how much is there | the reserved `culture` morale contributor | "far from the ancestors" on the morale breakdown |
+| Above the cohesion ceiling, morale falls; belief on the tile raises the ceiling | the reserved `crowding` morale contributor | "crowded" on the breakdown; people leaving for a connected band |
+| Honouring the dead and gathering push Devout and Traditionalist (the manual already names memorialization and ritual authority on those axes) | culture trait vector | The Telling's `sacred_secular` stance reads that axis today |
+| Belief is an input to the tether beside stored food and improvements | `SedentarizationScore` | the `roam_settle` stance, the settle prompts |
+
+Nothing new reaches the player directly. Belief changes morale, morale does what it already does,
+and the breakdown names the cause.
+
+### The gathering is detected, not commanded
+
+**The sim detects bands meeting.** When two bands of a breeding population come within contact
+range, that is a gathering: lines merge, the tile gains belief, and the event goes to The Telling
+and the event log, with a turn-orb message the way a discovery is announced. There is no gather
+command. The player causes it by moving bands, and learns it happened the way they learn anything
+else the world did.
+
+### Gathering is where culture converges
+
+The culture module already has layer-drift meters, tension and schism (`culture.rs`;
+manual §7c "Divergence & Conflict"). Two bands sharing a sacred place **converge** their local
+layers. A far band that stops gathering **diverges**, and hard divergence is already defined as
+splitting into a new faction. That is the cultural drift a far band undergoes, and it is the same
+machinery as the fission rule's independence, fed by the same missing contact.
+
+### The decisions it creates
+
+- **Where to stand** — the belief tile or the richer patch; morale against food.
+- **Whether to walk to the gathering** — turns and depletion for contact, belief and convergence.
+- **Whether to spend labor on a monument** that feeds nobody.
+- **Whether a splinter keeps returning.**
+
+### Left out on purpose
+
+A separate religion subsystem; prophets or priests as units; any hard cap on cohesion.
+
 ## One hunt verb (leaning)
 
 ### Why the current shape exists
@@ -312,19 +387,16 @@ already do, and the first would have to be special-cased.
 
 ## Open questions
 
-- Belief as a tile value: what accrues it (deaths, gatherings, time), what decays it, and whether it
-  is per-faction or per-place.
-- The lineage levers: `L`, `K`, contact range; whether a gathering is a proximity event or a
-  command; whether lines ever regrow in a long-separated group.
+- Belief as a tile value: whether it is per-faction or per-place (another faction's dead on your
+  tile), and how much each source adds.
+- The lineage levers: `L`, `K`, contact range; whether lines ever regrow in a long-separated group.
 - Shedding with no route: what happens to people leaving a truly isolated group above its ceiling
   (a wild/independent cohort? deaths? nothing until a route exists?).
-- Grievance on leaving the dead: whether it survives beside the ceiling leak, and if so its scale
-  and whether it is a one-time hit or a standing term while away.
+- The away-from-belief morale term: its scale, and whether it reads distance or only presence.
 - The population-genetics numbers (50/500, ~500 mating networks, founder-group histories): verify
   before the spec leans on them.
-- The gathering place: is it a site tag on the map (the wondrous-sites seam), a built improvement,
-  or an event? Who can contribute? With one faction until #513, "several bands" means your local
-  bands.
+- The monument in the improvement catalog: the first improvement with no yield — what its
+  `labor_draw` and decay mean for a thing that produces belief.
 - Hunting: *follow herd* as a resident-band order; whether `drop_off_within_tiles` survives or
   collapses into `reach_tiles`; which of the two "who eats" answers.
 - Why moving never paid: measure it before touching depletion tuning.
