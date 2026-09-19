@@ -37,14 +37,9 @@ use crate::profile::AiProfile;
 use crate::specialists::food::ledger::{regrowth_at, BEST_FLOOR};
 use crate::specialists::food::{
     foreign_band_at, herd_kit_id, is_walkable, kit_units_held, patch_per_worker_yield,
-    sustained_hands, workable_patch_at, Climb, Food,
+    sustained_hands, workable_patch_at, Climb, Food, HOE_BUILD_WORK_PER_WORKER,
 };
 use crate::view::{band_tile, SeatMemory, SeatView};
-
-/// **What a hoe adds to one keeper's work per turn** — `equipment.json` → `hoes`, tier `flint`,
-/// the `build_work` effect's `equipped` value on the `plant` branch (`0.5`); the tillage kit is
-/// what an `agriculture` pool holds. Restated: this crate cannot link the server's config.
-pub const HOE_BUILD_WORK_PER_WORKER: f32 = 0.5;
 
 /// **The levers the reading is shaped by** — the profile's, carried through the brain's lens so
 /// the observation reads the same shape the brain would.

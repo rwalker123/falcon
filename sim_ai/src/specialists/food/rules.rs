@@ -101,31 +101,166 @@ pub(super) const DEMAND_PRIORITY_HOES: f32 = 0.6;
 const GATHERING_KIT_ID: &str = "gathering";
 
 // ---- The hoe estimate's terms, restated in one place: this crate cannot link the server's
-// config, and the server's values are the authority.
-/// The tillage kit's recipe id (`recipes.json` → `hoes`), the item a `craft` demand names.
+// config, and the server's values are the authority. Every one is pinned to the shipped JSON by
+// `config_pins::the_hoe_constants_match_the_shipped_config` below (a file include, not a crate
+// link), so a retune of any key fails a test here rather than silently mis-sizing the estimate.
+/// The tillage kit's recipe id (`recipes.json` → `recipes.hoes`), the item a `craft` demand
+/// names. Pinned by `config_pins`.
 const HOES_RECIPE_ID: &str = "hoes";
-/// One hoe's bone (`recipes.json` → `hoes.inputs[material == "bone"].amount`, `1`).
+/// One hoe's bone (`recipes.json` → `recipes.hoes.inputs[material == "bone"].amount`, `1`).
+/// Pinned by `config_pins`.
 const HOE_RECIPE_BONE: u32 = 1;
-/// One hoe's fibre (`recipes.json` → `hoes.inputs[material == "fibre"].amount`, `2`).
+/// One hoe's fibre (`recipes.json` → `recipes.hoes.inputs[material == "fibre"].amount`, `2`).
+/// Pinned by `config_pins`.
 const HOE_RECIPE_FIBRE: u32 = 2;
-/// One hoe's bench work in worker-turns (`recipes.json` → `hoes.work`, `5`).
+/// One hoe's bench work in worker-turns (`recipes.json` → `recipes.hoes.work`, `5`). Pinned by
+/// `config_pins`.
 const HOE_RECIPE_WORK: f32 = 5.0;
 /// What a worker-turn at the bench is worth (`recipes.json` → `crafting.progress_per_worker_turn`,
-/// `1.0`).
+/// `1.0`). Pinned by `config_pins`.
 const CRAFT_PROGRESS_PER_WORKER_TURN: f32 = 1.0;
-/// The bare hand's craft speed on the hoes' bench material (`materials.json` → `bone`
-/// `hand_working.rate`, `0.5` — the hoes read bone's `density`, so bone is the bench material
-/// and its rate applies with no tool).
+/// The bare hand's craft speed on the hoes' bench material (`materials.json` →
+/// `materials.bone.hand_working.rate`, `0.5` — the hoes read bone's `density`, so bone is the
+/// bench material and its rate applies with no tool). Pinned by `config_pins`.
 const BARE_HAND_CRAFT_RATE: f32 = 0.5;
 /// The crafter crew the estimate is timed for: one hand at the bench.
 const HOE_CRAFT_CREW: u32 = 1;
 /// What the cultivation lesson costs in practice units (`intensification_ladder.json` →
-/// `knowledge.lesson_costs.cultivation`, `20`).
+/// `knowledge.lesson_costs.cultivation`, `20`). Pinned by `config_pins`.
 const CULTIVATION_LESSON_COST: f32 = 20.0;
 /// What one worked turn of one source is worth in practice units
 /// (`intensification_ladder.json` → `knowledge.learn_rate`, `1.0`) — charged once per source
-/// per turn, so the shape's patch sites each teach it.
+/// per turn, so the shape's patch sites each teach it. Pinned by `config_pins`.
 const LADDER_LEARN_RATE: f32 = 1.0;
+/// **What a hoe adds to one keeper's work per turn** — `equipment.json` → `items.hoes`, tier
+/// `flint`, the `build_work` effect's `equipped` value on the `plant` branch (`0.5`); the tillage
+/// kit is what an `agriculture` pool holds. Read by `ground.rs` for every `*_hoed` crew figure.
+/// Pinned by `config_pins`.
+pub(crate) const HOE_BUILD_WORK_PER_WORKER: f32 = 0.5;
+/// The tillage kit's tier whose `build_work` effect [`HOE_BUILD_WORK_PER_WORKER`] restates
+/// (`equipment.json` → `items.hoes.tiers[id == "flint"]`).
+#[cfg(test)]
+const HOE_TIER_ID: &str = "flint";
+
+/// **The hoe estimate's constants are the server's shipped config, held to it by a file include**
+/// — the same rule `bench/mod.rs` pins `SHIPPED_CONFIG` and `MAP_SIZES` by: this crate cannot
+/// link `core_sim`, so each JSON is embedded at build time by relative path and parsed as
+/// `serde_json::Value`. One assertion per constant, each naming the JSON path it reads, so the
+/// failure says which key was retuned.
+#[cfg(test)]
+mod config_pins {
+    use serde_json::Value;
+
+    use super::*;
+
+    const RECIPES: &str = include_str!("../../../../core_sim/src/data/recipes.json");
+    const MATERIALS: &str = include_str!("../../../../core_sim/src/data/materials.json");
+    const LADDER: &str = include_str!("../../../../core_sim/src/data/intensification_ladder.json");
+    const EQUIPMENT: &str = include_str!("../../../../core_sim/src/data/equipment.json");
+
+    fn parse(name: &str, text: &str) -> Value {
+        serde_json::from_str(text).unwrap_or_else(|err| panic!("{name} parses: {err}"))
+    }
+
+    /// The value at a dotted `path`, panicking with the path when a step is missing.
+    fn at<'a>(root: &'a Value, path: &str) -> &'a Value {
+        let mut here = root;
+        for key in path.split('.') {
+            here = here
+                .get(key)
+                .unwrap_or_else(|| panic!("no `{key}` on the way to `{path}`"));
+        }
+        here
+    }
+
+    fn f64_at(root: &Value, path: &str) -> f64 {
+        at(root, path)
+            .as_f64()
+            .unwrap_or_else(|| panic!("`{path}` is a number"))
+    }
+
+    /// The one element of the array at `path` whose `field` reads `value`.
+    fn element_where<'a>(root: &'a Value, path: &str, field: &str, value: &str) -> &'a Value {
+        at(root, path)
+            .as_array()
+            .unwrap_or_else(|| panic!("`{path}` is an array"))
+            .iter()
+            .find(|entry| entry.get(field).and_then(Value::as_str) == Some(value))
+            .unwrap_or_else(|| panic!("`{path}` has an entry with `{field}` == \"{value}\""))
+    }
+
+    #[test]
+    fn the_hoe_constants_match_the_shipped_config() {
+        let recipes = parse("recipes.json", RECIPES);
+        let hoes = format!("recipes.{HOES_RECIPE_ID}");
+        assert!(
+            at(&recipes, "recipes").get(HOES_RECIPE_ID).is_some(),
+            "recipes.json `{hoes}`: HOES_RECIPE_ID names a shipped recipe"
+        );
+        let bone = element_where(
+            &recipes,
+            &format!("{hoes}.inputs"),
+            "material",
+            MATERIAL_BONE,
+        );
+        assert_eq!(
+            f64_at(bone, "amount"),
+            f64::from(HOE_RECIPE_BONE),
+            "recipes.json `{hoes}.inputs[material == \"{MATERIAL_BONE}\"].amount`: HOE_RECIPE_BONE"
+        );
+        let fibre = element_where(
+            &recipes,
+            &format!("{hoes}.inputs"),
+            "material",
+            MATERIAL_FIBRE,
+        );
+        assert_eq!(
+            f64_at(fibre, "amount"),
+            f64::from(HOE_RECIPE_FIBRE),
+            "recipes.json `{hoes}.inputs[material == \"{MATERIAL_FIBRE}\"].amount`: HOE_RECIPE_FIBRE"
+        );
+        assert_eq!(
+            f64_at(&recipes, &format!("{hoes}.work")),
+            f64::from(HOE_RECIPE_WORK),
+            "recipes.json `{hoes}.work`: HOE_RECIPE_WORK"
+        );
+        assert_eq!(
+            f64_at(&recipes, "crafting.progress_per_worker_turn"),
+            f64::from(CRAFT_PROGRESS_PER_WORKER_TURN),
+            "recipes.json `crafting.progress_per_worker_turn`: CRAFT_PROGRESS_PER_WORKER_TURN"
+        );
+
+        let materials = parse("materials.json", MATERIALS);
+        let bone_rate = format!("materials.{MATERIAL_BONE}.hand_working.rate");
+        assert_eq!(
+            f64_at(&materials, &bone_rate),
+            f64::from(BARE_HAND_CRAFT_RATE),
+            "materials.json `{bone_rate}`: BARE_HAND_CRAFT_RATE"
+        );
+
+        let ladder = parse("intensification_ladder.json", LADDER);
+        assert_eq!(
+            f64_at(&ladder, "knowledge.lesson_costs.cultivation"),
+            f64::from(CULTIVATION_LESSON_COST),
+            "intensification_ladder.json `knowledge.lesson_costs.cultivation`: CULTIVATION_LESSON_COST"
+        );
+        assert_eq!(
+            f64_at(&ladder, "knowledge.learn_rate"),
+            f64::from(LADDER_LEARN_RATE),
+            "intensification_ladder.json `knowledge.learn_rate`: LADDER_LEARN_RATE"
+        );
+
+        let equipment = parse("equipment.json", EQUIPMENT);
+        let tiers = format!("items.{HOES_RECIPE_ID}.tiers");
+        let tier = element_where(&equipment, &tiers, "id", HOE_TIER_ID);
+        let build_work = element_where(tier, "effects", "stat", "build_work");
+        assert_eq!(
+            f64_at(build_work, "equipped"),
+            f64::from(HOE_BUILD_WORK_PER_WORKER),
+            "equipment.json `{tiers}[id == \"{HOE_TIER_ID}\"].effects[stat == \"build_work\"].equipped`: HOE_BUILD_WORK_PER_WORKER"
+        );
+    }
+}
 /// The two materials a hoe is made of, by `materials.json` id.
 const MATERIAL_BONE: &str = "bone";
 const MATERIAL_FIBRE: &str = "fibre";

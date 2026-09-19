@@ -46,7 +46,7 @@ pub mod ledger;
 mod rules;
 mod sources;
 
-pub(crate) use rules::Climb;
+pub(crate) use rules::{Climb, HOE_BUILD_WORK_PER_WORKER};
 
 use sim_runtime::{
     CommandPayload, HerdTelemetryState, LaborAssignmentState, PopulationCohortState,

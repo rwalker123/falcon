@@ -321,8 +321,12 @@ starts `hoes × HOE_RECIPE_WORK (5) / (HOE_CRAFT_CREW (1) × CRAFT_PROGRESS_PER_
 × BARE_HAND_CRAFT_RATE (0.5, bone's `hand_working.rate` — the hoes read bone's `density`, so
 bone is the bench material))` turns before that, never before now. All three at
 `DEMAND_PRIORITY_HOES` (0.6 — after the kits that feed today, before `Land`'s scout). The
-constants are restated in one block at the top of `rules.rs`; the server's config is the
-authority. The orchestrator fulfils the bone and fibre it can from the window's material budget
+constants are restated in one block at the top of `rules.rs` (with `HOE_BUILD_WORK_PER_WORKER`,
+below); the server's config is the authority, and
+`config_pins::the_hoe_constants_match_the_shipped_config` holds every one of them to the shipped
+JSON by `include_str!` of `recipes.json`, `materials.json`, `intensification_ladder.json` and
+`equipment.json` (a file include, not a crate link — the `SHIPPED_CONFIG` rule), so a retune of
+any key fails that test rather than silently mis-sizing the estimate. The orchestrator fulfils the bone and fibre it can from the window's material budget
 (the pre-fill fills what they leave, below) and **declines the craft `no crafter yet`**: nothing
 runs a bench for the seat, so the log carries the ask and its timing and nothing crafts. On the eight Standard bench seeds at t1 every band posts `bone 6, fibre 12,
 craft:hoes ×6` — two hoed keepers on the richest climbable patch plus the founding four.
@@ -882,7 +886,8 @@ comparison *better ground* moves on.
   people, the near ring 18"`, persisting while the reading still names the target. Gated on the
   kind and not on "a target exists and the near ring is short" alone: that looser reading fired
   once on the eight Standard bench seeds, on a band of two at t54 of seed 3 toward ground that fed
-  nobody. `MoveAll` reads on no Standard bench seed but 13, so the rule is inert on the eight.
+  nobody. `MoveAll` reads on no Standard seed at the tick-2 reading (seed 13 read it only under
+  the tick-1 reading with herds priced at the sled's carry), so the rule is inert on the eight.
 
 ⛔ **Two guards on *better ground*, because the margin alone does not stop the oscillation.** On
 bench seed 11 the band walked 20,8 → 18,8 (t12) → 20,8 (t17) → 18,8 (t19), and every arrival
@@ -961,8 +966,9 @@ per-patch quotes are species-blind: they read whatever the patch is already comm
 (usually nothing)"*). Each payoff is a crew-free patch total, so its take crew is `ceil(yield /
 rate)` like the wild one, plus the keeping crew `ceil(*_upkeep_demand /
 build_work_per_worker_turn)` bare-handed and, as a second number, hoed at
-`build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated from `equipment.json`
-→ `hoes`, the tillage kit's `build_work`); `tended_keepers_hoed` is that hoed keeping crew alone
+`build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated in `rules.rs`'s hoe
+block from `equipment.json` → `items.hoes`, the `flint` tier's `build_work` effect, and pinned to
+it by `config_pins`); `tended_keepers_hoed` is that hoed keeping crew alone
 (`0` where no plant can climb), the number the hoe estimate counts — `tended_hands_hoed` includes
 the take crew, who gather and need no hoe. A herd site also carries `kit_needed`
 (`herd_kit_id`), `kit_units_held`, and **`unforecast`** — `true` for a herd the sim has not
