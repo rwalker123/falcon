@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 112
+const EXPECTED_CHECKPOINTS := 120
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -105,6 +105,9 @@ const EXPECTED_EARTHMOVING := 0
 ## The kit the chapter buys, and how many of it.
 const KIT_STALKING := "big_game"
 const KIT_PRESSES := 3
+## …and the SECOND kit, which only the draft state moves — a row the player touches while the one
+## above it stays the sim's, so "the untouched row took the cut" is a claim about a different row.
+const KIT_GATHERING := "gathering"
 ## The roster entry that must NEVER be offered — it grants nothing, which is how the picker knows.
 const KIT_NONE := "none"
 
@@ -197,6 +200,39 @@ const TAKE_SUBTITLE_NEEDLE := "take from"
 const GRANT_METER_NEEDLE := "/ 30 left"
 ## The orb noun a take may never use, for the same reason. Supply left at home is lost by nobody.
 const TAKE_FORBIDDEN_NOUN := "unspent"
+
+# ---- the band whose allocation MOVES under an uncommitted draft ----------------------------------
+
+## ⛔ **ITS OWN BAND, because a draft's survival is a claim about a state nothing else has touched.**
+## Every other band in this chapter has been edited by the states above, so their touched-row sets are
+## already populated and "the untouched row adopted the re-fit" could not be told from "nothing
+## happened". It opens LAST, after every orb claim has been made, and the chapter's closing shut-window
+## push simply omits it.
+const DRAFT_BAND_ENTITY := 6204
+
+## The window it opens on, and the one the sim re-publishes a frame later. **The re-fit is what a
+## split does to the PARENT** (`fission::rebalance_partitioned_grant`): both budgets shrink and the
+## accepted allocation is restated against them, which is the frame that used to wipe the draft.
+const DRAFT_KIT_BUDGET := 10
+const DRAFT_MATERIAL_BUDGET := 14
+const DRAFT_REFIT_KIT_BUDGET := 6
+const DRAFT_REFIT_MATERIAL_BUDGET := 10
+## The published spread, unchanged across the re-fit so the claim is about authorship and not about a
+## number that moved on its own.
+const DRAFT_PUBLISHED_BIG_GAME := 3
+const DRAFT_PUBLISHED_GATHERING := 3
+const DRAFT_BONE := 4
+const DRAFT_FIBRE := 6
+const DRAFT_REFIT_BONE := 2
+const DRAFT_REFIT_FIBRE := 4
+## What the player does to it: two presses on `gathering`, so the draft is a value the published rows
+## do not carry and cannot be arrived at by adopting them.
+const DRAFT_PRESSES := 2
+const DRAFT_GATHERING := DRAFT_PUBLISHED_GATHERING + DRAFT_PRESSES
+## …and what the clamp must then do with the row the player did NOT touch. The re-fit budget is 6, the
+## draft holds 5 of it, so `big_game` comes down from 3 to 1 — **the cut lands on the sim's own
+## suggestion rather than on the pick**, which is the whole ordering rule in `_clamp_order`.
+const DRAFT_REFIT_BIG_GAME := DRAFT_REFIT_KIT_BUDGET - DRAFT_GATHERING
 
 ## The word every retired forfeiture claim was built on — the commit control's old conditional face
 ## and the subtitle's old second clause alike. Asserted ABSENT from the whole card: the unspent
@@ -299,6 +335,7 @@ func run(harness) -> void:
 	await _the_switcher_reaches_the_other_band()
 	await _every_row_names_its_band_and_opens_it()
 	await _an_over_budget_band_is_not_outfitted()
+	await _a_re_published_allocation_keeps_the_draft()
 	_assert_window_shuts()
 
 # ---- the opening state ------------------------------------------------------
@@ -614,6 +651,103 @@ func _band_attention_row(band_id: int) -> Dictionary:
 		if int(row.get(HudAttentionVocab.ATTENTION_PANEL_SUBJECT, HudConst.NO_BAND_ID)) == band_id:
 			return row
 	return {}
+
+## ⛔ **A RE-PUBLISHED ALLOCATION ADOPTS THE SIM'S ROWS AND KEEPS THE PLAYER'S.**
+##
+## Reproduced from a recorded session: a player set kits on a band's card, split the band, and the
+## split frame — which re-fits the PARENT's allocation to its reduced budget, so the published rows
+## genuinely move — silently restored the sim's spread over the draft. `Set out` then sent the
+## allocation the player had just changed. **The player's own commit fires the same branch**, the sim
+## republishing the accepted order, so an edit made between the press and the frame landing went the
+## same way. Nothing on the card or the orb said anything had been lost.
+##
+## The branch itself is right and stays: a card that ignored a moved allocation would draw the
+## pre-split rows against the post-split budget, which is a negative meter reproduced client-side. It
+## is the WIPE that was never the mechanism — the CLAMP is, and this state asserts both halves:
+##
+## - the row the player touched holds their value, which the published rows do not carry;
+## - the row they did not adopts the re-fit and the budget still balances, so the meter cannot go
+##   negative — read off the ORB, whose `over budget` arm is the one reader of the unclamped
+##   remainder;
+## - and the composed ORDER carries the draft, which is the only claim that says the send agrees with
+##   the card.
+##
+## **Its own band** (see `DRAFT_BAND_ENTITY`), and last, so no earlier state's edits are in its state
+## and no orb claim above it sees a fourth row.
+func _a_re_published_allocation_keeps_the_draft() -> void:
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_draft_band(false)])
+	await h._settle()
+	h._assert_hud("loadout/draft — the new band's card stands itself up (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().is_expanded()
+			and _controller().subject_band_id() == _band_id(DRAFT_BAND_ENTITY))
+	for _i in range(DRAFT_PRESSES):
+		_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+		await h._settle()
+	h._assert_hud("loadout/draft — the player's uncommitted draft stands at %d (got %d)"
+			% [DRAFT_GATHERING, _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == DRAFT_GATHERING)
+	# **THE FRAME THAT USED TO EAT IT**: both budgets shrink and the accepted rows are restated.
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_draft_band(true)])
+	await h._settle()
+	h._assert_hud("loadout/draft — the re-published allocation does NOT overwrite the draft (%d)"
+			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING),
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == DRAFT_GATHERING)
+	h._assert_hud("loadout/draft — …and the row the player never touched takes the cut (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING), DRAFT_REFIT_BIG_GAME],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == DRAFT_REFIT_BIG_GAME)
+	# **THE PROPERTY THE WIPE WAS WRITTEN FOR, KEPT.** `over budget` is the one arm that reads the
+	# UNCLAMPED remainder, so a draft carried past a shrunken budget would light it.
+	var row := _band_attention_row(_band_id(DRAFT_BAND_ENTITY))
+	h._assert_hud("loadout/draft — the meter is not negative — the orb says `%s`, never `%s`"
+			% [row.get("label", ""), HudLoadoutVocab.ATTENTION_LABEL_OVER],
+		String(row.get("label", "")) != HudLoadoutVocab.ATTENTION_LABEL_OVER)
+	# **AND THE ORDER AGREES WITH THE CARD.** The rendered steppers and the composed command are two
+	# different claims — the whole defect was a card that looked right and a send that did not.
+	var sent: Array = []
+	var sink := func(payload: Dictionary) -> void: sent.append(payload)
+	h._hud.set_starting_loadout_requested.connect(sink)
+	var commit := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
+	commit.pressed.emit()
+	await h._settle()
+	h._hud.set_starting_loadout_requested.disconnect(sink)
+	var order: Dictionary = sent[0] if not sent.is_empty() else {}
+	h._assert_hud("loadout/draft — the commit carries the draft, not the published spread (%s)"
+			% str(_order_rows(order, "kits", "count")),
+		int(order.get("band_id", HudConst.NO_BAND_ID)) == _band_id(DRAFT_BAND_ENTITY)
+			and _order_rows(order, "kits", "count") == {
+				KIT_GATHERING: DRAFT_GATHERING, KIT_STALKING: DRAFT_REFIT_BIG_GAME})
+	_panel().reopen_pill().pressed.emit()
+	await h._settle()
+	_assert_no_dead_space("draft")
+	await h._save("starting_loadout_draft_kept")
+
+## The band whose allocation MOVES under a draft. `refit` is the second frame: both budgets shrunk and
+## the accepted rows restated against them, which is what a split does to the parent.
+func _draft_band(refit: bool) -> Dictionary:
+	return _band(DRAFT_BAND_ENTITY, {
+		HudLoadoutVocab.OPEN_KEY: true,
+		HudLoadoutVocab.KIT_BUDGET_KEY: DRAFT_REFIT_KIT_BUDGET if refit else DRAFT_KIT_BUDGET,
+		HudLoadoutVocab.MATERIAL_BUDGET_KEY: DRAFT_REFIT_MATERIAL_BUDGET if refit \
+			else DRAFT_MATERIAL_BUDGET,
+		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
+		HudLoadoutVocab.WINDOW_KITS_KEY: [
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DRAFT_PUBLISHED_BIG_GAME},
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_GATHERING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DRAFT_PUBLISHED_GATHERING},
+		],
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "bone",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY:
+					DRAFT_REFIT_BONE if refit else DRAFT_BONE},
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "fibre",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY:
+					DRAFT_REFIT_FIBRE if refit else DRAFT_FIBRE},
+		],
+	})
 
 ## The turn advanced: the sim says every window has shut, and the whole surface goes with it. **The
 ## BANDS are still there** — it is their windows that closed, which is the frame the sim really sends

@@ -129,6 +129,13 @@ const BAND_SEEDED := "seeded"
 ## makes "seeded once" mean *do not clobber a draft* rather than *never look again*: a re-published
 ## allocation that DIFFERS is the sim having moved this band's holdings, and the card must adopt it.
 const BAND_PUBLISHED := "published"
+## ⛔ **THE IDS THE PLAYER HAS MOVED A STEPPER ON, as `id -> true` SETS.** They are what separates the
+## two halves of a re-published allocation: a row the player never touched is the sim's to restate,
+## and a row they did is a DRAFT the card may not overwrite. Written by the two stepper handlers and
+## read only by `_adopt_published`; a press that returns a row to its published value still counts,
+## because a value the player chose is a decision whatever it equals.
+const BAND_TOUCHED_KITS := "touched_kits"
+const BAND_TOUCHED_MATERIALS := "touched_materials"
 
 ## A recipe with no inputs at all cannot be priced against a pile, so the column reads it as
 ## unreachable rather than as infinitely makeable. Nothing in the shipped book is such a recipe; this
@@ -253,6 +260,8 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 		state[BAND_SEEDED] = true
 		state[BAND_KIT_PICKS] = {}
 		state[BAND_MATERIAL_PICKS] = {}
+		state[BAND_TOUCHED_KITS] = {}
+		state[BAND_TOUCHED_MATERIALS] = {}
 		state[BAND_PUBLISHED] = published
 		_seed_band(state, window)
 	elif published != state.get(BAND_PUBLISHED, {}):
@@ -266,11 +275,91 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 		# card last saw, so a delta merely re-stating the same allocation leaves an uncommitted pick
 		# exactly where the player left it — which is the whole reason the seed is once-per-band.
 		state[BAND_PUBLISHED] = published
-		state[BAND_KIT_PICKS] = {}
-		state[BAND_MATERIAL_PICKS] = {}
-		_seed_rows(state, window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
-			window.get(HudLoadoutVocab.WINDOW_KITS_KEY, []))
+		_adopt_published(state, window)
 	_bands[band_id] = state
+
+## ⛔ **ADOPT THE MOVED ALLOCATION WITHOUT DESTROYING THE PLAYER'S DRAFT.**
+##
+## This branch used to CLEAR both pick dictionaries and re-seed from the published rows, which threw
+## away every uncommitted pick on the band whose allocation moved. Reproduced from the recorded
+## session: a player set kits on the parent's card, split the band, and the split frame — which
+## re-fits the parent's allocation to its reduced budget, so `published` genuinely moves — silently
+## restored the sim's rows over the draft. The next `Set out` then sent the allocation the player had
+## just changed, with no sign anywhere that anything had been lost. **A player's own commit fires the
+## same branch**, the sim republishing the accepted order, so an edit made between the press and the
+## frame landing was eaten the same way.
+##
+## The split is by AUTHORSHIP: an untouched row is the sim's to restate and is dropped and re-seeded
+## from the published rows (so a row the sim no longer names goes, which is what keeps the card off
+## the pre-split spread); a TOUCHED row is the player's and is left exactly as they left it.
+##
+## ⛔ **AND THEN IT CLAMPS, which is what the wipe was really for.** The property the branch defends
+## is that the card cannot draw a stale allocation against a shrunken budget — a negative meter
+## reproduced client-side. That is the CLAMP's job, not the wipe's, and the clamps this file already
+## owns do it without costing the player their picks.
+func _adopt_published(state: Dictionary, window: Dictionary) -> void:
+	var touched_kits: Dictionary = state.get(BAND_TOUCHED_KITS, {})
+	var touched_materials: Dictionary = state.get(BAND_TOUCHED_MATERIALS, {})
+	var kit_picks: Dictionary = state[BAND_KIT_PICKS]
+	for kit_variant in kit_picks.keys():
+		if not touched_kits.has(kit_variant):
+			kit_picks.erase(kit_variant)
+	var material_picks: Dictionary = state[BAND_MATERIAL_PICKS]
+	for material_variant in material_picks.keys():
+		if not touched_materials.has(material_variant):
+			material_picks.erase(material_variant)
+	_seed_rows(state, window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
+		window.get(HudLoadoutVocab.WINDOW_KITS_KEY, []), touched_materials, touched_kits)
+	_clamp_picks(state)
+
+## ⛔ **THE WHOLE ORDER, FITTED TO THE WINDOW AS IT NOW STANDS** — the guard that lets a draft survive
+## a re-published allocation. It is the same arithmetic the two stepper handlers clamp a single press
+## with, applied to every row at once: a grant against its two point budgets, a take against the
+## expanded item supply and the per-material supply.
+##
+## **TOUCHED ROWS ARE FITTED FIRST, and that is the whole ordering rule.** A budget that shrank has to
+## take the cut out of something; taking it out of the sim's own suggestions rather than out of the
+## player's picks is what makes this a clamp rather than a quieter version of the wipe.
+func _clamp_picks(state: Dictionary) -> void:
+	var take := _parent_of(state) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
+	var kit_picks: Dictionary = state[BAND_KIT_PICKS]
+	var kit_left := _kit_total(state, take)
+	for kit_variant in _clamp_order(kit_picks, state.get(BAND_TOUCHED_KITS, {})):
+		var kit_id := String(kit_variant)
+		var count := int(kit_picks[kit_variant])
+		# A take's rows are NOT independent — `sled` is used by two kits — so each row is priced
+		# against every OTHER row already fitted, which is exactly `_take_kit_ceiling`.
+		if take:
+			kit_picks[kit_variant] = mini(count, _take_kit_ceiling(state, kit_id))
+			continue
+		var fitted := clampi(count, 0, maxi(kit_left, 0))
+		kit_picks[kit_variant] = fitted
+		kit_left -= fitted
+	var material_picks: Dictionary = state[BAND_MATERIAL_PICKS]
+	var units_left := _material_total(state, take)
+	var supply: Dictionary = state.get(BAND_MATERIAL_SUPPLY, {})
+	for material_variant in _clamp_order(material_picks, state.get(BAND_TOUCHED_MATERIALS, {})):
+		var units := int(material_picks[material_variant])
+		# A take's material cap is PER MATERIAL (the home band's own line), so the per-row clamp is
+		# the one `_material_ceiling` applies and the sum takes care of itself.
+		if take:
+			material_picks[material_variant] = mini(units, int(supply.get(material_variant, 0)))
+			continue
+		var fitted_units := clampi(units, 0, maxi(units_left, 0))
+		material_picks[material_variant] = fitted_units
+		units_left -= fitted_units
+
+## The ids of one pick half, the player's own first. Both halves are walked in this order so a
+## shrinking budget eats the sim's suggestions before it eats a pick.
+func _clamp_order(picks: Dictionary, touched: Dictionary) -> Array:
+	var ordered: Array = []
+	for id_variant in picks.keys():
+		if touched.has(id_variant):
+			ordered.append(id_variant)
+	for id_variant in picks.keys():
+		if not touched.has(id_variant):
+			ordered.append(id_variant)
+	return ordered
 
 ## An accepted-allocation half as `id -> amount`, for the comparison above — a DICT rather than the
 ## published array, so a re-ordered but identical allocation is not read as a change.
@@ -358,7 +447,11 @@ func _seed_band(state: Dictionary, window: Dictionary) -> void:
 ## budget. **The kit half needs no such filter**: the roster it is drawn against is the published
 ## equipment config, and a kit absent from that roster simply renders no row, so an unknown id costs
 ## a dictionary entry nobody reads rather than a phantom control.
-func _seed_rows(state: Dictionary, materials: Variant, kits: Variant) -> bool:
+##
+## `skip_materials` / `skip_kits` name the ids this seed may NOT write — the player's own, on the
+## re-publish path (`_adopt_published`). Empty on the first seed, where nothing has been touched yet.
+func _seed_rows(state: Dictionary, materials: Variant, kits: Variant,
+		skip_materials: Dictionary = {}, skip_kits: Dictionary = {}) -> bool:
 	var seeded := false
 	var material_picks: Dictionary = state[BAND_MATERIAL_PICKS]
 	var kit_picks: Dictionary = state[BAND_KIT_PICKS]
@@ -371,7 +464,8 @@ func _seed_rows(state: Dictionary, materials: Variant, kits: Variant) -> bool:
 				continue
 			var entry: Dictionary = entry_variant
 			var material_id := String(entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, ""))
-			if material_id.is_empty() or not offered.has(material_id):
+			if material_id.is_empty() or not offered.has(material_id) \
+					or skip_materials.has(material_id):
 				continue
 			material_picks[material_id] = int(
 				entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY, 0))
@@ -382,7 +476,7 @@ func _seed_rows(state: Dictionary, materials: Variant, kits: Variant) -> bool:
 				continue
 			var entry: Dictionary = entry_variant
 			var kit_id := String(entry.get(HudLoadoutVocab.KIT_DEFAULT_ID_KEY, ""))
-			if kit_id.is_empty():
+			if kit_id.is_empty() or skip_kits.has(kit_id):
 				continue
 			kit_picks[kit_id] = int(entry.get(HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY, 0))
 			seeded = true
@@ -1054,6 +1148,9 @@ func _on_kit_count_changed(kit_id: String, count: int) -> void:
 		if _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID \
 		else current + kits_left()
 	picks[kit_id] = clampi(count, 0, ceiling)
+	# **THIS ROW IS THE PLAYER'S NOW** — a re-published allocation may restate every other row and
+	# must leave this one alone. See `BAND_TOUCHED_KITS` and `_adopt_published`.
+	(band[BAND_TOUCHED_KITS] as Dictionary)[kit_id] = true
 	render()
 	_push_attention()
 
@@ -1063,6 +1160,8 @@ func _on_material_units_changed(material_id: String, units: int) -> void:
 		return
 	var picks: Dictionary = band[BAND_MATERIAL_PICKS]
 	picks[material_id] = clampi(units, 0, _material_ceiling(band, material_id))
+	# …and its kit twin's reason, one currency over.
+	(band[BAND_TOUCHED_MATERIALS] as Dictionary)[material_id] = true
 	render()
 	_push_attention()
 

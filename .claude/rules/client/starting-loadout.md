@@ -44,12 +44,39 @@ band's last accepted order named, **re-read whenever they CHANGE**.
 > negative meter above, reproduced client-side out of stale state.
 >
 > `_ingest_window` therefore holds the published allocation as last seen (`BAND_PUBLISHED`, compared
-> as `id -> amount` DICTS so a re-ordered but identical list is not read as a change) and re-seeds the
+> as `id -> amount` DICTS so a re-ordered but identical list is not read as a change) and re-reads the
 > picks when it differs. **A delta merely re-stating the same allocation leaves an uncommitted pick
 > exactly where the player left it**, which is what the once-per-band seed was for. The campaign pre-fill is the fallback and belongs to **ONE band, the
 first grant window this world opens**: `openingLoadout`'s kit spread arrives already clamped to *that*
 band's budget, so handing it to a second, smaller grant window would compose an order over its budget,
 and re-clamping it here would be the second clamp the wire's rule forbids (`_prefill_claimed`).
+
+> ### ⛔ …AND THE RE-READ MERGES BY AUTHORSHIP. IT IS THE CLAMP THAT KEEPS THE METER HONEST, NEVER A WIPE
+>
+> That branch used to CLEAR both pick dictionaries and re-seed from the published rows. Reproduced
+> from a recorded session and from the harness: a player set kits on a band's card, split the band,
+> and the split frame — the one that re-fits the parent, so `published` genuinely moves — silently
+> restored the sim's spread over the draft; the next `Set out` sent the allocation the player had
+> just changed. **A player's own commit fires the same branch**, the sim republishing the accepted
+> order, so an edit made between the press and that frame landing went the same way. Neither the card
+> nor the orb can say a pick was lost: the orb's rows are computed from the picks as they now stand,
+> and nothing anywhere records what was last sent.
+>
+> `BAND_TOUCHED_KITS` / `BAND_TOUCHED_MATERIALS` are `id -> true` sets written by the two stepper
+> handlers, and `_adopt_published` splits the re-read on them: an **untouched** row is dropped and
+> re-seeded from the published rows (so a row the sim no longer names goes, which is what keeps the
+> card off the pre-split spread), a **touched** row is the player's and is left exactly as they left
+> it. A press that returns a row to its published value still counts as touched — a value the player
+> chose is a decision whatever it equals.
+>
+> **`_clamp_picks` is then what the wipe was actually for.** It is the two stepper handlers' own
+> arithmetic applied to every row at once — a grant against its two point budgets, a take against
+> `_take_kit_ceiling` and the per-material supply — so a draft carried past a shrunken budget cannot
+> put the meter negative. **Touched rows are fitted FIRST** (`_clamp_order`): a budget that shrank has
+> to take the cut out of something, and taking it out of the sim's own suggestions rather than out of
+> the player's picks is what makes this a clamp rather than a quieter wipe.
+>
+> The first seed (`BAND_SEEDED`) is untouched by any of it, and so is `_prefill_claimed`.
 
 > ### ⛔ A SPLINTER'S CARD OPENS ON ITS DEFAULT TAKE, AND THAT IS WHAT MAKES AN UNTOUCHED COMMIT SAFE
 >
@@ -73,7 +100,7 @@ and re-clamping it here would be the second clamp the wire's rule forbids (`_pre
 | `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two meters, a **band switcher** drawn only while two or more windows are open, an **unconditional** commit control and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits six intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed` / `commit_requested`) and holds no allocation of its own. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — on a take the cap is per ITEM, so one kit row can be exhausted while the next is free. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
 | `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND, every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list, the pre-fills, the craftable ids), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`); relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — twelve frames and one hundred and twelve checkpoints, including the orb's two colours, the no-dead-space bound and the TAKE arc appended after them. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — thirteen frames and one hundred and twenty checkpoints, including the orb's two colours, the no-dead-space bound, the TAKE arc appended after them and, last, the DRAFT state: its own band (nothing above it has touched that state), a pick made, the band's allocation re-published against shrunken budgets, and the claim that the draft survives on the card AND in the composed order while the untouched row takes the cut. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## What the client owns, and what it must not decide
 

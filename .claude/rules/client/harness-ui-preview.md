@@ -1708,9 +1708,10 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Twelve frames and
-one hundred assertions (`EXPECTED_CHECKPOINTS` **112**, RE-MEASURED by raising the const to an
-impossible number and reading `reached` back — frames count too). It ends by publishing SHUT
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Thirteen frames
+and one hundred and seven assertions (`EXPECTED_CHECKPOINTS` **120**, RE-MEASURED by raising the const
+to an impossible number and reading `reached` back — frames count too; the draft state is the last of
+them, worth one frame and seven). It ends by publishing SHUT
 windows, so the surface it stands up is gone before anything appended after it could inherit it.
 
 ⛔ **THE WINDOW RIDES THE COHORT NOW, so the chapter pushes TWO seams in `Main`'s own order**:
@@ -1781,6 +1782,7 @@ Two frames and eleven claims appended after the switcher block, before the shut.
 |---|---|
 | `starting_loadout_orb_bands` | **the reported popover, fixed** — two loadout rows LEADING with different bands (`Brackwater — everything is picked` / `Thornhollow — 3 kits, 4 resources`) where the report showed the same sentence twice, both still wearing `Open ▸` |
 | `starting_loadout_over_budget` | the reported CARD — `-2 / 12 left` and `-6 / 22 left` on one band, which is what the row beside it must not call done |
+| `starting_loadout_draft_kept` | ⛔ **a re-published allocation keeps the pick and re-fits the rest.** The frame the reported loss happened on, staged on the chapter's own fourth band: a pick made, then both budgets shrunk and the accepted rows restated — the touched row still reads 5 where the sim republished 3, the untouched one has come down to 1, and the meter reads `0 / 6 left` rather than negative. The claim that only the ORDER can make rides with it, PNG-less: the composed command carries the draft |
 
 - **The `Open ▸` claim is a PRESS, not a reading.** Both rows wear the affordance whatever it reaches,
   so the row's own button is pressed (`Q.turn_orb_popover_rows` hands the `button` back for exactly
