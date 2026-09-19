@@ -113,7 +113,8 @@ const DEV_DEFAULT_NEW_GAME := {
     "preset_id": "earthlike",
     "width": 80,
     "height": 52,
-    "seed": 0,
+    # The seed is TEXT the whole way to the socket — see `new_game_line`.
+    "seed": "0",
     "profile_id": "late_forager_tribe",
     # No rival count: a direct `Main.tscn` launch never saw the New Game screen, so it has no pick to
     # forward and the argument is omitted. **The server resolves an absent field to its UNATTENDED
@@ -416,8 +417,6 @@ func _ready() -> void:
             hud.connect("abandon_working_requested", Callable(self, "_on_hud_abandon_working"))
         if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
             hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
-        if hud.has_signal("upkeep_kit_requested") and not hud.is_connected("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit")):
-            hud.connect("upkeep_kit_requested", Callable(self, "_on_hud_upkeep_kit"))
         if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
@@ -650,10 +649,18 @@ func _build_world_request() -> void:
     var preset := String(params.get("preset_id", DEV_DEFAULT_NEW_GAME["preset_id"]))
     var width := maxi(1, int(params.get("width", DEV_DEFAULT_NEW_GAME["width"])))
     var height := maxi(1, int(params.get("height", DEV_DEFAULT_NEW_GAME["height"])))
-    # Clamp the seed to >= 0 at the wire boundary: the server parses it as a u64, so a negative
-    # seed fails the parse and the world never generates. Catches every caller (GameLaunch + dev
-    # default). 0 stays "derive from the run clock".
-    var seed_value := maxi(0, int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"])))
+    # **THE SEED IS TEXT, AND IS NEVER PUT THROUGH AN `int` HERE.** The server parses it as a u64;
+    # a GDScript `int` is signed 64-bit, so the top half of the seed range would be accepted and
+    # silently changed, generating a world that is not the one asked for. The one validity rule is
+    # the shell's own, asked statically, so this boundary and the New Game field cannot disagree; a
+    # seed it refuses falls back to `SEED_UNSEEDED` rather than sending a line the server cannot
+    # parse and stranding the client on the loading overlay. That path is reachable only from a
+    # caller that is not the New Game screen, which gates the press.
+    var seed_text := String(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"]))
+    if MenuShell.seed_error(seed_text) != "":
+        seed_text = MenuShell.SEED_UNSEEDED
+    else:
+        seed_text = MenuShell.seed_digits(seed_text)
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
     # **HOW MANY RIVAL PEOPLES, OR NO ANSWER AT ALL.** The count is the command's one OPTIONAL
     # argument, and omitting it is not the same request as sending 0: absent names no count and the
@@ -665,8 +672,8 @@ func _build_world_request() -> void:
     if rivals < 0:
         rivals = FactionCapacity.NO_COUNT
     _new_game_command = {
-        "line": new_game_line(preset, width, height, seed_value, profile, rivals),
-        "message": "New game: %s (%dx%d) seed %d, %s." % [preset, width, height, seed_value, _rivals_message(rivals)],
+        "line": new_game_line(preset, width, height, seed_text, profile, rivals),
+        "message": "New game: %s (%dx%d) seed %s, %s." % [preset, width, height, seed_text, _rivals_message(rivals)],
     }
     # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
     # got — including when the fallback is what supplied them.
@@ -675,18 +682,24 @@ func _build_world_request() -> void:
             "preset_id": preset,
             "width": width,
             "height": height,
-            "seed": seed_value,
+            "seed": seed_text,
             "profile_id": profile,
             "ai_faction_count": rivals,
         })
 
 ## **THE `new_game` LINE, INCLUDING WHETHER IT CARRIES A COUNT AT ALL.** Static and pure, so the one
 ## rule that decides between "2 rivals" and "none" is reachable from a harness without standing a
-## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends.
-static func new_game_line(preset: String, width: int, height: int, seed_value: int,
+## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends, and
+## that the seed reaches this line digit for digit.
+##
+## **`seed_text` IS THE SEED'S DIGITS, substituted with `%s`.** The command is text and the server
+## parses it as a u64, so there is no number to round-trip through: a `%d` over a GDScript `int`
+## would cap the top half of the u64 range at 9223372036854775807 and ask for a different world than
+## the one named. Callers hand digits a `MenuShell.seed_error` accepts.
+static func new_game_line(preset: String, width: int, height: int, seed_text: String,
         profile: String, rivals: int) -> String:
     var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
-    return "new_game %s %d %d %d %s%s" % [preset, width, height, seed_value, profile, rivals_suffix]
+    return "new_game %s %d %d %s %s%s" % [preset, width, height, seed_text, profile, rivals_suffix]
 
 ## The boot line's words for a rival count — the four cases the count actually has, since "1 rivals"
 ## and "0 rivals" both misreport what was asked for.
@@ -1947,51 +1960,23 @@ static func format_build_kit(payload: Dictionary) -> Dictionary:
 ## back, and *"with "* followed by nothing states nothing at all.
 const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
 
-## **`upkeep_kit <faction> <x> <y> [kit <id>]` | `upkeep_kit <faction> <herd_id> [kit <id>]` — THE
-## PER-SITE KEEPING KIT** (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item 12c). It names a
-## SOURCE and sets that site's keeping tool on every band of the faction that works it — a WIDER reach
-## than `build_kit`'s, because a keeping bill is owed by every band holding the ground and not only by
-## whoever queued a build on it. The take crew, its own kit, the queue entry and the meter are
-## untouched.
-##
-## **THE BAND IS THE POOL, NOT THE DECISION.** A kit stored on the band's `agriculture` / `husbandry`
-## role row — where this lived until §2.7 — is the one thing a per-site derivation cannot express: one
-## pick put the same tool on every site that band kept, with no way back. That is also why the strip's
-## picker needs no scope warning: there is no longer a scope to warn about.
-##
-## ⛔ **`none` AND "NO SELECTION" ARE DIFFERENT STATES, AND GETTING IT BACKWARDS IS SILENT.** An
-## ABSENT `kit` token clears the site back to its own web derivation; **`kit none` is bare-handed and
-## is a real selection**, which is how a player conserves the tool on one site while its neighbour
-## goes on using it. `_kit_token`'s standing rule produces both: it omits the token when the pick
-## equals the default, and `none` is an ordinary roster member whose id is never equal to a derived
-## kit's. `KitRoster.NO_KIT_ID` (`""`) is the third thing — *nothing to say* — and also omits.
-##
-## The two source shapes are told apart exactly as `format_build_kit` tells them apart, which is how
-## the sim's own parser does it: a non-empty herd id is the herd form, else two integers are a tile.
-static func format_upkeep_kit(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var kit_face := String(payload.get("kit_id", "")).strip_edges()
-    var token := _kit_token(payload)
-    var message_kit := kit_face if token != "" else UPKEEP_KIT_DERIVED_NOTE
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id != "":
-        return {
-            "line": "upkeep_kit %d %s%s" % [faction, herd_id, token],
-            "message": "Keep %s with %s." % [herd_id, message_kit],
-        }
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
-        return {}
-    return {
-        "line": "upkeep_kit %d %d %d%s" % [faction, x, y, token],
-        "message": "Keep (%d, %d) with %s." % [x, y, message_kit],
-    }
+## > ### ⛔ RETIRED — `format_upkeep_kit` AND `UPKEEP_KIT_DERIVED_NOTE`
+## >
+## > `upkeep_kit <faction> <x> <y> [kit <id>]` set a SITE's keeping tool on every band of the faction
+## > that worked it — *"a WIDER reach than `build_kit`'s, because a keeping bill is owed by every band
+## > holding the ground and not only by whoever queued a build on it"*. `docs/plan_pool_toe.md` §3
+## > retired the choice: a site's tools follow from its own rung, so there is nothing left to name.
+## >
+## > **The rule it was minted for is still true one scope out**, which is why it is quoted rather than
+## > deleted silently: *a kit stored on the band's `agriculture` / `husbandry` role row is the one
+## > thing a per-site answer cannot express — one pick put the same tool on every site that band
+## > kept, with no way back.* The requirement answers per site with nothing stored anywhere.
+## >
+## > **`format_build_kit` above did NOT go with it**, and the asymmetry is a fact rather than an
+## > oversight: `cargo xtask command-guard` drives that grammar and parses the emitted line with the
+## > real server parser, so the builder is still reached. Nothing drove this one. Both verbs retire
+## > end to end in the slice that owns the gate.
 
-## The keeping twin of `BUILD_KIT_DERIVED_NOTE`, and its own string because the two sentences say
-## different things about the same absence: a build derives its kit from the ENTRY's food web, a site
-## from the SITE's.
-const UPKEEP_KIT_DERIVED_NOTE := "the tools this site derives for itself"
 
 ## **WHAT THE PLAYER CALLS THE FIRST SLOT OF A QUEUE.** The wire's `position` is a 0-based INDEX and
 ## stays one; the sim's own reply spells the landed slot `#{landed + 1}`, so the echo beside it adds
@@ -2359,17 +2344,6 @@ func _on_hud_abandon_working(payload: Dictionary) -> void:
 func _on_hud_build_kit(payload: Dictionary) -> void:
     _send_formatted_command(format_build_kit(payload))
 
-## NAME THE KIT one WORK SITE is kept with (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item
-## 12c) — its own handler because its own command and its own scope: it names a SOURCE and sets a
-## property of that SITE, where `build_kit` sets a property of that site's queue entry and
-## `assign_labor` names a band and a role.
-##
-## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule.
-## `upkeepKitId` is captured LIVE rather than turn-written, so the recapture this command triggers
-## already carries the new value.
-func _on_hud_upkeep_kit(payload: Dictionary) -> void:
-    _send_formatted_command(format_upkeep_kit(payload))
-
 ## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
 ## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule,
@@ -2413,13 +2387,20 @@ func _on_hud_clear_bench(payload: Dictionary) -> void:
 func _on_hud_bench_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_priority(payload))
 
-## Compose one band's outfitting order. **No optimistic write**, deliberately: the verb fails CLOSED
-## and WHOLE, and what answers it is the band's own published state on the recapture this command
-## triggers — after a success that IS the allocation just sent. A local write here would be a second,
-## disagreeing one. (`loadout_window.open` is not that answer: a commit never closes a window, so it
-## reads true after a refusal and after a success alike.)
+## Compose one band's outfitting order — emitted on every stepper press, the card deferring nothing.
+##
+## **THE OPTIMISTIC WRITE IS THE CARD'S AND THE ROLLBACK IS ITS OWN**, `_on_hud_assign_labor`'s shape:
+## the picks are written on the frame the stepper moved, the outcome is only known here, and the
+## payload carries the pre-press allocation (`revert_kits` / `revert_materials`, which
+## `format_set_starting_loadout` ignores) so a line that did not go takes its write back. Reached by
+## `has_method`, so a client without the method simply keeps the number — which is why the emitting
+## side, not this one, owns the handle.
+##
+## (`loadout_window.open` is not an outcome: an accepted order never closes a window, so it reads true
+## after a refusal and after a success alike.)
 func _on_hud_set_starting_loadout(payload: Dictionary) -> void:
-    _send_formatted_command(format_set_starting_loadout(payload))
+    if not _send_formatted_command(format_set_starting_loadout(payload)):
+        _hud_invoke("revert_starting_loadout", [payload])
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

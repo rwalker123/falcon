@@ -813,11 +813,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // row as `default_kits.builders` (`none`), so the row put **no demand** on the very item it was
     // then issued a share of — a band owning six hoes published twelve workers holding them.
     //
-    // ⛔ **THE BUILDERS ROW NEEDS NO ARM OF ITS OWN NOW.** Its kit and the budget's are the one
-    // resolution ([`crate::components::LaborAllocation::row_kit`], which the budget is struck from),
-    // and `systems::labor::BuildersGear::for_source` arms the pool off that same share rather than
-    // off the whole ledger — so the published reach is the reach the turn grants, which is what wire
-    // equals take means here.
+    // ⛔ **A STANDING POOL PUBLISHES THE EMPTY KIT, AND ITS TOOLS RIDE `poolToe`**
+    // (`docs/plan_pool_toe.md` §4). `agriculture`, `husbandry`, `roadwork`, `quarrywork` and
+    // `builders` each work many sites out of one stock, and the tools follow from each **site's**
+    // rung — a Roadwork pool keeping a dirt road and a paved road wants two of them at once, which
+    // is one more than a `kitId` can carry. The empty kit is what makes the rest of this expression
+    // state that honestly rather than by a special case: it carries no item, so
+    // `workers_holding_whole_kit` folds over nothing and answers `workers` — the *nothing to be
+    // short of* reading §4 asks for — the row contributes to no item's `kitItemConditions` pair, and
+    // `kit_id` publishes `""`. The pool's real gear is the cohort's `pool_toe` below.
+    //
+    // It is also what the budget already believes: `kitted_rows` filters the five pool rows out
+    // ([`crate::components::LaborTarget::is_standing_pool`]), so a pool asking this budget for a
+    // share is asking about a denominator it is not in.
     //
     // Resolved here rather than per readout because both of this section's gear readouts fold out of
     // it: the per-row `kitWorkersHolding` below and the per-item pair on `kitItemConditions`. One
@@ -835,7 +843,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .iter()
                 .map(|assignment| {
                     let workers = assignment.workers as f32;
-                    let row_kit = alloc.row_kit(assignment, kit_levers.config);
+                    let row_kit = if assignment.target.is_standing_pool() {
+                        kit_levers.config.no_kit()
+                    } else {
+                        assignment.kit_choice(kit_levers.config)
+                    };
                     let coverage = kit_levers.config.coverage_from_units(
                         &row_kit,
                         workers,
@@ -1711,6 +1723,33 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             quarrywork_demand,
             quarrywork_supplied,
         ),
+        // **THE FIVE POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — what each pool's
+        // own sites required this turn and what the band's settlement gave them, published **as the
+        // turn settled it** off `LaborAllocation::last_pool_toe`.
+        //
+        // ⛔ **REPORTED, NOT RE-DERIVED.** The requirement follows from the hands the pool's split
+        // put on each site at that site's own rung, and the fill from a band-wide settlement across
+        // every pool at once — neither of which this capture holds the inputs for. A second
+        // derivation here could disagree with the tools the turn's work was actually priced at,
+        // which is the pool row's `kitId` defect one field over.
+        //
+        // **A row exists only where the pool required something**, which the sim decides: a pool
+        // whose lines were all filled keeps them, and a reader tells *satisfied* from *not
+        // applicable* by the row's presence.
+        pool_toe: allocation
+            .map(|alloc| {
+                alloc
+                    .last_pool_toe
+                    .iter()
+                    .map(|line| sim_schema::state::PoolToeLineState {
+                        pool: line.pool.as_str().to_string(),
+                        item_id: line.item.clone(),
+                        required: line.required,
+                        filled: line.filled,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

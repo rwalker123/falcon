@@ -2529,6 +2529,19 @@ mod wire {
             A_TAKE_CREW,
             TOO_FEW_KEEPERS,
         );
+        // ⛔ **THE BAND HOLDS NO STONE-DRESSING GEAR, AND THAT IS WHAT KEEPS ONE KEEPER SHORT.**
+        // `extraction:quarry`'s tool declares `build_work 2.0`, so a keeper holding one delivers
+        // `1 + 2 = 3` a turn — comfortably past this working's bill — and the published quad would
+        // be `demand == supplied` with a zero shortfall, which is the one shape the identity below
+        // cannot be read off.
+        //
+        // **The tool reaching this pool at all is new** (`docs/plan_pool_toe.md`): the kit lookup it
+        // replaced asked for a roster entry offering the `quarrywork` **job**, and the `paving` kit
+        // that carries the tool offers `builders` and `roadwork` only — so a quarry's keepers were
+        // silently bare-handed however many chisels the band owned. A quarry crew that owns the tool
+        // is now geared by it, which is a real pacing move and is the arc's point rather than a side
+        // effect.
+        core_sim::disarm_the_builders(&mut app.world, band, RungKey::ExtractionQuarry);
         app.update();
         (app, home, rock)
     }
@@ -3063,9 +3076,16 @@ mod wire {
             sim_schema::NO_BUILD_TURNS_ESTIMATE,
             "a rung nobody ordered has no quote, and never a 0 that renders as finished: {rock:?}"
         );
+        // **A WORKING NAMES NO KEEPING KIT** (`docs/plan_pool_toe.md` §4). This asserted the
+        // opposite — that a worked working always resolved one, the bare-handed kit included — and
+        // the resolution it pinned is retired: a site's tools follow from its own rung, are settled
+        // band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`.
+        // The `quarrywork` pool is the one this working's keepers are drawn from, and it is where
+        // the chisels are now stated.
         assert!(
-            !rock.upkeep_kit_id.is_empty(),
-            "a worked working resolves a keeping kit, the bare-handed one included: {rock:?}"
+            rock.upkeep_kit_id.is_empty(),
+            "a working names no keeping kit; its keepers' tools ride the quarrywork pool's TOE: \
+             {rock:?}"
         );
     }
 

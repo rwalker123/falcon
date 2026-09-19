@@ -179,6 +179,19 @@ const RUNG_BY_KIND := {
 	# (`docs/plan_band_fission.md` §Q6, issue #510). The same kind carries the command's REFUSALS, and
 	# a refused irreversible order is exactly as loud as a taken one.
 	"band_founded": RUNG_ALERT,
+	# **`band_founded`'s TWIN, ONE STEP OUT** — rare, irreversible, and it changes the roster by a
+	# whole band. What separates it from a founding is that it is NOT player-initiated: a band walks
+	# off to another people (or arrives from one) on the sim's own turn, so the dock is the only place
+	# the player can learn of it at all. Notable is for what happens to a band as a matter of course —
+	# a death, a migration, a party reaching its objective — and losing or gaining an entire band is
+	# not that. This kind was reported from play precisely because it fell to `DEFAULT_RUNG` and so
+	# sat below `DEFAULT_DETAIL_LEVEL`: the roster changed and nothing said so.
+	#
+	# **ONE HANDOVER IS TWO ROWS, one per faction** (`core_sim` `systems::population::
+	# push_band_changed_hands_events`), filtered per viewer, so each side sees exactly its own —
+	# `side=lost|gained` names which. It takes the Alert rung on BOTH sides: a band arriving is as
+	# irreversible as a band leaving, and the gaining player has no other surface that reports it.
+	"band_changed_hands": RUNG_ALERT,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is
@@ -550,6 +563,23 @@ const DETAIL_KEY_HIDDEN := {
 	# lives" and then `killed=3.000` beside it, so showing both says one thing twice in two
 	# different notations. `wounded` deliberately stays: it is the half the label never carries.
 	"killed": true,
+	# **`band_changed_hands`' THREE REMAINING TOKENS, and all three are said by its label.** The sim
+	# writes `band=3 from=0 to=1 side=lost` beside *"Band 3 left us for People 1"* / *"Band 3 joined
+	# us from People 0"*: `band` is substituted INTO the label like every other kind's, and the other
+	# two peoples are already named in the prose, so rendering them would print `From 0 · To 1` — a
+	# pair of RAW FACTION IDS on a player-facing bar, which is the defect `detail_phrase` exists to
+	# make impossible. They are ids rather than words for a reason the client cannot fix: the sim
+	# authors no faction names, so there is nothing here to join them to, and inventing a naming rule
+	# for a people is a decision this table is not the place to take.
+	#
+	# `side` is hidden on the same test rather than given `DETAIL_VALUE_LABELS` rows: *left us* and
+	# *joined us* is the whole of what `lost` / `gained` mean, and the label says it in English. It
+	# stays a MACHINE CONTRACT — it is how the two halves of one handover are matched up — which is
+	# exactly the kind of token this table drops. `direction=out|in` on `migrated` is not the
+	# counter-example it looks like: that label counts PEOPLE and never says which way they went.
+	"from": true,
+	"to": true,
+	"side": true,
 }
 
 ## Bare words that are grammar, not content. The ` · ` join supplies the separation `at` was doing.

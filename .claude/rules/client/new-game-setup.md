@@ -147,6 +147,49 @@ summary reads "server default" for the few milliseconds after every click, and a
 that window would silently discard the pick. The server clamps a count the new grid cannot seat; it
 cannot recover one this screen threw away.
 
+## THE SEED IS A STRING, FROM THE KEYSTROKE TO THE SOCKET
+
+A seed is a **u64**. The `new_game` line is text and the server parses that field as a u64, so there
+is no number to round-trip through — and every hop that made one lost seeds:
+
+| Hop | Carries | Why not a number |
+|---|---|---|
+| `MenuShell._seed_edit` | up to `SEED_MAX_LENGTH` = **20** characters | 20 is a u64's full decimal width |
+| `new_game_requested`'s `seed` | `String` | a GDScript `int` is **signed** 64-bit |
+| `GameLaunch.pending_new_game` / `active_new_game` `"seed"` | `String` | same, and it survives a scene reload |
+| `Main.new_game_line`'s `seed_text` | `String`, substituted with `%s` | `%d` would cap it |
+
+**Both halves of that were reported from one playtest.** The field capped at 12 characters, so the
+19-digit seed the client itself had minted came back as `618699468282` and generated a different
+world. **Raising the cap alone would have been worse than the bug**: a GDScript `int` stops at
+`9223372036854775807` and a u64 runs to `18446744073709551615`, so roughly half of all clock-derived
+seeds — `16811688588392450970` was the same session's second seed — would have been accepted as
+typed, silently changed, and never reported as changed. The string carries the whole range and the
+summary row therefore states the digits that go on the wire verbatim.
+
+**The affordance refuses what the server could not parse, because the alternative is a dead client.**
+A `new_game` the server cannot parse is never answered, and the client sits on the loading overlay
+with nothing to press. So `MenuShell.seed_error` is static and pure — the `SaveSlots.slot_name_error`
+shape, one rule asked by the field, by `Main`'s wire boundary and by the harness — and it drives the
+caption under the field and the `Begin the trail` gate together. Two refusals, and both are short
+declaratives: **digits only** (a u64 has no sign, no separators and no `0x`, so a whitelist of the
+ten digits is the whole rule) and **the largest seed**, named. An EMPTY field is not a refusal; it is
+`SEED_UNSEEDED` (`"0"`), which keeps its old meaning of *derive from the run clock*.
+
+`Begin the trail` now has **two** reasons to lock — nothing listening, and a seed that cannot be
+sent — and they are the same kind of reason: each would produce a run that never starts. Every other
+unanswered state still starts a game.
+
+> ⛔ **THE COMPARISON AGAINST u64 MAX IS MADE ON TEXT.** `SEED_MAX_TEXT` is itself above a GDScript
+> `int`'s ceiling, so `int(typed) > int(SEED_MAX_TEXT)` compares two values that both saturated at
+> `9223372036854775807` and answers **false for every seed in the top half of the range** — the exact
+> seeds the string carriage exists for. `_exceeds_seed_max` drops leading zeros and compares lengths,
+> then the equal-length strings lexicographically, which for digits is numeric order.
+
+**The caption is re-worded, never rebuilt.** It runs on every keystroke and the field beside it holds
+the caret, which is the Save pane's caret defect one pane over (`save-load-menu.md`). `_add_note`
+returns its Label so this one caller can hold it; the rest ignore the return.
+
 ## One allocator for every query seam
 
 `QueryRequestIds` holds the request-id floor and the per-instance block that `SaveSlots` used to hold
@@ -180,4 +223,10 @@ handed in — that the retry does not change what is on screen, that the resolve
 matches the pick, that
 the control across a re-ask is the SAME NODE at the SAME RECT with the row's height and the summary
 unchanged, that the row is the same height with and without a slider, and that the capacity seam's ids
-are disjoint from the save seam's. Details in `.claude/rules/client/harness-menu-workbench.md`.
+are disjoint from the save seam's.
+
+**The seed has its own block** (`_run_seed_states`, with one still, `menu_new_game_seed_refused`): both
+playtest seeds are typed into the real field and asserted to reach the composed `new_game` line digit
+for digit, an empty field composes `0`, and a seed above u64 max and one holding a non-digit are each
+refused with a caption and a locked `Begin the trail` and emit nothing. Details in
+`.claude/rules/client/harness-menu-workbench.md`.

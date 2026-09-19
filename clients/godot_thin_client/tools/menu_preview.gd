@@ -137,8 +137,22 @@ const PENDING_THEME := "kiln"
 const WIRE_PRESET := "earthlike"
 const WIRE_WIDTH := 80
 const WIRE_HEIGHT := 52
-const WIRE_SEED := 0
+const WIRE_SEED := "0"
 const WIRE_PROFILE := "late_forager_tribe"
+
+# ---- seed fixtures ------------------------------------------------------------------------------
+# **THE SEEDS ARE FROM A REAL PLAYTEST**, not invented widths: the client minted them, reported them,
+# and could not take them back. The 12-character cap truncated the first to `618699468282` and a
+# signed-`int` hop would have capped the second — it is above 2^63-1, where roughly half of all
+# clock-derived seeds live — so both legs below fail on the field's original implementation and on
+# the obvious half-fix.
+const SEED_TYPED_FULL := "6186994682829664034"        # 19 digits: the LENGTH leg, the one the cap ate
+const SEED_TYPED_ABOVE_INT := "16811688588392450970"  # 20 digits, a valid u64, ABOVE a signed int's ceiling
+const SEED_TYPED_ABOVE_U64 := "18446744073709551616"  # u64 max + 1: the field must refuse it
+const SEED_TYPED_NOT_DIGITS := "6186 994682"          # a space is not a digit, and neither is a sign
+## The truncation the 12-character cap produced, asserted against by NAME so a regression reports the
+## seed the player actually lost rather than a length.
+const SEED_TRUNCATED_TO := "618699468282"
 
 const EXIT_OK := 0
 const EXIT_FAILED := 1
@@ -335,6 +349,7 @@ func _run_new_game_states() -> void:
 	_assert_capacity_ids_are_disjoint_from_the_save_seam()
 	await _run_server_unreachable_states()
 	await _run_landing_notice_state()
+	await _run_seed_states()
 
 
 ## **NOTHING IS LISTENING — the state the New Game screen used to blame on the rival count.** With no
@@ -494,7 +509,7 @@ func _assert_the_shown_count_is_the_count_sent() -> void:
 	# itself sits below this harness window's fold, and a click that lands on nothing would assert
 	# nothing.
 	var emitted: Array = []
-	var sink := func(_preset: String, _w: int, _h: int, _seed: int, _profile: String, count: int) -> void:
+	var sink := func(_preset: String, _w: int, _h: int, _seed: String, _profile: String, count: int) -> void:
 		emitted.append(count)
 	_shell.new_game_requested.connect(sink)
 	_shell._on_begin_pressed()
@@ -514,10 +529,183 @@ func _assert_the_shown_count_is_the_count_sent() -> void:
 	# …and the absent case still carries NOTHING, which is a different request from a trailing 0.
 	var omitted: String = MAIN_SCRIPT.new_game_line(
 		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, FactionCapacity.NO_COUNT)
-	if omitted != "new_game %s %d %d %d %s" % [WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE]:
+	if omitted != "new_game %s %d %d %s %s" % [WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE]:
 		_fail("shown-is-sent: an unanswered ask put something on the line (%s)" % omitted)
 	# Left as it was found: untouched, so the next state stages its own starting point.
 	_shell._rival_picked = false
+
+
+## **THE SEED THE PLAYER TYPES BACK IN, AND WHETHER IT REACHES THE SOCKET UNCHANGED.** Reported from
+## play: the field capped at 12 characters, so a 19-digit seed the client itself had minted came back
+## as `618699468282` and replayed a different world — a defect nothing on screen could show, because
+## the truncated field looks exactly like a field.
+##
+## Every leg asserts the COMPOSED `new_game` LINE, never an internal: the seed's whole journey is
+## field → `new_game_requested` → the handoff dict → `Main.new_game_line`, and the corruption this
+## covers happens in the TYPE that journey is made in. A GDScript `int` is signed 64-bit and the
+## server parses a u64, so the top half of the seed range — `SEED_TYPED_ABOVE_INT`, one of the three
+## seeds from the session that reported this — cannot survive a numeric hop at all.
+##
+## The last two legs are the affordance's half of the same contract: a seed the server could not
+## parse is refused HERE, with a caption and a locked Begin, rather than sent and left to strand the
+## client on a loading overlay that never lifts.
+##
+## Staged, not inherited: `_run_landing_notice_state` leaves the screen believing nothing is
+## listening, which withholds Begin for a reason that has nothing to do with the seed.
+func _run_seed_states() -> void:
+	_shell._activate_item(NEW_GAME_PANE_ID)
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_shell.set_notice("")
+	await _settle()
+	_assert_begin_is_offered("a seeded screen with a server answering")
+
+	_assert_the_seed_field_fits_a_full_seed()
+	await _assert_a_seed_reaches_the_wire_intact(SEED_TYPED_FULL)
+	await _assert_a_seed_reaches_the_wire_intact(SEED_TYPED_ABOVE_INT)
+	await _assert_an_empty_field_means_unseeded()
+	await _assert_a_seed_is_refused(SEED_TYPED_ABOVE_U64, "above u64 max")
+	await _save("menu_new_game_seed_refused")
+	await _assert_a_seed_is_refused(SEED_TYPED_NOT_DIGITS, "not digits")
+
+	# Left as it was found, so nothing downstream inherits a refused field.
+	_type_seed(MenuShell.SEED_UNSEEDED)
+	await _settle()
+
+
+## **THE CAP IS WIDE ENOUGH FOR A WHOLE u64, AND THE FIELD IS WIDE ENOUGH TO READ ONE.** Two claims,
+## because they fail differently: too small a cap eats digits, too narrow a field scrolls them out of
+## sight. The width is MEASURED against the field's own font and the padding `HudStyle.apply_line_edit`
+## sets, so the constant cannot be left behind by a theme change — and it is measured against the
+## CONSTANT rather than the rendered rect, since the field is `SIZE_FILL` inside a pane far wider than
+## its minimum and would pass on any value at this window size.
+func _assert_the_seed_field_fits_a_full_seed() -> void:
+	if MenuShell.SEED_MAX_LENGTH < MenuShell.SEED_MAX_TEXT.length():
+		_fail("seed: the field caps at %d characters, so the largest seed (%s, %d digits) cannot be typed"
+			% [MenuShell.SEED_MAX_LENGTH, MenuShell.SEED_MAX_TEXT, MenuShell.SEED_MAX_TEXT.length()])
+	var field: LineEdit = _shell._seed_edit
+	if field == null:
+		_fail("seed: the setup pane built no seed field")
+		return
+	var font := field.get_theme_font("font")
+	var font_size := field.get_theme_font_size("font_size")
+	var box := field.get_theme_stylebox("normal")
+	var needed := font.get_string_size(
+		MenuShell.SEED_MAX_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	needed += box.content_margin_left + box.content_margin_right
+	print("menu_preview: a full seed needs %.1fpx in the field's font; the minimum is %.1fpx"
+		% [needed, MenuShell.SEED_FIELD_MIN_WIDTH])
+	if MenuShell.SEED_FIELD_MIN_WIDTH < needed:
+		_fail("seed: the field's minimum width is %.1fpx and a full seed needs %.1fpx, so it clips"
+			% [MenuShell.SEED_FIELD_MIN_WIDTH, needed])
+
+
+## One typed seed, walked to the wire. The `new_game` line is built by `Main`'s OWN static composer
+## from the payload the shell emitted, so nothing between the keystroke and the socket is restated
+## here.
+func _assert_a_seed_reaches_the_wire_intact(typed: String) -> void:
+	_type_seed(typed)
+	await _settle()
+	if _shell._seed_edit.text != typed:
+		_fail("seed: typing %s left the field holding %s%s"
+			% [typed, _shell._seed_edit.text,
+				" — the truncation this covers" if _shell._seed_edit.text == SEED_TRUNCATED_TO else ""])
+	_assert_begin_is_offered("a valid seed of %d digits" % typed.length())
+	var line := _line_for_the_emitted_request("seed %s" % typed)
+	if line == "":
+		return
+	if not line.contains(" %s " % typed):
+		_fail("seed: %s was typed and the new_game line reads %s" % [typed, line])
+	# THE SUMMARY ROW, which is what a player copies the seed down FROM.
+	if not _summary_shows(typed):
+		_fail("seed: the summary does not show %s (it reads %s)" % [typed, _summary_text()])
+
+
+## An untouched field is not an error and not a seed: it is `0`, "derive from the run clock", and the
+## line must carry that rather than an empty slot that would shift every argument after it.
+func _assert_an_empty_field_means_unseeded() -> void:
+	_type_seed("")
+	await _settle()
+	_assert_begin_is_offered("an empty seed field")
+	var line := _line_for_the_emitted_request("an empty seed")
+	if line == "":
+		return
+	if not line.contains(" %s %s" % [MenuShell.SEED_UNSEEDED, WIRE_PROFILE]):
+		_fail("seed: an empty field composed %s, not the unseeded %s" % [line, MenuShell.SEED_UNSEEDED])
+
+
+## A seed the server cannot parse. **The refusal is the affordance, not a round trip**: the caption
+## under the field says which rule was broken and Begin is LOCKED, because the alternative — sending
+## it — leaves the client on a loading overlay forever with nothing to press.
+func _assert_a_seed_is_refused(typed: String, state_name: String) -> void:
+	_type_seed(typed)
+	await _settle()
+	_assert_begin_is_withheld("a seed %s" % state_name)
+	if _shell._seed_note == null or _shell._seed_note.text == MenuShell.SEED_NOTE_HINT:
+		_fail("seed (%s): %s is refused and nothing under the field says so" % [state_name, typed])
+	var emitted := _emitted_request()
+	if not emitted.is_empty():
+		_fail("seed (%s): a seed that cannot be parsed was still sent (%s)"
+			% [state_name, MAIN_SCRIPT.new_game_line(WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT,
+				String(emitted["seed"]), WIRE_PROFILE, FactionCapacity.NO_COUNT)])
+
+
+## Type into the REAL field, through the path that enforces its cap. `set_text` does not, so assigning
+## would leave this harness green against the 12-character cap that caused the defect;
+## `insert_text_at_caret` truncates exactly as a keystroke does. It emits no `text_changed`, so the
+## shell's own connection is fired here — the shipped handler, not a copy of it.
+func _type_seed(text: String) -> void:
+	var field: LineEdit = _shell._seed_edit
+	field.clear()
+	field.insert_text_at_caret(text)
+	field.text_changed.emit(field.text)
+
+
+## The shell's `new_game_requested` payload for a Begin pressed now, or `{}` if it emitted nothing.
+## Driven through the handler the button is connected to: the button sits below this harness window's
+## fold, and a click that landed on nothing would assert nothing.
+func _emitted_request() -> Dictionary:
+	# MUTATED, never reassigned: a GDScript lambda captures a local by value, so `captured = {…}` would
+	# rebind the lambda's own copy and this function would report every press as "emitted nothing".
+	var captured := {}
+	var sink := func(preset: String, w: int, h: int, seed: String, profile: String, count: int) -> void:
+		captured["preset"] = preset
+		captured["width"] = w
+		captured["height"] = h
+		captured["seed"] = seed
+		captured["profile"] = profile
+		captured["rivals"] = count
+	_shell.new_game_requested.connect(sink)
+	_shell._on_begin_pressed()
+	_shell.new_game_requested.disconnect(sink)
+	return captured
+
+
+## The `new_game` command line a Begin pressed now would put on the socket — the shell's payload,
+## composed by `Main`'s own static builder. `""` (already reported) when nothing was emitted.
+func _line_for_the_emitted_request(state_name: String) -> String:
+	var emitted := _emitted_request()
+	if emitted.is_empty():
+		_fail("seed: Begin emitted no request at all with %s in the field" % state_name)
+		return ""
+	return MAIN_SCRIPT.new_game_line(
+		String(emitted["preset"]), int(emitted["width"]), int(emitted["height"]),
+		String(emitted["seed"]), String(emitted["profile"]), int(emitted["rivals"]))
+
+
+## Everything the summary row says, in one string — the row is a box of key/value pairs, so the
+## assertion reads it the way a player does rather than indexing into it.
+func _summary_text() -> String:
+	var parts := PackedStringArray()
+	for pair in _shell._summary_box.get_children():
+		for label in pair.get_children():
+			if label is Label:
+				parts.append(label.text)
+	return " ".join(parts)
+
+
+func _summary_shows(value: String) -> bool:
+	return _summary_text().contains(value)
 
 
 ## **THE MAP-SIZE CLICK, WHICH IS THE ONE THE PLAYER MAKES REPEATEDLY.** A re-ask must not take the

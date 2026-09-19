@@ -218,7 +218,9 @@ fn world_with_a_queue_knowing(
         .map(|source| core_sim::BuildQueueEntry {
             source: BuildSource::Patch(*source),
             declared: BuildJob::Rung(Improvement::Cultivate),
-            kit: Some(bare_builders()),
+            // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a pool's tools
+            // follow from the rung. The gear axis is held on the LEDGER below.
+            kit: None,
         })
         .collect();
 
@@ -263,6 +265,7 @@ fn world_with_a_queue_knowing(
             },
         ))
         .id();
+    core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
     (app, band, sources)
 }
 
@@ -935,7 +938,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: BuildSource::Herd(herd_id.clone()),
                     declared: BuildJob::Rung(Improvement::Tame),
-                    kit: Some(bare_builders()),
+                    kit: None,
                 }],
                 ..Default::default()
             },
@@ -1775,12 +1778,12 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Herd(RING_HERD.to_string()),
                         declared: BuildJob::ExtendPen,
-                        kit: Some(bare_builders()),
+                        kit: None,
                     },
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(source),
                         declared: BuildJob::Rung(Improvement::Cultivate),
-                        kit: Some(bare_builders()),
+                        kit: None,
                     },
                 ],
                 ..Default::default()
@@ -1791,6 +1794,10 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
     // fence is a pen build, so a band with no panels is materials-blocked and this fixture would
     // measure a stall it staged itself instead of the countdown it means to read.
     pen_materials_support::stock_pen_materials(&mut app.world, band);
+    // **Both branches this band builds on** — the ring stands on `animal:pen` and the entry behind
+    // it on `plant:tended`, so the gear axis is held on each.
+    core_sim::disarm_the_builders(&mut app.world, band, RungKey::AnimalPen);
+    core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
     (app, band, RING_HERD.to_string(), source)
 }
 
@@ -2091,7 +2098,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
     let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
         source: BuildSource::Patch(source),
         declared: BuildJob::Rung(Improvement::Cultivate),
-        kit: Some(bare_builders()),
+        kit: None,
     };
 
     let finisher = vec![
@@ -2155,6 +2162,16 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             },
         ))
         .id();
+    for spawned in [FINISHER_BAND, SURVIVOR_BAND] {
+        let entity = app
+            .world
+            .query::<(Entity, &core_sim::BandId)>()
+            .iter(&app.world)
+            .find(|(_, id)| id.0 == spawned)
+            .map(|(entity, _)| entity)
+            .expect("the fixture spawned this band");
+        core_sim::disarm_the_builders(&mut app.world, entity, RungKey::PlantTended);
+    }
     (app, band, sources)
 }
 
@@ -2677,23 +2694,30 @@ fn plant_build_kit() -> core_sim::KitChoice {
         .expect("the shipped roster carries the plant builders kit")
 }
 
-/// **THE WIRE STATES THE KIT A SITE IS ACTUALLY KEPT WITH, AND WHETHER A BAND NAMED IT**
-/// (`docs/plan_standing_upkeep.md` §2.7).
+/// **A SITE NAMES NO KEEPING KIT, AND THE WIRE SAYS SO — EVEN WHERE A BAND NAMED ONE**
+/// (`docs/plan_pool_toe.md` §4).
 ///
-/// # THE PAIR IS ONE READING, AND NEITHER HALF ANSWERS FOR THE OTHER
+/// # WHAT THIS TEST USED TO PIN, AND WHY IT INVERTED
 ///
-/// **The id is RESOLVED**, never *"the player named none"* — `buildKitId`'s standing rule, and it
-/// matters here for its reason one account over: the keeping default is derived from the site's own
-/// food web, so a row that named nothing would publish `""` while its keepers were out with hoes.
+/// It was `the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_was_named`,
+/// and it asserted the pair was **one reading whose halves cannot answer for each other**: a
+/// **resolved** id, never *"the player named none"*, beside a flag saying whether that id was a
+/// stated override or the web's derivation.
 ///
-/// **And `named` is not recoverable from the id**, because a player may name the very kit the
-/// derivation would have picked. Without it a picker cannot draw its `(default)` mark or offer *back
-/// to default* — which is the whole reason the flag rides the wire instead of being re-derived.
+/// A site's keeping tools follow from its own **rung** now — a pool's whole TOE is derived per site
+/// and settled band-wide by priority — so there is no per-site kit left to resolve. Both halves
+/// publish their absence: the id empty, the flag `false`.
+///
+/// ⛔ **THE SECOND SITE STILL NAMES ONE, AND THAT IS THE WHOLE TEST.** A row publishing `""` because
+/// nothing was ever picked would pass a weaker assertion while the pick was still live. The pick is
+/// made here, survives on `LaborAssignment::upkeep_kit` until #676 retires the command, and the wire
+/// states nothing about it — which is the retirement, rather than a derivation that happens to
+/// answer nothing.
 ///
 /// Asserted on the **encoded** row rather than on the in-process state, because what a client reads
 /// is the FlatBuffer.
 #[test]
-fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_was_named() {
+fn a_sites_upkeep_kit_publishes_empty_even_where_a_band_named_one() {
     let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
     let published_kit = |app: &App, source: UVec2| -> (String, bool) {
         published(app, source, |patch| {
@@ -2708,8 +2732,8 @@ fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
-        // The first site names nothing — its web's derivation answers for it.
-        // …and the second names the bare kit, which is a selection and not an absence.
+        // The first site names nothing; the second names the bare kit, which was a selection and
+        // not an absence.
         assert!(allocation.set_upkeep_kit(
             &LaborTarget::Forage {
                 tile: sources[1],
@@ -2724,15 +2748,15 @@ fn the_published_upkeep_kit_is_the_one_the_site_resolves_to_and_says_whether_it_
 
     assert_eq!(
         published_kit(&app, sources[0]),
-        (plant_build_kit().id().to_string(), false),
-        "a site naming nothing publishes the kit its own web wants, marked as the DERIVATION — a \
-         row publishing the empty string would say 'no kit' while the keepers were out with hoes"
+        (String::new(), false),
+        "a site names no keeping kit at all — its tenders carry what its own rung wants, out of the \
+         agriculture pool's settled TOE"
     );
     assert_eq!(
         published_kit(&app, sources[1]),
-        (bare_builders().id().to_string(), true),
-        "…and an explicit bare-handed pick crosses as the roster's own bare id, marked as a NAMED \
-         override: the two are different statements and the flag is what keeps them apart"
+        (String::new(), false),
+        "…and a site a band DID name one on publishes exactly the same nothing: the id is retired, \
+         not merely underived, and the flag has no override left to report"
     );
 }
 
@@ -2771,106 +2795,35 @@ fn re_declaring_a_queued_source_keeps_the_kit_its_entry_carries() {
     );
 }
 
-/// ⛔ **TWO ENTRIES, TWO KITS, AND EACH IS PRICED AND DATED AT ITS OWN.**
+// ⛔ **RETIRED: `two_entries_on_one_band_are_each_priced_and_dated_at_their_own_kit` and
+// `a_bare_kit_on_an_entry_survives_as_bare_handed_rather_than_collapsing_to_derive`.**
+//
+// Both pinned the same seam: `BuildQueueEntry::kit` deciding what a build is **priced and dated**
+// at — a geared head beside a deliberately bare tail, and `none` surviving as a real selection
+// rather than collapsing to the derivation.
+//
+// `docs/plan_pool_toe.md` retires that seam outright. A pool's tools follow from the **rung** the
+// job stands on, because a lookup that resolves one kit per pool cannot serve a pool whose sites sit
+// on rungs wanting different tools — and it fails *silently* where the tool is rung-tied. So an
+// entry's kit prices nothing, and with it goes the lever these two tested: **there is no longer a
+// way to send the pool out bare on one job to conserve gear.** §3 states that loss rather than
+// hiding it; a `Low`-marked site is served last when tools run short, and that is the replacement.
+//
+// The **field and the command survive** for the wire (`LaborAllocation::builders_kit` publishes
+// `buildKitId`) and are retired end to end by #676, so the two tests immediately below — which read
+// the published id and the checkpoint round trip — are untouched and still pass.
+
+/// **AN ENTRY NAMES NO BUILD KIT, AND THE WIRE SAYS SO — EVEN WHERE THE ENTRY NAMES ONE**
+/// (`docs/plan_pool_toe.md` §4), the builders' twin of
+/// [`a_sites_upkeep_kit_publishes_empty_even_where_a_band_named_one`].
 ///
-/// The head is the only entry the pool funds, but **every** entry is dated — and now that entries can
-/// carry different kits, a waiting entry must be dated at the gear *it* will be raised with rather
-/// than at its web's derived answer. That is the whole point of a per-entry override: a queue whose
-/// second job is deliberately bare-handed has to say so in its date.
-///
-/// **Both arms are on the plant web**, so the branch is held constant and the only thing that moves
-/// is the entry's own kit — a cross-web pair would confound the two.
+/// It was `the_published_build_kit_is_the_one_the_entry_resolves_to`, and it pinned the opposite: a
+/// **resolved** id whatever the entry named, with `""` reserved for *"nobody has this queued"*. The
+/// builders' tools follow from the rung the leg in flight stands on now, so every row publishes the
+/// empty id — and the queued/unqueued distinction the empty string used to carry is asserted here on
+/// the field that owns it, because a retired field must not take a live reading down with it.
 #[test]
-fn two_entries_on_one_band_are_each_priced_and_dated_at_their_own_kit() {
-    /// Both entries geared, or the tail one deliberately bare — the one dial under test.
-    fn queue_with_a_bare_tail(bare_tail: bool) -> (App, Vec<UVec2>) {
-        let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
-        {
-            let mut allocation = app
-                .world
-                .get_mut::<LaborAllocation>(band)
-                .expect("the band keeps its allocation");
-            assert!(allocation
-                .set_build_entry_kit(&BuildSource::Patch(sources[0]), Some(plant_build_kit())));
-            assert!(allocation.set_build_entry_kit(
-                &BuildSource::Patch(sources[1]),
-                Some(if bare_tail {
-                    bare_builders()
-                } else {
-                    plant_build_kit()
-                }),
-            ));
-        }
-        resolve_a_turn(&mut app);
-        (app, sources)
-    }
-
-    let (bare_tail, sources) = queue_with_a_bare_tail(true);
-    let head_gear = published(&bare_tail, sources[0], |patch| patch.buildWorkFromGear());
-    let tail_gear = published(&bare_tail, sources[1], |patch| patch.buildWorkFromGear());
-    assert!(
-        head_gear > 0.0,
-        "fixture: the geared head must actually be geared, or both claims below are vacuous — \
-         got {head_gear}"
-    );
-    assert_eq!(
-        tail_gear, 0.0,
-        "a deliberately bare-handed entry is priced at ITS OWN kit, not at the kit the entry above \
-         it happens to carry — got {tail_gear}"
-    );
-
-    // **And the DATE moves with it**: the same queue with a geared tail finishes sooner.
-    let (geared_tail, geared_sources) = queue_with_a_bare_tail(false);
-    let bare_date = published_turns(&bare_tail, sources[1]);
-    let geared_date = published_turns(&geared_tail, geared_sources[1]);
-    assert!(
-        bare_date > geared_date,
-        "a waiting entry is dated at the gear IT will be raised with: bare tail {bare_date} must \
-         be later than geared tail {geared_date}"
-    );
-}
-
-/// **`none` IS A REAL SELECTION AND DOES NOT COLLAPSE TO "derive".**
-///
-/// The two are different statements — *"send this job's builders out bare-handed to conserve gear"*
-/// versus *"whatever this entry's web wants"* — and an `Option` that lost the distinction would make
-/// the bare-handed choice unexpressible, which is exactly the defect the deleted per-band picker had
-/// in the other direction.
-#[test]
-fn a_bare_kit_on_an_entry_survives_as_bare_handed_rather_than_collapsing_to_derive() {
-    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
-    let source = BuildSource::Patch(sources[0]);
-    assert!(app
-        .world
-        .get_mut::<LaborAllocation>(band)
-        .expect("the band keeps its allocation")
-        .set_build_entry_kit(&source, Some(bare_builders())));
-    resolve_a_turn(&mut app);
-    assert_eq!(
-        published(&app, sources[0], |patch| patch.buildWorkFromGear()),
-        0.0,
-        "an explicit bare kit must be honoured: collapsing it to the derivation would send the \
-         pool out with the hoes the player just declined"
-    );
-
-    // **Liveness — clearing it back to `None` really does reach the derivation.**
-    assert!(app
-        .world
-        .get_mut::<LaborAllocation>(band)
-        .expect("the band keeps its allocation")
-        .set_build_entry_kit(&source, None));
-    resolve_a_turn(&mut app);
-    assert!(
-        published(&app, sources[0], |patch| patch.buildWorkFromGear()) > 0.0,
-        "clearing the override returns the entry to its own web's kit — without this the zero \
-         above is also what a dead gear term reports"
-    );
-}
-
-/// **THE WIRE STATES THE RESOLVED KIT, NEVER "the player named none"** — and `""` means *"nobody has
-/// this queued"*, which is a different statement from the roster's own bare kit.
-#[test]
-fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
+fn an_entrys_build_kit_publishes_empty_even_where_the_entry_names_one() {
     let (mut app, band, sources) = world_with_a_queue(2, BUILDERS);
     let published_kit = |app: &App, source: UVec2| -> String {
         published(app, source, |patch| {
@@ -2882,34 +2835,35 @@ fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
-        // The head names nothing — the derivation answers for it.
+        // The head names nothing; the tail names the bare kit, which was a selection and not an
+        // absence.
         assert!(allocation.set_build_entry_kit(&BuildSource::Patch(sources[0]), None));
-        // …and the tail names the bare kit, which is a selection and not an absence.
         assert!(
             allocation.set_build_entry_kit(&BuildSource::Patch(sources[1]), Some(bare_builders()))
         );
-        // Nothing is queued on the third source at all.
-        allocation.build_queue.retain(|entry| {
-            entry.source == BuildSource::Patch(sources[0])
-                || entry.source == BuildSource::Patch(sources[1])
-        });
     }
     resolve_a_turn(&mut app);
 
     assert_eq!(
         published_kit(&app, sources[0]),
-        plant_build_kit().id(),
-        "an entry naming nothing publishes the kit its own web wants — a row that published the \
-         empty string would say 'no kit' while the pool was out with hoes"
+        "",
+        "an entry naming nothing names nothing on the wire either — the pool's tools come from the \
+         rung and are published per pool as `poolToe`"
     );
     assert_eq!(
         published_kit(&app, sources[1]),
-        bare_builders().id(),
-        "…and an explicit bare kit publishes the roster's own bare id, which reads differently \
-         from the empty string below"
+        "",
+        "…and so does an entry that DID name a kit: the id is retired rather than underived"
     );
 
-    // **An unqueued source says so with the empty string.** Withdraw one and re-publish.
+    // **WHAT THE EMPTY ID STOPPED SAYING, THE MEMBERSHIP FIELD STILL SAYS.** `""` used to mean
+    // "nobody has this queued"; every row reads it now, so the queued/unqueued distinction is
+    // asserted where it still lives. Withdraw the tail and re-publish.
+    assert_ne!(
+        published_position(&app, sources[1]),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "the tail holds a place in the line while it is in the band's queue"
+    );
     assert!(app
         .world
         .get_mut::<LaborAllocation>(band)
@@ -2917,9 +2871,9 @@ fn the_published_build_kit_is_the_one_the_entry_resolves_to() {
         .unqueue_build(&BuildSource::Patch(sources[1])));
     resolve_a_turn(&mut app);
     assert_eq!(
-        published_kit(&app, sources[1]),
-        "",
-        "a source in nobody's queue is being raised with nothing at all"
+        published_position(&app, sources[1]),
+        NOT_IN_ANY_BUILD_QUEUE,
+        "a source in nobody's queue says so on its place in the line, which is where it says it now"
     );
 }
 
@@ -3291,10 +3245,10 @@ const KEEPERS_SHORT_OF_THE_BILL: u32 = 1;
 /// No keeping row staffed at all — the **control**: the builders' pool with nothing in the band
 /// competing for its hoes.
 ///
-/// It is a head count and not a bare kit, because the `agriculture` row's kit is **not** an input:
-/// `assign_labor` refuses a `kit` token there and `LaborAllocation::row_kit` derives the web's
-/// keeping kit for it, so *"the keepers hold nothing"* is not a state the game can be in. What a
-/// band can genuinely have is nobody on the role.
+/// It is a head count and not a bare kit, because a standing pool's kit is **not** an input:
+/// `assign_labor` refuses a `kit` token on the `agriculture` row, and what the keepers hold follows
+/// from each site's own rung — so *"the keepers hold nothing"* is not a state the game can be in.
+/// What a band can genuinely have is nobody on the role.
 const NO_KEEPING_ROW: u32 = 0;
 
 /// One hoe per hand across both claimants — the arm where "no hand is armed twice" is a claim about
@@ -3419,12 +3373,30 @@ fn the_keepers_are_short_of_their_bill(app: &App, patch: UVec2) -> bool {
         < published(app, patch, |patch| patch.upkeepDemand())
 }
 
-/// **One published field of this band's `builders` row, off the ENCODED buffer.**
-fn published_builders_row<T>(
-    app: &App,
-    band: Entity,
-    read: impl Fn(&shadow_scale_flatbuffers::generated::shadow_scale::sim::LaborAssignment<'_>) -> T,
-) -> T {
+// **RETIRED: `published_builders_row`** — one published field off the band's `builders` row.
+//
+// Its one reader asserted `kitWorkersHolding` equalled the head count the turn armed, and a pool
+// row's published reach is a number no surface should be read against until #675 replaces it with
+// `poolToe`. See `a_builders_pools_take_falls_when_a_keeping_row_reaches_for_the_same_tool`.
+
+/// **NOTHING QUOTES A POOL'S TOOL ON THE PER-ITEM PAIR.** `kitItemConditions` sums over the rows
+/// whose **kit** carries the item, and a standing pool row publishes the empty kit
+/// (`docs/plan_pool_toe.md` §4) — so a tool only the pools reach for reads `0 of 0` there, which is
+/// *not applicable* rather than *nobody is holding one*. The pools' own reading is `poolToe`.
+const NO_ROW_QUOTES_A_POOLS_TOOL: f32 = 0.0;
+
+/// One published `poolToe` line — see [`published_pool_toe`].
+#[derive(Debug)]
+struct PublishedToeLine {
+    pool: String,
+    item: String,
+    required: f32,
+    filled: f32,
+}
+
+/// **THIS BAND'S PUBLISHED POOL TOEs**, in wire order — what each standing pool's sites required
+/// this turn and what the band's settlement gave them.
+fn published_pool_toe(app: &App, band: Entity) -> Vec<PublishedToeLine> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -3436,7 +3408,7 @@ fn published_builders_row<T>(
     let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
     let envelope =
         fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
-    let row = envelope
+    envelope
         .payload_as_snapshot()
         .expect("the envelope carries a snapshot")
         .population()
@@ -3445,12 +3417,19 @@ fn published_builders_row<T>(
         .iter()
         .find(|cohort| cohort.entity() == band.to_bits())
         .expect("the band is on the wire")
-        .laborAssignments()
-        .expect("a staffed band publishes its work rows")
-        .iter()
-        .find(|row| row.kind() == Some(LaborTarget::Builders.kind()))
-        .expect("the fixture staffs a builders row");
-    read(&row)
+        .poolToe()
+        .map(|lines| {
+            lines
+                .iter()
+                .map(|line| PublishedToeLine {
+                    pool: line.pool().unwrap_or_default().to_string(),
+                    item: line.itemId().unwrap_or_default().to_string(),
+                    required: line.required(),
+                    filled: line.filled(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// One item's published `(workersHolding, count)` — how many of this band's people the wire says
@@ -3533,59 +3512,51 @@ fn a_builders_pool_and_a_keeping_row_cannot_arm_more_hands_than_the_band_owns() 
     );
 }
 
-/// **⛔ THE BUILDERS ROW PUBLISHES THE REACH THE TURN ARMS — and that reach now MOVES with the row
-/// beside it.**
+/// **⛔ THE POOL'S TAKE MOVES WITH THE ROW BESIDE IT — a keeping row reaching for the same tool
+/// cuts the builders' share.**
 ///
-/// # What changed, and why it is the intended new truth
+/// `tillage`'s hoes serve a plant build **and** a plant keeping site, so the two pools' claims land
+/// in one settlement (`docs/plan_pool_toe.md` §2.2) and the head's fill is its own share of it.
 ///
-/// This test used to assert the pair was **indifferent** to a keeping row on the same kit: the pool
-/// armed off the whole ledger, so `buildWorkFromGear` was identical across the two arms and the wire
-/// was held to that same indifference. That indifference *was* the double-issue — the keeping row
-/// beside it armed off the whole ledger too. The pool is a budgeted claimant now
-/// (`LaborAllocation::row_kit` registers the head entry's kit over the whole pool, and
-/// `BuildersGear::for_source` cuts from that row's share), so the take **falls** when a keeping row
-/// reaches for the same hoes.
+/// # ⛔ THE "WIRE EQUALS TAKE" HALF IS RETIRED HERE, AND IT IS SLICE 2's TO RESTORE (#675)
 ///
-/// **Wire equals take is unmoved and is still the claim**; only the shared number moved, from the
-/// whole ledger to the row's share of it.
+/// It used to assert `kitWorkersHolding` on the `builders` row equalled the head count the turn
+/// armed. That pair was one resolution while the pool was a **budgeted** claimant: the capture
+/// struck the row's coverage from `LaborAllocation::item_budget`, and `BuildersGear` cut from the
+/// same budget.
+///
+/// A pool is out of that budget now — its tools are settled by `SourcePriority`, band-wide and per
+/// tool, which is a different rule from the budget's pro-rata-by-head-count split and the two must
+/// not both ration one stock. So the capture's pool row reads the band's whole live stock while the
+/// take reads the settled share, and the two legitimately differ.
+///
+/// **The wire is deliberately not corrected in this slice.** #675 appends `poolToe` — required and
+/// filled, per pool per tool — and publishes a pool row's `kitId` empty with `kitWorkersHolding`
+/// equal to its `workers`, the *"nothing to be short of"* reading. Until then the pool row's
+/// published reach is a number no surface should be read against, and this test says so rather than
+/// pinning it to a value slice 2 is about to change.
+///
+/// What is asserted is the **take**, from both ends, which is the half that is load-bearing now.
 #[test]
-fn a_builders_row_and_a_keeping_row_sharing_one_tool_publish_the_reach_the_turn_arms() {
-    let (competing, competing_band, competing_patch) =
-        a_band_whose_pool_and_keepers_share_the_tillage(
-            HOES_FOR_A_SHORT_BAND,
-            KEEPERS_SHORT_OF_THE_BILL,
-        );
-    let (alone, alone_band, alone_patch) =
+fn a_builders_pools_take_falls_when_a_keeping_row_reaches_for_the_same_tool() {
+    let (competing, _, competing_patch) = a_band_whose_pool_and_keepers_share_the_tillage(
+        HOES_FOR_A_SHORT_BAND,
+        KEEPERS_SHORT_OF_THE_BILL,
+    );
+    let (alone, _, alone_patch) =
         a_band_whose_pool_and_keepers_share_the_tillage(HOES_FOR_A_SHORT_BAND, NO_KEEPING_ROW);
 
     let armed_alone = builders_the_turn_armed(&alone, alone_patch);
     assert_eq!(
         armed_alone, BUILDERS as f32,
-        "with nobody competing the pool still arms every builder — the stock covers them and the \
-         budget's `min` against the row's own people is what says so; got {armed_alone}"
+        "with nobody competing the pool still arms every builder — the stock covers them and \
+         coverage's `min` against the row's own people is what says so; got {armed_alone}"
     );
     let armed_competing = builders_the_turn_armed(&competing, competing_patch);
     assert!(
         armed_competing < armed_alone,
-        "THE ASSERTION THAT MOVED: the take is no longer indifferent to the row beside it — a \
-         keeping row reaching for the same hoes cuts the pool's share. got {armed_competing} \
+        "a keeping row reaching for the same hoes cuts the pool's share: got {armed_competing} \
          against {armed_alone}"
-    );
-
-    // **Wire equals take, in both arms** — the row's published reach is the head count the turn
-    // armed, not a second resolution of the same row.
-    assert!(
-        (published_builders_row(&alone, alone_band, |row| row.kitWorkersHolding()) - armed_alone)
-            .abs()
-            < 1e-4,
-        "the control arm's wire must state the reach its take arms"
-    );
-    assert!(
-        (published_builders_row(&competing, competing_band, |row| row.kitWorkersHolding())
-            - armed_competing)
-            .abs()
-            < 1e-4,
-        "…and so must the short arm's, at the smaller number"
     );
 }
 
@@ -3622,10 +3593,37 @@ fn a_band_that_is_not_short_arms_both_pools_in_full() {
         "…and every keeper beside them"
     );
 
+    // **AND THE WIRE SAYS SO, THROUGH `poolToe`** (`docs/plan_pool_toe.md` §4). The conservation
+    // claim used to be read off `kitItemConditions`' per-row pair; a pool row carries no kit any
+    // more, so no row quotes the hoes there and the pair reads `0 of 0` — *not applicable*, with the
+    // band's `count` beside it saying the stock is real. What states a pool's gear now is its TOE,
+    // and the two pools' filled lines are exactly the band's stock.
     let (holding, owned) = published_holding_and_stock(&unshort, unshort_band, SHARED_TOOL);
     assert_eq!(
         (holding, owned),
-        (HOES_FOR_EVERY_HAND as f32, HOES_FOR_EVERY_HAND),
-        "the pool and the keepers together are issued exactly the band's stock of hoes"
+        (NO_ROW_QUOTES_A_POOLS_TOOL, HOES_FOR_EVERY_HAND),
+        "a pool row carries no kit, so the per-row quote for a pool's own tool is `0 of 0` beside a \
+         stock the band really holds"
+    );
+    let toe = published_pool_toe(&unshort, unshort_band);
+    let hoes: Vec<_> = toe.iter().filter(|line| line.item == SHARED_TOOL).collect();
+    assert_eq!(
+        hoes.iter()
+            .map(|line| line.pool.as_str())
+            .collect::<Vec<_>>(),
+        vec!["agriculture", "builders"],
+        "both pools reach for the hoes, so both state a line: got {toe:?}"
+    );
+    for line in &hoes {
+        assert!(
+            (line.filled - line.required).abs() < 1e-4,
+            "a band that is not short fills every line it states: {line:?}"
+        );
+    }
+    let filled: f32 = hoes.iter().map(|line| line.filled).sum();
+    assert!(
+        (filled - HOES_FOR_EVERY_HAND as f32).abs() < 1e-4,
+        "the pool and the keepers together are issued exactly the band's stock of hoes: got \
+         {filled} against {HOES_FOR_EVERY_HAND}"
     );
 }

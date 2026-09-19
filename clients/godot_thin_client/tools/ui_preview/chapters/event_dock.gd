@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 195
+const EXPECTED_CHECKPOINTS := 203
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -651,6 +651,55 @@ func _event_dock_founding_fixture() -> Array:
 			"label": FOUNDING_LABEL, "detail": FOUNDING_DETAIL, "seq": 901},
 		{"tick": 71, "kind": "band_founded", "faction": 0,
 			"label": FOUNDING_REFUSAL_LABEL, "detail": FOUNDING_REFUSAL_DETAIL, "seq": 902},
+	]
+
+## ---- A BAND CHANGES HANDS — `band_founded`'s twin, one step out --------------------------------
+## The two halves of ONE handover, in the sim's own shapes
+## (`core_sim` `systems::population::push_band_changed_hands_events`). They are staged as two SEPARATE
+## ingests rather than one fixture, because the feed is per-faction on the wire
+## (`snapshot::campaign::command_events_to_state` keeps only `entry.faction == viewer`) and a frame
+## carrying both is a frame no server sends — the two rows are what the two PLAYERS see.
+const HANDOVER_KIND := "band_changed_hands"
+
+## The band that moves. Its client-side name matters on one side of the handover and is unreachable
+## on the other, which is the whole of the naming claim below.
+const HANDOVER_BAND_ID := 4
+const HANDOVER_BAND_NAME := "Thornhollow"
+const HANDOVER_BAND_LABELS := {"4": HANDOVER_BAND_NAME}
+
+## THE GAINING SIDE — the viewer is faction 0 and the band arrives from People 1, so `to` is the
+## viewer. Its roster now holds the band, so `band=` joins and the row says the client's own name.
+const HANDOVER_GAINED_SIM_LABEL := "Band 4 joined us from People 1"
+const HANDOVER_GAINED_LABEL := "Thornhollow joined us from People 1"
+const HANDOVER_GAINED_DETAIL := "band=4 from=1 to=0 side=gained"
+
+## THE LOSING SIDE — the same handover from the other seat, so `from` is the viewer and the band is
+## gone from its roster. There is no name left to join, which is why this half keeps the sim's own
+## `Band 4` and why that is the CORRECT reading rather than a missing substitution.
+const HANDOVER_LOST_SIM_LABEL := "Band 4 left us for People 1"
+const HANDOVER_LOST_DETAIL := "band=4 from=0 to=1 side=lost"
+
+## The detail column's expected rendering: NOTHING. Every token this kind writes is said by its label
+## (`HudEventVocab.DETAIL_KEY_HIDDEN`), and `from`/`to` are raw FACTION ids the client has no name to
+## join them to — so a row that rendered them would print `From 1 · To 0` on a player-facing bar.
+const HANDOVER_DETAIL_PHRASE := ""
+
+## The non-vacuity control for that: the same detail with ONE token this kind does not write. An empty
+## phrase is also what a walk that had stopped running answers, so the claim needs a fragment that must
+## still come through.
+const HANDOVER_DETAIL_WITH_EXTRA := "band=4 from=1 to=0 side=gained warriors=3"
+const HANDOVER_EXTRA_PHRASE := "Warriors 3"
+
+func _event_dock_handover_gained_fixture() -> Array:
+	return [
+		{"tick": 88, "kind": HANDOVER_KIND, "faction": 0,
+			"label": HANDOVER_GAINED_SIM_LABEL, "detail": HANDOVER_GAINED_DETAIL, "seq": 911},
+	]
+
+func _event_dock_handover_lost_fixture() -> Array:
+	return [
+		{"tick": 88, "kind": HANDOVER_KIND, "faction": 0,
+			"label": HANDOVER_LOST_SIM_LABEL, "detail": HANDOVER_LOST_DETAIL, "seq": 912},
 	]
 
 ## Assert the event bar clears one HUD region — **and that the claim is not vacuous**.
@@ -2466,6 +2515,64 @@ func run(harness) -> void:
 	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 	event_dock.set_expanded(false)
 	await h._settle()
+
+	# ---- A BAND CHANGES HANDS — the rung, the floor and the name -------------------------------
+	# **THE DEFECT THIS BLOCK EXISTS FOR IS AN ABSENCE.** `band_changed_hands` was missing from
+	# `RUNG_BY_KIND`, so it took `DEFAULT_RUNG` (`RUNG_ROUTINE`) — below `DEFAULT_DETAIL_LEVEL` — and a
+	# player on default settings was never told that a whole band had walked off to another people.
+	# It is `band_founded`'s twin one step out: rare, irreversible, a whole band either way, and NOT
+	# player-initiated, so the dock is the only surface that can report it at all.
+	#
+	# **RENDERED AT THE ALERTS-ONLY FLOOR**, the founding block's own idiom: a frame taken at the
+	# default floor would show a row that `notable` admits anyway and prove nothing about the rung.
+	# The DEFAULT floor is then asked PNG-less below, which is where the reported defect lives.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_expanded(false)
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_detail_level(HudEventVocab.RUNG_ALERT)
+	event_dock.set_band_labels(HANDOVER_BAND_LABELS)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_handover_gained_fixture())
+	await h._settle()
+	await h._save("event_dock_band_changed_hands")
+	# The rung itself, read off the accumulator rather than inferred from the picture — a row drawn at
+	# the wrong importance looks perfectly right in a frame whose floor admits everything.
+	h._assert_hud("a band changing hands is an ALERT, like the founding it mirrors (got %s)"
+			% _preview_event_rung(event_dock, HANDOVER_GAINED_SIM_LABEL),
+		_preview_event_rung(event_dock, HANDOVER_GAINED_SIM_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…so it reaches the ALERTS-ONLY floor, which is what the frame above shows",
+		_preview_visible_label_count(event_dock, HANDOVER_GAINED_SIM_LABEL) == 1)
+	# **THE REPORTED DEFECT, IN ITS OWN TERMS.** `_visible_events()` rather than the drawn bar, so the
+	# claim is about the FLOOR and not about which surface happens to be open.
+	event_dock.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	await h._settle()
+	h._assert_hud("…and it is still there at the DEFAULT floor, where it used to be filtered away",
+		_preview_visible_label_count(event_dock, HANDOVER_GAINED_SIM_LABEL) == 1)
+	# **THE `band=` JOIN IS THIS KIND'S TOO, and it needs no new rule.** The sim spells the band from
+	# its durable id, `BAND_ID_TOKEN_LABELS` is walked on every row, and the gaining faction's roster
+	# holds the band — so the row says what the rest of the client calls it.
+	h._assert_hud("…and the gaining side says the roster's own name for the band it received",
+		_preview_event_label_count(event_dock, HANDOVER_GAINED_LABEL, true) == 1)
+	# **NO RAW FACTION ID REACHES THE BAR.** `from=`/`to=` are ids with no client name to join to, and
+	# the label already names both peoples, so the detail column says nothing at all.
+	var handover_phrase := EventDockPanel.detail_phrase(HANDOVER_GAINED_DETAIL)
+	h._assert_hud("a handover's detail column is EMPTY — its label carries every token (\"%s\")"
+			% handover_phrase,
+		handover_phrase == HANDOVER_DETAIL_PHRASE)
+	# …and the walk still RUNS, which an empty phrase alone cannot say.
+	h._assert_hud("…while an unrelated token on the same line is still rendered as prose",
+		EventDockPanel.detail_phrase(HANDOVER_DETAIL_WITH_EXTRA).contains(HANDOVER_EXTRA_PHRASE))
+	# **THE LOSING HALF, staged as the OTHER SEAT sees it** — same handover, same kind, and the band is
+	# gone from this viewer's roster, so there is no name to join. The sim's own `Band 4` standing is
+	# the correct degradation (`_swap_band_label` refuses an absent name), not a missed substitution.
+	event_dock.set_band_labels({})
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_handover_lost_fixture())
+	await h._settle()
+	h._assert_hud("the LOSING side is the same Alert, and keeps the sim's `Band 4` — it has no roster row left (got %s)"
+			% _preview_event_rung(event_dock, HANDOVER_LOST_SIM_LABEL),
+		_preview_event_rung(event_dock, HANDOVER_LOST_SIM_LABEL) == HudEventVocab.RUNG_ALERT
+			and _preview_event_label_count(event_dock, HANDOVER_LOST_SIM_LABEL, true) == 1)
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame

@@ -605,18 +605,25 @@ fn equipment_batches_survive_a_checkpoint_round_trip() {
     );
 }
 
-/// ⛔ **A SPAWNED BAND OWNS NOTHING — NO EQUIPMENT AND AN EMPTY MATERIAL STORE.**
+/// ⛔ **A SPAWNED BAND OWNS EXACTLY ITS DEFAULT OUTFIT — NOTHING ARRIVES FROM ANYWHERE ELSE.**
 ///
-/// Both halves used to be false and both were retired deliberately. `equipment.json` ships
-/// `start_stock_fraction: 0.0` (`.claude/rules/core_sim/equipment.md`), and the per-material
-/// `start_stock` that seeded `wood` and `stone` beside the kit is **deleted, mechanism and all**.
-/// The one source of opening gear and material is the loadout the player composes on turn one.
+/// `equipment.json` ships `start_stock_fraction: 0.0` (`.claude/rules/core_sim/equipment.md`) and
+/// the per-material `start_stock` that seeded `wood` and `stone` beside the kit is **deleted,
+/// mechanism and all**. The one source of opening gear and material is the outfitting window — and
+/// since `starting-loadout.md` → "A default is applied, never suggested", the sim itself commits
+/// that window's default the moment the band exists, so *"owns nothing"* became *"owns the default
+/// and only the default"*.
+///
+/// **The pairing is the test.** Asserting the band holds *something* passes on a resurrected start
+/// stock; asserting it holds *nothing* is now simply false. What is asserted is that every material
+/// it holds is one `material_defaults` names, in exactly the defaulted quantity — so a second source
+/// reappearing shows up as a material it should not have, or a quantity nothing declared.
 ///
 /// The store half is the one this test exists for: an empty `LocalStore` and a store the capture
 /// simply failed to publish look identical from the outside, so it asserts on the **cohort's own**
 /// store rather than on a wire row.
 #[test]
-fn a_spawned_band_owns_no_equipment_and_holds_no_material() {
+fn a_spawned_band_owns_exactly_its_default_outfit() {
     let mut app = build_test_app();
     // **The SHIPPED equipment config, put back deliberately.** `build_test_app` installs
     // `for_a_stocked_fixture` so a fixture whose subject is something else gets bands that own gear;
@@ -634,11 +641,23 @@ fn a_spawned_band_owns_no_equipment_and_holds_no_material() {
         .iter(&app.world)
         .next()
         .expect("the campaign spawns at least one resident band");
-    assert_eq!(
-        equipment.batches().count(),
-        0,
-        "a spawning band owns NO equipment at all - `start_stock_fraction` ships 0.0, and the \
-         opening allocation is the only way gear reaches a band"
+    let defaults = app
+        .world
+        .resource::<core_sim::ActiveStartProfile>()
+        .profile()
+        .overrides()
+        .opening_loadout
+        .material_defaults
+        .clone();
+    assert!(
+        !defaults.is_empty(),
+        "**LIVENESS**: the profile must default SOMETHING, or the store assertion below is the \
+         old empty-store claim under a new name"
+    );
+    assert!(
+        equipment.batches().count() > 0,
+        "the band holds the kit half of its default outfit - it is applied at creation, not \
+         suggested"
     );
     let mut held: Vec<(&str, f32)> = Vec::new();
     for (id, _) in materials.materials() {
@@ -647,10 +666,18 @@ fn a_spawned_band_owns_no_equipment_and_holds_no_material() {
             held.push((id, amount));
         }
     }
-    assert!(
-        held.is_empty(),
-        "a spawning band's material store is EMPTY - every material is either produced or picked \
-         in the opening loadout, and nothing is stocked at spawn; it is holding {held:?}"
+    for (id, amount) in &held {
+        let declared = defaults.get(*id).copied().unwrap_or_default() as f32;
+        assert_eq!(
+            *amount, declared,
+            "'{id}' is held at {amount} against a declared default of {declared} - `start_stock` \
+             is deleted, so the default outfit is the ONLY way material reaches a spawning band"
+        );
+    }
+    assert_eq!(
+        held.len(),
+        defaults.values().filter(|units| **units > 0).count(),
+        "and every defaulted material is held, so the check above is not vacuous: {held:?}"
     );
 }
 

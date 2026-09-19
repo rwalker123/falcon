@@ -1501,6 +1501,26 @@ table PopulationCohortState {
   quarryworkDemand:float = 0;
   quarryworkSupplied:float = 0;
   quarryworkShortfall:float = 0;
+  // --- THIS BAND'S POOL TABLES OF EQUIPMENT (appended last) -------------------------------------
+  // WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND'S SETTLEMENT GAVE
+  // THEM (`docs/plan_pool_toe.md` section 4). One row per (pool, item).
+  //
+  // *** IT REPLACES A POOL ROW'S `kitId` / `kitWorkersHolding`, WHICH COULD ONLY CARRY ONE TOOL. ***
+  // A pool's tools are derived per SITE from the rung that site stands on, so a Roadwork pool
+  // keeping a dirt road and a paved road wants earthmoving gear AND stone-dressing gear at once -
+  // two answers where one kit id has room for one. A pool row therefore publishes an empty `kitId`
+  // and a `kitWorkersHolding` equal to its `workers` (the "nothing to be short of" reading), and
+  // this vector is where its gear is actually stated.
+  //
+  // *** A ROW EXISTS ONLY WHERE `required > 0`. *** A pool that wants nothing of an item has NO row
+  // rather than a zero one; a pool whose requirement was fully met KEEPS its row, with
+  // `filled == required`. That distinction is the readout: a surface shows no tool line when every
+  // line is filled, and it cannot tell "satisfied" from "not applicable" off an absent row.
+  //
+  // *** THE POOL TOKEN IS THE ROLE TOKEN *** - `agriculture` | `husbandry` | `roadwork` |
+  // `quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes for the row, so a
+  // client joins a line to its pool card without a table of its own.
+  poolToe:[PoolToeLine];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -1528,10 +1548,11 @@ table BandLoadoutWindowState {
   // Material points this window may MINT against, one point per unit. 0 for a take.
   materialBudget:uint;
   // THE ACCEPTED ALLOCATION - the kit rows this band's last accepted `set_starting_loadout` named.
-  // Empty only for a window nobody has ordered against yet. A FRESH SPLINTER'S IS NOT EMPTY: the
-  // default take a split hands over is denominated in KITS and published right here, so a card that
-  // renders these rows and re-sends them untouched commits an exact no-op. Rendering an empty card
-  // instead and echoing it back is a real order - TAKE NOTHING - and forfeits the whole dowry.
+  // NO FRESH WINDOW IS EMPTY, and on every one of them these rows describe gear the band is ACTUALLY
+  // HOLDING: the sim commits a band's default outfit the moment it is created (a TAKE splinter's is
+  // the default take that physically crossed; a GRANT band's is the campaign default, minted against
+  // its own budget), so re-sending these untouched is an exact no-op. Rendering an empty card and
+  // echoing it back is a real order - TAKE NOTHING - and would hand the outfit straight back.
   kits:[OpeningKitDefault];
   // The material half of the accepted allocation, the twin of `kits`.
   materials:[OpeningMaterialDefault];
@@ -6603,6 +6624,26 @@ table RouteState {
 
 table RouteSection {
   routes:[RouteState];
+}
+
+// ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT - a row of `PopulationCohortState.poolToe`,
+// where the rules that govern the vector are stated. Appended last (append-only discipline).
+table PoolToeLine {
+  // Which pool the line belongs to, in the labor-role vocabulary: `agriculture`, `husbandry`,
+  // `roadwork`, `quarrywork` or `builders`.
+  pool:string;
+  // The `equipment.json` item id this line is about.
+  itemId:string;
+  // Units the pool's sites require this turn - one unit per hand standing on a site the tool serves,
+  // divided by the item's `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is
+  // required, so a reader may divide by it.
+  required:float;
+  // Units the band's settlement actually handed this pool. `filled == required` is a pool that got
+  // everything it asked for; `0` is a pool the settlement reached with nothing (its sites work bare
+  // on this line); anything between is the proportional share of a tier the stock could not cover.
+  // Tools are settled BAND-WIDE per item by the player's own row priority, so two pools reaching for
+  // one stock - a paved road and a quarry both want stone-dressing gear - divide it here.
+  filled:float;
 }
 
 table WorldSnapshot {

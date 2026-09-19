@@ -6,8 +6,13 @@ extends Node
 ## slot. Null when no launch is pending (Main falls back to a dev-default world in that case,
 ## so launching `Main.tscn` directly still yields a playable map).
 ##
-## Shape when set: {preset_id: String, width: int, height: int, seed: int, profile_id: String,
-## ai_faction_count: int}. **`ai_faction_count` is `FactionCapacity.NO_COUNT` for "the player was
+## Shape when set: {preset_id: String, width: int, height: int, seed: String, profile_id: String,
+## ai_faction_count: int}. **`seed` IS TEXT, and carrying it as an `int` is a data-loss bug**: the
+## server parses the seed as a u64 and mints seeds across that whole range, while a GDScript `int` is
+## signed 64-bit and stops at 9223372036854775807. Roughly half of all clock-derived seeds are above
+## that, so an `int` hop would accept the digits and hand `Main` a different world
+## (`.claude/rules/client/new-game-setup.md`). `"0"` means "derive from the run clock".
+## **`ai_faction_count` is `FactionCapacity.NO_COUNT` for "the player was
 ## never offered a choice"** — the New Game screen's capacity ask went unanswered — and `Main` then
 ## omits the argument, which the server answers with its unattended roster: no rivals, unless its
 ## config pins some. An explicit `0` is a different request naming that count outright.
@@ -27,7 +32,7 @@ var last_world_epoch: int = 0
 ## of the dev default. Null before the first run, and cleared when a run is abandoned — the landing
 ## screen owns the parameters again from there.
 ##
-## Same shape as `pending_new_game`. A run whose seed is 0 ("derive from the run clock") still lands on
+## Same shape as `pending_new_game`. A run whose seed is `"0"` ("derive from the run clock") still lands on
 ## a different map, because 0 is what gets re-sent — the request is for a NEW world either way.
 var active_new_game = null
 

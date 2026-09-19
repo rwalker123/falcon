@@ -604,6 +604,36 @@ it, for `roadwork_demand`'s own reason — deposit rows are fog-filtered, so a w
 drops out of a client-side total the band still owes. **ONE POOL FOR BOTH BRANCHES**: forestry and
 extraction split on knowledge and on nothing a keeper does.
 
+## `pool_toe` — where a STANDING POOL's tools are stated, now that its `kit_id` cannot say
+
+`docs/plan_pool_toe.md` §4. `PopulationCohortState.poolToe` → **`pool_toe`** on the band dict
+(`dict/population.rs`), an `Array` of `{pool, item_id, required, filled}` — one row per
+`(pool, item)`, where `pool` is the labor-role token `agriculture` | `husbandry` | `roadwork` |
+`quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes, so a surface joins a
+line to its pool card on a string it already holds.
+
+**IT SUPERSEDES THE POOL ROW'S `kit_id`, WHICH THE SIM NOW PUBLISHES EMPTY.** A pool's tools follow
+from each SITE's own rung, and a Roadwork pool keeping a dirt road and a paved road wants two of
+them at once — one more than a kit id has room for. So a pool row's `kit_id` is `""` and its
+`kit_workers_holding` equals its `workers` (the *nothing to be short of* reading, so no existing
+reader reports a shortfall it cannot see the terms of), and the gear is here instead. The per-site
+`build_kit_id` / `upkeep_kit_id` publish `""` with `upkeep_kit_named` `false` for the same reason,
+on every patch, herd and working.
+
+⛔ **AN ABSENT LINE AND A FILLED LINE ARE DIFFERENT SENTENCES**, and the decoder filters neither. A
+line exists only where `required > 0`; a pool whose requirement was met KEEPS its line with
+`filled == required`. *"Wants none of this item"* is the line being ABSENT and *"wanted some, got
+all"* is `filled == required` — drop the filled rows on decode and the only distinction the vector
+carries is destroyed. `required` is never `0`, so a readout may divide by it; `filled` is a float
+because the band-wide settlement divides a tier proportionally, and `0` is a pool the settlement
+reached with nothing.
+
+**A VECTOR FIELD, so the `material_yield` treatment applies** — saturation reaches it and a golden
+re-record is the only fixture step, but the decode golden can say nothing about the three
+publishing changes above: it is built from `sim_schema::fixture`'s saturated snapshot, not from a
+sim capture, so `upkeep_kit_id` there still reads `"forage_patches[0].upkeep_kit_id"`. Only
+`core_sim`'s own capture tests witness those.
+
 ## The `connections` section, and the cohort fields the shipment arc appended
 
 Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact

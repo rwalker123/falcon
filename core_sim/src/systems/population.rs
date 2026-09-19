@@ -581,6 +581,54 @@ fn band_label(band: BandId) -> String {
     format!("Band {}", band.0)
 }
 
+/// How the OTHER people are named in a world event's label.
+///
+/// The sim authors no faction names — `FactionRegistry` holds ids and who controls them, nothing
+/// else — so the id is all there is to say, and it is said in [`band_label`]'s register. The
+/// `from=`/`to=` detail tokens carry the raw ids, so a client that later knows a people's name
+/// substitutes it the same way it substitutes a band's.
+fn people_label(faction: FactionId) -> String {
+    format!("People {}", faction.0)
+}
+
+/// Tell **both** peoples that a band changed hands: one entry filed under the faction that lost it,
+/// one under the faction that gained it.
+///
+/// Two entries rather than one because the feed is per-faction on the wire —
+/// `snapshot::campaign::command_events_to_state` keeps only `entry.faction == viewer` — so a single
+/// row would reach exactly one of the two players the handover happened to. Which side a row
+/// describes rides `side=lost|gained`, and both carry the same `band=`/`from=`/`to=` tokens so the
+/// two halves of one handover can be matched up.
+fn push_band_changed_hands_events(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    band: BandId,
+    from: FactionId,
+    to: FactionId,
+) {
+    let name = band_label(band);
+    let detail = |side: &str| {
+        Some(format!(
+            "band={} from={} to={} side={}",
+            band.0, from.0, to.0, side
+        ))
+    };
+    event_log.push(CommandEventEntry::new(
+        tick,
+        CommandEventKind::BandChangedHands,
+        from,
+        format!("{name} left us for {}", people_label(to)),
+        detail("lost"),
+    ));
+    event_log.push(CommandEventEntry::new(
+        tick,
+        CommandEventKind::BandChangedHands,
+        to,
+        format!("{name} joined us from {}", people_label(from)),
+        detail("gained"),
+    ));
+}
+
 /// The three age brackets as they appear in a `died` event: the `bracket=` token, the singular noun
 /// with its article, and the plural noun.
 #[derive(Debug, Clone, Copy)]
@@ -1037,6 +1085,18 @@ pub fn simulate_population(
                 );
                 cohort.knowledge = fragments_from_contract(&knowledge_contract);
                 cohort.faction = migration.destination;
+                // **The handover is told to BOTH peoples.** This branch used to change the band's
+                // faction in silence — the two events it sends are diffusion telemetry that nothing
+                // reads — so a player lost, or gained, a whole band with no line anywhere.
+                if let Some(band_id) = band_id {
+                    push_band_changed_hands_events(
+                        &mut event_log,
+                        tick.0,
+                        *band_id,
+                        source_faction,
+                        migration.destination,
+                    );
+                }
             } else {
                 cohort.migration = Some(migration);
             }
@@ -2122,6 +2182,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
+            last_pool_toe: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -2171,6 +2232,7 @@ mod food_flow_tests {
             last_roadwork_supplied: 0.0,
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
+            last_pool_toe: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,

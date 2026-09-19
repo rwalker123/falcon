@@ -7,10 +7,15 @@ extends RefCounted
 ## is most of the chapter; the TAKE a split opens on a splinter (picks that MOVE gear out of the home
 ## band, capped per ITEM) is appended at the end, after the orb states, so nothing before it moves.
 ##
-## ⛔ **THE TAKE CARD OPENS ON THE SPLIT'S OWN DEFAULT TAKE, NOT AT ZERO.** That allocation is
-## kit-denominated and published on the window, so an untouched `Set out` re-sends it unchanged — a
-## no-op. It is asserted twice over, on the rendered steppers AND on the composed order, because a
-## card that shows the right numbers and a commit that sends them are two different claims.
+## ⛔ **THE CARD DRAWS WHAT THE BAND HOLDS, AND EVERY PRESS ORDERS.** The sim applies a band's default
+## outfit when it makes the band, so `loadout_window.kits` / `.materials` are gear in hands rather than
+## a suggestion — and there is no deferred commit for the card to lose: a stepper press emits the whole
+## allocation on the spot, and the footer control closes the card and sends nothing.
+##
+## ⛔ **EVERY FIXTURE BAND PUBLISHES THE LAST ORDER THIS CARD SENT FOR IT** (`_held_kits`), falling
+## back to its default outfit. That is what a server does — it applies the order and republishes the
+## band — and a fixture that re-stated a stale allocation instead would be a server that ignored the
+## player, which the card would rightly (and confusingly) adopt.
 ##
 ## One chapter of the `ui_preview` state walk, run in the order `ui_preview.gd`'s `CHAPTERS` lists
 ## it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a chapter
@@ -34,7 +39,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 112
+const EXPECTED_CHECKPOINTS := 136
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -64,16 +69,17 @@ const MATERIAL_BUDGET := 30
 ## The shipped pick list, in the profile's own order — which is also the draw order of the resources
 ## column and of the legend above the recipe list.
 const PICKABLE := ["bone", "fibre", "hide", "wood", "stone"]
-## …and the pre-fill it opens on. Sums to 28 of 30, deliberately NOT to the budget: a fixture that
-## opened with nothing left could not tell a working meter from one stuck at zero.
+## …and the pile the band already holds, the profile's own spread as the sim applied it. Sums to 28 of
+## 30, deliberately NOT to the budget: a fixture holding its whole budget could not tell a working
+## meter from one stuck at zero.
 const DEFAULT_BONE := 3
 const DEFAULT_FIBRE := 17
 const DEFAULT_HIDE := 8
 const DEFAULTS_TOTAL := DEFAULT_BONE + DEFAULT_FIBRE + DEFAULT_HIDE
 
-## The KIT column's own pre-fill — the shipped spread, and 12 of the 17-kit budget so the meter opens
-## with something left for the same reason the material one does. **The wire sends these ALREADY
-## CLAMPED**; the fixture states them as the sim would and the picker must draw them unchanged.
+## The KITS THE BAND HOLDS — the shipped spread, and 12 of the 17-kit budget so the meter opens with
+## something left for the same reason the material one does. **The sim fitted these to the budget when
+## it applied them**; the fixture states them as the sim would and the picker must draw them unchanged.
 const DEFAULT_STALKING := 4
 const DEFAULT_TRAPPING := 4
 const DEFAULT_GATHERING := 4
@@ -105,6 +111,9 @@ const EXPECTED_EARTHMOVING := 0
 ## The kit the chapter buys, and how many of it.
 const KIT_STALKING := "big_game"
 const KIT_PRESSES := 3
+## …and the SECOND kit, which only the adoption states move — a row pressed on a band nothing above
+## has touched, so "the sim's rows replaced the card's" is a claim about a row with a history.
+const KIT_GATHERING := "gathering"
 ## The roster entry that must NEVER be offered — it grants nothing, which is how the picker knows.
 const KIT_NONE := "none"
 
@@ -160,7 +169,7 @@ const TAKE_BASKETS := 3
 const TAKE_ITEM_TOTAL := TAKE_SPEARS + TAKE_SLED + TAKE_TRAPS + TAKE_BASKETS
 ## ⛔ **THE DEFAULT TAKE THE SPLIT ALREADY MOVED, kit-denominated and published on the window** — and
 ## the card OPENS on it. It is what makes an untouched `Set out` an exact no-op instead of an order to
-## take nothing, which is what an empty card committed while the take was a bare per-item manifest.
+## take nothing, which is what an empty card would order the moment a stepper is pressed.
 ## Non-zero and unequal to the stepper's floor, so a card that opened at zero — or at one — fails on
 ## the count rather than on a coincidence.
 const TAKE_DEFAULT_BIG_GAME := 2
@@ -198,12 +207,48 @@ const GRANT_METER_NEEDLE := "/ 30 left"
 ## The orb noun a take may never use, for the same reason. Supply left at home is lost by nobody.
 const TAKE_FORBIDDEN_NOUN := "unspent"
 
-## The word every retired forfeiture claim was built on — the commit control's old conditional face
+# ---- the band whose allocation the SIM moves, and the one that proves two presses hold ------------
+
+## ⛔ **ITS OWN BAND, because adoption is a claim about a band whose card has a HISTORY.** Every other
+## band here has been edited by the states above and would confuse "the sim's rows replaced mine" with
+## "nothing happened". It opens LAST, after every orb claim has been made, and the chapter's closing
+## shut-window push simply omits it.
+const ADOPT_BAND_ENTITY := 6204
+
+## The window it opens on, and the one the sim re-publishes a frame later. **The re-fit is what a split
+## does to the PARENT** (`fission::rebalance_partitioned_grant`): both budgets shrink and the standing
+## allocation is restated against them — an allocation this card never sent, so the card must take it.
+const ADOPT_KIT_BUDGET := 10
+const ADOPT_MATERIAL_BUDGET := 14
+const ADOPT_REFIT_KIT_BUDGET := 6
+const ADOPT_REFIT_MATERIAL_BUDGET := 10
+## What the band holds when the card opens.
+const ADOPT_HELD_BIG_GAME := 3
+const ADOPT_HELD_GATHERING := 3
+const ADOPT_BONE := 4
+const ADOPT_FIBRE := 6
+## …and what the SIM re-fits it to. **Every row moves**, and `gathering` moves to a value the player's
+## own presses below never reach, so "the published rows won" cannot be satisfied by a card that simply
+## kept what it had.
+const ADOPT_REFIT_BIG_GAME := 1
+const ADOPT_REFIT_GATHERING := 2
+const ADOPT_REFIT_BONE := 2
+const ADOPT_REFIT_FIBRE := 4
+## What the player does to it afterwards: two presses on `gathering`, one after the other, with the
+## FIRST press's echo landing between the second press and its own. Neither may pull the card back.
+const ADOPT_PRESSES := 2
+
+## The word every retired forfeiture claim was built on — the old commit control's conditional face
 ## and the subtitle's old second clause alike. Asserted ABSENT from the whole card: the unspent
 ## warning is the turn orb's, and a second copy here is what this needle exists to catch coming back.
 const FORFEIT_NEEDLE := "forfeit"
 ## …and the refusal notice that used to be posted on a still-open frame after a commit.
 const REFUSAL_NEEDLE := "refused"
+## ⛔ **THE FACE THE FOOTER CONTROL MAY NEVER WEAR AGAIN.** It closes the card and sends nothing, so a
+## button reading `Set out` would promise the one thing this card no longer defers — and a player who
+## never pressed it would think they had lost what they picked. A LITERAL, not
+## `HudLoadoutVocab.CLOSE_LABEL`'s old value: a needle taken from the const under test moves with it.
+const RETIRED_SEND_FACE := "Set out"
 
 ## **THE FLOOR A `ready` INK MUST CLEAR AGAINST ITS OWN PALETTE'S OTHER ACCENTS**, as a straight RGB
 ## distance normalised so 1.0 is black-to-white. It exists because "blue means done" is worth nothing
@@ -243,12 +288,17 @@ const ORB_DETAIL_RETIRED_NOUN := "unit"
 ## card that is merely "about right".
 const CARD_DEAD_SPACE_TOLERANCE := 2.0
 
-## The face the commit control wears while a budget is unspent, captured so the fully-spent state can
-## be compared against it. The claim is that the two are EQUAL.
-var _unspent_commit_face := ""
+## **EVERY COMMAND THE CARD HAS EMITTED, in order** — the sink is connected for the whole chapter, so
+## a press is visible to the state that made it AND to the fixtures, which republish the last order a
+## band was sent as that band's holdings. See `_held_kits`.
+var _orders: Array = []
 
 func run(harness) -> void:
 	h = harness
+	# **THE SINK IS CONNECTED FOR THE WHOLE CHAPTER**, because every press sends now: a state that
+	# connected only for its own block would leave the fixtures unable to say what a band holds. See
+	# `_orders`.
+	h._hud.set_starting_loadout_requested.connect(_on_order)
 	# The two catalogues the picker JOINS onto, pushed through the seams `Main` really uses. Neither
 	# is part of the loadout section: the kit roster rides the equipment config blob and a recipe's
 	# input costs ride the recipe book, and the picker reads both rather than a second copy.
@@ -259,47 +309,53 @@ func run(harness) -> void:
 	# window is open is what stands the card up, which is the behaviour a player meets after watching
 	# a world generate.
 	#
-	# **TWO SEAMS, IN THIS ORDER.** The campaign half (the pick list and the two pre-fills) rides the
-	# campaign section; the WINDOW itself — `open`, both budgets, the accepted rows and a take's caps
-	# — rides the COHORT, so it arrives through the same roster push `update_band_alerts` already
-	# makes. The campaign half has to land first or the pre-fill has no pick list to be filtered
-	# against, which is the order `Main` dispatches them in.
+	# **TWO SEAMS, IN THIS ORDER.** The campaign half (the pick list, the craftable ids) rides the
+	# campaign section; the WINDOW itself — `open`, both budgets, the allocation the band HOLDS and a
+	# take's caps — rides the COHORT, so it arrives through the same roster push `update_band_alerts`
+	# already makes. The campaign half has to land first or the allocation has no pick list to be
+	# filtered against, which is the order `Main` dispatches them in.
 	h._hud.update_opening_loadout(_campaign())
 	h._hud.update_band_alerts([_grant_band()])
 	await h._settle()
 	_assert_opened_itself()
-	_assert_kits_open_on_the_published_prefill()
-	_assert_defaults_seeded()
+	_assert_the_kits_the_band_holds()
+	_assert_the_pile_the_band_holds()
 	_assert_gated_recipe_is_absent()
 	_assert_recipe_counts()
 	_assert_reachable_first()
 	_assert_orb_row()
 	_assert_the_footer_says_how_to_get_back()
+	_assert_the_footer_control_does_not_read_as_a_send()
 	_assert_no_dead_space("opened")
 	await h._save("starting_loadout")
 
-	await _pick_a_kit()
+	await _a_press_sends_the_whole_allocation()
 	_assert_no_dead_space("picked")
 	await h._save("starting_loadout_picked")
+
+	await _a_failed_send_rolls_the_press_back()
 
 	await _spend_both_budgets()
 	_assert_no_dead_space("spent")
 	await h._save("starting_loadout_spent")
 
 	await _dismiss_and_reopen()
-	await _commit_is_revisable()
+	await _closing_the_card_sends_nothing()
 	_assert_the_ready_ink_is_separable_in_every_palette()
 	await _orb_states()
 	# **THE TAKE ARC IS APPENDED, never interleaved.** Every state above renders with exactly one
 	# window open, and the orb states assert the loadout row is the orb's ONLY entry — a second window
 	# opened earlier would make those two frames evidence of somebody else's row.
 	await _take_window_opens_on_the_splinter()
-	await _an_untouched_commit_re_sends_the_standing_take()
+	await _a_press_on_a_take_sends_the_whole_standing_order()
 	await _the_take_cap_is_the_expanded_item_list()
 	await _the_switcher_reaches_the_other_band()
 	await _every_row_names_its_band_and_opens_it()
 	await _an_over_budget_band_is_not_outfitted()
+	await _a_moved_allocation_is_adopted()
+	await _two_presses_do_not_flicker_back()
 	_assert_window_shuts()
+	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
 # ---- the opening state ------------------------------------------------------
 
@@ -313,44 +369,48 @@ func _assert_opened_itself() -> void:
 	h._assert_hud("loadout — the picker opens ITSELF on the first frame the window is open",
 		_controller().is_expanded())
 
-## **THE KIT COLUMN OPENS ON THE PUBLISHED PRE-FILL**, not on zeros — the material column's rule, one
+## **THE KIT COLUMN DRAWS THE KITS THE BAND HOLDS**, not zeros — the material column's rule, one
 ## column over. A roster row is found by its own meta rather than by its face: the face is a config
 ## string, so a text match would only confirm the fixture back to itself.
 ##
-## ⛔ **THE COUNTS ARE ASSERTED AS PUBLISHED, which is what catches a second clamp.** The wire's spread
-## is already fitted to `kit_budget` sim-side, so a client that re-fitted it would render a different
-## pre-fill from the one that was sent — and with a spread comfortably inside the budget (12 of 17)
-## that re-fit would be INVISIBLE unless the individual counts are checked, since the total would
-## still look reasonable.
-func _assert_kits_open_on_the_published_prefill() -> void:
+## ⛔ **THE COUNTS ARE ASSERTED AS PUBLISHED, which is what catches a second clamp.** The sim fitted
+## the spread to `kit_budget` when it applied it, so a client that re-fitted it would render a
+## different allocation from the one the band is carrying — and with a spread comfortably inside the
+## budget (12 of 17) that re-fit would be INVISIBLE unless the individual counts are checked, since
+## the total would still look reasonable.
+##
+## ⛔ **AND THE CAMPAIGN PRE-FILL IS NOT DRAWN HERE AT ALL.** `_campaign()` no longer states it, so a
+## client that still read `openingLoadout.kitDefaults` would render an EMPTY kit column on this frame
+## rather than a doubled one — which these same counts catch, at `got 0`.
+func _assert_the_kits_the_band_holds() -> void:
 	var rows := _rows(HudLoadoutVocab.KIT_ROW_META)
 	h._assert_hud("loadout — the `%s` kit is not offered (it grants nothing)" % KIT_NONE,
 		not rows.is_empty() and not rows.has(KIT_NONE))
 	for expectation in [[KIT_STALKING, DEFAULT_STALKING], ["trapping", DEFAULT_TRAPPING],
-			["gathering", DEFAULT_GATHERING]]:
+			[KIT_GATHERING, DEFAULT_GATHERING]]:
 		var kit_id := String(expectation[0])
 		var want := int(expectation[1])
 		var got := _stepper_count(HudLoadoutVocab.KIT_ROW_META, kit_id)
-		h._assert_hud("loadout — %s opens on the published %d (got %d)" % [kit_id, want, got],
+		h._assert_hud("loadout — %s draws the published %d (got %d)" % [kit_id, want, got],
 			got == want)
-	# …and a kit the pre-fill does not name really does open at zero, without which "opens on the
-	# defaults" passes on a column that put the same number on every row.
-	h._assert_hud("loadout — a kit the pre-fill does not name opens at 0 (got %d)"
+	# …and a kit the band does not hold really does read zero, without which "draws what it holds"
+	# passes on a column that put the same number on every row.
+	h._assert_hud("loadout — a kit the band does not hold reads 0 (got %d)"
 			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, "warrior"),
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, "warrior") == 0)
-	h._assert_hud("loadout — the meter accounts for the pre-fill (%d spent, %d of %d left)"
+	h._assert_hud("loadout — the meter accounts for what is held (%d spent, %d of %d left)"
 			% [_controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
 		_controller().kits_spent() == KIT_DEFAULTS_TOTAL
 			and _controller().kits_left() == KIT_BUDGET - KIT_DEFAULTS_TOTAL)
 
-## …and the resources column opens on the PROFILE'S DEFAULTS rather than on zero. It is the one
-## column that does, and a picker that opened both at zero would look identical in a screenshot.
-func _assert_defaults_seeded() -> void:
+## …and the resources column draws the pile the band holds rather than zero. A picker that opened
+## both columns at zero would look identical in a screenshot.
+func _assert_the_pile_the_band_holds() -> void:
 	var rows := _rows(HudLoadoutVocab.MATERIAL_ROW_META)
 	h._assert_hud("loadout — one row per pickable material, in the profile's order (%s)"
 			% str(rows),
 		rows == PICKABLE)
-	h._assert_hud("loadout — the pile opens on the published defaults (%d of %d spent)"
+	h._assert_hud("loadout — the pile draws what the band holds (%d of %d spent)"
 			% [_controller().materials_spent(), MATERIAL_BUDGET],
 		_controller().materials_spent() == DEFAULTS_TOTAL)
 
@@ -405,29 +465,94 @@ func _assert_orb_row() -> void:
 
 # ---- driving the steppers ---------------------------------------------------
 
-## Press the Stalking kit's `+` through the REAL button. The panel rebuilds on every press, so the
-## button is re-found each time — a cached node here would be pressing a freed control.
-func _pick_a_kit() -> void:
+## ⛔ **A PRESS IS AN ORDER, AND IT CARRIES THE WHOLE ALLOCATION.**
+##
+## Proven from a recorded session: a player filled a card in, never pressed `Set out`, ended the turn
+## and the band got NOTHING — the server had received exactly one `set_starting_loadout` all game, for
+## the other band, while the card and the orb both read *outfitted* off the card's own local copy. The
+## draft is deleted, so the claim is that the press itself sends.
+##
+## **THREE THINGS, AND THEY FAIL APART**: the number under the finger moved; a command went out on the
+## press with no further control touched; and that command names the WHOLE allocation, every row the
+## band holds, since the verb is a replacement and a line naming only the pressed row would order the
+## rest away.
+##
+## Pressed through the REAL button, re-found on every press — the panel rebuilds each time, so a
+## cached node here is a freed control.
+func _a_press_sends_the_whole_allocation() -> void:
+	var before := _orders.size()
 	for _i in range(KIT_PRESSES):
 		_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
-	await h._settle()
+		await h._settle()
 	var want_spent := KIT_DEFAULTS_TOTAL + KIT_PRESSES
 	h._assert_hud("loadout — %d presses buy %d more kits, and the meter says so (%d left of %d)"
 			% [KIT_PRESSES, _controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
 		_controller().kits_spent() == want_spent
 			and _controller().kits_left() == KIT_BUDGET - want_spent)
-	# **THE COMMIT CONTROL'S FACE IS UNCONDITIONAL, and this is the half of that claim taken with a
-	# budget still holding something.** Its pair rides the fully-spent state below, and neither is
-	# worth anything alone: a face reading `Set out` here alone passes on a control that renames
-	# itself once the budgets clear, and there alone on one that renames itself while they do not.
-	_unspent_commit_face = _commit_face()
-	h._assert_hud("loadout — the commit control reads `%s` with 14 kits and 2 resources unspent"
-			% _unspent_commit_face,
-		_unspent_commit_face == HudLoadoutVocab.COMMIT_CLEAR_LABEL)
+	h._assert_hud("loadout — …and each press sent ONE order, with no `%s` pressed (%d for %d presses)"
+			% [RETIRED_SEND_FACE, _orders.size() - before, KIT_PRESSES],
+		_orders.size() - before == KIT_PRESSES)
+	var order: Dictionary = _orders.back()
+	h._assert_hud("loadout — the order names the band by its durable id (got %d)"
+			% int(order.get("band_id", HudConst.NO_BAND_ID)),
+		int(order.get("band_id", HudConst.NO_BAND_ID)) == _band_id(HOME_BAND_ENTITY))
+	# **THE WHOLE ALLOCATION, not the row that moved.** A replacement naming only `big_game` would order
+	# the other two kits and the whole pile away, which is a line that looks perfectly correct.
+	h._assert_hud("loadout — …and it carries every kit the band holds (%s)"
+			% str(_order_rows(order, "kits", "count")),
+		_order_rows(order, "kits", "count") == {
+			KIT_STALKING: DEFAULT_STALKING + KIT_PRESSES,
+			"trapping": DEFAULT_TRAPPING,
+			KIT_GATHERING: DEFAULT_GATHERING,
+		})
+	h._assert_hud("loadout — …and every resource too (%s)"
+			% str(_order_rows(order, "materials", "units")),
+		_order_rows(order, "materials", "units") == {
+			"bone": DEFAULT_BONE, "fibre": DEFAULT_FIBRE, "hide": DEFAULT_HIDE,
+		})
 	# …and it makes NO forfeiture claim, which is the orb's to make. Asked of the whole card, because
 	# the sentence that used to say it was the SUBTITLE as well as the button.
 	h._assert_hud("loadout — nothing on the card says anything is forfeited",
 		not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
+
+## ⛔ **A SEND THAT DID NOT GO TAKES THE PRESS WITH IT.** The write is optimistic — the number has to
+## move on the frame the stepper was pressed — and its warrant is the command beside it, so a line the
+## transport refused would otherwise leave a card showing gear the sim has never heard of.
+##
+## **Driven the way `Main` drives it**: the `has_method` name is asserted first (that probe fails
+## SILENTLY, so a rename takes the rollback out of the client without a word), then the very payload
+## the HUD emitted is handed back — `band_panel_preview._assert_pending_assign_rollback`'s shape, and
+## for its reason: a card showing one more kit than it ordered is a perfectly ordinary card.
+func _a_failed_send_rolls_the_press_back() -> void:
+	var before := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	var before_spent := _controller().kits_spent()
+	h._assert_hud("loadout/rollback — the HUD carries the name `Main` probes for",
+		h._hud.has_method("revert_starting_loadout"))
+	_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	await h._settle()
+	h._assert_hud("loadout/rollback — the press moved the row first (%d → %d)"
+			% [before, _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == before + 1)
+	# The line did not go. This is the branch `Main._on_hud_set_starting_loadout` takes on `false`.
+	h._hud.revert_starting_loadout(_orders.back())
+	# **AND NO SERVER SAW IT**, so it is taken off the record the fixtures publish from — a frame
+	# carrying an order that never arrived would be a server inventing one.
+	_orders.pop_back()
+	await h._settle()
+	h._assert_hud("loadout/rollback — …and the refused send takes the row back (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING), before],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == before)
+	h._assert_hud("loadout/rollback — …and the meter with it (%d spent, want %d)"
+			% [_controller().kits_spent(), before_spent],
+		_controller().kits_spent() == before_spent)
+	# **AND THE ROLLED-BACK ORDER IS NOT LEFT WAITING FOR AN ECHO.** The card un-sent it, so the next
+	# frame — which restates the band as it stood BEFORE the press, that being the last order that
+	# really went — must leave the rolled-back row exactly where the rollback put it.
+	h._hud.update_band_alerts([_grant_band()])
+	await h._settle()
+	h._assert_hud("loadout/rollback — …and the next frame leaves the rolled-back row alone (%d)"
+			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING),
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == before)
 
 ## Spend BOTH budgets to the last unit, then press once more. The extra press is the point: the
 ## controller clamps against the budget, so the `+` is disabled and nothing can be overspent — the
@@ -448,15 +573,18 @@ func _spend_both_budgets() -> void:
 	var plus := _plus_button(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
 	h._assert_hud("loadout — `+` is disabled once the budget is gone",
 		plus != null and plus.disabled)
-	h._assert_hud("loadout — the commit control's face did not move when the budgets cleared (%s → %s)"
-			% [_unspent_commit_face, _commit_face()],
-		_commit_face() == _unspent_commit_face
-			and _commit_face() == HudLoadoutVocab.COMMIT_CLEAR_LABEL)
+	# **THE FOOTER CONTROL'S FACE IS UNCONDITIONAL**, taken here with both budgets clear against the
+	# opening state's reading with both unspent. Neither half is worth anything alone: a face asserted
+	# only where something is unspent passes on a control that renames itself once the budgets clear,
+	# and only where they are clear on one that renames itself while they are not.
+	h._assert_hud("loadout — the footer control still reads `%s` with both budgets clear (got `%s`)"
+			% [HudLoadoutVocab.CLOSE_LABEL, _close_face()],
+		_close_face() == HudLoadoutVocab.CLOSE_LABEL)
 
 # ---- dismiss, reopen, refuse ------------------------------------------------
 
 ## **THE WINDOW IS DISMISSIBLE AND THE PICKS SURVIVE IT.** A player has to be able to pan, zoom and
-## read a tile before committing, and the reopen pill is what brings the card back.
+## read a tile while outfitting, and the reopen pill is what brings the card back.
 func _dismiss_and_reopen() -> void:
 	_controller().collapse()
 	await h._settle()
@@ -478,44 +606,53 @@ func _dismiss_and_reopen() -> void:
 	h._assert_hud("loadout — reopening keeps every pick (%d kits)" % _controller().kits_spent(),
 		_controller().is_expanded() and _controller().kits_spent() == spent)
 
-## ⛔ **COMMITTING DOES NOT SHUT THE WINDOW, AND THE FRAME AFTER ONE IS NOT A REFUSAL.** An apply is a
-## REPLACEMENT, so the sim leaves `open` true and the player may revise and re-send as often as they
-## like. This block walks that whole loop: commit, take the still-open frame the sim really sends,
-## reopen, change the allocation, and commit the same control again.
+## ⛔ **THE FOOTER CONTROL CLOSES THE CARD AND SENDS NOTHING, AND NOTHING IS LOST BY PRESSING IT.**
 ##
-## The claim it exists for is the one a client reading `open` as a success signal fails: the card must
-## come back CLEAN. An earlier cut posted *"that order was refused"* on exactly this frame, which
-## under replacement semantics fires after every successful order.
-func _commit_is_revisable() -> void:
-	var commit := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
-	h._assert_hud("loadout — the card carries a commit control", commit != null)
-	commit.pressed.emit()
+## It was `Set out` and it was the only thing that sent; a player who filled the card in and never
+## pressed it lost the lot. Every press orders now, so what is left for this button is the map: it
+## puts the card away, and the reopen pill and the orb's row both stay live.
+##
+## **The pair is the claim** — pressing it must send NOTHING (a control that still ordered would make
+## every press's send a double) and must cost nothing (a card that came back empty would be the old
+## defect wearing new words).
+##
+## The frame after it is the one a client reading `open` as a success signal fails: the sim leaves the
+## window open whatever it does with an order, so the card must come back CLEAN. An earlier cut posted
+## *"that order was refused"* on exactly this frame.
+func _closing_the_card_sends_nothing() -> void:
+	var close_button := Q.find_meta_node(_panel(), HudLoadoutVocab.CLOSE_BUTTON_META) as Button
+	h._assert_hud("loadout — the card carries a footer control", close_button != null)
+	var before := _orders.size()
+	var spent := _controller().kits_spent()
+	close_button.pressed.emit()
 	await h._settle()
-	h._assert_hud("loadout — committing puts the card away so the player can look at the map",
+	h._assert_hud("loadout — it puts the card away so the player can look at the map",
 		not _controller().is_expanded() and _controller().is_open())
-	# The frame the sim really sends after an accepted order: the window is STILL OPEN.
+	h._assert_hud("loadout — …and it sends NOTHING (%d orders)" % (_orders.size() - before),
+		_orders.size() == before)
+	# The frame the sim really sends: the window is STILL OPEN.
 	h._hud.update_band_alerts([_grant_band()])
 	await h._settle()
-	h._assert_hud("loadout — a still-open window after a commit is not treated as a refusal",
+	h._assert_hud("loadout — a still-open window is not treated as a refusal",
 		not _controller().is_expanded())
 	_panel().reopen_pill().pressed.emit()
 	await h._settle()
-	h._assert_hud("loadout — the card comes back CLEAN — no refusal, no forfeiture claim",
-		_controller().is_expanded()
+	h._assert_hud("loadout — the card comes back CLEAN, every kit intact (%d), no refusal, no"
+				% _controller().kits_spent() + " forfeiture claim",
+		_controller().is_expanded() and _controller().kits_spent() == spent
 			and not Q.has_label_containing(_panel(), REFUSAL_NEEDLE)
 			and not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
 	_assert_no_dead_space("reopened")
-	await h._save("starting_loadout_resent")
-	# **AND THE SAME CONTROL SENDS AGAIN.** A revised allocation, then a re-send — the ordinary act
-	# under replacement semantics, and one a client that latched "already committed" would refuse.
+	await h._save("starting_loadout_reopened")
+	# **AND A PRESS STILL ORDERS AFTER A CLOSE AND A REOPEN** — an ordinary act under replacement
+	# semantics, and one a client that latched "already sent" would refuse. It also leaves ONE resource
+	# unspent, which is the warn arm the orb states below are taken on.
+	var sends := _orders.size()
 	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
 	await h._settle()
-	var revised := _controller().materials_spent()
-	var resend := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
-	resend.pressed.emit()
-	await h._settle()
-	h._assert_hud("loadout — a revised allocation re-sends and survives the send (%d units)" % revised,
-		_controller().materials_spent() == revised and _controller().is_open())
+	h._assert_hud("loadout — a revised allocation sends again (%d units left, %d order)"
+			% [_controller().materials_left(), _orders.size() - sends],
+		_orders.size() - sends == 1 and _controller().materials_left() == 1)
 
 ## ⛔ **EVERY ROW NAMES ITS OWN BAND, AND ITS `Open ▸` REACHES THAT BAND.**
 ##
@@ -615,6 +752,147 @@ func _band_attention_row(band_id: int) -> Dictionary:
 			return row
 	return {}
 
+## ⛔ **AN ALLOCATION THIS CARD NEVER SENT IS THE SIM'S, AND THE CARD TAKES IT.**
+##
+## A split re-fits the PARENT's standing allocation down to its reduced budget
+## (`fission::rebalance_partitioned_grant`) and re-materializes the band from it, so the published
+## rows genuinely move under a card that is already up. The wire is the authority on what a band
+## holds: a card that kept its own copy would draw the pre-split rows against the post-split budget,
+## which is a negative meter reproduced client-side out of stale state.
+##
+## **EVERY ROW MOVES, and the one the player pressed moves to a value the presses never reach** — so
+## "the published rows won" cannot be satisfied by a card that simply kept what it had. The meter is
+## read off the ORB, whose `over budget` arm is the one reader of the unclamped remainder, because a
+## stale allocation carried past a shrunken budget is exactly what would light it.
+##
+## **Its own band** (see `ADOPT_BAND_ENTITY`), and last, so no earlier state's edits are in its state
+## and no orb claim above it sees a fourth row.
+func _a_moved_allocation_is_adopted() -> void:
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_adopt_band(false)])
+	await h._settle()
+	h._assert_hud("loadout/adopt — the new band's card stands itself up (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().is_expanded()
+			and _controller().subject_band_id() == _band_id(ADOPT_BAND_ENTITY))
+	h._assert_hud("loadout/adopt — …on the kits the band HOLDS (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), ADOPT_HELD_GATHERING],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == ADOPT_HELD_GATHERING)
+	# The player orders one more, so the card is standing on something IT sent rather than on the rows
+	# it was handed — without which "the published rows won" is a claim about a card that never moved.
+	_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	var ordered := ADOPT_HELD_GATHERING + HudConst.WORKER_STEP
+	h._assert_hud("loadout/adopt — the player's own order stands at %d (got %d)"
+			% [ordered, _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == ordered)
+	# **THE FRAME THE SIM SENDS FOR ITS OWN REASONS**: both budgets shrink and every row is restated.
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_adopt_band(true)])
+	await h._settle()
+	h._assert_hud("loadout/adopt — the re-fit replaces the row the player ordered (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), ADOPT_REFIT_GATHERING],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == ADOPT_REFIT_GATHERING)
+	h._assert_hud("loadout/adopt — …and the rows beside it (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING), ADOPT_REFIT_BIG_GAME],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == ADOPT_REFIT_BIG_GAME)
+	h._assert_hud("loadout/adopt — …and the resources column too (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, "fibre"), ADOPT_REFIT_FIBRE],
+		_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, "fibre") == ADOPT_REFIT_FIBRE)
+	# **THE PROPERTY ADOPTION EXISTS FOR.** `over budget` is the one arm that reads the UNCLAMPED
+	# remainder, so a card still holding the pre-refit allocation against the post-refit budget lights it.
+	var row := _band_attention_row(_band_id(ADOPT_BAND_ENTITY))
+	h._assert_hud("loadout/adopt — the meter is not negative — the orb says `%s`, never `%s`"
+			% [row.get("label", ""), HudLoadoutVocab.ATTENTION_LABEL_OVER],
+		String(row.get("label", "")) != HudLoadoutVocab.ATTENTION_LABEL_OVER)
+	# **AND THE NEXT ORDER AGREES WITH THE CARD.** The rendered steppers and the composed command are
+	# two different claims — a card that adopted only on screen would send the rows it no longer shows.
+	var before := _orders.size()
+	_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	h._assert_hud("loadout/adopt — the order carries the adopted rows (%s)"
+			% str(_order_rows(_orders.back(), "kits", "count")),
+		_orders.size() - before == 1
+			and _order_rows(_orders.back(), "kits", "count") == {
+				KIT_GATHERING: ADOPT_REFIT_GATHERING + HudConst.WORKER_STEP,
+				KIT_STALKING: ADOPT_REFIT_BIG_GAME,
+			})
+	_assert_no_dead_space("adopt")
+	await h._save("starting_loadout_adopted")
+
+## ⛔ **TWO PRESSES IN A ROW, AND THE FIRST ONE'S ECHO MUST NOT PULL THE CARD BACK.**
+##
+## The sim recaptures after every dispatched command, so a pair of quick presses is answered by a pair
+## of frames — and the FIRST arrives when the card is already showing the SECOND. A card comparing a
+## published allocation against what it last SAW reads that frame as a change and steps backwards on
+## it, visibly, on every pair of presses; comparing against what it has SENT is what makes the echo
+## recognisable as its own.
+##
+## **Both frames are pushed, in the order a server sends them**, and the claim after each is that the
+## card still reads the SECOND press. The second frame is not decoration: without it the block passes
+## on a card that ignores published allocations altogether, which the state above would then be the
+## only thing to catch.
+func _two_presses_do_not_flicker_back() -> void:
+	var standing := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	var want := standing + ADOPT_PRESSES * HudConst.WORKER_STEP
+	for _i in range(ADOPT_PRESSES):
+		_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+		await h._settle()
+	h._assert_hud("loadout/flicker — two presses stand at %d (got %d)"
+			% [want, _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want)
+	# The FIRST press's own frame, arriving after the second press was made.
+	h._hud.update_band_alerts([_adopt_band_holding(_orders[_orders.size() - 2])])
+	await h._settle()
+	h._assert_hud("loadout/flicker — the first press's echo does not pull the card back (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), want],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want)
+	# …and the second press's own frame, which settles it.
+	h._hud.update_band_alerts([_adopt_band_holding(_orders.back())])
+	await h._settle()
+	h._assert_hud("loadout/flicker — …and its own echo leaves it exactly there (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), want],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want)
+
+## The band whose allocation the SIM moves. `refit` is the second frame: both budgets shrunk and every
+## row restated against them, which is what a split does to the parent.
+func _adopt_band(refit: bool) -> Dictionary:
+	return _band(ADOPT_BAND_ENTITY, {
+		HudLoadoutVocab.OPEN_KEY: true,
+		HudLoadoutVocab.KIT_BUDGET_KEY: ADOPT_REFIT_KIT_BUDGET if refit else ADOPT_KIT_BUDGET,
+		HudLoadoutVocab.MATERIAL_BUDGET_KEY: ADOPT_REFIT_MATERIAL_BUDGET if refit \
+			else ADOPT_MATERIAL_BUDGET,
+		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
+		HudLoadoutVocab.WINDOW_KITS_KEY: [
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY:
+					ADOPT_REFIT_BIG_GAME if refit else ADOPT_HELD_BIG_GAME},
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_GATHERING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY:
+					ADOPT_REFIT_GATHERING if refit else ADOPT_HELD_GATHERING},
+		],
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "bone",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY:
+					ADOPT_REFIT_BONE if refit else ADOPT_BONE},
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "fibre",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY:
+					ADOPT_REFIT_FIBRE if refit else ADOPT_FIBRE},
+		],
+	})
+
+## …and the same band publishing ONE PARTICULAR ORDER back — the frame a server sends after applying
+## it. Taken from the emitted payload rather than composed, so the echo is byte-for-byte what the card
+## asked for; anything composed here could differ from the order by a rounding of the fixture's own.
+func _adopt_band_holding(order: Dictionary) -> Dictionary:
+	var band := _adopt_band(true)
+	var window: Dictionary = band[HudLoadoutVocab.WINDOW_KEY]
+	window[HudLoadoutVocab.WINDOW_KITS_KEY] = _window_rows(order.get("kits", []), "count",
+		HudLoadoutVocab.KIT_DEFAULT_ID_KEY, HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY)
+	window[HudLoadoutVocab.WINDOW_MATERIALS_KEY] = _window_rows(order.get("materials", []), "units",
+		HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY)
+	return band
+
 ## The turn advanced: the sim says every window has shut, and the whole surface goes with it. **The
 ## BANDS are still there** — it is their windows that closed, which is the frame the sim really sends
 ## and not the same thing as a roster going empty.
@@ -696,43 +974,40 @@ func _take_window_opens_on_the_splinter() -> void:
 	_assert_no_dead_space("take")
 	await h._save("starting_loadout_take")
 
-## ⛔ **AN UNTOUCHED `Set out` RE-SENDS WHAT IS SHOWN, WHICH IS AN EXACT NO-OP.** That is the fix this
-## whole fixture exists for: an apply is a REPLACEMENT, so while the card opened EMPTY on a splinter
-## this same press ordered *take nothing* and handed the band's whole dowry back to its parent.
+## ⛔ **ONE PRESS ON A TAKE ORDERS THE WHOLE STANDING TAKE, PLUS THE PRESS.** The splinter is already
+## holding its dowry — the split moved it — so the row the player does not touch is exactly the row a
+## replacement must still name: an order carrying only the pressed kit would hand the rest of the
+## dowry back to the parent, which is the shape this fixture exists for and a line that reads as
+## perfectly ordinary.
 ##
 ## **The claim is the composed ORDER, not the rendered steppers.** The card showing the right numbers
-## and the commit sending them are two different things, and only the payload can say the second —
-## which is why this presses the real control and reads what the HUD emitted.
+## and the command carrying them are two different things, and only the payload can say the second.
 ##
-## **Nothing special-cases an empty tail.** An empty order still means *take nothing* here exactly as
-## it does on a grant; what makes the press safe is that the card is not empty.
-func _an_untouched_commit_re_sends_the_standing_take() -> void:
-	var sent: Array = []
-	var sink := func(payload: Dictionary) -> void: sent.append(payload)
-	h._hud.set_starting_loadout_requested.connect(sink)
-	var commit := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
-	commit.pressed.emit()
+## **Nothing special-cases an empty tail**, here or on a grant: an empty order means *take nothing*.
+func _a_press_on_a_take_sends_the_whole_standing_order() -> void:
+	var before := _orders.size()
+	_press_plus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
 	await h._settle()
-	h._hud.set_starting_loadout_requested.disconnect(sink)
-	var order: Dictionary = sent[0] if not sent.is_empty() else {}
-	h._assert_hud("loadout/take — the commit names the SPLINTER by its durable band id (got %d)"
+	var order: Dictionary = _orders.back()
+	h._assert_hud("loadout/take — the press sent ONE order, naming the SPLINTER by its durable id (%d)"
 			% int(order.get("band_id", HudConst.NO_BAND_ID)),
-		sent.size() == 1
+		_orders.size() - before == 1
 			and int(order.get("band_id", HudConst.NO_BAND_ID)) == _band_id(SPLINTER_BAND_ENTITY))
-	h._assert_hud("loadout/take — an untouched commit re-sends the standing kits (%s)"
+	h._assert_hud("loadout/take — …and it carries the standing kits the press never touched (%s)"
 			% str(_order_rows(order, "kits", "count")),
 		_order_rows(order, "kits", "count") == {KIT_STALKING: TAKE_DEFAULT_BIG_GAME})
-	h._assert_hud("loadout/take — …and the standing materials, unchanged (%s)"
+	h._assert_hud("loadout/take — …and the standing hide beside the fibre just taken (%s)"
 			% str(_order_rows(order, "materials", "units")),
-		_order_rows(order, "materials", "units") == {TAKE_MATERIALS[0]: TAKE_DEFAULT_HIDE})
-	# The commit collapses the card so the player can look at the map; the pill brings it back with
-	# every pick intact, which is what the cap walk below then moves.
-	_panel().reopen_pill().pressed.emit()
+		_order_rows(order, "materials", "units") == {
+			TAKE_MATERIALS[0]: TAKE_DEFAULT_HIDE, TAKE_MATERIALS[1]: HudConst.WORKER_STEP,
+		})
+	# Put the fibre back, so the cap walk below starts from the standing take the fixture describes.
+	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
 	await h._settle()
-	h._assert_hud("loadout/take — the card comes back on the same band, picks intact",
-		_controller().is_expanded()
-			and _controller().subject_band_id() == _band_id(SPLINTER_BAND_ENTITY)
-			and _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == TAKE_DEFAULT_BIG_GAME)
+	h._assert_hud("loadout/take — and a `−` orders too, back to the standing take (%s)"
+			% str(_order_rows(_orders.back(), "materials", "units")),
+		_order_rows(_orders.back(), "materials", "units")
+			== {TAKE_MATERIALS[0]: TAKE_DEFAULT_HIDE})
 
 ## One half of a composed order as `id -> amount`. A DICT rather than the emitted array, so the claim
 ## is about the rows and not about the order a Dictionary happened to hand back its keys in.
@@ -883,6 +1158,21 @@ func _assert_the_footer_says_how_to_get_back() -> void:
 	h._assert_hud("loadout — …while still claiming nothing is forfeited by committing",
 		not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
 
+## ⛔ **THE FOOTER CONTROL DOES NOT READ AS A SEND, AND THIS IS HALF OF AN UNCONDITIONAL-FACE PAIR.**
+## Taken here with both budgets unspent; its twin rides the fully-spent state, and neither is worth
+## anything alone — a face asserted only where something is unspent passes on a control that renames
+## itself once the budgets clear, and only where they are clear on one that renames itself while they
+## do not.
+##
+## The negative is the one that matters: `Set out` was this button's face while it was the only thing
+## that sent, and a player who read it and never pressed it lost the lot.
+func _assert_the_footer_control_does_not_read_as_a_send() -> void:
+	h._assert_hud("loadout — the footer control reads `%s`, never `%s` (got `%s`)"
+			% [HudLoadoutVocab.CLOSE_LABEL, RETIRED_SEND_FACE, _close_face()],
+		_close_face() == HudLoadoutVocab.CLOSE_LABEL and _close_face() != RETIRED_SEND_FACE)
+	h._assert_hud("loadout — …and nothing else on the card says `%s` either" % RETIRED_SEND_FACE,
+		not Q.has_label_containing(_panel(), RETIRED_SEND_FACE))
+
 ## The two facts, as the words only this line says. Needles rather than the whole sentence, so a
 ## reworded second clause does not silently stop being asserted — what must survive is the FACT.
 const FOOTER_ORB_NEEDLE := "turn orb"
@@ -912,8 +1202,8 @@ func _orb_states() -> void:
 	h._hud._turnorb._knowledge_attention = []
 	h._hud._turnorb._pending_forks = []
 	h._hud._turnorb.set_band_attention([])
-	# **UNSPENT — the warn arm.** `_commit_is_revisable` left one unit off the pile, so the window is
-	# open with something still to pick.
+	# **UNSPENT — the warn arm.** `_closing_the_card_sends_nothing` left one unit off the pile, so the
+	# window is open with something still to pick.
 	await h._settle()
 	# The precondition without which every accent claim below is about somebody else's row.
 	h._assert_hud("loadout — the loadout row is the orb's ONLY entry for these two frames (%d)"
@@ -1105,35 +1395,74 @@ func _press_minus(meta: StringName, id: String) -> void:
 	if minus != null and not minus.disabled:
 		minus.pressed.emit()
 
-## The commit control's rendered FACE. Read off the button rather than off a producer, because the
+## The footer control's rendered FACE. Read off the button rather than off a producer, because the
 ## claim is about what the player is looking at.
-func _commit_face() -> String:
-	var commit := Q.find_meta_node(_panel(), HudLoadoutVocab.COMMIT_BUTTON_META) as Button
-	return commit.text if commit != null else ""
+func _close_face() -> String:
+	var close_button := Q.find_meta_node(_panel(), HudLoadoutVocab.CLOSE_BUTTON_META) as Button
+	return close_button.text if close_button != null else ""
+
+# ---- the orders this card has sent -------------------------------------------
+
+## Every `set_starting_loadout` payload the HUD emits, in order. A METHOD rather than a lambda: a
+## lambda captures a local by VALUE, so a witness assigning into one reports that nothing happened.
+func _on_order(payload: Dictionary) -> void:
+	_orders.append(payload)
+
+## The last order sent for one band, or `{}` — what a server would have applied, and so what it
+## publishes back.
+func _last_order_for(entity: int) -> Dictionary:
+	var band_id := _band_id(entity)
+	for index in range(_orders.size() - 1, -1, -1):
+		var order: Dictionary = _orders[index]
+		if int(order.get("band_id", HudConst.NO_BAND_ID)) == band_id:
+			return order
+	return {}
+
+## One band's published kits: the last order sent for it, else the default outfit the sim applied when
+## it made the band.
+func _held_kits(entity: int, fallback: Array) -> Array:
+	var order := _last_order_for(entity)
+	if order.is_empty():
+		return fallback
+	return _window_rows(order.get("kits", []), "count",
+		HudLoadoutVocab.KIT_DEFAULT_ID_KEY, HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY)
+
+func _held_materials(entity: int, fallback: Array) -> Array:
+	var order := _last_order_for(entity)
+	if order.is_empty():
+		return fallback
+	return _window_rows(order.get("materials", []), "units",
+		HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY)
+
+## A command's `[{id, <amount>}]` rows as the WINDOW's `[{<id_key>, <amount_key>}]` ones — the two
+## shapes the same allocation wears on the way out and on the way back.
+func _window_rows(rows: Variant, order_amount_key: String, id_key: String,
+		amount_key: String) -> Array:
+	var out: Array = []
+	if not (rows is Array):
+		return out
+	for row_variant in rows:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		out.append({
+			id_key: String(row.get("id", "")),
+			amount_key: int(row.get(order_amount_key, 0)),
+		})
+	return out
 
 # ---- fixtures ---------------------------------------------------------------
 
-## **THE CAMPAIGN'S HALF — one per world.** The pick list, the two pre-fills and the craftable ids;
-## `open` and the budgets are NOT here, they are facts about one band and ride the cohort below.
+## **THE CAMPAIGN'S HALF — one per world.** The pick list and the craftable ids.
+##
+## ⛔ **THE TWO PRE-FILLS ARE DELIBERATELY ABSENT.** The wire still carries them and the client reads
+## neither: the SIM applies that spread when it makes the band, so it arrives on the window below, and
+## a fixture stating it here as well would let a client that drew it a second time pass.
+##
+## `open` and the budgets are not here either — they are facts about one band and ride the cohort.
 func _campaign() -> Dictionary:
 	return {
 		HudLoadoutVocab.PICKABLE_MATERIALS_KEY: PICKABLE.duplicate(),
-		HudLoadoutVocab.MATERIAL_DEFAULTS_KEY: [
-			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "bone",
-				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_BONE},
-			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "fibre",
-				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_FIBRE},
-			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "hide",
-				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_HIDE},
-		],
-		HudLoadoutVocab.KIT_DEFAULTS_KEY: [
-			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
-				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_STALKING},
-			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: "trapping",
-				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_TRAPPING},
-			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: "gathering",
-				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_GATHERING},
-		],
 		HudLoadoutVocab.CRAFTABLE_RECIPE_IDS_KEY: [
 			RECIPE_SLED, RECIPE_CROOK, RECIPE_BASKETS, RECIPE_TRAPS, RECIPE_SPEARS,
 			RECIPE_EARTHMOVING,
@@ -1142,6 +1471,11 @@ func _campaign() -> Dictionary:
 
 ## The spawned band, carrying its own GRANT window. Stamped through `BandFx.with_band_id` like every
 ## fixture cohort in the walk — a `Band #<id>` on a frame means one reached the HUD without it.
+##
+## ⛔ **ITS ALLOCATION IS THE LAST ORDER THIS CARD SENT FOR IT**, and the profile's own spread before
+## any — which is the sim: it applies the default outfit at the band's creation and applies each order
+## as it arrives, republishing the band either way. A fixture that re-stated the default after a press
+## would be a server that ignored the player, and the card would rightly adopt it.
 func _grant_band() -> Dictionary:
 	return _band(HOME_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
@@ -1149,18 +1483,31 @@ func _grant_band() -> Dictionary:
 		HudLoadoutVocab.MATERIAL_BUDGET_KEY: MATERIAL_BUDGET,
 		# **A GRANT NAMES NO PARENT.** Its picks mint; nothing moves off another band.
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
-		# Nobody has ordered against it yet, which is what makes the campaign pre-fill the seed.
-		HudLoadoutVocab.WINDOW_KITS_KEY: [],
-		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [],
+		HudLoadoutVocab.WINDOW_KITS_KEY: _held_kits(HOME_BAND_ENTITY, [
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_STALKING},
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: "trapping",
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_TRAPPING},
+			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_GATHERING,
+				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: DEFAULT_GATHERING},
+		]),
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: _held_materials(HOME_BAND_ENTITY, [
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "bone",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_BONE},
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "fibre",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_FIBRE},
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: "hide",
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: DEFAULT_HIDE},
+		]),
 	})
 
 ## The splinter a split just made, carrying a TAKE on the home band. Both budgets are `0` and mean
 ## nothing; the cap is the two supplies, each already `the home band's holdings + this take's standing
 ## units`, which is the number the sim refuses on.
 ##
-## ⛔ **ITS ACCEPTED ROWS ARE NOT EMPTY**, and a fixture that left them so would be staging the very
-## state the split's kit-denominated default take exists to remove — a card opening at zero on a band
-## standing on its dowry, whose untouched commit hands the dowry back.
+## ⛔ **ITS ROWS ARE NOT EMPTY**, and a fixture that left them so would be staging the very state the
+## split's kit-denominated default take exists to remove — a card reading zero on a band standing on
+## its dowry, whose next press would hand the dowry back.
 func _splinter_band() -> Dictionary:
 	return _band(SPLINTER_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
@@ -1168,16 +1515,16 @@ func _splinter_band() -> Dictionary:
 		HudLoadoutVocab.MATERIAL_BUDGET_KEY: 0,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: _band_id(HOME_BAND_ENTITY),
 		# **THE DEFAULT TAKE, kit-denominated** — what the split already moved, which is what the card
-		# opens on and what an untouched commit re-sends. Its expansion (2 spears, 2 sleds) is inside
+		# draws and what every press re-sends beside itself. Its expansion (2 spears, 2 sleds) is inside
 		# the supply below by construction, the sim publishing `holdings + this take's standing units`.
-		HudLoadoutVocab.WINDOW_KITS_KEY: [
+		HudLoadoutVocab.WINDOW_KITS_KEY: _held_kits(SPLINTER_BAND_ENTITY, [
 			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
 				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: TAKE_DEFAULT_BIG_GAME},
-		],
-		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [
+		]),
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: _held_materials(SPLINTER_BAND_ENTITY, [
 			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: TAKE_MATERIALS[0],
 				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: TAKE_DEFAULT_HIDE},
-		],
+		]),
 		HudLoadoutVocab.PARENT_ITEM_SUPPLY_KEY: [
 			_supply("spears", TAKE_SPEARS), _supply("sled", TAKE_SLED),
 			_supply("traps", TAKE_TRAPS), _supply("baskets", TAKE_BASKETS),

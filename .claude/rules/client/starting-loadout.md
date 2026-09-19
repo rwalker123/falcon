@@ -33,47 +33,104 @@ splinter stands its own card up on the turn it is made and a card the player dis
 back on the next snapshot. Every pending band is marked in one pass, so two splits in one turn cannot
 queue two pop-ups on two consecutive frames.
 
-**Every window opens on its OWN accepted rows** (`loadout_window.kits` / `.materials`) — what this
-band's last accepted order named, **re-read whenever they CHANGE**.
+**Every card draws its band's OWN rows** (`loadout_window.kits` / `.materials`), which are **gear the
+band actually holds** — never a suggestion and never an unspent budget.
 
-> ### ⛔ SEEDED ONCE MEANS *DO NOT CLOBBER A DRAFT*, NOT *NEVER LOOK AGAIN*
+> ### ⛔ THERE IS NO DRAFT. THE SIM OUTFITS A BAND WHEN IT MAKES IT, AND EVERY PRESS ORDERS
+>
+> The sim applies a band's default outfit at the moment the band is created — the opening band at
+> world start, a splinter at its split — through the same path a player's `set_starting_loadout`
+> takes. So a band nobody touches keeps its default, and there is no such thing as an allocation
+> waiting to be filled in.
+>
+> **The card therefore holds no state the sim does not know about.** A `+`/`−` on a kit or material
+> row emits `set_starting_loadout` for that band there and then, carrying the whole allocation as it
+> stands AFTER the press. `_write_pick` is the ONLY writer of either pick map outside adoption, which
+> is what makes the invariant checkable: **a local value is only ever written together with a command
+> being sent.** A press the clamp refuses writes and sends nothing — the allocation is unchanged, so
+> there is no replacement to make.
+>
+> **WHAT THIS CLOSED, proven from a recorded session:** a player filled a splinter's card in, never
+> pressed `Set out`, ended the turn, and the band got **nothing**. The server had received exactly one
+> `set_starting_loadout` that whole game, for the other band — while the card and the turn orb both
+> said the band was outfitted, because both read the card's own local copy. The draft was the defect,
+> so the draft is deleted rather than defended.
+>
+> **DELETED WITH IT, and nothing may rebuild any of it**: `BAND_TOUCHED_KITS` / `BAND_TOUCHED_MATERIALS`
+> (the `id -> true` sets that separated a player's rows from the sim's), `_clamp_picks` / `_clamp_order`
+> (the whole-order re-fit those sets ordered), `BAND_SEEDED` / `BAND_PUBLISHED`, and `_prefill_claimed`
+> with the campaign pre-fill path it guarded. Every one of them existed to reconcile two copies of one
+> allocation; there is one copy now.
+>
+> **A row at ZERO is erased rather than stored**, so the pick maps ARE the allocation: a `{gathering: 0}`
+> entry is a row nobody holds, it drops out of the composed line anyway, and keeping it made "is
+> anything ordered" answer yes to an empty take.
+
+> ### ⛔ AN OPTIMISTIC WRITE NEEDS A ROLLBACK, AND THE SEND'S OUTCOME IS ONLY KNOWN IN `Main`
+>
+> A press has to move the number under the player's finger on the frame it was pressed, so the picks
+> are written before the send's outcome is known. The payload therefore carries the allocation as it
+> stood BEFORE the press (`REVERT_KITS` / `REVERT_MATERIALS`, which `format_set_starting_loadout`
+> ignores), and `Main._on_hud_set_starting_loadout` hands the whole payload back to
+> `HudLayer.revert_starting_loadout` → `StartingLoadoutController.revert_order` when
+> `_send_formatted_command` answers `false`. It restores both halves, drops the entry the send queued,
+> and RE-RENDERS — `hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS A ROLLBACK" is the general rule and
+> `_on_hud_assign_labor` the worked example.
+>
+> **The handle is the WHOLE allocation rather than the one row that moved**, and that is not the
+> `pending_key` rule being broken: the verb is a whole-order replacement, so there is no other
+> un-acknowledged edit on the band for a whole-allocation restore to discard — every local write has
+> been sent as it was made.
+>
+> **It is reached by a `has_method` PROBE, which fails SILENTLY**, so `revert_starting_loadout` is a
+> thin `HudLayer` delegator and stays one. No retry, no queue of unsent commands.
+
+> ### ⛔ A PUBLISHED ALLOCATION IS ADOPTED UNLESS IT IS THIS CARD'S OWN ECHO
 >
 > A split re-fits the PARENT's standing allocation down to its reduced budget and re-materializes the
-> band from it (`fission::rebalance_partitioned_grant`). A card that treated a band it had already
-> stood up as settled would keep drawing the pre-split rows against the post-split budget — the
-> negative meter above, reproduced client-side out of stale state.
+> band from it (`fission::rebalance_partitioned_grant`). The wire is the authority on what a band
+> holds, so the card adopts those rows whole and unclamped — a card that kept its own copy would draw
+> the pre-split rows against the post-split budget, which is the negative meter above reproduced
+> client-side out of stale state. A band the sim has genuinely left over its budget must READ as over
+> budget rather than be trimmed into looking fine.
 >
-> `_ingest_window` therefore holds the published allocation as last seen (`BAND_PUBLISHED`, compared
-> as `id -> amount` DICTS so a re-ordered but identical list is not read as a change) and re-seeds the
-> picks when it differs. **A delta merely re-stating the same allocation leaves an uncommitted pick
-> exactly where the player left it**, which is what the once-per-band seed was for. The campaign pre-fill is the fallback and belongs to **ONE band, the
-first grant window this world opens**: `openingLoadout`'s kit spread arrives already clamped to *that*
-band's budget, so handing it to a second, smaller grant window would compose an order over its budget,
-and re-clamping it here would be the second clamp the wire's rule forbids (`_prefill_claimed`).
+> **`BAND_UNECHOED` is what tells an echo from a move.** The sim recaptures after every dispatched
+> command, so each press comes back as a frame restating it; the list holds the orders this card has
+> SENT and not yet seen come back, oldest first, in the same `{kits, materials}` map shape the
+> published allocation is read into. A published allocation FOUND in that list settles it and every
+> order before it (`slice`) and the card keeps what it is showing; anything else clears the list and
+> is adopted.
+>
+> ⛔ **COMPARING AGAINST WHAT WAS SENT, NOT AGAINST WHAT WAS LAST SEEN, AND ONE VALUE IS NOT ENOUGH.**
+> Press twice quickly and the first press's echo lands while the card is already showing the second's:
+> against a last-seen copy — or against only the LAST order sent — that echo reads as a change and
+> drags the card back a step, visibly, on every pair of presses. The list is what makes an echo
+> recognisable however many are in flight. The preview's `loadout/flicker` claims are the guard, and
+> they fail at `(4, want 5)` the moment the test is removed.
 
-> ### ⛔ A SPLINTER'S CARD OPENS ON ITS DEFAULT TAKE, AND THAT IS WHAT MAKES AN UNTOUCHED COMMIT SAFE
+> ### ⛔ A SPLINTER'S CARD DRAWS ITS DEFAULT TAKE, AND A PRESS ON IT ORDERS THE WHOLE THING
 >
-> The split's take is **kit-denominated** and published in those same accepted rows, so the card draws
-> the allocation the band is already standing on and pressing `Set out` without touching anything
-> re-sends it unchanged — an exact no-op.
+> The split's take is **kit-denominated** and published in those same rows, so the card draws the
+> allocation the band is already standing on. The row the player does NOT touch is exactly the row a
+> replacement must still name: an order carrying only the pressed kit would hand the rest of the dowry
+> back to the parent.
 >
-> It opened at ZERO for one iteration, while the take was a bare per-item manifest no kit allocation
-> could express. An apply is a REPLACEMENT, so that untouched press ordered *take nothing* and handed
-> the splinter's whole dowry back to its parent — a card that looked entirely correct committing the
-> opposite of what it showed.
+> It drew ZERO for one iteration, while the take was a bare per-item manifest no kit allocation could
+> express — and an apply being a REPLACEMENT, the first press then ordered *take nothing* and handed
+> the splinter's whole dowry back.
 >
 > **Nothing here special-cases an empty tail**, and nothing may start to: an empty order still means
-> *take nothing*, on a take exactly as on a grant. What makes the press safe is that the card is not
+> *take nothing*, on a take exactly as on a grant. What makes a press safe is that the card is not
 > empty when the take is not.
 
 ## Key scripts
 
 | Script | Purpose |
 |--------|---------|
-| `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two meters, a **band switcher** drawn only while two or more windows are open, an **unconditional** commit control and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits six intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed` / `commit_requested`) and holds no allocation of its own. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — on a take the cap is per ITEM, so one kit row can be exhausted while the next is free. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
-| `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND, every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list, the pre-fills, the craftable ids), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`); relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
+| `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two meters, a **band switcher** drawn only while two or more windows are open, a footer control that CLOSES the card (it sends nothing: every stepper press already orders) and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits five intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed`) and holds no allocation of its own — the footer control emits `dismissed` like the ✕, `commit_requested` having gone with the deferred order. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — on a take the cap is per ITEM, so one kit row can be exhausted while the next is free. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
+| `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND — what that band HOLDS, never a draft — every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list and the craftable ids; **the two pre-fills are read by nothing**), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`). `_write_pick` is the one press handler and the one sender; `_send_order` composes the line and queues it in `BAND_UNECHOED`; `revert_order` is the rollback `Main` reaches through `HudLayer.revert_starting_loadout`. Relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — twelve frames and one hundred and twelve checkpoints, including the orb's two colours, the no-dead-space bound and the TAKE arc appended after them. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — thirteen frames and **136 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against shrunken budgets and taken whole, then two presses whose first echo must not pull the card back. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## What the client owns, and what it must not decide
 
@@ -81,10 +138,10 @@ and re-clamping it here would be the second clamp the wire's rule forbids (`_pre
   per band: a band's card opens itself on the first frame it reads `true`, that band's state is
   dropped when it reads `false` (or the window is absent), and the whole surface goes when the last
   one shuts. The client never closes one on its own and never blocks End Turn.
-- ⛔ **AN APPLY IS A REPLACEMENT, SO A COMMIT SHUTS NOTHING.** The order may be sent, revised and sent
+- ⛔ **AN APPLY IS A REPLACEMENT, SO A SEND SHUTS NOTHING.** The order may be sent, revised and sent
   again as often as the player likes; **only the TURN ADVANCE closes the window and forfeits what is
-  left**. Commit sends the line and collapses the card so the map is readable — the picks stay, the
-  reopen pill stays, the orb's row stays — and nothing latches "already committed".
+  left**. Nothing latches "already sent", and the footer control is not a send at all — it collapses
+  the card so the map is readable, and the rows, the reopen pill and the orb's row all stay.
 - ⛔ **`open` IS THEREFORE NOT A SUCCESS SIGNAL.** The controller once held an `_awaiting_commit` flag
   and read a still-open window on the next frame as a REFUSAL. That was right while an accepted order
   closed the window and is now exactly inverted: under replacement semantics every SUCCESSFUL commit
@@ -107,14 +164,17 @@ and re-clamping it here would be the second clamp the wire's rule forbids (`_pre
 Neither the kit roster nor a recipe's input costs is copied into the loadout section, and neither
 should be:
 
-- **The KIT COLUMN'S PRE-FILL rides `openingLoadout.kitDefaults`** (`[{kitId, count}]`) and seeds the
-  FIRST grant window this world opens — see the table at the top of this file. It is the material
-  one's twin. ⛔ **It arrives ALREADY CLAMPED to `kitBudget`** — that budget is the spawned band's
-  working-age head count rather than a config number, so `start_profiles.json` cannot sum-check its own
-  pre-fill and the sim scales it proportionally at publish time. **Draw the counts as-is**; a second
-  clamp here would disagree with the first, and with the shipped spread (12 of 17) comfortably inside
-  the budget that disagreement would be invisible unless the individual counts are checked — which is
-  why the preview asserts each one rather than the total.
+- ⛔ **`openingLoadout.kitDefaults` / `.materialDefaults` HAVE NO CLIENT READER, AND MUST NOT GROW
+  ONE.** The wire still carries both; the SIM applies that spread when it makes the band, so it is
+  already in `loadout_window.kits` / `.materials` by the time a card is drawn, and a client seeding
+  from the campaign section as well would draw — and then ORDER — twice the gear the band holds. What
+  the client still reads out of that section is the **pick list** (a grant's offered materials, in the
+  profile's own order) and the **craftable recipe ids**. ⛔ **The window's counts arrive ALREADY
+  CLAMPED to `kitBudget`** — that budget is the band's working-age head count rather than a config
+  number, so the sim scales the spread proportionally when it applies it. **Draw them as-is**; a
+  second clamp here would disagree with the first, and with the shipped spread (12 of 17) comfortably
+  inside the budget that disagreement would be invisible unless the individual counts are checked —
+  which is why the preview asserts each one rather than the total.
 - **The kit roster rides `SubsistenceSection.equipmentConfigJson`** — the picker parses that blob (it
   is the only HUD consumer of it; the Workbench is the other reader) and drops the carry-nothing entry
   **by its EMPTY `uses`**, never by matching `none`. A roster that renamed that entry is still
@@ -195,7 +255,8 @@ shorter explanation but none:
 | `BUILDS_HEAD` "What this builds" — it named no subject, beside two other columns | "What the resources can build" |
 | `BUILDS_NOTE` "If you spent the whole pile on one thing." | **deleted**, and `_column` draws no node for it |
 | `PANEL_SUBTITLE` "…Nothing is theirs until you commit, and anything unspent is lost when the turn advances." | "What your people carry when they set out." |
-| `COMMIT_TOOLTIP` "…The window shuts and whatever is left of either budget is gone." | "You can change this until you end the turn." |
+| `COMMIT_TOOLTIP` "…The window shuts and whatever is left of either budget is gone." | `CLOSE_TOOLTIP` "You can change this until you end the turn." |
+| `COMMIT_CLEAR_LABEL` "Set out" — the face of the control that DEFERRED the order | `CLOSE_LABEL` "Done" |
 
 **Do not restore an explanatory clause to any of them**, and note the deliberate absence of a full
 stop on the two Ray rewrote.
@@ -208,6 +269,12 @@ one fact each**, and none of them explains a model:
 | `PANEL_TITLE_FORMAT` | `Outfit <band>` | which band this card is for, there being more than one |
 | `PANEL_SUBTITLE_TAKE_FORMAT` | `What they take from <home band>.` | the gear comes out of the home band's ledger rather than being minted |
 | `SUPPLY_REMAINING_FORMAT` | `18 / 18 left at home` | what is left is left AT HOME — a take forfeits nothing on the advance, so the grant's bare *"left"* would state a loss that does not happen |
+
+⛔ **AND THE FOOTER CONTROL MAY NEVER READ AS A SEND AGAIN.** `Set out` was true while it was the
+only thing that sent; every press orders now, so that face would promise the one thing this card no
+longer holds back — and a player who read it and never pressed it would believe they had lost what
+they picked, which is the defect this arc closed. The preview asserts the face is `Done` AND that the
+words `Set out` appear nowhere on the card.
 
 **THE CARD MAKES NO FORFEITURE CLAIM ANYWHERE.** It was on the commit control's face
 (`Set out — forfeit 17 kits and 2 units`) and again in the subtitle's second clause; both are gone.
@@ -323,10 +390,18 @@ before ending the turn. What moves is the SEVERITY and the WORDING:
 | window | state | severity | reads |
 |---|---|---|---|
 | either | **a meter reading NEGATIVE** | `warn` → `HudStyle.WARN` | `Band over budget` / `Windmere — 2 kits, 6 resources over budget` |
-| GRANT | anything unspent | `warn` → `HudStyle.WARN` | `Band not outfitted` / `Brackwater — 1 kit unspent, 2 resources unspent` |
+| GRANT | anything unspent | `warn` → `HudStyle.WARN` | `Band not fully outfitted` / `Brackwater — 1 kit unspent, 2 resources unspent` |
 | GRANT | both budgets clear | `ready` → `HudStyle.READY` | `Band outfitted` / `Brackwater — everything is picked` |
-| TAKE | nothing ordered — reachable only by CLEARING the card, a fresh splinter opening on its default take | `warn` → `HudStyle.WARN` | `Band not outfitted` / `Thornhollow — nothing taken yet` |
+| TAKE | nothing ordered — reachable only by CLEARING the card, a fresh splinter drawing its default take | `warn` → `HudStyle.WARN` | `Band not fully outfitted` / `Thornhollow — nothing taken yet` |
 | TAKE | an order standing | `ready` → `HudStyle.READY` | `Band outfitted` / `Thornhollow — 3 kits, 4 resources` |
+
+⛔ **`not FULLY outfitted`, BECAUSE A BAND IS NEVER UNOUTFITTED ANY MORE.** The sim applies a band's
+default outfit when it makes the band, so every band this row speaks for is already carrying gear;
+what the warn arm reports is budget still to MINT, which the turn advance forfeits. The bare
+*"Band not outfitted"* was true while the card held an unsent draft over an empty band, and would now
+contradict the card beside it — which is showing the kits those people are holding. The READY arm's
+`Band outfitted` / `everything is picked` is unchanged and is now true BY CONSTRUCTION rather than by
+the card's say-so: the rows it counts are the sim's own.
 
 ⛔ **A TAKE NEVER SAYS `unspent`.** That word is on the orb because a grant's remainder is GONE on the
 turn advance; supply a take leaves behind stays with the home band and is lost by nobody. So a take's
@@ -419,5 +494,5 @@ went 0.20 → 0.25 and 0.17 → 0.25 against their own `SIGNAL`).
 | direction | contract |
 |---|---|
 | in, per world | `CampaignSection.openingLoadout` → `opening_loadout` on the snapshot dict (`native/src/dict/campaign.rs`) — the pick list, the two pre-fills, the craftable recipe ids. ⛔ **`open`, `kitBudget` and `materialBudget` were DELETED from it**, not deprecated in place: a window is a fact about one band |
-| in, per band | `PopulationCohortState.loadoutWindow` → `loadout_window` on each cohort dict (`native/src/dict/population.rs`). **`kits` / `materials` are the accepted allocation and are NON-EMPTY on a fresh splinter** — they carry the split's kit-denominated default take, which is what the card opens on; `parentItemSupply` lists only items some kit carries, so a bench tool is never offered as claimable. Decoded inside `population_to_dict`, so the full and delta paths get it from one place — the sim whole-diffs these tables and the change that matters is `open` going false on the turn advance. It reaches the picker through `HudLayer.update_band_alerts` → `set_bands`, off the roster that method already filters to the player's own bands (parties excluded: a detached party is those same people walking somewhere, not a band to outfit) |
-| out | `set_starting_loadout <faction> <band> [kit <id> <n>]... [material <id> <n>]...`, built by `Main.format_set_starting_loadout`. **The band is positional and required**, and it is the durable `band_id` rather than the ECS `entity` — asserted by `cargo xtask command-guard`, which drives the card's real commit control. **The whole allocation every time, never a diff** — the verb fails closed and whole. An EMPTY tail is a real order (*spend nothing*), which is the one place that formatter departs from its neighbours and returns a line rather than `{}` |
+| in, per band | `PopulationCohortState.loadoutWindow` → `loadout_window` on each cohort dict (`native/src/dict/population.rs`). **`kits` / `materials` are what the band HOLDS — the sim applies a band's default outfit at its creation, so they are NON-EMPTY on a fresh band of either kind** — they carry the split's kit-denominated default take, which is what the card opens on; `parentItemSupply` lists only items some kit carries, so a bench tool is never offered as claimable. Decoded inside `population_to_dict`, so the full and delta paths get it from one place — the sim whole-diffs these tables and the change that matters is `open` going false on the turn advance. It reaches the picker through `HudLayer.update_band_alerts` → `set_bands`, off the roster that method already filters to the player's own bands (parties excluded: a detached party is those same people walking somewhere, not a band to outfit) |
+| out | `set_starting_loadout <faction> <band> [kit <id> <n>]... [material <id> <n>]...`, built by `Main.format_set_starting_loadout` and emitted on **every stepper press**. **The band is positional and required**, and it is the durable `band_id` rather than the ECS `entity` — asserted by `cargo xtask command-guard`, which drives the card's real commit control. **The whole allocation every time, never a diff** — the verb fails closed and whole. An EMPTY tail is a real order (*spend nothing*), which is the one place that formatter departs from its neighbours and returns a line rather than `{}` |

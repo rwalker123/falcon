@@ -1482,6 +1482,41 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("quarrywork_supplied", cohort.quarryworkSupplied() as f64);
     let _ = dict.insert("quarrywork_shortfall", cohort.quarryworkShortfall() as f64);
 
+    // --- THE FIVE STANDING POOLS' TABLES OF EQUIPMENT (`docs/plan_pool_toe.md` §4) ----------------
+    // One row per `(pool, item)`: what a pool's OWN SITES require this turn, and what the band's
+    // band-wide settlement handed it. **This is where a pool's gear is stated now** — a pool row's
+    // `kit_id` publishes `""` and its `kit_workers_holding` equals its `workers` (the *nothing to be
+    // short of* reading), because a pool's tools are derived per SITE at that site's rung and a
+    // Roadwork pool keeping a dirt road and a paved road wants two tools where one kit id has room
+    // for one.
+    //
+    // ⛔ **AN ABSENT ROW AND A FILLED ROW ARE DIFFERENT SENTENCES.** A line exists only where
+    // `required > 0`, and a pool whose requirement was fully met KEEPS its line with
+    // `filled == required`. So *"this pool wants nothing of this item"* is the line being ABSENT and
+    // *"it wanted some and got all of it"* is `filled == required` — a reader that collapses the two
+    // (by dropping filled rows on decode, say) destroys the only distinction the vector carries.
+    // Nothing is filtered here; the client decides what to render.
+    //
+    // **`pool` IS THE LABOR-ROLE TOKEN** — `agriculture` | `husbandry` | `roadwork` | `quarrywork` |
+    // `builders`, the same spelling `LaborAssignment.kind` publishes for the row — so a surface joins
+    // a line to its pool card on a string it already holds, with no table of its own.
+    //
+    // **`required` is NEVER 0**, by the rule above, so a readout may divide by it; `filled` is a
+    // float because the settlement divides a tier proportionally when the stock cannot cover it, and
+    // `0` there is a pool the settlement reached with nothing (its sites work bare on that line).
+    let mut pool_toe = VarArray::new();
+    if let Some(lines) = cohort.poolToe() {
+        for line in lines.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("pool", line.pool().unwrap_or_default());
+            let _ = row.insert("item_id", line.itemId().unwrap_or_default());
+            let _ = row.insert("required", line.required() as f64);
+            let _ = row.insert("filled", line.filled() as f64);
+            pool_toe.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("pool_toe", &pool_toe);
+
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and
     // `materialBudget` were deleted from `CampaignSection.openingLoadout` and live here; what stayed

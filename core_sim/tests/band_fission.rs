@@ -738,6 +738,12 @@ fn materials_are_conserved_across_a_split_with_their_readings() {
             .world
             .get_mut::<PopulationCohort>(parent)
             .expect("the home band exists");
+        // **The band is created holding its DEFAULT OUTFIT** (`starting-loadout.md` → "A default is
+        // applied, never suggested"), and the shipped `material_defaults` include this material — at
+        // the opening reading, which is neither of the two below. The fixture's subject is the two
+        // *ratings* a split has to carry across, so it declares its own store rather than measuring
+        // a third pile it did not put there.
+        cohort.stores.clear_materials();
         for (key, amount, axes) in banked {
             cohort
                 .stores

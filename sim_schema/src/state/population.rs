@@ -1565,6 +1565,40 @@ pub struct PopulationCohortState {
     /// See [`Self::quarrywork_demand`] — `demand − supplied`, verbatim.
     #[serde(default)]
     pub quarrywork_shortfall: f32,
+    /// **WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND GAVE THEM** —
+    /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4).
+    ///
+    /// ⛔ **IT REPLACES A POOL ROW'S [`LaborAssignmentState::kit_id`]**, which had room for one tool
+    /// where a pool needs as many as it has kinds of site: a Roadwork pool keeping a dirt road and a
+    /// paved road wants earthmoving gear *and* stone-dressing gear at once. A pool row therefore
+    /// publishes an empty `kit_id` and a [`LaborAssignmentState::kit_workers_holding`] equal to its
+    /// `workers` — *nothing to be short of* — and its gear is stated here instead.
+    ///
+    /// **A row exists only where `required > 0`**, and a fully-met requirement **keeps** its row
+    /// with `filled == required`. See [`PoolToeLineState`]. Appended last (append-only).
+    #[serde(default)]
+    pub pool_toe: Vec<PoolToeLineState>,
+}
+
+/// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
+/// [`PopulationCohortState::pool_toe`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PoolToeLineState {
+    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"agriculture"`,
+    /// `"husbandry"`, `"roadwork"`, `"quarrywork"` or `"builders"`.
+    pub pool: String,
+    /// The `equipment.json` item id this line is about.
+    pub item_id: String,
+    /// **Units the pool's sites require this turn** — one per hand standing on a site the tool
+    /// serves, divided by the item's `workers_per_unit`. ⛔ **Never `0`**: a line exists only where
+    /// something is required, so a reader may divide by it.
+    pub required: f32,
+    /// **Units the band's settlement actually handed this pool.** `== required` is a pool that got
+    /// everything; `0` is a pool the settlement reached with nothing (its sites work bare on this
+    /// line); between the two is the proportional share of a priority tier the stock could not
+    /// cover. Tools are settled **band-wide per item**, so two pools reaching for one stock divide
+    /// it here.
+    pub filled: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

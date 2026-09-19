@@ -8,13 +8,15 @@ paths:
 
 # The outfitting window — one per BAND, open until the turn is finalized
 
-A spawning band owns **nothing**: `equipment.json` ships `start_stock_fraction: 0.0`
+Nothing at the *spawn* grants a band anything: `equipment.json` ships `start_stock_fraction: 0.0`
 (`.claude/rules/core_sim/equipment.md`) and no material declares a start stock
-(`.claude/rules/core_sim/crafting.md`). What a band owns is what the **player** allocated through its
-own outfitting window.
+(`.claude/rules/core_sim/crafting.md`). **Everything a band owns comes through its own outfitting
+window** — the sim commits that window's *default* the moment the band exists (see "A default is
+applied, never suggested"), and the player revises it for the rest of the turn.
 
-`starting_loadout.rs` holds all of it: the `StartingLoadout` resource, the two systems that open and
-shut a window, and `apply_starting_loadout`, which validates, resolves the band and moves or mints.
+`starting_loadout.rs` holds all of it: the `StartingLoadout` resource, the systems that open, outfit
+and shut a window, and `apply_starting_loadout`, which validates, resolves the band and moves or
+mints.
 `bin/server.rs`'s handler only translates the wire types and logs the refusal. The client half is
 `.claude/rules/client/starting-loadout.md`; the split that opens a splinter's window is
 `.claude/rules/core_sim/fission.md`.
@@ -25,8 +27,8 @@ Two things open a window and nothing else does:
 
 | opener | when | the window it opens |
 |---|---|---|
-| `stamp_starting_loadout` | Startup, chained after the spawn | the spawned band's, carrying the campaign's **grant** |
-| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or the share of the grant re-fitted off the parent |
+| `stamp_starting_loadout` | Startup, chained after the spawn | the spawned band's, carrying the campaign's **grant**. `outfit_opening_bands` is chained straight after it and commits the default against that grant |
+| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or (on a grant) the default outfit it mints against its slice of the grant |
 
 **Turn one is not special — only the PARENT's state differs.** On turn one the parent still holds an
 unspent grant, so its splinter takes a slice of that grant, its picks **mint**, and the split moves no
@@ -89,21 +91,30 @@ Both caps are the numbers the split has just resolved (`asked`, `share`), not li
 > *is* the payment. The people and the larder dowry are untouched by this — they are not loadout
 > goods, and the food-ledger transfer booking is unchanged.
 
-#### The re-fit: what the parent gives up reaches the splinter
+#### The re-fit: the parent is clamped to what the partition left it
 
 `fission::rebalance_partitioned_grant` closes the loop, and it runs **only when the parent no longer
 fits its reduced budget**:
 
 1. the parent's standing allocation is re-fitted by `clamp_allocation`'s proportional-floored rule —
-   the same rule the profile's kit pre-fill is fitted by;
+   the same rule the profile's default outfit is fitted by;
 2. the parent is **re-materialized from the clamped allocation** through `apply_starting_loadout`, the
    path a player's own commit takes, so its ledger, its store and its meter state one thing and the
-   meter can never read negative;
-3. **what the clamp took off is offered to the splinter**, bounded by the splinter's own budget by the
-   same rule, and materialized the same way. Those units are not deleted — they are taken away from
-   the main band and given to the new one, which is the model.
+   meter can never read negative.
 
-**A parent that still fits gives up nothing and the re-fit returns without touching either band.**
+**Its standing allocation is never empty now**, which is what makes this fire on an *uncommanded*
+parent: a band holds its applied default from creation, so there is always something for the clamp to
+bite on. That is the `-6 / 22 left` case closed for a player who never opened a card
+(`split_loadout::a_split_leaves_an_uncommanded_parent_inside_its_reduced_budget`).
+
+> **What the clamp takes off is NOT handed to the splinter.** It used to be, because a grant split
+> moves no goods and the parent's leftovers were the only thing there was to open the splinter's card
+> on. The splinter mints its **own default** instead — a sensible opening outfit rather than whatever
+> a heavily-committed parent happened to be over by. Nothing is destroyed by dropping the hand-off:
+> on this arm every unit on either band is minted from a budget, and the two budgets still partition
+> the one grant exactly (`split_loadout::the_splinters_outfit_is_its_own_default_rather_than_the_parents_leftovers`).
+
+**A parent that still fits gives up nothing and the re-fit returns without touching it.**
 That is load-bearing rather than an optimisation: re-materializing rebuilds a ledger from *empty*, so
 running it on a parent with no standing allocation would destroy gear that never came from one.
 
@@ -125,9 +136,59 @@ re-sending it unchanged is an exact no-op. `items` and `kits` are two readings o
 `items == expand_kits(kits)` by construction — which is what makes the round trip exact rather than
 approximately right.
 
-**A splinter of a still-granting parent gets its rows the other way round**: nothing was moved, so its
-allocation is what the parent's re-fit shed, materialized on it by the same `apply_starting_loadout`
-call. Either way the rows describe the band standing beside them, which is the whole property.
+**A splinter of a still-granting parent gets its rows from the APPLY that outfits it**: nothing was
+moved, so it **mints the campaign default** against its own slice of the grant, and the window's rows
+are what that apply set. See the callout below, which is the rule for every band and not only a
+splinter.
+
+> ### ⛔ A DEFAULT IS APPLIED, NEVER SUGGESTED
+>
+> **A band holds its default outfit from the moment it is created, whether or not anybody ever opens
+> its card.** `starting_loadout::outfit_band_with_defaults` is the one seam, reached from two places:
+> `outfit_opening_bands` (a Startup system chained after `stamp_starting_loadout`, the first moment
+> the budgets exist) and `split_band_from_parent`, on the grant arm, as soon as the splinter's window
+> exists.
+>
+> **The defect this closes is a loss, not a blank screen.** A player composed an outfit for a
+> splinter, never pressed *Set out*, ended the turn — and the band walked away with nothing. The
+> server's record showed exactly one `set_starting_loadout` that game, for the parent. A default that
+> exists only as a client-side seed **cannot survive a card nobody commits**; one the sim has applied
+> cannot be lost. (The symptom that led here was narrower — a turn-one splinter published
+> `kitBudget 5` / `materialBudget 8` with `kits: []` and `materials: []`, so the card read
+> `5 / 5 left` and `8 / 8 left` with every row at zero — but a filled card is still a card, and an
+> untouched *"Set out"* is a real order meaning **take nothing**.)
+>
+> **It goes through `apply_starting_loadout`**, the path a player's own accepted order takes, rather
+> than writing the window's rows directly. So the band's ledger and store really hold the outfit, and
+> the window's accepted rows say so **because an apply sets them** — the card and the band agree by
+> construction, and a later revision replaces something real.
+>
+> **The budgets are the BAND's.** `clamped_kit_defaults` fits the kit half to that band's own
+> `kit_budget` and `clamp_allocation` fits the material half to its `material_budget` — the same
+> proportional, floored, remainder-unspent rule for both. The material half needs the clamp even
+> though `material_defaults` is config-validated against `material_points`: that validation is
+> against the *campaign's* budget, and a splinter's is a slice of it.
+>
+> **Only a grant window is outfitted.** A take window mints nothing — both its budgets are `0` — and
+> it already opens on the default take that physically crossed.
+>
+> ⛔ **MINTED, NEVER MOVED.** A grant split still takes nothing off the parent: the splinter's outfit
+> comes out of its own slice of the grant, so filling the card cannot resurrect the double charge
+> (`split_band_from_parent`'s `default_kits` / `default_materials` stay empty on that arm and are the
+> only lists `expand_kits` walks).
+>
+> ⛔ **AN APPLY IS A REPLACEMENT, so the default REBUILDS the ledger from empty.** On shipped config
+> that is invisible — `start_stock_fraction` is `0.0` and a spawning band owns nothing to overwrite.
+> Under a config that *does* stock a band at spawn (`EquipmentConfig::for_a_stocked_fixture`, which
+> only fixtures use) the default replaces that stock, so a fixture whose subject is some other item
+> has to declare its gear again after the world is built.
+>
+> Pinned by `starting_loadout::a_band_is_created_already_holding_its_default_outfit` (the opening
+> band, no command sent), `split_loadout::a_turn_one_splinter_is_created_already_holding_its_own_default`
+> (the splinter, asserted on the **encoded envelope** *and* on the ledger and store behind it),
+> `a_split_leaves_an_uncommanded_parent_inside_its_reduced_budget` (the `-6 / 22 left` case, now with
+> nothing commanded) and `a_turn_two_splinters_card_is_still_the_take_it_was_handed` (the take arm,
+> unchanged).
 
 > **An empty tail is still a real order** — *take nothing* — on a take exactly as it is on a grant.
 > Nothing special-cases the commit; the card is simply no longer empty when the take is not. A
@@ -277,17 +338,26 @@ reachable on shipped config, so `split_loadout::a_grant_split_divides_the_materi
 pins those numbers rather than deriving them from the `earthlike` fixture, whose own worker count
 never lands on a non-terminating share.
 
-## The pre-fill is the SPAWNED band's, and a splinter has a DEFAULT TAKE instead
+## The default is fitted to WHICHEVER budget it is drawn against
 
 `clamped_kit_defaults` keeps its rule unchanged: proportional, floored, remainder unspent. What moved
-is which budget it is fitted to — `snapshot::campaign::opening_kit_budget`, the lowest-id band still
-holding a grant, because the pre-fill is the *opening* suggestion. A splinter's window has no pre-fill: what it opens
-on is the **default take**, the kit allocation the split just moved, which is a statement about what
-the band already holds rather than a suggestion about what it might.
+is which budget it is fitted to, and there are now three readers of it:
 
-**A pre-fill remains a client seed and must never become a back-door spawn stock.** A band that never
-receives a `SetStartingLoadout` owns nothing, forever — pinned by
-`starting_loadout::the_published_defaults_grant_the_band_nothing`.
+| reader | the budget it fits to | what it does with the answer |
+|---|---|---|
+| `outfit_band_with_defaults` | **that band's own** `kit_budget` / `material_budget` | **applies** it — the opening band at Startup, a grant splinter at its split |
+| `snapshot::campaign::opening_kit_budget` | the lowest-id band still holding a grant | publishes `CampaignSection.openingLoadout.kitDefaults`, the campaign-wide statement of what the defaults *are* |
+| `stamp_starting_loadout` | the opening band's | warns once per world when the config over-allocates, which is the only moment that fault is observable |
+
+**A TAKE splinter is not outfitted from the defaults.** What it opens on is the **default take**, the
+kit allocation the split just moved, which is a statement about what the band already holds — and its
+two budgets are `0`, so the defaults would clamp to nothing anyway.
+
+**The campaign-wide rows are a STATEMENT, not a second grant.** `CampaignSection.openingLoadout`
+publishes the profile's declared defaults so a client can name them; nothing about a band's holdings
+comes from there. What a band holds comes from the apply — pinned by
+`starting_loadout::a_band_is_created_already_holding_its_default_outfit`, which sends no command at
+all.
 
 ## On the wire
 
@@ -298,9 +368,11 @@ The window is **per band**, so it rides the cohort beside the two things a picke
   take's caps as `parentItemSupply` / `parentMaterialSupply` (`id → units`, each already **holdings +
   this take's standing units**, so a client draws the cap the server refuses on). Absent, or `open ==
   false`, means there is nothing to outfit.
-  **`kits` / `materials` are non-empty on a fresh splinter** — they carry the default take, so a card
-  that renders them and re-sends them unchanged commits a no-op. `parentItemSupply` lists only items
-  some kit carries, so a bench tool never appears as a claimable cap.
+  **`kits` / `materials` are non-empty on EVERY fresh window** — the default take on a take, the
+  applied default outfit on a grant — and on both arms they describe gear the band is **actually
+  holding**, so re-sending them unchanged is an exact no-op and a card that renders them is never
+  blank against a live budget. `parentItemSupply` lists only items some kit carries, so a bench tool
+  never appears as a claimable cap.
 - **`CampaignSection.openingLoadout`** keeps only the campaign-wide facts: `pickableMaterials`,
   `materialDefaults`, `kitDefaults`, `craftableRecipeIds`.
 
