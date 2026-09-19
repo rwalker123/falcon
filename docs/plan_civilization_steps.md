@@ -52,10 +52,12 @@ All twelve are in scope eventually. The rest of this doc is about steps 1–5.
 
 ## The loop for steps 1–5 (leaning)
 
-**Standing still depletes the patch. Deaths and a shared site tether you anyway, and neither feeds
-anyone. The cap stops growth until belief lifts it. The ladder turns the patch into fields, the
-surplus becomes a place, and controlling it is the first act of politics.** Every step is a reason to
-stay fighting a reason to go.
+**A band alone cannot grow, so it walks to meet others. Where bands keep meeting, belief accrues
+and the dead go into the ground. Standing still depletes the patch, but the partners and the
+ancestors tether you anyway, and neither feeds anyone. Each ceiling stops growth until the next
+lifter — contact, belief, writing — raises it. The ladder turns the patch into fields, the surplus
+becomes a place, and controlling it is the first act of politics.** Every step is a reason to stay
+fighting a reason to go.
 
 ### The push is depletion, and we already own it
 
@@ -92,6 +94,82 @@ two channels already move people:
 
 Food stays the keeper of whether you *can* stay. Belief becomes the keeper of whether you *want*
 to, and of whether the place can hold you once you do.
+
+### The contact chain: what comes before belief (leaning)
+
+The video's two early examples are three thousand years apart in the wrong order for its own
+thesis: the Natufian cemeteries (~12,500 BC) come *before* the Göbekli Tepe gathering (~9500 BC).
+Its claim is causal, not chronological — the desire to gather pulled people into staying — and the
+claim holds once the burial half is corrected.
+
+**Burial did not start with settling.** People buried their dead long before any village. A nomadic
+band buries someone where they die and walks on. What is new with the Natufians is the *cemetery*:
+the same dead in the same ground, under or beside the houses, again and again. A cemetery is
+evidence of **returning**, not of grief. So the chain runs:
+
+1. **Foragers return to the same rich spots on a circuit.** Neither nomadic nor settled.
+2. **Bands aggregate at those spots**, for things a band of ~30 cannot supply itself: mates above
+   all (a band that size is not viable alone over generations), alliances for bad years,
+   information, goods from far away. Seasonal aggregation is documented among foragers everywhere.
+3. **Ritual is what makes the aggregation work.** Strangers who share no kin need something else to
+   trust each other — a feast, a rite, a monument built together (Göbekli Tepe shows heavy
+   feasting). Belief is a *consequence* of gathering, not its cause.
+4. **The dead go into the ground where everyone is together.** The aggregation site becomes where
+   the ancestors are. That is the tether.
+5. **The circuit shrinks around it, then stops.** The Natufians got there first because their site
+   also had the wild cereal stands.
+
+Lack of movement is the *last* link. Belief comes before it, and before belief comes a **need a
+band cannot meet alone**. That is the thing our sim lacks: a single band is completely
+self-sufficient, so it has no reason to walk, gather, or split.
+
+> The "not viable alone" claim reaches past the video into general anthropology and is **not
+> verified**; the mechanism below holds even if the number is soft, but the claim should be checked
+> before the spec leans on it.
+
+#### The mechanism: a band cannot grow past a ceiling without contact
+
+**A band's population has a ceiling, and contact with another band lifts it.** Births stop at the
+ceiling — the pattern carry capacity already uses (`docs/plan_early_game_labor.md`: population ≤
+carry cap, births stop at the cap). Contact is an *event*: another band within contact range within
+the last `T` turns. It lapses, so it has to be renewed, and the renewal is the gathering.
+
+This makes the caps in this doc **one ladder of ceilings**, each lifted by the next step:
+
+| Ceiling | Lifted by | Video step |
+|---|---|---|
+| A band alone | contact with another band | 1 → 2 |
+| A band with partners | belief on the tile it stands on | 2 → 3 |
+| A settlement | writing / record-keeping | 7 |
+
+One rule, two edges: **births stop at the ceiling; a band pushed above it sheds people.** A band
+goes above its ceiling only when a lifter lapses — it walked away from its partners, or off the tile
+that held its belief — and then it leaks back down to what it can hold. That is the resistance to
+leaving expressed in people rather than mood, and it may make the grievance-on-leaving term above
+redundant; which to keep is open.
+
+What falls out without further rules:
+
+- **Splitting has a purpose.** A lone band caps low. Split, and each half has a partner; the cluster
+  can grow past what one band could. Local bands inside supply reach are in permanent contact, so
+  the cluster is the first thing that can exceed a band's ceiling — and it is limited by land, since
+  each band needs its own work range.
+- **The gathering matters for far bands.** A band beyond reach has no standing contact; the
+  gathering is the episode that renews it. A far band that never gathers stops growing *and* drifts
+  toward independence under the fission rule, from the same missing signal.
+- **The gathering place is wherever bands keep meeting**, and belief accrues there. The dead go into
+  that ground. The settling decision is then real: stay where the partners and the ancestors are, or
+  keep walking the circuit that feeds you better.
+- **Contact, not exchange.** Trade (shipments, network pooling) is a thing you can do at a gathering,
+  not the gate. Gating growth on trade would make a food good stand in for a social need.
+- **Scouting gets teeth.** The scout expedition is rarely used today because nothing depends on what
+  it finds. Under a contact ceiling, the thing a scout finds is a **partner**: another faction's band
+  once #513 lands, and until then where your own far bands are and where the circuit's rich spots
+  (the future gathering places) lie. A scout that reports a band within reach of a route is the
+  difference between a ceiling and growth.
+
+Levers: the lone-band ceiling, `T`, contact range, and what each lifter adds. The lone-band ceiling
+must sit above the start size and below the belief ceiling, or one of the two never binds.
 
 ### Step 5 is a seam, not a design yet
 
@@ -183,10 +261,14 @@ already do, and the first would have to be special-cased.
 
 - Belief as a tile value: what accrues it (deaths, gatherings, time), what decays it, and whether it
   is per-faction or per-place.
-- The cohesion cap: config value, what "losing people to the surroundings" does mechanically (they
-  leave as a wild/independent cohort? they die? they become a local band?), and how belief lifts it.
-- Grievance on leaving the dead: scale, and whether it is a one-time hit or a standing term while
-  away.
+- The ceiling ladder: the lone-band ceiling, the contact lapse `T`, contact range, and what each
+  lifter adds. What "shedding people" does mechanically (they leave as a wild/independent cohort?
+  they die? they become a local band?).
+- Whether contact with your *own* local band counts fully, or only another faction's band once #513
+  lands (the fission-and-cluster loop depends on the answer).
+- Grievance on leaving the dead: whether it survives beside the ceiling leak, and if so its scale
+  and whether it is a one-time hit or a standing term while away.
+- The "a band of ~30 is not viable alone" claim: verify before the spec leans on it.
 - The gathering place: is it a site tag on the map (the wondrous-sites seam), a built improvement,
   or an event? Who can contribute? With one faction until #513, "several bands" means your local
   bands.
