@@ -127,33 +127,86 @@ self-sufficient, so it has no reason to walk, gather, or split.
 > verified**; the mechanism below holds even if the number is soft, but the claim should be checked
 > before the spec leans on it.
 
-#### The mechanism: a band cannot grow past a ceiling without contact
+#### The mechanism: a breeding population cannot grow past its lines
 
-**A band's population has a ceiling, and contact with another band lifts it.** Births stop at the
-ceiling — the pattern carry capacity already uses (`docs/plan_early_game_labor.md`: population ≤
-carry cap, births stop at the cap). Contact is an *event*: another band within contact range within
-the last `T` turns. It lapses, so it has to be renewed, and the renewal is the gathering.
+The need is **inbreeding**, so the unit that is capped is not the band but the **breeding
+population**: everyone in contact. That is what the supply network already computes as a connected
+component. "Faction limit" is right in practice, with one refinement — a far band that has dropped
+off the network is its own breeding population even though it is still your faction.
 
-This makes the caps in this doc **one ladder of ceilings**, each lifted by the next step:
+The sim has three age brackets, no individuals, no sexes and no kinship, so relatedness cannot be
+read from state. It is a proxy, and the proxy is **founding lines**: how many unrelated families a
+group descends from.
 
-| Ceiling | Lifted by | Video step |
+- **Each band carries a count of lines.** The starting band has `L` (config), standing for its
+  unrelated families.
+- **A split takes a proportional share, minimum one.** Five out of thirty takes one or two.
+- **A breeding population's ceiling is its lines × a per-line cap `K`.** Births stop there — the
+  pattern carry capacity already uses (`docs/plan_early_game_labor.md`: population ≤ carry cap,
+  births stop at the cap).
+- **Contact merges line sets.** Each side gains the lines it lacks. That is what a gathering does.
+  Contact with your *own* split band counts — that is what a tribe was, exogamy between bands of
+  the same people — but a *recent* split shares every line and adds nothing.
+- **Lines do not decay** in the plain version. The one refinement worth holding in reserve is that
+  lines regrow slowly in a long-separated group, so contact after a long separation is worth more
+  than after a short one. Not to be built first.
+
+**The numbers, hedged.** From general population genetics and forager anthropology, not the video;
+check before a spec leans on them. Roughly 50 effective breeders avoids short-term inbreeding
+damage and ~500 keeps a population healthy long-term; effective breeders are about a third of
+headcount. Forager mating networks ran around 500 people across many bands, and simulations put the
+minimum self-sustaining network at ~175–475. Founder groups of 15–30 (Pitcairn, Tristan da Cunha,
+Polynesian islands) grew to a few hundred over generations with visible inbreeding costs. A group
+of 5 is two or three couples; every second-generation marriage is between first cousins.
+
+**Our own clock.** `maturation_rate` 0.05 makes a generation ~20 turns; a well-fed band doubles in
+~35 turns at the reserve and trend bonuses (`demographics_config.json`). A splinter of 5 reaches
+30–40 in about three generations — exactly where real isolated founders start to hurt. The timing
+matches the history without tuning.
+
+With `K` chosen so a lone band of 30 ceilings near 150:
+
+| Isolated breeding population | Founding lines | Ceiling |
 |---|---|---|
-| A band alone | contact with another band | 1 → 2 |
-| A band with partners | belief on the tile it stands on | 2 → 3 |
-| A settlement | writing / record-keeping | 7 |
+| Splinter of 5 | 1–2 | ~25–30 |
+| Starting band of 30 | `L` | ~150–200 |
+| Three or four bands in contact | union | ~500 |
 
-One rule, two edges: **births stop at the ceiling; a band pushed above it sheds people.** A band
-goes above its ceiling only when a lifter lapses — it walked away from its partners, or off the tile
-that held its belief — and then it leaks back down to what it can hold. That is the resistance to
-leaving expressed in people rather than mood, and it may make the grievance-on-leaving term above
-redundant; which to keep is open.
+At ~500 inbreeding stops being the binding constraint and the next ceiling takes over.
+
+**Two ceilings on two different units, and they coincide at 150.** A lone band's inbreeding
+ceiling lands at ~150, the same number the video gives for where a band stops being able to run on
+personal relationships and starts losing people. That is a coincidence in the sources, but in the
+model it separates cleanly:
+
+| Ceiling | Unit | Lifted by | Video step |
+|---|---|---|---|
+| Lines × `K` (inbreeding) | the **breeding population** — a connected component | contact | 1 → 2 |
+| Cohesion (~150) | the **co-located group** — a band, or a cluster on one site | belief on the tile | 2 → 3 |
+| Administration | a settlement | writing / record-keeping | 7 |
+
+Contact lifts the *network's* ceiling but not any one band's: many bands of under 150 each, in
+touch. Belief is what lets a single *place* hold more than 150. Writing is what lets a polity
+administer more than a place can hold. For a lone band the two first ceilings are the same number,
+which is why it reads as one cap until the band has partners.
+
+**Shedding goes along routes, not into the void.** One rule, two edges: **births stop at the
+ceiling; a group pushed above it sheds people.** A group goes above its ceiling only when a lifter
+lapses — it walked away from its partners, or off the tile that held its belief — and then it leaks
+back down. The people who leave **walk the network**: they go to a connected band, along a trade
+route or the local reach, and join it. Nobody vanishes into the surroundings while a route exists.
+Where no route exists (a truly isolated group above its ceiling) the fallback is open. This is the
+resistance to leaving expressed in people rather than mood, and it may make the grievance-on-leaving
+term above redundant; which to keep is open.
 
 What falls out without further rules:
 
-- **Splitting has a purpose.** A lone band caps low. Split, and each half has a partner; the cluster
-  can grow past what one band could. Local bands inside supply reach are in permanent contact, so
-  the cluster is the first thing that can exceed a band's ceiling — and it is limited by land, since
-  each band needs its own work range.
+- **Splitting has a purpose, and staying connected is the point.** A lone band caps low. Split, and
+  the cluster can grow past what one band could — limited by land, since each band needs its own
+  work range. But a split that walks off the network takes its lines with it and *lowers both
+  ceilings*: the splinter of 5 caps at ~25–30 and the parent loses what it gave away. The
+  beneficial move is to keep the new band connected, locally or by a trade route, so the breeding
+  population stays whole.
 - **The gathering matters for far bands.** A band beyond reach has no standing contact; the
   gathering is the episode that renews it. A far band that never gathers stops growing *and* drifts
   toward independence under the fission rule, from the same missing signal.
@@ -168,8 +221,8 @@ What falls out without further rules:
   (the future gathering places) lie. A scout that reports a band within reach of a route is the
   difference between a ceiling and growth.
 
-Levers: the lone-band ceiling, `T`, contact range, and what each lifter adds. The lone-band ceiling
-must sit above the start size and below the belief ceiling, or one of the two never binds.
+Levers: `L` (starting lines), `K` (people per line), contact range, and what belief adds to the
+cohesion ceiling. `L × K` must sit above the start size, or the game opens capped.
 
 ### Step 5 is a seam, not a design yet
 
@@ -261,14 +314,14 @@ already do, and the first would have to be special-cased.
 
 - Belief as a tile value: what accrues it (deaths, gatherings, time), what decays it, and whether it
   is per-faction or per-place.
-- The ceiling ladder: the lone-band ceiling, the contact lapse `T`, contact range, and what each
-  lifter adds. What "shedding people" does mechanically (they leave as a wild/independent cohort?
-  they die? they become a local band?).
-- Whether contact with your *own* local band counts fully, or only another faction's band once #513
-  lands (the fission-and-cluster loop depends on the answer).
+- The lineage levers: `L`, `K`, contact range; whether a gathering is a proximity event or a
+  command; whether lines ever regrow in a long-separated group.
+- Shedding with no route: what happens to people leaving a truly isolated group above its ceiling
+  (a wild/independent cohort? deaths? nothing until a route exists?).
 - Grievance on leaving the dead: whether it survives beside the ceiling leak, and if so its scale
   and whether it is a one-time hit or a standing term while away.
-- The "a band of ~30 is not viable alone" claim: verify before the spec leans on it.
+- The population-genetics numbers (50/500, ~500 mating networks, founder-group histories): verify
+  before the spec leans on them.
 - The gathering place: is it a site tag on the map (the wondrous-sites seam), a built improvement,
   or an event? Who can contribute? With one faction until #513, "several bands" means your local
   bands.
