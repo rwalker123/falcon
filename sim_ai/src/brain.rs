@@ -21,10 +21,12 @@ use sim_runtime::{render_command_line, StartingKitAllocation, StartingMaterialAl
 
 use crate::arbiter::{Arbiter, Offered};
 use crate::board::{Board, Entry, Resource};
+use crate::ground::{read_all, GroundLevers, GroundReadings};
 use crate::instruments::decisions::{
     AlarmRecord, Decision, DecisionRecord, DecisionSink, Outcome, PlanRecord,
 };
 use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG};
+use crate::oracle::{CrewTakeOracle, Unasked};
 use crate::orchestrator::constant::ConstantStance;
 use crate::orchestrator::{Alarm, Orchestrator, Plan, INTENT_OUTFIT, ORCHESTRATOR_ID};
 use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError};
@@ -49,6 +51,14 @@ pub const OUTFIT_SCORE: f32 = 1.0;
 /// returns has a row behind it (§10). A brain with nothing to say leaves the sink untouched — the
 /// `ready` row is the loop's, not the brain's.
 pub trait Brain {
+    /// **Fold the frame in ahead of `decide`** — the memory's sightings and realized rows, the
+    /// sim's crew-take curves for the herds in reach (asked through `oracle`, within the tick's
+    /// budget), and the land reading of every own band — so an observation captured between the
+    /// two records the state the brain decides on: the reading `Food` sizes the outfit and the
+    /// splits by is the one the log shows. `decide` folds the frame in itself when nothing has,
+    /// with nothing to ask (`oracle::Unasked`); calling this twice on one tick is one fold.
+    fn observe(&mut self, _view: &SeatView, _oracle: &mut dyn CrewTakeOracle) {}
+
     fn decide(
         &mut self,
         view: &SeatView,
@@ -80,6 +90,13 @@ pub struct BrainLens<'a> {
     pub memory: Option<&'a SeatMemory>,
     /// The profile's `land.horizon_tiles`: how far `Land` looks, and the observation's radius floor.
     pub horizon_tiles: u32,
+    /// The levers the land reading (`ground.rs`) is shaped by; `None` on a brain with no
+    /// profile, whose observation then carries no reading.
+    pub ground: Option<GroundLevers>,
+    /// **The readings this turn's decisions are sized from**, one per own band
+    /// (`ground::read_all`, taken in `observe`) — the observation records the largest band's off
+    /// this, never a second computation.
+    pub readings: Option<&'a GroundReadings>,
 }
 
 /// Submits end-turn and nothing else.
@@ -120,6 +137,11 @@ pub struct Composite {
     /// The demand board (`board.rs`): nothing but this composite and the orchestrator touch it,
     /// and a specialist never sees it.
     board: Board,
+    /// The land reading of every own band, taken once per tick in `observe` and handed to every
+    /// specialist and to the observation record.
+    ground: GroundReadings,
+    /// The tick `observe` last folded in, so `decide` folds a frame in exactly once.
+    observed_tick: Option<u64>,
 }
 
 impl Composite {
@@ -134,6 +156,7 @@ impl Composite {
         let memory = SeatMemory::new(
             difficulty.memory_horizon_turns,
             profile.food.split_settle_turns,
+            profile.food.dead_row_turns,
         );
         Self {
             faction,
@@ -145,6 +168,8 @@ impl Composite {
             memory,
             plan: None,
             board: Board::default(),
+            ground: GroundReadings::default(),
+            observed_tick: None,
         }
     }
 
@@ -264,6 +289,34 @@ impl Composite {
 }
 
 impl Brain for Composite {
+    fn observe(&mut self, view: &SeatView, oracle: &mut dyn CrewTakeOracle) {
+        let tick = view.tick();
+        if self.observed_tick == Some(tick) {
+            return;
+        }
+        // The rows are folded against the curves they were staffed under, then the curves are
+        // refreshed, then the ground is read off the refreshed curves.
+        self.memory.observe(view, self.faction);
+        let asks = self.memory.refresh_crew_takes(view, self.faction, oracle);
+        if asks.asked > 0 || asks.waiting > 0 {
+            info!(
+                tick,
+                asked = asks.asked,
+                waiting = asks.waiting,
+                elapsed_ms = asks.elapsed.as_millis(),
+                slowest_ms = asks.slowest.as_millis(),
+                "crew take asked"
+            );
+        }
+        self.ground = read_all(
+            view,
+            &self.memory,
+            self.faction,
+            &GroundLevers::of(&self.profile),
+        );
+        self.observed_tick = Some(tick);
+    }
+
     fn decide(
         &mut self,
         view: &SeatView,
@@ -271,7 +324,7 @@ impl Brain for Composite {
         sink: &mut dyn DecisionSink,
     ) -> Vec<CommandPayload> {
         let tick = view.tick();
-        self.memory.observe(view, self.faction);
+        Brain::observe(self, view, &mut Unasked);
         // A command the sim refused last turn is a specialist's bug; say which, with the sim's reason.
         for refused in view
             .snapshot
@@ -296,7 +349,7 @@ impl Brain for Composite {
         let mut demands = Vec::new();
         for specialist in &mut self.specialists {
             let id = specialist.id();
-            let proposals = specialist.propose(view, &plan, &self.memory);
+            let proposals = specialist.propose(view, &plan, &self.memory, &self.ground);
             if let Some(alarm) = proposals.alarm {
                 sink.record(DecisionRecord::Alarm(AlarmRecord {
                     tick,
@@ -351,12 +404,17 @@ impl Brain for Composite {
             alarms: self.memory.pending_alarms(),
             memory: Some(&self.memory),
             horizon_tiles: self.profile.land.horizon_tiles,
+            ground: Some(GroundLevers::of(&self.profile)),
+            readings: Some(&self.ground),
         }
     }
 
     fn on_full_frame(&mut self, tick: u64) {
         self.memory.forget_after(tick);
         self.board.forget_after(tick);
+        // The readings were of the world that is gone; the next `observe` takes them afresh.
+        self.ground.clear();
+        self.observed_tick = None;
         // The orchestrator forgets with the plan: a stale `since_turn` is what would leave the seat
         // on `Plan::pass_through` — no budget, no priority, no orders — for a whole cadence after a
         // rebuild (`Orchestrator::forget_after`).
@@ -632,6 +690,14 @@ mod tests {
             kits.iter().map(|kit| kit.count).sum::<u32>(),
             working_age,
             "one kit per hand: {kits:?}"
+        );
+        // The composite read the ground for the band on this tick, and the lens shows it.
+        assert!(
+            brain
+                .lens()
+                .readings
+                .is_some_and(|readings| readings.contains_key(&7001)),
+            "the composite reads the ground in observe"
         );
         let outfit = decisions(VecSink(sink.0.clone()))
             .into_iter()

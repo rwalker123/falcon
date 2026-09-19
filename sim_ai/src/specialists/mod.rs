@@ -20,6 +20,7 @@ use sim_runtime::CommandPayload;
 
 use crate::board::Demand;
 use crate::geometry::Tile;
+use crate::ground::GroundReadings;
 use crate::orchestrator::{Alarm, Plan};
 use crate::view::{row_key, SeatMemory, SeatView};
 
@@ -52,14 +53,19 @@ pub fn intent_class(intent: &str) -> &str {
 /// The scarce units a proposal spends (`plan_ai_driver.md` §4 → Budgets and costs): the
 /// workers it draws, and **what it claims** — the resources two proposals cannot both set in one
 /// turn. The sim takes several labor orders for one band in a turn, so a band is not a claim; a
-/// *move* of it is, and so is each labor *row* it sets.
+/// *move* of it is, and so is each labor *row* it sets. A *split* is a claim against a move of
+/// the same band (a band walking does not split) and never against another split: the sim takes
+/// several `split_band` orders for one band in a turn, each against the floors as they then stand,
+/// and the shape proposes one per planned band.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Cost {
     /// Workers this proposal draws from the seat's working-age pool.
     pub workers: u32,
-    /// The bands this proposal moves or splits (`move_band`, `split_band`) — a band walks one
-    /// way a turn.
+    /// The bands this proposal walks (`move_band`) — a band walks one way a turn.
     pub moves: Vec<u64>,
+    /// The bands this proposal splits (`split_band`) — collides with a move of the band, not
+    /// with another split of it.
+    pub splits: Vec<u64>,
     /// The labor rows this proposal sets, keyed as [`row_key`] does (band, kind, target) —
     /// every `assign_labor` it emits, donors and targets alike, and the patch's forage row for a
     /// `cultivate` / `sow`; a `builders` or `agriculture` pool is a row too. Two proposals
@@ -75,12 +81,15 @@ impl Cost {
     /// carry. Duplicates are folded, so one proposal setting a row twice claims it once.
     pub fn claimed(workers: u32, band_id: u64, commands: &[CommandPayload]) -> Self {
         let mut moves = Vec::new();
+        let mut splits = Vec::new();
         let mut rows = Vec::new();
         for command in commands {
             match command {
-                CommandPayload::MoveBand { band_id: moved, .. }
-                | CommandPayload::SplitBand { band_id: moved, .. } => {
+                CommandPayload::MoveBand { band_id: moved, .. } => {
                     moves.push(moved.unwrap_or(band_id));
+                }
+                CommandPayload::SplitBand { band_id: split, .. } => {
+                    splits.push(split.unwrap_or(band_id));
                 }
                 CommandPayload::AssignLabor {
                     band_id: on,
@@ -113,11 +122,14 @@ impl Cost {
         }
         moves.sort_unstable();
         moves.dedup();
+        splits.sort_unstable();
+        splits.dedup();
         rows.sort_unstable();
         rows.dedup();
         Self {
             workers,
             moves,
+            splits,
             rows,
         }
     }
@@ -170,7 +182,16 @@ pub struct Proposals {
 
 pub trait Specialist {
     fn id(&self) -> SpecialistId;
-    fn propose(&mut self, view: &SeatView, plan: &Plan, memory: &SeatMemory) -> Proposals;
+    /// The turn's proposals. `ground` is the land reading of every own band this turn
+    /// (`ground::read_all`, taken in the composite's `observe`) — the same reading the observation
+    /// records, so what a specialist sizes by is what the log shows.
+    fn propose(
+        &mut self,
+        view: &SeatView,
+        plan: &Plan,
+        memory: &SeatMemory,
+        ground: &GroundReadings,
+    ) -> Proposals;
 }
 
 #[cfg(test)]
@@ -232,7 +253,8 @@ mod tests {
         ];
         let cost = Cost::claimed(5, BAND, &commands);
         assert_eq!(cost.workers, 5);
-        assert_eq!(cost.moves, vec![BAND, BAND + 1]);
+        assert_eq!(cost.moves, vec![BAND]);
+        assert_eq!(cost.splits, vec![BAND + 1]);
         assert_eq!(
             cost.rows,
             vec![

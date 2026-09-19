@@ -3,12 +3,14 @@
 //! accessors both specialists must ask the same way.
 
 use sim_runtime::{
-    ForagePatchState, KitOptionState, LaborAssignmentState, PopulationCohortState, TerrainTags,
+    ForagePatchState, HerdTelemetryState, KitOptionState, LaborAssignmentState,
+    PopulationCohortState, TerrainTags,
 };
 
 use super::ledger::{regrowth_at, BEST_FLOOR};
 use super::{Food, ROLE_FORAGE, ROLE_HUNT};
 use crate::geometry::Tile;
+use crate::oracle::CrewTakeCurve;
 use crate::view::{band_tile, row_key, SeatMemory, SeatView};
 
 /// **What one worker would take off `patch` this turn** — the rate the band has realized on that
@@ -103,6 +105,52 @@ pub(crate) fn hunting_kits_held(view: &SeatView, band: &PopulationCohortState) -
         .count() as u32
 }
 
+/// **The kit a herd is hunted under** — the row's own `HerdTelemetryState::default_kit_id` (*"the
+/// one `assign_labor … hunt <herd> <n>` resolves when the player names none"*), else the hunt
+/// job's default, `WorldSnapshot::default_hunt_kit_id` — the same fall-back the wire doc names
+/// for a herd whose species the roster cannot resolve.
+pub(crate) fn herd_kit_id<'v>(view: &'v SeatView, herd: &'v HerdTelemetryState) -> &'v str {
+    if herd.default_kit_id.is_empty() {
+        &view.snapshot.default_hunt_kit_id
+    } else {
+        &herd.default_kit_id
+    }
+}
+
+/// **How many crews `band` can send out under `kit`** — the units of the kit it holds: over the
+/// kit's `item_ids` (`KitOptionState`, *"WHICH ITEMS THIS KIT ACTUALLY CARRIES"*), the least of
+/// the summed `count` of the band's `equipment_batches` rows for each item, since a party needs
+/// every item of the kit. `None` for a kit that carries nothing (`none`): a bare crew is not
+/// bounded by gear. `Some(0)` for a kit the roster does not list — nothing to send anyone with.
+///
+/// ⛔ **A herd's crew is bounded by the kit units held, not by the herd.** The band holding one
+/// `big_game` kit read a deer row at `0.8` a hunter and rule 1 multiplied by twelve hands; the
+/// sim's own reading on that row was three useful hunters, then one. Hands past the units held
+/// hunt with nothing and take nothing.
+pub(crate) fn kit_units_held(
+    view: &SeatView,
+    band: &PopulationCohortState,
+    kit_id: &str,
+) -> Option<u32> {
+    let kit = view.snapshot.kits.iter().find(|kit| kit.id == kit_id);
+    let Some(kit) = kit else {
+        return Some(0);
+    };
+    if kit.item_ids.is_empty() {
+        return None;
+    }
+    kit.item_ids
+        .iter()
+        .map(|item| {
+            band.equipment_batches
+                .iter()
+                .filter(|batch| &batch.item_id == item)
+                .map(|batch| batch.count)
+                .sum::<u32>()
+        })
+        .min()
+}
+
 /// **The hands on `row` its take did not need** — `workers − workers_needed`, the frame's own
 /// overstaffing signal: `LaborAssignmentState::workers_needed` is *"Minimum workers that would
 /// have produced this turn's take — the **overstaffing** signal. `workers > workers_needed` ⇒ the
@@ -144,7 +192,7 @@ pub(crate) fn is_walkable(view: &SeatView, tile: Tile) -> bool {
 
 /// Whether a source is dead in this seat's memory — `Food::is_dead`, handed in as a closure so
 /// `Land`, which holds none of `Food`'s levers, reads the same cluster with no dead-row judgement.
-pub(crate) type IsDead<'a> = dyn Fn(&SourceKey, f32) -> bool + 'a;
+pub(crate) type IsDead<'a> = dyn Fn(&SourceKey) -> bool + 'a;
 
 /// What a band would take, per turn, from **every** workable site within its `work_range` of a
 /// standing tile ([`cluster_take`]).
@@ -202,11 +250,38 @@ pub(crate) fn cluster_take_over(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ceiling {
     /// The standing biomass — everything on the ground this turn (`biomass ×
-    /// provisions_per_biomass`); the reading `Land` moves on and `Food` deals free hands by.
+    /// provisions_per_biomass`); the reading `Land` moves on.
     Standing,
     /// The Best floor's regrowth — what the site gives every turn without being drawn down
-    /// ([`sustained_hands`]); the reading that says whether ground can *feed* a band.
+    /// ([`sustained_hands`]); the reading that says whether ground can *feed* a band, and the
+    /// first pass of `Food`'s free-hand deal ([`deal_free_hands`]).
     Sustained,
+    /// **The room above the Best floor** — `max(0, biomass − BEST_FLOOR × carrying_capacity) ×
+    /// provisions_per_biomass`, what the stand above the floor is worth this turn; the second
+    /// pass of the free-hand deal. Its plateau is `ceil(room / rate)` **on top of the sustained
+    /// crew**: only the hands above [`sustained_hands`] count against it, so a patch at or below
+    /// its floor has no room and takes no hand here. Dealt by the standing stock instead, a
+    /// patch stripped to its floor still looked able to use twelve hands (bench seed 19, t6–t9:
+    /// seventeen on a patch needing two, then eight "surplus" dealt onto a patch at its floor).
+    Surplus,
+}
+
+/// The room above the Best floor on `patch`, in provisions — [`Ceiling::Surplus`]'s ceiling.
+pub(crate) fn surplus_room(patch: &ForagePatchState) -> f32 {
+    (patch.biomass - BEST_FLOOR * patch.carrying_capacity).max(0.0) * patch.provisions_per_biomass
+}
+
+/// **What `patch` can give a crew this turn at the Best floor**, in provisions: the room above
+/// the floor plus the floor's regrowth — [`Ceiling::Surplus`] and [`Ceiling::Sustained`]
+/// summed, the two passes of the free-hand deal. A patch [`Source`]'s `ceiling`, and the cap on
+/// what a worked patch row is forecast (`SeatMemory`): a patch standing at its floor expects
+/// only its regrowth, which is what it pays. Not the standing stock (`biomass ×
+/// provisions_per_biomass`, the take at a zero floor): ranked on that, a patch at its floor read
+/// as having room for one more hand while the frame read the hand as surplus, and rule 1
+/// shuffled it between 47,5 and 49,5 every turn of seed 23's t45–t52.
+pub(crate) fn honest_ceiling(patch: &ForagePatchState) -> f32 {
+    surplus_room(patch)
+        + regrowth_at(&patch.regrowth_samples, BEST_FLOOR) * patch.provisions_per_biomass
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -221,6 +296,7 @@ fn cluster_take_by(
     ceiling: Ceiling,
 ) -> ClusterTake {
     let grid = view.grid();
+    // Per site: tile, rate, ceiling, the hands already counted against the plateau, the plateau.
     let mut sites: Vec<(Tile, f32, f32, u32, u32)> = view
         .snapshot
         .forage_patches
@@ -233,28 +309,38 @@ fn cluster_take_by(
             (view.is_discovered(tile)
                 && grid.distance(standing, tile) <= band.work_range
                 && !foreign_band_at(view, band.faction, tile)
-                && !is_dead(&key, patch.per_worker_yield))
+                && !is_dead(&key))
             .then(|| workable_patch_at(view, tile))
             .flatten()
             .and_then(|patch| {
                 existing(tile).map(|already| {
                     let rate = patch_per_worker_yield(memory, band, patch);
-                    let (ceiling, plateau) = match ceiling {
+                    let hands_for = |ceiling: f32| {
+                        if rate > 0.0 {
+                            (ceiling / rate).ceil() as u32
+                        } else {
+                            0
+                        }
+                    };
+                    let (ceiling, already, plateau) = match ceiling {
                         Ceiling::Standing => {
                             let ceiling = patch.biomass * patch.provisions_per_biomass;
                             // The plateau: `ceil(ceiling / rate)`, the standing biomass included.
-                            let plateau = if rate > 0.0 {
-                                (ceiling / rate).ceil() as u32
-                            } else {
-                                0
-                            };
-                            (ceiling, plateau)
+                            (ceiling, already, hands_for(ceiling))
                         }
                         Ceiling::Sustained => (
                             regrowth_at(&patch.regrowth_samples, BEST_FLOOR)
                                 * patch.provisions_per_biomass,
+                            already,
                             sustained_hands(patch, rate),
                         ),
+                        Ceiling::Surplus => {
+                            let room = surplus_room(patch);
+                            // The sustained crew stands first; only the hands above it draw on
+                            // the room.
+                            let above = already.saturating_sub(sustained_hands(patch, rate));
+                            (room, above, hands_for(room))
+                        }
                     };
                     (tile, rate, ceiling, already, plateau)
                 })
@@ -288,6 +374,113 @@ fn cluster_take_by(
     }
 }
 
+/// One site dealt free hands by [`deal_free_hands`]: the hands up to its sustained crew, the
+/// hands onto its surplus room, and what both take there this turn.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DealtSite {
+    pub tile: Tile,
+    /// Hands dealt in the first pass, up to the site's [`sustained_hands`].
+    pub sustained: u32,
+    /// Hands dealt in the second pass, onto the room above the floor ([`Ceiling::Surplus`]).
+    pub surplus: u32,
+    /// What the dealt hands take there this turn, both passes summed.
+    pub take: f32,
+}
+
+impl DealtSite {
+    pub fn hands(&self) -> u32 {
+        self.sustained + self.surplus
+    }
+}
+
+/// **`Food`'s free-hand deal — two passes over the sites in reach.** Pass one deals `hands`
+/// across the sites up to each site's **sustained** crew ([`Ceiling::Sustained`], best rate
+/// first, as [`cluster_take_over`] deals); pass two deals the hands left across the same sites
+/// up to each site's **surplus** crew ([`Ceiling::Surplus`]) with pass one's hands already
+/// standing. Each pass keeps a site only where `improves(tile, hands, take)` holds (the caller's
+/// guard); hands neither pass can place are not placed — they stay idle, which is the honest
+/// reading of ground that cannot use them and what *split to feed* reads next. `existing(tile)`
+/// is as for [`cluster_take_over`]: the crew already on a site, `None` striking it out.
+///
+/// Dealt in one pass by the standing stock, a patch at its floor still looked able to use
+/// twelve hands (bench seed 19: t6 put seventeen on a patch needing two, t9 dealt eight
+/// "surplus" onto a patch at its floor, which took nothing extra).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn deal_free_hands(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    standing: Tile,
+    hands: u32,
+    is_dead: &IsDead<'_>,
+    existing: &dyn Fn(Tile) -> Option<u32>,
+    improves: &dyn Fn(Tile, u32, f32) -> bool,
+) -> Vec<DealtSite> {
+    let sustained = cluster_take_by(
+        view,
+        memory,
+        band,
+        standing,
+        hands,
+        is_dead,
+        existing,
+        Ceiling::Sustained,
+    );
+    let mut dealt: Vec<DealtSite> = sustained
+        .sites
+        .into_iter()
+        .filter(|(tile, hands, take)| improves(*tile, *hands, *take))
+        .map(|(tile, hands, take)| DealtSite {
+            tile,
+            sustained: hands,
+            surplus: 0,
+            take,
+        })
+        .collect();
+    let placed: u32 = dealt.iter().map(DealtSite::hands).sum();
+    let left = hands.saturating_sub(placed);
+    if left == 0 {
+        return dealt;
+    }
+    let standing_now = |tile: Tile| {
+        existing(tile).map(|already| {
+            already
+                + dealt
+                    .iter()
+                    .find(|site| site.tile == tile)
+                    .map_or(0, DealtSite::hands)
+        })
+    };
+    let surplus = cluster_take_by(
+        view,
+        memory,
+        band,
+        standing,
+        left,
+        is_dead,
+        &standing_now,
+        Ceiling::Surplus,
+    );
+    for (tile, hands, take) in surplus.sites {
+        if !improves(tile, hands, take) {
+            continue;
+        }
+        match dealt.iter_mut().find(|site| site.tile == tile) {
+            Some(site) => {
+                site.surplus += hands;
+                site.take += take;
+            }
+            None => dealt.push(DealtSite {
+                tile,
+                sustained: 0,
+                surplus: hands,
+                take,
+            }),
+        }
+    }
+    dealt
+}
+
 /// **The sites a cluster is made of**: every workable patch within `work_range` of `standing`
 /// that [`cluster_take_over`] would deal to, with the rate it is dealt at — for a caller that
 /// prices the sites itself ([`super::Food::outfit_split`]).
@@ -310,7 +503,7 @@ pub(crate) fn cluster_sites<'v>(
             (view.is_discovered(tile)
                 && grid.distance(standing, tile) <= band.work_range
                 && !foreign_band_at(view, band.faction, tile)
-                && !is_dead(&key, patch.per_worker_yield))
+                && !is_dead(&key))
             .then(|| workable_patch_at(view, tile))
             .flatten()
         })
@@ -351,7 +544,7 @@ pub(crate) fn cluster_take_sustained(
         band,
         standing,
         hands,
-        &|_, _| false,
+        &|_| false,
         &|_| Some(0),
         Ceiling::Sustained,
     )
@@ -440,23 +633,65 @@ pub(super) struct Source {
     pub key: SourceKey,
     /// Where the source stands — the patch's tile, or the herd's this frame.
     pub tile: Tile,
-    /// The rate a crew is ranked on: what this band has **realized** on that source, if it has
-    /// worked it, else the web's prior, else the frame's forecast ([`Food::rate`]).
+    /// The rate a crew is ranked on. A patch: what this band has **realized** on it, if it has
+    /// worked it, else the web's prior, else the frame's forecast ([`Food::rate`]). A herd: the
+    /// smallest crew's likely take off the sim's curve (`likely(1)`), so a caller reading a
+    /// per-hand rate reads something honest — never the wire's `per_worker_yield`, which is the
+    /// kit's carry.
     pub per_worker_yield: f32,
-    /// The take at a zero floor: `biomass × provisions_per_biomass`.
+    /// The most a crew takes here this turn. A patch: the room above the Best floor plus the
+    /// floor's regrowth ([`honest_ceiling`]). A herd: the standing stock, `biomass ×
+    /// provisions_per_biomass` — unread, since a herd's take is the curve's.
     pub ceiling: f32,
+    /// **The most hands this source credits** — for a herd, the units of its kit the band holds
+    /// ([`kit_units_held`]) or the curve's plateau, whichever is fewer; `None` for a patch.
+    /// Hands beyond it hunt with nothing and add nothing.
+    pub crew_cap: Option<u32>,
+    /// **The sim's crew-take curve**, in food per turn — a herd's forecast
+    /// (`SeatMemory::crew_take`); `None` on a patch, whose take is `min(hands × rate, ceiling)`.
+    pub curve: Option<CrewTakeCurve>,
 }
 
 impl Source {
-    /// What a crew of `hands` takes: `min(hands × rate, ceiling)`.
+    /// What a crew of `hands` takes: the curve's likely at that crew for a herd, `min(hands ×
+    /// rate, ceiling)` for a patch — the hands past [`Self::crew_cap`] counting for nothing.
     pub fn expected(&self, hands: u32) -> f32 {
-        crew_take(hands, self.per_worker_yield, self.ceiling)
+        let hands = self.crew_cap.map_or(hands, |cap| hands.min(cap));
+        match &self.curve {
+            Some(curve) => curve.likely(hands),
+            None => crew_take(hands, self.per_worker_yield, self.ceiling),
+        }
+    }
+
+    /// The source as a reason names it with a crew of `hands` on it: a patch as
+    /// [`SourceKey::describe`]; a herd with its curve quoted — `hunt herd_9: 5 hunters, likely
+    /// 0.30/turn (sim crew take, low 0.00 high 0.72)` — so the log says what the sim said.
+    pub fn describe_for(&self, hands: u32) -> String {
+        let hands = self.crew_cap.map_or(hands, |cap| hands.min(cap));
+        match self.curve.as_ref().and_then(|curve| curve.row(hands)) {
+            Some(row) => format!(
+                "{}: {hands} hunters, likely {:.2}/turn (sim crew take, low {:.2} high {:.2})",
+                self.key.describe(),
+                row.likely,
+                row.low,
+                row.high
+            ),
+            None => self.key.describe(),
+        }
     }
 
     /// What `more` hands add on top of `existing` already on this source — the marginal take,
     /// which is what a reassignment onto it gains.
     pub fn marginal(&self, existing: u32, more: u32) -> f32 {
         self.expected(existing + more) - self.expected(existing)
+    }
+
+    /// **How many of `more` hands this source can use** on top of `existing`: all of them on a
+    /// patch, and on a herd only up to the kit units held — the hands a rule sends, so a herd
+    /// is never assigned a crew its gear cannot arm.
+    pub fn usable(&self, existing: u32, more: u32) -> u32 {
+        self.crew_cap
+            .map_or(more, |cap| cap.saturating_sub(existing).min(more))
     }
 
     /// The reach a band works this source from: `work_range` for a patch, `hunt_reach` for a herd.

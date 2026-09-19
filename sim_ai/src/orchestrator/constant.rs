@@ -14,18 +14,20 @@
 //! `priority × the profile weight of the requester's domain` (`food` → `food_security`, `land` →
 //! `land_claim`, ties by requester id), walked granting `min(asked, budget left)` — on a
 //! splinter's take, capped by the parent's supply of **every item** the kit lists — two demands
-//! for one kit coalesced into one line; materials the same way against `material_budget`, and a
-//! grant window nobody posted a material demand for takes the campaign pre-fill
-//! (`opening_loadout.material_defaults`) clamped to the budget, the sim's own suggestion. Never
-//! a `none` kit, a kit the roster does not name, or a total above either budget: the sim refuses
-//! the whole order for any of them.
+//! for one kit coalesced into one line; materials the same way against `material_budget`, and on
+//! a grant window **the campaign pre-fill fills whatever material budget the demands leave**
+//! (`opening_loadout.material_defaults`, the sim's own suggestion, scaled to the points left in
+//! its own proportions and floored — [`prefill_over`]). Never a `none` kit, a kit the roster does
+//! not name, or a total above either budget: the sim refuses the whole order for any of them. **Every grant under the ask says why** ([`Grant`]): a demand
+//! the budget cannot reach at all is declined, one it reaches partly is trimmed — and a craft
+//! demand is declined `no crafter yet`, because nothing runs a bench for the seat.
 
 use std::collections::BTreeMap;
 
-use sim_runtime::{BandLoadoutWindowState, PopulationCohortState};
+use sim_runtime::{BandLoadoutWindowState, OpeningMaterialDefaultState, PopulationCohortState};
 
 use super::{Alarm, Budget, FoodGoals, Goals, Orchestrator, Outfit, Plan, Stance};
-use crate::board::{Entry, Resource, BARE_KIT_ID};
+use crate::board::{Entry, Grant, Resource, BARE_KIT_ID};
 use crate::profile::{AiProfile, WEIGHT_TO_SPECIALIST};
 use crate::specialists::{SpecialistId, SPECIALIST_FOOD};
 use crate::view::{SeatMemory, SeatView};
@@ -34,6 +36,55 @@ use crate::view::{SeatMemory, SeatView};
 /// by `kit_budget` … and `material_budget`"* (`BandLoadoutWindowState`); non-zero is a take on
 /// that band, capped by the parent's supply instead.
 const GRANT_WINDOW: u64 = 0;
+
+/// **Why a grant fell short**, as the board records it.
+pub const DECLINED_NO_CRAFTER: &str = "no crafter yet";
+pub const DECLINED_BARE_KIT: &str = "the bare kit is never a line";
+pub const DECLINED_UNKNOWN_KIT: &str = "not on the kit roster";
+pub const DECLINED_KIT_BUDGET: &str = "kit budget spent";
+pub const DECLINED_PARENT_SUPPLY: &str = "parent cannot supply";
+pub const DECLINED_MATERIAL_BUDGET: &str = "material budget spent";
+pub const DECLINED_NOT_PICKABLE: &str = "not on the pick list";
+
+/// The grant for `asked` against `cap`, with the reason when it falls short.
+fn grant_against(asked: u32, cap: u32, short_because: &str) -> Grant {
+    let granted = asked.min(cap);
+    if granted == 0 {
+        Grant::declined(short_because)
+    } else if granted < asked {
+        Grant::trimmed(
+            granted,
+            format!("trimmed from {asked} to {granted}: {short_because}"),
+        )
+    } else {
+        Grant::whole(granted)
+    }
+}
+
+/// **The campaign pre-fill over the material points the demands left**: each default row scaled
+/// by `min(1, budget_left / Σ defaults)` and floored — proportional, remainder unspent, the
+/// `clamped_kit_defaults` rule on the material side — so a grant that spent part of its budget
+/// on what a specialist asked for still carries the sim's suggestion for the rest, in the
+/// suggestion's own mix. Clamping row by row instead spent the whole budget on the first rows
+/// and none on the last; skipping the pre-fill when anything was asked left a third of the
+/// budget on the table (the hoe estimate's `bone 6, fibre 12` against 30 points).
+fn prefill_over(defaults: &[OpeningMaterialDefaultState], budget_left: u32) -> Vec<(String, u32)> {
+    let total: u32 = defaults.iter().map(|row| row.units).sum();
+    if total == 0 || budget_left == 0 {
+        return Vec::new();
+    }
+    let scale = (budget_left as f32 / total as f32).min(1.0);
+    defaults
+        .iter()
+        .map(|row| {
+            (
+                row.material_id.clone(),
+                (row.units as f32 * scale).floor() as u32,
+            )
+        })
+        .filter(|(_, units)| *units > 0)
+        .collect()
+}
 
 /// Add `units` of `id` to a coalesced line list.
 fn coalesce(lines: &mut Vec<(String, u32)>, id: &str, units: u32) {
@@ -208,33 +259,44 @@ impl Orchestrator for ConstantStance {
             .iter()
             .map(|row| (row.id.as_str(), row.units))
             .collect();
-        let mut grants: Vec<(Resource, u32)> = demands
+        let mut grants: Vec<(Resource, Grant)> = demands
             .iter()
-            .map(|entry| (entry.demand.resource.clone(), 0))
+            .map(|entry| {
+                (
+                    entry.demand.resource.clone(),
+                    Grant::declined(DECLINED_KIT_BUDGET),
+                )
+            })
             .collect();
         let mut kits = Vec::new();
         let mut materials = Vec::new();
-        let mut any_material_demand = false;
         for index in order {
             let demand = &demands[index].demand;
             match &demand.resource {
                 Resource::Kit(id) => {
                     if id == BARE_KIT_ID {
+                        grants[index].1 = Grant::declined(DECLINED_BARE_KIT);
                         continue;
                     }
                     let Some(kit) = view.snapshot.kits.iter().find(|kit| &kit.id == id) else {
+                        grants[index].1 = Grant::declined(DECLINED_UNKNOWN_KIT);
                         continue;
                     };
-                    let cap = if is_take {
-                        kit.item_ids
-                            .iter()
-                            .map(|item| item_supply.get(item.as_str()).copied().unwrap_or(0))
-                            .min()
-                            .unwrap_or(0)
+                    let (cap, short_because) = if is_take {
+                        (
+                            kit.item_ids
+                                .iter()
+                                .map(|item| item_supply.get(item.as_str()).copied().unwrap_or(0))
+                                .min()
+                                .unwrap_or(0),
+                            DECLINED_PARENT_SUPPLY,
+                        )
                     } else {
-                        kit_budget
+                        (kit_budget, DECLINED_KIT_BUDGET)
                     };
-                    let granted = demand.amount.min(cap);
+                    let grant = grant_against(demand.amount, cap, short_because);
+                    let granted = grant.granted;
+                    grants[index].1 = grant;
                     if granted == 0 {
                         continue;
                     }
@@ -248,23 +310,26 @@ impl Orchestrator for ConstantStance {
                         kit_budget -= granted;
                     }
                     coalesce(&mut kits, id, granted);
-                    grants[index].1 = granted;
                 }
                 Resource::Material(id) => {
-                    any_material_demand = true;
-                    let cap = if is_take {
-                        material_supply.get(id.as_str()).copied().unwrap_or(0)
+                    let (cap, short_because) = if is_take {
+                        (
+                            material_supply.get(id.as_str()).copied().unwrap_or(0),
+                            DECLINED_PARENT_SUPPLY,
+                        )
                     } else if view
                         .snapshot
                         .opening_loadout
                         .pickable_materials
                         .contains(id)
                     {
-                        material_budget
+                        (material_budget, DECLINED_MATERIAL_BUDGET)
                     } else {
-                        0
+                        (0, DECLINED_NOT_PICKABLE)
                     };
-                    let granted = demand.amount.min(cap);
+                    let grant = grant_against(demand.amount, cap, short_because);
+                    let granted = grant.granted;
+                    grants[index].1 = grant;
                     if granted == 0 {
                         continue;
                     }
@@ -276,20 +341,22 @@ impl Orchestrator for ConstantStance {
                         material_budget -= granted;
                     }
                     coalesce(&mut materials, id, granted);
-                    grants[index].1 = granted;
+                }
+                // Nothing runs a bench for the seat: the ask and its timing are recorded, and
+                // that is all this slice does with it.
+                Resource::Craft { .. } => {
+                    grants[index].1 = Grant::declined(DECLINED_NO_CRAFTER);
                 }
             }
         }
-        // No specialist asked for material on a grant window: the campaign's own pre-fill,
-        // clamped to the budget. A splinter with no material demand takes nothing.
-        if !is_take && !any_material_demand {
-            for row in &view.snapshot.opening_loadout.material_defaults {
-                let units = row.units.min(material_budget);
-                if units == 0 {
-                    continue;
-                }
-                material_budget -= units;
-                coalesce(&mut materials, &row.material_id, units);
+        // A grant window: the campaign's own pre-fill over whatever the demands left, in its own
+        // proportions. A splinter's take carries no pre-fill.
+        if !is_take {
+            for (id, units) in prefill_over(
+                &view.snapshot.opening_loadout.material_defaults,
+                material_budget,
+            ) {
+                coalesce(&mut materials, &id, units);
             }
         }
         Outfit {
@@ -362,7 +429,8 @@ mod tests {
 
     /// Two kit demands over the budget: the higher-ranked (`priority × domain weight`) is granted
     /// whole and the other what is left; a `none` kit is never a line; a grant window nobody
-    /// asked material for takes the campaign pre-fill, clamped.
+    /// asked material for takes the campaign pre-fill, scaled to the budget in its own
+    /// proportions (17 : 8 over 20 points is 13 : 6, floored).
     #[test]
     fn outfit_grants_in_priority_order_and_pre_fills_material_on_a_grant_window() {
         let mut orchestrator =
@@ -380,7 +448,8 @@ mod tests {
         ];
         let band = &view.snapshot.populations[0];
         // Land's scout kit at 0.5 × 0.3 ranks under Food's baskets at 1.0 × 0.9 and its spears at
-        // 0.8 × 0.9; the budget of 10 covers 8 baskets and 2 of the 3 spears, and no scout kit.
+        // 0.8 × 0.9; the budget of 10 covers 8 baskets and 2 of the 3 spears, and no scout kit
+        // (the fixture roster does not carry one either).
         let entries = [
             entry(
                 SPECIALIST_LAND,
@@ -407,18 +476,28 @@ mod tests {
         assert_eq!(
             outfit.grants,
             vec![
-                (Resource::Kit("wayfinding".to_owned()), 0),
-                (Resource::Kit(FORAGE_KIT.to_owned()), 8),
-                (Resource::Kit(HUNT_KIT.to_owned()), 2),
-                (Resource::Kit("none".to_owned()), 0),
+                (
+                    Resource::Kit("wayfinding".to_owned()),
+                    Grant::declined(DECLINED_UNKNOWN_KIT)
+                ),
+                (Resource::Kit(FORAGE_KIT.to_owned()), Grant::whole(8)),
+                (
+                    Resource::Kit(HUNT_KIT.to_owned()),
+                    Grant::trimmed(2, format!("trimmed from 3 to 2: {DECLINED_KIT_BUDGET}"))
+                ),
+                (
+                    Resource::Kit("none".to_owned()),
+                    Grant::declined(DECLINED_BARE_KIT)
+                ),
             ]
         );
         assert_eq!(
             outfit.materials,
-            vec![("fibre".to_owned(), 17), ("hide".to_owned(), 3)],
-            "the pre-fill, clamped to the 20 points"
+            vec![("fibre".to_owned(), 13), ("hide".to_owned(), 6)],
+            "the pre-fill, scaled to the 20 points in its own mix"
         );
-        // A material demand displaces the pre-fill and is capped by the budget and the pick list.
+        // A material demand is capped by the budget and the pick list; a budget it spends whole
+        // leaves no pre-fill.
         view.snapshot.opening_loadout.pickable_materials = vec!["bone".to_owned()];
         let entries = [
             entry(
@@ -433,12 +512,90 @@ mod tests {
                 1,
                 1.0,
             ),
+            entry(
+                SPECIALIST_FOOD,
+                Resource::Craft {
+                    item: "hoes".to_owned(),
+                    start_tick: 9,
+                },
+                4,
+                1.0,
+            ),
         ];
         let demands: Vec<&Entry> = entries.iter().collect();
         let band = &view.snapshot.populations[0];
         let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 20), &demands);
         assert_eq!(outfit.materials, vec![("bone".to_owned(), 20)]);
-        assert_eq!(outfit.grants[1].1, 0, "not on the pick list");
+        assert_eq!(
+            outfit.grants[0].1,
+            Grant::trimmed(
+                20,
+                format!("trimmed from 25 to 20: {DECLINED_MATERIAL_BUDGET}")
+            )
+        );
+        assert_eq!(
+            outfit.grants[1].1,
+            Grant::declined(DECLINED_NOT_PICKABLE),
+            "not on the pick list"
+        );
+        assert_eq!(
+            outfit.grants[2].1,
+            Grant::declined(DECLINED_NO_CRAFTER),
+            "a craft is recorded and declined; nothing crafts"
+        );
+    }
+
+    /// **Demands first, the pre-fill over what is left.** Six bone asked of thirty points with a
+    /// pre-fill of bone 3 / fibre 17 / hide 8 (28): the six are granted, the 24 points left take
+    /// the pre-fill at 24/28 — bone 2, fibre 14, hide 6, floored — so the line reads bone 8,
+    /// fibre 14, hide 6; nothing is displaced and nothing is spent past the budget. A pre-fill
+    /// smaller than what is left goes whole.
+    #[test]
+    fn outfit_fills_the_material_budget_the_demands_leave_with_the_pre_fill() {
+        let mut orchestrator = ConstantStance::new(&[SPECIALIST_FOOD], cadence(), SHIFT);
+        let mut view = a_view();
+        let default = |id: &str, units: u32| OpeningMaterialDefaultState {
+            material_id: id.to_owned(),
+            units,
+        };
+        view.snapshot.opening_loadout.material_defaults =
+            vec![default("bone", 3), default("fibre", 17), default("hide", 8)];
+        view.snapshot.opening_loadout.pickable_materials =
+            vec!["bone".to_owned(), "fibre".to_owned(), "hide".to_owned()];
+        let entries = [entry(
+            SPECIALIST_FOOD,
+            Resource::Material("bone".to_owned()),
+            6,
+            1.0,
+        )];
+        let demands: Vec<&Entry> = entries.iter().collect();
+        let band = &view.snapshot.populations[0];
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 30), &demands);
+        assert_eq!(outfit.grants[0].1, Grant::whole(6));
+        assert_eq!(
+            outfit.materials,
+            vec![
+                ("bone".to_owned(), 8),
+                ("fibre".to_owned(), 14),
+                ("hide".to_owned(), 6)
+            ]
+        );
+        assert!(
+            outfit.materials.iter().map(|(_, units)| units).sum::<u32>() <= 30,
+            "never past the budget"
+        );
+        // Sixty points: the pre-fill goes whole on top of the demand.
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 60), &demands);
+        assert_eq!(
+            outfit.materials,
+            vec![
+                ("bone".to_owned(), 9),
+                ("fibre".to_owned(), 17),
+                ("hide".to_owned(), 8)
+            ]
+        );
+        assert_eq!(prefill_over(&[], 30), Vec::<(String, u32)>::new());
+        assert_eq!(prefill_over(&[default("hide", 8)], 0), Vec::new());
     }
 
     /// A splinter's take is capped by the parent's supply of every item the kit lists — the
@@ -492,7 +649,7 @@ mod tests {
         // Spears cap the stalking kit at 5 (6 spears, 5 sleds); the trapping kit gets the 0
         // sleds left — nothing.
         assert_eq!(outfit.kits, vec![(HUNT_KIT.to_owned(), 5)]);
-        assert_eq!(outfit.grants[1].1, 0);
+        assert_eq!(outfit.grants[1].1, Grant::declined(DECLINED_PARENT_SUPPLY));
         assert!(outfit.materials.is_empty(), "a splinter takes no pre-fill");
     }
 

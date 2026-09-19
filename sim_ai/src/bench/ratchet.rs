@@ -15,12 +15,12 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::measures::{
-    Measures, LIVE, M_ACCEPTED, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX,
+    Labels, Measures, LIVE, M_ACCEPTED, M_COMMANDS_FAILED_TOTAL, M_CRAFT_PREFIX, M_DEATHS_PREFIX,
     M_FOOD_STOCK, M_HUNGER_DEATHS_TOTAL, M_INTENSIFICATION_PREFIX, M_INTENT_PREFIX,
     M_POPULATION_CHILDREN, M_POPULATION_ELDERS, M_POPULATION_WORKING, M_RECONNECTS,
     M_SPECIALIST_PREFIX, M_STANCE_SWITCHES, M_TURNS_LOST, M_VICTORY_PREFIX, NOT_LIVE,
 };
-use super::SeatSpec;
+use super::{MapSize, SeatSpec};
 use crate::specialists::{DISABLEABLE_SPECIALISTS, SPECIALIST_SCRIPTED};
 use crate::BrainKind;
 
@@ -93,12 +93,17 @@ pub const BASELINE_TOLERANCE: f64 = 0.0;
 /// with the numbers in the PR body. The all-Pass control was dropped with seed 11: a Pass seat
 /// starves on every seed alike and measured nothing the forager's own `hunger_deaths_total` does
 /// not.
+/// The bench's default seeds (`DEFAULT_SEEDS`, whose doc says why these eight), as numbers; a
+/// test holds the two spellings to each other.
 #[cfg(test)]
-pub const BASELINE_SEEDS: [u64; 2] = [19, 40];
+pub const BASELINE_SEEDS: [u64; 8] = [54, 18, 22, 59, 50, 20, 3, 37];
 #[cfg(test)]
 pub const BASELINE_TURNS: u64 = 60;
 #[cfg(test)]
 pub const BASELINE_SEAT_SETS: [[&str; 2]; 1] = [["1=utility:forager@hard", "2=pass"]];
+/// The shipped baselines are played on the bench's default size, Standard.
+#[cfg(test)]
+pub const BASELINE_MAP_SIZE: MapSize = MapSize::Standard;
 /// The shipped file, embedded so a test can hold it to the constants above without a path.
 #[cfg(test)]
 const SHIPPED_BASELINES: &str = include_str!("../../bench/baselines.json");
@@ -128,17 +133,25 @@ const TABLE_NULL: &str = "-";
 
 /// seed → seat → measures.
 pub type RunMeasures = BTreeMap<String, BTreeMap<String, Measures>>;
+/// seed → seat → labels.
+pub type RunLabels = BTreeMap<String, BTreeMap<String, Labels>>;
 
 /// `report.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     pub seeds: Vec<u64>,
     pub turns: u64,
+    /// The world's size (`--map-size`).
+    pub map_size: MapSize,
     /// The seat specs as given (`<faction>=<brain>[:<script>]`).
     pub seats: Vec<String>,
     /// Wall-clock seconds per seed, for the record.
     pub wall_seconds: BTreeMap<String, f64>,
     pub measures: RunMeasures,
+    /// What a seat answers with a word (`ground.start_kind`); reported beside the measures,
+    /// never compared or checked. Absent from a report written before labels existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: RunLabels,
     /// `this − other` per seed, seat and measure, when `--compare` was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compare: Option<RunMeasures>,
@@ -203,9 +216,13 @@ pub struct DeclinedSpecialist {
     pub note: String,
 }
 
-/// `baselines.json`: one entry per seat set, keyed by the specs joined with a space.
+/// `baselines.json`: one entry per seat set, keyed by the specs joined with a space — every
+/// entry on one map size, since a Tiny start and a Standard one are different worlds.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BaselinesFile {
+    /// The size every entry was played at; `--check` and `--write-baselines` refuse a run on
+    /// another before comparing anything.
+    pub map_size: MapSize,
     pub runs: BTreeMap<String, Baselines>,
 }
 
@@ -277,11 +294,12 @@ impl Report {
     pub fn compare(&self, other: &Report) -> Result<RunMeasures, RatchetError> {
         if self.seeds != other.seeds
             || self.turns != other.turns
+            || self.map_size != other.map_size
             || seat_factions(&self.seats) != seat_factions(&other.seats)
         {
             return Err(RatchetError::Mismatch(format!(
-                "--compare: this run has seeds {:?} / turns {} / seats {:?}, the other has {:?} / {} / {:?}",
-                self.seeds, self.turns, self.seats, other.seeds, other.turns, other.seats
+                "--compare: this run has seeds {:?} / turns {} / {} / seats {:?}, the other has {:?} / {} / {} / {:?}",
+                self.seeds, self.turns, self.map_size, self.seats, other.seeds, other.turns, other.map_size, other.seats
             )));
         }
         let mut deltas = subtract(&self.measures, &other.measures);
@@ -318,6 +336,7 @@ impl Report {
     /// one that never proposed at all, or that proposed and was never once accepted, is a failure
     /// here rather than a silence ([`Report::specialist_ignored_violations`]).
     pub fn check(&self, file: &BaselinesFile) -> Result<Vec<Violation>, RatchetError> {
+        file.same_map_size(self.map_size, "--check")?;
         let baselines = file.find(&self.seeds, self.turns, &self.seats)?;
         let mut violations = Vec::new();
         for (seed, seats) in &baselines.measures {
@@ -539,6 +558,27 @@ impl Report {
                 }
                 let _ = writeln!(out);
             }
+            // The labels, one row each, a word per seat where the seat answered.
+            if let Some(seat_labels) = self.labels.get(seed) {
+                let names: std::collections::BTreeSet<&String> = seat_labels
+                    .values()
+                    .flat_map(|labels| labels.keys())
+                    .collect();
+                for name in names {
+                    let _ = write!(out, "{name:<TABLE_NAME_WIDTH$}");
+                    for seat in seats.keys() {
+                        let word = seat_labels
+                            .get(seat)
+                            .and_then(|labels| labels.get(name))
+                            .map_or(TABLE_NULL, String::as_str);
+                        let _ = write!(out, "{word:>TABLE_VALUE_WIDTH$}");
+                        if self.compare.is_some() {
+                            let _ = write!(out, "{TABLE_NULL:>TABLE_VALUE_WIDTH$}");
+                        }
+                    }
+                    let _ = writeln!(out);
+                }
+            }
             let _ = writeln!(
                 out,
                 "({} rows omitted from the table; see {REPORT_FILE})",
@@ -613,12 +653,31 @@ impl BaselinesFile {
         })
     }
 
-    /// The file at `path`, or an empty one when there is none yet — a first `--write-baselines`.
-    pub fn read_or_empty(path: &Path) -> Result<Self, RatchetError> {
+    /// The file at `path`, or an empty one on `map_size` when there is none yet — a first
+    /// `--write-baselines`.
+    pub fn read_or_empty(path: &Path, map_size: MapSize) -> Result<Self, RatchetError> {
         if path.is_file() {
             Self::read(path)
         } else {
-            Ok(Self::default())
+            Ok(Self {
+                map_size,
+                runs: BTreeMap::new(),
+            })
+        }
+    }
+
+    /// **A run on another map size is not compared, and not written in.** One line naming both
+    /// sizes and the flag that fixes it, rather than a violation table: a Tiny baseline and a
+    /// Standard run answer different questions, so there is nothing to tabulate.
+    pub fn same_map_size(&self, map_size: MapSize, flag: &str) -> Result<(), RatchetError> {
+        if self.map_size == map_size {
+            Ok(())
+        } else {
+            Err(RatchetError::Mismatch(format!(
+                "{flag}: the baselines are for a {} world and this run is {map_size}; pass \
+                 --map-size {} or write baselines for {map_size} to another file",
+                self.map_size, self.map_size
+            )))
         }
     }
 
@@ -808,12 +867,14 @@ mod tests {
         Report {
             seeds: vec![7],
             turns: 6,
+            map_size: MapSize::default(),
             seats: vec![seat_spec.to_owned()],
             wall_seconds: BTreeMap::new(),
             measures: BTreeMap::from([(
                 SEED.to_owned(),
                 BTreeMap::from([(SEAT.to_owned(), measures)]),
             )]),
+            labels: BTreeMap::new(),
             compare: None,
             check: None,
         }
@@ -922,10 +983,21 @@ mod tests {
         assert!((delta[SEED][SEAT][M_INTENT_DISTANCE_L1].unwrap() - 0.5).abs() < 1e-9);
     }
 
+    /// The default `--seeds` and the pinned baseline seeds are one list spelled twice.
+    #[test]
+    fn the_default_seeds_are_the_baseline_seeds() {
+        let defaults: Vec<u64> = super::super::DEFAULT_SEEDS
+            .split(',')
+            .map(|seed| seed.parse().expect("a seed"))
+            .collect();
+        assert_eq!(defaults, BASELINE_SEEDS);
+    }
+
     #[test]
     fn the_shipped_baselines_hold_the_control_and_the_forager_on_the_pinned_seeds() {
         let file: BaselinesFile =
             serde_json::from_str(SHIPPED_BASELINES).expect("the shipped baselines parse");
+        assert_eq!(file.map_size, BASELINE_MAP_SIZE);
         assert_eq!(file.runs.len(), BASELINE_SEAT_SETS.len());
         for seats in BASELINE_SEAT_SETS {
             let seats: Vec<String> = seats.iter().map(|s| (*s).to_owned()).collect();
@@ -1111,9 +1183,11 @@ mod tests {
         let report = Report {
             seeds: vec![7, 8],
             turns: 6,
+            map_size: MapSize::default(),
             seats: vec![UTILITY_SEAT_SPEC.to_owned()],
             wall_seconds: BTreeMap::new(),
             measures,
+            labels: BTreeMap::new(),
             compare: None,
             check: None,
         };
