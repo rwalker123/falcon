@@ -1189,18 +1189,24 @@ at all. Every band has an outfitting window of its own now — the spawned band'
 the home band for every splinter a split makes — so the band is **positional and required**, and this
 is the gate that says the client sends the durable `BandId` down it rather than the ECS `entity` the
 picker also holds. `xtask/src/command_guard.rs`'s `band_handle` gained the matching arm; the emitted
-line is `set_starting_loadout 0 71204 kit big_game 2 material hide 4`, the band token being the
+line is `set_starting_loadout 0 71204 kit big_game 2 material hide 5`, the band token being the
 fixture's `BAND_ID` and never its deliberately different `BAND_ENTITY`.
 
-- **It is driven LAST, and through the REAL commit control.** Pushing an open window earlier would
-  stand a card up over every drive above it; and the payload is composed inside the controller (the
-  picks, the subject band), so pressing the button by `HudLoadoutVocab.COMMIT_BUTTON_META` is the only
-  way to reach the code a player reaches.
+- ⛔ **IT IS DRIVEN THROUGH A ROW'S OWN `+`, AND IT WAS THE FOOTER BUTTON.** That control closed
+  nothing and sent everything; the outfitting draft is deleted, so it closes the card and sends
+  nothing, and a press on it captures no line at all. The command is composed on a STEPPER press now
+  (`_press_row_plus`, by the row's `HudLoadoutVocab.MATERIAL_ROW_META` and then by the stepper's `+`
+  face, `HudWidgets.add_stepper_controls` stamping no meta on either button), which is the only way to
+  reach the code a player reaches. Still driven LAST: pushing an open window earlier would stand a card
+  up over every drive above it.
 - **The window rides the BAND fixture** (`_outfitting_band_fixture`), which is what makes the emitted
   band the one this gate already asserts everything else against.
-- **The order is one kit line and one material line**, seeded from the campaign pre-fill. What is read
-  off the line is the BAND TOKEN; a longer order would be more tokens saying the same thing. Both
-  budgets sit above the pre-fill, the client drawing a published pre-fill as-is.
+- **The order is one kit line and one material line, and the KIT line comes from a row nobody
+  pressed.** The band HOLDS its default outfit — the sim applies it when it makes the band — so the
+  window's own `kits` / `materials` are what the card draws, and one press on the material row sends
+  the whole allocation: both tails, from one gesture. What is read off the line is the BAND TOKEN; a
+  longer order would be more tokens saying the same thing. Both budgets sit above the allocation, the
+  client drawing a published one as-is.
 - **It carries no `expected_kit`.** `SetStartingLoadout` has no kit AXIS — its `kit <id> <n>` tail is
   an allocation rather than the selection `Main._kit_token` omits — so `kit_token` answers
   `NotKitBearing` and the kit gate correctly says nothing about it.

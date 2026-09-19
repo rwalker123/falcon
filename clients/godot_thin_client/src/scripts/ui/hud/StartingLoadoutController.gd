@@ -38,13 +38,40 @@ extends RefCounted
 ## than every snapshot: re-opening a card the player put away, every turn, is the failure mode the
 ## fork panel's `_auto_opened_forks` already guards against.
 ##
-## ## ⛔ AN APPLY IS A REPLACEMENT, SO A COMMIT IS NOT THE END OF ANYTHING
+## ## ⛔ THE CARD DRAWS WHAT THE BAND HOLDS, AND EVERY PRESS SENDS A REPLACEMENT AT ONCE
 ##
-## **Committing does not shut the window** — only the turn advance does. The sim treats an apply as a
-## replacement rather than an addition, so the order may be sent, revised and sent again as often as
-## the player likes, and re-sending the SAME allocation is an ordinary act rather than an error path.
-## Commit therefore sends the line and collapses the card so the player can look at the map; the
-## picks are kept and the reopen pill and the orb's row both stay live.
+## **There is no draft.** The sim applies a band's default outfit the moment the band is made — the
+## opening band at world start, a splinter at its split, both down the same path a player's
+## `set_starting_loadout` takes — so `loadout_window.kits` / `.materials` always describe gear the
+## band ACTUALLY HOLDS. A band nobody touches keeps its default; there is no such thing as an
+## allocation waiting to be filled in.
+##
+## So a `+`/`−` on a row emits `set_starting_loadout` for that band there and then, carrying the whole
+## allocation as it stands AFTER the press — the verb is a whole-order replacement, never a diff. The
+## footer control CLOSES the card and sends nothing; nothing is lost by pressing it, and nothing is
+## lost by not.
+##
+## ⛔ **THE LOCAL WRITE IS OPTIMISTIC, AND ITS WARRANT IS THE COMMAND BESIDE IT.** A press has to move
+## the number under the player's finger on the frame it was pressed, so the picks are written before
+## the send's outcome is known — and the ONE invariant that makes that safe here is that **a local
+## value is only ever written together with a command being sent**. A send that did not go therefore
+## takes its write back: the payload carries the allocation as it stood BEFORE the press
+## (`REVERT_KITS` / `REVERT_MATERIALS`), and `Main` hands it straight back to `revert_order` when
+## `_send_formatted_command` answers `false` — `hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS A
+## ROLLBACK".
+##
+## ## ⛔ A PUBLISHED ALLOCATION IS ADOPTED UNLESS IT IS THIS CARD'S OWN ECHO
+##
+## The sim recaptures after every dispatched command, so each press comes back as a frame restating
+## what it just ordered. `BAND_UNECHOED` holds the orders this card has SENT and not yet seen come
+## back: a published allocation found in that list is our own echo and the card is already showing it,
+## and anything else is the sim having moved this band's outfit for its own reasons (a split re-fitting
+## the parent to its reduced budget) and is adopted whole.
+##
+## **Comparing against what was SENT rather than against what was last SEEN is what stops a second
+## press flickering back.** Press twice quickly and the first press's echo lands while the card is
+## already showing the second's; against a last-seen copy that echo reads as a change and drags the
+## card back a step, twice per pair of presses.
 ##
 ## ⛔ **`open` IS THEREFORE NOT A SUCCESS SIGNAL, and this controller used to read it as one.** It
 ## held an `_awaiting_commit` flag and treated a still-open window on the next frame as a REFUSAL,
@@ -56,7 +83,8 @@ extends RefCounted
 
 ## Send one band's composed loadout — `set_starting_loadout <faction> <band> [kit <id> <n>]...
 ## [material <id> <n>]...`. **It fails CLOSED and WHOLE server-side**, so the client sends the entire
-## allocation in one line and never a diff.
+## allocation in one line and never a diff. Emitted on EVERY stepper press, and the payload carries
+## the pre-press allocation so a refused send can be undone — see `REVERT_KITS`.
 signal set_starting_loadout_requested(payload: Dictionary)
 ## The orb registry's loadout half changed (or emptied). `HudLayer` relays it to `TurnOrbController`,
 ## which folds it in with the band, knowledge and fork halves.
@@ -73,10 +101,13 @@ var _room_bounds: Control = null
 var _panel: StartingLoadoutPanel = null
 
 # --- The CAMPAIGN's half (`opening_loadout`), one per world ---
+## ⛔ **THE TWO PRE-FILLS ARE GONE FROM HERE, AND NOTHING MAY DRAW THEM AGAIN.** `openingLoadout`
+## still publishes `kitDefaults` / `materialDefaults`, but the SIM has already applied that spread to
+## the band by the time the window is published — so seeding a card from it a second time would show,
+## and then order, twice the gear the band holds. What survives is the pick list (a grant's offered
+## materials, in the profile's own order) and the craftable ids (the third column's filter).
 var _pickable: Array = []
 var _craftable_recipe_ids: Array = []
-var _material_defaults: Array = []
-var _kit_defaults: Array = []
 
 # --- The catalogues the picker JOINS onto, both already published for other consumers ---
 ## The parsed `equipment_config_json` — the kit roster's one home.
@@ -93,12 +124,6 @@ var _band_order: Array[int] = []
 var _subject: int = HudConst.NO_BAND_ID
 ## Bands whose card has already stood itself up once this world.
 var _auto_opened: Dictionary = {}
-## **THE CAMPAIGN PRE-FILL BELONGS TO ONE BAND — the first grant window this world opens.** The sim
-## fits that spread to *that* band's kit budget (a head count the profile cannot see) and publishes
-## it already clamped, so handing the same spread to a second, smaller grant window would compose an
-## order over its budget — and re-clamping it here would be the second clamp the wire's rule forbids.
-## Every other window opens on its own accepted rows, which for a fresh splinter is nothing.
-var _prefill_claimed: bool = false
 ## The rows last handed to the orb, so an unchanged half is not re-pushed — `set_knowledge_attention`
 ## records what a needless full-registry push costs.
 var _attention_rows: Array = []
@@ -120,22 +145,25 @@ const BAND_MATERIAL_SUPPLY := "material_supply"
 ## home band actually HOLDS on a take** — the pick list binds the grant and deliberately not a take,
 ## since a material a band crafted for itself must still be transferable to its own splinter.
 const BAND_MATERIAL_ORDER := "material_order"
-## `kit_id -> count` and `material_id -> units`, the player's picks.
+## ⛔ **`kit_id -> count` and `material_id -> units` — WHAT THE BAND HOLDS, never a draft.** Every
+## write to either is accompanied by the command that orders it, so these two maps are always either
+## the sim's own published rows or an order this card has just sent.
+##
+## **A ROW AT ZERO IS ERASED RATHER THAN STORED**, so the maps ARE the allocation: a `{gathering: 0}`
+## entry is a row nobody holds, it drops out of the composed line anyway, and keeping it would make
+## "is anything ordered" answer yes to an empty take.
 const BAND_KIT_PICKS := "kit_picks"
 const BAND_MATERIAL_PICKS := "material_picks"
-## Seeded once per band, so a delta re-stating the accepted rows cannot overwrite a later pick.
-const BAND_SEEDED := "seeded"
-## ⛔ **THE PUBLISHED ALLOCATION AS LAST SEEN**, `{kits, materials}` of `id -> amount`. It is what
-## makes "seeded once" mean *do not clobber a draft* rather than *never look again*: a re-published
-## allocation that DIFFERS is the sim having moved this band's holdings, and the card must adopt it.
-const BAND_PUBLISHED := "published"
-## ⛔ **THE IDS THE PLAYER HAS MOVED A STEPPER ON, as `id -> true` SETS.** They are what separates the
-## two halves of a re-published allocation: a row the player never touched is the sim's to restate,
-## and a row they did is a DRAFT the card may not overwrite. Written by the two stepper handlers and
-## read only by `_adopt_published`; a press that returns a row to its published value still counts,
-## because a value the player chose is a decision whatever it equals.
-const BAND_TOUCHED_KITS := "touched_kits"
-const BAND_TOUCHED_MATERIALS := "touched_materials"
+## ⛔ **THE ORDERS THIS CARD HAS SENT AND NOT YET SEEN COME BACK**, oldest first — each a
+## `{kits, materials}` pair of `id -> amount` maps, i.e. the same shape the published allocation is
+## read into, so the two compare directly.
+##
+## It is what tells this card's own echo from a change the sim made for its own reasons. The sim
+## recaptures after every dispatched command, so a press comes back as a frame restating it; while
+## two presses are in flight the FIRST echo arrives after the card is already showing the SECOND, and
+## a card comparing against what it last SAW would drag itself back a step on every pair of presses.
+## A match settles that order and every order before it; anything else is adopted, and clears the list.
+const BAND_UNECHOED := "unechoed"
 
 ## A recipe with no inputs at all cannot be priced against a pile, so the column reads it as
 ## unreachable rather than as infinitely makeable. Nothing in the shipped book is such a recipe; this
@@ -147,26 +175,38 @@ const UNPRICED_RECIPE_COUNT := 0
 ## size as a set.
 const ITEM_UNITS_PER_USE := 1
 
+## ⛔ **THE ROLLBACK HANDLE — the allocation as it stood BEFORE the press, on the payload.** `Main`
+## reads neither key (`format_set_starting_loadout` ignores them) and hands the whole payload back to
+## `revert_order` when the line did not go, which is `pending_entity`'s own shape one verb over.
+##
+## **It is the WHOLE allocation rather than the one row that moved, because the verb is a whole-order
+## replacement**: there is no other un-acknowledged edit on this band for a whole-allocation restore
+## to discard, every local write having been sent as it was made.
+const REVERT_KITS := "revert_kits"
+const REVERT_MATERIALS := "revert_materials"
+
 func setup(host: Node, room_bounds: Control = null) -> void:
 	_host = host
 	_room_bounds = room_bounds
 
 # ---- ingest -----------------------------------------------------------------
 
-## The CAMPAIGN's half (`opening_loadout`): the pick list, the two pre-fills and the craftable ids.
-## A non-Dictionary is ignored — a delta carries a section only when it changed, so absence means
-## unchanged and never "the world forgot its pick list".
+## The CAMPAIGN's half (`opening_loadout`): the pick list and the craftable ids. A non-Dictionary is
+## ignored — a delta carries a section only when it changed, so absence means unchanged and never
+## "the world forgot its pick list".
 ##
 ## ⛔ **NOTHING HERE OPENS OR SHUTS A WINDOW.** `open` and the two budgets left this section when the
 ## window became a fact about one BAND; they arrive on the cohorts, through `set_bands`.
+##
+## ⛔ **AND NOTHING HERE SEEDS A CARD.** The section's two pre-fills are read by nothing: the sim
+## applies that spread at the band's creation, so a card seeded from it as well would draw — and
+## order — the gear twice.
 func set_campaign_loadout(state: Variant) -> void:
 	if not (state is Dictionary):
 		return
 	var campaign: Dictionary = state
 	_pickable = campaign.get(HudLoadoutVocab.PICKABLE_MATERIALS_KEY, [])
 	_craftable_recipe_ids = campaign.get(HudLoadoutVocab.CRAFTABLE_RECIPE_IDS_KEY, [])
-	_material_defaults = campaign.get(HudLoadoutVocab.MATERIAL_DEFAULTS_KEY, [])
-	_kit_defaults = campaign.get(HudLoadoutVocab.KIT_DEFAULTS_KEY, [])
 	if is_expanded():
 		render()
 
@@ -232,7 +272,8 @@ func set_recipes(recipes: Variant) -> void:
 	if is_expanded():
 		render()
 
-## Refresh one band's published window and seed its picks the first time it is seen.
+## Refresh one band's published window, and take its allocation from the wire unless it is this
+## card's own echo — see `BAND_UNECHOED`.
 func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void:
 	var state: Dictionary = _bands.get(band_id, {})
 	var parent := int(window.get(HudLoadoutVocab.PARENT_BAND_ID_KEY,
@@ -256,110 +297,52 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 			window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
 			HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY),
 	}
-	if not bool(state.get(BAND_SEEDED, false)):
-		state[BAND_SEEDED] = true
+	if not state.has(BAND_UNECHOED):
 		state[BAND_KIT_PICKS] = {}
 		state[BAND_MATERIAL_PICKS] = {}
-		state[BAND_TOUCHED_KITS] = {}
-		state[BAND_TOUCHED_MATERIALS] = {}
-		state[BAND_PUBLISHED] = published
-		_seed_band(state, window)
-	elif published != state.get(BAND_PUBLISHED, {}):
-		# ⛔ **THE SIM MOVED THIS BAND'S ALLOCATION, SO THE CARD ADOPTS IT.** A split re-fits the
-		# PARENT's standing allocation down to its reduced budget (`fission::
-		# rebalance_partitioned_grant`) and re-materializes the band from it — so a card that treated
-		# a band it had already stood up as settled would keep drawing the pre-split rows against the
-		# post-split budget, which is a negative meter reproduced client-side out of stale state.
-		#
-		# **A draft is still safe.** This fires only when the PUBLISHED rows differ from the ones this
-		# card last saw, so a delta merely re-stating the same allocation leaves an uncommitted pick
-		# exactly where the player left it — which is the whole reason the seed is once-per-band.
-		state[BAND_PUBLISHED] = published
-		_adopt_published(state, window)
+		state[BAND_UNECHOED] = []
+	# ⛔ **THIS CARD'S OWN ECHO, OR THE SIM'S OWN MOVE — there is no third case.** A published
+	# allocation this card SENT is already on screen, so adopting it would be a no-op at best and, with
+	# a second press already made, a step backwards. Anything else is the band's outfit having moved
+	# for the sim's own reasons — a split re-fitting the parent to its reduced budget
+	# (`fission::rebalance_partitioned_grant`), an order refused whole, or the default the sim applied
+	# when it made the band — and the wire is the authority on what the band holds.
+	var unechoed: Array = state[BAND_UNECHOED]
+	var echoed := unechoed.find(published)
+	if echoed >= 0:
+		# That order and every order before it have landed; later ones are still out.
+		state[BAND_UNECHOED] = unechoed.slice(echoed + 1)
+	else:
+		state[BAND_UNECHOED] = []
+		_adopt_published(state, published)
 	_bands[band_id] = state
 
-## ⛔ **ADOPT THE MOVED ALLOCATION WITHOUT DESTROYING THE PLAYER'S DRAFT.**
+## ⛔ **THE PUBLISHED ALLOCATION, WHOLE AND UNCLAMPED.** The sim already fitted this spread to the
+## band's budgets when it accepted it, so a second clamp here would disagree with the first — and a
+## band the sim has genuinely left over its budget must READ as over budget rather than be quietly
+## trimmed into looking fine (`_over_allowance` is the row that says so).
 ##
-## This branch used to CLEAR both pick dictionaries and re-seed from the published rows, which threw
-## away every uncommitted pick on the band whose allocation moved. Reproduced from the recorded
-## session: a player set kits on the parent's card, split the band, and the split frame — which
-## re-fits the parent's allocation to its reduced budget, so `published` genuinely moves — silently
-## restored the sim's rows over the draft. The next `Set out` then sent the allocation the player had
-## just changed, with no sign anywhere that anything had been lost. **A player's own commit fires the
-## same branch**, the sim republishing the accepted order, so an edit made between the press and the
-## frame landing was eaten the same way.
-##
-## The split is by AUTHORSHIP: an untouched row is the sim's to restate and is dropped and re-seeded
-## from the published rows (so a row the sim no longer names goes, which is what keeps the card off
-## the pre-split spread); a TOUCHED row is the player's and is left exactly as they left it.
-##
-## ⛔ **AND THEN IT CLAMPS, which is what the wipe was really for.** The property the branch defends
-## is that the card cannot draw a stale allocation against a shrunken budget — a negative meter
-## reproduced client-side. That is the CLAMP's job, not the wipe's, and the clamps this file already
-## owns do it without costing the player their picks.
-func _adopt_published(state: Dictionary, window: Dictionary) -> void:
-	var touched_kits: Dictionary = state.get(BAND_TOUCHED_KITS, {})
-	var touched_materials: Dictionary = state.get(BAND_TOUCHED_MATERIALS, {})
-	var kit_picks: Dictionary = state[BAND_KIT_PICKS]
-	for kit_variant in kit_picks.keys():
-		if not touched_kits.has(kit_variant):
-			kit_picks.erase(kit_variant)
-	var material_picks: Dictionary = state[BAND_MATERIAL_PICKS]
-	for material_variant in material_picks.keys():
-		if not touched_materials.has(material_variant):
-			material_picks.erase(material_variant)
-	_seed_rows(state, window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
-		window.get(HudLoadoutVocab.WINDOW_KITS_KEY, []), touched_materials, touched_kits)
-	_clamp_picks(state)
-
-## ⛔ **THE WHOLE ORDER, FITTED TO THE WINDOW AS IT NOW STANDS** — the guard that lets a draft survive
-## a re-published allocation. It is the same arithmetic the two stepper handlers clamp a single press
-## with, applied to every row at once: a grant against its two point budgets, a take against the
-## expanded item supply and the per-material supply.
-##
-## **TOUCHED ROWS ARE FITTED FIRST, and that is the whole ordering rule.** A budget that shrank has to
-## take the cut out of something; taking it out of the sim's own suggestions rather than out of the
-## player's picks is what makes this a clamp rather than a quieter version of the wipe.
-func _clamp_picks(state: Dictionary) -> void:
-	var take := _parent_of(state) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
-	var kit_picks: Dictionary = state[BAND_KIT_PICKS]
-	var kit_left := _kit_total(state, take)
-	for kit_variant in _clamp_order(kit_picks, state.get(BAND_TOUCHED_KITS, {})):
-		var kit_id := String(kit_variant)
-		var count := int(kit_picks[kit_variant])
-		# A take's rows are NOT independent — `sled` is used by two kits — so each row is priced
-		# against every OTHER row already fitted, which is exactly `_take_kit_ceiling`.
-		if take:
-			kit_picks[kit_variant] = mini(count, _take_kit_ceiling(state, kit_id))
-			continue
-		var fitted := clampi(count, 0, maxi(kit_left, 0))
-		kit_picks[kit_variant] = fitted
-		kit_left -= fitted
-	var material_picks: Dictionary = state[BAND_MATERIAL_PICKS]
-	var units_left := _material_total(state, take)
-	var supply: Dictionary = state.get(BAND_MATERIAL_SUPPLY, {})
-	for material_variant in _clamp_order(material_picks, state.get(BAND_TOUCHED_MATERIALS, {})):
-		var units := int(material_picks[material_variant])
-		# A take's material cap is PER MATERIAL (the home band's own line), so the per-row clamp is
-		# the one `_material_ceiling` applies and the sum takes care of itself.
-		if take:
-			material_picks[material_variant] = mini(units, int(supply.get(material_variant, 0)))
-			continue
-		var fitted_units := clampi(units, 0, maxi(units_left, 0))
-		material_picks[material_variant] = fitted_units
-		units_left -= fitted_units
-
-## The ids of one pick half, the player's own first. Both halves are walked in this order so a
-## shrinking budget eats the sim's suggestions before it eats a pick.
-func _clamp_order(picks: Dictionary, touched: Dictionary) -> Array:
-	var ordered: Array = []
-	for id_variant in picks.keys():
-		if touched.has(id_variant):
-			ordered.append(id_variant)
-	for id_variant in picks.keys():
-		if not touched.has(id_variant):
-			ordered.append(id_variant)
-	return ordered
+## A material this window cannot pick is dropped — it could not be spent and would strand part of the
+## budget. **The kit half needs no such filter**: the roster it is drawn against is the published
+## equipment config, so a kit absent from that roster renders no row at all and costs a dictionary
+## entry nobody reads rather than a phantom control.
+func _adopt_published(state: Dictionary, published: Dictionary) -> void:
+	var offered: Dictionary = {}
+	for id_variant in state.get(BAND_MATERIAL_ORDER, []):
+		offered[String(id_variant)] = true
+	var kits: Dictionary = {}
+	for kit_variant in (published[HudLoadoutVocab.WINDOW_KITS_KEY] as Dictionary).keys():
+		var count := int((published[HudLoadoutVocab.WINDOW_KITS_KEY] as Dictionary)[kit_variant])
+		if count > 0:
+			kits[String(kit_variant)] = count
+	var materials: Dictionary = {}
+	var published_materials: Dictionary = published[HudLoadoutVocab.WINDOW_MATERIALS_KEY]
+	for material_variant in published_materials.keys():
+		var units := int(published_materials[material_variant])
+		if units > 0 and offered.has(String(material_variant)):
+			materials[String(material_variant)] = units
+	state[BAND_KIT_PICKS] = kits
+	state[BAND_MATERIAL_PICKS] = materials
 
 ## An accepted-allocation half as `id -> amount`, for the comparison above — a DICT rather than the
 ## published array, so a re-ordered but identical allocation is not read as a change.
@@ -405,82 +388,6 @@ func _supply_order(rows: Variant) -> Array:
 		if not id.is_empty():
 			ids.append(id)
 	return ids
-
-## Seed ONE band's picks. **The window's own accepted rows come first and are authoritative** — they
-## are what this band's last accepted order named, so a client joining mid-turn opens on the order
-## that is actually standing.
-##
-## ⛔ **A FRESH SPLINTER OPENS ON ITS DEFAULT TAKE, NOT AT ZERO, and that is what makes an untouched
-## commit safe.** The split's take is kit-denominated and published in these very rows, so the card
-## draws the allocation the band is already standing on and re-sending it unchanged is an exact no-op.
-## It opened empty for one iteration, while the take was a bare per-item manifest no kit allocation
-## could express — and since an apply is a REPLACEMENT, an untouched `Set out` then ordered *take
-## nothing* and handed the whole dowry back to the parent.
-##
-## **Nothing here special-cases an empty tail.** An empty order still means *take nothing*, on a take
-## exactly as on a grant; what changed is that the card is no longer empty when the take is not.
-##
-## The campaign pre-fill is the fallback and only for the FIRST grant window (see `_prefill_claimed`).
-func _seed_band(state: Dictionary, window: Dictionary) -> void:
-	var kits: Variant = window.get(HudLoadoutVocab.WINDOW_KITS_KEY, [])
-	var materials: Variant = window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, [])
-	var accepted := _seed_rows(state, materials, kits)
-	if accepted:
-		return
-	if int(state.get(BAND_PARENT, HudLoadoutVocab.GRANT_PARENT_BAND_ID)) \
-			!= HudLoadoutVocab.GRANT_PARENT_BAND_ID:
-		return
-	if _prefill_claimed:
-		return
-	_prefill_claimed = true
-	_seed_rows(state, _material_defaults, _kit_defaults)
-
-## Put two published row lists into one band's picks. Answers whether either carried anything, so
-## the caller can tell an accepted allocation from an empty window.
-##
-## ⛔ **THE COUNTS GO IN AS PUBLISHED, neither clamped nor summed against their budget.** The sim
-## already fitted the kit spread to the band's `kit_budget` (a head count it knows and the profile
-## does not) and scales it proportionally when it binds; a second clamp here would disagree with the
-## first, and the player would see a spread the sim did not send.
-##
-## A material this window cannot pick is dropped — it could not be spent and would strand part of the
-## budget. **The kit half needs no such filter**: the roster it is drawn against is the published
-## equipment config, and a kit absent from that roster simply renders no row, so an unknown id costs
-## a dictionary entry nobody reads rather than a phantom control.
-##
-## `skip_materials` / `skip_kits` name the ids this seed may NOT write — the player's own, on the
-## re-publish path (`_adopt_published`). Empty on the first seed, where nothing has been touched yet.
-func _seed_rows(state: Dictionary, materials: Variant, kits: Variant,
-		skip_materials: Dictionary = {}, skip_kits: Dictionary = {}) -> bool:
-	var seeded := false
-	var material_picks: Dictionary = state[BAND_MATERIAL_PICKS]
-	var kit_picks: Dictionary = state[BAND_KIT_PICKS]
-	if materials is Array:
-		var offered: Dictionary = {}
-		for id_variant in state.get(BAND_MATERIAL_ORDER, []):
-			offered[String(id_variant)] = true
-		for entry_variant in materials:
-			if not (entry_variant is Dictionary):
-				continue
-			var entry: Dictionary = entry_variant
-			var material_id := String(entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, ""))
-			if material_id.is_empty() or not offered.has(material_id) \
-					or skip_materials.has(material_id):
-				continue
-			material_picks[material_id] = int(
-				entry.get(HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY, 0))
-			seeded = true
-	if kits is Array:
-		for entry_variant in kits:
-			if not (entry_variant is Dictionary):
-				continue
-			var entry: Dictionary = entry_variant
-			var kit_id := String(entry.get(HudLoadoutVocab.KIT_DEFAULT_ID_KEY, ""))
-			if kit_id.is_empty() or skip_kits.has(kit_id):
-				continue
-			kit_picks[kit_id] = int(entry.get(HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY, 0))
-			seeded = true
-	return seeded
 
 ## Which band the card renders, and whether it stands itself up. Called after every roster ingest.
 ##
@@ -570,9 +477,6 @@ func reset_world_state() -> void:
 	_band_order = []
 	_subject = HudConst.NO_BAND_ID
 	_auto_opened = {}
-	_prefill_claimed = false
-	_kit_defaults = []
-	_material_defaults = []
 	_equipment_config = {}
 	_recipes = []
 	_pickable = []
@@ -1122,7 +1026,6 @@ func _ensure_panel() -> void:
 	_panel.band_selected.connect(_on_band_selected)
 	_panel.kit_count_changed.connect(_on_kit_count_changed)
 	_panel.material_units_changed.connect(_on_material_units_changed)
-	_panel.commit_requested.connect(_on_commit_requested)
 
 func _on_dismissed() -> void:
 	collapse()
@@ -1147,55 +1050,99 @@ func _on_kit_count_changed(kit_id: String, count: int) -> void:
 	var ceiling := _take_kit_ceiling(band, kit_id) \
 		if _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID \
 		else current + kits_left()
-	picks[kit_id] = clampi(count, 0, ceiling)
-	# **THIS ROW IS THE PLAYER'S NOW** — a re-published allocation may restate every other row and
-	# must leave this one alone. See `BAND_TOUCHED_KITS` and `_adopt_published`.
-	(band[BAND_TOUCHED_KITS] as Dictionary)[kit_id] = true
-	render()
-	_push_attention()
+	_write_pick(band, BAND_KIT_PICKS, kit_id, clampi(count, 0, ceiling))
 
 func _on_material_units_changed(material_id: String, units: int) -> void:
 	var band := _subject_state()
 	if band.is_empty():
 		return
-	var picks: Dictionary = band[BAND_MATERIAL_PICKS]
-	picks[material_id] = clampi(units, 0, _material_ceiling(band, material_id))
-	# …and its kit twin's reason, one currency over.
-	(band[BAND_TOUCHED_MATERIALS] as Dictionary)[material_id] = true
-	render()
-	_push_attention()
+	_write_pick(band, BAND_MATERIAL_PICKS, material_id,
+		clampi(units, 0, _material_ceiling(band, material_id)))
 
-## Send the subject band's whole allocation as one line and collapse the card, so the player can look
-## at the map.
+## ⛔ **ONE ROW MOVES, THE WHOLE ORDER GOES, AND THE TWO HAPPEN TOGETHER.** This is the only writer of
+## either pick map outside `_adopt_published`, which is what makes the invariant checkable: a local
+## value is never written except beside the command that orders it.
 ##
-## **THE ORDER MAY BE SENT AGAIN, AND SENDING THE SAME ONE TWICE IS NOT AN ERROR** — an apply is a
-## replacement, so nothing here tracks whether a commit is the first. The picks stay exactly as they
-## are and the reopen pill brings the card back for a revision.
+## **A press the clamp refused writes and sends NOTHING.** The allocation is unchanged, so there is no
+## replacement to send — and an order nobody asked for would put an entry in `BAND_UNECHOED` for a
+## frame that is going to restate what is already on screen.
 ##
-## A zero row is dropped: the grammar's empty tail is a real order (*spend nothing*), so naming a kit
-## with a count of zero would only be a longer way of saying the same thing.
-func _on_commit_requested() -> void:
-	var band := _subject_state()
+## **A row taken to zero is ERASED**, so the map is the allocation — see `BAND_KIT_PICKS`.
+func _write_pick(band: Dictionary, picks_key: String, id: String, next: int) -> void:
+	var picks: Dictionary = band[picks_key]
+	if int(picks.get(id, 0)) == next:
+		return
+	var revert_kits: Dictionary = (band[BAND_KIT_PICKS] as Dictionary).duplicate()
+	var revert_materials: Dictionary = (band[BAND_MATERIAL_PICKS] as Dictionary).duplicate()
+	if next > 0:
+		picks[id] = next
+	else:
+		picks.erase(id)
+	# **THE OPTIMISTIC WRITE IS ON SCREEN BEFORE THE SEND**, which is the whole point of it; a refused
+	# send re-renders from `revert_order`. `is_expanded`, never `is_open`, for `_settle_subject`'s
+	# reason: rendering a dismissed card puts it back on screen.
+	if is_expanded():
+		render()
+	_push_attention()
+	_send_order(_subject, revert_kits, revert_materials)
+
+## Send ONE band's whole allocation as one line. **Never a diff** — the verb fails closed and whole
+## server-side, so a partial order has no meaning; and an EMPTY tail is a real order (*hold nothing*),
+## which is why nothing here special-cases it.
+##
+## The pre-press allocation rides along as the rollback handle (`REVERT_KITS`), and the order rides
+## into `BAND_UNECHOED` so the frame restating it is recognised as this card's own echo.
+func _send_order(band_id: int, revert_kits: Dictionary, revert_materials: Dictionary) -> void:
+	var band: Dictionary = _bands.get(band_id, {})
 	if band.is_empty():
 		return
+	var kit_picks: Dictionary = band[BAND_KIT_PICKS]
+	var material_picks: Dictionary = band[BAND_MATERIAL_PICKS]
+	(band[BAND_UNECHOED] as Array).append({
+		HudLoadoutVocab.WINDOW_KITS_KEY: kit_picks.duplicate(),
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: material_picks.duplicate(),
+	})
 	var kits: Array = []
-	var kit_picks: Dictionary = band.get(BAND_KIT_PICKS, {})
-	for kit_id in kit_picks.keys():
-		var count := int(kit_picks[kit_id])
-		if count > 0:
-			kits.append({"id": String(kit_id), "count": count})
+	for kit_variant in kit_picks.keys():
+		kits.append({"id": String(kit_variant), "count": int(kit_picks[kit_variant])})
 	var materials: Array = []
-	var material_picks: Dictionary = band.get(BAND_MATERIAL_PICKS, {})
-	for material_id in material_picks.keys():
-		var units := int(material_picks[material_id])
-		if units > 0:
-			materials.append({"id": String(material_id), "units": units})
+	for material_variant in material_picks.keys():
+		materials.append({
+			"id": String(material_variant), "units": int(material_picks[material_variant]),
+		})
 	set_starting_loadout_requested.emit({
 		"faction": HudConst.PLAYER_FACTION_ID,
 		# **THE DURABLE BAND ID, never `entity`** — every band has a window of its own now, so the
 		# command names one positionally and a rollback-renumbered entity would resolve to nothing.
-		"band_id": _subject,
+		"band_id": band_id,
 		"kits": kits,
 		"materials": materials,
+		REVERT_KITS: revert_kits,
+		REVERT_MATERIALS: revert_materials,
 	})
-	collapse()
+
+## ⛔ **THE SEND DID NOT GO, SO THE PRESS DID NOT HAPPEN.** Reached by `has_method` from
+## `Main._on_hud_set_starting_loadout` (through `HudLayer.revert_starting_loadout`) with the very
+## payload that was emitted, which is where the outcome is known — `hud-modules.md` → "AN OPTIMISTIC
+## WRITE NEEDS A ROLLBACK".
+##
+## It restores BOTH halves, because the order it undoes was the whole allocation; and it drops the
+## entry `_send_order` just queued, so a frame restating the allocation this card did NOT manage to
+## order is correctly read as the sim's and adopted. **The queued entry is the LAST one** — a signal
+## is delivered synchronously, so nothing can have been sent between the append and this call.
+##
+## It re-renders for the same reason the write did: a card keeping a number it has stopped believing
+## is the defect, one screen showing two answers.
+func revert_order(payload: Dictionary) -> void:
+	var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+	var band: Dictionary = _bands.get(band_id, {})
+	if band.is_empty():
+		return
+	band[BAND_KIT_PICKS] = (payload.get(REVERT_KITS, {}) as Dictionary).duplicate()
+	band[BAND_MATERIAL_PICKS] = (payload.get(REVERT_MATERIALS, {}) as Dictionary).duplicate()
+	var unechoed: Array = band[BAND_UNECHOED]
+	if not unechoed.is_empty():
+		unechoed.pop_back()
+	if is_expanded():
+		render()
+	_push_attention()

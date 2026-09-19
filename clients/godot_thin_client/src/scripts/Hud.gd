@@ -198,11 +198,13 @@ signal clear_bench_requested(payload: Dictionary)
 ## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
 ## `CraftingPanelController`.
 signal bench_priority_requested(payload: Dictionary)
-## Emitted when the OPENING LOADOUT picker's commit control is pressed (issue #629). Payload keys:
-## { faction, kits: [{id, count}], materials: [{id, units}] }. Main formats
-## `set_starting_loadout <faction> [kit <id> <n>]... [material <id> <n>]...`. **The whole allocation
-## goes in one line and never a diff** — the verb fails CLOSED and WHOLE server-side. RELAYED from
-## `StartingLoadoutController`.
+## Emitted on EVERY stepper press on the OPENING LOADOUT picker (issue #629) — the card holds no
+## draft and defers no order. Payload keys:
+## { faction, band_id, kits: [{id, count}], materials: [{id, units}], revert_kits, revert_materials }.
+## Main formats `set_starting_loadout <faction> <band> [kit <id> <n>]... [material <id> <n>]...`.
+## **The whole allocation goes in one line and never a diff** — the verb fails CLOSED and WHOLE
+## server-side. The two `revert_*` maps are the pre-press allocation and are read only by
+## `revert_starting_loadout`. RELAYED from `StartingLoadoutController`.
 signal set_starting_loadout_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
@@ -1273,6 +1275,14 @@ func close_starting_loadout_panel() -> void:
 ## The picker's controller, for the harnesses' assertions.
 func starting_loadout_panel() -> StartingLoadoutController:
     return _loadout
+
+## ⛔ **THE OUTFITTING CARD'S OPTIMISTIC WRITE, TAKEN BACK.** A stepper press writes the band's
+## allocation and emits the command in one act, and only `Main` learns whether the line went — so a
+## refused send hands the emitted payload straight back here and the card restores the allocation it
+## carried before the press. A thin delegator because `Main` reaches it by `has_method`, and a failed
+## probe fails SILENTLY (`hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS A ROLLBACK").
+func revert_starting_loadout(payload: Dictionary) -> void:
+    _loadout.revert_order(payload)
 
 ## Open / close the knowledge screen. Reached BY NAME from the preview harnesses, which stand the
 ## panel up without a Band/City panel to launch it from — the `open_crafting_panel` idiom.

@@ -1145,15 +1145,32 @@ hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue
    `baskets_run_dry_on_their_own_quantum_and_stay_dry`, both of which run worlds with an empty
    bench): nothing *decays* wear, nothing repairs a batch, and a band that makes nothing stays dry.
 
-## ⛔ A SPAWNING BAND OWNS NOTHING — `start_stock_fraction` ships `0.0`, AND SO DOES ITS STORE
+## ⛔ THE SPAWN GRANTS NOTHING — `start_stock_fraction` ships `0.0`, AND SO DOES THE STORE
 
 Not fewer units: **none**, of every item some kit names — and **no material either**. The
 per-material `start_stock` that used to seed `wood` and `stone` beside the kit is deleted, mechanism
 and all (`crafting.md` → "Nothing is stocked at spawn").
 
-**What a band opens with is what the PLAYER allocated**, in the turn-one loadout window
-(`starting_loadout.rs`), composed after the generated map is on screen. It is the one source of
-opening gear and material; there is no automatic grant of either anywhere in the sim.
+**The outfitting window is the ONE source of opening gear and material** (`starting_loadout.rs`),
+and there is no automatic grant of either anywhere in the sim.
+
+> ### ⛔ A BAND IS STILL NEVER BARE-HANDED — THE WINDOW'S DEFAULT IS APPLIED AT CREATION
+>
+> This section read *"a spawning band owns nothing"*, and as a statement about what the **band
+> holds** that is no longer true: `starting_loadout::outfit_band_with_defaults` commits the
+> campaign's `kit_defaults` / `material_defaults` on every band the moment it exists — the opening
+> band at Startup, a grant splinter at its split — through the same path a player's accepted order
+> takes. A default that existed only as a client-side suggestion was lost the moment a player did not
+> press *Set out* (`.claude/rules/core_sim/starting-loadout.md` → "A default is applied, never
+> suggested"). What is unchanged is the **spawn**: no code path here grants anything, and the dial
+> below still means *none*.
+>
+> ⛔ **AND AN APPLY IS A REPLACEMENT, SO THE DEFAULT OVERWRITES A STOCKED SPAWN.** On shipped config
+> that is invisible — the fraction is `0.0`, so there is nothing to overwrite. Under
+> `for_a_stocked_fixture` (below) it is not: the default rebuilds the ledger from the profile's three
+> kits and clears the material store, so **a fixture whose subject is some other item has to declare
+> its gear again after the world is built** rather than relying on the spawn. Several do, through a
+> local `restock_the_fixture_band` helper over `BandEquipment::start_stocked_owned`.
 
 **Setting the fraction to zero was not sufficient on its own, and that is the trap worth recording.**
 `start_stock_units` ended `.max(1.0) as u32).max(1)` — a floor documented *"for the degenerate party

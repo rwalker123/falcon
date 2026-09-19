@@ -170,27 +170,28 @@ pub struct OpeningLoadoutConfig {
     /// nobody would spend on. Validated non-empty, and every entry must name a material the
     /// materials table carries.
     pub pickable_materials: Vec<String>,
-    /// **The allocation the window OPENS on** — a suggestion the player is free to spend elsewhere,
-    /// never a grant: nothing is applied until a `SetStartingLoadout` arrives. Empty is the ordinary
-    /// case and means *"the window opens with everything unspent"*. Every key must be in
+    /// **The material half of the DEFAULT OUTFIT the sim applies to every band at creation**
+    /// ([`crate::starting_loadout::outfit_band_with_defaults`]), re-fitted to that band's own budget.
+    /// It is the allocation the window opens on and the player is free to spend elsewhere — but it
+    /// is *applied*, not suggested, so a card nobody commits costs the band nothing. Empty is the
+    /// ordinary case and means *"the window opens with everything unspent"*. Every key must be in
     /// [`Self::pickable_materials`], and the values must sum at or below [`Self::material_points`].
     #[serde(default)]
     pub material_defaults: BTreeMap<String, u32>,
-    /// **The kit column's pre-fill** — the material twin above, and a suggestion on exactly the same
-    /// terms: nothing is applied until a `SetStartingLoadout` arrives, and a client is free to draw
-    /// it and then send something else. Empty is the ordinary case.
+    /// **The kit half of the default outfit** — the material twin above, on exactly the same terms.
+    /// Empty is the ordinary case.
     ///
     /// Every key must name a kit the equipment roster carries **and one that actually carries
-    /// items** (the roster's `none` buys nothing, so pre-filling it would suggest spending a hand on
-    /// air), and every count must be `> 0`. Both are checked by
+    /// items** (the roster's `none` buys nothing, so defaulting it would spend a hand on air), and
+    /// every count must be `> 0`. Both are checked by
     /// [`StartProfiles::validate_against_equipment`].
     ///
     /// # ⛔ THERE IS NO SUM CHECK HERE, BECAUSE THE BUDGET IS NOT IN THIS FILE
     ///
     /// [`Self::material_defaults`] can be validated against [`Self::material_points`] at load
     /// because both are config. The kit budget is **derived from the spawned band's working-age head
-    /// count**, which does not exist until worldgen has run — so an over-allocating pre-fill cannot
-    /// be a parse error and is instead **clamped at publish time** by
+    /// count**, which does not exist until worldgen has run — so an over-allocating default cannot
+    /// be a parse error and is instead **clamped when it is applied** by
     /// [`crate::starting_loadout::clamped_kit_defaults`], which states the clamping rule and warns
     /// when it binds.
     #[serde(default)]

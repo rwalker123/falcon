@@ -12,6 +12,11 @@ class_name StartingLoadoutPanel
 ## only differences on screen are what the two meters read against and what the subtitle says; the
 ## band switcher across the header is how the player reaches the other card.
 ##
+## **IT DRAWS WHAT THE BAND HOLDS, AND EVERY PRESS ORDERS.** The sim applies a band's default outfit
+## when it makes the band, so the rows are gear the band has; a stepper press emits the whole
+## allocation as the controller's own command on the spot. There is no draft here and no deferred
+## commit — the footer control closes the card and sends nothing.
+##
 ## **IT IS A READOUT AND A WRITE SURFACE AT ONCE, AND THE READOUT IS THE POINT.** Two budgets sit
 ## side by side because they buy different things out of one decision — hands carrying gear, and a
 ## pile to build gear FROM — and the third column is the only place a player can see what the second
@@ -24,9 +29,8 @@ class_name StartingLoadoutPanel
 ## DISMISSIBLE (the player has to be able to pan, zoom and read tiles before committing) and comes
 ## back through its own reopen pill and through the turn orb's row. `End Turn` is untouched.
 ##
-## **COMMITTING IS NOT THE END OF ANYTHING, AND `open` IS NOT A SUCCESS SIGNAL.** An apply is a
-## REPLACEMENT, so the order may be sent, revised and sent again; every successful commit leaves the
-## window open, and a refusal is not visible on this card at all. `StartingLoadoutController`'s ⛔
+## **`open` IS NOT A SUCCESS SIGNAL.** An apply is a REPLACEMENT, so an accepted order leaves the
+## window open and a refusal is not visible on this card at all. `StartingLoadoutController`'s ⛔
 ## block is the contract — nothing here may infer an outcome from `open`.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`**
@@ -59,8 +63,6 @@ signal band_selected(band_id: int)
 signal kit_count_changed(kit_id: String, count: int)
 ## A material's stepper moved, in units.
 signal material_units_changed(material_id: String, units: int)
-## The commit control was pressed. Carries nothing: the controller holds the allocation.
-signal commit_requested
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 
@@ -422,10 +424,10 @@ func _build_columns(payload: Dictionary) -> void:
 	_columns.add_child(_column_seam())
 	_columns.add_child(_build_recipes_column(payload))
 
-## COLUMN 1 — the kits. **It opens on the profile's `kit_defaults`**, the materials column's twin,
-## and those counts arrive ALREADY CLAMPED to the derived kit budget (a spawned head count the
-## profile cannot see, so the sim scales the spread at publish time). **Draw them as-is** — a second
-## clamp here would disagree with the sim's, and the player would see a pre-fill it never sent.
+## COLUMN 1 — the kits. **It opens on the kits the band ALREADY HOLDS** (`loadout_window.kits`), the
+## default outfit the sim applied when it made the band. **Draw the counts as-is** — the sim fitted
+## that spread to the band's derived kit budget when it applied it, and a second clamp here would
+## disagree with the first.
 func _build_kits_column(payload: Dictionary) -> Control:
 	var col := _column(HudLoadoutVocab.KITS_HEAD, HudLoadoutVocab.KITS_NOTE)
 	var budget: Dictionary = payload.get(PAYLOAD_KIT_BUDGET, {})
@@ -470,9 +472,9 @@ func _kit_row(row: Dictionary) -> Control:
 		HudLoadoutVocab.ROW_NOTE_FONT_SIZE))
 	return block
 
-## COLUMN 2 — the resources. **It opens on the profile's published defaults**, not on zero: the sim
-## suggests a starting pile, and a player who touches nothing still walks out with something to
-## build from.
+## COLUMN 2 — the resources. **It opens on the pile the band already holds**, not on zero: the sim
+## applied the profile's starting pile when it made the band, so a player who touches nothing still
+## walks out with something to build from.
 func _build_materials_column(payload: Dictionary) -> Control:
 	var col := _column(HudLoadoutVocab.RESOURCES_HEAD, HudLoadoutVocab.RESOURCES_NOTE)
 	var budget: Dictionary = payload.get(PAYLOAD_MATERIAL_BUDGET, {})
@@ -595,9 +597,11 @@ func _recipe_row(row: Dictionary) -> Control:
 
 # ---- footer -----------------------------------------------------------------
 
-## The commit control. **Its face is a CONSTANT** — see `HudLoadoutVocab.COMMIT_CLEAR_LABEL`: an
-## apply is a replacement the player may revise until the turn advances, so a label conditioned on
-## what is unspent would name a consequence the press does not have.
+## ⛔ **THE FOOTER CONTROL CLOSES THE CARD. IT SENDS NOTHING, AND ITS FACE MUST NOT READ AS ONE.**
+## Every stepper press already sends the whole allocation, so there is no order left for a button to
+## carry — and a button that still said `Set out` would promise the one thing this card no longer
+## defers. It is the ✕'s twin in a shape the eye finds (`HudLoadoutVocab.CLOSE_LABEL`), and it emits
+## the same `dismissed`: nothing is lost by pressing it, and nothing is lost by not.
 func _build_footer() -> void:
 	# **THE LEADING END OF A ROW THE CARD IS ALREADY SPENDING.** It adds no row and moves no height —
 	# the footer exists for the button, and the space to its left was empty. The spacer below still
@@ -608,15 +612,15 @@ func _build_footer() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_footer.add_child(spacer)
-	var commit := Button.new()
-	commit.text = HudLoadoutVocab.COMMIT_CLEAR_LABEL
-	commit.tooltip_text = HudLoadoutVocab.COMMIT_TOOLTIP
-	commit.focus_mode = Control.FOCUS_NONE
-	commit.set_meta(HudLoadoutVocab.COMMIT_BUTTON_META, true)
-	commit.add_theme_font_size_override("font_size", HudLoadoutVocab.COMMIT_FONT_SIZE)
-	HudStyle.apply_button(commit, "primary")
-	commit.pressed.connect(func() -> void: commit_requested.emit())
-	_footer.add_child(commit)
+	var close := Button.new()
+	close.text = HudLoadoutVocab.CLOSE_LABEL
+	close.tooltip_text = HudLoadoutVocab.CLOSE_TOOLTIP
+	close.focus_mode = Control.FOCUS_NONE
+	close.set_meta(HudLoadoutVocab.CLOSE_BUTTON_META, true)
+	close.add_theme_font_size_override("font_size", HudLoadoutVocab.CLOSE_FONT_SIZE)
+	HudStyle.apply_button(close, "primary")
+	close.pressed.connect(func() -> void: dismissed.emit())
+	_footer.add_child(close)
 
 # ---- the budget meters ------------------------------------------------------
 

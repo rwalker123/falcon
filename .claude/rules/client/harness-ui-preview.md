@@ -1709,18 +1709,34 @@ refusal).
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
 **Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Thirteen frames
-and one hundred and seven assertions (`EXPECTED_CHECKPOINTS` **120**, RE-MEASURED by raising the const
-to an impossible number and reading `reached` back — frames count too; the draft state is the last of
-them, worth one frame and seven). It ends by publishing SHUT
-windows, so the surface it stands up is gone before anything appended after it could inherit it.
+and one hundred and twenty-three assertions (`EXPECTED_CHECKPOINTS` **136**, RE-MEASURED by raising
+the const to an impossible number and reading `reached` back — frames count too). It ends by
+publishing SHUT windows, so the surface it stands up is gone before anything appended after it could
+inherit it.
 
-⛔ **THE WINDOW RIDES THE COHORT NOW, so the chapter pushes TWO seams in `Main`'s own order**:
-`update_opening_loadout` (the campaign's half — the pick list and the two pre-fills) and then
+⛔ **THE WINDOW RIDES THE COHORT, so the chapter pushes TWO seams in `Main`'s own order**:
+`update_opening_loadout` (the campaign's half — the pick list and the craftable ids) and then
 `update_band_alerts` (the bands, each carrying its own `loadout_window`). The campaign half has to
-land first or the pre-fill has no pick list to be filtered against. Every re-push that used to
-re-state the window — the *"a snapshot does not re-open a dismissed card"* claim, the still-open
-frame after a commit — is a roster push now, and the SHUT state pushes both bands with their windows
-closed rather than an empty roster: the bands are still there, it is their windows that shut.
+land first or the allocation has no pick list to be filtered against. Every re-push that used to
+re-state the window is a roster push, and the SHUT state pushes both bands with their windows closed
+rather than an empty roster: the bands are still there, it is their windows that shut.
+
+> #### ⛔ THE CARD HOLDS NO DRAFT, SO THE CHAPTER IS A COMMAND LOG AS WELL AS A PICTURE WALK
+>
+> The sim outfits a band when it makes it and every stepper press sends a whole-order replacement
+> (`starting-loadout.md`), so three things changed in how this chapter is driven:
+>
+> - **The emit sink is connected for the WHOLE chapter** (`_orders`, a METHOD not a lambda — a lambda
+>   captures a local by VALUE and reports that nothing happened). A block that connected only for
+>   itself would leave the fixtures unable to say what a band holds.
+> - ⛔ **EVERY FIXTURE BAND PUBLISHES THE LAST ORDER THIS CARD SENT FOR IT** (`_held_kits` /
+>   `_held_materials`), falling back to the default outfit. That is what a server does — it applies
+>   the order and republishes the band — and a fixture re-stating a stale allocation would be a server
+>   that ignored the player, which the card would rightly (and confusingly) adopt. **A REFUSED order is
+>   popped off that record** in the rollback state, because no server saw it.
+> - **The campaign fixture states NEITHER pre-fill.** They are on the wire and read by nothing, so a
+>   client that still drew `openingLoadout.kitDefaults` renders an EMPTY kit column here rather than a
+>   doubled one — which the held-counts claims catch at `got 0`.
 
 **MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
 plausible picture whatever it says — a row reading `×3`, a dash on a row that should read `×1`, a
@@ -1730,11 +1746,12 @@ meta, never by scraping a subtree's text) and the frames carry the layout.
 | frame | what only IT can say |
 |---|---|
 | `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF, kits at 0 and the pile on the profile's defaults. **The card is placed at the top-left of the room on this ONE frame** — a first-render placement race that predates the per-band arc, confirmed by rendering the pre-arc client in the same environment; every later frame centres |
-| `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter — and the commit control reads `Set out` with a budget still unspent, with the word `forfeit` absent from the whole card |
-| `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the commit control's face UNMOVED from the frame above |
+| `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter — and **each one sent ONE order carrying the WHOLE allocation**, every kit and every resource the band holds, with no footer control touched. A replacement naming only the pressed row would order the rest away and reads as a perfectly correct line |
+| — (PNG-less, on the same card) | ⛔ **a refused send takes the press back.** The `has_method` name `Main` probes for is asserted first (that probe fails SILENTLY), the row is seen to MOVE, then the emitted payload is handed to `revert_starting_loadout` — `band_panel_preview._assert_pending_assign_rollback`'s shape, and for its reason: a card showing one more kit than it ordered is an ordinary card. A fourth claim pushes the next frame and requires the rolled-back row to stay put, which is what says the un-sent order left no echo waiting |
+| `starting_loadout_spent` | both budgets spent to the unit — `+` disabled, both bars full with **no remainder sliver**, and the footer control's face UNMOVED from the frame above |
 | `starting_loadout_dismissed` | the dismissed state leaves a live reopen control on screen rather than nothing at all |
-| `starting_loadout_resent` | ⛔ **a commit shuts nothing.** The still-open frame the sim really sends after an accepted order, reopened: the card comes back CLEAN — no refusal, no forfeiture claim, every pick intact — and the same control then re-sends a revised allocation |
-| `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not outfitted` / `1 unit unspent` and wearing `Open ▸` |
+| `starting_loadout_reopened` | ⛔ **the footer control closes the card and SENDS NOTHING**, and nothing is lost by pressing it: the still-open frame the sim really sends, reopened, with every kit intact and no refusal and no forfeiture claim. The pair is the claim — a control that still ordered would double every press's send, and a card that came back empty would be the old defect in new words |
+| `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not fully outfitted` / `1 resource unspent` and wearing `Open ▸` |
 | `starting_loadout_orb_ready` | the same orb BLUE with everything picked, reading `Band outfitted` / `everything is picked` — **still present, still `Open ▸`**, which is what says a dismissed card is reachable right up to the advance |
 
 ### The TAKE arc is APPENDED, never interleaved
@@ -1746,8 +1763,8 @@ somebody else's row.
 
 | frame | what only IT can say |
 |---|---|
-| `starting_loadout_take` | a split's splinter stands its OWN card up; the subtitle names the home band; the meters read `left at home` and never the grant's `/ 30 left`; the resources column lists what the HOME BAND holds — `clay` included, which the profile never offered — so a card drawing the pick list fails on the row list alone; and ⛔ **the card opens on the split's DEFAULT TAKE rather than at zero**, asserted row by row (a kit the take does not name still opens at 0, or "opens on the standing take" passes on a column that put one number on every row) |
-| — (PNG-less, on the same card) | ⛔ **an untouched `Set out` re-sends exactly what is shown.** The claim is the composed ORDER, read off the HUD's own `set_starting_loadout_requested`, because the card showing the right numbers and the commit sending them are two different things. While the card opened EMPTY this same press ordered *take nothing* and handed the splinter's dowry back, an apply being a replacement. The card is then reopened through its pill with the picks intact, which is what the cap walk moves |
+| `starting_loadout_take` | a split's splinter stands its OWN card up; the subtitle names the home band; the meters read `left at home` and never the grant's `/ 30 left`; the resources column lists what the HOME BAND holds — `clay` included, which the profile never offered — so a card drawing the pick list fails on the row list alone; and ⛔ **the card draws the split's DEFAULT TAKE rather than zero**, asserted row by row (a kit the take does not name still reads 0, or "draws the standing take" passes on a column that put one number on every row) |
+| — (PNG-less, on the same card) | ⛔ **one press orders the WHOLE standing take, plus the press.** The splinter is already holding its dowry, so the row the player does not touch is exactly the row a replacement must still name — an order carrying only the pressed material would hand the rest back to the parent, which is the line that reads as ordinary. Claimed on the composed ORDER, read off the HUD's own `set_starting_loadout_requested`, and taken in BOTH directions (`+` then `−`) so the walk leaves the cap block the standing take it describes |
 | `starting_loadout_take_capped` | ⛔ **the cap is the EXPANDED item list.** `big_game` stops at the SLED (five) rather than at its own six spears, `trapping` is then capped at zero with four traps still at home, and giving two sleds back frees it again — the one claim a per-row cap passes every other assertion on |
 | `starting_loadout_bands` | two open windows, two orb rows, two tabs — and pressing the HOME band's tab renders its GRANT again, meters and all. It is one of the two ways to a second band's card; the row's own `Open ▸` is the other, and has its own claim below |
 
@@ -1760,10 +1777,10 @@ takes it from BOTH sides, since a per-row cap gets the release wrong as well as 
 the six spears and five sleds, and the walk still reaches the same sled-bound ceiling of five. A
 fixture whose supply excluded its own standing take would be one no server can send.
 
-**Sabotage-verified**: with the take's accepted rows ignored at the seed (the card back to opening
-empty), exactly **seven** claims fail — both meter readings, both standing-row readings, both halves
-of the composed order (`({ })`, the forfeit order literally) and the reopen — while the band-id claim
-and every cap claim correctly stay green.
+**Sabotage-verified**: with the take's published rows ignored (the card back to drawing zero), exactly
+**seven** claims fail — both meter readings, both standing-row readings, both halves of the composed
+order (`({ })`, the forfeit order literally) and the reopen — while the band-id claim and every cap
+claim correctly stay green.
 
 ⛔ **A ROW META IS READ BACK AS TEXT, so `str()` and never `String()`.** The band tab's meta is a band
 id, and `String(<int>)` is not a constructor GDScript offers — it RAISES, which ABORTS the chapter
@@ -1782,7 +1799,8 @@ Two frames and eleven claims appended after the switcher block, before the shut.
 |---|---|
 | `starting_loadout_orb_bands` | **the reported popover, fixed** — two loadout rows LEADING with different bands (`Brackwater — everything is picked` / `Thornhollow — 3 kits, 4 resources`) where the report showed the same sentence twice, both still wearing `Open ▸` |
 | `starting_loadout_over_budget` | the reported CARD — `-2 / 12 left` and `-6 / 22 left` on one band, which is what the row beside it must not call done |
-| `starting_loadout_draft_kept` | ⛔ **a re-published allocation keeps the pick and re-fits the rest.** The frame the reported loss happened on, staged on the chapter's own fourth band: a pick made, then both budgets shrunk and the accepted rows restated — the touched row still reads 5 where the sim republished 3, the untouched one has come down to 1, and the meter reads `0 / 6 left` rather than negative. The claim that only the ORDER can make rides with it, PNG-less: the composed command carries the draft |
+| `starting_loadout_adopted` | ⛔ **an allocation this card never sent is the SIM's, and the card takes it whole.** Staged on the chapter's own fourth band: it draws what the band holds, the player orders one more, then both budgets shrink and EVERY row is restated — including the one the player ordered, to a value the presses never reach, so "the published rows won" cannot be satisfied by a card that merely kept what it had. The meter is read off the orb's `over budget` arm, the one reader of the unclamped remainder, and a last claim presses again and reads the composed ORDER, which is what says the send agrees with the card |
+| — (PNG-less, on the same band) | ⛔ **two presses in a row, and the FIRST one's echo must not pull the card back.** The two frames a server sends for a pair of quick presses are pushed in order, and the card must read the second press after each. The second frame is not decoration: without it the block passes on a card that ignores published allocations altogether. **Sabotage-verified** by making every published allocation adopt — exactly this claim fails, at `(4, want 5)`, and the rest of the run stays green |
 
 - **The `Open ▸` claim is a PRESS, not a reading.** Both rows wear the affordance whatever it reaches,
   so the row's own button is pressed (`Q.turn_orb_popover_rows` hands the `button` back for exactly
@@ -1802,10 +1820,15 @@ Two frames and eleven claims appended after the switcher block, before the shut.
 — the reported defect, in its own words — while the card's meter precondition and the auto-open claim
 correctly stay green, being about a different layer.
 
-**A clean run is 425 frames / 2008 `PASS`, exit 0 — MEASURED, with the pre-arc client MEASURED beside
-it at 420 / 1968** in the same environment (the swap-the-changed-files-to-the-merge-base method above):
-three frames and twenty-three claims, which is this chapter's whole delta. That baseline is also what
-attributed `starting_loadout.png`'s top-left placement to a race that predates the arc.
+**A clean run is 450 frames / 2166 `PASS`, exit 0 — RE-MEASURED windowed on this tree** when the
+outfitting draft was deleted. **This chapter's own delta is FRAME-NEUTRAL** — `starting_loadout_resent`
+became `_reopened` and `_draft_kept` became `_adopted`, both renamed because their claims inverted —
+**plus sixteen assertions**, which is `EXPECTED_CHECKPOINTS` 120 → 136. The whole-run figures recorded
+before it (425 / 2008 here when the chapter landed, 446 / 2115 further down this file) do not
+reconcile with those two numbers, and that gap is drift accumulated un-recorded, as it has been every
+previous time. Measure; do not sum. **The `starting_loadout.png` top-left placement is a first-render
+race that PREDATES the arc**, attributed by measuring the pre-arc client beside it in the same
+environment (the swap-the-changed-files-to-the-merge-base method above).
 
 **THE TWO ORB FRAMES ARE A PAIR TOO, and the same argument applies**: either alone passes on an orb
 whose accent never moves, so both are taken on one registry with only the allocation between them.
@@ -1832,13 +1855,14 @@ the producer falling silent once both budgets clear fails **five** (the whole co
 the rendered row and its `Open ▸`); and one hex pasted into all four palettes fails **two** (the
 separation claim at loam and the distinctness claim, `1 distinct of 4`).
 
-**THE COMMIT CONTROL'S FACE IS A PAIR, and neither half is worth anything alone.** It is read off the
+**THE FOOTER CONTROL'S FACE IS A PAIR, and neither half is worth anything alone.** It is read off the
 rendered button (never off a producer) at a partly-spent budget and again at a fully-spent one, and
-the claim is that the two are EQUAL and both `Set out`: a face asserted only where something is
-unspent passes on a control that renames itself once the budgets clear, and only where they are clear
-on one that renames itself while they are not. That conditional face is exactly what was removed —
-it read `Set out — forfeit 17 kits and 2 units`, naming the cost of ending the turn on a button that
-does not end the turn.
+the claim is that the two are EQUAL and both `Done`: a face asserted only where something is unspent
+passes on a control that renames itself once the budgets clear, and only where they are clear on one
+that renames itself while they are not. ⛔ **The NEGATIVE beside it is the arc's own** — `Set out`
+must appear nowhere on the card: it was that button's face while it was the only thing that sent, and
+a player who read it and never pressed it lost the lot. (Before that it read `Set out — forfeit 17
+kits and 2 units`, naming the cost of ending the turn on a button that does not end the turn.)
 
 **THE COUNT IS READ OFF THE LABEL'S OWN META, never its face.** The face is `×3` or a dash, and
 parsing either back into a number is re-implementing the renderer in order to check it.
@@ -1877,21 +1901,30 @@ on the picked and spent states.
 It was five while chasing this defect and stayed nine: the client's own roster is what the card is laid
 out against, and a fixture two-thirds of its height cannot show a column that is about to overflow.
 
-**THE KIT COLUMN'S PRE-FILL IS ASSERTED COUNT BY COUNT, not as a total.** `opening_loadout.kit_defaults`
-arrives already clamped to `kitBudget` sim-side, so the failure worth catching is a client that
-re-fits it — and with the shipped spread (4/4/4 of a 17 budget) comfortably inside the budget, a second
-clamp would leave a total that still looks reasonable. A kit the pre-fill does NOT name is asserted at
-zero beside them, without which "opens on the defaults" passes on a column that put the same number on
-every row. Sabotage-verified by ignoring the field: five claims fail, at `got 0`.
+**THE KITS THE BAND HOLDS ARE ASSERTED COUNT BY COUNT, not as a total.** The window's spread arrives
+already clamped to `kitBudget` sim-side, so the failure worth catching is a client that re-fits it —
+and with the shipped spread (4/4/4 of a 17 budget) comfortably inside the budget, a second clamp would
+leave a total that still looks reasonable. A kit the band does NOT hold is asserted at zero beside
+them, without which "draws what it holds" passes on a column that put the same number on every row.
+Sabotage-verified by ignoring the field: five claims fail, at `got 0`.
 
 **THE FIXTURE OFFERS THE `none` KIT AND THE GATED RECIPE ON PURPOSE.** The picker has to drop the
 first (by its empty `uses`) and never draw the second (it is in the recipe book and off
 `craftable_recipe_ids`), so a fixture that omitted either would assert nothing.
 
-**Its material defaults sum to 28 of 30, deliberately NOT to the budget** — a fixture that opened with
-nothing left could not tell a working meter from one stuck at zero. And `earthmoving` costs WOOD,
-which the default pile holds none of, so one row is unreachable and must be present-and-dimmed rather
-than filtered away.
+**Its material holdings sum to 28 of 30, deliberately NOT to the budget** — a fixture whose band
+already held its whole budget could not tell a working meter from one stuck at zero. And `earthmoving`
+costs WOOD, which that pile holds none of, so one row is unreachable and must be present-and-dimmed
+rather than filtered away.
+
+### The two sabotages the deleted draft is judged on
+
+Each fails a DISJOINT set, and each names the defect in its own words:
+
+| the forbidden implementation | fails, and only |
+|---|---|
+| the press no longer SENDS (the draft, restored) | **nine**, led by `…and each press sent ONE order, with no Set out pressed (0 for 3 presses)` — which is the recorded session's whole bug. The cascade behind it is the second half of the demonstration: with nothing sent, the fixtures republish the defaults and the card's own picks are adopted away under it, so `the last unit really is spent` and the orb's whole READY arm go too. The chapter then falls 16 checkpoints short, which the count guard catches |
+| every published allocation adopted (the `BAND_UNECHOED` test removed) | **one** — `loadout/flicker — the first press's echo does not pull the card back (4, want 5)`, the card dragged back to the first press's value while the player is looking at the second's. The other 2165 claims stay green, which is the decomposition: nothing else in the walk can see that rule |
 
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 

@@ -588,6 +588,18 @@ fn two_ratings_of_one_material_arrive_as_two_batches() {
     make_foreign(&mut app, destination);
     let destination_pos = band_position(&app, destination);
 
+    // **Cleared first, because a band is created holding its DEFAULT OUTFIT**
+    // (`.claude/rules/core_sim/starting-loadout.md` → "A default is applied, never suggested") and
+    // the shipped `material_defaults` include this material. The subject here is how two *ratings*
+    // merge on arrival, so the fixture declares an empty store rather than measuring a pile it did
+    // not send.
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(destination)
+            .expect("the band");
+        cohort.stores.clear_materials();
+    }
     // The receiving band holds none of it, so every batch found afterwards came off the shipment.
     assert_eq!(
         app.world

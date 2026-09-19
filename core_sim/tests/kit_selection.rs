@@ -915,6 +915,29 @@ fn published_kit_tiers(
 /// `starting_durability / wear.amount` — derived from config rather than written as a number, or a
 /// retune of either dial silently stops a fixture reaching the cliff it is about. It serves the most
 /// worn live batch, so charging that count once per unit owned empties the ledger.
+/// **Re-declare the fixture band's gear, after the opening outfit has landed on it.**
+///
+/// `build_test_app` installs `for_a_stocked_fixture` and worldgen stocks the band from it — and then
+/// the sim applies that band's **default outfit**, which is a *replacement*
+/// (`.claude/rules/core_sim/starting-loadout.md`) and so rebuilds the ledger from the profile's three
+/// default kits alone. A fixture whose subject is some *other* kit has to declare its stock again.
+fn restock_the_fixture_band(app: &mut App, band: bevy::prelude::Entity) {
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let recipes = app.world.resource::<core_sim::RecipesConfigHandle>().get();
+    let materials = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let workers = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .working
+        .to_f32();
+    let ledger = BandEquipment::start_stocked_owned(&equipment, &recipes, &materials, workers);
+    app.world.entity_mut(band).insert(ledger);
+}
+
 fn wear_to_the_cliff(app: &mut App, band: bevy::prelude::Entity, item_id: &str) {
     let cfg = equipment(app);
     let item = cfg
@@ -974,6 +997,12 @@ fn a_bands_published_carry_and_vantage_tiers_step_down_per_kit_at_the_item_that_
         .iter(&app.world)
         .next()
         .expect("the placid world spawns a resident band");
+    // **The fixture declares the gear it needs** (`equipment.md` → "A FIXTURE DECLARES THE STOCK").
+    // `build_test_app` installs `for_a_stocked_fixture`, but a band is then created holding its
+    // **default outfit** — an apply is a *replacement*, so the ledger is rebuilt from the profile's
+    // three default kits and `wayfinding`, whose gear supplies the vantage asserted below, is not
+    // one of them.
+    restock_the_fixture_band(&mut app, band);
     recapture_snapshot_in_place(&mut app.world);
     let fresh = published_kit_tiers(&app, band);
 

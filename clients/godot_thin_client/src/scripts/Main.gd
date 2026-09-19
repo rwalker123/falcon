@@ -2372,13 +2372,20 @@ func _on_hud_clear_bench(payload: Dictionary) -> void:
 func _on_hud_bench_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_priority(payload))
 
-## Compose one band's outfitting order. **No optimistic write**, deliberately: the verb fails CLOSED
-## and WHOLE, and what answers it is the band's own published state on the recapture this command
-## triggers — after a success that IS the allocation just sent. A local write here would be a second,
-## disagreeing one. (`loadout_window.open` is not that answer: a commit never closes a window, so it
-## reads true after a refusal and after a success alike.)
+## Compose one band's outfitting order — emitted on every stepper press, the card deferring nothing.
+##
+## **THE OPTIMISTIC WRITE IS THE CARD'S AND THE ROLLBACK IS ITS OWN**, `_on_hud_assign_labor`'s shape:
+## the picks are written on the frame the stepper moved, the outcome is only known here, and the
+## payload carries the pre-press allocation (`revert_kits` / `revert_materials`, which
+## `format_set_starting_loadout` ignores) so a line that did not go takes its write back. Reached by
+## `has_method`, so a client without the method simply keeps the number — which is why the emitting
+## side, not this one, owns the handle.
+##
+## (`loadout_window.open` is not an outcome: an accepted order never closes a window, so it reads true
+## after a refusal and after a success alike.)
 func _on_hud_set_starting_loadout(payload: Dictionary) -> void:
-    _send_formatted_command(format_set_starting_loadout(payload))
+    if not _send_formatted_command(format_set_starting_loadout(payload)):
+        _hud_invoke("revert_starting_loadout", [payload])
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

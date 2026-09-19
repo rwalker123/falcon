@@ -321,6 +321,34 @@ fn staff_roadwork(app: &mut App, band: Entity, workers: u32) {
 
 /// Stand a band's builders on a `pave` at `tile`, with `stone` in its stores — the state the paving
 /// pile is actually drawn in. `stone` of `0.0` leaves the shelf bare, which is the blocked arm.
+/// **Re-declare the fixture band's gear, after the opening outfit has landed on it.**
+///
+/// `build_test_app` installs `for_a_stocked_fixture` and worldgen stocks the band from it — and then
+/// the sim applies that band's **default outfit**, which is a *replacement*
+/// (`.claude/rules/core_sim/starting-loadout.md`) and rebuilds the ledger from the profile's three
+/// default kits alone. A build's rate reads `build_work_from_gear` off that ledger, so a fixture
+/// measuring one turn of accrual has to declare the gear it is measuring.
+fn restock_the_fixture_band(app: &mut App, band: Entity) {
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let recipes = app.world.resource::<core_sim::RecipesConfigHandle>().get();
+    let materials = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let workers = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .working
+        .to_f32();
+    let ledger =
+        core_sim::BandEquipment::start_stocked_owned(&equipment, &recipes, &materials, workers);
+    app.world.entity_mut(band).insert(ledger);
+}
+
 fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone: f32) {
     let ladder = LadderConfig::builtin();
     let (base, width) = core_sim::road_rung_span(
@@ -622,6 +650,7 @@ fn a_paving_roads_two_bills_are_struck_at_the_same_position() {
     let mut app = spawn_world();
     let (band, faction, id, camp) = first_band(&mut app);
     seat_a_dirt_road(&mut app, camp, (faction, id));
+    restock_the_fixture_band(&mut app, band);
     stage_a_paving(&mut app, band, camp, BUILDERS, PLENTY);
 
     let ladder = LadderConfig::builtin();
