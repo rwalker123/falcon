@@ -545,10 +545,15 @@ func _drive_assign_labor_kits() -> void:
 ## source holds the same entry. That is exactly the kind of thing this guard exists to pin — the
 ## grammar is the one place a client can be well-formed and mean something else.
 ##
-## **A NON-DEFAULT KIT, DELIBERATELY.** Picking the DERIVED entry emits no `kit` token (that is how
-## the override is cleared), and `_record` treats an expectation equal to the default as a fixture
-## error — rightly, since the assertion could never fail there. The clearing case is asserted where it
-## can be: `band_panel_preview` reads it off `Main.format_build_kit` on the live picker.
+## **A NON-DEFAULT KIT, DELIBERATELY.** A payload whose kit equals the DERIVED one emits no `kit`
+## token (that is how the override was cleared), and `_record` treats an expectation equal to the
+## default as a fixture error — rightly, since the assertion could never fail there.
+##
+## ⛔ **THIS IS THE VERB'S ONLY LIVE DRIVER NOW, and nothing in the UI emits it.**
+## `docs/plan_pool_toe.md` §3 retired the queue row's kit picker — a build's tools follow from the
+## RUNG it raises — so `band_panel_preview`'s live-picker claim (which carried the clearing case) is
+## retired with it and this drive reaches `_emit_build_kit` directly. Leaving the seam unreachable
+## from the UI is the expected state until the command retires end to end in a later slice.
 func _drive_build_kit() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
 	# **`BUILD_RUNG_ANY` IS STATED, NOT DEFAULTED** — no plant or animal kit binds a rung, so the

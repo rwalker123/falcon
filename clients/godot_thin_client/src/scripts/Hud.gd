@@ -128,18 +128,18 @@ signal abandon_working_requested(payload: Dictionary)
 ## carries `default_kit_id`: `Main._kit_token` omits the token when the selection equals the default,
 ## so picking the `(default)` entry is how a player hands the choice back. `none` is bare-handed and
 ## is a real selection.
-signal build_kit_requested(payload: Dictionary)
-
-## The KIT one WORK SITE is kept with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
-## formatting `upkeep_kit <faction> <x> <y> [kit <id>]` / `upkeep_kit <faction> <herd_id> [kit <id>]`
-## (`docs/plan_standing_upkeep.md` §2.7, surfaced by §4.9 item 12c).
 ##
-## **THE SAME PAYLOAD AS THE SIGNAL ABOVE AND A WIDER REACH.** A queue entry belongs to the band that
-## declared it; a site's keeping tool is owed by every band of the faction working that site, which is
-## the sim's own `bands_working_source`. `default_kit_id` is `_kit_token`'s, so picking the
-## `(default)` entry omits the token and hands the site back to its derivation; `none` is bare-handed
-## and is a real selection.
-signal upkeep_kit_requested(payload: Dictionary)
+## ⛔ **NOTHING IN THE UI EMITS IT ANY MORE.** The queue row's picker retired with
+## `docs/plan_pool_toe.md` §3 — a build's tools follow from its rung — so the relay below and
+## `Main.format_build_kit` exist for `cargo xtask command-guard`, which parses the emitted line with
+## the real server parser. The verb retires end to end in the slice that owns that drive.
+##
+## > ⛔ RETIRED — **`upkeep_kit_requested`**, the per-SITE keeping kit, which carried the same payload
+## > with a wider reach: *"a queue entry belongs to the band that declared it; a site's keeping tool is
+## > owed by every band of the faction working that site."* §3 retired that choice too, and unlike
+## > `build_kit` nothing drives its grammar, so the signal, its relay and `Main.format_upkeep_kit` went
+## > rather than standing with no reader at all.
+signal build_kit_requested(payload: Dictionary)
 
 ## The band's build queue was DRAGGED into a new order — { faction, band_id, x, y, herd_id, position },
 ## Main formatting `build_order <faction> <band> <x> <y> <position>` /
@@ -734,17 +734,12 @@ func _ready() -> void:
     # **THE WITHDRAWAL'S OPTIMISTIC HALF RIDES THIS RELAY**, which is why it is a method rather than a
     # lambda — see `_on_queue_row_unqueue_requested`.
     _bandpanel.unqueue_requested.connect(_on_queue_row_unqueue_requested)
-    # The queue row's KIT picker and its drag, each straight through: neither needs an optimistic
-    # write on this layer. `buildKitId` is captured LIVE, so the recapture the command triggers
-    # already carries the pick; the drag's own overlay is written by the controller before it emits,
-    # beside the ordering it is about.
+    # `build_kit`, straight through: it needs no optimistic write on this layer, `buildKitId` being
+    # captured LIVE, so the recapture the command triggers already carries the pick. **No UI control
+    # emits it since `docs/plan_pool_toe.md` §3** — the relay is what `cargo xtask command-guard`
+    # records the grammar off, and the verb retires with that drive.
     _bandpanel.build_kit_requested.connect(
         func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
-    # The inspector strip's UPKEEP picker, straight through for the queue picker's reason:
-    # `upkeepKitId` is captured LIVE, so the recapture the command triggers already carries the pick
-    # and there is no optimistic write on this layer to roll back.
-    _bandpanel.upkeep_kit_requested.connect(
-        func(payload: Dictionary) -> void: upkeep_kit_requested.emit(payload))
     # …and the ring, whose entry point moved to the work row's standing-rung mark (§4.9 item 12c).
     # Straight through: `extend_pen` declares a build-queue entry and the recapture it triggers is
     # what draws it, so there is no optimistic write on this layer.
