@@ -146,8 +146,8 @@ group descends from.
   unrelated families.
 - **A split takes a proportional share, minimum one.** Five out of thirty takes one or two.
 - **A breeding population's ceiling is its lines × a per-line cap `K`.** Births stop there — the
-  pattern carry capacity already uses (`docs/plan_early_game_labor.md`: population ≤ carry cap,
-  births stop at the cap).
+  pattern the shipped population clamp already uses (`simulate_population`: total ≤
+  `population_cap`, births stop at the cap).
 - **Contact merges line sets.** Each side gains the lines it lacks. That is what a gathering does.
   Contact with your *own* split band counts — that is what a tribe was, exogamy between bands of
   the same people — but a *recent* split shares every line and adds nothing.
@@ -375,12 +375,11 @@ surplus**:
 first entry (settlement arc) → the granary as a tether → directed labor and the `leadership` term.
 Measure how much surplus a well-placed band actually runs today before setting the lesson's pace.
 
-**The carry cap (open).** Two positions, unresolved. The stale plan decision above argued for a hard
-bound on what a band carries, so that a fixed store is the only way to hold more. The other position
-is that spoilage may be enough: food carried spoils at the base rate, food in a fixed store spoils
-slower, and walking away from your store leaves its contents behind. Under that rule the bound on a
-nomad's larder is **emergent** — steady state is surplus per turn ÷ spoilage rate — and no separate
-carry rule is needed. Under discussion; the second position is the one leaning.
+**There is no carry cap (decided).** The stale plan decision above argued for a hard bound on what
+a band carries, so that a fixed store would be the only way to hold more. Spoilage is enough: food
+carried spoils at the base rate, food in a fixed store spoils slower, and walking away from your
+store leaves its contents behind. The bound on a nomad's larder is **emergent** — steady state is
+surplus per turn ÷ spoilage rate — and no separate carry rule exists.
 
 **"Away from your storage" needs no distance rule.** Two things already decided give it: food
 spoils at the rate of *where it is* (carried, or in a store), and **the granary is a supply-network
@@ -491,8 +490,6 @@ case, the haul and the party reading as part of the band, before any sim code.
   `labor_draw` and decay mean for a thing that produces belief.
 - The work party: the shipment launch gate for a far party whose only tie is the haul; which of
   the two "who eats" answers; whether a far forage party's larder counts toward the tether.
-- The carry cap: whether spoilage alone bounds a nomad's larder (steady state = surplus per turn ÷
-  spoilage rate), or a separate rule on what a band can carry is still needed.
 - The storage lesson's pace: measure how much surplus a well-placed band actually runs today before
   setting how fast rot teaches storage.
 - Why moving never paid: measure it before touching depletion tuning.
@@ -501,7 +498,7 @@ case, the haul and the party reading as part of the band, before any sim code.
 
 - `docs/plan_settlement_population.md` — tether, decay, emergent settlement label
 - `docs/plan_band_fission.md` — the split verb; independence = disconnection + grievance
-- `docs/plan_early_game_labor.md` — carry capacity as the nomad cap; spoilage deferred
+- `docs/plan_early_game_labor.md` — the first-act labor model; its carry-cap decision (7) is superseded here
 - `docs/plan_intensification.md` — actual vs sustainable income (the push)
 - `docs/plan_exploration_and_sites.md` — scout/hunt expeditions, wondrous sites
 - `docs/plan_the_telling.md` — stance vectors, the story that binds
