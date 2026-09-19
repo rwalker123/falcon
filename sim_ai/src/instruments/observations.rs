@@ -718,6 +718,7 @@ mod tests {
     const HORIZON: u32 = 3;
     /// The turns a pending split waits for its child in these tests.
     const SETTLE: u32 = 3;
+    const PATCH_WINDOW: u32 = 4;
     const FOREIGN_FACTION: u32 = FACTION + 1;
     const FOREIGN_BAND: u64 = BAND + 1;
     /// A tile inside the radius the seat has never discovered.
@@ -851,7 +852,7 @@ mod tests {
             working_age: 3,
             ..view.snapshot.populations[0].clone()
         });
-        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let observation = capture(&view, &memory);
         let ground = observation
             .ground
@@ -900,7 +901,7 @@ mod tests {
     #[test]
     fn only_own_bands_appear_and_the_neighborhood_is_the_discovered_disk_around_them() {
         let view = a_view_with_a_rival();
-        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let observation = capture(&view, &memory);
 
         assert_eq!(observation.tick, TICK);
@@ -986,7 +987,7 @@ mod tests {
     #[test]
     fn last_seen_and_the_intent_in_force_read_from_memory() {
         let mut view = a_view_with_a_rival();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         view.snapshot.header.tick = EARLIER_TICK;
         memory.observe(&view, FACTION);
         view.snapshot.header.tick = TICK;
@@ -1081,7 +1082,10 @@ mod tests {
             };
             patch.regrowth_samples = vec![regrowth; 3];
         }
-        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        let observation = capture(
+            &view,
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW),
+        );
         let ground = observation.bands[0].ground;
         assert_eq!(ground.sustained_take_here, NEAR_REGROWTH + RICH_REGROWTH);
         assert!(
@@ -1091,12 +1095,15 @@ mod tests {
         // With the rival on the rich patch it is struck out of both readings.
         let observation = capture(
             &a_view_with_a_rival(),
-            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE),
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW),
         );
         let with_rival = observation.bands[0].ground;
         assert!(with_rival.sustained_take_here < ground.sustained_take_here);
         // Without a regrowth curve the ground feeds nothing.
-        let bare = capture(&a_view(), &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        let bare = capture(
+            &a_view(),
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW),
+        );
         assert_eq!(bare.bands[0].ground.sustained_take_here, 0.0);
         assert_eq!(bare.bands[0].ground.best_sustained_cluster_in_horizon, 0.0);
     }
@@ -1120,7 +1127,7 @@ mod tests {
         let view = a_view_with_a_rival();
         let record = ObservationRecord::Observation(capture(
             &view,
-            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE),
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW),
         ));
         let line = serde_json::to_string(&record).expect("serialises");
         assert!(!line.contains('\n'));
@@ -1137,7 +1144,10 @@ mod tests {
     #[test]
     fn the_worked_row_and_its_source_carry_the_readout_fields() {
         let view = a_view_with_a_rival();
-        let observation = capture(&view, &SeatMemory::new(NO_MEMORY_DECAY, SETTLE));
+        let observation = capture(
+            &view,
+            &SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW),
+        );
         let band = &observation.bands[0];
         let row = &band.assignments[0];
         assert_eq!(row.workers_needed, 2);

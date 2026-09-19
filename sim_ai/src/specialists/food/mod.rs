@@ -27,12 +27,15 @@
 //! this specialist's weight — so the arbiter ranks by goal gap closed, and a rule that needs a goal
 //! and is handed none (the pass-through plan) proposes nothing.
 //!
-//! **Sources are ranked by the crew's expected take, not the per-worker rate** ([`sources`]). The
-//! frame's `per_worker_yield` is a rate; what a crew of `n` takes is `min(n × rate, ceiling)`, and
-//! the ceiling is composed from terms on the wire — `biomass × provisions_per_biomass`, the take at a
-//! zero escapement floor (`ForagePatchState::per_worker_yield` docs). The sim's default floor is
-//! not published, so this is an upper bound; a herd of a few animals still ranks below a stand the
-//! whole band can gather, which is the failure a per-worker ranking walked into.
+//! **Sources are ranked by the crew's expected take, not the per-worker rate** ([`sources`]). A
+//! patch: the frame's `per_worker_yield` is a rate; what a crew of `n` takes is `min(n × rate,
+//! ceiling)`, and the ceiling is composed from terms on the wire — `biomass ×
+//! provisions_per_biomass`, the take at a zero escapement floor (`ForagePatchState::per_worker_yield`
+//! docs). The sim's default floor is not published, so this is an upper bound; a herd of a few
+//! animals still ranks below a stand the whole band can gather, which is the failure a per-worker
+//! ranking walked into. A herd: **the sim's own crew-take curve** ([`crate::oracle`]), asked
+//! through the link and cached in `SeatMemory` — its `per_worker_yield` on the wire is the kit's
+//! carry, not a kill rate, and a herd the sim has not answered for is not a source.
 //!
 //! Every assignment is `assign_labor` with the kit left to the frame's default (`None` means the
 //! job's default on the wire) — a specialist names no number the sim already owns. The floor is
@@ -56,12 +59,12 @@ use crate::geometry::Tile;
 use crate::ground::GroundReadings;
 use crate::orchestrator::{Alarm, AlarmKind, Plan};
 use crate::profile::FoodFloors;
-use crate::view::{band_tile, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
-use ledger::{Book, Reassignment};
+use crate::view::{band_tile, row_key, SeatMemory, SeatView, WORKED_DEAD_AT_ONCE};
+use ledger::{Book, Reassignment, BEST_FLOOR};
 
 pub(crate) use sources::{
     best_sustained_cluster_within, cluster_take, cluster_take_sustained, foreign_band_at,
-    herd_kit_id, is_food_site, is_walkable, kit_units_held, patch_per_worker_yield,
+    herd_kit_id, honest_ceiling, is_food_site, is_walkable, kit_units_held, patch_per_worker_yield,
     sustained_hands, workable_patch_at, ClusterTake, IsDead, SourceKey,
 };
 use sources::{hunting_kits_held, Source};
@@ -105,31 +108,53 @@ impl Food {
         }
     }
 
-    /// Whether `band`'s row on `key` has realized less than `poor_yield_fraction` of `forecast`
-    /// per worker for `dead_row_turns` turns — or the sim has said no crew is useful on it.
+    /// Whether `band`'s row on `key` is **dead**: its window has run and it realized under
+    /// `poor_yield_fraction` of what it was forecast over it (`Realized::dead_under` in
+    /// `view.rs` — the window is the turns one kill takes at the row's crew,
+    /// `food.dead_row_turns` on a patch) — or the sim
+    /// has said no crew is useful on it (`WORKED_DEAD_AT_ONCE`).
+    ///
+    /// ⛔ **A dead patch is dead while it stands at its floor.** A patch pays nothing for a turn
+    /// when it has been stripped to the Best floor and its regrowth is a hair — the frame's own
+    /// word, `biomass ≤ BEST_FLOOR × carrying_capacity` — and that is what the verdict says;
+    /// once the stand has regrown above the floor there is food to take again and the record no
+    /// longer condemns it. Kept for good, the verdict blacklisted every stripped patch in reach
+    /// one by one (seed 50: 60,9 at t7 and t9), rule 1 fell silent from t14 to t45 with income
+    /// under consumption, and the band starved from a larder of 54. A herd's verdict stands as
+    /// long as its record does: its forecast is the curve, not the stand.
     fn is_dead(
         &self,
+        view: &SeatView,
         memory: &SeatMemory,
         band: &PopulationCohortState,
         key: &SourceKey,
-        forecast: f32,
     ) -> bool {
-        memory
+        let poor = memory
             .realized(&key.row_key(band.band_id))
-            .is_some_and(|realized| {
-                // The sim's own verdict, kept as `WORKED_DEAD_AT_ONCE`: no crew was useful on this
-                // row, so it carries no per-worker measurement to hold against the forecast.
-                realized.worked_turns == WORKED_DEAD_AT_ONCE
-                    || (realized.worked_turns >= self.floors.dead_row_turns
-                        && realized.per_worker.is_some_and(|per_worker| {
-                            per_worker < self.floors.poor_yield_fraction * forecast
-                        }))
-            })
+            .is_some_and(|realized| realized.dead_under(self.floors.poor_yield_fraction));
+        match key {
+            SourceKey::Patch(tile) => {
+                poor && view
+                    .patch_at(*tile)
+                    .is_none_or(|patch| patch.biomass <= BEST_FLOOR * patch.carrying_capacity)
+            }
+            SourceKey::Herd(_) => poor,
+        }
     }
 
-    /// The rate to rank `key` on: what the band realized **on that source**; else what the seat has
-    /// realized across that web (a hunt's published rate is not what a bare-handed crew takes, and a
-    /// seat that has measured one herd knows that about the next); else `forecast`.
+    /// The row's accounting for a reason (`took R of E expected over W turns`), when the band
+    /// has a record of it.
+    fn accounting(memory: &SeatMemory, band: &PopulationCohortState, key: &SourceKey) -> String {
+        memory
+            .realized(&key.row_key(band.band_id))
+            .map(|realized| realized.accounting())
+            .unwrap_or_default()
+    }
+
+    /// The rate to rank a **patch** under `key` on: what the band realized **on that source**;
+    /// else what the seat has realized across that web; else `forecast`. **A herd is ranked on
+    /// the sim's crew-take curve, never on what it realized** — a hunt pays in whole animals, so
+    /// a zero turn is a turn before the kill, not a rate — and this answers `forecast` for one.
     ///
     /// ⛔ **The web's prior may weigh a source down, never veto it.** `best_source` drops anything a
     /// crew would take nothing from, so a prior of `0.0` would strike out every source of its kind —
@@ -143,6 +168,9 @@ impl Food {
         key: &SourceKey,
         forecast: f32,
     ) -> f32 {
+        if matches!(key, SourceKey::Herd(_)) {
+            return forecast;
+        }
         memory
             .realized(&key.row_key(band.band_id))
             .and_then(|realized| realized.per_worker)
@@ -154,29 +182,40 @@ impl Food {
             .unwrap_or(forecast)
     }
 
-    /// The frame's forecast for the source under `key`, when it is in the frame.
-    fn forecast_for(view: &SeatView, key: &SourceKey) -> Option<f32> {
-        match key {
-            SourceKey::Patch(tile) => view.patch_at(*tile).map(|patch| patch.per_worker_yield),
-            SourceKey::Herd(id) => view
-                .snapshot
-                .herds
-                .iter()
-                .find(|herd| &herd.id == id)
-                .map(|herd| herd.per_worker_yield),
-        }
-    }
-
-    /// **What a worked `row` pays this band per worker today**: the frame's own `actual_yield`
-    /// over the crew — the income a hand leaving it costs. Not [`Food::rate`], which is what a
-    /// *next* assignment is expected to take and falls back to a forecast: a row nobody is useful
-    /// on realizes nothing, and leaving it costs nothing, whatever the herd was forecast to pay.
-    fn row_rate(row: &LaborAssignmentState) -> f32 {
+    /// **What a worked `row` pays this band per worker today** — the income a hand leaving it
+    /// costs, and the figure a row is "lowest" by. A **patch** row: the frame's own
+    /// `actual_yield` over the crew. A **hunt** row pays in whole animals, so its turn's take is
+    /// not a rate: while its window runs (`worked_turns < window`, [`crate::view::Realized`]) it
+    /// is priced at its forecast — the curve's likely at its crew, per hand — and once the window
+    /// has run at what it realized over it (`realized_sum / worked_turns`, per hand); a row
+    /// nobody was useful on (`WORKED_DEAD_AT_ONCE`), or one with no curve, at its `actual_yield`
+    /// like a patch. Not [`Food::rate`], which is what a *next* assignment is expected to take.
+    /// Priced per turn, seed 54's one hunter read as the lowest row on every zero turn and was
+    /// bounced onto a full patch and back every other turn from t26 to t45, each bounce the
+    /// band's one order, so the upgrade it should have made was `conflict` for twenty turns.
+    fn row_rate(
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+        row: &LaborAssignmentState,
+    ) -> f32 {
         if row.workers == 0 {
-            0.0
-        } else {
-            row.actual_yield / row.workers as f32
+            return 0.0;
         }
+        let crew = row.workers as f32;
+        if row.kind == ROLE_HUNT {
+            let record = memory.realized(&Self::row_key_of(band.band_id, row));
+            let curve = memory.crew_take(band.band_id, &row.fauna_id);
+            if let (Some(record), Some(curve)) = (record, curve) {
+                if record.worked_turns != WORKED_DEAD_AT_ONCE && record.window > 0 {
+                    return if record.worked_turns < record.window {
+                        curve.likely(row.workers) / crew
+                    } else {
+                        record.realized_sum / record.worked_turns as f32 / crew
+                    };
+                }
+            }
+        }
+        row.actual_yield / crew
     }
 
     /// The sources within `band`'s reach that the seat has discovered and has not found dead.
@@ -205,11 +244,9 @@ impl Food {
                 per_worker_yield: patch_per_worker_yield(memory, band, patch),
                 ceiling: patch.biomass * patch.provisions_per_biomass,
                 crew_cap: None,
+                curve: None,
             })
-            .filter(|source| {
-                let forecast = Self::forecast_for(view, &source.key).unwrap_or_default();
-                !self.is_dead(memory, band, &source.key, forecast)
-            })
+            .filter(|source| !self.is_dead(view, memory, band, &source.key))
             .collect();
         // A herd is a source only for a band holding a unit of the kit that herd is hunted
         // under ([`herd_kit_id`], [`kit_units_held`]), and credits no more hands than the units
@@ -219,7 +256,11 @@ impl Food {
         // the herd's, so one spear arms one hunter on one herd, not one on each: the band-wide
         // "holds any hunting kit" reading sent twelve hands after one spear, and the per-herd
         // count alone sent a second hunter to the aurochs while the first stood on the deer
-        // (bench seed 19, t2–t3).
+        // (bench seed 19, t2–t3). **And only once the sim has answered for it**: a herd's
+        // forecast is the crew-take curve in memory (`SeatMemory::crew_take`), never the row's
+        // `per_worker_yield` — that is the kit's carry (0.8 on every herd in view), and ranked on
+        // it five hunters read 4.0 a turn off a boar that paid 0.24 (seed 54). No curve, no
+        // source, this turn.
         let kits_held = hunting_kits_held(view, band);
         let kit_of_row = |row: &LaborAssignmentState| {
             view.snapshot
@@ -249,19 +290,19 @@ impl Food {
                     if units == Some(0) {
                         return None;
                     }
+                    let curve = memory.crew_take(band.band_id, &herd.id)?.clone();
+                    let plateau = curve.plateau();
                     let key = SourceKey::Herd(herd.id.clone());
                     Some(Source {
-                        per_worker_yield: Self::rate(memory, band, &key, herd.per_worker_yield),
+                        per_worker_yield: curve.likely(1),
                         key,
                         tile: Tile::new(herd.x, herd.y),
                         ceiling: herd.biomass * herd.provisions_per_biomass,
-                        crew_cap: units,
+                        crew_cap: Some(units.map_or(plateau, |units| units.min(plateau))),
+                        curve: Some(curve),
                     })
                 })
-                .filter(|source| {
-                    let forecast = Self::forecast_for(view, &source.key).unwrap_or_default();
-                    !self.is_dead(memory, band, &source.key, forecast)
-                }),
+                .filter(|source| !self.is_dead(view, memory, band, &source.key)),
         );
         debug!(
             band = band.band_id,
@@ -381,6 +422,17 @@ impl Food {
             kit_id: None,
             take_species: Vec::new(),
         }
+    }
+
+    /// The memory key of `row` on `band_id` ([`row_key`]).
+    fn row_key_of(band_id: u64, row: &LaborAssignmentState) -> String {
+        row_key(
+            band_id,
+            &row.kind,
+            row.target_x,
+            row.target_y,
+            &row.fauna_id,
+        )
     }
 
     /// Workers already on `key`'s row, if the band works it.
@@ -552,8 +604,35 @@ pub(crate) mod tests {
         }
     }
 
+    /// The forager's `food.dead_row_turns`, the window a patch row is judged over.
+    pub const PATCH_WINDOW: u32 = 4;
+
     pub fn memory() -> SeatMemory {
-        SeatMemory::new(NO_MEMORY_DECAY, SETTLE)
+        SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW)
+    }
+
+    /// One animal of the fixture's herd is one food: a kill window of one turn at any crew
+    /// that takes a whole food.
+    pub const FIXTURE_BODY_FOOD: f32 = 1.0;
+
+    /// **A memory the sim has answered for every herd in `view`** — with the curve the linear
+    /// model read before the oracle existed: `min(n × per_worker_yield, biomass ×
+    /// provisions_per_biomass)` for `n` in `1..=HUNT_KIT_UNITS`. The fixture's herd (1.5 a hand,
+    /// a ceiling of its biomass) keeps its arithmetic, with the curve in place of the rate.
+    pub fn memory_forecasting(view: &SeatView) -> SeatMemory {
+        let mut memory = memory();
+        for herd in &view.snapshot.herds {
+            let ceiling = herd.biomass * herd.provisions_per_biomass;
+            let points: Vec<(u32, f32)> = (1..=HUNT_KIT_UNITS)
+                .map(|n| (n, (n as f32 * herd.per_worker_yield).min(ceiling)))
+                .collect();
+            memory.remember_crew_take(
+                BAND,
+                &herd.id,
+                crate::oracle::curve_of(&points, FIXTURE_BODY_FOOD),
+            );
+        }
+        memory
     }
 
     /// The raster the fixture world is: 8 wide, 6 high, wrapped.

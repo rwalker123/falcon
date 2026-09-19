@@ -83,11 +83,14 @@ pub struct Behaviors {
 pub struct FoodFloors {
     /// `FoodShort` when the minimum own-band `turns_of_food` is below this.
     pub runway_floor_turns: f32,
-    /// A worked row whose realized take per worker has stayed below `poor_yield_fraction` of the
-    /// frame's forecast for this many consecutive turns is a **dead row**: its crew is moved and its
-    /// source avoided. (A hunt row the sim marks `hunt_useful_workers == 0` is dead at once.)
+    /// **The window a patch is judged over**, in turns; a herd's is its kill cadence
+    /// (`ceil(body_food / likely)` off the sim's crew-take curve). A worked patch row realizing
+    /// under `poor_yield_fraction` of its forecast, summed over this many turns at its current
+    /// crew, is a **dead row**: its crew is moved and its source avoided while it stands at its
+    /// floor.
     pub dead_row_turns: u32,
-    /// The share of the forecast a row must realize, per worker, not to count as dead.
+    /// The share of its forecast a worked row must realize **over its window** not to be a
+    /// **dead row**. (A hunt row the sim marks `hunt_useful_workers == 0` is dead at once.)
     pub poor_yield_fraction: f32,
     /// *Runway*: the share by which the band's best worked row must out-pay its worst, per worker,
     /// before moving a crew between them is worth an order — `(high − low) / high`.

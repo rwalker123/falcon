@@ -201,6 +201,8 @@ impl Food {
     /// given until each is empty. `hands` is what could be freed, which may be short of `want`.
     fn draw(
         &self,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
         surplus_from: &[&LaborAssignmentState],
         rows: &[&LaborAssignmentState],
         want: u32,
@@ -243,7 +245,7 @@ impl Food {
             if take == 0 {
                 continue;
             }
-            drawn.income_lost += Self::row_rate(row) * take as f32;
+            drawn.income_lost += Self::row_rate(memory, band, row) * take as f32;
             match drawn
                 .reductions
                 .iter_mut()
@@ -258,13 +260,18 @@ impl Food {
     }
 
     /// The band's rows carrying surplus hands ([`surplus_hands`]), lowest-paying first.
-    fn surplus_rows(band: &PopulationCohortState) -> Vec<&LaborAssignmentState> {
+    fn surplus_rows<'b>(
+        memory: &SeatMemory,
+        band: &'b PopulationCohortState,
+    ) -> Vec<&'b LaborAssignmentState> {
         let mut rows: Vec<&LaborAssignmentState> = band
             .labor_assignments
             .iter()
             .filter(|row| surplus_hands(row) > 0)
             .collect();
-        rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
+        rows.sort_by(|a, b| {
+            Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
+        });
         rows
     }
 
@@ -292,6 +299,7 @@ impl Food {
 
     /// The band's worked rows under `role`, lowest-paying first.
     fn rows_ascending<'b>(
+        memory: &SeatMemory,
         band: &'b PopulationCohortState,
         role: &str,
     ) -> Vec<&'b LaborAssignmentState> {
@@ -300,7 +308,9 @@ impl Food {
             .iter()
             .filter(|row| row.kind == role && row.workers > 0)
             .collect();
-        rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
+        rows.sort_by(|a, b| {
+            Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
+        });
         rows
     }
 
@@ -326,22 +336,18 @@ impl Food {
                 WHY_OVERUSED
             } else if row.kind == ROLE_HUNT && row.hunt_useful_workers == 0 {
                 WHY_NO_USEFUL_CREW
-            } else if self.is_dead(
-                memory,
-                band,
-                key,
-                Self::forecast_for(view, key).unwrap_or_default(),
-            ) {
+            } else if self.is_dead(view, memory, band, key) {
                 WHY_DEAD_ROW
             } else {
                 continue;
             };
             return Some((row, key.clone(), true, why));
         }
-        let per_worker = |row: &LaborAssignmentState| row.actual_yield / row.workers as f32;
         worked
             .into_iter()
-            .min_by(|(a, _), (b, _)| per_worker(a).total_cmp(&per_worker(b)))
+            .min_by(|(a, _), (b, _)| {
+                Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
+            })
             .map(|(row, key)| (row, key, false, WHY_LOWEST_ROW))
     }
 
@@ -353,7 +359,12 @@ impl Food {
     /// would read surplus where it lands stays where it is. The second half is the frame's own
     /// word: the ceiling the model deals by said 47,5 and 49,5 each had room for one more hand
     /// while the frame read that hand as surplus wherever it stood, and rule 1 sent it back and
-    /// forth every turn of seed 23's t45–t52.
+    /// forth every turn of seed 23's t45–t52. (The row-full half also refuses an exactly-staffed
+    /// row with room above its floor — seed 50's parent stood silent with six surplus hands from
+    /// t5 to t45 beside 60,12 at `w1 n1`. Dropped, with the marginal read against the honest
+    /// ceiling instead, the eight bench seeds read 169 working / 20 hunger deaths against this
+    /// form's 163 / 16, but the seat then split twice in three turns on the outfitting
+    /// scenario's world and `ai_seat_scenario` found the family one basket short of its grant.)
     fn improves(
         &self,
         view: &SeatView,
@@ -433,12 +444,11 @@ impl Food {
     ) -> Vec<Candidate> {
         let mut out = Vec::new();
         let idle = band.idle_workers.min(budget);
-        let surplus_rows = Self::surplus_rows(band);
-        let free = self.draw(&surplus_rows, &[], budget, idle);
+        let surplus_rows = Self::surplus_rows(memory, band);
+        let free = self.draw(memory, band, &surplus_rows, &[], budget, idle);
         let donors: Vec<SourceKey> = free.reductions.iter().map(|(key, _)| key.clone()).collect();
         if free.hands > 0 {
-            let is_dead =
-                |key: &SourceKey, forecast: f32| self.is_dead(memory, band, key, forecast);
+            let is_dead = |key: &SourceKey| self.is_dead(view, memory, band, key);
             // Only the sites the hands improve take any; the hands a site could not use stay
             // where they are, so the donors are drawn down only by what is placed.
             let improves = |tile: Tile, hands: u32, take: f32| {
@@ -459,7 +469,7 @@ impl Food {
             );
             let dealt: u32 = sites.iter().map(DealtSite::hands).sum();
             if dealt > 0 {
-                let placed_hands = self.draw(&surplus_rows, &[], dealt, idle);
+                let placed_hands = self.draw(memory, band, &surplus_rows, &[], dealt, idle);
                 let mut commands = self.reduction_commands(band, &placed_hands);
                 let mut placed = Vec::new();
                 for site in &sites {
@@ -524,7 +534,7 @@ impl Food {
             });
         if let Some((best, hands)) = free_onto {
             let existing = Self::workers_on(band, &best.key);
-            let sent = self.draw(&surplus_rows, &[], hands, idle);
+            let sent = self.draw(memory, band, &surplus_rows, &[], hands, idle);
             let mut commands = self.reduction_commands(band, &sent);
             commands.push(self.assign(band, &best.key, existing + sent.hands));
             out.push(Candidate {
@@ -538,7 +548,7 @@ impl Food {
                 subject: format!(
                     "{} -> {}",
                     Self::free_hands_phrase(sent.idle, sent.hands - sent.idle),
-                    best.key.describe()
+                    best.describe_for(existing + sent.hands)
                 ),
             });
         }
@@ -549,7 +559,18 @@ impl Food {
         if moved == 0 {
             return out;
         }
-        let low = Self::row_rate(row);
+        // The row as the reason names it; a dead row carries its accounting — `dead row hunt
+        // herd_9: took 0.24 of 1.20 expected over 4 turns`.
+        let why = if why == WHY_DEAD_ROW {
+            format!(
+                "{why} {}: {}",
+                low_key.describe(),
+                Self::accounting(memory, band, &low_key)
+            )
+        } else {
+            format!("{why} {}", low_key.describe())
+        };
+        let low = Self::row_rate(memory, band, row);
         // ⛔ **A SHUFFLE MUST BUY SOMETHING.** With only "are these distinct rows" between them,
         // two rows paying the same moved workers back and forth every turn under the alarm, at
         // the highest score the specialist had, and one order per band then rejected the idle
@@ -561,6 +582,22 @@ impl Food {
                 || (next.per_worker_yield > 0.0
                     && next.per_worker_yield - low
                         >= self.floors.runway_gain_fraction * next.per_worker_yield)
+        };
+        // ⛔ **A merely lowest row lands only where its hands improve the take** — the same
+        // guard the free-hand path has (`improves`): a patch whose row already reads `workers ≥
+        // workers_needed` takes no more. A troubled row leaves whatever it lands on. Without
+        // this a hunter on a zero turn was the lowest row, went back onto the full patch it had
+        // been surplus on, was surplus there again, and went back to the herd — every other turn
+        // of seed 54's t26–t45, each bounce the band's one order. (Narrowed to rows already
+        // carrying surplus, `workers > workers_needed`, the eight seeds read 147 working and 26
+        // hunger deaths against this guard's 164 and 20 — the seat shuffled whole rows onto
+        // exactly-staffed patches every turn again.)
+        let lands_well = |next: &Source, hands: u32, take: f32| {
+            troubled
+                || match next.key {
+                    SourceKey::Patch(tile) => self.improves(view, memory, band, tile, hands, take),
+                    SourceKey::Herd(_) => true,
+                }
         };
         if let Some(next) = Self::best_source(sources, moved, std::slice::from_ref(&low_key))
             .filter(|next| clears(next))
@@ -576,7 +613,10 @@ impl Food {
                 income_gained: next.marginal(existing, placed),
                 payoff_turn: 0,
             };
-            if placed > 0 && change.income_gained > change.income_lost {
+            if placed > 0
+                && change.income_gained > change.income_lost
+                && lands_well(next, placed, change.income_gained)
+            {
                 out.push(Candidate {
                     commands: vec![
                         self.assign(band, &low_key, row.workers - leaving),
@@ -584,7 +624,7 @@ impl Food {
                     ],
                     hands: leaving,
                     change,
-                    subject: format!("{why} {} -> {}", low_key.describe(), next.key.describe()),
+                    subject: format!("{why} -> {}", next.describe_for(existing + placed)),
                 });
             }
         }
@@ -594,7 +634,14 @@ impl Food {
             .copied()
             .filter(|other| SourceKey::of_row(other).as_ref() != Some(&low_key))
             .collect();
-        let free = self.draw(&surplus_elsewhere, &[], budget.saturating_sub(moved), idle);
+        let free = self.draw(
+            memory,
+            band,
+            &surplus_elsewhere,
+            &[],
+            budget.saturating_sub(moved),
+            idle,
+        );
         let both = free.hands + moved;
         if free.hands > 0 && both <= budget {
             let mut except: Vec<SourceKey> =
@@ -611,7 +658,9 @@ impl Food {
                     income_gained: best.marginal(existing, both),
                     payoff_turn: 0,
                 };
-                if change.income_gained > change.income_lost {
+                if change.income_gained > change.income_lost
+                    && lands_well(best, both, change.income_gained)
+                {
                     let mut commands = self.reduction_commands(band, &free);
                     commands.push(self.assign(band, &low_key, row.workers - moved));
                     commands.push(self.assign(band, &best.key, existing + both));
@@ -620,10 +669,9 @@ impl Food {
                         hands: both,
                         change,
                         subject: format!(
-                            "{} and {why} {} -> {}",
+                            "{} and {why} -> {}",
                             Self::free_hands_phrase(free.idle, free.hands - free.idle),
-                            low_key.describe(),
-                            best.key.describe()
+                            best.describe_for(existing + both)
                         ),
                     });
                 }
@@ -650,7 +698,7 @@ impl Food {
         };
         let fires = band.food_income < band.food_consumption
             || band.idle_workers > 0
-            || !Self::surplus_rows(band).is_empty();
+            || !Self::surplus_rows(memory, band).is_empty();
         if !fires || band.is_traveling || memory.born_by_split(band.band_id).is_some() {
             return (None, Reassignment::NONE);
         }
@@ -787,7 +835,9 @@ impl Food {
                 })
             })
             .collect();
-        staying.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
+        staying.sort_by(|a, b| {
+            Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
+        });
         let idle = band.idle_workers.min(budget);
         let book = Self::book(band);
         let horizon = self.floors.projection_horizon_turns;
@@ -795,7 +845,7 @@ impl Food {
         let mut best: Option<(Drawn, &Source, Projection, f32, Reassignment)> = None;
         let none: [&LaborAssignmentState; 0] = [];
         for (rows, want) in [(&none[..], idle), (&staying[..], budget)] {
-            let drawn = self.draw(&[], rows, want, idle);
+            let drawn = self.draw(memory, band, &[], rows, want, idle);
             if drawn.hands == 0 {
                 continue;
             }
@@ -809,7 +859,7 @@ impl Food {
                 continue;
             }
             let drawn = if usable < drawn.hands {
-                self.draw(&[], rows, usable, idle)
+                self.draw(memory, band, &[], rows, usable, idle)
             } else {
                 drawn
             };
@@ -841,7 +891,7 @@ impl Food {
             reason: format!(
                 "{REASON_FEED_MOVE}: {} hands onto {} before it falls out of range from {},{} [{}]",
                 drawn.hands,
-                source.key.describe(),
+                source.describe_for(existing + drawn.hands),
                 target.x,
                 target.y,
                 ledger_note(&after)
@@ -973,7 +1023,7 @@ impl Food {
             })
             .filter(|(patch, _)| {
                 let key = SourceKey::Patch(Tile::new(patch.x, patch.y));
-                !self.is_dead(memory, band, &key, patch.per_worker_yield)
+                !self.is_dead(view, memory, band, &key)
             })
             .filter_map(|(patch, distance)| {
                 let rate = patch_per_worker_yield(memory, band, patch);
@@ -1001,10 +1051,19 @@ impl Food {
         let crew = site.crew;
         let travel = site.distance.div_ceil(BAND_MOVE_TILES_PER_TURN);
         // The hands leave the parent's rows, lowest-paying first (its idle ones cost nothing).
-        let mut rows = Self::rows_ascending(band, ROLE_HUNT);
-        rows.extend(Self::rows_ascending(band, ROLE_FORAGE));
-        rows.sort_by(|a, b| Self::row_rate(a).total_cmp(&Self::row_rate(b)));
-        let drawn = self.draw(&Self::surplus_rows(band), &rows, crew, band.idle_workers);
+        let mut rows = Self::rows_ascending(memory, band, ROLE_HUNT);
+        rows.extend(Self::rows_ascending(memory, band, ROLE_FORAGE));
+        rows.sort_by(|a, b| {
+            Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
+        });
+        let drawn = self.draw(
+            memory,
+            band,
+            &Self::surplus_rows(memory, band),
+            &rows,
+            crew,
+            band.idle_workers,
+        );
         // What the parent keeps: the rows drawn are lost, the mouths that leave are gained.
         let change = Reassignment {
             income_lost: drawn.income_lost,
@@ -1202,8 +1261,8 @@ impl Food {
         if herds.is_empty() {
             return None;
         }
-        let forage = Self::rows_ascending(band, ROLE_FORAGE);
-        let forage_surplus: Vec<&LaborAssignmentState> = Self::surplus_rows(band)
+        let forage = Self::rows_ascending(memory, band, ROLE_FORAGE);
+        let forage_surplus: Vec<&LaborAssignmentState> = Self::surplus_rows(memory, band)
             .into_iter()
             .filter(|row| row.kind == ROLE_FORAGE)
             .collect();
@@ -1212,7 +1271,7 @@ impl Food {
             // Off the rows only — their surplus first, then the lowest-paying: the idle hands are
             // *negative income*'s to place, and a hunt drawn from them would compete with that
             // assignment for the same rows.
-            let drawn = self.draw(&forage_surplus, &forage, hands, 0);
+            let drawn = self.draw(memory, band, &forage_surplus, &forage, hands, 0);
             if drawn.hands < hands {
                 break;
             }
@@ -1252,7 +1311,7 @@ impl Food {
             reason: format!(
                 "{REASON_SPARE_HANDS}: {} hands onto {} [{}]",
                 drawn.hands,
-                herd.key.describe(),
+                herd.describe_for(existing + drawn.hands),
                 ledger_note(&projection)
             ),
             memo: None,
@@ -1358,8 +1417,8 @@ impl Food {
         let after = project(&book, carried, horizon);
         let idle = band.idle_workers.min(budget);
         let builders_now = Self::workers_in_pool(band, ROLE_BUILDERS);
-        let surplus_rows = Self::surplus_rows(band);
-        let free = self.draw(&surplus_rows, &[], budget, idle);
+        let surplus_rows = Self::surplus_rows(memory, band);
+        let free = self.draw(memory, band, &surplus_rows, &[], budget, idle);
         let mut best: Option<(Proposal, f32, Reassignment)> = None;
         for row in band
             .labor_assignments
@@ -1417,14 +1476,14 @@ impl Food {
             if gained <= 0.0 || work_left <= 0.0 || per_builder <= 0.0 {
                 continue;
             }
-            let mut pool = Self::rows_ascending(band, ROLE_HUNT);
+            let mut pool = Self::rows_ascending(memory, band, ROLE_HUNT);
             pool.extend(
-                Self::rows_ascending(band, ROLE_FORAGE)
+                Self::rows_ascending(memory, band, ROLE_FORAGE)
                     .into_iter()
                     .filter(|other| Tile::new(other.target_x, other.target_y) != tile),
             );
             for hands in free.hands.max(1)..=budget {
-                let drawn = self.draw(&surplus_rows, &pool, hands, idle);
+                let drawn = self.draw(memory, band, &surplus_rows, &pool, hands, idle);
                 if drawn.hands < hands {
                     break;
                 }
@@ -1513,7 +1572,7 @@ impl Food {
             return Vec::new();
         }
         let tick = view.tick();
-        let is_dead = |key: &SourceKey, forecast: f32| self.is_dead(memory, band, key, forecast);
+        let is_dead = |key: &SourceKey| self.is_dead(view, memory, band, key);
         let horizon = self.floors.projection_horizon_turns;
         let (gathering, spare) = self.outfit_split(view, memory, band, &is_dead, horizon);
         let demand = |resource: Resource, amount: u32, priority: f32| Demand {
@@ -1894,10 +1953,10 @@ impl Food {
         let held = Self::workers_in_pool(band, ROLE_AGRICULTURE);
         let want = need.saturating_sub(held).max(HOLD_MIN_HANDS).min(budget);
         let idle = band.idle_workers.min(budget);
-        let surplus_rows = Self::surplus_rows(band);
-        let mut pool = Self::rows_ascending(band, ROLE_HUNT);
-        pool.extend(Self::rows_ascending(band, ROLE_FORAGE));
-        let drawn = self.draw(&surplus_rows, &pool, want, idle);
+        let surplus_rows = Self::surplus_rows(memory, band);
+        let mut pool = Self::rows_ascending(memory, band, ROLE_HUNT);
+        pool.extend(Self::rows_ascending(memory, band, ROLE_FORAGE));
+        let drawn = self.draw(memory, band, &surplus_rows, &pool, want, idle);
         if drawn.hands < want {
             return None;
         }
@@ -1930,7 +1989,7 @@ impl Food {
             // The rebuild an unwound rung costs, once, at the horizon's end: the work already
             // done in builder-turns at the row's rate — the patch's forecast on an emptied row.
             let row_rate = if row.workers > 0 {
-                Self::row_rate(row)
+                Self::row_rate(memory, band, row)
             } else {
                 rate
             };
@@ -2174,12 +2233,14 @@ impl Food {
 #[cfg(test)]
 mod tests {
     use super::super::tests::{
-        a_view, food, goals, memory, own_band, plan_toward, plan_with_food_share, ARMED_ATTACK,
-        BAND, BARE_KIT, FACTION, FAR_PATCH, FORAGE_KIT, HERD_AT, HERD_ID, HERE, HUNT_KIT,
-        NEAR_PATCH, RICH_PATCH, STOCK, TICK, WORK_RANGE,
+        a_view, food, goals, memory, memory_forecasting, own_band, plan_toward,
+        plan_with_food_share, ARMED_ATTACK, BAND, BARE_KIT, FACTION, FAR_PATCH, FIXTURE_BODY_FOOD,
+        FORAGE_KIT, HERD_AT, HERD_ID, HERE, HUNT_KIT, HUNT_KIT_UNITS, NEAR_PATCH, PATCH_WINDOW,
+        RICH_PATCH, STOCK, TICK, WORK_RANGE,
     };
     use super::*;
     use crate::ground::{Classified, GroundReadings, PlannedBand, Reading, StartKind};
+    use crate::oracle::curve_of;
     use crate::orchestrator::Plan;
     use crate::profile::AiProfiles;
     use crate::specialists::Specialist;
@@ -2317,7 +2378,7 @@ mod tests {
         let specialist = food();
         let herd_source = |view: &SeatView| {
             specialist
-                .reachable_sources(view, &memory(), own_band(view))
+                .reachable_sources(view, &memory_forecasting(view), own_band(view))
                 .into_iter()
                 .find(|source| matches!(source.key, SourceKey::Herd(_)))
         };
@@ -2326,7 +2387,7 @@ mod tests {
         let source = herd_source(&armed).expect("a source");
         assert_eq!(source.crew_cap, Some(17));
         let proposal = specialist
-            .negative_income(&armed, &plan, &memory(), own_band(&armed))
+            .negative_income(&armed, &plan, &memory_forecasting(&armed), own_band(&armed))
             .expect("a proposal");
         assert_eq!(
             assigned_to(&proposal.commands[0]),
@@ -2347,7 +2408,7 @@ mod tests {
         };
         alone.snapshot.forage_patches.clear();
         let proposal = specialist
-            .negative_income(&alone, &plan, &memory(), own_band(&alone))
+            .negative_income(&alone, &plan, &memory_forecasting(&alone), own_band(&alone))
             .expect("the one hand");
         assert_eq!(
             assigned_to(&proposal.commands[0]),
@@ -2367,7 +2428,11 @@ mod tests {
         });
         committed.snapshot.populations[0].labor_assignments = vec![hunt_row(1, 1.5, 1)];
         committed.snapshot.populations[0].idle_workers = 16;
-        let sources = specialist.reachable_sources(&committed, &memory(), own_band(&committed));
+        let sources = specialist.reachable_sources(
+            &committed,
+            &memory_forecasting(&committed),
+            own_band(&committed),
+        );
         let herd_caps: Vec<(String, Option<u32>)> = sources
             .iter()
             .filter_map(|source| match &source.key {
@@ -2380,7 +2445,7 @@ mod tests {
         let bare = spears(0);
         assert!(herd_source(&bare).is_none());
         let proposal = specialist
-            .negative_income(&bare, &plan, &memory(), own_band(&bare))
+            .negative_income(&bare, &plan, &memory_forecasting(&bare), own_band(&bare))
             .expect("the near patch");
         assert_eq!(assigned_to(&proposal.commands[0]).0, ROLE_FORAGE);
         assert!(
@@ -2388,7 +2453,7 @@ mod tests {
                 .spare_hands_into_hunts(
                     &bare,
                     &plan,
-                    &memory(),
+                    &memory_forecasting(&bare),
                     own_band(&bare),
                     &Reassignment::NONE
                 )
@@ -2402,7 +2467,11 @@ mod tests {
         fallback.snapshot.default_hunt_kit_id = HUNT_KIT.to_owned();
         assert_eq!(herd_source(&fallback).map(|s| s.crew_cap), Some(Some(2)));
         fallback.snapshot.herds[0].default_kit_id = BARE_KIT.to_owned();
-        assert_eq!(herd_source(&fallback).map(|s| s.crew_cap), Some(None));
+        // A kit that carries nothing bounds nothing; the curve's plateau still does.
+        assert_eq!(
+            herd_source(&fallback).map(|s| s.crew_cap),
+            Some(Some(HUNT_KIT_UNITS))
+        );
         fallback.snapshot.herds[0].default_kit_id = "no_such_kit".to_owned();
         assert!(herd_source(&fallback).is_none());
         // The outfit demand is the roster's business, not the batches': bare, the window still
@@ -2418,7 +2487,12 @@ mod tests {
         window.snapshot.herds[0].per_worker_biomass = 40.0;
         // A defense the roster's spear clears (the saturated fixture's herd is armoured).
         window.snapshot.herds[0].defense = 5.0;
-        let demands = specialist.outfit_demands(&window, &memory(), own_band(&window), None);
+        let demands = specialist.outfit_demands(
+            &window,
+            &memory_forecasting(&window),
+            own_band(&window),
+            None,
+        );
         assert!(
             demands
                 .iter()
@@ -2527,6 +2601,7 @@ mod tests {
             field_hands_hoed: 0,
             kit_needed: None,
             kit_units_held: None,
+            unforecast: false,
         }
     }
 
@@ -3523,10 +3598,11 @@ mod tests {
     }
 
     /// A hand that would read surplus where it lands stays where it is: seventeen on a site
-    /// reading `workers_needed 8`, the second site already at the crew the frame says it needs —
-    /// nothing moves, and the same with the second site at its ceiling. (The near row pays its
-    /// hands more than the rich one does, so rule 1's row-to-empty path has nowhere better to
-    /// send the rich row either, and the free-hand path is what is pinned.)
+    /// reading `workers_needed 8`, the second site standing at its floor with its six hands
+    /// already taking the floor's regrowth — its honest ceiling — so another hand's marginal
+    /// there is nothing; nothing moves, and the same with the second site at its ceiling. (The
+    /// near row pays its hands more than the rich one does, so rule 1's row-to-empty path has
+    /// nowhere better to send the rich row either, and the free-hand path is what is pinned.)
     #[test]
     fn a_free_hand_does_not_move_onto_a_site_that_cannot_use_it() {
         let parked = |near: LaborAssignmentState| {
@@ -3544,11 +3620,17 @@ mod tests {
                 ];
             })
         };
-        // The near row reads full: six hands, six needed.
-        let full = parked(LaborAssignmentState {
+        // The near patch at its floor, regrowing six a turn: its six hands take exactly that.
+        let mut full = parked(LaborAssignmentState {
             workers_needed: 6,
-            ..forage_row(NEAR_PATCH, 6, 12.0)
+            ..forage_row(NEAR_PATCH, 6, 6.0)
         });
+        for patch in &mut full.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == NEAR_PATCH {
+                patch.biomass = BEST_FLOOR * patch.carrying_capacity;
+                patch.regrowth_samples = vec![6.0, 6.0];
+            }
+        }
         assert!(food()
             .negative_income(
                 &full,
@@ -3626,7 +3708,7 @@ mod tests {
             .negative_income(
                 &view,
                 &plan_with_food_share(1.0),
-                &memory(),
+                &memory_forecasting(&view),
                 own_band(&view),
             )
             .unwrap();
@@ -3641,7 +3723,7 @@ mod tests {
             .negative_income(
                 &view,
                 &plan_with_food_share(1.0),
-                &memory(),
+                &memory_forecasting(&view),
                 own_band(&view),
             )
             .unwrap();
@@ -3652,7 +3734,7 @@ mod tests {
             .negative_income(
                 &view,
                 &plan_with_food_share(1.0),
-                &memory(),
+                &memory_forecasting(&view),
                 own_band(&view),
             )
             .unwrap();
@@ -3836,10 +3918,10 @@ mod tests {
         }];
         view.snapshot.populations[0].idle_workers = 5;
         let specialist = food();
-        let mut memory = memory();
-        for _ in 0..specialist.floors.dead_row_turns {
-            memory.observe(&view, FACTION);
-        }
+        // The curve forecasts 18 a turn for twelve; the row's window at that rate is one turn
+        // (one animal is one food), so one turn of 0.12 is the verdict.
+        let mut memory = memory_forecasting(&view);
+        memory.observe(&view, FACTION);
         let proposal = specialist
             .negative_income(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
             .expect("the dead row and the idle hands");
@@ -3887,10 +3969,9 @@ mod tests {
         }];
         view.snapshot.populations[0].idle_workers = 5;
         let specialist = food();
-        let mut memory = memory();
-        for _ in 0..specialist.floors.dead_row_turns {
-            memory.observe(&view, FACTION);
-        }
+        // One turn: the row's window at the curve's 18 a turn (see the test above).
+        let mut memory = memory_forecasting(&view);
+        memory.observe(&view, FACTION);
         let proposal = specialist
             .negative_income(
                 &view,
@@ -3914,14 +3995,15 @@ mod tests {
     /// plateau, so twelve hands on a plateau of two bring home what two bring home. Measured
     /// against the twelve the band *assigned*, that reads as a sixth of the forecast — under the
     /// forager's `poor_yield_fraction` — and the herd was declared dead and struck off
-    /// `reachable_sources`, on a row the specialist had staffed that way itself.
+    /// `reachable_sources`, on a row the specialist had staffed that way itself. (Now the
+    /// sim's curve is the forecast, and it plateaus at two: twelve are forecast what two take.)
     #[test]
     fn an_over_staffed_hunt_row_is_measured_on_its_plateau_and_is_not_dead() {
         const ASSIGNED: u32 = 12;
         const PLATEAU: u32 = 2;
         let mut view = a_view();
         view.snapshot.herds[0].biomass = 100.0;
-        // The forecast is 1.5 a worker; the plateau of two takes 3.0, which is exactly it.
+        // The curve: 1.5 for one, 3.0 from two on; the plateau of two takes 3.0, which is exactly it.
         view.snapshot.populations[0].labor_assignments = vec![LaborAssignmentState {
             sustainable_yield: 10.0,
             ..hunt_row(ASSIGNED, PLATEAU as f32 * 1.5, PLATEAU)
@@ -3929,17 +4011,28 @@ mod tests {
         view.snapshot.populations[0].idle_workers = 5;
         let specialist = food();
         let mut memory = memory();
-        for _ in 0..specialist.floors.dead_row_turns + 1 {
+        let points: Vec<(u32, f32)> = (1..=HUNT_KIT_UNITS)
+            .map(|n| (n, (n.min(PLATEAU)) as f32 * 1.5))
+            .collect();
+        memory.remember_crew_take(BAND, HERD_ID, curve_of(&points, FIXTURE_BODY_FOOD));
+        for _ in 0..4 {
             memory.observe(&view, FACTION);
         }
-        // It is still a source: with the stands out of reach, the idle hands go to it.
-        view.snapshot.forage_patches.clear();
-        let idle = specialist
-            .negative_income(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
+        // It is still a source, and not dead: twelve are forecast what two take, and took it.
+        // (It credits no hand past its plateau, so the idle hands have nowhere to go on it.)
+        assert!(!specialist.is_dead(
+            &view,
+            &memory,
+            own_band(&view),
+            &SourceKey::Herd(HERD_ID.into())
+        ));
+        let sources = specialist.reachable_sources(&view, &memory, own_band(&view));
+        let herd = sources
+            .iter()
+            .find(|source| source.key == SourceKey::Herd(HERD_ID.into()))
             .expect("the herd is still a source");
-        assert!(!idle.reason.contains(WHY_DEAD_ROW), "{}", idle.reason);
-        let (role, _, _, herd) = assigned_to(idle.commands.last().unwrap());
-        assert_eq!((role.as_str(), herd.as_deref()), (ROLE_HUNT, Some(HERD_ID)));
+        assert_eq!(herd.crew_cap, Some(PLATEAU));
+        assert_eq!(herd.expected(ASSIGNED), 3.0);
     }
 
     #[test]
@@ -4004,7 +4097,7 @@ mod tests {
             biomass: 100.0,
             ..view.snapshot.herds[0].clone()
         });
-        let mut memory = memory();
+        let mut memory = memory_forecasting(&view);
         memory.observe(&view, FACTION);
         let proposal = food()
             .negative_income(&view, &plan_with_food_share(1.0), &memory, own_band(&view))
@@ -4140,7 +4233,9 @@ mod tests {
 
     #[test]
     fn a_band_about_to_move_east_works_the_patch_that_will_fall_out_of_range_to_the_west() {
-        let view = a_view_with(|view| add_patch(view, WEST_PATCH, 3.0, 30.0));
+        // A west stand of K 40 at 3.0 a hand: its room above the floor (45) out-pays the rich
+        // patch's (40) for seventeen hands, under the honest ceiling.
+        let view = a_view_with(|view| add_patch(view, WEST_PATCH, 3.0, 40.0));
         let mut walking = memory();
         walking.record_choices(
             TICK - 1,
@@ -4696,6 +4791,284 @@ mod tests {
             .is_none());
     }
 
+    // ---- the crew-take curve ---------------------------------------------------------------------
+
+    /// **A herd is forecast by the sim's crew take, through the oracle.** With a curve cached
+    /// for it, the herd's `expected(n)` is the curve's likely at `n`, `marginal` the difference,
+    /// `per_worker_yield` the smallest crew's likely, and its crew is capped at the plateau; with
+    /// no curve it is not a source at all, whatever the row's `per_worker_yield` says.
+    #[test]
+    fn a_herd_is_forecast_by_the_curve_and_is_no_source_without_one() {
+        let view = a_view_with(|view| view.snapshot.herds[0].biomass = 100.0);
+        let specialist = food();
+        let herd_of = |memory: &SeatMemory| {
+            specialist
+                .reachable_sources(&view, memory, own_band(&view))
+                .into_iter()
+                .find(|source| matches!(source.key, SourceKey::Herd(_)))
+        };
+        assert!(
+            herd_of(&memory()).is_none(),
+            "no curve, no source — the row's 1.5 a hand is the kit's carry"
+        );
+        let mut memory = memory();
+        memory.remember_crew_take(
+            BAND,
+            HERD_ID,
+            curve_of(
+                &[(1, 0.1), (2, 0.25), (3, 0.5), (4, 0.7), (5, 0.8), (6, 0.8)],
+                FIXTURE_BODY_FOOD,
+            ),
+        );
+        let herd = herd_of(&memory).expect("a source once the sim has answered");
+        assert_eq!(herd.per_worker_yield, 0.1);
+        assert_eq!(herd.expected(5), 0.8);
+        assert_eq!(herd.expected(9), 0.8, "no hand past the plateau counts");
+        assert_eq!(herd.marginal(2, 3), 0.8 - 0.25);
+        assert_eq!(
+            herd.crew_cap,
+            Some(5),
+            "the plateau, under seventeen spears"
+        );
+        assert_eq!(
+            herd.describe_for(5),
+            "hunt herd_9: 5 hunters, likely 0.80/turn (sim crew take, low 0.80 high 0.80)"
+        );
+    }
+
+    /// **Rule 1 reads the curve, not the rate.** A forage row at 0.44 a hand is the band's
+    /// lowest row; the herd in reach is forecast 0.3 for five hunters by the sim. Before the
+    /// curve the herd read 1.5 a hand off the wire and the row was emptied onto it (seed 54:
+    /// five hunters read 4.0 a turn, the boar paid 0.24). Now the row stays; and a herd the sim
+    /// forecasts at five a turn for five draws it, quoting the curve.
+    #[test]
+    fn a_forage_row_is_not_emptied_onto_a_herd_the_sim_forecasts_less_for() {
+        const HANDS: u32 = 5;
+        let view = a_view_with(|view| {
+            view.snapshot
+                .forage_patches
+                .retain(|patch| Tile::new(patch.x, patch.y) == NEAR_PATCH);
+            view.snapshot.herds[0].biomass = 100.0;
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.working_age = HANDS;
+            band.labor_assignments = vec![forage_row(NEAR_PATCH, HANDS, 0.44 * HANDS as f32)];
+        });
+        let specialist = food();
+        let plan = plan_with_food_share(1.0);
+        let mut poor = memory();
+        poor.remember_crew_take(
+            BAND,
+            HERD_ID,
+            curve_of(&[(1, 0.06), (5, 0.3)], FIXTURE_BODY_FOOD),
+        );
+        assert!(
+            specialist
+                .negative_income(&view, &plan, &poor, own_band(&view))
+                .is_none(),
+            "0.3 for five does not beat 2.2 for five"
+        );
+        let mut rich = memory();
+        rich.remember_crew_take(
+            BAND,
+            HERD_ID,
+            curve_of(&[(1, 1.0), (5, 5.0)], FIXTURE_BODY_FOOD),
+        );
+        let proposal = specialist
+            .negative_income(&view, &plan, &rich, own_band(&view))
+            .expect("five a turn for five does");
+        assert_eq!(
+            assigned_to(proposal.commands.last().unwrap()),
+            (ROLE_HUNT.to_owned(), HANDS, None, Some(HERD_ID.to_owned()))
+        );
+        assert!(
+            proposal.reason.contains(
+                "hunt herd_9: 5 hunters, likely 5.00/turn (sim crew take, low 5.00 high 5.00)"
+            ),
+            "{}",
+            proposal.reason
+        );
+    }
+
+    /// **A zero turn does not re-rate a herd.** A hunt pays in whole animals; a turn of nothing
+    /// before the kill is due is not a rate. The herd's rank stays the curve's, and the row is
+    /// not dead while its window runs. (A patch is still ranked on what it realized.)
+    #[test]
+    fn a_herds_rank_survives_a_zero_turn() {
+        const CREW: u32 = 3;
+        let view = a_view_with(|view| {
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.labor_assignments = vec![hunt_row(CREW, 0.0, CREW)];
+        });
+        let specialist = food();
+        let mut hunted = memory();
+        // Two food a turn for three, off animals of four food each: a kill every second turn.
+        hunted.remember_crew_take(BAND, HERD_ID, curve_of(&[(1, 1.5), (3, 2.0)], 4.0));
+        hunted.observe(&view, FACTION);
+        let herd_key = SourceKey::Herd(HERD_ID.into());
+        assert!(!specialist.is_dead(&view, &hunted, own_band(&view), &herd_key));
+        let herd = specialist
+            .reachable_sources(&view, &hunted, own_band(&view))
+            .into_iter()
+            .find(|source| source.key == herd_key)
+            .expect("still a source");
+        assert_eq!(herd.per_worker_yield, 1.5);
+        assert_eq!(herd.expected(CREW), 2.0);
+        assert_eq!(
+            Food::rate(&hunted, own_band(&view), &herd_key, 0.8),
+            0.8,
+            "a herd's rate is whatever it is handed, never the realized zero"
+        );
+        // A patch, for contrast, is re-rated by what it realized.
+        let patch = a_view_with(|view| {
+            let band = &mut view.snapshot.populations[0];
+            band.labor_assignments = vec![forage_row(NEAR_PATCH, 4, 0.4)];
+        });
+        let mut gathered = memory();
+        gathered.observe(&patch, FACTION);
+        assert_eq!(
+            Food::rate(
+                &gathered,
+                own_band(&patch),
+                &SourceKey::Patch(NEAR_PATCH),
+                1.0
+            ),
+            0.1
+        );
+    }
+
+    /// **A hunt row in its window is priced at its forecast, not its zero turn.** One hunter
+    /// forecast 0.5 a turn off animals of two food each has a window of four turns: on a zero
+    /// turn the row still pays 0.5 a hand (`Food::row_rate`), so the forage row at 0.4 is the
+    /// band's lowest, not the hunt; once the window has run with nothing taken, the row pays
+    /// what it realized — nothing — and is the lowest.
+    #[test]
+    fn a_hunt_row_in_its_window_is_priced_at_its_forecast() {
+        const LIKELY: f32 = 0.5;
+        const BODY_FOOD: f32 = 2.0;
+        let view = a_view_with(|view| {
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.labor_assignments = vec![forage_row(NEAR_PATCH, 4, 1.6), hunt_row(1, 0.0, 1)];
+        });
+        let band = own_band(&view);
+        let hunt = &band.labor_assignments[1];
+        let mut hunted = memory();
+        hunted.remember_crew_take(BAND, HERD_ID, curve_of(&[(1, LIKELY)], BODY_FOOD));
+        hunted.observe(&view, FACTION);
+        assert_eq!(Food::row_rate(&hunted, band, hunt), LIKELY);
+        let (row, _, _, why) = food()
+            .row_to_empty(&view, &hunted, band)
+            .expect("two worked rows");
+        assert_eq!((row.kind.as_str(), why), (ROLE_FORAGE, WHY_LOWEST_ROW));
+        // Four turns of nothing: the window has run, and the row pays what it took.
+        for _ in 0..3 {
+            hunted.observe(&view, FACTION);
+        }
+        assert_eq!(Food::row_rate(&hunted, band, hunt), 0.0);
+        let (row, _, troubled, _) = food()
+            .row_to_empty(&view, &hunted, band)
+            .expect("two worked rows");
+        assert_eq!((row.kind.as_str(), troubled), (ROLE_HUNT, true), "dead now");
+        // With no curve the row is priced like a patch, at its take.
+        assert_eq!(Food::row_rate(&memory(), band, hunt), 0.0);
+    }
+
+    /// **A merely lowest row does not land on a patch where its hands would be surplus.** The
+    /// one hunter's row is the lowest (no curve: it pays its zero); the only patch in reach
+    /// already reads `workers ≥ workers_needed`, so the hunter stays; with room on the patch
+    /// (`workers_needed` above the crew) the hunter moves. Before this the hunter bounced onto
+    /// the full patch and back every other turn of seed 54's t26–t45.
+    #[test]
+    fn a_lowest_row_does_not_land_where_its_hands_would_be_surplus() {
+        let a_band_with_patch_needing = |needed: u32| {
+            a_view_with(|view| {
+                view.snapshot
+                    .forage_patches
+                    .retain(|patch| Tile::new(patch.x, patch.y) == RICH_PATCH);
+                let band = &mut view.snapshot.populations[0];
+                band.idle_workers = 0;
+                band.labor_assignments = vec![
+                    LaborAssignmentState {
+                        workers_needed: needed,
+                        ..forage_row(RICH_PATCH, 8, 16.0)
+                    },
+                    hunt_row(1, 0.0, 1),
+                ];
+            })
+        };
+        let plan = plan_with_food_share(1.0);
+        let full = a_band_with_patch_needing(8);
+        assert!(
+            food()
+                .negative_income(&full, &plan, &memory(), own_band(&full))
+                .is_none(),
+            "the patch is full: the hunter stays"
+        );
+        let room = a_band_with_patch_needing(9);
+        let proposal = food()
+            .negative_income(&room, &plan, &memory(), own_band(&room))
+            .expect("the patch has room for one more");
+        assert!(
+            proposal.reason.contains(WHY_LOWEST_ROW),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(
+            assigned_to(proposal.commands.last().unwrap()),
+            (ROLE_FORAGE.to_owned(), 9, Some(RICH_PATCH), None)
+        );
+    }
+
+    /// **A dead patch is dead while it stands at its floor.** Four hands on a patch stripped to
+    /// the Best floor took nothing for the forager's window, against a regrowth of one a turn:
+    /// dead, and not a source. The same record with the stand regrown above the floor no longer
+    /// condemns it — the frame says there is food again.
+    #[test]
+    fn a_dead_patch_row_lapses_once_the_stand_regrows_above_its_floor() {
+        let at_floor = a_view_with(|view| {
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == NEAR_PATCH {
+                    patch.biomass = BEST_FLOOR * patch.carrying_capacity;
+                    patch.regrowth_samples = vec![1.0, 1.0];
+                }
+            }
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.labor_assignments = vec![LaborAssignmentState {
+                workers_needed: 0,
+                ..forage_row(NEAR_PATCH, 4, 0.0)
+            }];
+        });
+        let specialist = food();
+        let key = SourceKey::Patch(NEAR_PATCH);
+        let mut memory = memory();
+        for turn in 1..=PATCH_WINDOW {
+            memory.observe(&at_floor, FACTION);
+            assert_eq!(
+                specialist.is_dead(&at_floor, &memory, own_band(&at_floor), &key),
+                turn == PATCH_WINDOW,
+                "turn {turn}"
+            );
+        }
+        assert!(!specialist
+            .reachable_sources(&at_floor, &memory, own_band(&at_floor))
+            .iter()
+            .any(|source| source.key == key));
+        let mut regrown = at_floor;
+        for patch in &mut regrown.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == NEAR_PATCH {
+                patch.biomass = patch.carrying_capacity;
+            }
+        }
+        assert!(!specialist.is_dead(&regrown, &memory, own_band(&regrown), &key));
+        assert!(specialist
+            .reachable_sources(&regrown, &memory, own_band(&regrown))
+            .iter()
+            .any(|source| source.key == key));
+    }
+
     // ---- rule 4: spare hands into hunts --------------------------------------------------------
 
     /// A well-fed band: four on the near patch, thirteen on the rich one, and a small herd in
@@ -4721,7 +5094,7 @@ mod tests {
             .spare_hands_into_hunts(
                 &view,
                 &plan,
-                &memory(),
+                &memory_forecasting(&view),
                 own_band(&view),
                 &Reassignment::NONE,
             )
@@ -4733,16 +5106,24 @@ mod tests {
             proposal.reason
         );
         assert!(proposal.reason.contains(HERD_ID), "{}", proposal.reason);
-        // Net 3.0 against a goal of 1.0: two hands off the near patch (−2.0) onto a herd that
-        // hands back 0.5 leaves 1.5; a third would leave 0.5, under the goal.
-        assert_eq!(proposal.cost.workers, 2);
+        // Net 3.0 against a goal of 1.0: one hand off the near patch (−1.0) onto a herd that
+        // hands back 0.5 leaves 2.5. The curve plateaus at one hunter (half an animal is all
+        // there is), so a second is never sent — before the curve, two went for the same 0.5.
+        assert_eq!(proposal.cost.workers, 1);
         assert_eq!(
             assigned_to(&proposal.commands[0]),
-            (ROLE_FORAGE.to_owned(), 2, Some(NEAR_PATCH), None)
+            (ROLE_FORAGE.to_owned(), 3, Some(NEAR_PATCH), None)
         );
         assert_eq!(
             assigned_to(&proposal.commands[1]),
-            (ROLE_HUNT.to_owned(), 2, None, Some(HERD_ID.to_owned()))
+            (ROLE_HUNT.to_owned(), 1, None, Some(HERD_ID.to_owned()))
+        );
+        assert!(
+            proposal
+                .reason
+                .contains("1 hunters, likely 0.50/turn (sim crew take, low 0.50 high 0.50)"),
+            "{}",
+            proposal.reason
         );
         // Exactly at the goal: any hand leaving drops below it, so none does.
         let at_goal = a_fed_band(goals().net_income_per_turn);
@@ -4750,7 +5131,7 @@ mod tests {
             .spare_hands_into_hunts(
                 &at_goal,
                 &plan,
-                &memory(),
+                &memory_forecasting(&at_goal),
                 own_band(&at_goal),
                 &Reassignment::NONE
             )
@@ -4761,7 +5142,7 @@ mod tests {
             .spare_hands_into_hunts(
                 &short,
                 &plan,
-                &memory(),
+                &memory_forecasting(&short),
                 own_band(&short),
                 &Reassignment::NONE
             )

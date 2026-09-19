@@ -200,11 +200,21 @@ pub fn labels(observations: &[Observation]) -> Labels {
     labels
 }
 
-/// The earliest observation's land reading, when any observation carries one.
+/// **The tick the `ground.*` measures and the `start_kind` labels are read at.** Not the first:
+/// at tick 1 a band holds no kit — the outfit lands after the tick-1 command — so every herd's
+/// crew-take curve reads nothing and the reading describes a bare band, not the start. At tick 2
+/// the kits are in hand and the herds are re-asked under the new key. The observation carries
+/// its `ground` block on every tick; only this capture moves.
+const GROUND_CAPTURE_TICK: u64 = 2;
+
+/// The land reading of the earliest observation at or after [`GROUND_CAPTURE_TICK`] that carries
+/// one.
 fn first_ground(observations: &[Observation]) -> Option<&GroundRecord> {
     observations
         .iter()
-        .filter(|observation| observation.ground.is_some())
+        .filter(|observation| {
+            observation.ground.is_some() && observation.tick >= GROUND_CAPTURE_TICK
+        })
         .min_by_key(|observation| observation.tick)
         .and_then(|observation| observation.ground.as_ref())
 }
@@ -855,16 +865,18 @@ mod tests {
         assert!(!none.contains_key(M_GROUND_CONSUMPTION_AT_START));
     }
 
-    /// The reading's measures and the start-kind label come off the earliest observation that
-    /// carries a reading — not an earlier one without.
+    /// The reading's measures and the start-kind label come off the earliest observation at or
+    /// after the capture tick that carries a reading — not tick 1's, whose herds read a bare band,
+    /// and not a later one.
     #[test]
     fn the_reading_measures_and_the_start_kind_read_the_first_observation_with_one() {
-        let rows = vec![row(FIRST_TICK, 0), row(FIRST_TICK + 1, 0)];
-        let mut later = observation(FIRST_TICK + 1, 9.0, 9.0);
+        let rows = vec![row(1, 0), row(GROUND_CAPTURE_TICK, 0)];
+        let mut later = observation(GROUND_CAPTURE_TICK + 1, 9.0, 9.0);
         later.ground = Some(a_ground(20.0, StartKind::Stay, 0));
-        let mut first = observation(FIRST_TICK, 3.5, 6.0);
+        let mut first = observation(GROUND_CAPTURE_TICK, 3.5, 6.0);
         first.ground = Some(a_ground(5.0, StartKind::MoveAll, 9));
-        let bare = observation(FIRST_TICK - 1, 1.0, 1.0);
+        let mut bare = observation(1, 1.0, 1.0);
+        bare.ground = Some(a_ground(1.0, StartKind::Short, 0));
         let observations = vec![later, bare, first];
         let measures = compute(&rows, &[], &observations);
         assert_eq!(measures[M_GROUND_PEOPLE], Some(12.0));

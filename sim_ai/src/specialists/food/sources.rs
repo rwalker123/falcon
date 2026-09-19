@@ -10,6 +10,7 @@ use sim_runtime::{
 use super::ledger::{regrowth_at, BEST_FLOOR};
 use super::{Food, ROLE_FORAGE, ROLE_HUNT};
 use crate::geometry::Tile;
+use crate::oracle::CrewTakeCurve;
 use crate::view::{band_tile, row_key, SeatMemory, SeatView};
 
 /// **What one worker would take off `patch` this turn** — the rate the band has realized on that
@@ -191,7 +192,7 @@ pub(crate) fn is_walkable(view: &SeatView, tile: Tile) -> bool {
 
 /// Whether a source is dead in this seat's memory — `Food::is_dead`, handed in as a closure so
 /// `Land`, which holds none of `Food`'s levers, reads the same cluster with no dead-row judgement.
-pub(crate) type IsDead<'a> = dyn Fn(&SourceKey, f32) -> bool + 'a;
+pub(crate) type IsDead<'a> = dyn Fn(&SourceKey) -> bool + 'a;
 
 /// What a band would take, per turn, from **every** workable site within its `work_range` of a
 /// standing tile ([`cluster_take`]).
@@ -270,6 +271,17 @@ pub(crate) fn surplus_room(patch: &ForagePatchState) -> f32 {
     (patch.biomass - BEST_FLOOR * patch.carrying_capacity).max(0.0) * patch.provisions_per_biomass
 }
 
+/// **What `patch` can give a crew this turn at the Best floor**, in provisions: the room above
+/// the floor plus the floor's regrowth — [`Ceiling::Surplus`] and [`Ceiling::Sustained`]
+/// summed, the two passes of the free-hand deal. The cap on what a worked patch row is
+/// forecast (`SeatMemory`): a patch standing at its floor expects only its regrowth, which is
+/// what it pays. Not the standing stock (`biomass × provisions_per_biomass`, the take at a zero
+/// floor, which a patch [`Source`] still carries as its `ceiling`).
+pub(crate) fn honest_ceiling(patch: &ForagePatchState) -> f32 {
+    surplus_room(patch)
+        + regrowth_at(&patch.regrowth_samples, BEST_FLOOR) * patch.provisions_per_biomass
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cluster_take_by(
     view: &SeatView,
@@ -295,7 +307,7 @@ fn cluster_take_by(
             (view.is_discovered(tile)
                 && grid.distance(standing, tile) <= band.work_range
                 && !foreign_band_at(view, band.faction, tile)
-                && !is_dead(&key, patch.per_worker_yield))
+                && !is_dead(&key))
             .then(|| workable_patch_at(view, tile))
             .flatten()
             .and_then(|patch| {
@@ -489,7 +501,7 @@ pub(crate) fn cluster_sites<'v>(
             (view.is_discovered(tile)
                 && grid.distance(standing, tile) <= band.work_range
                 && !foreign_band_at(view, band.faction, tile)
-                && !is_dead(&key, patch.per_worker_yield))
+                && !is_dead(&key))
             .then(|| workable_patch_at(view, tile))
             .flatten()
         })
@@ -530,7 +542,7 @@ pub(crate) fn cluster_take_sustained(
         band,
         standing,
         hands,
-        &|_, _| false,
+        &|_| false,
         &|_| Some(0),
         Ceiling::Sustained,
     )
@@ -619,23 +631,50 @@ pub(super) struct Source {
     pub key: SourceKey,
     /// Where the source stands — the patch's tile, or the herd's this frame.
     pub tile: Tile,
-    /// The rate a crew is ranked on: what this band has **realized** on that source, if it has
-    /// worked it, else the web's prior, else the frame's forecast ([`Food::rate`]).
+    /// The rate a crew is ranked on. A patch: what this band has **realized** on it, if it has
+    /// worked it, else the web's prior, else the frame's forecast ([`Food::rate`]). A herd: the
+    /// smallest crew's likely take off the sim's curve (`likely(1)`), so a caller reading a
+    /// per-hand rate reads something honest — never the wire's `per_worker_yield`, which is the
+    /// kit's carry.
     pub per_worker_yield: f32,
-    /// The take at a zero floor: `biomass × provisions_per_biomass`.
+    /// The take at a zero floor: `biomass × provisions_per_biomass`, the standing stock (a
+    /// herd's is unread, since its take is the curve's).
     pub ceiling: f32,
     /// **The most hands this source credits** — for a herd, the units of its kit the band holds
-    /// ([`kit_units_held`]); `None` for a patch and for a herd hunted under a kit that carries
-    /// nothing. Hands beyond it hunt with nothing and add nothing.
+    /// ([`kit_units_held`]) or the curve's plateau, whichever is fewer; `None` for a patch.
+    /// Hands beyond it hunt with nothing and add nothing.
     pub crew_cap: Option<u32>,
+    /// **The sim's crew-take curve**, in food per turn — a herd's forecast
+    /// (`SeatMemory::crew_take`); `None` on a patch, whose take is `min(hands × rate, ceiling)`.
+    pub curve: Option<CrewTakeCurve>,
 }
 
 impl Source {
-    /// What a crew of `hands` takes: `min(hands × rate, ceiling)`, the hands past
-    /// [`Self::crew_cap`] counting for nothing.
+    /// What a crew of `hands` takes: the curve's likely at that crew for a herd, `min(hands ×
+    /// rate, ceiling)` for a patch — the hands past [`Self::crew_cap`] counting for nothing.
     pub fn expected(&self, hands: u32) -> f32 {
         let hands = self.crew_cap.map_or(hands, |cap| hands.min(cap));
-        crew_take(hands, self.per_worker_yield, self.ceiling)
+        match &self.curve {
+            Some(curve) => curve.likely(hands),
+            None => crew_take(hands, self.per_worker_yield, self.ceiling),
+        }
+    }
+
+    /// The source as a reason names it with a crew of `hands` on it: a patch as
+    /// [`SourceKey::describe`]; a herd with its curve quoted — `hunt herd_9: 5 hunters, likely
+    /// 0.30/turn (sim crew take, low 0.00 high 0.72)` — so the log says what the sim said.
+    pub fn describe_for(&self, hands: u32) -> String {
+        let hands = self.crew_cap.map_or(hands, |cap| hands.min(cap));
+        match self.curve.as_ref().and_then(|curve| curve.row(hands)) {
+            Some(row) => format!(
+                "{}: {hands} hunters, likely {:.2}/turn (sim crew take, low {:.2} high {:.2})",
+                self.key.describe(),
+                row.likely,
+                row.low,
+                row.high
+            ),
+            None => self.key.describe(),
+        }
     }
 
     /// What `more` hands add on top of `existing` already on this source — the marginal take,

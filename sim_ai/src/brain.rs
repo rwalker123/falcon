@@ -26,6 +26,7 @@ use crate::instruments::decisions::{
     AlarmRecord, Decision, DecisionRecord, DecisionSink, Outcome, PlanRecord,
 };
 use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG};
+use crate::oracle::{CrewTakeOracle, Unasked};
 use crate::orchestrator::constant::ConstantStance;
 use crate::orchestrator::{Alarm, Orchestrator, Plan, INTENT_OUTFIT, ORCHESTRATOR_ID};
 use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError};
@@ -50,12 +51,13 @@ pub const OUTFIT_SCORE: f32 = 1.0;
 /// returns has a row behind it (§10). A brain with nothing to say leaves the sink untouched — the
 /// `ready` row is the loop's, not the brain's.
 pub trait Brain {
-    /// **Fold the frame in ahead of `decide`** — the memory's sightings and realized rows, and
-    /// the land reading of every own band — so an observation captured between the two records
-    /// the state the brain decides on: the reading `Food` sizes the outfit and the splits by is
-    /// the one the log shows. `decide` folds the frame in itself when nothing has; calling this
-    /// twice on one tick is one fold.
-    fn observe(&mut self, _view: &SeatView) {}
+    /// **Fold the frame in ahead of `decide`** — the memory's sightings and realized rows, the
+    /// sim's crew-take curves for the herds in reach (asked through `oracle`, within the tick's
+    /// budget), and the land reading of every own band — so an observation captured between the
+    /// two records the state the brain decides on: the reading `Food` sizes the outfit and the
+    /// splits by is the one the log shows. `decide` folds the frame in itself when nothing has,
+    /// with nothing to ask (`oracle::Unasked`); calling this twice on one tick is one fold.
+    fn observe(&mut self, _view: &SeatView, _oracle: &mut dyn CrewTakeOracle) {}
 
     fn decide(
         &mut self,
@@ -154,6 +156,7 @@ impl Composite {
         let memory = SeatMemory::new(
             difficulty.memory_horizon_turns,
             profile.food.split_settle_turns,
+            profile.food.dead_row_turns,
         );
         Self {
             faction,
@@ -286,12 +289,25 @@ impl Composite {
 }
 
 impl Brain for Composite {
-    fn observe(&mut self, view: &SeatView) {
+    fn observe(&mut self, view: &SeatView, oracle: &mut dyn CrewTakeOracle) {
         let tick = view.tick();
         if self.observed_tick == Some(tick) {
             return;
         }
+        // The rows are folded against the curves they were staffed under, then the curves are
+        // refreshed, then the ground is read off the refreshed curves.
         self.memory.observe(view, self.faction);
+        let asks = self.memory.refresh_crew_takes(view, self.faction, oracle);
+        if asks.asked > 0 || asks.waiting > 0 {
+            info!(
+                tick,
+                asked = asks.asked,
+                waiting = asks.waiting,
+                elapsed_ms = asks.elapsed.as_millis(),
+                slowest_ms = asks.slowest.as_millis(),
+                "crew take asked"
+            );
+        }
         self.ground = read_all(
             view,
             &self.memory,
@@ -308,7 +324,7 @@ impl Brain for Composite {
         sink: &mut dyn DecisionSink,
     ) -> Vec<CommandPayload> {
         let tick = view.tick();
-        Brain::observe(self, view);
+        Brain::observe(self, view, &mut Unasked);
         // A command the sim refused last turn is a specialist's bug; say which, with the sim's reason.
         for refused in view
             .snapshot

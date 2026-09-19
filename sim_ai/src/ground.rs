@@ -109,6 +109,9 @@ pub struct Site {
     pub kit_needed: Option<String>,
     /// The units of that kit the band holds (`None` on a patch, and on a kit carrying nothing).
     pub kit_units_held: Option<u32>,
+    /// **A herd the sim has not answered for yet** (`SeatMemory::crew_take` holds no curve for
+    /// it and this band): it reads `0` food and `0` hands until it has. Always `false` on a patch.
+    pub unforecast: bool,
 }
 
 impl Site {
@@ -332,8 +335,9 @@ impl Reading {
     /// **Read the ground for `band`** off the view: the sites the faction could work, the hexes
     /// it could stand on, and the band's own numbers. The rate a patch's crews are read at is
     /// [`patch_per_worker_yield`] — what this seat has realized there, else the web's prior,
-    /// else the forecast — the same rate every rule ranks on; a herd's crew is the hunters
-    /// that move its regrowth in biomass (`per_worker_biomass`), never fewer than one.
+    /// else the forecast — the same rate every rule ranks on; a herd is read at the sim's crew
+    /// take ([`herd_site`]): its best crew and what that crew likely brings home, capped at its
+    /// sustainable line.
     pub fn read(view: &SeatView, memory: &SeatMemory, band: &PopulationCohortState) -> Self {
         let grid = view.grid();
         let faction = band.faction;
@@ -368,8 +372,10 @@ impl Reading {
                     let tile = Tile::new(herd.x, herd.y);
                     view.is_discovered(tile) && !foreign_band_at(view, faction, tile)
                 })
-                .map(|herd| herd_site(view, band, herd))
-                .filter(|site| site.sustained_food > 0.0),
+                .map(|herd| herd_site(view, memory, band, herd))
+                // A herd the sim has not answered for stays in the reading at nothing, flagged,
+                // so the record says which herds were not yet forecast.
+                .filter(|site| site.sustained_food > 0.0 || site.unforecast),
         );
         // The candidate hexes: every discovered, walkable, unoccupied tile within some site's
         // reach.
@@ -849,23 +855,41 @@ fn patch_site(memory: &SeatMemory, band: &PopulationCohortState, patch: &ForageP
         field_hands_hoed: crew_for(field_food, rate) + crew_for(patch.field_upkeep_demand, hoed),
         kit_needed: None,
         kit_units_held: None,
+        unforecast: false,
     }
 }
 
-/// The site a herd row is: its Best-floor regrowth in provisions, the crew that moves that much
-/// biomass (at least one hunter), and the kit it is hunted under with the units `band` holds.
-fn herd_site(view: &SeatView, band: &PopulationCohortState, herd: &HerdTelemetryState) -> Site {
+/// The site a herd row is, **read at the sim's crew take**: its food is the lesser of its
+/// sustainable line (the Best-floor regrowth in provisions) and what the best crew likely brings
+/// home per turn off the cached curve (`SeatMemory::crew_take`), its hands are that best crew
+/// (`CrewTakeCurve::best_crew`, the size taking the most per hunter), and it carries the kit it
+/// is hunted under with the units `band` holds. A herd with no curve reads `0` and `unforecast`.
+fn herd_site(
+    view: &SeatView,
+    memory: &SeatMemory,
+    band: &PopulationCohortState,
+    herd: &HerdTelemetryState,
+) -> Site {
     // A herd's low samples are negative (the Allee crash); at the Best floor the regrowth is
     // what the herd gives, and nothing below zero is a take.
-    let sustained_biomass = regrowth_at(&herd.regrowth_samples, BEST_FLOOR).max(0.0);
+    let line =
+        regrowth_at(&herd.regrowth_samples, BEST_FLOOR).max(0.0) * herd.provisions_per_biomass;
     let kit = herd_kit_id(view, herd);
+    let curve = memory.crew_take(band.band_id, &herd.id);
+    let (sustained_food, sustained_hands) = match curve.and_then(|curve| curve.best_crew()) {
+        Some(best) => {
+            let likely = curve.map_or(0.0, |curve| curve.likely(best));
+            (line.min(likely), best)
+        }
+        None => (0.0, 0),
+    };
     Site {
         x: herd.x,
         y: herd.y,
         herd_id: Some(herd.id.clone()),
         reach: band.hunt_reach,
-        sustained_food: sustained_biomass * herd.provisions_per_biomass,
-        sustained_hands: crew_for(sustained_biomass, herd.per_worker_biomass).max(1),
+        sustained_food,
+        sustained_hands,
         tended_food: 0.0,
         tended_hands: 0,
         tended_hands_hoed: 0,
@@ -875,6 +899,7 @@ fn herd_site(view: &SeatView, band: &PopulationCohortState, herd: &HerdTelemetry
         field_hands_hoed: 0,
         kit_needed: Some(kit.to_owned()),
         kit_units_held: kit_units_held(view, band, kit),
+        unforecast: curve.is_none(),
     }
 }
 
@@ -920,6 +945,7 @@ mod tests {
             field_hands_hoed: crew_for(food * 4.0, rate) + 1,
             kit_needed: None,
             kit_units_held: None,
+            unforecast: false,
         }
     }
 
@@ -1105,6 +1131,55 @@ mod tests {
         assert_eq!(shape.people_fed, 60.0);
     }
 
+    /// **A herd site is read at the sim's crew take.** With no curve cached for the band it is
+    /// in the reading at nothing, flagged `unforecast`; with one, its food is the lesser of its
+    /// sustainable line and what the best crew (the most per hunter) likely brings home, and its
+    /// hands are that crew. Before this the herd read its regrowth at `per_worker_biomass` a
+    /// hunter — the kit's carry — whatever the crew could bring down.
+    #[test]
+    fn a_herd_site_reads_the_curve_at_its_best_crew_or_unforecast() {
+        use crate::oracle::curve_of;
+        use crate::specialists::food::tests::{a_view, memory, BAND, HERD_ID};
+        let herd_site_of = |view: &SeatView, memory: &SeatMemory| {
+            Reading::read(view, memory, &view.snapshot.populations[0])
+                .sites
+                .into_iter()
+                .find(|site| site.herd_id.as_deref() == Some(HERD_ID))
+        };
+        let mut view = a_view();
+        // The herd's line: one biomass a turn at every fraction of K, one food a biomass.
+        let samples = view.snapshot.herds[0].regrowth_samples.len().max(2);
+        view.snapshot.herds[0].regrowth_samples = vec![1.0; samples];
+        let bare = herd_site_of(&view, &memory()).expect("in the reading, at nothing");
+        assert!(bare.unforecast);
+        assert_eq!((bare.sustained_food, bare.sustained_hands), (0.0, 0));
+        // 0.5 for one, 1.2 for two (0.6 a hunter, the best), 1.5 for three.
+        let mut forecast = memory();
+        forecast.remember_crew_take(
+            BAND,
+            HERD_ID,
+            curve_of(&[(1, 0.5), (2, 1.2), (3, 1.5)], 1.0),
+        );
+        let read = herd_site_of(&view, &forecast).expect("forecast");
+        assert!(!read.unforecast);
+        assert_eq!(
+            (read.sustained_food, read.sustained_hands),
+            (1.0, 2),
+            "the line of 1.0 caps the best crew's 1.2"
+        );
+        view.snapshot.herds[0].regrowth_samples = vec![2.0; samples];
+        let read = herd_site_of(&view, &forecast).expect("forecast");
+        assert_eq!(
+            (read.sustained_food, read.sustained_hands),
+            (1.2, 2),
+            "under a line of 2.0 the best crew's 1.2 is the food"
+        );
+        // A curve that takes nothing reads as nothing, forecast — and is out of the reading.
+        let mut nothing = memory();
+        nothing.remember_crew_take(BAND, HERD_ID, curve_of(&[(1, 0.0), (2, 0.0)], 1.0));
+        assert!(herd_site_of(&view, &nothing).is_none());
+    }
+
     /// A herd site under the `big_game` kit beside two patches: the full reading's first band
     /// wants baskets for the patch hands and two spears' worth of hunters; struck out, the
     /// patches-only reading re-indexes the sites, drops the hex that reached only the herd,
@@ -1128,6 +1203,7 @@ mod tests {
             field_hands_hoed: 0,
             kit_needed: Some("big_game".to_owned()),
             kit_units_held: Some(0),
+            unforecast: false,
         };
         let reading = a_reading(vec![
             patch(Tile::new(9, 8), 2.0, 0.5),

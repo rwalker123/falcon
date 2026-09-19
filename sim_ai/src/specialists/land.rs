@@ -56,10 +56,10 @@ const DEMAND_PRIORITY_SCOUT: f32 = 0.5;
 /// The roster's scout kit (`equipment.json` → `wayfinding`, jobs `scout`).
 const SCOUT_KIT_ID: &str = "wayfinding";
 
-/// **`Land` passes no dead-row judgement** — those are `Food`'s levers (`food.dead_row_turns`,
-/// `food.poor_yield_fraction`), and a dead source already reads its realized rate, which is what
-/// made it dead, so the cluster weighs it down without a verdict.
-const NEVER_DEAD: &IsDead<'static> = &|_, _| false;
+/// **`Land` passes no dead-row judgement** — that is `Food`'s lever (`food.poor_yield_fraction`
+/// over the row's window), and a dead patch already reads its realized rate, which is what made
+/// it dead, so the cluster weighs it down without a verdict.
+const NEVER_DEAD: &IsDead<'static> = &|_| false;
 
 pub struct Land {
     faction: u32,
@@ -429,7 +429,7 @@ mod tests {
     use crate::orchestrator::Budget;
     use crate::profile::{AiProfiles, NO_MEMORY_DECAY};
     use crate::specialists::food::tests::{
-        a_view, BAND, FACTION, FAR_PATCH, HERE, RICH_PATCH, SETTLE, TICK, WORK_RANGE,
+        a_view, BAND, FACTION, FAR_PATCH, HERE, PATCH_WINDOW, RICH_PATCH, SETTLE, TICK, WORK_RANGE,
     };
     use sim_runtime::{ForagePatchState, TerrainTags};
     use std::collections::BTreeMap;
@@ -495,7 +495,7 @@ mod tests {
 
     /// A memory in which the band's runway fell since last turn.
     fn falling(view: &SeatView) -> SeatMemory {
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         memory.observe(view, FACTION);
         let mut before = SeatView {
             snapshot: view.snapshot.clone(),
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn a_blind_band_posts_scouts_and_a_seeing_one_does_not() {
         let view = a_view();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         // Nothing observed yet: every tile is unknown.
         let proposal = land("forager")
             .blind(&view, &memory, own_band(&view))
@@ -582,7 +582,7 @@ mod tests {
             kit_budget: 17,
             ..Default::default()
         });
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let demands = land("forager").outfit_demands(&view, &memory, own_band(&view));
         assert_eq!(demands.len(), 1);
         assert_eq!(demands[0].resource, Resource::Kit("wayfinding".to_owned()));
@@ -595,7 +595,7 @@ mod tests {
             .outfit_demands(&view, &memory, own_band(&view))
             .is_empty());
         view.snapshot.populations[0].loadout_window = None;
-        let blind = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let blind = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         assert!(land("forager")
             .outfit_demands(&view, &blind, own_band(&view))
             .is_empty());
@@ -609,7 +609,7 @@ mod tests {
             workers: 1,
             ..Default::default()
         }];
-        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         assert!(land("forager")
             .blind(&view, &memory, own_band(&view))
             .is_none());
@@ -762,7 +762,7 @@ mod tests {
     #[test]
     fn better_ground_needs_a_falling_runway_and_then_persists_until_arrival() {
         let view = a_cluster_north_and_a_rich_patch_east();
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         memory.observe(&view, FACTION);
         let specialist = land("forager");
         assert!(
@@ -881,7 +881,7 @@ mod tests {
         let mut view = bare();
         add_site(&mut view, EAST, 3.0, 15.0);
         let specialist = land("forager");
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         memory.observe(&view, FACTION);
         let short = move_all_ground(&view, EAST, 10.0);
         let proposal = specialist
@@ -909,7 +909,7 @@ mod tests {
         // move-everyone, and with the runway not falling the usual rule proposes nothing.
         let mut fed = move_all_ground(&view, EAST, 30.0);
         fed.classified.kind = StartKind::SplitLocal;
-        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         assert!(specialist
             .better_ground(&view, &memory, own_band(&view), Some(&fed))
             .is_none());
@@ -965,7 +965,7 @@ mod tests {
         view.snapshot
             .forage_patches
             .retain(|patch| Tile::new(patch.x, patch.y) != FAR_PATCH);
-        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         view.snapshot.populations[0].food_consumption = 30.0;
         assert!(
             land("forager").alarm(&view, &memory).is_none(),
@@ -1034,7 +1034,7 @@ mod tests {
         view.snapshot.populations[0].food_consumption = 4.0;
 
         let specialist = land("forager");
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         memory.observe(&view, FACTION);
         memory.remember_runways(&view, FACTION);
         view.snapshot.populations[0].turns_of_food -= 1.0;
@@ -1068,7 +1068,7 @@ mod tests {
     #[test]
     fn the_alarm_weighs_what_the_crew_harvests_per_turn_not_the_biomass_standing_here() {
         let mut view = bare();
-        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         // The band's own ground: a great deal of biomass standing, paying a worker almost nothing.
         // Nothing else is on the table, so only this ground answers the question.
         view.snapshot.forage_patches = vec![ForagePatchState {

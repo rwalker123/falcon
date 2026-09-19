@@ -24,6 +24,7 @@ mod ground;
 mod import_record;
 mod instruments;
 mod link;
+mod oracle;
 mod orchestrator;
 mod profile;
 mod specialists;
@@ -48,6 +49,7 @@ use instruments::observations::{Observation, ObservationRecord};
 use instruments::scoreboard::ScoreRow;
 use instruments::Instruments;
 use link::{Endpoints, Link, LinkEvent};
+use oracle::LinkOracle;
 use profile::{AiProfiles, DEFAULT_DIFFICULTY};
 use view::{FrameOutcome, Perception};
 
@@ -345,9 +347,10 @@ fn run(args: Args) -> Result<(), RunError> {
             continue;
         }
 
-        // The brain folds the frame in first — its memory and the land reading of every band —
-        // so the observation records the reading `decide` is about to size the turn by.
-        brain.observe(view);
+        // The brain folds the frame in first — its memory, the sim's crew-take answers for the
+        // herds in reach (asked on the link), and the land reading of every band — so the
+        // observation records the reading `decide` is about to size the turn by.
+        brain.observe(view, &mut LinkOracle::new(&mut link));
         // The row first, so a process that dies mid-turn still leaves the tick it saw behind —
         // and the observation beside it, read off the same view before `decide` chooses anything.
         if let Some(instruments) = instruments.as_mut() {
