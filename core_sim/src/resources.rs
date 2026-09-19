@@ -1602,6 +1602,21 @@ pub enum CommandEventKind {
     /// **People left or joined a band** through discontent-driven migration. Whole counts already
     /// (`PopulationCohort::last_emigrated` / `last_immigrated`), so this kind needs no accumulator.
     Migrated,
+    /// **A WHOLE BAND CHANGED FACTION** — a knowledge migration completed and the band now belongs
+    /// to the people it defected to (`systems::population`, the `PendingMigration` branch).
+    ///
+    /// **One kind, pushed TWICE — once under the faction that lost the band, once under the faction
+    /// that gained it** — because `snapshot::campaign::command_events_to_state` files a frame's feed
+    /// by `entry.faction == viewer`, so a single entry would reach exactly one of the two players
+    /// who need to know. Which side of the handover a row describes rides the detail
+    /// (`side=lost|gained`), on [`Self::Road`]'s reading: the player is looking at *one band
+    /// changing hands*, not at two unrelated events.
+    ///
+    /// It shipped silent: the migration branch sent `TradeDiffusionEvent` and
+    /// `MigrationKnowledgeEvent` (neither of which has an `EventReader` anywhere — they are
+    /// telemetry/diffusion plumbing) and pushed nothing to the event log at all, so a player gained
+    /// or lost twenty-nine people with no line anywhere.
+    BandChangedHands,
     /// **Workers reached elderhood** — the aging accumulator crossed a whole person. The twin of
     /// [`CommandEventKind::CameOfAge`] at the other end of a working life: it moves nobody in or
     /// out of the band, but it is a pair of hands the player no longer has, which is why the
@@ -1648,6 +1663,7 @@ impl CommandEventKind {
             CommandEventKind::Died => "died",
             CommandEventKind::CameOfAge => "came_of_age",
             CommandEventKind::Migrated => "migrated",
+            CommandEventKind::BandChangedHands => "band_changed_hands",
             CommandEventKind::Aged => "aged",
         }
     }

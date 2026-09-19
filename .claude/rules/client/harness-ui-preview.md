@@ -2974,3 +2974,41 @@ failure text is the defect in its own words — `composes at the rung's floor al
 both renewing claims correctly stay green, which is the decomposition: the condition and the maximum
 are independent, so a defect in one leaves the other's claims standing.
 
+
+## A band changes hands — one frame, seven claims (`chapters/event_dock.gd`)
+
+`event_dock_band_changed_hands`, appended LAST in that chapter before it frees its panel, so no
+earlier state moves and the chapter still hands the HUD back where it found it. The behaviour is
+`event-dock.md`'s; what belongs here is the shape of the drive. `EXPECTED_CHECKPOINTS` 195 → **203**,
+RE-MEASURED by raising the const to an impossible number and reading `reached` back — frames count
+too, so the eight is seven claims plus the one `_save`.
+
+**RENDERED AT THE ALERTS-ONLY FLOOR, which is `event_dock_band_founded`'s own idiom**: a frame taken
+at the default floor would show a row `notable` admits anyway and prove nothing about the rung. The
+DEFAULT floor is then asked PNG-LESS on the same ingest, and that is where the reported defect lives
+— the kind was missing from `RUNG_BY_KIND`, so it took `RUNG_ROUTINE` and was filtered away for
+every player on default settings. Both floor claims read `_visible_events()` rather than the drawn
+bar, so they are about the FLOOR and not about which surface happens to be open; the rung itself is
+read off the accumulator, a row drawn at the wrong importance looking perfectly right in a frame
+whose floor admits everything.
+
+**THE TWO SIDES ARE TWO INGESTS, NEVER ONE FIXTURE.** The feed is per-faction on the wire, so a
+frame carrying `side=lost` and `side=gained` together is a frame no server sends — those rows are
+what the two PLAYERS see. The gaining ingest sets `HANDOVER_BAND_LABELS` and the losing one CLEARS
+them, which is the honest staging of each seat: the gaining faction's roster now holds the band, and
+the losing faction's does not, so the sim's own `Band 4` standing on that half is the correct
+reading rather than a missed substitution. Both labels are spelled out as chapter constants in the
+sim's own shapes (`systems::population::push_band_changed_hands_events`), the
+`_assert_horizon_floor_is_the_whole_trip` rule: an expectation recomposed through `HudEventVocab`
+could only agree with itself. **The band labels are cleared on the way out**, as the existing
+band-label trio clears them, or every later state inherits a roster name.
+
+**THE EMPTY DETAIL COLUMN NEEDS ITS VACUITY CONTROL.** `detail_phrase` answering `""` is also what a
+walk that had stopped running answers, so the same line with one extra token (`warriors=3`) is
+driven beside it and must still render `Warriors 3`.
+
+**Sabotage-verified** by deleting the `RUNG_BY_KIND` row: **exactly four** claims fail — the rung
+(`got routine`), both floor claims and the losing side's — while the band-name join, the empty
+detail and its control correctly stay green, which is the decomposition: the naming rule and the
+prose walk are different layers and neither stands in for the rung. `EXIT=1`, 2169 `PASS`. Restored:
+`EXIT=0`, **2173 `PASS`**, 0 `FAIL` — identical to the run before the sabotage.

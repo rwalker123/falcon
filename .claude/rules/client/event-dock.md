@@ -42,6 +42,31 @@ founding is the opposite on every count: rare, player-initiated, and the first a
 that cannot be undone. The same kind carries the command's REFUSALS, which belong there too — a
 refused irreversible order is as loud as a taken one.
 
+**`band_changed_hands` is ALERT too — `band_founded`'s twin, one step out.** The same three
+properties earn it the rung (rare, irreversible, the roster moves by a whole band), and the one that
+differs is what makes it *louder* rather than quieter: a founding is a player's own act, and a
+handover is not. A band with knowledge and high morale walks off to a people it has met, or arrives
+from one, on the sim's own turn — so the dock is the only place the player can learn of it at all,
+where a founding was at least something they pressed. It was reported from play precisely because it
+was MISSING from `RUNG_BY_KIND`: it took `DEFAULT_RUNG` (`RUNG_ROUTINE`), sat below
+`DEFAULT_DETAIL_LEVEL`, and the roster changed with the bar saying nothing.
+
+**Both sides of a handover take that rung**, and each player sees exactly one of them: the sim
+pushes two entries — `side=lost` filed under the losing faction, `side=gained` under the gaining one
+— and `snapshot::campaign::command_events_to_state` keeps only `entry.faction == viewer`
+(`.claude/rules/core_sim/event-feed.md` → "One EVENT, two ROWS"). A band arriving is as irreversible
+as a band leaving, and the gaining player has no other surface that reports it either.
+
+**Its `band=` join needs no new rule, and the LOSING side's un-joined label is the correct
+reading.** The sim spells the band from its durable id (`Band 4`) and repeats it as `band=4`, so
+`BAND_ID_TOKEN_LABELS` relabels the row like any other — on the GAINING side, where the band is now
+in the viewer's roster. On the losing side the band has left, `band_label_for_id` answers `""`, and
+`_swap_band_label`'s empty-name refusal leaves the sim's own spelling standing. That is the honest
+answer rather than a gap: there is no client-side name for a band this people no longer has.
+**`from=` / `to=` are FACTION ids and get no such join** — the sim authors no faction names
+(`People 1` is its own fallback), so there is nothing to join them to, and minting a client-side
+naming rule for a people is a decision this table is not the place to take.
+
 **`trade_delivered` is NOTABLE, and it is the one expedition event that happens where OTHER PEOPLE
 live** (arc #527). That novelty is what earns it a kind of its own sim-side; it is not what decides
 its rung, because the ladder asks how LOUDLY, not how new. A shipment landing sits exactly beside
@@ -303,7 +328,7 @@ on a player-facing bar — an internal identifier where prose belongs.
 
 | Layer | Does | Example |
 |---|---|---|
-| `DETAIL_KEY_HIDDEN` | drops keys the LABEL already carries — `band`, `count`, `expedition`, `killed` | `band=3 count=4 direction=out` → `departed` |
+| `DETAIL_KEY_HIDDEN` | drops keys the LABEL already carries — `band`, `count`, `expedition`, `killed`, and `band_changed_hands`' `from` / `to` / `side` | `band=3 count=4 direction=out` → `departed`; `band=4 from=1 to=0 side=gained` → `` |
 | `DETAIL_VALUE_LABELS` | the enumerated values in English, used VERBATIM (several are deliberately lowercase, reading as a phrase continuing the label) | `settle_site` → `Settle site`, `out` → `departed` |
 | the generic fallback | underscores → spaces, first letter capitalised | `herd_gone` → `Herd gone` |
 
@@ -327,6 +352,16 @@ Three details in the walk are not obvious:
   the ` · ` join already supplies.
 - **Coordinates stay** — re-spaced to `(64, 36)`. They were the one part of the raw detail worth
   keeping.
+- **A handover renders an EMPTY detail column, and every one of its four tokens is hidden on the
+  same test.** `band=` is substituted into the label as always; `from=` / `to=` are raw FACTION ids
+  the label already names in prose (*"left us for People 1"*), so rendering them would print
+  `From 0 · To 1` — exactly the identifier-on-a-player-bar the walk exists to prevent, and there is
+  no faction-naming rule to join them through. `side=lost|gained` is hidden rather than given
+  `DETAIL_VALUE_LABELS` rows because *left us* / *joined us* is the whole of what it means and the
+  label says it in English; it stays a machine contract, the handle that matches the two halves of
+  one handover. **`direction=out|in` on `migrated` is not the counter-example it looks like**: that
+  label counts PEOPLE and never says which way they went, which is why its value is spelled out
+  where this one is dropped.
 - **A number is TRIMMED, never rounded** (`_trimmed_number`). The sim writes casualties with
   `{:.3}` — honest on the wire, where a `Scalar` really can be fractional, and debug output on a
   notification bar: `Killed 2.000` is a float where the player is owed a count. Trailing zeros and a

@@ -11034,6 +11034,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CameOfAge => "Came of age",
         CommandEventKind::Aged => "Joined the elders",
         CommandEventKind::Migrated => "Migration",
+        CommandEventKind::BandChangedHands => "Band changed hands",
     }
 }
 

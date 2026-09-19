@@ -146,6 +146,40 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
   assignment is staffed. Scout/Warrior are band-wide roles, not tile sources. Config:
   `labor_config.json` `worked_source_sight_range`.
 
+#### ⛔ SIGHT IS MEASURED IN HEX STEPS — `hex_distance_wrapped`, like every other radius
+
+`for_each_visible_tile_in_range` compares `hex_distance_wrapped(center, tile) <= effective_range`,
+the same metric `band_work_range`, the supply reach and `raid_radius` use. It used to compare
+`dx² + dy²` against `range²` over odd-r **offset** coordinates, and offset Euclidean **always
+understates** true hex distance on the diagonals — so every vision source saw further diagonally
+than its configured range.
+
+Measured from the live game that found it, on an 80-wide wrapping map: an observer at `(73,31)` and
+a band at `(1,35)` are **10 hex steps** apart; the old comparison read wrapped `dx=8`, `dy=4` →
+`√80 ≈ 8.94` and accepted it against a `BandScout`'s effective range of **9** (`base_range` 6 plus a
+`+3` elevation bonus). The tile was revealed, `ContactSink` recorded a contact into
+`ConnectionLedger`, and that contact satisfied the defection gate in `systems::population` — a
+rival's whole 29-person band changed faction off one over-long sight line. **No config was retuned
+to compensate**: narrowing the diagonals is the fix.
+
+- **The bounding box is unchanged and is still a superset.** Every hex step changes the offset
+  column and row by at most one (`HEX_NEIGHBOR_OFFSETS`), so a tile `n` steps away lies within `n`
+  columns and `n` rows; `water_bonus` is the only positive terrain modifier
+  (`get_terrain_modifier` returns the water bonus, the negative forest penalty, or zero), so
+  `effective_range <= max_range`. The **caller has already folded the elevation bonus into the
+  `base_range` argument** (`calculate_visibility` passes `source.base_range + capped_bonus`), which
+  is what keeps that inequality true.
+- **`ADJACENT_LOS_SKIP_DIST_SQ` became `ADJACENT_LOS_SKIP_DISTANCE` (`1`)** — adjacency is hex
+  distance ≤ 1, and a squared constant compared against a non-squared value is the silent-drift
+  shape this change exists to remove. The two offset "diagonals" that are *not* hex neighbours are
+  hex distance 2 and now take an LOS ray-cast, which is correct.
+- **`has_line_of_sight_wrapped` is untouched** — it is a Bresenham ray-cast over offset coordinates
+  and answers a different question (what lies *between* two tiles).
+- **No existing test encoded the offset-Euclidean shape**; the whole suite passed unchanged.
+  `visibility_systems::hex_sight_range_tests` pins the live geometry above, the control tile one
+  step nearer (`(0,35)`, 9 steps, still revealed and still contacted), and the reveal set as
+  exactly `grid_utils::hex_range_tiles` across the wrap seam.
+
 **Modifiers**:
 - **Elevation**: Higher elevation grants sight bonus (configurable per 100m)
 - **Terrain**: Water tiles grant bonus range; forest/wetland tiles apply penalty
@@ -210,6 +244,43 @@ least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, increme
 `simulate_population`) before its population can emigrate. This stops a freshly-spawned, well-fed
 starting band from defecting on turn one (the `well_fed_morale_bonus` alone would otherwise clear the
 morale threshold immediately).
+
+### ⛔ THE HANDOVER IS TOLD TO BOTH PEOPLES — one `band_changed_hands` row per side
+
+`CommandEventKind::BandChangedHands`, pushed by `systems::population::push_band_changed_hands_events`
+on the turn the migration's eta reaches zero: *"Band 3 left us for People 1"* filed under the losing
+faction, *"Band 3 joined us from People 0"* under the gaining one, both carrying
+`band=/from=/to=/side=lost|gained`.
+
+**Two rows, because the feed is per-faction on the wire.**
+`snapshot::campaign::command_events_to_state` keeps only `entry.faction == viewer`, so a single entry
+reaches exactly one of the two players the handover happened to. Which side a row describes rides the
+**detail** (`side=`), on `CommandEventKind::Road`'s reading: the player is looking at one band
+changing hands, not at two unrelated events.
+
+**It shipped silent, and the silence is why the handover was reported as a bug.** The branch sent
+`TradeDiffusionEvent` and `MigrationKnowledgeEvent` — registered at `lib.rs` and read by **no
+`EventReader` anywhere in the crate**; they are diffusion/telemetry plumbing — and pushed nothing to
+`CommandEventLog` at all, so `cohort.faction = migration.destination` changed a 29-person band's
+allegiance with no line on any surface. The two dead events are deliberately left as they are: this
+arc adds a reader for neither.
+
+**The rung is ALERT** (`.claude/rules/client/event-dock.md`'s three-rung ladder). Notable is for what
+happens to a band as a matter of course — a death, a person migrating, a party arriving — and this is
+`band_founded`'s twin one step further out: rare, irreversible, and it changes the faction's roster by
+a **whole band**. Unlike a founding it is not player-initiated, so the dock is the only place the
+player can learn of it at all. ⛔ **`RUNG_BY_KIND` lives client-side**, and a kind absent from it
+falls to `DEFAULT_RUNG` (Routine) — until the client adds the row this line sits below the default
+detail floor.
+
+**The band is named by its durable id** (`band_label`, *"Band 3"*) and the other people by theirs
+(`people_label`, *"People 1"*) — the sim authors no faction names, `FactionRegistry` holds ids and
+who controls them and nothing else. Both raw ids ride the detail so a client that later knows a
+name substitutes it the same way it substitutes a band's.
+
+`core_sim/tests/band_changed_hands.rs` pins both halves off the **encoded envelope**, capturing the
+same turn's log under each `ViewerFaction` in turn, with a negative-control arm: a turn in which
+nobody changes hands publishes no row to either people.
 
 **Config**: `migration_fragment_scaling`, `migration_fidelity_floor`; migration gating (`migration_morale_threshold`, `migration_eta_ticks`, `migration_min_settled_turns`) lives in the `population` block of `turn_pipeline_config.json`.
 
