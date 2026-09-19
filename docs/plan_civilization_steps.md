@@ -1,10 +1,10 @@
-# Plan: The steps to a civilization — resistance to settling, the pulls that beat it, and one hunt verb
+# Plan: The steps to a civilization — resistance to settling, the pulls that beat it, and one work party
 
-Status: **design dialogue captured, not a spec.** Nothing here is filed or built. Decisions marked
+Status: **design dialogue captured, not a spec.** Filed under arc #682 (early steps) and placeholder arcs #693, #695, #696; nothing is built. Decisions marked
 *leaning* are where the discussion landed; *open* is where it did not.
 
 Source: *How Did Humans Invent Countries?* (Neon Rush, 29 min, published 2026-07-31,
-https://youtu.be/vh2TNc7ASiw). Timestamps below refer to its captions. Discussion 2026-09-17/18.
+https://youtu.be/vh2TNc7ASiw). Timestamps below refer to its captions. Discussion 2026-09-17 to 19.
 
 ## Why this doc exists
 
@@ -210,7 +210,10 @@ What falls out without further rules:
   beneficial move is to keep the new band connected, locally or by a trade route, so the breeding
   population stays whole.
 - **The gathering matters for far bands.** A band beyond reach has no standing contact; the
-  gathering is the episode that renews it. A far band that never gathers stops growing *and* drifts
+  gathering is the episode that renews it. The sim already has the contact primitive: the
+  connection ledger (`.claude/rules/core_sim/connections.md`) gains a tie from presence in sight
+  range and bleeds it over ~50 quiet turns; the gathering should reuse it, not add a second notion
+  of contact. A far band that never gathers stops growing *and* drifts
   toward independence under the fission rule, from the same missing signal.
 - **The gathering place is wherever bands keep meeting**, and belief accrues there. The dead go into
   that ground. The settling decision is then real: stay where the partners and the ancestors are, or
@@ -307,7 +310,7 @@ machinery as the fission rule's independence, fed by the same missing contact.
 
 A separate religion subsystem; prophets or priests as units; any hard cap on cohesion.
 
-## One hunt verb (leaning)
+## One work party: hunt and forage are the same thing (decided)
 
 ### Why the current shape exists
 
@@ -320,70 +323,78 @@ A separate religion subsystem; prophets or priests as units; any hard cap on coh
   kills, and **drops off** to the home band whenever the herd is within `drop_off_within_tiles`
   (3, `expedition_config.json`). Otherwise it hunts until the pack fills or the surplus is spent,
   then walks home and folds back. See `.claude/rules/core_sim/expeditions.md`.
+- **Forage** is a labor assignment on a resident band, range `band_work_range` (2), into that
+  band's own larder. It has no far mode and no carry-back of any kind. A band split off with
+  `split_band` and walked to a far patch forages it into its own larder with no way to send food
+  home, because a shipment launch is gated on a connection tie and two bands beyond sight range
+  hold none (`.claude/rules/core_sim/connections.md`).
 
-Two commands, two mechanisms, for one activity.
+Two hunt commands and one forage command, three mechanisms, for one activity: workers go where the
+food is and the food comes back.
 
-### The proposal
+### The model
 
-**Every hunt sends hunters out, and they follow the herd.** The only line between "local" and "far"
-is where the kill lands relative to another of your bands:
+**Assigning workers to hunt or forage is the only command. The workers are still the band's; they
+are just somewhere else.**
 
-- Kill within reach of a band → the meat is that band's, automatically.
-- Kill beyond reach → the meat sits with the hunters, and what they do not eat can be **hauled back**
-  by a party (the shipment verb: a party that walks cargo between two nodes,
-  `.claude/rules/core_sim/expeditions.md` → "A shipment is a party that WALKS IT").
+- **The sim places the party at the source.** No split, no move order, no follow order. A hunt
+  party follows the herd on its own, because that is where the source is; a forage party stands on
+  the patch, because the patch does not move.
+- **The party is a supply-network node with its own larder.** Within `reach_tiles` (3) it pools
+  with the band automatically through `balance_supply_networks`, bounded by the network's
+  `throughput_per_turn` and `friction` — the natural carry limit and loss-in-transit for a near
+  party. Beyond reach, **hauling** is the carry-back: a shipment from the party to any band the
+  player chooses. The shipment launch gate has to be rethought here, because a far party's only tie
+  is the haul itself, and that traffic is what keeps it from being cut off.
+- **Unassigning brings them home.** The existing fold-back (`fold_party_into_band`) settles workers,
+  pack and materials into the band. There is no merge, because they never stopped being the band.
+- **Hunters and foragers stay labor.** The party earns per-turn income into its larder the way the
+  assignment does today. The lumpy raid model, its forecast and its completion rules go away with
+  the expedition.
+- **Trails come free.** The route branch of the intensification ladder already says a path is what
+  traffic wears in before anyone builds a road. Hauling is traffic; a far patch hauled from
+  regularly wears its own path home.
 
-The leash goes away: a party that follows the herd never goes out of range. The expedition's
-drop-off rule *is* the local-hunt rule, so nothing about "local" needs its own mechanism.
+What the earlier "treat the party as a split-off band" idea was buying — network pooling and the
+ability to send food along a trade route — comes from the party being a **network node**, not from
+it being a separate band. A separate band would have needed a merge verb and a move order per turn.
 
-### If the hunting party is a real band, what comes free
+### What goes
 
-The discussion converged on treating the hunting party as a **split-off resident band** (the
-fission verb) rather than an expedition. Checked against the code, this is what a `ResidentBand`
-gets that an `Expedition` is excluded from by construction:
-
-- **Automatic exchange within reach.** `balance_supply_networks` auto-pools stores between
-  same-faction resident bands within `reach_tiles` (3). A hunting band within 3 hexes of another band
-  hands over its larder with no command — bounded by the network's `throughput_per_turn` and
-  `friction`, which are the natural "carry" limit and spoilage-in-transit for a local hunt. Note
-  `reach_tiles` and `drop_off_within_tiles` are both 3 today; under one verb the drop-off radius is
-  redundant with the supply reach.
-- **Trade routes to whoever you choose.** The shipment verb already launches from a band to any
-  connected band; a far hunting band can send excess to a chosen destination, not only "home".
-- **Connection is cohesion.** Hauling keeps the hunting band on the supply network, which is exactly
-  the signal the fission rule reads. A hunting band that follows a herd for a season and keeps
-  sending meat home stays yours; one that stops sending is drifting. The hunt becomes the first
-  natural way a band falls out of touch — steps 1→3 told through food.
-- Everything else a band is: births, ageing, its own runway, culture layer, live fog reveal,
-  sedentarization tick, ordinary `MoveBand`.
-
-### What is *not* free
-
-- **Herd-following.** Retargeting to the herd's live tile each turn is expedition-only
-  (`advance_expeditions`). A resident band goes where the player sends it. Either the player moves
-  the hunting band every turn (tedious, and the exact problem the 5-leash was patched over) or a
-  resident band gains a *follow herd* order. The latter is the missing piece.
-- **Hunters stop being labor.** Today's local hunt is same-turn income into the larder. Under one
-  verb, hunters leave the pool, and meat arrives as pooled transfers or hauls. The food-arrivals arc
-  already projects lumpy arrivals forward, so the Food line survives; but the first turns gain a
-  launch → walk → kill → transfer lag. Judged the right feel (a hunt is an event, not a rate), but it
-  changes turn 1.
-- **Roster and map.** Every hunt is a moving marker. Within reach it should read as "your hunters
-  are over there", and the band roster and the map counter must agree it is part of the band. The
-  band-naming rule already records a bug from exactly that split.
+- The local-hunt leash: a party that follows the herd never goes out of range.
+- `drop_off_within_tiles`: redundant with `reach_tiles` once the party is a network node.
+- The hunt expedition path, its forecast, and the second hunt command.
 
 ### Who eats what (open)
 
 Two consistent answers, pick one:
 
-- **The local hunting band keeps no larder.** It sends 100% back (the pooling does this) and eats
-  from the home band's larder. Simplest; the home band's runway readout is unchanged.
-- **Every hunting band has a larder and eats from it.** Consistent with a far band, which must. The
-  home band's consumption drops by the hunters' share and the pooled meat is net of what they ate.
-  Realistic; changes the runway readout and the first turns' food math.
+- **The party keeps no larder when near.** It pools 100% and eats from the band's larder. The
+  band's runway readout is unchanged.
+- **Every party has a larder and eats from it.** Consistent with a far party, which must. The
+  band's consumption drops by the party's share and the pooled food is net of what they ate.
 
-If the local band is simply "a resident band within reach", the second answer is what the systems
-already do, and the first would have to be special-cased.
+If the party is simply a network node, the second answer is what the systems already do, and the
+first would have to be special-cased.
+
+### In the anthropology
+
+Binford's forager/collector distinction: foragers move the whole camp to the food; collectors send
+task groups out from a base camp and bring the food back. The shift from the first to the second is
+the recognised step toward sedentism. The base camp is the gathering point; the trails are the
+routes.
+
+### Tasks
+
+Three, and the first is built **UX prototype first** — the hunt and forage panel, with the far
+case, the haul and the party reading as part of the band, before any sim code.
+
+1. **The work party** — hunt and forage share one model, in one PR: placement at the source, herd
+   following for hunt, the network node, pooling within reach, hauling beyond it with the gate
+   rethought, fold-back on unassign.
+2. **Retire the expedition hunt path and the leash** once the work party covers everything they
+   did.
+3. **Client: the hunt and forage panel**, prototype first.
 
 ## Open questions
 
@@ -397,8 +408,8 @@ already do, and the first would have to be special-cased.
   before the spec leans on them.
 - The monument in the improvement catalog: the first improvement with no yield — what its
   `labor_draw` and decay mean for a thing that produces belief.
-- Hunting: *follow herd* as a resident-band order; whether `drop_off_within_tiles` survives or
-  collapses into `reach_tiles`; which of the two "who eats" answers.
+- The work party: the shipment launch gate for a far party whose only tie is the haul; which of
+  the two "who eats" answers; whether a far forage party's larder counts toward the tether.
 - Why moving never paid: measure it before touching depletion tuning.
 
 ## Related
