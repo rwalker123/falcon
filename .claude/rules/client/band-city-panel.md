@@ -2687,12 +2687,14 @@ room for arithmetic"*).
       That const's own doc anticipates it: *"a roster whose names ever went plural would need a
       different rule."* The take row also does not inflect at one (`1 of 1 Harvesting kits
       available`, Ray's own wording) and is **left exactly as it is**.
-  - ⛔ **BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART.** `required` and `filled` are floats in
-    units and the card prints whole numbers, so `KitRoster.row_coverage`'s rule applies one account
-    over: filled and the shortfall behind it PARTITION the requirement, and rounding each on its own
-    gives a `4 of 6` whose remainder is 3. `HudFormat.apportion_people_to` is that one arithmetic; the
-    target it sums to is `round(required)`, floored at `POOL_TOE_MIN_UNITS` so a requirement under one
-    whole unit still states a denominator instead of `0 of 0`.
+  - ⛔ **THE SHORT TEST IS ON THE WIRE'S FLOATS; THE ROUNDING ONLY DECIDES HOW THE NUMBERS READ.**
+    Two different questions, and conflating them is what let a sub-unit shortfall read as covered —
+    see "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" below for the playtest numbers and the
+    retired arithmetic. `HudWorkVocab.pool_toe_row_is_short` answers the first
+    (`required − filled > POOL_TOE_SHORT_MIN`, this client's family floor for a rate that is nothing
+    to state); the term then CEILS the requirement and FLOORS what is held, each with that same
+    tolerance, and clamps the denominator to at least `held + POOL_TOE_SHORT_UNIT_GAP` so a short row
+    can never print `N of N`.
 - **ONE triangle, never two.** A card short of both draws a single `⚠`; a second glyph is the
   measured-and-refused placement above.
 - **The gating underneath is otherwise unchanged**: nothing flies for a fine pool, an unstaffed pool
@@ -2722,6 +2724,77 @@ that never renders passes the two silent ones. The state re-pushes the fund-mode
 dock states below it re-render this block and push no band of their own, so leaving the fixture
 standing failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that
 changed.
+
+### ⛔ A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY — the triangle flies at any magnitude
+
+Reported from a live playtest. Band `Teasel`, one plant site at (72,28) mid-Cultivate, straight off
+the wire:
+
+```
+patch (72,28):  upkeep_demand 1.1859   upkeep_supplied 1.0739   upkeep_shortfall 0.1120
+                upkeep_workers_needed 2
+pool_toe:  agriculture / hoes   required 0.7906   filled 0.5666     (72% covered)
+           builders    / hoes   required 2.0000   filled 1.4334
+labor rows: agriculture 2 workers, builders 2 workers
+```
+
+The band owns two hoes and both pools bid at Normal priority, so the settlement splits them pro-rata
+and **both pools are genuinely short**. The **Builders card warned and the Agriculture card said
+nothing at all** — so the pools panel was silent about the exact shortage the tile was complaining
+about, which is what the player reported.
+
+**THE ROUNDING SWALLOWED IT.** `round(0.7906)` floored UP to a denominator of one, the apportion then
+drove the numerator to one as well, and `parts[0] >= units` skipped the row: `1 of 1 hoe` — a 28%
+shortfall printed as complete, no line, no triangle. Builders' `1.4334 of 2.0` survived as `1 of 2`
+purely because its numbers are bigger.
+
+> #### ⛔ RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*
+>
+> The dead rule: *"`filled` and the shortfall behind it PARTITION `required`, so rounding each on its
+> own gives a `4 of 6` whose remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic,
+> and the target it sums to is `round(required)`, floored at `POOL_TOE_MIN_UNITS`."*
+>
+> **`apportion_people_to`'s premise does not hold on this account.** It divides WHOLE PEOPLE by a
+> share the player chose — the target is a real count and the parts must sum to it exactly — whereas
+> here the target is itself a rounding of a float, and the card prints `N of M` rather than `N + S`,
+> so nothing is partitioned on screen. What the apportion actually does to a sub-unit row is round
+> the numerator UP to the denominator, which is the whole defect. `POOL_TOE_MIN_UNITS` went with it;
+> the floor it provided is structural now.
+
+**THE RULE THAT REPLACED IT — one predicate, one rendering, and they answer different questions.**
+
+| question | answered by | how |
+|---|---|---|
+| is this pool short of this tool? | `HudWorkVocab.pool_toe_row_is_short` / `pool_toe_is_short` | `required − filled > POOL_TOE_SHORT_MIN`, on the WIRE'S OWN FLOATS |
+| what do the numbers say? | `pool_toe_short_line` | CEIL the requirement, FLOOR what is held, both with that tolerance |
+
+- ⛔ **THE SHORT TEST IS NEVER MADE ON THE DISPLAY PAIR.** The sim settled `required` and `filled`
+  and published them; the card's whole numbers are downstream of that answer and may not be the
+  basis for it. A pool short of a tool flies the triangle **whatever the magnitude** — that is the
+  whole point of the mark.
+- **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** You cannot buy 0.4 of a
+  hoe, so `0.79` wants one; `0.5666` of a hoe's service is no whole hoe, so the pool holds none. The
+  playtest row reads **`0 of 1 hoe`**. It is still a rounding, and one that can only ever OVERSTATE
+  the gap by less than a unit — where the retired pair understated it to nothing.
+- **`POOL_TOE_SHORT_UNIT_GAP` MAKES *ALMOST NEVER* INTO *NEVER*.** The pair above satisfies
+  `held < units` at essentially every input on its own; the clamp is what guarantees a short row
+  cannot print `N of N` at any tolerance, which is the exact reading the retired arithmetic produced.
+- **The tolerance is `POOL_TOE_SHORT_MIN` = 0.005**, this client's family floor for a rate that is
+  nothing to state (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap
+  under it is float noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody
+  is missing. It is applied to the ceil and the floor as well, so an `f32` sum landing a hair either
+  side of a whole unit cannot invent a denominator (`6.0000005 → 7`) or lose a held one.
+- ⛔ **A POOL ROUNDING *UP* TO COVERED IS NO LONGER COVERED.** `required 3.0 / filled 2.9` used to
+  render nothing and now reads `2 of 3 hoes`. That reversal is the rule, not a side effect: the old
+  reading is the playtest defect one order of magnitude up.
+
+**Driven, PNG-less, in `_assert_pool_toe_rounding` + `_assert_pool_toe_sub_unit_shortfall`** — a card
+quoting `1 of 1` renders a perfectly ordinary card, which is why the whole class was invisible to the
+frames. The playtest row is transcribed verbatim and **both producers are asserted**, because a fix
+that made the line print while leaving the boolean rounding would fly no triangle, and one that flew
+the triangle over an empty hover would say nothing. The `3.0 / 2.9` row is the case that tells the
+raw-float test apart from a comparison of the printed pair, and a FILLED row is paired against both,
+or *"it states a line"* passes on a builder that states one for everything.
 
 ## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
@@ -5035,6 +5108,84 @@ Frames: `band_panel_under_herded`, and the A/B pair `band_panel_keepers_short` /
 `band_panel_keepers_staffed` — one herd, one hunt crew, only the herd's POOL SHARE moving. The third
 claim rides with them and is PNG-less, because no picture can carry it: a board with twice the
 hunters on it looks exactly like the short frame.
+
+### ⛔ …AND THE NOTE NAMES THE BINDING CONSTRAINT — hands OR tools, never always hands
+
+The sentence above is **right only while the head count is what binds**, and on the playtest band it
+was not. Teasel's plant site read *"This ground is slipping — raise this band's Agriculture role."*
+against the numbers in "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" above: the pool commits
+`demand ÷ fully-equipped-rate` hands — `1.1859 / 1.5 = 0.79` — capped by its head count of **2**, so
+the cap was nowhere near binding, **a third worker would have stood idle and the shortfall would not
+have moved a decimal.** What was short was HOES.
+
+**THE ADVICE IS STILL RIGHT WHEN THE POOL *IS* HAND-LIMITED** — earlier in the same game the demand
+was high enough that `demand / 1.5` exceeded the head count and a third worker genuinely cleared it.
+So this is a **fork**, not a replacement, and `HudWorkVocab.under_kept_note` gained a fourth arm:
+
+| the keeping pool's TOE | the note |
+|---|---|
+| any line SHORT | `This ground is slipping — Agriculture needs tools, not hands.` / `Animals drifting off — Husbandry needs tools, not hands.` |
+| every line filled, or no TOE at all | the role sentences above, unchanged |
+| a MATERIAL shortfall on the row | supersedes both, unchanged — no head count and no tool mends a fence with no hurdles |
+
+- ⛔ **A KEEPING SHORTFALL HAS EXACTLY TWO CAUSES AND THE WIRE SAYS WHICH — but the inference runs
+  backwards, so write it out.** The sim splits the pool's HEAD COUNT across its sites' worker-needs
+  (`distribute_upkeep_pool`) at the FULLY EQUIPPED rate, then settles the tools those committed hands
+  bid for against the band's store. **A pool whose needs fit inside its head count is paid in full** —
+  every site gets its need, `supplied == demand`, and no row on it is under-kept at all. So a source
+  that IS under-kept means the split was capped **unless the hands it did commit are working bare**,
+  which is precisely what a short TOE line reports. *Tools short ⇒ say tools. Tools filled and still
+  short ⇒ the head count bound it, so say hands.* **Both arms are POSITIVE statements**; neither is a
+  guess dressed as a fallback.
+- ⛔ **WHERE BOTH BIND, TOOLS WIN — on which fact is PUBLISHED, not on which is worse.** A pool can be
+  hand-capped *and* tool-short at once. The tool shortfall is a settlement the sim resolved and put on
+  the wire; **the hand cap is not published in any form this client can read** — neither the committed
+  hands nor the per-site worker-needs ride the snapshot — so it can only ever be recovered by
+  elimination. Naming the stated fact over the inferred one is the discipline every producer on this
+  panel follows. It is also the cheaper remedy: an arriving tool lifts a hand the pool has ALREADY
+  committed from the bare rate to the equipped one, where a new worker is a whole body.
+- **RAISING THE ROW'S PRIORITY IS A THIRD REAL REMEDY AND IS DELIBERATELY NOT IN THE SENTENCE.**
+  `settle_scarce_store` serves High in full, then Normal, then Low — so on the playtest band,
+  agriculture and builders bidding Normal against two hoes, re-ranking would hand agriculture the
+  tools outright. The note is one short declarative in the register its siblings use, and the control
+  is already on this card: the PRIORITY section sits two rows under the note in the same work-row
+  inspector. A second clause naming it would say what the control beneath it already offers.
+- **ONE PREDICATE, TWO SURFACES.** The fork reads `HudWorkVocab.pool_toe_is_short` over the pool's own
+  TOE — the same predicate `_pool_toe_short_line` composes the pool CARD's hover from — so the
+  triangle on the Agriculture card and the remedy on the row it is failing to keep cannot disagree
+  about which shortfall this is. That was the reported defect's other half.
+- **`HudWorkVocab.keeping_pool_kind` is the one labor-kind → pool-token picker**, `keeping_role_name`'s
+  twin: that one answers the display NAME off a SOURCE kind, this one the token `pool_toe_for` joins
+  on. A caller that reached for the other web's pool would read a TOE that is a wrong answer looking
+  like a right one.
+- ⛔ **THE TOOLS ARM STAYS IN THE *WARN* REGISTER**, beside the hands arm and NOT beside the
+  missing-good one. The three-register rule is about what the shortfall DOES: a missing GOOD stops the
+  work outright and takes DANGER; a pool short of tools is still working, bare-handed and slower,
+  which is the same gradual loss the hands arm describes. `under_kept_note_severity` therefore takes
+  no tools argument.
+- **THE WORDING IS MEASURED TO THE SENTENCE IT REPLACES** — 61 and 56 characters, identical to the
+  hands pair. `build_status_part` is a bare `Label` with no autowrap in a 354px narrow-shell strip, so
+  a longer rewording overruns its clipping host; `not hands` is `MATERIAL_SHORT_REMEDY`'s own refusal,
+  so the two arms that decline a head count decline it in the same words.
+- ⛔ **THE SOURCE CARD'S HOVER KEEPS THE HANDS SENTENCE, and that is the one thing given up here.**
+  `DetailFormat.note_under_kept_hover` passes no material note for a stated reason — *"the board is
+  where staffing is decided this turn … on the tile card it is a number you cannot act on"* — and the
+  tools arm inherits it: a card carries no priority rank and no bench, so it has nothing to press
+  either. On a source short of TOOLS alone its hover therefore names a role that will not fix it, one
+  hover away from a board that says what is missing. **Threading the band through that path is a
+  six-call-site change to a surface the arc already decided is not where remedies are acted on**; it
+  is listed here as a known cost rather than as work pending.
+
+**Frames:** `band_panel_keepers_tools_short` — the same herd and the same hunt crew as the pair above,
+with only the husbandry pool's TABLE OF EQUIPMENT moving. **BOTH ARMS are asserted and the two HANDS
+arms are driven** (`_assert_keeping_remedy`), because either alone passes on a producer stuck on one
+answer: a pool with **no TOE at all** and a pool whose TOE is **FILLED** must both keep the role
+sentence, which is what stops *"it has a TOE"* standing in for *"it is short of one"*. The short fill
+is sub-unit (`0.5666 of 0.7906`, the playtest's own shape), so the pair also pins that the remedy
+reads the raw-float test rather than the rounded display pair — sabotaging that predicate fails these
+claims alongside the rounding block's. The note and its HOVER are asserted together, being two
+producers, and the countdown is asserted to survive: what changed is which lever is named, not whether
+the source is being lost.
 
 ## …AND A PART-BUILT RUNG GETS THE SAME ⚠ AND THE SAME NOTE — one test, not two (§4.6a)
 

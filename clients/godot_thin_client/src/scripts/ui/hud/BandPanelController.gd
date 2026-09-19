@@ -6512,6 +6512,25 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
     var queued_keys: Dictionary = {}
     for queued_variant in _band_labor.build_queue_keys(band):
         queued_keys[String(queued_variant)] = true
+    # **AND WHETHER EACH KEEPING POOL'S TOOLS REACHED THE HANDS IT COMMITTED** — resolved ONCE for the
+    # whole board, keyed by the row's own labor kind, because it is a fact about the BAND's pool and
+    # not about any one source. It forks `under_kept_note` between its two staffing remedies: the
+    # hands arm sends the player to a role card, which only moves the number while the head count is
+    # what binds.
+    #
+    # ⛔ **IT IS THE POOL CARD'S OWN TEST AND MUST STAY SO.** `_pool_toe_short_line` composes the
+    # card's hover off the same `pool_toe_is_short` predicate, so the triangle on the Agriculture card
+    # and the remedy on the row it is failing to keep cannot disagree about which shortfall this is —
+    # which was the reported defect's other half (the card said nothing at all while the tile
+    # complained).
+    var pool_tools_short := {
+        SourceForecast.LABOR_KIND_FORAGE: HudWorkVocab.pool_toe_is_short(
+            HudBandLaborState.pool_toe_for(band,
+                HudWorkVocab.keeping_pool_kind(SourceForecast.LABOR_KIND_FORAGE))),
+        SourceForecast.LABOR_KIND_HUNT: HudWorkVocab.pool_toe_is_short(
+            HudBandLaborState.pool_toe_for(band,
+                HudWorkVocab.keeping_pool_kind(SourceForecast.LABOR_KIND_HUNT))),
+    }
     for key in merged:
         var m: Dictionary = merged[key]
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
@@ -6797,6 +6816,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # trips the same grace and drives the same decay, so it earns the same ⚠, the same slot and
         # the same countdown.
         var at_risk := under_kept or material_note != ""
+        # **WHICH STAFFING REMEDY THIS ROW'S POOL ACTUALLY HAS** — resolved above, once for the board,
+        # and read here by the row's own labor kind so the note and its hover can never fork
+        # differently.
+        var tools_short := bool(pool_tools_short.get(kind, false))
         var under_kept_hint := ""
         if at_risk:
             var source_kind := SourceForecast.source_kind_for_labor(kind)
@@ -6805,7 +6828,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             under_kept_hint = HudWorkVocab.under_kept_tooltip(kind,
                 DetailFormat.rung_badge_word(SourceForecast.at_risk_rung(
                     rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind)),
-                int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0, material_note)
+                int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0, material_note,
+                tools_short)
         if at_risk:
             if not marks.contains(HudComposeVocab.OVERHUNT_FLAG):
                 marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -6815,7 +6839,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # can: an overstaffed TAKE crew on a source nobody keeps is an ordinary state. They are not
             # equal in weight, so the slot is not first-come: the overstaff note says some hands bring
             # nothing home, and this one says the ground or the flock is being lost.
-            note = HudWorkVocab.under_kept_note(kind, material_note)
+            note = HudWorkVocab.under_kept_note(kind, material_note, tools_short)
             note_severity = HudWorkVocab.under_kept_note_severity(material_note)
         # **AND THE ROW FLIES A MARK OF ITS OWN FOR IT** — a KIT, never a second ⚠. The two hazards
         # have opposite remedies (the bench against the stepper), so one glyph for both would make a

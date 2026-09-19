@@ -3653,6 +3653,35 @@ func _render_keeper_warning_states() -> void:
 	_assert_keeper_warning("keepers_short_with_hunters_piled_on", true)
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
+	# ---- …AND WHICH LEVER THE NOTE NAMES (the playtest's second half) --------------------------
+	# The SAME herd and the SAME hunt crew again, with only the husbandry pool's TABLE OF EQUIPMENT
+	# moving. The frame is the TOOLS arm, because that is the one the board could not say before and
+	# the one a reader will want to look at; the two HANDS arms beside it are driven, a board naming
+	# one lever looking exactly like a board naming the other.
+	_set_world_herds(_under_herded_work_herd_fixtures())
+	_push_bands([_keeper_tools_band_fixture(KEEPER_STATE_HUNTERS, KEEPER_TOOLS_FILLED_SHORT)])
+	await _settle()
+	_open_work_inspector_for_herd(UNDER_HERDED_WORK_HERD_ID)
+	await _settle()
+	await _save("band_panel_keepers_tools_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_keeping_remedy("band_panel_keepers_tools_short", true)
+	# …and the strip still HOLDS the reworded note, which is a width claim and not a wording one:
+	# the tools sentence is measured to the hands sentence's length precisely so this stays true.
+	_assert_work_inspector_fits("band_panel_keepers_tools_short")
+
+	# THE SAME POOL WITH ITS TOE FILLED — the fork is on SHORTNESS, not on the vector's presence.
+	_push_bands([_keeper_tools_band_fixture(KEEPER_STATE_HUNTERS, KEEPER_TOOLS_FILLED_WHOLE)])
+	await _settle()
+	_assert_keeping_remedy("keepers_tools_filled", false)
+
+	# …and the band with NO TOE at all, which is every other frame in this file.
+	_push_bands([_keeper_work_band_fixture(KEEPER_STATE_HUNTERS)])
+	await _settle()
+	_assert_keeping_remedy("keepers_no_toe", false)
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+
 	# ---- THE OTHER WAY A SOURCE BLEEDS: a part-built rung nobody is building -------------------
 	# A Tame the player started and then re-tasked the crew off. The rung is owed its BUILDERS, so the
 	# keeper demand is honestly `0` and every keeper-shaped reading says nothing is wanted — while the
@@ -5011,47 +5040,115 @@ func _assert_pool_toe_shared_item(tools: Dictionary) -> void:
 
 ## ⛔ GUARD: **THE ROUNDING, DRIVEN — because `required` and `filled` are FLOATS and the card prints
 ## WHOLE numbers.** Every TOE row in the fixture above is whole on purpose, so the frame says nothing
-## about what happens between two integers; these three rows are the cases that bite, and each is a
-## sentence the card must or must not produce rather than an arithmetic identity.
+## about what happens between two integers; these rows are the cases that bite, and each is a sentence
+## the card must or must not produce rather than an arithmetic identity.
 ##
 ## **THE EXPECTATIONS ARE HAND-WORKED FROM THE DOCUMENTED RULE, never re-derived through
-## `apportion_people_to`** — an expectation composed through the arithmetic under test agrees with it
-## by construction, whatever the arithmetic does.
+## `pool_toe_short_line` itself** — an expectation composed through the arithmetic under test agrees
+## with it by construction, whatever the arithmetic does.
 ##
-## | row | rounds to | the card says |
+## ⛔ **THE SUB-UNIT ROW IS THE PLAYTEST DEFECT AND IS THE POINT OF THE SET.** Teasel's Agriculture
+## pool at `0.5666 of 0.7906` — 72% covered, a live wire reading — printed `1 of 1 hoe` under the
+## retired apportion, which produced NO line and therefore NO triangle while the tile it keeps was
+## complaining. Two of the rows below are the same claim at two magnitudes; a rule that only handled
+## the playtest numbers would pass one and fail the other.
+##
+## | row | reads | why |
 ## |---|---|---|
-## | required 5.5, filled 2.5 | 6 units, 3 filled (floors 2 + 3, the leftover to the larger remainder) | `3 of 6 hoes` |
-## | required 3.0, filled 2.9 | 3 of 3 | **nothing** — a pool rounded up to covered is covered |
-## | required 0.4, filled 0.0 | 1 unit | `0 of 1 hoe`, never `0 of 0` and never `0 of 1 hoes` |
+## | required 5.5, filled 2.5 | `2 of 6 hoes` | ceil the want, floor the held — was `3 of 6` |
+## | required 3.0, filled 2.9 | `2 of 3 hoes` | **short by a tenth is SHORT** — was silent |
+## | required 0.4, filled 0.0 | `0 of 1 hoe` | never `0 of 0` and never `0 of 1 hoes` |
+## | required 0.7906, filled 0.5666 | `0 of 1 hoe` | the playtest row — was `1 of 1` and silent |
+## | required 4.0, filled 4.0 | **nothing** | the negative: a filled row is still not a line |
 const POOL_TOE_ROUNDING_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
 const POOL_TOE_ROUNDING_SHORT_REQUIRED := 5.5
 const POOL_TOE_ROUNDING_SHORT_FILLED := 2.5
 const POOL_TOE_ROUNDING_SHORT_UNITS := 6
-const POOL_TOE_ROUNDING_SHORT_HELD := 3
-const POOL_TOE_ROUNDING_COVERED_REQUIRED := 3.0
-const POOL_TOE_ROUNDING_COVERED_FILLED := 2.9
+const POOL_TOE_ROUNDING_SHORT_HELD := 2
+## A row whose halves ROUND to equality and whose floats do not. The one case that tells the raw-float
+## short test apart from a comparison of the printed pair.
+const POOL_TOE_ROUNDING_NEAR_REQUIRED := 3.0
+const POOL_TOE_ROUNDING_NEAR_FILLED := 2.9
+const POOL_TOE_ROUNDING_NEAR_UNITS := 3
+const POOL_TOE_ROUNDING_NEAR_HELD := 2
 const POOL_TOE_ROUNDING_TINY_REQUIRED := 0.4
 const POOL_TOE_ROUNDING_TINY_FILLED := 0.0
 const POOL_TOE_ROUNDING_TINY_UNITS := 1
 const POOL_TOE_ROUNDING_TINY_HELD := 0
+## ⛔ **THE LIVE PLAYTEST ROW, TRANSCRIBED FROM THE WIRE** — Teasel's `agriculture` / `hoes` line at
+## the plant site (72,28), the band holding two hoes against a Builders pool bidding 2.0 at the same
+## priority. Do not "tidy" these to round numbers: what they pin is that a shortfall smaller than one
+## whole unit still flies the triangle.
+const POOL_TOE_ROUNDING_LIVE_REQUIRED := 0.7906
+const POOL_TOE_ROUNDING_LIVE_FILLED := 0.5666
+const POOL_TOE_ROUNDING_LIVE_UNITS := 1
+const POOL_TOE_ROUNDING_LIVE_HELD := 0
+## …and the FILLED row beside it, so "states a line" is a claim rather than a builder that always does.
+const POOL_TOE_ROUNDING_FILLED_REQUIRED := 4.0
+const POOL_TOE_ROUNDING_FILLED_FILLED := 4.0
 func _assert_pool_toe_rounding() -> void:
 	var pool := HudConst.LABOR_KIND_AGRICULTURE
 	var short_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
 		POOL_TOE_ROUNDING_SHORT_REQUIRED, POOL_TOE_ROUNDING_SHORT_FILLED)])
 	var want_short := _pool_toe_term(POOL_TOE_ROUNDING_SHORT_HELD, POOL_TOE_ROUNDING_SHORT_UNITS,
 		POOL_TOE_ROUNDING_ITEM)
-	_assert_band_panel("pool gear — a FRACTIONAL shortfall apportions both halves against the rounded requirement — \"%s\" (want \"%s\")"
+	_assert_band_panel("pool gear — a FRACTIONAL shortfall CEILS its want and FLOORS what it holds — \"%s\" (want \"%s\")"
 			% [short_line, want_short], short_line == want_short)
-	var covered_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
-		POOL_TOE_ROUNDING_COVERED_REQUIRED, POOL_TOE_ROUNDING_COVERED_FILLED)])
-	_assert_band_panel("pool gear — …a pool that rounds UP to covered says nothing (\"%s\")"
-		% covered_line, covered_line == "")
+	# ⛔ **THE SHORT TEST IS ON THE FLOATS, and this row is the only one that says so.** Both halves
+	# round to 3, so a builder comparing its own printed pair reads `3 of 3` and falls silent — which
+	# is exactly the shape that swallowed the playtest row one order of magnitude down.
+	var near_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
+		POOL_TOE_ROUNDING_NEAR_REQUIRED, POOL_TOE_ROUNDING_NEAR_FILLED)])
+	var want_near := _pool_toe_term(POOL_TOE_ROUNDING_NEAR_HELD, POOL_TOE_ROUNDING_NEAR_UNITS,
+		POOL_TOE_ROUNDING_ITEM)
+	_assert_band_panel("pool gear — …a pool short by a TENTH of a unit still states a line — \"%s\" (want \"%s\")"
+			% [near_line, want_near], near_line == want_near)
 	var tiny_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
 		POOL_TOE_ROUNDING_TINY_REQUIRED, POOL_TOE_ROUNDING_TINY_FILLED)])
 	var want_tiny := _pool_toe_term(POOL_TOE_ROUNDING_TINY_HELD, POOL_TOE_ROUNDING_TINY_UNITS,
 		POOL_TOE_ROUNDING_ITEM)
 	_assert_band_panel("pool gear — …and a requirement under a whole unit still states a DENOMINATOR — \"%s\" (want \"%s\")"
 			% [tiny_line, want_tiny], tiny_line == want_tiny)
+	_assert_pool_toe_sub_unit_shortfall()
+
+## ⛔ GUARD: **THE PLAYTEST ROW — a SUB-UNIT tool shortfall flies the triangle and states a tool line.**
+##
+## Reported from play: the Agriculture pool card was SILENT about the exact shortage the tile at
+## (72,28) was complaining about, while the Builders card beside it (`1.4334 of 2.0`, which survives
+## rounding) warned correctly. Both pools were genuinely short of the same two hoes.
+##
+## **BOTH HALVES OF THE CONTRACT ARE ASSERTED, because they are different producers**: the raw-float
+## predicate the triangle and the work row's remedy fork on (`pool_toe_is_short`), and the SENTENCE
+## the card's hover carries (`pool_toe_short_line`). A fix that made the line print while leaving the
+## boolean rounding would fly no triangle; one that flew the triangle over an empty hover would say
+## nothing.
+##
+## **PAIRED WITH A FILLED ROW, or "it states a line" passes on a builder that states one for
+## everything** — and the filled row is asserted on BOTH producers for the same reason.
+func _assert_pool_toe_sub_unit_shortfall() -> void:
+	var pool := HudConst.LABOR_KIND_AGRICULTURE
+	var live := [_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM, POOL_TOE_ROUNDING_LIVE_REQUIRED,
+		POOL_TOE_ROUNDING_LIVE_FILLED)]
+	var filled := [_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM, POOL_TOE_ROUNDING_FILLED_REQUIRED,
+		POOL_TOE_ROUNDING_FILLED_FILLED)]
+	_assert_band_panel("pool gear — the PLAYTEST row (%.4f of %.4f) is SHORT on the raw floats"
+			% [POOL_TOE_ROUNDING_LIVE_FILLED, POOL_TOE_ROUNDING_LIVE_REQUIRED],
+		HudWorkVocab.pool_toe_is_short(live))
+	var live_line := HudWorkVocab.pool_toe_short_line(live)
+	var want_live := _pool_toe_term(POOL_TOE_ROUNDING_LIVE_HELD, POOL_TOE_ROUNDING_LIVE_UNITS,
+		POOL_TOE_ROUNDING_ITEM)
+	_assert_band_panel("pool gear — …and states it as \"%s\" rather than reading as covered (got \"%s\")"
+			% [want_live, live_line], live_line == want_live)
+	# ⛔ **AND IT MAY NEVER PRINT `N of N`.** The retired apportion's whole failure was an equality
+	# beside a live shortfall, which reads as covered whatever the triangle does — so the shape is
+	# asserted on its own rather than inferred from the equality above.
+	_assert_band_panel("pool gear — …and a short row NEVER reads `N of N` (\"%s\")" % live_line,
+		live_line != _pool_toe_term(POOL_TOE_ROUNDING_LIVE_UNITS, POOL_TOE_ROUNDING_LIVE_UNITS,
+			POOL_TOE_ROUNDING_ITEM))
+	_assert_band_panel("pool gear — …while a FILLED row is short of nothing and states nothing (\"%s\")"
+			% HudWorkVocab.pool_toe_short_line(filled),
+		not HudWorkVocab.pool_toe_is_short(filled)
+			and HudWorkVocab.pool_toe_short_line(filled) == "")
 
 ## ⛔ GUARD: **THE COUNTED NOUN AGREES WITH THE DENOMINATOR — on a PLURAL-labelled item and on a
 ## SINGULAR-labelled one, which is the whole of why one suffix rule cannot serve this table.**
@@ -5706,6 +5803,97 @@ func _keeper_work_band_fixture(hunters: int) -> Dictionary:
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
 			(entry as Dictionary)["workers"] = hunters
 	return band
+
+## ---- THE KEEPING REMEDY FORKS ON THE POOL'S TOOLS (the playtest's second half) ------------------
+##
+## The under-herded row read *"raise this band's Husbandry role"* whatever was actually binding. On
+## Teasel's plant site the pool had committed `demand ÷ fully-equipped-rate` = **0.79** hands against
+## a head count of **2**, so the cap was nowhere near binding and a third worker would have stood idle
+## — what was short was HOES (`0.5666 of 0.7906`). The remedy has to name the constraint that binds.
+##
+## The item the husbandry pool wants. `crook` is the roster's SINGULAR-labelled item, deliberately:
+## nothing about the remedy reads it, so any shipped item serves — and if a future claim ever did
+## quote the line, a singular label is the one that catches a naive plural rule.
+const KEEPER_TOOLS_ITEM := DetailFormat.KIT_DURABILITY_KEY_CROOK
+## The pool's whole want, and the two fills that fork the remedy. The SHORT fill is sub-unit against a
+## sub-unit requirement — the playtest's own shape, so this pair also pins that FIX 1's raw-float test
+## is what the remedy reads rather than the rounded display pair.
+const KEEPER_TOOLS_REQUIRED := 0.7906
+const KEEPER_TOOLS_FILLED_SHORT := 0.5666
+const KEEPER_TOOLS_FILLED_WHOLE := 0.7906
+
+## The same band with a husbandry TOE line stamped on it, at a stated fill.
+##
+## ⛔ **THE POOL IS `husbandry`, NOT `hunt`.** `pool_toe_for` joins on the POOL's own wire token while
+## the row carries the LABOR kind, and a fixture that stamped the labor kind would leave the pool's
+## TOE empty — every assertion below would then pass on the hands arm for the wrong reason.
+func _keeper_tools_band_fixture(hunters: int, filled: float) -> Dictionary:
+	var band := _keeper_work_band_fixture(hunters)
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(
+		HudWorkVocab.keeping_pool_kind(SourceForecast.LABOR_KIND_HUNT),
+		KEEPER_TOOLS_ITEM, KEEPER_TOOLS_REQUIRED, filled)]
+	return band
+
+## ⛔ GUARD: **THE UNDER-KEPT ROW NAMES THE BINDING CONSTRAINT — and BOTH ARMS are asserted, because
+## either alone passes on a producer stuck on one answer.**
+##
+## Three bands, one herd, one hunt crew, and only the husbandry pool's TOE moving:
+##
+## | the pool's TOE | the row's note |
+## |---|---|
+## | no line at all | **hands** — the state every frame before this one stages |
+## | one line, FILLED | **hands** — the fork is on SHORTNESS, not on the vector's presence |
+## | one line, SHORT by 0.22 of a unit | **tools** |
+##
+## The middle row is what stops "it has a TOE" standing in for "it is short of one", and the
+## sub-unit fill is what ties the remedy to the raw-float test rather than to the rounded pair.
+##
+## **THE NOTE AND ITS HOVER ARE ASSERTED TOGETHER** — they are two producers (`under_kept_note` and
+## `under_kept_tooltip`), so a fork threaded into one and not the other puts one remedy on the row and
+## the opposite one under the pointer. The countdown is asserted to SURVIVE the tools arm: what
+## changed is which lever is named, not whether the source is being lost.
+func _assert_keeping_remedy(state_name: String, want_tools: bool) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var hands_note := HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT)
+	var tools_note := HudWorkVocab.WORK_ROW_UNDER_HERDED_TOOLS_NOTE
+	var want := tools_note if want_tools else hands_note
+	var other := hands_note if want_tools else tools_note
+	var found := false
+	var failures: Array[String] = []
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
+			continue
+		found = true
+		if not bool(model.get("at_risk", false)):
+			failures.append("the row is not at risk, so it states no remedy at all")
+		var note := String(model.get("note", ""))
+		if note != want:
+			failures.append("expected \"%s\", got \"%s\"" % [want, note])
+		if note == other:
+			failures.append("it states the OTHER remedy: \"%s\"" % [other])
+		# ⛔ **THE TOOLS ARM KEEPS THE WARN REGISTER.** A pool working bare-handed is slower, not
+		# stopped — the DANGER ink belongs to a missing GOOD, which halts the work outright — so a
+		# fork that reached the severity would restate a hazard this one is not.
+		var severity := String(model.get("note_severity", ""))
+		if severity != HudWorkVocab.NOTE_SEVERITY_WARN:
+			failures.append("expected the WARN register, got \"%s\"" % [severity])
+		var tooltip := String(model.get("tooltip", ""))
+		if not tooltip.contains(want):
+			failures.append("the row hover states a different remedy: %s" % [tooltip])
+		if tooltip.contains(other):
+			failures.append("the row hover states the OTHER remedy too: %s" % [tooltip])
+		if not tooltip.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+			failures.append("the row hover lost its countdown: %s" % [tooltip])
+	if not found:
+		_fail("%s — no Hunt work row for %s" % [state_name, UNDER_HERDED_WORK_HERD_ID])
+		return
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the remedy names %s" % [
+			state_name, "TOOLS" if want_tools else "HANDS"])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [state_name, failure])
 
 ## GUARD: the under-herded ⚠, its note and its instruction, asserted TOGETHER — the flag the row tints
 ## from, the amber mark, and (when up) the note naming the band's HUSBANDRY role. Asserting the flag

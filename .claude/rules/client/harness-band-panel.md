@@ -171,8 +171,15 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 183 frames / 1323 `PASS` / 536 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 184 frames / 1328 `PASS` / 542 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE POOL-TOE SUB-UNIT FIX MOVED IT 183 / 1323 / 536 → 184 / 1328 / 542**, re-measured rather than
+summed: **+1 frame** (`band_panel_keepers_tools_short`), **+5 `PASS`** (`_assert_pool_toe_rounding`'s
+`_assert_pool_toe_sub_unit_shortfall` block is four of them, the new frame's
+`_assert_work_inspector_fits` the fifth) and **+6 `assert OK`** (the frame's bounds/content-fits pair,
+its width claim, and `_assert_keeping_remedy`'s three `print`-reported answers — that producer lands
+in the `assert OK` tally for the same reason `_assert_keeper_warning` does).
 
 ⛔ **THE `PASS` COUNT WENT DOWN (1328 → 1323) AND NO CLAIM WAS LOST** — `docs/plan_pool_toe.md` §3
 retired two kit PICKERS and every claim that could only be made about a control, while §5's pool TOE
@@ -2743,12 +2750,28 @@ stepper rides the WORKINGS ROSTER head), so the claim is made where the shared i
 the Roadwork card.
 
 **THE ROUNDING IS DRIVEN, NOT RENDERED** (`_assert_pool_toe_rounding`). Every row in the fixture is
-whole on purpose, so the frame says nothing about what happens between two integers; the three rows
-that bite are constructed and handed to `HudWorkVocab.pool_toe_short_line` directly — a fractional
-shortfall (`5.5` required, `2.5` filled → `3 of 6 hoes`), one that rounds UP to covered (`3.0` /
-`2.9` → **nothing**) and one whose requirement is under a whole unit (`0.4` / `0.0` → `0 of 1 hoes`,
-never `0 of 0`). **The expectations are hand-worked from the documented rule and never re-derived
-through `apportion_people_to`**, which would agree with itself whatever it does.
+whole on purpose, so the frame says nothing about what happens between two integers; the rows that
+bite are constructed and handed to `HudWorkVocab.pool_toe_short_line` directly — a fractional
+shortfall (`5.5` required, `2.5` filled → `2 of 6 hoes`), one whose two halves ROUND to equality and
+whose floats do not (`3.0` / `2.9` → `2 of 3 hoes`) and one whose requirement is under a whole unit
+(`0.4` / `0.0` → `0 of 1 hoe`, never `0 of 0`). **The expectations are hand-worked from the documented
+rule**, never re-derived through the arithmetic under test, which would agree with itself whatever it
+does.
+
+⛔ **THE `3.0 / 2.9` ROW REVERSED ITS CLAIM, and the reversal IS the rule.** It used to read *"one
+that rounds UP to covered → **nothing**"*; a pool short of a tool now flies the triangle at any
+magnitude, and that row is the only one in the set that tells the raw-float short test apart from a
+comparison of the printed pair (`band-city-panel.md` → "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND
+AWAY").
+
+**`_assert_pool_toe_sub_unit_shortfall` IS THE PLAYTEST ROW, TRANSCRIBED** (`0.5666 of 0.7906`, which
+the retired apportion printed as `1 of 1 hoe` and therefore skipped). It asserts **both producers** —
+the raw-float `pool_toe_is_short` the triangle and the work row's remedy fork on, and the SENTENCE the
+hover carries — because a fix that made the line print while leaving the boolean rounding would fly no
+triangle, and one that flew the triangle over an empty hover would say nothing. A FILLED row is paired
+against both, and a standalone claim asserts a short row never reads `N of N`: that equality beside a
+live shortfall was the defect's actual output, and inferring its absence from the equality above would
+not pin it.
 
 **THE EXPECTATIONS ARE COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS**
 (`_pool_toe_term` / `_pool_toe_line`), never through `pool_toe_short_line` — the material-short
@@ -2806,8 +2829,9 @@ passes the two plural rows:
 
 ⛔ **THE `1 of 2` CASE IS ASSERTED FOR ITS OWN SAKE.** A noun following the NUMERATOR reads singular
 there and is wrong; the noun agrees with the DENOMINATOR, which is the quantity `N of M` names. The
-`0 of 1` case is the other half and is the easy one to miss — it is also reachable in play, since
-`POOL_TOE_MIN_UNITS` floors a sub-unit requirement at one.
+`0 of 1` case is the other half and is the easy one to miss — it is also reachable in play, since a
+sub-unit requirement CEILS to a denominator of one (`POOL_TOE_MIN_UNITS`, which floored it there, is
+retired: the floor is structural now, a term being emitted only for a row the raw floats call short).
 
 **A third claim per item requires the two forms to DIFFER**, or *"it inflects"* is satisfied by a row
 that spells the same word twice — which is exactly what the FALLBACK does, deliberately.

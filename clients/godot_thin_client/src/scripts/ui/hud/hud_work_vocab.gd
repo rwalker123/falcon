@@ -1202,10 +1202,54 @@ const POOL_CARD_TOOL_SHORT_META := &"pool_card_tool_short"
 ## phrasing itself is the client's existing one, which is the whole point of not inventing a second.
 const POOL_TOE_TERM_FORMAT := "%d of %d %s"
 
-## **A LINE EXISTS ONLY WHERE `required > 0`, so its DENOMINATOR may never read zero.** `required` is
-## a float in UNITS and a pool's hands are split fractionally by the band's fund mode, so a real
-## requirement can round down to nothing; the floor is what keeps `0 of 0 hoes` off the card.
-const POOL_TOE_MIN_UNITS := 1
+## ⛔ **RETIRED — `POOL_TOE_MIN_UNITS`, THE FLOOR THAT ROUNDED A SHORTFALL AWAY.** It read: *"a line
+## exists only where `required > 0`, so its DENOMINATOR may never read zero … a real requirement can
+## round down to nothing; the floor is what keeps `0 of 0 hoes` off the card."* The goal was right and
+## the mechanism produced the defect: at `required 0.7906 / filled 0.5666` — a live playtest reading,
+## Teasel's Agriculture pool at 72% coverage — `round(0.7906)` floored UP to a denominator of 1 and
+## the apportion then drove the numerator to 1 as well, so a 28% shortfall printed `1 of 1 hoe` and
+## the card produced NO line and flew NO triangle.
+##
+## **THE FLOOR IS STRUCTURAL NOW.** A term is emitted only for a row the raw floats call SHORT, so
+## `required > POOL_TOE_SHORT_MIN` holds and `ceil` of it is at least one — a denominator can no
+## longer reach zero without a shortfall test having already declined to print anything.
+
+## **THE SMALLEST GAP IN TOOL UNITS THAT IS A SHORTFALL** — the ONE test the triangle, the line and
+## the work row's remedy all fork on, made against the WIRE'S OWN FLOATS rather than against the
+## rounded pair the card prints.
+##
+## ⛔ **THE SHORT TEST AND THE DISPLAY PAIR ARE DIFFERENT QUESTIONS, and conflating them is what let a
+## sub-unit shortfall read as covered.** *Is this pool short* is answered by `required − filled`, which
+## the sim settled and published; *what does the card say* is a rounding of that pair for a line with
+## no room for decimals. The old code asked the second and inferred the first from it.
+##
+## The value is this client's family floor for a rate that is nothing to state
+## (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap under it is float
+## noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody is missing.
+const POOL_TOE_SHORT_MIN := 0.005
+
+## **A SHORT ROW'S DENOMINATOR EXCEEDS ITS NUMERATOR BY AT LEAST THIS MANY WHOLE UNITS.** The
+## structural guarantee that `N of N` can never be printed beside a shortfall the floats affirm —
+## which is the exact reading the retired apportion produced. The ceil/floor pair below almost always
+## satisfies it on its own; the clamp is what makes *almost* into *never*, at every tolerance.
+const POOL_TOE_SHORT_UNIT_GAP := 1
+
+## **IS THIS TOE ROW SHORT — asked of the wire's floats.** `required` and `filled` are what the sim's
+## `settle_scarce_store` settled for this `(pool, item)`; the card's whole-number pair is downstream of
+## this answer and may never be the basis for it.
+static func pool_toe_row_is_short(row: Dictionary) -> bool:
+    var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
+    var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)), 0.0, required)
+    return required - filled > POOL_TOE_SHORT_MIN
+
+## **AND IS THIS POOL SHORT OF ANY OF ITS TOOLS** — `lines` is `HudBandLaborState.pool_toe_for`'s
+## answer for ONE pool. The boolean the work row's remedy forks on, so the pool card's triangle and
+## that remedy provably answer to the same test rather than to two readings of one vector.
+static func pool_toe_is_short(lines: Array) -> bool:
+    for row_variant in lines:
+        if row_variant is Dictionary and pool_toe_row_is_short(row_variant):
+            return true
+    return false
 
 ## **A POOL'S SHORT TOE LINES, AS ONE SENTENCE — `4 of 6 hoes · 0 of 2 dressing hammers`, or `""`.**
 ## `lines` is `HudBandLaborState.pool_toe_for`'s answer for THIS pool, in wire order.
@@ -1215,30 +1259,48 @@ const POOL_TOE_MIN_UNITS := 1
 ## applicable*; both render nothing here, and only one of them is a line. Collapsing them at the
 ## DECODER would destroy that distinction — which is why the filter is here and not there.
 ##
-## ⛔ **BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART** — `KitRoster.row_coverage`'s rule, applied to
-## units of tools rather than to people, because it is the same shape of question: `filled` and the
-## shortfall behind it PARTITION `required`, so rounding each on its own gives a `4 of 6` whose
-## remainder is 3. `HudFormat.apportion_people_to` is that one arithmetic; the target it sums to is
-## the rounded requirement, which is the denominator the term prints.
+## ⛔ **THE SHORT TEST IS `pool_toe_row_is_short`, ON THE RAW FLOATS — never a comparison of the two
+## rounded numbers this function then prints.** A pool short by less than a whole unit is short, and
+## the card must say so; what the rounding may decide is how the numbers READ, never whether the
+## shortfall exists.
+##
+## ⛔ **THE DENOMINATOR CEILS AND THE NUMERATOR FLOORS — they are NOT apportioned.**
+##
+## > **RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*.** The dead rule: *"`filled` and the
+## > shortfall behind it PARTITION `required`, so rounding each on its own gives a `4 of 6` whose
+## > remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic, and the target it sums to
+## > is the rounded requirement."* **`apportion_people_to`'s premise does not hold here.** It divides
+## > WHOLE PEOPLE by a share the player chose — the target is a real count and the parts must sum to
+## > it exactly — whereas the target here is itself a rounding of a float, and the card prints `N of
+## > M` rather than `N + S`, so nothing is partitioned on screen. What the apportion actually does to
+## > a sub-unit row is round the numerator UP to the denominator, which is the defect.
+##
+## **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** *How many whole tools
+## does this pool want* — you cannot buy 0.4 of a hoe, so `0.79` wants one. *How many whole tools are
+## in its hands* — `0.5666` of a hoe's service is no whole hoe, so it holds none. Together they read
+## `0 of 1 hoe` for the playtest row: still a rounding, and one that can only ever OVERSTATE the gap
+## by less than a unit, where the retired pair understated it to nothing. Both are taken with the
+## short floor's tolerance so an `f32` sum landing a hair either side of a whole unit cannot invent a
+## denominator (`6.0000005 → 7`) or lose a held one.
 static func pool_toe_short_line(lines: Array) -> String:
     var terms: Array[String] = []
     for row_variant in lines:
         if not (row_variant is Dictionary):
             continue
         var row: Dictionary = row_variant
+        if not pool_toe_row_is_short(row):
+            continue
         var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
-        var units: int = maxi(int(round(required)), POOL_TOE_MIN_UNITS)
         var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)),
             0.0, required)
-        var halves: Array[float] = [filled, required - filled]
-        var parts := HudFormat.apportion_people_to(halves, units)
-        if parts[0] >= units:
-            continue
+        var held := int(floor(filled + POOL_TOE_SHORT_MIN))
+        var units: int = maxi(int(ceil(required - POOL_TOE_SHORT_MIN)),
+            held + POOL_TOE_SHORT_UNIT_GAP)
         # ⛔ **THE NOUN AGREES WITH THE DENOMINATOR, NOT WITH WHAT IS HELD.** `N of M <item>` names
         # the M — *four of six earthmoving tools*, *one of two crooks* — so a term whose noun followed
-        # `parts[0]` would read `1 of 2 crook`, and one that never inflected would read `0 of 1 hoes`.
+        # `held` would read `1 of 2 crook`, and one that never inflected would read `0 of 1 hoes`.
         # `DetailFormat.kit_item_count_word` is the one place an item label is inflected.
-        terms.append(POOL_TOE_TERM_FORMAT % [parts[0], units,
+        terms.append(POOL_TOE_TERM_FORMAT % [held, units,
             DetailFormat.kit_item_count_word(
                 String(row.get(HudBandLaborState.POOL_TOE_ITEM_KEY, "")), units)])
     return RUNG_TRACK_PRICE_SEPARATOR.join(terms)
@@ -1570,6 +1632,38 @@ const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — raise this band's 
 ## picker below is one function and not a branch at each call site.
 const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's Agriculture role."
 
+## ---- THE FOURTH ARM: THE POOL HAS THE HANDS AND NOT THE TOOLS ----------------------------------
+##
+## ⛔ **THE ROLE SENTENCE IS WRONG ADVICE WHENEVER THE HEAD COUNT IS NOT WHAT BINDS.** Reported from
+## play, on Teasel's plant site at (72,28) mid-Cultivate: the row read *"This ground is slipping —
+## raise this band's Agriculture role."* while the pool held **2** workers against a commitment of
+## `demand 1.1859 ÷ 1.5 = 0.79` hands. The cap was nowhere near binding, so a third worker would have
+## stood idle and the shortfall would not have moved a decimal. What was actually short was HOES —
+## `pool_toe` said `0.5666 of 0.7906`, 72% covered, the band's two hoes split pro-rata against a
+## Builders pool bidding 2.0 at the same priority.
+##
+## **THE SENTENCE NAMES TOOLS AND REFUSES HANDS**, the register `MATERIAL_SHORT_REMEDY` already uses
+## one account over (*"…not more hands."*) — so the two arms that decline a head count decline it in
+## the same words, and a player learns the refusal once. **Same first clause as the hands arm**: the
+## CONSEQUENCE is identical (this ground is slipping, these animals are drifting) and only the remedy
+## forks, which is what keeps the pair readable as one family.
+##
+## ⛔ **MEASURED TO THE HANDS ARM'S WIDTH, and that is a constraint rather than a coincidence.**
+## `build_status_part` is a bare `Label` with no autowrap in a 354px narrow-shell strip, so this
+## sentence is a width budget: at 61 and 56 characters it is exactly as long as the note it replaces,
+## and a longer rewording overruns the clipping host (`band_panel_preview`'s recursive bounds
+## assertion is what says so).
+##
+## ⛔ **IT STAYS IN THE *WARN* REGISTER, beside the hands arm and NOT beside the missing-good one.**
+## The three-register rule under `MATERIAL_SHORT_REMEDY` is about what the shortfall DOES: a missing
+## GOOD stops the work outright and takes DANGER; a pool short of tools is still working, bare-handed
+## and slower, which is the same *losing ground gradually* the hands arm describes. `under_kept_note_severity`
+## therefore takes no tools argument.
+const WORK_ROW_UNDER_KEPT_TOOLS_NOTE := "This ground is slipping — Agriculture needs tools, not hands."
+
+## The animal web's twin, and the pool is `husbandry`.
+const WORK_ROW_UNDER_HERDED_TOOLS_NOTE := "Animals drifting off — Husbandry needs tools, not hands."
+
 ## RETIRED — **`WORK_ROW_UNDER_KEPT_TOOLTIP` AND `WORK_ROW_UNDER_HERDED_TOOLTIP`**, a four-sentence
 ## hover each (*"Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its
 ## gatherers, so this row's + will not stop the slide. …"*). They explained the MODEL — which pool
@@ -1778,11 +1872,46 @@ static func _worst_material_shortfall(demand: Array[Dictionary],
 ## names a remedy the stepper cannot reach, so a row short of hands AND of hurdles is told about the
 ## hurdles. Callers with no material pair in hand pass nothing and get the staffing pair, which is
 ## every caller that existed before this arm.
-static func under_kept_note(kind: String, material_note: String = "") -> String:
+##
+## **AND `tools_short` FORKS THE STAFFING PAIR ITSELF** — `HudWorkVocab.pool_toe_is_short` over the
+## keeping pool's own TOE. **A keeping shortfall has exactly two causes and the wire says which**, and
+## the reasoning is worth writing down because the inference runs backwards:
+##
+##   - The sim splits the pool's HEAD COUNT across its sites' worker-needs (`distribute_upkeep_pool`)
+##     and prices each hand at the FULLY EQUIPPED rate, then settles the tools those committed hands
+##     bid for against the band's store. **So a pool whose `sum(needs) <= keepers` is paid in full**:
+##     every site gets its need, `supplied == demand`, and no row on it is under-kept at all.
+##   - Therefore a source that IS under-kept means the split was capped — **unless the hands it did
+##     commit are working bare**, which is exactly what a short TOE line reports.
+##   - **Tools short ⇒ say tools. Tools filled and still short ⇒ the head count is what bound it, so
+##     say hands.** Both arms are POSITIVE statements; neither is a fallback.
+##
+## ⛔ **WHERE BOTH BIND, TOOLS WIN — and the reason is which fact is PUBLISHED.** A pool can be
+## hand-capped *and* tool-short at once. The tool shortfall is a settlement the sim resolved and put
+## on the wire; the hand cap is not published in any form this client can read (neither the committed
+## hands nor the per-site worker-needs ride the snapshot), so the client can only ever INFER it from
+## the absence of the other. Naming the fact the wire states outright, over the one recovered by
+## elimination, is the same discipline every other producer in this file follows. It is also the
+## cheaper remedy of the two: an arriving tool lifts a hand the pool has ALREADY committed from the
+## bare rate to the equipped one, where a new worker is a whole body.
+static func under_kept_note(kind: String, material_note: String = "",
+        tools_short: bool = false) -> String:
     if material_note != "":
         return material_note
+    if tools_short:
+        return WORK_ROW_UNDER_HERDED_TOOLS_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
+            else WORK_ROW_UNDER_KEPT_TOOLS_NOTE
     return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_NOTE
+
+## **WHICH POOL KEEPS THIS WEB'S SOURCES, AS THE POOL'S OWN WIRE TOKEN** — `husbandry` on the animal
+## web, `agriculture` on the plant one. `keeping_role_name`'s twin: that one answers the display NAME
+## off a SOURCE kind, this one the token `HudBandLaborState.pool_toe_for` joins on, off a LABOR kind.
+## One picker, for `under_kept_note`'s own reason — a caller that reached for the other web's pool
+## would read a TOE that is a wrong answer looking like a right one.
+static func keeping_pool_kind(labor_kind: String) -> String:
+    return HudConst.LABOR_KIND_HUSBANDRY if labor_kind == SourceForecast.LABOR_KIND_HUNT \
+        else HudConst.LABOR_KIND_AGRICULTURE
 
 ## **AND ITS SEVERITY, ASKED THE SAME WAY** — DANGER for a missing good, WARN for missing hands. One
 ## producer for the pair, so a note and its ink can never describe different shortfalls.
@@ -1794,8 +1923,9 @@ static func under_kept_note_severity(material_note: String = "") -> String:
 ## one counter, the decay riding the worst of the two fractions — so the hover says how long you have
 ## whichever term came up short.
 static func under_kept_tooltip(kind: String, rung_word: String = "",
-        grace: int = UNDER_KEPT_NO_COUNTDOWN, material_note: String = "") -> String:
-    var note := under_kept_note(kind, material_note)
+        grace: int = UNDER_KEPT_NO_COUNTDOWN, material_note: String = "",
+        tools_short: bool = false) -> String:
+    var note := under_kept_note(kind, material_note, tools_short)
     if rung_word == "" or grace == UNDER_KEPT_NO_COUNTDOWN:
         return note
     var countdown := UNDER_KEPT_LOST_NOW % rung_word
