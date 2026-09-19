@@ -113,7 +113,8 @@ const DEV_DEFAULT_NEW_GAME := {
     "preset_id": "earthlike",
     "width": 80,
     "height": 52,
-    "seed": 0,
+    # The seed is TEXT the whole way to the socket — see `new_game_line`.
+    "seed": "0",
     "profile_id": "late_forager_tribe",
     # No rival count: a direct `Main.tscn` launch never saw the New Game screen, so it has no pick to
     # forward and the argument is omitted. **The server resolves an absent field to its UNATTENDED
@@ -648,10 +649,18 @@ func _build_world_request() -> void:
     var preset := String(params.get("preset_id", DEV_DEFAULT_NEW_GAME["preset_id"]))
     var width := maxi(1, int(params.get("width", DEV_DEFAULT_NEW_GAME["width"])))
     var height := maxi(1, int(params.get("height", DEV_DEFAULT_NEW_GAME["height"])))
-    # Clamp the seed to >= 0 at the wire boundary: the server parses it as a u64, so a negative
-    # seed fails the parse and the world never generates. Catches every caller (GameLaunch + dev
-    # default). 0 stays "derive from the run clock".
-    var seed_value := maxi(0, int(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"])))
+    # **THE SEED IS TEXT, AND IS NEVER PUT THROUGH AN `int` HERE.** The server parses it as a u64;
+    # a GDScript `int` is signed 64-bit, so the top half of the seed range would be accepted and
+    # silently changed, generating a world that is not the one asked for. The one validity rule is
+    # the shell's own, asked statically, so this boundary and the New Game field cannot disagree; a
+    # seed it refuses falls back to `SEED_UNSEEDED` rather than sending a line the server cannot
+    # parse and stranding the client on the loading overlay. That path is reachable only from a
+    # caller that is not the New Game screen, which gates the press.
+    var seed_text := String(params.get("seed", DEV_DEFAULT_NEW_GAME["seed"]))
+    if MenuShell.seed_error(seed_text) != "":
+        seed_text = MenuShell.SEED_UNSEEDED
+    else:
+        seed_text = MenuShell.seed_digits(seed_text)
     var profile := String(params.get("profile_id", DEV_DEFAULT_NEW_GAME["profile_id"]))
     # **HOW MANY RIVAL PEOPLES, OR NO ANSWER AT ALL.** The count is the command's one OPTIONAL
     # argument, and omitting it is not the same request as sending 0: absent names no count and the
@@ -663,8 +672,8 @@ func _build_world_request() -> void:
     if rivals < 0:
         rivals = FactionCapacity.NO_COUNT
     _new_game_command = {
-        "line": new_game_line(preset, width, height, seed_value, profile, rivals),
-        "message": "New game: %s (%dx%d) seed %d, %s." % [preset, width, height, seed_value, _rivals_message(rivals)],
+        "line": new_game_line(preset, width, height, seed_text, profile, rivals),
+        "message": "New game: %s (%dx%d) seed %s, %s." % [preset, width, height, seed_text, _rivals_message(rivals)],
     }
     # The POST-fallback, post-clamp values, so a re-armed launch asks for exactly the world this run
     # got — including when the fallback is what supplied them.
@@ -673,18 +682,24 @@ func _build_world_request() -> void:
             "preset_id": preset,
             "width": width,
             "height": height,
-            "seed": seed_value,
+            "seed": seed_text,
             "profile_id": profile,
             "ai_faction_count": rivals,
         })
 
 ## **THE `new_game` LINE, INCLUDING WHETHER IT CARRIES A COUNT AT ALL.** Static and pure, so the one
 ## rule that decides between "2 rivals" and "none" is reachable from a harness without standing a
-## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends.
-static func new_game_line(preset: String, width: int, height: int, seed_value: int,
+## whole client up — `menu_preview` asserts the count the screen SHOWS is the count this appends, and
+## that the seed reaches this line digit for digit.
+##
+## **`seed_text` IS THE SEED'S DIGITS, substituted with `%s`.** The command is text and the server
+## parses it as a u64, so there is no number to round-trip through: a `%d` over a GDScript `int`
+## would cap the top half of the u64 range at 9223372036854775807 and ask for a different world than
+## the one named. Callers hand digits a `MenuShell.seed_error` accepts.
+static func new_game_line(preset: String, width: int, height: int, seed_text: String,
         profile: String, rivals: int) -> String:
     var rivals_suffix := "" if rivals == FactionCapacity.NO_COUNT else " %d" % rivals
-    return "new_game %s %d %d %d %s%s" % [preset, width, height, seed_value, profile, rivals_suffix]
+    return "new_game %s %d %d %s %s%s" % [preset, width, height, seed_text, profile, rivals_suffix]
 
 ## The boot line's words for a rival count — the four cases the count actually has, since "1 rivals"
 ## and "0 rivals" both misreport what was asked for.

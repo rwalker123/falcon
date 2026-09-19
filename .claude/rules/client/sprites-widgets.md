@@ -189,7 +189,7 @@ is consumed AND CLEARED by the first `Main._ready`, so the `_ready` a reload run
 falls through to `Main.DEV_DEFAULT_NEW_GAME` — a theme apply would have replaced the player's preset,
 size, seed and profile with an 80x52 `earthlike` while the button warned only that the run would end.
 `Main._build_new_game_command` therefore records the parameters it ACTUALLY used — after the
-dev-default fallback and the seed clamp have resolved, so the record is populated on every path into
+dev-default fallback and the seed check have resolved, so the record is populated on every path into
 `Main.tscn` — as `GameLaunch.active_new_game`, and `apply_theme_now` re-arms `pending_new_game` from it
 immediately before the reload. Consume-and-clear is untouched for every other caller: nothing else
 writes the pending slot, `LandingScreen` still stashes fresh parameters for New Game, and a bare

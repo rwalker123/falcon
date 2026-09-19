@@ -96,7 +96,11 @@ func _send_query(request_id: int, ask: Dictionary) -> bool:
 	return _command_client.send_query(request_id, ask)
 
 
-func _on_new_game_requested(preset_id: String, width: int, height: int, seed: int, profile_id: String, ai_faction_count: int) -> void:
+## `seed` arrives as the DIGITS of a u64 and is stashed unchanged. It is not converted to an `int`
+## anywhere on this path: a GDScript `int` is signed 64-bit and cannot hold the top half of the range
+## the server mints seeds from, so a conversion here would silently rebuild a different world
+## (`.claude/rules/client/new-game-setup.md`).
+func _on_new_game_requested(preset_id: String, width: int, height: int, seed: String, profile_id: String, ai_faction_count: int) -> void:
 	GameLaunch.pending_new_game = {
 		"preset_id": preset_id,
 		"width": width,
