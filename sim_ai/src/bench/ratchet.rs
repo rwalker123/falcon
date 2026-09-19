@@ -93,16 +93,17 @@ pub const BASELINE_TOLERANCE: f64 = 0.0;
 /// with the numbers in the PR body. The all-Pass control was dropped with seed 11: a Pass seat
 /// starves on every seed alike and measured nothing the forager's own `hunger_deaths_total` does
 /// not.
+/// The bench's default seeds (`DEFAULT_SEEDS`, whose doc says why these eight), as numbers; a
+/// test holds the two spellings to each other.
 #[cfg(test)]
-pub const BASELINE_SEEDS: [u64; 2] = [19, 40];
+pub const BASELINE_SEEDS: [u64; 8] = [54, 18, 22, 59, 50, 20, 3, 37];
 #[cfg(test)]
 pub const BASELINE_TURNS: u64 = 60;
 #[cfg(test)]
 pub const BASELINE_SEAT_SETS: [[&str; 2]; 1] = [["1=utility:forager@hard", "2=pass"]];
-/// The shipped baselines were played on Tiny worlds — before the bench standardised on
-/// Standard — and their numbers stand until they are regenerated there.
+/// The shipped baselines are played on the bench's default size, Standard.
 #[cfg(test)]
-pub const BASELINE_MAP_SIZE: MapSize = MapSize::Tiny;
+pub const BASELINE_MAP_SIZE: MapSize = MapSize::Standard;
 /// The shipped file, embedded so a test can hold it to the constants above without a path.
 #[cfg(test)]
 const SHIPPED_BASELINES: &str = include_str!("../../bench/baselines.json");
@@ -980,6 +981,16 @@ mod tests {
         let theirs = report_with(&[(&food, Some(1.0))]);
         let delta = ours.compare(&theirs).unwrap();
         assert!((delta[SEED][SEAT][M_INTENT_DISTANCE_L1].unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    /// The default `--seeds` and the pinned baseline seeds are one list spelled twice.
+    #[test]
+    fn the_default_seeds_are_the_baseline_seeds() {
+        let defaults: Vec<u64> = super::super::DEFAULT_SEEDS
+            .split(',')
+            .map(|seed| seed.parse().expect("a seed"))
+            .collect();
+        assert_eq!(defaults, BASELINE_SEEDS);
     }
 
     #[test]

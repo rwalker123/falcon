@@ -1020,19 +1020,15 @@ reads the ground at tick 2**, not tick 1 (`GROUND_CAPTURE_TICK`, `bench/measures
 food in the reading is its crew take for *this band*, and at tick 1 every band holds no kit, so
 every herd reads nothing and the tick-1 reading describes a bare band, not the start; at tick 2
 the outfit has landed and the herds are re-asked under the new key. The observation carries its
-`ground` block on every tick; only the capture moves. The sweep classifications below were
-**tick-1 readings** under the earlier herd model (a herd at its regrowth whatever the kit), and
-have not been re-swept. On the sixty
-bench seeds at t1, `--map-size standard`, the full reading says 24 `Stay` / 26 `SplitLocal` / 6
-`SplitFar` / 0 `MoveAll` / 4 `Short`; the patches alone say 0 / 3 / 16 / 0 / 41 — `hunt_reach` 5
-puts five to thirteen herds inside a standing hex, and on no size does a band's own hex feed
-thirty from patches. Sizes shift the verdict the way the land does: on Tiny 34 seeds read `Stay`
-and 13 `Short`, on Huge 7 and 7 with 32 `SplitLocal` and 14 `SplitFar` (a bigger world spreads
-the sites, so the second band's ground is farther). `MoveAll` needs a `move_target` and only
-seed 13 on Standard names one (7 steps): the discovered ground rarely reaches past the far ring at
-t1, and where it does no single hex beats the first band by the tolerance — so a seed whose
-`visible` covering feeds everyone with no move target still reads `Short` (seed 60 on Standard:
-visible 40.6 people, kind `short`).
+`ground` block on every tick; only the capture moves. On the sixty bench seeds at tick 2,
+`--map-size standard`, with the herds priced by the band's own crew take, the full reading says
+1 `Stay` / 17 `SplitLocal` / 17 `SplitFar` / 0 `MoveAll` / 25 `Short` (seed 54 is the one
+`Stay`: its own hex feeds 36.5 of 30 on wild ground, 26.9 from its patches alone) — a herd a
+band holds one spear for feeds what that spear brings down, not its regrowth, so a band's own hex
+rarely feeds thirty. `MoveAll` reads on no Standard seed: it needs a `move_target`, and the
+discovered ground rarely reaches past the far ring at t2; where it does no single hex beats the
+first planned band by the tolerance — so a seed whose `visible` covering feeds everyone with no
+move target still reads `Short` (seed 18: `visible` 40.0 people, `stay` 28.2, kind `short`).
 
 **Published**: the observation's `ground` block (`GroundRecord`, present only on a seat whose
 `BrainLens::ground` carries the profile's levers and whose `readings` hold the band — the utility
@@ -1252,18 +1248,14 @@ the record derives nothing the client would have to (`labor-ui.md` → "THE ⚠ 
 `sim_ai bench [--seeds <u64,…>] [--turns <n>] [--map-size tiny|small|standard|large|huge]
 --seats <spec> … --out <dir> [--server <path>] [--config <path>] [--compare <other-out-dir>]
 [--check <baselines.json>] [--write-baselines <path>]`.
-`--seeds` defaults to **`19,40`** (`DEFAULT_SEEDS`): of seeds 1–60 at `@hard`, the two starts
-the forager brings through sixty turns with no hunger death that have the best ground by the
-bench's own reading — `ground.best_cluster_in_horizon` 2.72 and 2.22 food/turn against a start
-consumption of 4.09 — and that replayed identically in every run, so the ratchet measures the
-rules on them and not the start's luck. No start on the map feeds thirty people on regrowth
-alone (the best of sixty is 2.72; forty-one read under 2.0), so "can feed" is the best ground
-there is, not a threshold met. Seed 21 reads 2.56, second best, and is passed over: the band is
-wiped out by t43 — `Land` walked it 51,26 → 2,19 → 52,24 → 4,22 across the wrap seam, each
-cluster reading better once the other was stripped — so its row would be degenerate and ratchet
-nothing, the reason seed 11 (the first default; ~1.2 food/turn in reach) was dropped; 12 (2.31)
-survives but was the one seed that flipped a branch before the replay fix. 23 and 47 were the
-defaults before the sweep, picked by hand for a start a human could feed. `--turns` defaults to
+`--seeds` defaults to **`54,18,22,59,50,20,3,37`** (`DEFAULT_SEEDS`; `BASELINE_SEEDS` is the
+same list as numbers, and a unit test holds the two to each other): eight Standard starts chosen
+off the land reading's `ground.start_kind` at tick 2 in the sixty-seed sweep of this build ("The
+land reading", above: 1 `stay` / 17 `split_local` / 17 `split_far` / 0 `move_all` / 25
+`short`) — 54 the one `stay`, 22 and 59 `split_local`, 50 and 20 `split_far`, 18, 3 and 37
+`short` — so the ratchet measures the rules against every kind of start the reading names, not
+only the ground that feeds a band where it stands. (The two before them, `19,40`, were the Tiny
+starts with the best ground by `ground.best_cluster_in_horizon`.) `--turns` defaults to
 **`60`**
 (`DEFAULT_TURNS`): cultivation costs 50 work units and a crew of a few builders takes ~15–25
 turns, so a 30-turn run ends inside the investment's dip and the ratchet's end-of-run population
@@ -1303,8 +1295,8 @@ Then `new_game` is sent and synchronised by a `ListSaves` question behind it. A 
 ~3.5 s wall on Tiny and ~13 s on Huge (release build; the world generation dominates).
 
 **The New Game recipe** — to open the world a bench seed played, from the client menu: preset
-*Earthlike*, size = the run's `--map-size` (*Tiny* for the shipped baselines), seed = the bench
-seed (`19` or `40` for the shipped baselines), start
+*Earthlike*, size = the run's `--map-size` (*Standard* for the shipped baselines), seed = the
+bench seed (one of the eight defaults for the shipped baselines), start
 profile *late_forager_tribe*, rivals = the number of `--seats` (2 for the shipped set). The
 human holds seat 0 — the seat the bench only *holds* and never plays — and the rivals are seats 1
 and 2 in `--seats` order; the AI played seat 1 (`1=utility:forager@hard`), seat 2 was Pass. The
@@ -1409,24 +1401,25 @@ brain to move a number. So `liveness` stays **reported** and ratchetable through
 never gates on its own.
 
 **`sim_ai/bench/baselines.json`** holds one entry, `1=utility:forager@hard 2=pass` on the
-bench's default seeds `19, 40` for its default 60 turns (`BASELINE_SEEDS` / `BASELINE_TURNS` /
-`BASELINE_SEAT_SETS`; a unit test holds the file to them), recorded on the **Tiny** `earthlike`
-world — the file's top-level `"map_size": "tiny"` (`BASELINE_MAP_SIZE`, pinned by the same test)
-predates the Standard default, so a `--check` against it needs `--map-size tiny` until the entry
-is regenerated on Standard — with the outfitting board sizing the loadout by value (`gathering 16, big_game 1` on seed
-19, `gathering 15, big_game 2` on 40), conflicts per claim, *hold the ground* a standing bill
-sized to the band's summed plant bill and defaulted on when paying it would starve the band,
-overuse read only at or below a patch's floor and free hands moved only where they improve a
-site's take: seed 19 ends with 16 working, no hunger deaths and `patches_improved 0` — 27,18
-(complete t25) and 28,20 (complete t30) each held one tick and unwound, their bills defaulted
-on, and read 0.96 and 0.88 at t60; seed 40 with 20 working, no hunger deaths and
-`patches_improved 2` — 26,28 completes at t41 and 24,31 at t58, both held to t60 on two
-`agriculture` hands each. `hard` because argmax makes the run the rules' — at `normal` two
-proposals for one band in the top two are a seeded coin flip. The all-Pass control went with
-seed 11: a Pass seat starves on every seed alike and measured nothing the forager's own
-`hunger_deaths_total` does not; seat 2 is still Pass and is marked `degenerate` on both seeds.
-`Land` wins on both seeds (11 and 9 moves accepted), so the file carries no `declined` entry.
-Regenerate the entry in the PR that moves it, with the numbers in the PR body.
+bench's default seeds `54, 18, 22, 59, 50, 20, 3, 37` for its default 60 turns
+(`BASELINE_SEEDS` / `BASELINE_TURNS` / `BASELINE_SEAT_SETS`; a unit test holds the file to them),
+recorded on the **Standard** `earthlike` world — the file's top-level `"map_size": "standard"`
+(`BASELINE_MAP_SIZE`, pinned by the same test) — with the outfitting board sizing the loadout
+by value, conflicts per claim, free hands landing where they take more (the honest ceiling, no
+row-full reading), the pools releasing their spare hands, and *hold the ground* a standing bill
+sized by what a keeper supplies, keeping the harvesters, and defaulted on when paying it would
+starve the band. At t60, alive / hunger deaths / `patches_improved` by start kind: 54 (`stay`)
+52 / 0 / 2; 22 (`split_local`) 40 / 0 / 1; 59 (`split_local`) 50 / 0 / 1; 50 (`split_far`)
+44 / 0 / 2; 20 (`split_far`) 44 / 0 / 2; 18 (`short`) 44 / 0 / 1; 3 (`short`) 33 / 3 / 1; 37
+(`short`) 51 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two
+proposals for one band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every
+seed alike, and is marked `degenerate` on all eight by the writer. `Land` wins on seven seeds
+(5 to 26 moves accepted) and on seed 20 proposes nothing in sixty turns: it raises `land_short`
+at t5, t9, t10, t11 and t13 — no discovered walkable tile within `land.horizon_tiles` out-takes
+the cluster the band stands in by `better_ground_gain_fraction`, the reading names no
+`move_target`, and the band is not blind — so the file carries one `declined` entry, `seed 20,
+seat 1, land`, with that note. Regenerate the entry in the PR that moves it, with the numbers
+in the PR body.
 
 ⛔ **The file must parse back to the f64 it was written from.** The tolerance is 0, so `sim_ai`
 takes serde_json with `float_roundtrip`: the default float parse is best-effort and read seed
