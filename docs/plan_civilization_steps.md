@@ -47,8 +47,10 @@ All twelve are in scope eventually. The rest of this doc is about steps 1–5.
   independence is earned by **disconnection + grievance over time, never distance alone**, with the
   supply network's connected components as the disconnection signal. A band that drops off the
   network and stews is the one that drifts. (Worth stating in the fission doc in these plain terms.)
-- **Food is the keeper today.** Carry capacity caps a nomad; storage is the way past it
-  (`docs/plan_early_game_labor.md`). The video does not contradict this; it adds a second keeper.
+- **Food is the keeper today, and it is a keeper with no edge.** The larder has no cap and nothing
+  spoils, so a surplus is free to hold forever and moving costs it nothing. The video does not
+  contradict food as the keeper; it adds a second keeper, and step 5 below gives the first one its
+  edge.
 
 ## The loop for steps 1–5 (leaning)
 
@@ -229,13 +231,11 @@ What falls out without further rules:
 Levers: `L` (starting lines), `K` (people per line), contact range, and what belief adds to the
 cohesion ceiling. `L × K` must sit above the start size, or the game opens capped.
 
-### Step 5 is a seam, not a design yet
+### Step 5 is a seam — see below
 
 Once the pulls hold a band through enough depletion that it climbs to fields, stored surplus is fixed
-to a tile for the first time. The political event is not the granary but who controls it, and the
-band's egalitarian pressure resists until the surplus overrides it. We carry per-cohort grievance
-and stance vectors in The Telling; that is enough to say *a stored surplus above some level creates a
-leader role, and grievance pushes back*. Not designed further.
+to a tile for the first time; how that surplus comes to exist, sit, and be spent is "Step 5:
+spoilage, storage, and the granary" below.
 
 ## Belief and cohesion (leaning)
 
@@ -309,6 +309,87 @@ machinery as the fission rule's independence, fed by the same missing contact.
 ### Left out on purpose
 
 A separate religion subsystem; prophets or priests as units; any hard cap on cohesion.
+
+## Step 5: spoilage, storage, and the granary (leaning)
+
+The video's step 5 is that control of stored surplus is the first real power. Before anything can be
+controlled it has to exist, sit, and be worth keeping. This section is the order in which that
+happens, and where the game stands against it.
+
+**Where the game stands.** The larder has no cap and nothing spoils. No bound on the food stock was
+found in the population or labor systems, and `population_cap` in simulation config is a clamp on
+*people*, not food. A surplus today is free to hold forever, so the player never feels the need that
+storage answers. `docs/plan_early_game_labor.md` decision 7 — carry capacity as the nomad's
+population cap, storage the way past it — is **stale**: this doc replaced what caps population with
+the lineage/cohesion ladder, and the carry capacity that shipped is what a *worker carries back*
+(`forage_carry`), not a bound on the larder.
+
+**Spoilage comes first.** Every food stock loses a share per turn; storage lowers that rate. Spoilage
+is what turns a surplus into a problem instead of a number going up, and nothing below works without
+it.
+
+**Rot teaches storage — one signal, not two.** The intensification ladder's knowledge ledger already
+teaches the next rung by practice, over ~20-turn lessons (`.claude/rules/core_sim/intensification.md`).
+The storage lesson's practice signal is **food lost to spoilage while a surplus sat**. A band with no
+excess never learns storage; a band whose excess rots learns it fast. "Excess makes you want storage"
+and "spoilage makes you need it" are the same accrual read off one number.
+
+**Workers build storage, which needs the improvement catalog.** The catalog from
+`docs/plan_settlement_population.md` (footprint, `labor_draw`, decay) is not shipped. Storage is its
+first entry, before the monument. The catalog slice belongs to the settlement arc, not this one.
+
+**Split by how food keeps, not plant vs animal.** The video's step 4 property is the one that
+matters: grain is legible because it keeps dry and can be counted. A food kind carries one property —
+how fast it spoils and which method saves it — the way the crafting arc gives a material
+characteristic axes (`docs/plan_crafting_and_materials.md`). Not a per-species table.
+
+**The first storage improvements:**
+
+| Improvement | Where it lives | Holds | What it is |
+|---|---|---|---|
+| Drying rack | travels with the band | small; cures meat and fish | a nomad's storage — slows rot without rooting anyone |
+| Pit / granary | fixed to a tile | large; dry goods only | its contents are on the ground, not on your backs, so leaving means leaving them — the stored-surplus tether `docs/plan_settlement_population.md` describes, finally existing |
+| Sealed pottery | later | everything | a crafting-arc material, not a storage rung |
+
+**After the granary: directed labor and consent.** In a 4X the player is already the chief, so step 5
+cannot be "a leader emerges". What it models is the **band's consent to being directed, bought with
+surplus**:
+
+- **Labor that feeds no one is paid from the granary.** Workers on a monument or a wall eat and
+  produce nothing; the work runs while the granary can carry them and ends when it empties. An empty
+  larder stops the work, not a rule.
+- **The band sets how much direction it tolerates.** The manual's Hierarchical↔Egalitarian axis
+  (§7c: acceptance of stratification, ease of command-chain mobilization) is exactly this. An
+  egalitarian band bears a short stretch of non-food labor and then grievance climbs — the leveling
+  mechanism in our vocabulary. A hierarchical band bears far more.
+- **Each fed completion pushes the axis toward Hierarchical.** Temporary prestige becoming rank is the
+  axis drifting until direction is simply accepted. The Telling narrates a chief, then a line of
+  chiefs. No king button, the same emergent shape as the settlement label.
+- **The reserved `leadership` morale contributor** is positive while directed work is fed and
+  completing, negative when the granary runs dry under it — a chief who delivers is followed, a chief
+  who cannot feed is mocked.
+- **Not modelled:** who within the band holds the granary. That is The Telling's to narrate; a second
+  political layer inside a thirty-person band is more than the early game can carry.
+
+**Order for the arc (leaning):** spoilage with the storage lesson → the catalog with storage as its
+first entry (settlement arc) → the granary as a tether → directed labor and the `leadership` term.
+Measure how much surplus a well-placed band actually runs today before setting the lesson's pace.
+
+**The carry cap (open).** Two positions, unresolved. The stale plan decision above argued for a hard
+bound on what a band carries, so that a fixed store is the only way to hold more. The other position
+is that spoilage may be enough: food carried spoils at the base rate, food in a fixed store spoils
+slower, and walking away from your store leaves its contents behind. Under that rule the bound on a
+nomad's larder is **emergent** — steady state is surplus per turn ÷ spoilage rate — and no separate
+carry rule is needed. Under discussion; the second position is the one leaning.
+
+**"Away from your storage" needs no distance rule.** Two things already decided give it: food
+spoils at the rate of *where it is* (carried, or in a store), and **the granary is a supply-network
+node** — the same rule as the work party. A band within `reach_tiles` of its store draws from it
+through pooling; a band beyond reach is cut off from it, and the contents stay on the tile spoiling
+slowly. The only thing a store adds to the network is that it is a node with no people in it. With
+no carry cap, the first turns differ from today only in that the larder shrinks a little each turn —
+which is the signal that teaches the storage lesson — so base rates should stay slow enough that a
+well-fed band still sees its runway grow, and the rot should show on the Food line as its own term.
 
 ## One work party: hunt and forage are the same thing (decided)
 
@@ -410,6 +491,10 @@ case, the haul and the party reading as part of the band, before any sim code.
   `labor_draw` and decay mean for a thing that produces belief.
 - The work party: the shipment launch gate for a far party whose only tie is the haul; which of
   the two "who eats" answers; whether a far forage party's larder counts toward the tether.
+- The carry cap: whether spoilage alone bounds a nomad's larder (steady state = surplus per turn ÷
+  spoilage rate), or a separate rule on what a band can carry is still needed.
+- The storage lesson's pace: measure how much surplus a well-placed band actually runs today before
+  setting how fast rot teaches storage.
 - Why moving never paid: measure it before touching depletion tuning.
 
 ## Related
