@@ -163,6 +163,28 @@ struct Drawn {
     income_lost: f32,
     /// The rows reduced, and the workers left on each.
     reductions: Vec<(SourceKey, u32)>,
+    /// The band-wide pools released from ([`PoolRelease`]): the role, the hands taken off it and
+    /// the hands left on it. Free hands like the idle ones — a pool with nothing to do earns
+    /// nothing where it stands.
+    pool_cuts: Vec<PoolCut>,
+}
+
+/// One pool a draw took hands off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PoolCut {
+    role: &'static str,
+    taken: u32,
+    left: u32,
+}
+
+/// **A band-wide pool with hands to spare** ([`Food::pool_releases`]): `free` of the `held` hands
+/// on `role` are free hands, offered to every rule that draws — the `builders` pool with nothing
+/// to raise, the `agriculture` pool above the band's plant bill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PoolRelease {
+    role: &'static str,
+    held: u32,
+    free: u32,
 }
 
 /// A reassignment *negative income* weighs.
@@ -196,13 +218,16 @@ pub(crate) enum Climb {
 }
 
 impl Food {
-    /// Free `want` hands: the band's idle first, then the surplus on `surplus_from` — each row
+    /// Free `want` hands: the band's idle first, then the pools `released` ([`PoolRelease`] —
+    /// hands a pool has nothing for, at no cost), then the surplus on `surplus_from` — each row
     /// down to its `workers_needed`, at no cost ([`surplus_hands`]) — then `rows` in the order
     /// given until each is empty. `hands` is what could be freed, which may be short of `want`.
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &self,
         memory: &SeatMemory,
         band: &PopulationCohortState,
+        released: &[PoolRelease],
         surplus_from: &[&LaborAssignmentState],
         rows: &[&LaborAssignmentState],
         want: u32,
@@ -213,7 +238,23 @@ impl Food {
             idle: idle.min(want),
             income_lost: 0.0,
             reductions: Vec::new(),
+            pool_cuts: Vec::new(),
         };
+        for pool in released {
+            if drawn.hands >= want {
+                break;
+            }
+            let take = (want - drawn.hands).min(pool.free);
+            if take == 0 {
+                continue;
+            }
+            drawn.pool_cuts.push(PoolCut {
+                role: pool.role,
+                taken: take,
+                left: pool.held - take,
+            });
+            drawn.hands += take;
+        }
         for row in surplus_from {
             if drawn.hands >= want {
                 break;
@@ -275,25 +316,149 @@ impl Food {
         rows
     }
 
-    /// How a candidate names its free hands: *"9 idle hands"*, *"9 surplus hands"*, or both.
-    fn free_hands_phrase(idle: u32, surplus: u32) -> String {
-        match (idle, surplus) {
-            (_, 0) => format!("{idle} idle hands"),
-            (0, _) => format!("{surplus} surplus hands"),
-            _ => format!("{idle} idle and {surplus} surplus hands"),
+    /// How a candidate names its free hands: *"9 idle hands"*, *"9 surplus hands"*, *"3 hands
+    /// off builders"*, or any of them joined — *"2 idle, 3 surplus and 3 off builders hands"*.
+    fn free_hands_phrase(drawn: &Drawn) -> String {
+        let surplus =
+            drawn.hands - drawn.idle - drawn.pool_cuts.iter().map(|cut| cut.taken).sum::<u32>();
+        let mut parts = Vec::new();
+        if drawn.idle > 0 {
+            parts.push(format!("{} idle", drawn.idle));
         }
+        if surplus > 0 {
+            parts.push(format!("{surplus} surplus"));
+        }
+        for cut in &drawn.pool_cuts {
+            parts.push(format!("{} off {}", cut.taken, cut.role));
+        }
+        let named = match parts.len() {
+            0 => format!("{} idle", drawn.idle),
+            1 => parts.remove(0),
+            n => format!("{} and {}", parts[..n - 1].join(", "), parts[n - 1]),
+        };
+        format!("{named} hands")
     }
 
-    /// The `assign_labor` lines that reduce the rows a draw took hands from.
+    /// The `assign_labor` lines that reduce the rows and the pools a draw took hands from.
     fn reduction_commands(
         &self,
         band: &PopulationCohortState,
         drawn: &Drawn,
     ) -> Vec<CommandPayload> {
+        self.reduction_commands_keeping(band, drawn, None)
+    }
+
+    /// [`Food::reduction_commands`] without the cut of the pool `keep` — for a rule that restaffs
+    /// that pool itself and would otherwise send two lines on one row.
+    fn reduction_commands_keeping(
+        &self,
+        band: &PopulationCohortState,
+        drawn: &Drawn,
+        keep: Option<&str>,
+    ) -> Vec<CommandPayload> {
         drawn
             .reductions
             .iter()
             .map(|(key, left)| self.assign(band, key, *left))
+            .chain(
+                drawn
+                    .pool_cuts
+                    .iter()
+                    .filter(|cut| keep != Some(cut.role))
+                    .map(|cut| self.assign_pool(band, cut.role, cut.left)),
+            )
+            .collect()
+    }
+
+    /// **The pools with hands to spare** — free hands, offered to every rule that draws, since a
+    /// pool with nothing to do earns nothing where it stands and no rule could reach into one
+    /// (bench seed 27: the parent ended with every hand on `builders` and `agriculture`, income
+    /// 0.00 for twenty turns, and *negative income* was silent for want of a row to draw from).
+    ///
+    /// **Builders release.** The whole `builders` pool when the band's `build_queue` is empty —
+    /// nothing to raise — or when the head of it is blocked: the head's source row publishes a
+    /// non-empty `build_blocked_reason` (*"WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE"*,
+    /// `ForagePatchState` / `HerdTelemetryState`; the whole pool goes on the head, so a blocked
+    /// head idles all of it). A head the frame does not carry is not read as blocked.
+    ///
+    /// **Keeper trim.** The `agriculture` pool is one pool against the band's summed plant bill
+    /// (*hold the ground*): Σ `upkeep_workers_needed` over the patches the band holds a row on
+    /// ([`Food::kept_patches`]). Above that sum the excess is free — **except a single hand**,
+    /// [`HOLD_MIN_HANDS`], which is the slack the hold itself adds when the pool at the sum still
+    /// leaves a patch short; trimmed, the hold would add it back the next turn, every other turn.
+    /// Nothing is trimmed while a held patch reads short: the pool is the hold's then.
+    /// `husbandry` is not trimmed: no rule of this specialist staffs it, so it never holds a hand
+    /// to spare.
+    pub(super) fn pool_releases(
+        &self,
+        view: &SeatView,
+        band: &PopulationCohortState,
+    ) -> Vec<PoolRelease> {
+        let mut out = Vec::new();
+        let builders = Self::workers_in_pool(band, ROLE_BUILDERS);
+        if builders > 0 && Self::build_head_idle(view, band) {
+            out.push(PoolRelease {
+                role: ROLE_BUILDERS,
+                held: builders,
+                free: builders,
+            });
+        }
+        let keepers = Self::workers_in_pool(band, ROLE_AGRICULTURE);
+        if keepers > 0 {
+            let kept = self.kept_patches(view, band);
+            let short = kept.iter().any(|(_, patch)| patch.upkeep_shortfall > 0.0);
+            let need: u32 = kept
+                .iter()
+                .map(|(_, patch)| patch.upkeep_workers_needed)
+                .sum();
+            let excess = keepers.saturating_sub(need);
+            if !short && excess > HOLD_MIN_HANDS {
+                out.push(PoolRelease {
+                    role: ROLE_AGRICULTURE,
+                    held: keepers,
+                    free: excess,
+                });
+            }
+        }
+        out
+    }
+
+    /// Whether the band's `builders` pool has nothing to raise: the build queue is empty, or its
+    /// head's source publishes a blocked reason ([`Food::pool_releases`]).
+    fn build_head_idle(view: &SeatView, band: &PopulationCohortState) -> bool {
+        let Some(head) = band.build_queue.first() else {
+            return true;
+        };
+        if head.kind == ROLE_HUNT || !head.fauna_id.is_empty() {
+            view.snapshot
+                .herds
+                .iter()
+                .find(|herd| herd.id == head.fauna_id)
+                .is_some_and(|herd| !herd.build_blocked_reason.is_empty())
+        } else {
+            view.patch_at(Tile::new(head.target_x, head.target_y))
+                .is_some_and(|patch| !patch.build_blocked_reason.is_empty())
+        }
+    }
+
+    /// **The patches the band's `agriculture` pool answers for**: every forage row it holds,
+    /// hands or none, whose patch the seat owns and whose ladder has work to hold
+    /// (`upkeep_workers_needed > 0`).
+    fn kept_patches<'v>(
+        &self,
+        view: &'v SeatView,
+        band: &'v PopulationCohortState,
+    ) -> Vec<(&'v LaborAssignmentState, &'v ForagePatchState)> {
+        band.labor_assignments
+            .iter()
+            .filter(|row| row.kind == ROLE_FORAGE)
+            .filter_map(|row| {
+                let patch = view
+                    .patch_at(Tile::new(row.target_x, row.target_y))
+                    .filter(|patch| patch.owner == Some(self.faction))
+                    .filter(|patch| patch.upkeep_workers_needed > 0)?;
+                Some((row, patch))
+            })
             .collect()
     }
 
@@ -353,18 +518,17 @@ impl Food {
 
     /// **Distinctness is not improvement, on the free-hand path too.** Free hands move onto a
     /// site only when the site's take actually rises by them: the marginal take of `moved` hands
-    /// there must be at least `food.runway_gain_fraction × moved × rate` (the idiom the row-empty
-    /// guard uses), **and** the band's row on that site, if it has one, must not already read at
-    /// or past the crew the frame says the take needs (`workers ≥ workers_needed`) — a hand that
-    /// would read surplus where it lands stays where it is. The second half is the frame's own
-    /// word: the ceiling the model deals by said 47,5 and 49,5 each had room for one more hand
-    /// while the frame read that hand as surplus wherever it stood, and rule 1 sent it back and
-    /// forth every turn of seed 23's t45–t52. (The row-full half also refuses an exactly-staffed
-    /// row with room above its floor — seed 50's parent stood silent with six surplus hands from
-    /// t5 to t45 beside 60,12 at `w1 n1`. Dropped, with the marginal read against the honest
-    /// ceiling instead, the eight bench seeds read 169 working / 20 hunger deaths against this
-    /// form's 163 / 16, but the seat then split twice in three turns on the outfitting
-    /// scenario's world and `ai_seat_scenario` found the family one basket short of its grant.)
+    /// there — `take`, read against the patch's **honest ceiling** (`honest_ceiling`: the room
+    /// above the Best floor plus the floor's regrowth, what the ground can give this turn) — must
+    /// be at least `food.runway_gain_fraction × moved × rate`, the idiom the row-empty guard
+    /// uses. A patch at its floor with its regrowth already taken has a marginal of nothing for
+    /// the next hand, so the hand stays: seed 23's t45–t52 shuffle (47,5 and 49,5 each read as
+    /// having room for one more hand by the standing stock while the frame read that hand as
+    /// surplus wherever it stood) is held by this alone. There is no second half: reading the
+    /// band's row there as full when `workers ≥ workers_needed` misread a one-hand row, since
+    /// `workers_needed` is only the crew that produced *this turn's* take — a row at `w1 n1` on
+    /// a patch with room read "full", and seed 50's parent sat with six spare hands beside 60,12
+    /// and starved (11 working / 11 hunger deaths at t60).
     fn improves(
         &self,
         view: &SeatView,
@@ -381,15 +545,7 @@ impl Food {
             return false;
         };
         let rate = patch_per_worker_yield(memory, band, patch);
-        let row_full = band
-            .labor_assignments
-            .iter()
-            .filter(|row| row.workers > 0 && row.workers_needed > 0)
-            .any(|row| {
-                SourceKey::of_row(row) == Some(SourceKey::Patch(tile))
-                    && row.workers >= row.workers_needed
-            });
-        !row_full && take >= self.floors.runway_gain_fraction * moved as f32 * rate
+        take >= self.floors.runway_gain_fraction * moved as f32 * rate
     }
 
     /// **Whether a worked row is overused**, read by job.
@@ -444,8 +600,9 @@ impl Food {
     ) -> Vec<Candidate> {
         let mut out = Vec::new();
         let idle = band.idle_workers.min(budget);
+        let released = self.pool_releases(view, band);
         let surplus_rows = Self::surplus_rows(memory, band);
-        let free = self.draw(memory, band, &surplus_rows, &[], budget, idle);
+        let free = self.draw(memory, band, &released, &surplus_rows, &[], budget, idle);
         let donors: Vec<SourceKey> = free.reductions.iter().map(|(key, _)| key.clone()).collect();
         if free.hands > 0 {
             let is_dead = |key: &SourceKey| self.is_dead(view, memory, band, key);
@@ -469,7 +626,8 @@ impl Food {
             );
             let dealt: u32 = sites.iter().map(DealtSite::hands).sum();
             if dealt > 0 {
-                let placed_hands = self.draw(memory, band, &surplus_rows, &[], dealt, idle);
+                let placed_hands =
+                    self.draw(memory, band, &released, &surplus_rows, &[], dealt, idle);
                 let mut commands = self.reduction_commands(band, &placed_hands);
                 let mut placed = Vec::new();
                 for site in &sites {
@@ -497,10 +655,7 @@ impl Food {
                     },
                     subject: format!(
                         "{} -> {}",
-                        Self::free_hands_phrase(
-                            placed_hands.idle,
-                            placed_hands.hands - placed_hands.idle
-                        ),
+                        Self::free_hands_phrase(&placed_hands),
                         placed.join(", ")
                     ),
                 });
@@ -534,7 +689,7 @@ impl Food {
             });
         if let Some((best, hands)) = free_onto {
             let existing = Self::workers_on(band, &best.key);
-            let sent = self.draw(memory, band, &surplus_rows, &[], hands, idle);
+            let sent = self.draw(memory, band, &released, &surplus_rows, &[], hands, idle);
             let mut commands = self.reduction_commands(band, &sent);
             commands.push(self.assign(band, &best.key, existing + sent.hands));
             out.push(Candidate {
@@ -547,7 +702,7 @@ impl Food {
                 },
                 subject: format!(
                     "{} -> {}",
-                    Self::free_hands_phrase(sent.idle, sent.hands - sent.idle),
+                    Self::free_hands_phrase(&sent),
                     best.describe_for(existing + sent.hands)
                 ),
             });
@@ -637,6 +792,7 @@ impl Food {
         let free = self.draw(
             memory,
             band,
+            &released,
             &surplus_elsewhere,
             &[],
             budget.saturating_sub(moved),
@@ -670,7 +826,7 @@ impl Food {
                         change,
                         subject: format!(
                             "{} and {why} -> {}",
-                            Self::free_hands_phrase(free.idle, free.hands - free.idle),
+                            Self::free_hands_phrase(&free),
                             best.describe_for(existing + both)
                         ),
                     });
@@ -698,7 +854,8 @@ impl Food {
         };
         let fires = band.food_income < band.food_consumption
             || band.idle_workers > 0
-            || !Self::surplus_rows(memory, band).is_empty();
+            || !Self::surplus_rows(memory, band).is_empty()
+            || !self.pool_releases(view, band).is_empty();
         if !fires || band.is_traveling || memory.born_by_split(band.band_id).is_some() {
             return (None, Reassignment::NONE);
         }
@@ -839,13 +996,14 @@ impl Food {
             Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
         });
         let idle = band.idle_workers.min(budget);
+        let released = self.pool_releases(view, band);
         let book = Self::book(band);
         let horizon = self.floors.projection_horizon_turns;
         let before = project(&book, &Reassignment::NONE, horizon);
         let mut best: Option<(Drawn, &Source, Projection, f32, Reassignment)> = None;
         let none: [&LaborAssignmentState; 0] = [];
         for (rows, want) in [(&none[..], idle), (&staying[..], budget)] {
-            let drawn = self.draw(memory, band, &[], rows, want, idle);
+            let drawn = self.draw(memory, band, &released, &[], rows, want, idle);
             if drawn.hands == 0 {
                 continue;
             }
@@ -859,7 +1017,7 @@ impl Food {
                 continue;
             }
             let drawn = if usable < drawn.hands {
-                self.draw(memory, band, &[], rows, usable, idle)
+                self.draw(memory, band, &released, &[], rows, usable, idle)
             } else {
                 drawn
             };
@@ -1059,6 +1217,7 @@ impl Food {
         let drawn = self.draw(
             memory,
             band,
+            &self.pool_releases(view, band),
             &Self::surplus_rows(memory, band),
             &rows,
             crew,
@@ -1268,10 +1427,10 @@ impl Food {
             .collect();
         let mut best: Option<(Drawn, &Source, Projection, Reassignment)> = None;
         for hands in 1..=budget {
-            // Off the rows only — their surplus first, then the lowest-paying: the idle hands are
-            // *negative income*'s to place, and a hunt drawn from them would compete with that
-            // assignment for the same rows.
-            let drawn = self.draw(memory, band, &forage_surplus, &forage, hands, 0);
+            // Off the rows only — their surplus first, then the lowest-paying: the idle hands
+            // and the pools' spare hands are *negative income*'s to place, and a hunt drawn from
+            // them would compete with that assignment for the same rows.
+            let drawn = self.draw(memory, band, &[], &forage_surplus, &forage, hands, 0);
             if drawn.hands < hands {
                 break;
             }
@@ -1416,9 +1575,9 @@ impl Food {
         let horizon = self.floors.projection_horizon_turns;
         let after = project(&book, carried, horizon);
         let idle = band.idle_workers.min(budget);
-        let builders_now = Self::workers_in_pool(band, ROLE_BUILDERS);
+        let released = self.pool_releases(view, band);
         let surplus_rows = Self::surplus_rows(memory, band);
-        let free = self.draw(memory, band, &surplus_rows, &[], budget, idle);
+        let free = self.draw(memory, band, &released, &surplus_rows, &[], budget, idle);
         let mut best: Option<(Proposal, f32, Reassignment)> = None;
         for row in band
             .labor_assignments
@@ -1483,11 +1642,21 @@ impl Food {
                     .filter(|other| Tile::new(other.target_x, other.target_y) != tile),
             );
             for hands in free.hands.max(1)..=budget {
-                let drawn = self.draw(memory, band, &surplus_rows, &pool, hands, idle);
+                let drawn = self.draw(memory, band, &released, &surplus_rows, &pool, hands, idle);
                 if drawn.hands < hands {
                     break;
                 }
-                let builders = builders_now + hands;
+                // The builders already standing, less any the draw released (a pool with nothing
+                // to raise is free hands, and this rule restaffs it whole below).
+                let builders_kept = drawn
+                    .pool_cuts
+                    .iter()
+                    .find(|cut| cut.role == ROLE_BUILDERS)
+                    .map_or_else(
+                        || Self::workers_in_pool(band, ROLE_BUILDERS),
+                        |cut| cut.left,
+                    );
+                let builders = builders_kept + hands;
                 let payoff_turn = (work_left / (builders as f32 * per_builder)).ceil() as u32;
                 if payoff_turn > horizon {
                     continue;
@@ -1517,7 +1686,7 @@ impl Food {
                 // to the band's idle hands at dispatch (`" (clamped from {} — only {} idle)"`,
                 // `core_sim/src/bin/server.rs`), so builders named first would be clamped to 0.
                 let mut commands = vec![declare];
-                commands.extend(self.reduction_commands(band, &drawn));
+                commands.extend(self.reduction_commands_keeping(band, &drawn, Some(ROLE_BUILDERS)));
                 commands.push(self.assign_pool(band, ROLE_BUILDERS, builders));
                 let progress = goal_progress(&goals, &after, &projection);
                 let proposal = Proposal {
@@ -1925,20 +2094,8 @@ impl Food {
         if budget == 0 {
             return None;
         }
-        // The patches the band's pool answers for: every forage row it holds, hands or none,
-        // whose patch the seat owns and whose ladder has work to hold.
-        let kept: Vec<(&LaborAssignmentState, &ForagePatchState)> = band
-            .labor_assignments
-            .iter()
-            .filter(|row| row.kind == ROLE_FORAGE)
-            .filter_map(|row| {
-                let patch = view
-                    .patch_at(Tile::new(row.target_x, row.target_y))
-                    .filter(|patch| patch.owner == Some(self.faction))
-                    .filter(|patch| patch.upkeep_workers_needed > 0)?;
-                Some((row, patch))
-            })
-            .collect();
+        // The patches the band's pool answers for ([`Food::kept_patches`]).
+        let kept = self.kept_patches(view, band);
         let short: Vec<&(&LaborAssignmentState, &ForagePatchState)> = kept
             .iter()
             .filter(|(_, patch)| patch.upkeep_shortfall > 0.0)
@@ -1953,10 +2110,12 @@ impl Food {
         let held = Self::workers_in_pool(band, ROLE_AGRICULTURE);
         let want = need.saturating_sub(held).max(HOLD_MIN_HANDS).min(budget);
         let idle = band.idle_workers.min(budget);
+        // A patch reads short, so the keeper trim is silent: only builders can be released here.
+        let released = self.pool_releases(view, band);
         let surplus_rows = Self::surplus_rows(memory, band);
         let mut pool = Self::rows_ascending(memory, band, ROLE_HUNT);
         pool.extend(Self::rows_ascending(memory, band, ROLE_FORAGE));
-        let drawn = self.draw(memory, band, &surplus_rows, &pool, want, idle);
+        let drawn = self.draw(memory, band, &released, &surplus_rows, &pool, want, idle);
         if drawn.hands < want {
             return None;
         }
@@ -2243,9 +2402,10 @@ mod tests {
     use crate::oracle::curve_of;
     use crate::orchestrator::Plan;
     use crate::profile::AiProfiles;
+    use crate::specialists::food::honest_ceiling;
     use crate::specialists::Specialist;
     use sim_runtime::{
-        CohortStoreState, HerdTelemetryState, IntensificationKnowledgeState,
+        BuildQueueEntryState, CohortStoreState, HerdTelemetryState, IntensificationKnowledgeState,
         LadderKnowledgeProgress, FIXED_POINT_SCALE, FOOD_CARGO_KEY,
     };
     use std::sync::Arc;
@@ -4975,23 +5135,30 @@ mod tests {
         assert_eq!(Food::row_rate(&memory(), band, hunt), 0.0);
     }
 
-    /// **A merely lowest row does not land on a patch where its hands would be surplus.** The
-    /// one hunter's row is the lowest (no curve: it pays its zero); the only patch in reach
-    /// already reads `workers ≥ workers_needed`, so the hunter stays; with room on the patch
-    /// (`workers_needed` above the crew) the hunter moves. Before this the hunter bounced onto
-    /// the full patch and back every other turn of seed 54's t26–t45.
+    /// **A merely lowest row does not land on a patch that has no room for it.** The one
+    /// hunter's row is the lowest (no curve: it pays its zero); the only patch in reach stands
+    /// at its floor with its eight hands taking the floor's regrowth — its honest ceiling — so
+    /// the hunter's marginal there is nothing and it stays; with room above the floor the hunter
+    /// moves. The frame's `workers_needed` reads `8` either way: the row-full reading is not
+    /// what holds the hunter. Before the guard the hunter bounced onto the full patch and back
+    /// every other turn of seed 54's t26–t45.
     #[test]
     fn a_lowest_row_does_not_land_where_its_hands_would_be_surplus() {
-        let a_band_with_patch_needing = |needed: u32| {
+        let a_band_with_patch_at = |biomass_share: f32| {
             a_view_with(|view| {
                 view.snapshot
                     .forage_patches
                     .retain(|patch| Tile::new(patch.x, patch.y) == RICH_PATCH);
+                for patch in &mut view.snapshot.forage_patches {
+                    patch.biomass = biomass_share * patch.carrying_capacity;
+                    // Eight hands' worth of regrowth at the rich patch's 2.0 a hand.
+                    patch.regrowth_samples = vec![16.0, 16.0];
+                }
                 let band = &mut view.snapshot.populations[0];
                 band.idle_workers = 0;
                 band.labor_assignments = vec![
                     LaborAssignmentState {
-                        workers_needed: needed,
+                        workers_needed: 8,
                         ..forage_row(RICH_PATCH, 8, 16.0)
                     },
                     hunt_row(1, 0.0, 1),
@@ -4999,17 +5166,17 @@ mod tests {
             })
         };
         let plan = plan_with_food_share(1.0);
-        let full = a_band_with_patch_needing(8);
+        let full = a_band_with_patch_at(BEST_FLOOR);
         assert!(
             food()
                 .negative_income(&full, &plan, &memory(), own_band(&full))
                 .is_none(),
-            "the patch is full: the hunter stays"
+            "the patch gives its regrowth and no more: the hunter stays"
         );
-        let room = a_band_with_patch_needing(9);
+        let room = a_band_with_patch_at(1.0);
         let proposal = food()
             .negative_income(&room, &plan, &memory(), own_band(&room))
-            .expect("the patch has room for one more");
+            .expect("the patch has room above its floor");
         assert!(
             proposal.reason.contains(WHY_LOWEST_ROW),
             "{}",
@@ -5019,6 +5186,246 @@ mod tests {
             assigned_to(proposal.commands.last().unwrap()),
             (ROLE_FORAGE.to_owned(), 9, Some(RICH_PATCH), None)
         );
+    }
+
+    /// **Seed 23's t45–t52 shuffle is held by the marginal test alone.** Two patches at their
+    /// Best floor, each with a crew of two taking exactly its regrowth, and one hand over on one
+    /// of them: by the standing stock each patch has room for one more hand (the fixture pins
+    /// that reading), and the frame reads the spare hand as surplus wherever it stands — the
+    /// shape rule 1 sent back and forth every turn. Against the honest ceiling the other patch's
+    /// marginal for that hand is nothing, so it stays, whichever patch it stands on, with no
+    /// row-full reading in the way.
+    #[test]
+    fn the_seed_23_shuffle_is_held_by_the_marginal_test_alone() {
+        const CREW: u32 = 2;
+        let a_band_with_the_spare_hand_on = |spare_on: Tile| {
+            a_view_with(|view| {
+                view.snapshot.herds.clear();
+                view.snapshot.forage_patches.retain(|patch| {
+                    [NEAR_PATCH, RICH_PATCH].contains(&Tile::new(patch.x, patch.y))
+                });
+                for patch in &mut view.snapshot.forage_patches {
+                    patch.biomass = BEST_FLOOR * patch.carrying_capacity;
+                    // The crew's worth of regrowth at each patch's own rate (1.0 near, 2.0 rich).
+                    patch.regrowth_samples = vec![CREW as f32 * patch.per_worker_yield; 2];
+                    // The standing stock says a third hand would take more here; the honest
+                    // ceiling says the regrowth is spoken for.
+                    let standing = patch.biomass * patch.provisions_per_biomass;
+                    assert!(
+                        crew_take(CREW + 1, patch.per_worker_yield, standing)
+                            > crew_take(CREW, patch.per_worker_yield, standing)
+                    );
+                    assert_eq!(
+                        crew_take(CREW + 1, patch.per_worker_yield, honest_ceiling(patch)),
+                        crew_take(CREW, patch.per_worker_yield, honest_ceiling(patch))
+                    );
+                }
+                let band = &mut view.snapshot.populations[0];
+                band.idle_workers = 0;
+                band.food_income = band.food_consumption;
+                band.labor_assignments = [NEAR_PATCH, RICH_PATCH]
+                    .into_iter()
+                    .map(|tile| {
+                        let rate = if tile == NEAR_PATCH { 1.0 } else { 2.0 };
+                        let spare = u32::from(tile == spare_on);
+                        LaborAssignmentState {
+                            workers_needed: CREW,
+                            ..forage_row(tile, CREW + spare, CREW as f32 * rate)
+                        }
+                    })
+                    .collect();
+            })
+        };
+        let plan = plan_with_food_share(1.0);
+        for spare_on in [NEAR_PATCH, RICH_PATCH] {
+            let view = a_band_with_the_spare_hand_on(spare_on);
+            let proposal = food().negative_income(&view, &plan, &memory(), own_band(&view));
+            assert!(
+                proposal.is_none(),
+                "the spare hand on {},{} has nowhere better: {:?}",
+                spare_on.x,
+                spare_on.y,
+                proposal.map(|proposal| proposal.reason)
+            );
+        }
+    }
+
+    // ---- the pools release their spare hands ---------------------------------------------------
+
+    /// A band with hands in a pool and nothing else spare: eight on the rich patch, its take
+    /// needing all eight, the rest on `role`, breaking even.
+    fn a_band_pooled(role: &str, pooled: u32) -> SeatView {
+        a_view_with(|view| {
+            view.snapshot.herds.clear();
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = 0;
+            band.food_income = band.food_consumption;
+            band.labor_assignments = vec![
+                LaborAssignmentState {
+                    workers_needed: 8,
+                    ..forage_row(RICH_PATCH, 8, 16.0)
+                },
+                LaborAssignmentState {
+                    kind: role.into(),
+                    workers: pooled,
+                    ..Default::default()
+                },
+            ];
+        })
+    }
+
+    /// The role and count of every pool line among `commands`.
+    fn pool_lines(commands: &[CommandPayload]) -> Vec<(String, u32)> {
+        commands
+            .iter()
+            .map(assigned_to)
+            .filter(|(role, _, tile, herd)| {
+                tile.is_none() && herd.is_none() && role != ROLE_FORAGE && role != ROLE_HUNT
+            })
+            .map(|(role, workers, _, _)| (role, workers))
+            .collect()
+    }
+
+    /// **Builders with nothing to raise are free hands.** Three on `builders` with an empty
+    /// build queue: *negative income* fires on them alone, places all three on the ground in
+    /// reach, and sends `builders 0` with the deal.
+    #[test]
+    fn builders_with_an_empty_queue_are_dealt_onto_the_ground_and_the_pool_is_emptied() {
+        let view = a_band_pooled(ROLE_BUILDERS, 3);
+        let band = own_band(&view);
+        assert_eq!(
+            food().pool_releases(&view, band),
+            vec![PoolRelease {
+                role: ROLE_BUILDERS,
+                held: 3,
+                free: 3
+            }]
+        );
+        let proposal = food()
+            .negative_income(&view, &plan_with_food_share(1.0), &memory(), band)
+            .expect("three builders with nothing to build");
+        assert_eq!(proposal.cost.workers, 3, "{}", proposal.reason);
+        assert!(
+            proposal
+                .reason
+                .starts_with("negative income: 3 off builders hands -> "),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(
+            pool_lines(&proposal.commands),
+            vec![(ROLE_BUILDERS.to_owned(), 0)]
+        );
+        let placed: u32 = proposal
+            .commands
+            .iter()
+            .map(assigned_to)
+            .filter(|(role, _, _, _)| role == ROLE_FORAGE)
+            .map(|(_, workers, tile, _)| {
+                workers - Food::workers_on(band, &SourceKey::Patch(tile.unwrap()))
+            })
+            .sum();
+        assert_eq!(placed, 3, "every released hand lands: {}", proposal.reason);
+    }
+
+    /// **A blocked head idles the whole pool**: the queue's head names the rich patch and the
+    /// frame says its build is blocked, so the three builders are free hands — the same deal as
+    /// the empty queue.
+    #[test]
+    fn builders_behind_a_blocked_head_are_released_the_same_way() {
+        let mut view = a_band_pooled(ROLE_BUILDERS, 3);
+        view.snapshot.populations[0].build_queue = vec![BuildQueueEntryState {
+            kind: ROLE_FORAGE.into(),
+            target_x: RICH_PATCH.x,
+            target_y: RICH_PATCH.y,
+            ..Default::default()
+        }];
+        for patch in &mut view.snapshot.forage_patches {
+            if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                patch.build_blocked_reason = "knowledge".into();
+            }
+        }
+        let band = own_band(&view);
+        assert!(Food::build_head_idle(&view, band));
+        let proposal = food()
+            .negative_income(&view, &plan_with_food_share(1.0), &memory(), band)
+            .expect("three builders stuck behind a blocked head");
+        assert_eq!(proposal.cost.workers, 3, "{}", proposal.reason);
+        assert_eq!(
+            pool_lines(&proposal.commands),
+            vec![(ROLE_BUILDERS.to_owned(), 0)]
+        );
+    }
+
+    /// **A live head keeps its builders.** The same queue with the build unblocked: the pool is
+    /// not free, nothing else is spare, and *negative income* is silent.
+    #[test]
+    fn builders_on_a_live_unblocked_head_stay() {
+        let mut view = a_band_pooled(ROLE_BUILDERS, 3);
+        view.snapshot.populations[0].build_queue = vec![BuildQueueEntryState {
+            kind: ROLE_FORAGE.into(),
+            target_x: RICH_PATCH.x,
+            target_y: RICH_PATCH.y,
+            ..Default::default()
+        }];
+        let band = own_band(&view);
+        assert!(!Food::build_head_idle(&view, band));
+        assert!(food().pool_releases(&view, band).is_empty());
+        assert!(food()
+            .negative_income(&view, &plan_with_food_share(1.0), &memory(), band)
+            .is_none());
+    }
+
+    /// **Keepers above the bill are free hands, one hand of slack excepted.** Four on
+    /// `agriculture` against a bill of two (the rich patch, owned and tended, `workers_needed
+    /// 2`, paid): two are free and the deal sends `agriculture 2`. Three against the same bill
+    /// stand — the one hand over is the slack *hold the ground* adds when the pool at the sum
+    /// still leaves a patch short, and trimming it would have the hold add it back next turn.
+    /// Four with the patch reading short stand too: the pool is the hold's then.
+    #[test]
+    fn keepers_above_the_plant_bill_are_freed_less_the_holds_slack() {
+        let kept = |pooled: u32, shortfall: f32| {
+            let mut view = a_band_pooled(ROLE_AGRICULTURE, pooled);
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                    patch.owner = Some(FACTION);
+                    patch.is_cultivated = true;
+                    patch.upkeep_demand = 1.92;
+                    patch.upkeep_shortfall = shortfall;
+                    patch.upkeep_workers_needed = 2;
+                }
+            }
+            view
+        };
+        let view = kept(4, 0.0);
+        let band = own_band(&view);
+        assert_eq!(
+            food().pool_releases(&view, band),
+            vec![PoolRelease {
+                role: ROLE_AGRICULTURE,
+                held: 4,
+                free: 2
+            }]
+        );
+        let proposal = food()
+            .negative_income(&view, &plan_with_food_share(1.0), &memory(), band)
+            .expect("two keepers over the bill");
+        assert_eq!(proposal.cost.workers, 2, "{}", proposal.reason);
+        assert!(
+            proposal
+                .reason
+                .starts_with("negative income: 2 off agriculture hands -> "),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(
+            pool_lines(&proposal.commands),
+            vec![(ROLE_AGRICULTURE.to_owned(), 2)]
+        );
+        let slack = kept(2 + HOLD_MIN_HANDS, 0.0);
+        assert!(food().pool_releases(&slack, own_band(&slack)).is_empty());
+        let short = kept(4, 0.5);
+        assert!(food().pool_releases(&short, own_band(&short)).is_empty());
     }
 
     /// **A dead patch is dead while it stands at its floor.** Four hands on a patch stripped to

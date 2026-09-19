@@ -273,10 +273,12 @@ pub(crate) fn surplus_room(patch: &ForagePatchState) -> f32 {
 
 /// **What `patch` can give a crew this turn at the Best floor**, in provisions: the room above
 /// the floor plus the floor's regrowth — [`Ceiling::Surplus`] and [`Ceiling::Sustained`]
-/// summed, the two passes of the free-hand deal. The cap on what a worked patch row is
-/// forecast (`SeatMemory`): a patch standing at its floor expects only its regrowth, which is
-/// what it pays. Not the standing stock (`biomass × provisions_per_biomass`, the take at a zero
-/// floor, which a patch [`Source`] still carries as its `ceiling`).
+/// summed, the two passes of the free-hand deal. A patch [`Source`]'s `ceiling`, and the cap on
+/// what a worked patch row is forecast (`SeatMemory`): a patch standing at its floor expects
+/// only its regrowth, which is what it pays. Not the standing stock (`biomass ×
+/// provisions_per_biomass`, the take at a zero floor): ranked on that, a patch at its floor read
+/// as having room for one more hand while the frame read the hand as surplus, and rule 1
+/// shuffled it between 47,5 and 49,5 every turn of seed 23's t45–t52.
 pub(crate) fn honest_ceiling(patch: &ForagePatchState) -> f32 {
     surplus_room(patch)
         + regrowth_at(&patch.regrowth_samples, BEST_FLOOR) * patch.provisions_per_biomass
@@ -637,8 +639,9 @@ pub(super) struct Source {
     /// per-hand rate reads something honest — never the wire's `per_worker_yield`, which is the
     /// kit's carry.
     pub per_worker_yield: f32,
-    /// The take at a zero floor: `biomass × provisions_per_biomass`, the standing stock (a
-    /// herd's is unread, since its take is the curve's).
+    /// The most a crew takes here this turn. A patch: the room above the Best floor plus the
+    /// floor's regrowth ([`honest_ceiling`]). A herd: the standing stock, `biomass ×
+    /// provisions_per_biomass` — unread, since a herd's take is the curve's.
     pub ceiling: f32,
     /// **The most hands this source credits** — for a herd, the units of its kit the band holds
     /// ([`kit_units_held`]) or the curve's plateau, whichever is fewer; `None` for a patch.

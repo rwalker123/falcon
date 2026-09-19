@@ -242,7 +242,7 @@ impl Food {
                 key: SourceKey::Patch(Tile::new(patch.x, patch.y)),
                 tile: Tile::new(patch.x, patch.y),
                 per_worker_yield: patch_per_worker_yield(memory, band, patch),
-                ceiling: patch.biomass * patch.provisions_per_biomass,
+                ceiling: honest_ceiling(patch),
                 crew_cap: None,
                 curve: None,
             })
@@ -707,8 +707,9 @@ pub(crate) mod tests {
             kit(FORAGE_KIT, &[ROLE_FORAGE], &[FORAGE_KIT_ITEM], BARE_ATTACK),
             kit(BARE_KIT, &[ROLE_HUNT, ROLE_FORAGE], &[], BARE_ATTACK),
         ];
-        // Each stand's ceiling (`biomass × provisions_per_biomass`) is 1.5× its capacity, so a
-        // 17-hand crew is capped at 30 on the near patch and takes its full 34 on the rich one.
+        // Each stand is 1.5× its capacity, so its honest ceiling (the room above the Best floor,
+        // `biomass − 0.5 × K`, plus a regrowth of nothing — no curve is sent) is its capacity: a
+        // 17-hand crew is capped at 20 on the near patch and takes its full 34 on the rich one.
         let patch = |tile: Tile, per_worker_yield: f32, carrying_capacity: f32| ForagePatchState {
             x: tile.x,
             y: tile.y,

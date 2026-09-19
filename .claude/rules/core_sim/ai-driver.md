@@ -458,11 +458,36 @@ would have produced this turn's take — the overstaffing signal. `workers > wor
 binding constraint was not labor, so the extra workers were idle"*, so a row's surplus is
 `workers − workers_needed` (`surplus_hands`, `sources.rs`; `0` on a row whose `workers_needed` is
 `0` — a fresh row and one that produced nothing alike, neither an overstaffing signal).
-`Food::draw` frees hands in three tiers — idle, then the surplus on the rows offered for it (each
-down to its `workers_needed`, at no cost), then the rows named until each is empty — and every
-rule that moves hands draws through it. Before this a band that had parked all seventeen hands on
-a patch needing eight read `idle 0`, so no rule could find a hand to move and the seat went silent
-for fifty turns.
+`Food::draw` frees hands in four tiers — idle, then **the pools with hands to spare**
+(`Food::pool_releases`, below; at no cost, like the idle), then the surplus on the rows offered
+for it (each down to its `workers_needed`, at no cost), then the rows named until each is empty
+— and every rule that moves hands draws through it, so every rule sees the released pool hands
+(*spare hands into hunts* excepted: it draws off the forage rows alone, the free hands being rule
+1's to place). A pool a draw cuts is reduced with the deal — `assign_labor … builders 0`,
+`agriculture 2` — beside the row reductions, and the reason names them (`3 off builders hands`).
+Before this a band that had parked all seventeen hands on a patch needing eight read `idle 0`,
+so no rule could find a hand to move and the seat went silent for fifty turns.
+
+**The pools release their spare hands** (`Food::pool_releases`). No rule could reach into a
+band-wide pool: on seed 27 the parent ended at t29 with every hand on `builders` (3) and
+`agriculture` (3), income 0.00 for twenty turns and 17 hunger deaths, and rule 1 was silent for
+want of a row to draw from. Two readings free them. **Builders release** — the whole `builders`
+pool is free when the band's `build_queue` is empty (nothing to raise) or when its head's source
+row publishes a non-empty `build_blocked_reason` (*"WHY THE BAND'S BUILDERS ARE STUCK ON THIS
+SOURCE"*; the whole pool goes on the head, so a blocked head idles all of it); a head the frame
+does not carry is not read as blocked, and a live unblocked head keeps its builders. *Upgrade
+the ground* restaffs the pool itself, so it keeps a builders cut out of its reductions and sizes
+`builders` from what the cut left. **Keeper trim** — the `agriculture` pool is one pool against
+the band's summed plant bill (*hold the ground*: Σ `upkeep_workers_needed` over the patches the
+band holds a row on, `Food::kept_patches`); above that sum the excess is free, **less one hand**:
+`HOLD_MIN_HANDS` is the slack the hold adds when the pool at the sum still leaves a patch short,
+and trimmed it would be added back the next turn, every other turn — so four keepers against a
+two-hand bill free two, three stand. Nothing is trimmed while a held patch reads short (the pool
+is the hold's then). `husbandry` is not trimmed: no rule staffs it, so it never holds a spare
+hand. Neither reading fires on seed 27's own income-zero turns — its queue head (36,33) was live
+and progressing, and its keepers stood at the bill (3 against `workers_needed 3`); what emptied
+the band's income was the hold at t28 drawing all three forage hands off 37,35, the very row that
+would harvest the premium it priced.
 
 **The cluster is one reading, shared.** `cluster_take(view, memory, band, standing, hands,
 is_dead)` (`sources.rs`) is what a band of `hands` would take per turn from **every** workable site
@@ -511,12 +536,23 @@ fired and what the ledger said. The rules, in `propose` order:
   the single best source none of them leave
   (which may be a herd, up to its kit units; one site in reach and no herd: nowhere to put
   them, and the rule is silent) — **either only where the hands improve the take** (`Food::improves`): a site's
-  marginal take of the hands moved must be at least `food.runway_gain_fraction × moved × rate`,
-  the row-empty guard's idiom, *and* the band's row there, if any, must not already read
-  `workers ≥ workers_needed` — a hand that would read surplus where it lands stays where it is
-  (the model's ceiling said 47,5 and 49,5 each had room for one more while the frame read that
-  hand as surplus wherever it stood, and rule 1 sent it back and forth every turn of seed 23's
-  t45–t52), (b) the *row to empty first* onto the best other source, (c) both onto the best
+  marginal take of the hands moved, read against the patch's **honest ceiling**
+  (`honest_ceiling`, the room above the Best floor plus the floor's regrowth — a patch
+  `Source`'s `ceiling`), must be at least `food.runway_gain_fraction × moved × rate`, the
+  row-empty guard's idiom. That alone holds seed 23's t45–t52 shuffle (47,5 and 49,5 each read as
+  having room for one more hand by the standing stock while the frame read that hand as surplus
+  wherever it stood; at the honest ceiling the other patch's marginal for it is nothing —
+  `the_seed_23_shuffle_is_held_by_the_marginal_test_alone` stages the shape). There is no
+  row-full half: reading the band's row there as full when `workers ≥ workers_needed` misread a
+  one-hand row, since `workers_needed` is only the crew that produced *this turn's* take — 60,12
+  at `w1 n1` read "full", and seed 50's parent sat with six spare hands beside it and starved
+  (11 working / 11 hunger deaths at t60; with the half gone the seed reads 45 alive, no death).
+  On the eight Standard bench seeds the marginal-only guard, the honest `Source` ceiling and
+  the pool releases together read 327 alive / 20 hunger deaths / 14 patches improved at t60
+  against the row-full form's 306 / 16 / 10 — seed 27's 17 deaths the whole of the difference
+  in deaths, from the hold at t28 described under "The pools release their spare hands"
+  (above), which the row-full half had masked by keeping that seed on another path
+  entirely, (b) the *row to empty first* onto the best other source, (c) both onto the best
   source for the whole crew — and takes
   the one closing the most goal gap, ties broken by net income added (`closer`: once the goals
   are met every candidate closes the same nothing, and without the tiebreak the band took the
@@ -542,17 +578,10 @@ fired and what the ledger said. The rules, in `propose` order:
   failing one of those the lowest-paying row, which moves
   only onto ground out-paying it by `food.runway_gain_fraction` per worker **and** whose marginal
   take exceeds what the row earns today, **and, on a patch, only where its hands improve the
-  take** (the free-hand path's `improves`: a row already reading `workers ≥ workers_needed`
-  takes no more — without it a hunter on a zero turn went back onto the full patch it had been
-  surplus on, and back to the herd, every other turn of seed 54's t26–t45). The row-full half
-  has a cost: the frame's `workers_needed` is only what this turn's crew took, so an
-  exactly-staffed row with room above its floor is refused too, and seed 50's parent stood
-  silent with six surplus hands from t5 to t45 beside 60,12 at `w1 n1`. Measured without it —
-  the marginal alone, read against the honest ceiling (`honest_ceiling`, the room above the
-  Best floor plus the floor's regrowth) — the eight bench seeds read 169 working / 20 hunger
-  deaths against 163 / 16, but the seat then split twice in three turns on the outfitting
-  scenario's harness world and `ai_seat_scenario` found the family one basket short of its
-  grant (14 of 15), so the row-full half stands. ⛔ Distinctness is not improvement: with only "are these
+  take** (the free-hand path's `improves`: a patch at its floor with its regrowth already taken
+  has no marginal for the next hand — without it a hunter on a zero turn went back onto the
+  full patch it had been surplus on, and back to the herd, every other turn of seed 54's
+  t26–t45). ⛔ Distinctness is not improvement: with only "are these
   distinct rows" between them, two rows paying the same shuffled workers every turn under the alarm
   at the specialist's highest score, and one-order-per-band then rejected the idle hands as
   `conflict`. Not for a travelling band, nor for a child still walking to the site it was split
@@ -614,10 +643,13 @@ fired and what the ledger said. The rules, in `propose` order:
   crew (`keeping_claims` walks the band's assignments whatever their `workers`), and the
   `agriculture` pool is **one pool against the band's summed plant bill**
   (`LaborTarget::Agriculture`, `maintenance_shares`). So `n` is Σ `upkeep_workers_needed` over
-  every owned patch the band holds a row on, less the pool it has, and one more hand
-  (`HOLD_MIN_HANDS`) when the pool already stands at the sum and a patch still reads short — the
-  wire's `workers_needed` is `ceil(demand / PER_WORKER_OUTPUT)` and a bare keeper delivers under
-  that (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`). Sized per patch less the whole
+  every owned patch the band holds a row on (`Food::kept_patches`), less the pool it has, and
+  one more hand (`HOLD_MIN_HANDS`) when the pool already stands at the sum and a patch still
+  reads short — the wire's `workers_needed` is `ceil(demand / PER_WORKER_OUTPUT)` and a bare
+  keeper delivers under that (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`). The same
+  sum is what the **keeper trim** ("The pools release their spare hands", above) sizes the pool
+  *down* to when nothing reads short: hands above it, less the hold's one of slack, are free
+  hands for every rule that draws. Sized per patch less the whole
   pool it read `want 0` for 49,5 while the pool's two hands kept 53,8, and skipping a row the
   band had emptied it never proposed for 49,5 again; the patch unwound at t48 with two holds
   accepted twenty turns earlier. One proposal per band naming every short patch; the kit left
@@ -1632,12 +1664,27 @@ asserts no
 `command.rejected` in the server log; a `decision` with intent `orchestrator:outfit:<band>` whose
 `commands_text[0]` starts `set_starting_loadout`; for that band a `demand` resource whose records
 read `posted`, then `planned`, then `fulfilled` in that order; and, reading the rival's world back
-through seat 1 after the AI has released it, that for every `kit <id> <n>` on the loadout line the
-`equipment_batches` of the band **and every resident band of its faction** together hold at
-least `n` of every item the roster's kit lists — on the harness world *split to feed* fires at
-tick 1 and the splinter's outfitting window takes its proportional share of the grant, a
-transfer inside the faction (`fission.md`), so the family is what holds it; with no split the
-family is the parent alone.
+through seat 1 after the AI has released it, that the `equipment_batches` of the band **and
+every resident band of its faction** together hold, for every kit, at least the units of every
+item the roster's kit lists that **the sim's own partition rule leaves the family**. On the
+harness world *split to feed* fires on the grant turn, and a split of a still-granting parent
+partitions the grant rather than moving goods (`starting-loadout.md` → "What a SPLIT gives the
+splinter"): the splinter's window gets `min(asked, the parent's remaining kit budget)` slots,
+the parent is re-fitted to what is left by `clamp_allocation`'s proportional-floored rule, and
+what that shed is fitted to the splinter's slots by the same rule — two floors per split: on
+the harness world one split of four against a budget of seventeen leaves the family 14 of the
+15 baskets and 1 of the 2 spears on the line (`gathering 15, big_game 2` → kept `11, 1`, shed
+`4, 1` fitted to four slots → `3, 0`). The test
+therefore replays the rule: it reads the parent's `loadout_window.kit_budget` off the world
+**before** the AI plays (a claim of seat 1, released — a closed window is absent from the
+frame), takes the grant-turn `food:split:<band>` decisions in the order the log sent them with
+their `split_band … <workers>`, pairs them with the children sorted by band id (ids are minted
+in order), applies `core_sim::starting_loadout::clamped_kit_defaults` — the public face of the
+one implementation — as `fission::rebalance_partitioned_grant` does, and lets a splinter's own
+`orchestrator:outfit:<child>` line stand in for its share where it sent one (an apply is a
+replacement). A later turn's split is a take, which moves goods inside the family and changes
+nothing it holds. With no split the replay is the identity and the family — the parent alone —
+must hold the whole line exactly as granted.
 
 `ai_record_import.rs` starts the server with `SIM_RECORD_DIR` set, seats the scripted `sim_ai` for
 3 turns **without** `--log-dir` (standing in for the human), and asserts: `run.json` carries the
