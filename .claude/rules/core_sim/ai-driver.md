@@ -461,7 +461,9 @@ binding constraint was not labor, so the extra workers were idle"*, so a row's s
 `Food::draw` frees hands in four tiers — idle, then **the pools with hands to spare**
 (`Food::pool_releases`, below; at no cost, like the idle), then the surplus on the rows offered
 for it (each down to its `workers_needed`, at no cost), then the rows named until each is empty
-— and every rule that moves hands draws through it, so every rule sees the released pool hands
+— a row the caller names in `keep` is never drawn below the crew given for it on either tier
+(*hold the ground*'s harvesters) — and every rule that moves hands draws through it, so every
+rule sees the released pool hands
 (*spare hands into hunts* excepted: it draws off the forage rows alone, the free hands being rule
 1's to place). A pool a draw cuts is reduced with the deal — `assign_labor … builders 0`,
 `agriculture 2` — beside the row reductions, and the reason names them (`3 off builders hands`).
@@ -478,16 +480,15 @@ SOURCE"*; the whole pool goes on the head, so a blocked head idles all of it); a
 does not carry is not read as blocked, and a live unblocked head keeps its builders. *Upgrade
 the ground* restaffs the pool itself, so it keeps a builders cut out of its reductions and sizes
 `builders` from what the cut left. **Keeper trim** — the `agriculture` pool is one pool against
-the band's summed plant bill (*hold the ground*: Σ `upkeep_workers_needed` over the patches the
-band holds a row on, `Food::kept_patches`); above that sum the excess is free, **less one hand**:
-`HOLD_MIN_HANDS` is the slack the hold adds when the pool at the sum still leaves a patch short,
-and trimmed it would be added back the next turn, every other turn — so four keepers against a
-two-hand bill free two, three stand. Nothing is trimmed while a held patch reads short (the pool
-is the hold's then). `husbandry` is not trimmed: no rule staffs it, so it never holds a spare
-hand. Neither reading fires on seed 27's own income-zero turns — its queue head (36,33) was live
-and progressing, and its keepers stood at the bill (3 against `workers_needed 3`); what emptied
-the band's income was the hold at t28 drawing all three forage hands off 37,35, the very row that
-would harvest the premium it priced.
+the band's plant bill (`Food::plant_bill`, the bill *hold the ground* sizes the pool up to, over
+the patches the band holds a row on, `Food::kept_patches`); above it the excess is free — four
+keepers against a two-hand bill free two, three free one. Nothing is trimmed while a held patch
+reads short (the pool is the hold's then). `husbandry` is not trimmed: no rule staffs it, so it
+never holds a spare hand. On seed 27's own income-zero turns the builders release did not fire —
+the queue head (36,33) was live and progressing — and the keepers read 3 against the wire's
+`workers_needed 3` while supplying 4.31 on a demand of 2.15, which is what the bill sized by
+supply (below) reads as two; what emptied the band's income was the hold at t28 drawing all
+three forage hands off 37,35, the very row that would harvest the premium it priced.
 
 **The cluster is one reading, shared.** `cluster_take(view, memory, band, standing, hands,
 is_dead)` (`sources.rs`) is what a band of `hands` would take per turn from **every** workable site
@@ -642,23 +643,36 @@ fired and what the ledger said. The rules, in `propose` order:
   forage row on it — **with or without hands on the row**: the sim keeps by the row, not the
   crew (`keeping_claims` walks the band's assignments whatever their `workers`), and the
   `agriculture` pool is **one pool against the band's summed plant bill**
-  (`LaborTarget::Agriculture`, `maintenance_shares`). So `n` is Σ `upkeep_workers_needed` over
-  every owned patch the band holds a row on (`Food::kept_patches`), less the pool it has, and
-  one more hand (`HOLD_MIN_HANDS`) when the pool already stands at the sum and a patch still
-  reads short — the wire's `workers_needed` is `ceil(demand / PER_WORKER_OUTPUT)` and a bare
-  keeper delivers under that (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`). The same
-  sum is what the **keeper trim** ("The pools release their spare hands", above) sizes the pool
-  *down* to when nothing reads short: hands above it, less the hold's one of slack, are free
-  hands for every rule that draws. Sized per patch less the whole
+  (`LaborTarget::Agriculture`, `maintenance_shares`). So `n` is **the band's plant bill**
+  (`Food::plant_bill` over every owned patch the band holds a row on, `Food::kept_patches`) less
+  the pool it has, and one more hand (`HOLD_MIN_HANDS`) when the pool already stands at the
+  bill and a patch still reads short. **The bill is sized by what a keeper of this pool
+  supplies**: until the pool has supplied anything it is the wire's Σ `upkeep_workers_needed` —
+  `ceil(demand / PER_WORKER_OUTPUT)`, a bare hand's output, which a bare keeper delivers under
+  (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`) and a hoed one over (37,35 on seed 27:
+  three keepers supplied 4.31 on a demand of 2.15 and read `workers_needed 3`) — and once it
+  has, `ceil(Σ upkeep_demand / (Σ upkeep_supplied / pool))` off the patch rows and the pool's
+  count, which reads seed 27's three as two. The same bill is what the **keeper trim** ("The
+  pools release their spare hands", above) sizes the pool *down* to when nothing reads short:
+  hands above it are free hands for every rule that draws. Sized per patch less the whole
   pool it read `want 0` for 49,5 while the pool's two hands kept 53,8, and skipping a row the
   band had emptied it never proposed for 49,5 again; the patch unwound at t48 with two holds
   accepted twenty turns earlier. One proposal per band naming every short patch; the kit left
   `None` so the wire derives `tillage` (the hoes are the board's business later). The hands
-  come from the surplus first, then the lowest rows, and the
+  come from the surplus first, then the lowest rows — **never the harvesters**: the forage row
+  of every patch the bill covers keeps its sustained crew (`sustained_hands` at the band's
+  rate, at least `HOLD_MIN_HANDS`; `Food::draw`'s `keep` floors), only what stands above it
+  being drawable, and short of the bill the hold pays the hands it can find, down to one,
+  rather than nothing. ⛔ On seed 27 the hold at t28 (`3 hands on agriculture for 37,35 short
+  0.02`) drew all three forage hands off 37,35 — the row at `3/1`, its bill three, nothing
+  else on the band but builders — priced the tended premium those hands would have gathered,
+  and the band's income read 0.00 from t29 until it starved (17 hunger deaths); nothing could
+  draw the pools back out. The
   change is priced like any reassignment: what they earned where they stood against **the rung
   lost** — an unpaid bill costs the whole improvement, so the hold keeps, as a `Change::Series`
   over the horizon, the rung's premium per turn (`tended_yield`, `field_yield` on a field, less
-  the wild take the same hands make on that patch) **once the rung is complete** (`is_cultivated`
+  the wild take **the hands left harvesting** make on that patch; nothing where nobody forages
+  it) **once the rung is complete** (`is_cultivated`
   / `is_field`; the bill runs during the build too — 51,9 read `need 1` at progress 0.22 — but a
   patch mid-build earns no premium yet) plus, **on the horizon's last turn**, the rebuild the
   seat would otherwise declare again: the work already done (`cultivation_work_done`, the full
