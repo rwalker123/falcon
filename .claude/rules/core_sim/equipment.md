@@ -513,6 +513,12 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > hands, so a site holding at least `hands ÷ workers_per_unit` units is fully covered either way and
 > the `KeepingRate` it works at is unmoved.
 >
+> **AND THE SHEDDING ORDER ASKS THE SAME REQUIREMENT ONE STAGE EARLIER.** A pool that cannot arm the
+> hands it already has reports **no spare keepers** at step 3, because the bill those keepers are
+> struck against is quoted at the fully equipped rate — `yield-forecast.md` → "STEP 3 IS GATED ON THE
+> TOOLS". It reads the band's **ledger** rather than a settlement: the shed runs before
+> `plan_pool_tools`, so at that point nothing has been settled.
+>
 
 > **AND THE POOLS LEFT THE PRO-RATA ITEM BUDGET.** `LaborAllocation::kitted_rows` filters every
 > `LaborTarget::is_standing_pool` row out, so `BandItemBudget` sees take crews and the two band-wide

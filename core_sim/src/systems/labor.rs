@@ -1985,6 +1985,82 @@ fn spare_keepers(workers: u32, worker_need: f32) -> u32 {
     workers.saturating_sub(needed)
 }
 
+/// **WHAT A POOL THE BAND CANNOT ARM REPORTS** — named so [`spare_keepers_the_band_can_arm`]'s gate
+/// reads as *"there is not one keeper to spare"* rather than as an arbitrary zero.
+const NOT_ONE_KEEPER_TO_SPARE: u32 = 0;
+
+/// **HANDS THE BILL DOES NOT NEED *AND* THE BAND CAN ACTUALLY ARM** — [`spare_keepers`] behind a
+/// gate, and what the shedding order's step 3 is handed.
+///
+/// # ⛔ A POOL SHORT OF ITS OWN TOOLS HAS NO SPARE HANDS
+///
+/// [`keeping_worker_need`] is struck at [`fully_equipped_keeper_rate`], which reads the ledger for
+/// the tools' tier and condition and applies **no coverage** (`docs/plan_pool_toe.md` §2.3 step 1).
+/// A band that cannot arm every hand works **slower** than that rate and therefore needs **more**
+/// keepers than the count says — so the bare difference reported a surplus that does not exist, and
+/// step 3 (*"a keeper above the keeping demand"*, the first thing spent after a scout and a warrior)
+/// gave away a keeper the rung needed.
+///
+/// **The gate answers `0`, never a smaller number.** Sizing the real surplus needs the rate the
+/// pool will be *delivered*, and there is no such rate here — see the ordering note below.
+///
+/// **It is conservative in ONE direction.** The answer is `<=` the ungated one for every input: it
+/// may withhold a keeper the band could in fact spare, and may never offer one it cannot. A keeper
+/// wrongly kept costs a little output on a band that is already shedding; a keeper wrongly shed
+/// costs a rung.
+///
+/// ⛔ **IT READS THE BAND'S LEDGER, NEVER A SETTLEMENT.** [`LaborAllocation::normalize`] runs
+/// **before** [`plan_pool_tools`] in `advance_labor_allocation`, so at this point no tool has been
+/// settled and there is no delivered rate to read; settling first would plan against rows the shed
+/// is about to delete.
+///
+/// ⛔ **AND IT ASKS ABOUT THIS POOL'S OWN REQUIREMENT ALONE.** A pool can hold enough for itself and
+/// still lose the band-wide settlement to another pool bidding on the same tool — genuinely
+/// unknowable before the settlement, and this does not pretend otherwise. The gate fires only where
+/// the band plainly cannot arm the hands.
+fn spare_keepers_the_band_can_arm(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    pool: crate::equipment_config::KitJob,
+    workers: u32,
+    mode: crate::intensification::UpkeepFundMode,
+    claims: &[KeepingClaim],
+) -> u32 {
+    if !pool_can_arm_its_hands(equipment, band_kit, pool, workers, mode, claims) {
+        return NOT_ONE_KEEPER_TO_SPARE;
+    }
+    spare_keepers(workers, keeping_worker_need(equipment, band_kit, claims))
+}
+
+/// **DOES THE BAND HOLD WHAT THIS POOL'S SITES ASK FOR** — per tool, the pool's own requirement
+/// against the band's live units.
+///
+/// The requirement is [`pool_toe_claims`]' — the same seam the settlement's stage-1 bid is summed
+/// from — so *"what this pool requires"* has one definition here as everywhere else, and the
+/// comparison is the band's own [`BandEquipment::live_units`]. A pool whose rungs want no tool at
+/// all requires nothing and is therefore never gated.
+///
+/// **`units >= required` is the whole-unit test written once.** A stock is a count of objects, so an
+/// integer stock reaching a fractional requirement already reaches its `ceil`.
+fn pool_can_arm_its_hands(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &BandEquipment,
+    pool: crate::equipment_config::KitJob,
+    keepers: u32,
+    mode: crate::intensification::UpkeepFundMode,
+    claims: &[KeepingClaim],
+) -> bool {
+    let mut required: BTreeMap<std::sync::Arc<str>, f32> = BTreeMap::new();
+    for claim in pool_toe_claims(equipment, band_kit, pool, keepers, mode, claims) {
+        for (item, units) in claim.required {
+            *required.entry(item).or_insert(NOTHING_DEMANDED) += units;
+        }
+    }
+    required
+        .iter()
+        .all(|(item, units)| band_kit.live_units(item, equipment) as f32 >= *units)
+}
+
 /// [`source_banking_its_first_work`] with [`head_rung_gate`] wired to this system's resources.
 ///
 /// **A function rather than a reusable closure, because `advance_labor_allocation` asks it twice**
@@ -2241,21 +2317,40 @@ fn resolve_shed_facts(
     ShedFacts {
         sources,
         threatened: band_is_threatened(band_pos, herds, fauna, width, wrap),
-        spare_agriculture_keepers: spare_keepers(
+        // **All four pools go through the gate**, because the defect is in the shared helper and so
+        // is the fix: a Roadwork or Quarrywork pool short of its own gear is as wrongly counted as
+        // a food web's.
+        spare_agriculture_keepers: spare_keepers_the_band_can_arm(
+            equipment,
+            band_kit,
+            crate::equipment_config::KitJob::Agriculture,
             allocation.workers_on(&LaborTarget::Agriculture),
-            keeping_worker_need(equipment, band_kit, &plant_claims),
+            allocation.upkeep_fund_mode,
+            &plant_claims,
         ),
-        spare_husbandry_keepers: spare_keepers(
+        spare_husbandry_keepers: spare_keepers_the_band_can_arm(
+            equipment,
+            band_kit,
+            crate::equipment_config::KitJob::Husbandry,
             allocation.workers_on(&LaborTarget::Husbandry),
-            keeping_worker_need(equipment, band_kit, &animal_claims),
+            allocation.upkeep_fund_mode,
+            &animal_claims,
         ),
-        spare_roadwork_keepers: spare_keepers(
+        spare_roadwork_keepers: spare_keepers_the_band_can_arm(
+            equipment,
+            band_kit,
+            crate::equipment_config::KitJob::Roadwork,
             allocation.workers_on(&LaborTarget::Roadwork),
-            keeping_worker_need(equipment, band_kit, road_claims),
+            allocation.upkeep_fund_mode,
+            road_claims,
         ),
-        spare_quarrywork_keepers: spare_keepers(
+        spare_quarrywork_keepers: spare_keepers_the_band_can_arm(
+            equipment,
+            band_kit,
+            crate::equipment_config::KitJob::Quarrywork,
             allocation.workers_on(&LaborTarget::Quarrywork),
-            keeping_worker_need(equipment, band_kit, extraction_claims),
+            allocation.upkeep_fund_mode,
+            extraction_claims,
         ),
     }
 }
@@ -10545,6 +10640,114 @@ mod keeping_split_tests {
             "…and a bill bigger than the role can cover leaves nothing spare, never a wrap-around"
         );
     }
+
+    /// ⛔ **THE TOOL GATE ONLY EVER WITHHOLDS A KEEPER — it never offers one.**
+    ///
+    /// [`spare_keepers_the_band_can_arm`] must answer `<=` the ungated [`spare_keepers`] for every
+    /// input: a keeper wrongly kept costs a little output on a band that is already shedding, and a
+    /// keeper wrongly shed costs a rung. Swept over a spread of crews and stocks, **including the
+    /// covered stocks where the two must be exactly equal** — an inequality alone passes for a gate
+    /// that fires unconditionally, which would be the one-directional error in the other costume.
+    #[test]
+    fn the_tool_gate_never_offers_a_keeper_the_ungated_count_would_not() {
+        /// A bill per site large enough that a pool of a few hands is genuinely divided by it.
+        const A_BILL: f32 = 3.0;
+        /// Stocks spanning bare, short, exactly covering and surplus for the crews below.
+        const STOCKS: [u32; 5] = [0, 1, 2, 4, 12];
+        const CREWS: [u32; 4] = [1, 2, 3, 6];
+
+        let equipment = crate::equipment_config::EquipmentConfig::for_a_stocked_fixture();
+        let tier = equipment
+            .item(HOES_FOR_THE_GATE)
+            .expect("the shipped roster carries the hoes")
+            .default_tier()
+            .id
+            .clone();
+        let claims = [
+            claim(0, A_BILL, crate::intensification::RungKey::PlantTended),
+            claim(1, A_BILL, crate::intensification::RungKey::PlantTended),
+        ];
+
+        let mut ever_gated = false;
+        let mut ever_equal = false;
+        for stock in STOCKS {
+            let mut ledger = BandEquipment::default();
+            ledger.stock(HOES_FOR_THE_GATE, stock, &tier, None);
+            for crew in CREWS {
+                let ungated =
+                    spare_keepers(crew, keeping_worker_need(&equipment, &ledger, &claims));
+                let gated = spare_keepers_the_band_can_arm(
+                    &equipment,
+                    &ledger,
+                    crate::equipment_config::KitJob::Agriculture,
+                    crew,
+                    crate::intensification::UpkeepFundMode::Spread,
+                    &claims,
+                );
+                assert!(
+                    gated <= ungated,
+                    "the gate may withhold a keeper and never offer one: {gated} against \
+                     {ungated} at {crew} keepers over {stock} hoes"
+                );
+                ever_gated |= gated < ungated;
+                ever_equal |= gated == ungated && ungated > NOT_ONE_KEEPER_TO_SPARE;
+            }
+        }
+        assert!(
+            ever_gated,
+            "fixture: some sweep point must be genuinely gated, or the bound above is vacuous"
+        );
+        assert!(
+            ever_equal,
+            "…and some covered point must pass a real surplus through unchanged, or the gate is \
+             firing unconditionally"
+        );
+    }
+
+    /// **A POOL WHOSE RUNGS WANT NO TOOL IS NEVER GATED** — there is nothing for it to be short of,
+    /// so its spare keepers are the ungated count whatever the band owns.
+    ///
+    /// `forestry:coppice` is served by no shipped tool, and the band here owns **nothing at all** —
+    /// the harshest ledger there is. A gate keyed on *"does the band hold gear"* rather than on
+    /// *"does this pool require any"* would zero this pool's surplus.
+    #[test]
+    fn a_pool_that_requires_no_tool_keeps_its_spare_keepers() {
+        const A_BILL: f32 = 1.0;
+        const A_CREW: u32 = 4;
+
+        let equipment = crate::equipment_config::EquipmentConfig::for_a_stocked_fixture();
+        let owns_nothing = BandEquipment::default();
+        let claims = [claim(
+            0,
+            A_BILL,
+            crate::intensification::RungKey::ForestryCoppice,
+        )];
+
+        let ungated = spare_keepers(
+            A_CREW,
+            keeping_worker_need(&equipment, &owns_nothing, &claims),
+        );
+        assert!(
+            ungated > NOT_ONE_KEEPER_TO_SPARE,
+            "fixture: the bill must leave a real surplus, or the claim below is vacuous — \
+             {ungated} of {A_CREW}"
+        );
+        assert_eq!(
+            spare_keepers_the_band_can_arm(
+                &equipment,
+                &owns_nothing,
+                crate::equipment_config::KitJob::Quarrywork,
+                A_CREW,
+                crate::intensification::UpkeepFundMode::Spread,
+                &claims,
+            ),
+            ungated,
+            "a coppice wants no tool, so a band owning nothing is short of nothing"
+        );
+    }
+
+    /// The plant branch's tool — the one the gate's sweep is stocked and starved of.
+    const HOES_FOR_THE_GATE: &str = "hoes";
 }
 
 #[cfg(test)]
