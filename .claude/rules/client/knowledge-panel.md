@@ -149,7 +149,7 @@ completion rendered `New this turn 1` over a faction that knew nothing.
 ### The turn diff is ONE diff over BOTH webs, and it is the ONLY one left
 
 The ladder tracks and the craft tracks arrive through different ingests, so a diff per ingest would
-make the LAND column's "new" and the CRAFT column's "new" two different rules — and the one that
+make the LAND row's "new" and the CRAFT row's "new" two different rules — and the one that
 drifted would be invisible, both rendering as a plausible pill count. One diff over the SAME roster
 the panel draws cannot disagree with what is on screen.
 
@@ -193,7 +193,7 @@ snapshot still joins the baseline, or it reports as new on the next tick.
 Ray, on finding his three new road knowledges missing: *"I would hope that panel would be more dynamic
 and be able to create itself from the configuration files of knowledge."*
 
-**The Craft column always worked that way** — its nodes come off `craft_knowledge` in the order the sim
+**The Craft row always worked that way** — its nodes come off `craft_knowledge` in the order the sim
 published them, so a fourth craft in `recipes.json` needs no client edit. **Land and Herds were
 hard-coded lists, and the reason was that their WIRE was hard-coded too**: the ladder's knowledges rode
 as five named `float` fields on `IntensificationKnowledgeState`, so adding a knowledge meant adding a
@@ -201,38 +201,105 @@ schema field. That is exactly why the route branch's Roadbuilding and Paving had
 the header went on saying *"All 8"*.
 
 **So the fix is at the wire, and the panel follows.** The sim publishes a `ladder_knowledge` ROSTER —
-one row per knowledge the ladder teaches — and every column is built from it:
+one row per knowledge the ladder teaches — and every domain row is built from it:
 
 | | derived from |
 |---|---|
-| which column | the **branch** of the rung that teaches it (`earns_knowledge`): `plant`→Land, `animal`→Herds, `route`→Roads; crafts ride their own list |
+| which row | the **branch** of the rung that teaches it (`earns_knowledge`): `plant`→Land, `animal`→Herds, `route`→Roads; crafts ride their own list |
 | order within it | that rung's **order**, bottom step first |
 | step vs. capability | whether any rung's `unlock_knowledge` names it — `is_step` |
 
 ⛔ **`UNLOCKLESS_TRACKS` IS RETIRED, AND THAT IS THE POINT OF `is_step`.** It was a DECLARED set holding
 exactly `foddering`, and it had to be declared because the client could not tell a knowledge that gates
 nothing from one somebody forgot to wire up. The ladder answers that itself now, so `foddering` hangs
-off the bottom of the Herds column because the config says no rung waits on it — and a knowledge that
+off the end of the Herds ladder because the config says no rung waits on it — and a knowledge that
 STOPS gating a rung stops being a step with no second table to remember.
 
 **What is left in the client is COPY, and only copy**: `HudKnowledgeVocab.DOMAIN_BRANCH_LABELS` (the
 wire says `plant`, a player reads *Land*) and the two authored note tables. A branch the label table
 has never heard of still draws — `domain_label` falls back to the capitalized wire token — because the
-panel is built from the roster and a column must never depend on a client table knowing about it.
+panel is built from the roster and a row must never depend on a client table knowing about it.
 
-### DOMAINS ARE COLUMNS, IT IS NOT A GRAPH, AND AN EMPTY ONE IS NEVER DRAWN
+### DOMAINS ARE ROWS, IT IS NOT A GRAPH, AND AN EMPTY ONE IS NEVER DRAWN
 
 The rung engine models ~4 steps per web and grows by adding BRANCHES, so the screen never needs pan,
 zoom or edge routing — and a graph view would spend its whole budget drawing eight nodes' worth of
 empty space.
 
-**The prototype (`docs/knowledge_screen_ux_proposal.html`) shows 36 nodes; the shipped ladder teaches
-SEVEN** — Land: `cultivation`, `seed_selection`. Herds: `herding`, `penning`, `foddering`. **Roads:
-`roadbuilding`, `paving`.** Craft: whatever `craft_knowledge` publishes. **War and Telling have no
-ladder branch, so they have no column** — a column appears the turn its first branch teaches
-something, which is precisely how Roads got one with no client edit beyond its label. An empty column
-is worse than a missing one: it teaches the player that a whole area of the game is closed to them
-when in truth it does not exist yet.
+**They were COLUMNS, and the measurement is why they are not** (`docs/plan_knowledge_rows.md` §1):
+**domains are the axis that GROWS, and the shipped layout put them on the axis that cannot scroll.**
+A column carried a 210px floor and a 20px separation beside a 300px pinned detail pane, so the card's
+content minimum was a straight function of the branch count — `230 × domains + 336`. That is ~1,716px
+at today's six, and **2,636–3,096 at the ten to twelve `docs/plan_civilization_steps.md` commits**, on
+a 1,920 viewport that docked panels have already taken a bite out of. Ten to twelve is the planned
+shape, not the stress case.
+
+In rows, **width is a function of ladder DEPTH** — which the design caps at ~4 rungs and forbids
+growing — so one fixed card width fits every branch count, and a new branch costs one ROW of height
+on an axis that already scrolls. Measured in `knowledge_panel_stress`: **24 branches, 75 knowledges,
+card minimum 546 against a fixed 820.**
+
+> ⛔ **THE CLAMP WAS COMPUTED CORRECTLY AND THEN OVERRULED BY THE LAYOUT.** It looks as though `refit`
+> already handled this. `KnowledgePanel.refit` raised `max_width` to the room and
+> `AutoSizingPanel.fit_width` did clamp the request to it — but `_apply_width` writes that number to
+> `size.x`, and **Godot will not render a Control below its `get_combined_minimum_size()`**. The card's
+> combined minimum ran straight through `KnowledgeScroll`, whose `horizontal_scroll_mode` was
+> `SCROLL_MODE_DISABLED`, and **a ScrollContainer that cannot scroll an axis propagates its child's
+> full minimum on that axis rather than absorbing it.** No clamp would have made the columns fit; the
+> content minimum itself had to come down. The horizontal axis is `SCROLL_MODE_AUTO` now, which is what
+> makes the card genuinely shrinkable — it is required rather than cosmetic, and turning it back off
+> restores the defect.
+
+**The shipped ladder teaches SEVEN** — Land: `cultivation`, `seed_selection`. Herds: `herding`,
+`penning`, `foddering`. **Roads: `roadbuilding`, `paving`.** Craft: whatever `craft_knowledge`
+publishes. **War and Telling have no ladder branch, so they have no row** — a row appears the turn its
+first branch teaches something, which is precisely how Roads got one with no client edit beyond its
+label. An empty row is worse than a missing one: it teaches the player that a whole area of the game
+is closed to them when in truth it does not exist yet.
+
+### THE CARD IS A FIXED SIZE, AND THE RESERVED DETAIL BLOCK IS WHAT MAKES IT ONE
+
+A reading is wider and taller than a bare ladder row, so a card fitted to its CONTENT narrows on every
+close and widens on every open — and this card is CENTRED in its room, so that is a lurch in both
+directions from the middle of the screen on every click. Two mechanisms, and both are load-bearing:
+
+- **`refit` applies `PANEL_WIDTH`, never the content's demand.** `target_width` is the panel's ACTUAL
+  width now rather than the nominal floor it was, clamped only by the room
+  (`clampf(room.size.x, PANEL_MIN_WIDTH, PANEL_WIDTH)`), so `fit_width(0, 0)` has nothing left to fit.
+- **The detail block is mounted in BOTH states at `DETAIL_BLOCK_MIN_HEIGHT`** — open, and holding the
+  placeholder. The body's minimum height therefore does not change when a knowledge is opened or
+  closed; the gap simply moves from the bottom of the list to under the open row. That constant is
+  MEASURED against the tallest open reading the shipped copy produces, not chosen: a shorter reserve
+  does not break the layout, it only lets the card breathe again.
+
+Asserted as the CONSEQUENCE rather than as either mechanism (`_assert_card_does_not_breathe`), so it
+survives a different implementation of the same promise: **both axes, on the open AND on the toggle
+back**. Width alone passes with the height reserve deleted; opening alone passes with a card that
+grows and never comes back. Measured at 1920×1080: **820 × 477 in all three states.**
+
+### SELECTION IS A TOGGLE, AND IT NEEDS NO NEW STATE
+
+`PAYLOAD_SELECTED` is a knowledge key whose EMPTY STRING already means *nothing is selected* — the
+panel renders the placeholder for it — so a toggle is "set the key, or set it back to empty". Pressing
+the open chip closes it; pressing a different one MOVES the reading. **Only one is ever open**, and
+that is not fussiness: several at once would make the panel's height a function of how much the player
+had poked at it, on a card centred in its room.
+
+`Escape` closes it too, and the reading carries a `✕`. The `✕` emits its own `detail_closed` rather
+than `node_selected` with the open key — a close routed through the toggle happens to work only
+because of what is currently selected. `Main.escape_claimant` gained `ESC_KNOWLEDGE_DETAIL`, ranked
+after `work_inspector` (that is a DIALOG; this is a paragraph inside a card, so it is the outermost of
+the dismissible surfaces) and ahead of `ESC_PAUSE` (a surface with an explicit dismiss answers ESC
+before ESC means "leave the game"). ⛔ **It claims the key only when a READING is open, never merely
+because the screen is** — with the screen up and nothing selected ESC still falls through to the pause
+menu, which is what `close_detail` returning `false` and `is_knowledge_detail_open` reading the
+SELECTION rather than the panel's tree are for.
+
+> ⛔ **THE ORB'S HAND-OVER FORCES OPEN AND MUST NEVER TOGGLE.** `open_on_filter` sets `_open = true`
+> and leaves `_selected` alone. Now that selection toggles, an external open routed through
+> `_on_node_selected` would **close** the row in the one case where the player already had that exact
+> knowledge open — the one case where the orb's row appears to do nothing. It takes no key parameter
+> either, the orb handing over a FILTER and nothing else today.
 
 ⛔ **THE ROSTER CARRIES NO FACTION, AND THE PROGRESS LIST DOES.** A faction that has learned nothing has
 no `intensification_knowledge` row at all — the sim skips it — so a roster carried on that row would
@@ -243,41 +310,110 @@ Two sections, and the split is load-bearing.
 `model` does: without it the diff sees no ladder nodes, `_seen_keys` never learns them, and no ladder
 discovery can ever be reported as new.
 
-**A LADDER domain draws a rail down its left edge; the CRAFT fan draws none.** Its nodes are ORDERED —
-each earned by practising the one below — and the rail is what says so; a craft is learned by working
-its material and gates recipes rather than a next step. **That is a property of the domain descriptor,
-not a branch in the renderer.**
+**A LADDER domain draws the rail BETWEEN its rungs; the CRAFT fan draws none.** Its nodes are ORDERED
+— each earned by practising the one below — and the connector between two chips is what says so; a
+craft is learned by working its material and gates recipes rather than a next step. **That is a
+property of the domain descriptor, not a branch in the renderer.** It is the column rail's rule
+rotated ninety degrees, and only the ladder's connector carries `RAIL_META`, so *"a ladder draws its
+rail and the craft fan draws none"* stays a claim about the TREE rather than about a pixel.
 
-## A NODE ROW IS A `PanelContainer` WITH `gui_input`, NEVER A `Button`
+**A knowledge that gates nothing wears a capsule** reading `gates nothing` — `foddering` today. It
+hangs off the end of its ladder and the capsule is what stops it reading as one more step. Drawn from
+`NODE_UNSPENT_TESTABLE`, which is the config's own `is_step` crossed with the verb lookup, never a
+client list of exceptions. **That puts the verb lookup's own blind spot on the FACE**: a ladder branch
+absent from `RungGates.RUNG_KNOWLEDGE_TRACKS` reads `unspent_testable = false`, so every one of its
+knowledges wears the capsule — the same fault this file already records under *`unspent_testable` is
+two questions*, now visible without a click rather than only in the reading's `Where, now` line.
+
+## A NODE CHIP IS A `PanelContainer` WITH `gui_input`, NEVER A `Button`
 
 **Both halves of this were shipped wrong first, and both are invisible to a bounds assertion.** A
-Button is not a Container, so a `glyph + name + value` row parented to one is NEVER LAID OUT — the
-children pile up at the origin and the row's height stops being a function of its content — and a
-`flat` Button ignores its `normal` stylebox outright, so the SELECTED state was an override reaching
-nothing the widget draws. The row rendered, at the wrong height, with no visible selection.
+Button is not a Container, so a `glyph + name` face parented to one is NEVER LAID OUT — the children
+pile up at the origin and the chip's height stops being a function of its content — and a `flat`
+Button ignores its `normal` stylebox outright, so the SELECTED state was an override reaching nothing
+the widget draws. It rendered, at the wrong height, with no visible selection.
 
 `BandCityPanel._make_tab_button` records the identical finding for the identical reason. Follow it.
 
-**The selection is the row's own stylebox** — a `SIGNAL` bar down the leading edge plus the faint wash
-this HUD gives a live selection, with identical content margins in both states so selecting a row
-never moves the column.
+**The selection is the chip's own stylebox** — the faint wash this HUD gives a live selection inside a
+`SIGNAL` border on all four sides, with identical content margins in both states so selecting a chip
+never moves the ones beside it. A border rather than the column layout's leading bar: a bar down one
+edge said *this row of a column*, and on a horizontal run it reads as a connector to whatever is left
+of it.
 
-**The unspent clause is ON THE ROW, not only in the detail pane.** The whole point of the state is that
-the player has not noticed it, so it has to be legible without a click.
+**The chips ride in an `HFlowContainer`, and that is what keeps the card bounded.** It wraps, so its
+own minimum width is only its WIDEST CHILD — one chip — rather than the sum of the ladder. An
+`HBoxContainer` would put the whole ladder back into the card's minimum, which is the column layout's
+defect on the other axis. The connectors carry the spacing (both flow separations are zero) so a
+wrapped chip lands at the same pitch as one that did not wrap.
 
-## The detail pane reads `FactionReadouts`' copy, and authors only the half that did not exist
+### THE UNSPENT STATE HAS THREE CARRIERS NOW, AND ALL THREE ARE WIRED
+
+The whole point of the state is that the player has not noticed it, so it has to be legible without a
+click — and the clause row that used to sit under the node's name (`◇ nothing is using it`) has
+nowhere to go under a chip. So:
+
+- **the `◇` mark ON the chip**, in `WARN`, the tint the tally's unspent clause takes;
+- **the chip's own `tooltip_text`** — the unlock note, with the clause APPENDED rather than replacing
+  it, the two saying different things;
+- **the reading's state line**, `Known · nothing is using it`.
+
+Dropping any one of them is a state the player can only find by opening the reading, which is the
+defect the clause row existed to prevent.
+
+### THE EMPTY-FILTER NOTE RIDES ON THE FILTER ROW, AND THAT IS A SIZING RULE
+
+It hung in the pinned detail pane because a banner drawn ACROSS the columns would have read as a
+replacement for the list rather than as a note about it. There is no pinned pane to hang in now, and
+the filter row answers the same objection better: it is a note about the FILTER, and it sits beside
+the pill that earned it. `EMPTY_NOTE_META` and `FILTER_EMPTY_FORMAT` are unchanged.
+
+⛔ **ON the row, not UNDER it, because `_header` is outside the scroll and `_header_height()` feeds
+`fit_to_content`.** Mounted as a row of its own, the caption grows the card by its own height the
+moment a player presses a pill that matches nothing — measured at **477 → 499**, which is the lurch
+the reading's reserve exists to prevent arriving through the other surface. A pill's own minimum
+height (a `Button` with `HudStyle.BUTTON_PADDING_V`) is taller than an `EMPTY_FONT_SIZE` Label, so
+riding the row costs NOTHING whether the note is present or not — no reserve, and no permanent dead
+band under the pills to pay for a caption that is usually absent.
+
+**The WIDTH it adds is real and is not the binding term**: the header's title row (title + tally +
+`✕`) is wider than the pills plus this note, so the card's combined minimum is unmoved — **717
+against the fixed 820** with the note up. That is the one way this placement could push the card past
+`PANEL_WIDTH`, so the preview chapter asserts it rather than leaving it to a longer clause or a sixth
+pill to discover.
+
+## The inline reading uses `FactionReadouts`' copy, and authors only the half that did not exist
+
+Three side-by-side sections, in the prototype's order — **does · where · how**
+(`docs/knowledge_rows_ux_proposal.html` → `detailFor`), which is the design. The pinned pane read
+does · how · where; laid out as three columns, *where it stands now* belongs beside *what it lets you
+do* rather than after the practice note.
 
 - **What it lets you do** — `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES`, READ rather than re-authored, so
-  the pane and any other surface naming a discovery cannot describe it differently. **That table
+  the reading and any other surface naming a discovery cannot describe it differently. **That table
   outlived the announcement it was written for**: the one-shot System note is retired (§5) and the
-  table is not, this pane being its reader now. See `band-readouts.md`.
+  table is not, this reading being its reader now. See `band-readouts.md`.
+- **Where, now** — a COUNT of the faction's sources standing on it. **Never a jump**: a discovery
+  unlocks a verb across the whole map, so there is no one hex for `focus_on_tile` to land on, which is
+  why the knowledge rows are non-locating. **A node not yet learned has no "where" at all**, so the
+  kicker itself changes to `DETAIL_NEEDS_HEAD`: "0 sources" would read as a shortfall rather than as a
+  thing not yet learned.
 - **How it is learned** — `HudKnowledgeVocab.PRACTISE_NOTES`, which is the half that existed NOWHERE
   in the client. The rule lived only in a Rust doc comment on `intensification_ladder.json`
   (`_comment_earns_knowledge`, one per rung) and a player was never told any of it, which is most of
   why the ladder read as something that happened TO them.
-- **Where, now** — a COUNT of the faction's sources standing on it. **Never a jump**: a discovery
-  unlocks a verb across the whole map, so there is no one hex for `focus_on_tile` to land on, which is
-  why the knowledge rows are non-locating.
+
+**The state line above them keeps the block METER**, which the chip could not (`METER_CELLS` is still
+live for it) — and with it the `progress * HudConst.PROGRESS_PERCENT_SCALE` conversion, `meter_bar`
+grading a `0..100` score where every node's progress is `0..1`. Dropping that is how the faction
+page's meters shipped EMPTY, indistinguishable from an unstarted track beside a live percent.
+
+**One column's body width is DERIVED, never typed** — `PANEL_WIDTH` less the card's chrome and the
+scroll gutter, less the block's indent and right margin, less the bar and its gutter, less the gutters
+between the columns, shared out between `DETAIL_SECTION_COUNT`. The chrome and gutter terms are not
+optional: a width derived from `PANEL_WIDTH` alone makes the reading's minimum the card's OUTER width,
+which is wider than its interior, so the horizontal scrollbar would show on every frame of a card that
+fits.
 
 **`PRACTISE_NOTES` IS AUTHORED — but it is COPY now, not structure.** The roster carries the branch and
 order of the teaching rung, so the client no longer needs a table to know WHERE a knowledge sits; what
@@ -287,8 +423,8 @@ the config, which is authoritative — `plant:wild` earns `cultivation`, `plant:
 `foddering`, `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`. **Re-read the
 config, do not re-word them, if a rung's `earns_knowledge` ever moves.**
 
-⛔ **A KNOWLEDGE WITH NO NOTE STILL DRAWS.** Absence leaves the pane with less to say; it never removes
-the node. That is what keeps the roster wire-driven: if a missing sentence could suppress a column
+⛔ **A KNOWLEDGE WITH NO NOTE STILL DRAWS, AND SO DOES ITS SECTION.** Absence leaves the column with
+less to say; it never removes the section and never removes the node. That is what keeps the roster wire-driven: if a missing sentence could suppress a row
 entry, adding a knowledge would be a client edit again.
 
 **The player-facing NAME is the sim's** (`display_name`, resolved from the knowledge id: underscores to
@@ -382,10 +518,10 @@ not contain it.
   because it happened to be open already would answer a question nobody asked. It re-renders either
   way, so an already-open panel redraws on the new filter.
 - **The SELECTION is left alone.** A filter is a question about the list, not about the node being
-  read, and throwing a reading away to answer it would lose the one thing the detail pane is for.
+  read, and throwing a reading away to answer it would lose the one thing the reading is for.
 
 `nodes()` is the other seam slice C added: the flattened roster, exposed rather than re-derived per
-reader, because the walk behind it resolves the faction's patches, herds, kit and bench. The columns
+reader, because the walk behind it resolves the faction's patches, herds, kit and bench. The rows
 draw it, the pip counts it and the orb's row is built off it — one derivation, so no two of the three
 can answer differently about one discovery.
 
@@ -435,7 +571,7 @@ COUNT — two gaps between three columns — which is the term that was wrong wh
 `tools/ui_preview/chapters/knowledge_panel.gd`, and **most of it is PNG-less on purpose**. Every claim
 this screen makes renders as a plausible picture whatever it says — a pill reading `2`, a greyed row,
 the clause *"nothing is using it"*, a `3` on the pip — so the derivation is asked of `KnowledgeRoster`
-directly with models staged in the chapter, and the four frames are for the LAYOUT alone.
+directly with models staged in the chapter, and the frames are for the LAYOUT alone.
 
 **The fixtures derive their standing rung and never state it** (`fixtures_rung.gd`), the whole test
 tree's rule: `improvement_is_done` reads one wire field, so a hand-built source that omits
@@ -446,10 +582,10 @@ green.
 so the other spelling is invisible to the assignment walk and every animal claim reads "nothing is
 using it" for a reason that has nothing to do with the code under test. It cost a run.
 
-**The row and the filter pill are driven with REAL POINTER INPUT**, never `pressed.emit()` — the row
-has no signal of its own to fake, and the harness contract's reason applies either way: an emitted
-signal passes on a control that is covered, zero-size or filtered out of the hit test, which is
-exactly the shape this row shipped in first.
+**The chip and the filter pill are driven with REAL POINTER INPUT**, never `pressed.emit()` — the
+chip has no signal of its own to fake, and the harness contract's reason applies either way: an
+emitted signal passes on a control that is covered, zero-size or filtered out of the hit test, which
+is exactly the shape this chip shipped in first.
 
 **`fixtures_knowledge.gd` is the shared roster fixture**, in the wire's own shapes, used by the
 `knowledge_panel` / `turn_orb` / `herd_graze_pen` chapters and by `band_panel_preview`. It is a
@@ -458,10 +594,10 @@ would pass against a producer that had stopped producing one. That the transcrip
 is the SIM's claim (`the_published_roster_places_every_knowledge_the_ladder_teaches`); what the fixture
 proves is that the client renders whatever roster arrives.
 
-⛔ **AND A HARNESS THAT PUSHES NO ROSTER RENDERS NO LADDER COLUMNS**, which is the honest consequence of
+⛔ **AND A HARNESS THAT PUSHES NO ROSTER RENDERS NO LADDER ROWS**, which is the honest consequence of
 the panel building itself. The `ui_preview` prologue pushes it once so every chapter has one.
 
-**THE FALSIFICATION RUNS IN THE REMOVAL DIRECTION** (`_assert_the_roster_builds_the_columns`, claim 4):
+**THE FALSIFICATION RUNS IN THE REMOVAL DIRECTION** (`_assert_the_roster_builds_the_rows`, claim 4):
 a knowledge dropped from the roster leaves the panel and the tally shrinks with it. It needs no config
 file, and nothing in the client names the dropped knowledge — so if the node survives, the panel is
 drawing from something other than the wire.
@@ -472,13 +608,23 @@ drawing from something other than the wire.
 which renders a perfectly ordinary frame with every rung honestly refused — so `band_panel_preview`
 keeps `_standing_knowledge_row` and `_standing_knowledge_tracks` under separate names.
 
-**Frames:** `knowledge_panel` (the whole screen, mixed states) · `knowledge_panel_untouched` (**the
-frame this arc is about** — a faction that knows nothing, every node drawn and greyed, where the old
-faction-page block rendered an empty zone) · `knowledge_panel_detail` (a node selected, the pane's
-three sections, the selection bar) · `knowledge_panel_filtered` (a filter live, so the DIMMING is in a
-frame) · `knowledge_launcher_mark` / `_rail` / `_bar` (the CAIRN on the launcher's face, one per action
-mount — subject row, collapsed rail, bar — with the pip over it on the first two, which is the normal
-state for this action rather than an edge one).
+**Frames:** `knowledge_panel` (the whole screen, mixed states — four domain rows, the rails between
+their chips, the craft fan with none) · `knowledge_panel_untouched` (**the frame this arc is about** —
+a faction that knows nothing, every node drawn and greyed, where the old faction-page block rendered
+an empty zone) · `knowledge_panel_detail` (a node selected, the reading open UNDER ITS OWN ROW, its
+three sections and the `SIGNAL` bar) · `knowledge_panel_filtered` (a filter live, so the DIMMING is in
+a frame) · **`knowledge_panel_stress`** (24 synthetic ladder branches — §1's own stress figure and
+twice the planned shape — with the card still at its fixed width and the list scrolling instead) ·
+`knowledge_launcher_mark` / `_rail` / `_bar` (the CAIRN on the launcher's face, one per action mount —
+subject row, collapsed rail, bar — with the pip over it on the first two, which is the normal state
+for this action rather than an edge one).
+
+**The stress roster is built in the chapter from `KnowledgeFx.ladder_roster()`'s ROW SHAPE**, not from
+a config and not from the sim: the panel builds itself from whatever roster arrives, so a synthetic
+one is exactly what tests that. It asserts the card's WIDTH *and* `card().get_combined_minimum_size().x`,
+because a card can be SET to 820 while demanding more — which is precisely how the old clamp was
+overruled. It restores the shipped roster afterwards; this HUD is long-lived and every later chapter
+is written against the real ladder.
 
 ## A world that arrives already knowing things must not announce them
 
@@ -522,7 +668,7 @@ later frame of the baseline's own turn is a SECTION ARRIVING, and the fold is ov
 `_learned_this_turn` is still left standing by that branch, so an announcement survives every later
 frame of its own turn.
 
-**The craft column takes the identical path** and is the case the narrow fold was written for —
+**The craft row takes the identical path** and is the case the narrow fold was written for —
 `update_crafting_catalogues` lands after `update_intensification` on the same turn. Widening the fold
 subsumes it; both are guarded, as siblings, in `ui_preview`'s `knowledge_panel` chapter.
 

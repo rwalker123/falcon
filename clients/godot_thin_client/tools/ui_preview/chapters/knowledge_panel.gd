@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 96
+const EXPECTED_CHECKPOINTS := 133
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -91,11 +91,11 @@ const TURN_THIRD := 42
 
 func run(harness) -> void:
 	h = harness
-	# ⛔ **THE ROSTER GOES IN FIRST, AND WITHOUT IT THERE IS NO LADDER AT ALL.** The columns are built
+	# ⛔ **THE ROSTER GOES IN FIRST, AND WITHOUT IT THERE IS NO LADDER AT ALL.** The rows are built
 	# from the wire now, so this push is what the panel is made of — not a detail of one state.
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
 	_assert_greyed_zero_tracks()
-	_assert_the_roster_builds_the_columns()
+	_assert_the_roster_builds_the_rows()
 	_assert_ladder_usage()
 	_assert_craft_usage()
 	_assert_filter_counts()
@@ -133,16 +133,16 @@ func _assert_greyed_zero_tracks() -> void:
 	h._assert_hud("knowledge — …and every one of them is `not begun`, i.e. GREYED rather than absent (%d of %d)"
 			% [not_begun, nodes.size()],
 		not_begun == nodes.size() and nodes.size() > 0)
-	# **NO CRAFT COLUMN AT ALL when the wire has published no craft vector**, which is the "never draw
-	# an empty domain column" rule. Every column's nodes come off the wire now, so this is the general
+	# **NO CRAFT ROW AT ALL when the wire has published no craft vector**, which is the "never draw
+	# an empty domain row" rule. Every row's nodes come off the wire now, so this is the general
 	# case rather than the craft fan's special one — the craft vector is simply the one this model
 	# leaves out.
-	var craft_columns := 0
+	var craft_rows := 0
 	for domain in domains:
 		if StringName(domain[HudKnowledgeVocab.DOMAIN_KEY]) == HudKnowledgeVocab.DOMAIN_KEY_CRAFT:
-			craft_columns += 1
-	h._assert_hud("knowledge — a domain with no nodes draws NO column (craft columns %d)" % craft_columns,
-		craft_columns == 0)
+			craft_rows += 1
+	h._assert_hud("knowledge — a domain with no nodes draws NO row (craft rows %d)" % craft_rows,
+		craft_rows == 0)
 
 ## ⛔ **THE PANEL BUILDS ITSELF FROM THE ROSTER — THIS IS THE CLAIM THE ARC IS ABOUT.**
 ##
@@ -153,9 +153,9 @@ func _assert_greyed_zero_tracks() -> void:
 ##
 ## Four claims, and each fails differently:
 ##
-## 1. **A ROADS COLUMN EXISTS, carrying Roadbuilding and Paving** — the visible proof, because nothing
+## 1. **A ROADS ROW EXISTS, carrying Roadbuilding and Paving** — the visible proof, because nothing
 ##    in the client names either knowledge and no client edit put them there.
-## 2. **The column a knowledge lands in is the BRANCH of the rung that teaches it**, so Paving is on
+## 2. **The row a knowledge lands in is the BRANCH of the rung that teaches it**, so Paving is on
 ##    Roads and Penning is on Herds.
 ## 3. **`foddering` is a CAPABILITY and it FALLS OUT** — no rung's `unlock_knowledge` names it, so the
 ##    roster says `is_step: false` and it cannot be unspent. A client-side declared set is what this
@@ -164,11 +164,11 @@ func _assert_greyed_zero_tracks() -> void:
 ## 4. ⛔ **REMOVE A KNOWLEDGE FROM THE ROSTER AND THE PANEL DROPS IT, WITH NO CLIENT EDIT.** This is
 ##    the falsification, run in the direction that needs no config file: if the node survives, the
 ##    panel is drawing from something other than the wire.
-func _assert_the_roster_builds_the_columns() -> void:
+func _assert_the_roster_builds_the_rows() -> void:
 	var roster := KnowledgeFx.ladder_roster()
 	var domains := KnowledgeRoster.build_domains({KnowledgeRoster.MODEL_LADDER_ROSTER: roster})
 	var roads := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_ROUTES)
-	h._assert_hud("knowledge — the ROADS column exists, built from the wire's roster alone",
+	h._assert_hud("knowledge — the ROADS row exists, built from the wire's roster alone",
 		not roads.is_empty()
 			and String(roads[HudKnowledgeVocab.DOMAIN_LABEL])
 				== HudKnowledgeVocab.DOMAIN_BRANCH_LABELS[HudKnowledgeVocab.DOMAIN_KEY_ROUTES])
@@ -182,11 +182,11 @@ func _assert_the_roster_builds_the_columns() -> void:
 		_node_label(roads, KnowledgeFx.KNOWLEDGE_ROADBUILDING)
 			== KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_ROADBUILDING))
 
-	# CLAIM 2 — the branch of the TEACHING rung decides the column. Asserted on a knowledge from each
-	# ladder web, so a producer that put everything in one column fails.
+	# CLAIM 2 — the branch of the TEACHING rung decides the row. Asserted on a knowledge from each
+	# ladder web, so a producer that put everything in one row fails.
 	var herds := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_HERDS)
 	var land := _domain_by_key(domains, HudKnowledgeVocab.DOMAIN_KEY_LAND)
-	h._assert_hud("knowledge — a knowledge sits in the column of the branch that TEACHES it",
+	h._assert_hud("knowledge — a knowledge sits in the row of the branch that TEACHES it",
 		_node_keys(land).has(KnowledgeFx.KNOWLEDGE_SEED_SELECTION)
 			and _node_keys(herds).has(KnowledgeFx.KNOWLEDGE_PENNING)
 			and not _node_keys(land).has(KnowledgeFx.KNOWLEDGE_PENNING))
@@ -197,9 +197,9 @@ func _assert_the_roster_builds_the_columns() -> void:
 	h._assert_hud("knowledge — `foddering` is a CAPABILITY, so `unspent` cannot be asked of it",
 		not fodder.is_empty()
 			and not bool(fodder[HudKnowledgeVocab.NODE_UNSPENT_TESTABLE]))
-	h._assert_hud("knowledge — …while a STEP beside it in the same column can be asked",
+	h._assert_hud("knowledge — …while a STEP beside it in the same row can be asked",
 		not penning.is_empty() and bool(penning[HudKnowledgeVocab.NODE_UNSPENT_TESTABLE]))
-	h._assert_hud("knowledge — …and the capability sorts UNDER the chain, last on its column (%s)"
+	h._assert_hud("knowledge — …and the capability sorts LAST along the chain, at the end of its row (%s)"
 			% str(_node_keys(herds)),
 		_node_keys(herds).back() == KnowledgeFx.KNOWLEDGE_FODDERING)
 
@@ -216,7 +216,7 @@ func _assert_the_roster_builds_the_columns() -> void:
 			% [KnowledgeRoster.flatten(domains).size(), KnowledgeRoster.flatten(thinner).size()],
 		KnowledgeRoster.flatten(thinner).size() == KnowledgeRoster.flatten(domains).size() - 1)
 
-## One domain out of a built roster, `{}` when the columns hold none of that branch.
+## One domain out of a built roster, `{}` when the rows hold none of that branch.
 func _domain_by_key(domains: Array, key: StringName) -> Dictionary:
 	for domain_variant in domains:
 		var domain: Dictionary = domain_variant
@@ -224,7 +224,7 @@ func _domain_by_key(domains: Array, key: StringName) -> Dictionary:
 			return domain
 	return {}
 
-## A column's node keys, in the order the column draws them.
+## A row's node keys, in the order the row draws them.
 func _node_keys(domain: Dictionary) -> Array[String]:
 	var keys: Array[String] = []
 	for node_variant in domain.get(HudKnowledgeVocab.DOMAIN_NODES, []):
@@ -359,7 +359,7 @@ func _assert_filter_counts() -> void:
 	h._assert_hud("knowledge — …and the model really holds known tracks, so that is not vacuous (%d)"
 			% int(tally[HudKnowledgeVocab.NODE_STATE_KNOWN]),
 		int(tally[HudKnowledgeVocab.NODE_STATE_KNOWN]) > 0)
-	# The header's tally is taken over the SAME flattened list the columns draw, so the three state
+	# The header's tally is taken over the SAME flattened list the rows draw, so the three state
 	# counts must partition it exactly — a tally that had drifted onto its own walk would not.
 	var summed := int(tally[HudKnowledgeVocab.NODE_STATE_KNOWN]) \
 		+ int(tally[HudKnowledgeVocab.NODE_STATE_LEARNING]) \
@@ -454,7 +454,7 @@ func _assert_new_this_turn() -> void:
 	# **AND THE DIFF ROLLS ON A KNOWLEDGE-ONLY DELTA, not just on the populations seam.** `Main`
 	# dispatches each section independently and only when it CHANGED, so a turn that finishes a track
 	# and moves nobody never reaches `update_band_alerts` — which was the ONE seam `refresh_snapshot`
-	# was called from, so the pip moved while the diff (and an open panel's columns) stayed a turn
+	# was called from, so the pip moved while the diff (and an open panel's rows) stayed a turn
 	# behind. Pushed with NO `update_band_alerts` at all, which is what makes this a claim about the
 	# section rather than about the frame. The `update_overlay` beside it is not a convenience: it is
 	# what carries the turn, and `Main` dispatches it ahead of every gated section, so the diff has
@@ -470,8 +470,8 @@ func _assert_new_this_turn() -> void:
 
 # ---- the frames -------------------------------------------------------------
 
-## The LAYOUT, which is the one thing a picture is the right witness for: two ladder columns with
-## their rails, a craft fan with none, the filter pills, and the detail pane.
+## The LAYOUT, which is the one thing a picture is the right witness for: the ladder rows with the
+## rails between their chips, a craft fan with none, the filter pills, and the inline reading.
 func _knowledge_frames() -> void:
 	h._hud.update_band_alerts([_band([_hunt_assignment("worked")])])
 	h._hud.update_forage_patches([_patch(6, 6, true, false)])
@@ -481,7 +481,7 @@ func _knowledge_frames() -> void:
 	await h._settle()
 
 	# STATE 1 — the whole screen. A known track, one close, one barely begun, one untouched, and the
-	# craft fan beside them.
+	# craft fan under them.
 	h._hud.open_knowledge_panel()
 	await h._settle()
 	_assert_panel_renders()
@@ -495,22 +495,27 @@ func _knowledge_frames() -> void:
 	await h._settle()
 	await h._save("knowledge_panel_untouched")
 
-	# STATE 3 — a node SELECTED, so the detail pane's three sections render: what it lets you do, how
-	# it is learned, and where it stands now.
+	# STATE 3 — a node SELECTED, so the inline reading's three sections render, under the row that
+	# owns it: what it lets you do, where it stands now, and how it is learned.
 	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
 	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
 	await h._settle()
-	var row := NodeQuery.find_meta_node(h._hud.knowledge_panel().panel(), HudKnowledgeVocab.NODE_META)
-	h._assert_hud("knowledge — a node row is a control the harness can find by identity",
-		row != null)
-	# **DRIVEN AS A REAL POINTER PRESS, never `pressed.emit()`.** A row is a `PanelContainer` with a
+	var chip := NodeQuery.find_meta_node(h._hud.knowledge_panel().panel(), HudKnowledgeVocab.NODE_META)
+	h._assert_hud("knowledge — a node chip is a control the harness can find by identity",
+		chip != null)
+	# **THE CARD'S SIZE IS RECORDED BEFORE THE FIRST PRESS**, because the claim the whole layout rests
+	# on is that opening and closing a reading does not move it. See `_assert_card_does_not_breathe`.
+	await _assert_card_does_not_breathe()
+	# **DRIVEN AS A REAL POINTER PRESS, never `pressed.emit()`.** A chip is a `PanelContainer` with a
 	# `gui_input` handler (a Button is not a Container, so it could not lay its face out), and it has no
 	# signal of its own to fake — but the rule is the harness contract's either way: an emitted signal
 	# calls the connected lambda by hand and passes on a control that is covered, zero-size or filtered
-	# out of the hit test, which is exactly the shape this row shipped in first.
+	# out of the hit test, which is exactly the shape this chip shipped in first.
 	await _press_node("cultivation")
 	_assert_detail_pane()
+	_assert_detail_sits_under_its_own_row("cultivation")
 	await h._save("knowledge_panel_detail")
+	await _assert_selection_toggles()
 
 	# **STATE 4 — A FILTER LIVE, so the DIMMING is in a frame.** Non-matching nodes keep their place
 	# at `FILTERED_OUT_ALPHA`; the shape of the tree is most of what this screen teaches.
@@ -521,32 +526,45 @@ func _knowledge_frames() -> void:
 	_assert_filter_dims_rather_than_hides()
 	await h._save("knowledge_panel_filtered")
 
+	await _assert_the_empty_filter_note_does_not_move_the_card()
+	await _assert_escape_closes_only_the_reading()
 	h._hud.close_knowledge_panel()
 	await h._settle()
+	await _assert_the_card_survives_a_planned_domain_count()
 
-## The columns are there, the ladder domains draw a rail and the craft fan does not, and a `0.0` track
-## is on screen as a row rather than absent.
+## The rows are there, the ladder domains draw their rails and the craft fan does not, and a `0.0`
+## track is on screen as a chip rather than absent.
 func _assert_panel_renders() -> void:
 	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
 	h._assert_hud("knowledge — the panel is open", panel != null and panel.is_open())
 	if panel == null:
 		return
-	h._assert_hud("knowledge — the LAND column rendered",
+	h._assert_hud("knowledge — the LAND row rendered",
 		NodeQuery.has_label_containing(panel, "Land".to_upper()))
-	h._assert_hud("knowledge — the CRAFT column rendered",
+	h._assert_hud("knowledge — the CRAFT row rendered",
 		NodeQuery.has_label_containing(panel, HudKnowledgeVocab.DOMAIN_CRAFT_LABEL.to_upper()))
-	# **THE RAIL IS THE DOMAIN'S SHAPE, DRAWN**, and it is the one thing that says the ladder columns
-	# are ORDERED. A ladder domain has one; the craft fan must not.
+	# **THE RAIL IS THE DOMAIN'S SHAPE, DRAWN**, and it is the one thing that says the ladder rows are
+	# ORDERED. Rotated ninety degrees it is the CONNECTOR between two chips, but the claim is
+	# unchanged: a ladder domain draws one; the craft fan must not.
 	var land := _domain_node(panel, HudKnowledgeVocab.DOMAIN_KEY_LAND)
 	var craft := _domain_node(panel, HudKnowledgeVocab.DOMAIN_KEY_CRAFT)
-	h._assert_hud("knowledge — a LADDER column draws its rail",
+	h._assert_hud("knowledge — a LADDER row draws its rail",
 		land != null and NodeQuery.find_meta_node(land, HudKnowledgeVocab.RAIL_META) != null)
 	h._assert_hud("knowledge — …and the CRAFT fan draws none",
 		craft != null and NodeQuery.find_meta_node(craft, HudKnowledgeVocab.RAIL_META) == null)
-	# The `not begun` word is the greyed track's own value cell — a row that had been skipped would
-	# leave it nowhere on screen.
-	h._assert_hud("knowledge — an untouched track renders its `%s` row" % HudKnowledgeVocab.NODE_VALUE_NOT_BEGUN,
-		NodeQuery.has_label_containing(panel, HudKnowledgeVocab.NODE_VALUE_NOT_BEGUN))
+	# **AN UNTOUCHED TRACK IS A DRAWN CHIP, GREYED.** The `not begun` WORD moved into the reading's
+	# state line when the chip replaced the row (there is no room for a value cell on a chip), so the
+	# claim is made against the carrier the chip has: the node is in the tree, wearing the `not_begun`
+	# glyph. A track that had been skipped would have neither.
+	var untouched := _node_chip(panel, KnowledgeFx.KNOWLEDGE_ROADBUILDING)
+	h._assert_hud("knowledge — an untouched track is drawn as a chip (`%s`)"
+			% KnowledgeFx.KNOWLEDGE_ROADBUILDING,
+		untouched != null)
+	h._assert_hud("knowledge — …wearing the `%s` glyph `%s`, i.e. GREYED rather than absent"
+			% [HudKnowledgeVocab.NODE_STATE_NOT_BEGUN,
+				HudKnowledgeVocab.NODE_GLYPHS[HudKnowledgeVocab.NODE_STATE_NOT_BEGUN]],
+		untouched != null and NodeQuery.has_label_containing(untouched,
+			HudKnowledgeVocab.NODE_GLYPHS[HudKnowledgeVocab.NODE_STATE_NOT_BEGUN]))
 
 ## The detail pane's three heads, once a node is selected. **The unlock copy is `FactionReadouts`'
 ## own table**, which OUTLIVED the one-shot announcement it was written for: that note is retired and
@@ -583,14 +601,13 @@ func _assert_filter_dims_rather_than_hides() -> void:
 	var dimmed := 0
 	var bright := 0
 	for node in nodes:
-		var row := _node_row(panel, String(node[HudKnowledgeVocab.NODE_KEY]))
-		if row == null:
+		# **READ OFF THE CHIP ITSELF.** It used to be read off a `VBoxContainer` host walked up to from
+		# the row; there is no row host any more, and the chip is what carries the `modulate`.
+		var chip := _node_chip(panel, String(node[HudKnowledgeVocab.NODE_KEY]))
+		if chip == null:
 			continue
 		rendered += 1
-		var host := row.get_parent()
-		while host != null and not (host is VBoxContainer):
-			host = host.get_parent()
-		var alpha := (host as Control).modulate.a if host is Control else 1.0
+		var alpha := chip.modulate.a
 		if alpha < 1.0:
 			dimmed += 1
 		else:
@@ -601,6 +618,304 @@ func _assert_filter_dims_rather_than_hides() -> void:
 	h._assert_hud("knowledge filter — the non-matching ones are DIMMED (%d) and the matching ones are not (%d)"
 			% [dimmed, bright],
 		dimmed > 0 and bright > 0)
+
+# ---- the row layout's own claims (`docs/plan_knowledge_rows.md`) ------------
+
+## **A ZERO-MATCH FILTER MUST NOT MOVE THE CARD EITHER.** §4 words its claim about READINGS, and the
+## intent is the card: this one is centred in its room, so anything that changes its height on a press
+## is a lurch in both directions from the middle of the screen. The empty-filter note is a child of
+## `_header`, and `_header_height()` feeds `fit_to_content` — so a caption mounted on a filter press
+## is exactly the same failure the reading's reserve exists to prevent, arriving through the other
+## surface.
+##
+## **`new` IS THE FILTER THAT IS GENUINELY EMPTY ON THIS BLOCK'S MODEL.** Nothing completes on the
+## turn these frames render, so the pill reads `New this turn 0` while `Learning now` reads 3 — which
+## makes this a real before/after on ONE card rather than two cards compared. Both counts are asserted
+## as preconditions, because a fixture in which `new` had quietly gained a member would make the whole
+## block a measurement of a filter that matches something.
+##
+## **The note is found by `EMPTY_NOTE_META`, never by its text** — the wording is copy and the claim is
+## about the control — and the walk presses BACK afterwards, which is what says the note really came
+## and went rather than being a permanent fixture the size claim was measured around.
+func _assert_the_empty_filter_note_does_not_move_the_card() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge empty-filter — the panel is open", false)
+		return
+	var nodes := controller.nodes()
+	var empty_count := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_NEW)
+	var live_count := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_LEARNING)
+	h._assert_hud("knowledge empty-filter — `%s` really matches nothing and `%s` really matches something (%d, %d)"
+			% [HudKnowledgeVocab.FILTER_NEW, HudKnowledgeVocab.FILTER_LEARNING,
+				empty_count, live_count],
+		empty_count == 0 and live_count > 0)
+	h._assert_hud("knowledge empty-filter — …and no note is on screen before the press",
+		NodeQuery.find_meta_node(panel, HudKnowledgeVocab.EMPTY_NOTE_META) == null)
+
+	var before := panel.size
+	var before_card := panel.card().size
+	await _press_filter(HudKnowledgeVocab.FILTER_NEW)
+	h._assert_hud("knowledge empty-filter — the zero-match filter renders its note",
+		NodeQuery.find_meta_node(panel, HudKnowledgeVocab.EMPTY_NOTE_META) != null)
+	h._assert_hud("knowledge empty-filter — …and the panel does not resize around it (%s → %s)"
+			% [str(before), str(panel.size)],
+		panel.size.is_equal_approx(before))
+	h._assert_hud("knowledge empty-filter — …nor does the card inside it (%s → %s)"
+			% [str(before_card), str(panel.card().size)],
+		panel.card().size.is_equal_approx(before_card))
+	# ⛔ **THE NOTE RIDES THE FILTER ROW, SO WIDTH IS THE TERM IT COULD BREAK.** `_header` is outside
+	# the scroll, so its minimum reaches the card — and Godot renders a Control at its combined
+	# minimum whatever the fit asked for, which is how the old clamp was overruled. The title row is
+	# the wider of the two today; a longer clause or a sixth pill is what would change that.
+	var minimum := panel.card().get_combined_minimum_size().x
+	h._assert_hud("knowledge empty-filter — …and the note has not pushed the card's minimum past `PANEL_WIDTH` (%.0f <= %.0f)"
+			% [minimum, HudKnowledgeVocab.PANEL_WIDTH],
+		minimum <= HudKnowledgeVocab.PANEL_WIDTH)
+	# **THE PLACEMENT IS A LAYOUT CLAIM, so it gets a picture.** Every assertion above is about height
+	# and identity; whether the note reads as a remark on the pills or as a crowded sixth one is the
+	# one thing only a frame can answer.
+	await h._save("knowledge_panel_empty_filter")
+
+	# Back to the filter the frame was left on, which restores the walk AND makes the claim above
+	# non-vacuous: a note that never went away would be part of both measurements.
+	await _press_filter(HudKnowledgeVocab.FILTER_LEARNING)
+	h._assert_hud("knowledge empty-filter — the note goes away again with the filter",
+		NodeQuery.find_meta_node(panel, HudKnowledgeVocab.EMPTY_NOTE_META) == null)
+	h._assert_hud("knowledge empty-filter — …and the card is where it started (%s → %s)"
+			% [str(before_card), str(panel.card().size)],
+		panel.card().size.is_equal_approx(before_card))
+
+## **THE CARD DOES NOT RESIZE AS READINGS OPEN AND CLOSE — the claim the whole layout rests on.**
+##
+## A reading is wider and taller than a bare ladder row, so a card fitted to its CONTENT narrows on
+## every close and widens on every open; on a card centred in its room that is a lurch in both
+## directions from the middle of the screen, on every click (§4). Two things make it not happen —
+## `refit` applies `PANEL_WIDTH` rather than the content's demand, and the detail block is mounted in
+## BOTH states at `DETAIL_BLOCK_MIN_HEIGHT` — and this asserts the consequence rather than either
+## mechanism, so it survives a different implementation of the same promise.
+##
+## **BOTH AXES, AND THE TOGGLE BACK AS WELL.** Width alone would pass with the height reserve
+## deleted; opening alone would pass with a card that grew on the open and never came back.
+func _assert_card_does_not_breathe() -> void:
+	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
+	if panel == null:
+		h._assert_hud("knowledge size — the panel is open", false)
+		return
+	var closed_size := panel.size
+	var closed_card := panel.card().size
+	await _press_node("cultivation")
+	var open_size := panel.size
+	var open_card := panel.card().size
+	h._assert_hud("knowledge size — the panel does not resize when a reading OPENS (%s → %s)"
+			% [str(closed_size), str(open_size)],
+		open_size.is_equal_approx(closed_size))
+	h._assert_hud("knowledge size — …nor does the card inside it (%s → %s)"
+			% [str(closed_card), str(open_card)],
+		open_card.is_equal_approx(closed_card))
+	# …and back again, through the TOGGLE: the same chip pressed a second time.
+	await _press_node("cultivation")
+	h._assert_hud("knowledge size — …and it comes back to the same size when the reading CLOSES (%s → %s)"
+			% [str(open_size), str(panel.size)],
+		panel.size.is_equal_approx(closed_size))
+	h._assert_hud("knowledge size — …card too (%s → %s)" % [str(open_card), str(panel.card().size)],
+		panel.card().size.is_equal_approx(closed_card))
+	# ⛔ **AND IT IS THE TALLEST READING THE RESERVE HAS TO COVER, NOT THE ONE THE FRAME HAPPENS TO
+	# OPEN.** `DETAIL_BLOCK_MIN_HEIGHT` is a MINIMUM: a reading whose three columns wrap past it makes
+	# the block taller than the reserve, and the card breathes again for that node alone — which would
+	# be a defect nobody ever sees on `cultivation`. So every node on the roster is opened in turn and
+	# the card is required not to move for any of them.
+	var tallest := ""
+	var tallest_size := closed_size
+	for node in h._hud.knowledge_panel().nodes():
+		var key := String(node[HudKnowledgeVocab.NODE_KEY])
+		await _press_node(key)
+		if panel.size.y > tallest_size.y:
+			tallest = key
+			tallest_size = panel.size
+		await _press_node(key)
+	h._assert_hud("knowledge size — no reading on the roster makes the card grow (worst `%s` at %s, floor %s)"
+			% [tallest, str(tallest_size), str(closed_size)],
+		tallest == "")
+
+## **SELECTION IS A TOGGLE, AND ONLY EVER ONE READING IS OPEN** (§4).
+##
+## Entered with `cultivation` open (the detail frame's state). Pressing the OPEN chip clears the
+## selection back to the placeholder; pressing a DIFFERENT chip moves the reading rather than opening
+## a second one — which is asserted by COUNTING the blocks, because a renderer that appended a second
+## one produces a perfectly ordinary-looking card with two paragraphs in it.
+func _assert_selection_toggles() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge toggle — the panel is open", false)
+		return
+	h._assert_hud("knowledge toggle — precondition: `cultivation` is the open reading (got `%s`)"
+			% controller._selected,
+		controller._selected == "cultivation")
+	await _press_node("cultivation")
+	h._assert_hud("knowledge toggle — pressing the OPEN chip clears the selection (got `%s`)"
+			% controller._selected,
+		controller._selected == "")
+	h._assert_hud("knowledge toggle — …and the block falls back to its placeholder (`%s`)"
+			% HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY,
+		NodeQuery.has_label_containing(panel, HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY))
+	# A DIFFERENT chip MOVES the reading. `herding` sits on another domain, so this is also the leg
+	# that proves the block travels between rows rather than staying where the last one was.
+	await _press_node("cultivation")
+	await _press_node("herding")
+	h._assert_hud("knowledge toggle — a different chip moves the reading (got `%s`)"
+			% controller._selected,
+		controller._selected == "herding")
+	var blocks := _detail_blocks(panel)
+	h._assert_hud("knowledge toggle — …and there is exactly ONE reading in the tree (%d)" % blocks.size(),
+		blocks.size() == 1)
+	_assert_detail_sits_under_its_own_row("herding")
+	# Left as the frame found it, so nothing after this block inherits a moved selection.
+	await _press_node("herding")
+
+## **THE READING SITS UNDER ITS OWN DOMAIN'S ROW, not merely somewhere in the tree.** Asserted as an
+## INDEX inside `_rows`: exactly one past the row carrying the selected node. "It is in the panel"
+## would pass with the block appended at the bottom of a twelve-row list, which is the arrangement
+## this layout exists to replace.
+func _assert_detail_sits_under_its_own_row(key: String) -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge placement — the panel is open", false)
+		return
+	var node := _node_in(controller.nodes(), key)
+	var domain := String(node.get(HudKnowledgeVocab.NODE_DOMAIN, "")) if not node.is_empty() else ""
+	var rows: VBoxContainer = panel._rows
+	var row_index := -1
+	var detail_index := -1
+	for i in rows.get_child_count():
+		var child := rows.get_child(i)
+		if not (child is Control):
+			continue
+		if (child as Control).get_meta(HudKnowledgeVocab.DOMAIN_META, "") == domain:
+			row_index = i
+		if (child as Control).has_meta(HudKnowledgeVocab.DETAIL_META):
+			detail_index = i
+	h._assert_hud("knowledge placement — `%s`'s domain row `%s` is in the list (index %d)"
+			% [key, domain, row_index],
+		row_index >= 0)
+	h._assert_hud("knowledge placement — …and its reading is the very next child (row %d, reading %d)"
+			% [row_index, detail_index],
+		row_index >= 0 and detail_index == row_index + 1)
+
+## Every detail block mounted in the panel. A LIST rather than a first hit, because the claim that
+## matters is *exactly one*.
+func _detail_blocks(root: Node) -> Array[Control]:
+	var found: Array[Control] = []
+	if root is Control and (root as Control).has_meta(HudKnowledgeVocab.DETAIL_META):
+		found.append(root as Control)
+	for child in root.get_children():
+		found.append_array(_detail_blocks(child))
+	return found
+
+## **ESCAPE CLOSES THE READING AND NOTHING ELSE** (§4). The plan asks ESC to close the reading and
+## asks nothing about closing the screen, so with nothing selected the claim test must answer `false`
+## and let the key fall through to the pause menu exactly as it did before this arc.
+##
+## Driven through the two methods `Main._unhandled_input` reaches BY NAME — a `has_method` probe that
+## fails SILENTLY, so a rename here is a key that quietly stops working — and the ORDER is asked of
+## `Main.escape_claimant` itself, with the real HUD's own readers rather than literals.
+func _assert_escape_closes_only_the_reading() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	await _press_node("cultivation")
+	h._assert_hud("knowledge esc — precondition: a reading is open (`%s`)" % controller._selected,
+		h._hud.is_knowledge_detail_open())
+	h._assert_hud("knowledge esc — ESC claims the reading ahead of the pause menu",
+		h.MAIN_SCRIPT.escape_claimant(false, h._hud.is_compose_sheet_open(),
+			h._hud.is_targeting_active(), h._hud.is_work_inspector_open(),
+			h._hud.is_knowledge_detail_open()) == h.MAIN_SCRIPT.ESC_KNOWLEDGE_DETAIL)
+	# …and yields to the WORK INSPECTOR, which is a dialog rather than a paragraph inside a card.
+	h._assert_hud("knowledge esc — …and yields to the work inspector",
+		h.MAIN_SCRIPT.escape_claimant(false, false, false, true, true)
+			== h.MAIN_SCRIPT.ESC_WORK_INSPECTOR)
+	h._hud.close_knowledge_detail()
+	await h._settle()
+	h._assert_hud("knowledge esc — the closer takes the reading down (`%s`)" % controller._selected,
+		not h._hud.is_knowledge_detail_open())
+	# **THE SCREEN IS STILL OPEN** — this is the half that says ESC closed the reading rather than the
+	# card, and it is the one a "close the panel" implementation would fail.
+	h._assert_hud("knowledge esc — …and the SCREEN is still open", controller.is_open())
+	# …and with nothing selected the key falls through, exactly as it did before this arc.
+	h._assert_hud("knowledge esc — with no reading open ESC falls through to the pause menu",
+		h.MAIN_SCRIPT.escape_claimant(false, h._hud.is_compose_sheet_open(),
+			h._hud.is_targeting_active(), h._hud.is_work_inspector_open(),
+			h._hud.is_knowledge_detail_open()) == h.MAIN_SCRIPT.ESC_PAUSE)
+
+## **THE CARD SURVIVES THE DOMAIN COUNT THIS WHOLE ARC IS ABOUT** — §1's claim, asserted rather than
+## argued. The column layout's content minimum was `230 × domains + 336`, so the ten to twelve
+## branches `docs/plan_civilization_steps.md` commits wanted 2,636–3,096px on a 1,920 viewport. In
+## rows, width is a function of ladder DEPTH and not of the branch count at all.
+##
+## **TWENTY-FOUR, which is the plan's own stress figure** and twice the planned shape. Built here out
+## of `KnowledgeFx.ladder_roster()`'s own ROW SHAPE rather than out of a config or a sim: the panel
+## builds itself from the roster, so a synthetic roster is exactly what tests that.
+##
+## **THE MINIMUM IS ASSERTED BESIDE THE WIDTH**, because a card can be SET to 820 while demanding
+## more — Godot renders a Control at its `get_combined_minimum_size()` whatever the fit asked for,
+## which is precisely how the clamp was overruled before (see `KnowledgePanel`'s docstring).
+func _assert_the_card_survives_a_planned_domain_count() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	h._hud.update_ladder_knowledge(_stress_roster())
+	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
+	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
+	controller.open()
+	await h._settle()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge stress — the panel is open", false)
+		return
+	# NON-VACUOUS FIRST: a roster that failed to reach the panel would keep the card at 820 for a
+	# reason that has nothing to do with the layout.
+	var drawn := controller.domains().size()
+	h._assert_hud("knowledge stress — the panel really is drawing %d domains (got %d)"
+			% [STRESS_DOMAIN_COUNT + 1, drawn],
+		drawn == STRESS_DOMAIN_COUNT + 1)
+	h._assert_hud("knowledge stress — the card is still `PANEL_WIDTH` at %d domains (%.0f, want %.0f)"
+			% [drawn, panel.size.x, HudKnowledgeVocab.PANEL_WIDTH],
+		is_equal_approx(panel.size.x, HudKnowledgeVocab.PANEL_WIDTH))
+	var minimum := panel.card().get_combined_minimum_size().x
+	h._assert_hud("knowledge stress — …and it is not being rendered above a minimum it cannot hold (%.0f <= %.0f)"
+			% [minimum, HudKnowledgeVocab.PANEL_WIDTH],
+		minimum <= HudKnowledgeVocab.PANEL_WIDTH)
+	await h._save("knowledge_panel_stress")
+	controller.close()
+	await h._settle()
+	# **PUT THE SHIPPED ROSTER BACK.** This HUD is long-lived and the chapters after this one — and
+	# the blocks after this in THIS chapter — are written against the real ladder.
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	await h._settle()
+
+## The stress roster's branch count. `docs/plan_knowledge_rows.md` §1's own figure, and twice the
+## ten-to-twelve the civilization-steps plan commits.
+const STRESS_DOMAIN_COUNT := 24
+## How deep each synthetic branch runs. The design caps a ladder at about four rungs and forbids it
+## growing, so this is the shape the card's width is actually a function of.
+const STRESS_RUNGS_PER_DOMAIN := 3
+const STRESS_BRANCH_FORMAT := "branch_%02d"
+const STRESS_KNOWLEDGE_FORMAT := "branch_%02d_step_%d"
+const STRESS_DISPLAY_FORMAT := "Branch %02d Step %d"
+
+## `STRESS_DOMAIN_COUNT` ladder branches in the wire's own roster shape — built from
+## `KnowledgeFx.ladder_roster()`'s row shape, which is the thing the panel is made of. No config and
+## no sim: this is a claim about the CLIENT rendering whatever roster arrives.
+func _stress_roster() -> Array:
+	var roster: Array = []
+	for branch in STRESS_DOMAIN_COUNT:
+		for step in STRESS_RUNGS_PER_DOMAIN:
+			roster.append({
+				KnowledgeFx.KEY_ID: STRESS_KNOWLEDGE_FORMAT % [branch, step + 1],
+				KnowledgeFx.KEY_DISPLAY: STRESS_DISPLAY_FORMAT % [branch, step + 1],
+				KnowledgeFx.KEY_BRANCH: STRESS_BRANCH_FORMAT % branch,
+				KnowledgeFx.KEY_ORDER: step + 1,
+				KnowledgeFx.KEY_IS_STEP: true,
+			})
+	return roster
 
 # ---- the launcher and its pip ----------------------------------------------
 
@@ -716,7 +1031,7 @@ const TURN_FILTER_ROUTE := 44
 ## `TurnOrbController._on_turn_orb_panel_requested` and not a method this chapter called directly.
 ##
 ## **THE FILTER IS ASSERTED, NEVER LOOKED AT.** A screen opened on the wrong filter renders a perfectly
-## ordinary card — the columns are the same, the pills are the same, and only which pill is lit says
+## ordinary card — the rows are the same, the pills are the same, and only which pill is lit says
 ## anything — so the claim is read off the drawn chrome (`_live_filter`) rather than saved as a frame.
 ##
 ## **THE SCREEN IS DELIBERATELY LEFT ON A DIFFERENT FILTER FIRST, and that is what makes the landing
@@ -773,6 +1088,22 @@ func _assert_opens_on_filter() -> void:
 	h._assert_hud("knowledge route — …and it is still on `%s` (lit pill: `%s`)"
 			% [HudKnowledgeVocab.FILTER_NEW, _live_filter()],
 		_live_filter() == HudKnowledgeVocab.FILTER_NEW)
+	# ⛔ **AND WITH A READING OPEN IT MUST NOT TOGGLE THAT EITHER** (`docs/plan_knowledge_rows.md` §4).
+	# Selection is a toggle now, so an external open routed through `_on_node_selected` would CLOSE the
+	# row in the one case where the player already had that exact knowledge open — the one case where
+	# the orb's row appears to do nothing. Staged with a reading genuinely open, which is what makes
+	# the claim falsifiable: with nothing selected, "the selection is untouched" is vacuous.
+	await _press_node("cultivation")
+	h._assert_hud("knowledge route — precondition: a reading is open before the hand-over (`%s`)"
+			% controller._selected,
+		controller._selected == "cultivation")
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED,
+		TurnOrb.PANEL_SUBJECT_NONE)
+	await h._settle()
+	h._assert_hud("knowledge route — the hand-over leaves the screen OPEN", controller.is_open())
+	h._assert_hud("knowledge route — …and leaves the reading UNTOUCHED (`%s`)" % controller._selected,
+		controller._selected == "cultivation")
+	await _press_node("cultivation")
 	# **WHY THE ENTRY POINT HAS TO EXIST AT ALL.** The live filter is CONTROLLER state that survives a
 	# close, so a plain launcher open reopens on whatever was last set. Parked on `unused` again and
 	# reopened through `toggle`, the screen comes back on `unused` — which is what the row would have
@@ -855,7 +1186,7 @@ func _assert_late_catalogue_is_not_learned() -> void:
 	h._hud.update_crafting_catalogues([], [], [], [])
 	controller.reset_world_state()
 	# THE SEEDING PASS — the turn, then the ladder tracks, and NO catalogues: exactly what the craft
-	# column looks like on the frame the baseline is seeded from.
+	# row looks like on the frame the baseline is seeded from.
 	h._hud.update_overlay(TURN_LATE_CATALOGUE_SEED, {})
 	h._hud.update_intensification([_wire_tracks({"cultivation": PROGRESS_KNOWN})])
 	await h._settle()
@@ -1042,11 +1373,12 @@ func _domain_node(root: Node, key: StringName) -> Node:
 			return found
 	return null
 
-func _node_row(root: Node, key: String) -> Control:
+## One node's CHIP, found by the key it carries rather than by the face it wears.
+func _node_chip(root: Node, key: String) -> Control:
 	if root is Control and (root as Control).get_meta(HudKnowledgeVocab.NODE_META, "") == key:
 		return root as Control
 	for child in root.get_children():
-		var found := _node_row(child, key)
+		var found := _node_chip(child, key)
 		if found != null:
 			return found
 	return null
@@ -1056,10 +1388,10 @@ func _press_node(key: String) -> bool:
 	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
 	if panel == null:
 		return false
-	var row := _node_row(panel, key)
-	if row == null:
+	var chip := _node_chip(panel, key)
+	if chip == null:
 		return false
-	await _click(row)
+	await _click(chip)
 	return true
 
 func _press_filter(key: StringName) -> bool:

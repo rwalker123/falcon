@@ -24190,7 +24190,8 @@ func _render_work_inspector_dialog_states() -> void:
 	_assert_band_panel("…and with the card gone ESC falls through to the pause menu rather than being swallowed",
 		not _hud.is_work_inspector_open()
 			and tabbed_away_script.escape_claimant(false, _hud.is_compose_sheet_open(),
-				_hud.is_targeting_active(), _hud.is_work_inspector_open())
+				_hud.is_targeting_active(), _hud.is_work_inspector_open(),
+				_hud.is_knowledge_detail_open())
 				== tabbed_away_script.ESC_PAUSE)
 
 	_panel.set_active_tab(&"work")
@@ -24808,11 +24809,12 @@ func _assert_dialog_esc_precedence() -> void:
 		_hud.is_work_inspector_open())
 	_assert_band_panel("ESC claims the work inspector ahead of the pause menu",
 		main_script.escape_claimant(false, _hud.is_compose_sheet_open(),
-			_hud.is_targeting_active(), _hud.is_work_inspector_open())
+			_hud.is_targeting_active(), _hud.is_work_inspector_open(),
+			_hud.is_knowledge_detail_open())
 			== main_script.ESC_WORK_INSPECTOR)
 	# …and it yields to targeting, which is a question the client has ASKED and is waiting on.
 	_assert_band_panel("…and yields to an armed targeting flow",
-		main_script.escape_claimant(false, false, true, true) == main_script.ESC_TARGETING)
+		main_script.escape_claimant(false, false, true, true, true) == main_script.ESC_TARGETING)
 	# …and the REAL closer takes it down, after which the key falls through to the pause menu — the
 	# half that proves the claim above is about the card and not about the chain's shape.
 	_hud.close_work_inspector()
@@ -24820,7 +24822,8 @@ func _assert_dialog_esc_precedence() -> void:
 	_assert_band_panel("…and with the card closed ESC falls through to the pause menu",
 		not _hud.is_work_inspector_open()
 			and main_script.escape_claimant(false, _hud.is_compose_sheet_open(),
-				_hud.is_targeting_active(), _hud.is_work_inspector_open())
+				_hud.is_targeting_active(), _hud.is_work_inspector_open(),
+				_hud.is_knowledge_detail_open())
 				== main_script.ESC_PAUSE)
 	_open_first_work_inspector()
 	await _settle()

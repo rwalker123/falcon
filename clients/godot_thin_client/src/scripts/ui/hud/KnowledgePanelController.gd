@@ -148,6 +148,13 @@ func open() -> void:
 ##
 ## The selection is deliberately left alone: a filter is a question about the list, not about the node
 ## being read, and throwing a reading away to answer it would lose the one thing the pane is for.
+##
+## ⛔ **IT FORCES OPEN, AND ROUTING IT THROUGH THE TOGGLE WOULD BE A BUG** (`docs/plan_knowledge_rows.md`
+## §4). Now that selection toggles, an external open that went through `_on_node_selected` would
+## CLOSE the row in the one case where the player already had that exact knowledge open — which is
+## the one case where the orb's row appears to do nothing. `_open = true` and the key untouched is
+## the whole contract. **It takes no key parameter**, because the orb hands over a FILTER and nothing
+## else today.
 func open_on_filter(filter: StringName) -> void:
 	_filter = filter
 	_open = true
@@ -269,13 +276,41 @@ func _ensure_panel() -> void:
 	_panel.closed.connect(close)
 	_panel.node_selected.connect(_on_node_selected)
 	_panel.filter_selected.connect(_on_filter_selected)
+	_panel.detail_closed.connect(_on_detail_closed)
 
-## Selecting the node already selected DESELECTS it, back to the placeholder. A reading has no
-## "close" of its own, and a player who has finished with one should not have to find another node to
-## get out of it.
+## **SELECTION IS A TOGGLE, AND IT NEEDS NO NEW STATE** (`docs/plan_knowledge_rows.md` §4).
+## `PAYLOAD_SELECTED` is a knowledge key whose EMPTY STRING already means *nothing is selected* — the
+## panel renders the placeholder for it — so a toggle is "set the key, or set it back to empty" and
+## there is nothing to remember about whether a reading is open.
+##
+## Pressing the OPEN knowledge closes it; pressing a different one MOVES the reading. **Only one is
+## ever open**, and that is not fussiness: several at once would make the panel's height a function
+## of how much the player had poked at it, on a card centred in its room — so it would grow in BOTH
+## directions from the middle of the screen on every click.
 func _on_node_selected(key: String) -> void:
 	_selected = "" if key == _selected else key
 	render()
+
+## The reading's own `✕`, and `Main`'s ESC path through `HudLayer.close_knowledge_detail`. **Not the
+## toggle** — this says *close whatever is open*, so it cannot accidentally OPEN one.
+func _on_detail_closed() -> void:
+	_selected = ""
+	render()
+
+## Close the open reading, answering whether there WAS one. `false` is what lets `Main`'s ESC chain
+## fall through to the pause menu on a screen with nothing selected — the plan says Escape closes the
+## reading and says nothing about closing the screen.
+func close_detail() -> bool:
+	if _selected == "":
+		return false
+	_selected = ""
+	render()
+	return true
+
+## Is a reading open? The ESC chain's claim test, and it is asked of the SELECTION rather than of the
+## panel's tree: a screen that is shut has no reading open whatever it last rendered.
+func is_detail_open() -> bool:
+	return is_open() and _selected != ""
 
 func _on_filter_selected(key: StringName) -> void:
 	_filter = key
