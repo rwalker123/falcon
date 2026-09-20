@@ -537,17 +537,20 @@ case, the haul and the party reading as part of the band, before any sim code.
    did.
 3. **Client: the hunt and forage panel**, prototype first.
 
-## Open questions
+## Nothing is open outside a task
 
-- The lineage levers: `L`, `K`, contact range; whether lines ever regrow in a long-separated group.
-  The population-genetics numbers behind them are verified when that slice is built, not before.
-- The work party: when a far party's haul is delivered, and what gates its launch when the party's
-  only tie is the haul itself — a decision the work-party slice makes.
-- The storage lesson's pace: measure how much surplus a well-placed band actually runs today before
-  setting how fast rot teaches storage.
-- Why moving never paid: measure it before touching depletion tuning.
-- Writing, the third ceiling: what the administration ceiling caps and what record-keeping does —
-  the one rung of the ladder with no design behind it (arc #693).
+Every decision this doc leaves unmade is owned by an issue, so it cannot be lost:
+
+- **The founding-family levers** — how many families the starting band has (`L`), how many people
+  each sustains (`K`), the contact range, and the genetics numbers behind them — are chosen and
+  verified in the ceiling slice (#688). The deferred refinement that a long-separated group slowly
+  counts as new families again is recorded on the founding-lines slice (#687), not built first.
+- **When a far party's haul is delivered, and what gates its launch** — the work-party slice (#684),
+  decided before implementation.
+- **The storage lesson's pace** — a meaningful default from the existing ~20-work lessons and the
+  ladder's pacing (#707), adjusted from the measurement (#705) and playtesting.
+- **Why moving never paid** — the measurement (#705).
+- **Writing, the third ceiling** — the design task (#712).
 
 Decided since first listed: **belief is per place** (it exists to promote settling *there*; whose
 dead are in the ground is The Telling's to narrate). **People shed with no route stay** — they leave
