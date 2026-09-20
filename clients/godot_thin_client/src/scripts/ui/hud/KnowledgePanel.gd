@@ -164,9 +164,16 @@ func _ready() -> void:
 
 ## Rebuild the whole panel against `payload` (see the `PAYLOAD_*` keys) and show it.
 ##
-## **NO SCROLL OFFSET IS CARRIED**, unlike the crafting ledger's. This body is three short columns and
-## a reading — it does not scroll at any ordinary window size — so there is no place for a player to
-## be scrolled to that a rebuild could cost them.
+## **NO SCROLL OFFSET IS SAVED AND RESTORED**, unlike the crafting ledger's. The body is one row per
+## domain with the reading interleaved, and a rebuild re-mounts that same short stack — so the only
+## place a player can be is near a row they just pressed, and `fit_to_content` re-clamps
+## `scroll_vertical` into whatever range the new content has.
+##
+## ⛔ **IT DOES SCROLL, THOUGH, AND ON BOTH AXES.** The card narrows with the ROOM (`refit`) and is
+## capped by it in height, so a narrow or short window genuinely can leave the body bigger than the
+## viewport: `KnowledgeScroll` is `AUTO` horizontally, `fit_to_content` turns the vertical axis on when
+## the content outruns the ceiling, and `refit` budgets the horizontal bar's own height so the turning
+## on is not itself what clips the last row.
 func render(payload: Dictionary) -> void:
 	_payload = payload
 	HudWidgets.clear_children(_header)
@@ -220,14 +227,20 @@ func refit() -> void:
 	# (`docs/plan_knowledge_rows.md` §4). `target_width` is therefore the panel's ACTUAL width rather
 	# than the nominal floor it used to be, and `fit_width(0, 0)` has nothing left to fit: it applies
 	# exactly `target_width`.
-	target_width = clampf(room.size.x, HudKnowledgeVocab.PANEL_MIN_WIDTH, HudKnowledgeVocab.PANEL_WIDTH)
+	target_width = _card_width()
 	max_width = target_width
 	fit_width(0.0, 0.0)
 	# The height fit's ceiling is the WHOLE room and the card does not move to be measured —
 	# `centred_in_room` is how the base class is told so. Fitting a centred card against the room
 	# BELOW it throws away everything above it.
 	max_height = room.size.y
-	fit_to_content(_body.get_combined_minimum_size().y + _header_height(), chrome.y, _scroll)
+	# ⛔ **THE HORIZONTAL SCROLLBAR IS PAID FOR IN THE HEIGHT FIT.** `ScrollContainer` takes the bar's
+	# height off the child's VIEWPORT, and a content height that did not include it comes back equal to
+	# the clamped height — so `AutoSizingPanel` disables the vertical scroll, `_body` lays out at its
+	# full minimum from `y = 0`, and the bottom of the last row (or of the open reading) is clipped
+	# with no way to reach it. See `_scroll_hbar_reserve` for why the reserve is not a read of the bar.
+	fit_to_content(_body.get_combined_minimum_size().y + _header_height() + _scroll_hbar_reserve(),
+		chrome.y, _scroll)
 	_place()
 
 # ---- header: the title, the tally, the filter pills -------------------------
@@ -353,14 +366,38 @@ func _build_domain_row(domain: Dictionary, filter: StringName, selected: String)
 	# The domain's name, right-aligned in a fixed gutter so every row's first chip starts on one
 	# vertical — and pinned to the TOP of the row, so a row whose chips have wrapped onto two lines
 	# still reads as belonging to the name beside its first line.
+	#
+	# ⛔ **THE GUTTER IS A CAP AS WELL AS A FLOOR, AND `custom_minimum_size` IS ONLY THE FLOOR.** A
+	# Label that neither clips nor trims reports its WHOLE TEXT as its minimum width, so a domain
+	# label wider than `ROW_NAME_WIDTH` widens THAT ROW'S gutter alone — which breaks the one vertical
+	# the chips start on and desynchronises `DETAIL_INDENT`, so the reading stops lining up under the
+	# chip it belongs to. It is not a hypothetical: `HudKnowledgeVocab.domain_label` falls back to the
+	# capitalized wire token for a branch the label table has never heard of (that fallback is what
+	# makes a new branch draw with no client edit), and a two-word token clears 88px unaided.
+	# `OVERRUN_TRIM_ELLIPSIS` + `clip_text` drop the reported minimum to Godot's one-pixel floor, so
+	# the `custom_minimum_size` below is what the label is — exactly the gutter, both ways.
 	var name_label := Label.new()
-	name_label.text = String(domain[HudKnowledgeVocab.DOMAIN_LABEL]).to_upper()
-	name_label.custom_minimum_size = Vector2(HudKnowledgeVocab.ROW_NAME_WIDTH, 0.0)
+	var domain_label := String(domain[HudKnowledgeVocab.DOMAIN_LABEL]).to_upper()
+	name_label.text = domain_label
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	name_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	name_label.add_theme_font_size_override("font_size", HudKnowledgeVocab.DOMAIN_HEAD_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# **MEASURED BEFORE THE CLIP, because a clipped Label reports the floor rather than its text** —
+	# `EventDockPanel`'s own rule, and through its helper, which asks the FONT: a detached Label shapes
+	# at the default theme's size whatever font-size override it carries.
+	var natural: float = EventDockPanel.natural_label_width(name_label)
+	name_label.custom_minimum_size = Vector2(HudKnowledgeVocab.ROW_NAME_WIDTH, 0.0)
+	name_label.clip_text = true
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	# **TRUNCATING IS ONLY ALLOWED WHILE THE WHOLE NAME STAYS REACHABLE**, so a trimmed label carries
+	# it as a hover — through `HudWidgets.set_label_tooltip`, a `Label` defaulting to
+	# `MOUSE_FILTER_IGNORE` where a bare `tooltip_text` is a silent no-op. A name that FITS gets none:
+	# a tooltip repeating what is already on screen is noise, and it would also make every row's
+	# gutter eat mouse events the chips beside it should get.
+	if natural > HudKnowledgeVocab.ROW_NAME_WIDTH:
+		HudWidgets.set_label_tooltip(name_label, domain_label)
 	line.add_child(name_label)
 
 	# **THE RAIL IS THE DOMAIN'S SHAPE, DRAWN.** A ladder's nodes are ordered — each earned by
@@ -463,9 +500,15 @@ func _build_node_chip(node: Dictionary, filter: StringName, selected: String) ->
 			HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
 
 	# **A KNOWLEDGE THAT GATES NOTHING SAYS SO ON ITS FACE.** `foddering` hangs off the end of its
-	# ladder, and the capsule is what stops it reading as one more step. Off `NODE_UNSPENT_TESTABLE`,
-	# which is the ladder's own `is_step` — never a client list of exceptions. Crafts publish it
-	# `true`, so the capsule cannot land on one.
+	# ladder, and the capsule is what stops it reading as one more step. Off `NODE_UNSPENT_TESTABLE` —
+	# never a client list of exceptions. Crafts publish it `true`, so the capsule cannot land on one.
+	#
+	# ⛔ **THAT FLAG IS TWO TERMS, AND ONLY THE FIRST IS THE LADDER'S.** `KnowledgeRoster._ladder_node`
+	# computes `is_step and unlocks != IMPROVEMENT_NONE`, where `unlocks` comes from inverting
+	# `RungGates.RUNG_KNOWLEDGE_TRACKS` — a CLIENT table. So a branch that genuinely IS a step but is
+	# absent from that table puts the player-facing words *"gates nothing"* on a knowledge that gates
+	# something, which is exactly why every chip in `knowledge_panel_stress` wears the capsule. The
+	# lookup's blind spot is on the FACE now rather than only in the reading's `Where, now` line.
 	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)):
 		face.add_child(_build_capability_capsule())
 
@@ -702,10 +745,13 @@ func _where_text(node: Dictionary) -> String:
 ## OUTSIDE the scroll and `_header_height()` feeds `fit_to_content`, so a caption mounted as a row of
 ## its own grows the card by its own height the moment a player presses a pill that matches nothing —
 ## measured at **477 → 499** on a centred card, which is the same lurch the reading's reserve exists
-## to prevent, arriving through the other surface. A pill's own minimum height (a `Button` with
-## `HudStyle.BUTTON_PADDING_V`) is taller than an `EMPTY_FONT_SIZE` Label, so riding the row costs
-## NOTHING whether the note is there or not — no reserve, and no permanent dead band under the pills
-## to pay for a caption that is usually absent.
+## to prevent, arriving through the other surface. A pill is a `Button` styled by
+## `HudStyle.apply_pill_toggle`, so its vertical padding is `PILL_PADDING_V` (4) and not the
+## `BUTTON_PADDING_V` (9) a plain button carries — and a `FILTER_FONT_SIZE` line inside that padding
+## still clears an `EMPTY_FONT_SIZE` Label. **`PILL_PADDING_V` is the constant this rests on**, so
+## that is the one to re-measure against if it moves; `BUTTON_PADDING_V` is not. Riding the row
+## therefore costs NOTHING whether the note is there or not — no reserve, and no permanent dead band
+## under the pills to pay for a caption that is usually absent.
 ##
 ## The width it adds is real but is not the binding term: the TITLE row (title + tally + `✕`) is wider
 ## than the pills plus this note, so the card's combined minimum is unmoved. The preview chapter
@@ -759,25 +805,34 @@ func _detail_body(text: String) -> Label:
 	label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	return label
 
-## One reading column's width, DERIVED rather than typed: the card's fixed width, less the card's own
-## chrome and the scroll gutter, less the block's indent and right margin, less the leading bar and
-## its gutter, less the gutters between the columns — shared out between them.
+## One reading column's width, DERIVED rather than typed: the width the card WILL be, less the card's
+## own chrome and the scroll gutter, less the block's indent and right margin, less the leading bar
+## and its gutter, less the gutters between the columns — shared out between them.
 ##
-## **IT SUBTRACTS THE CHROME AND THE GUTTER DELIBERATELY.** A width derived from `PANEL_WIDTH` alone
-## makes the reading's minimum exactly the card's outer width, which is wider than the card's
+## **IT SUBTRACTS THE CHROME AND THE GUTTER DELIBERATELY.** A width derived from the card's OUTER
+## width makes the reading's minimum exactly that outer width, which is wider than the card's
 ## INTERIOR — so the horizontal scrollbar would be showing on every frame of a card that fits.
+##
+## ⛔ **AND IT IS THE FITTED WIDTH, NOT `PANEL_WIDTH`.** The constant is the card's NOMINAL width and
+## `refit` applies `_card_width()`, which the room can clamp below it — so in a room narrower than
+## ~810px the card narrowed while this went on reserving ~771px for the reading, putting the body's
+## minimum past the viewport and raising the horizontal bar on a card that had done nothing wrong.
+## `_content_width` is the same measurement `_scroll_hbar_reserve` tests against, so the two cannot
+## disagree about how much room the body was offered.
 func _detail_section_width() -> float:
-	var interior := HudKnowledgeVocab.PANEL_WIDTH \
-		- HudStyle.card_stylebox().get_minimum_size().x - _scroll_gutter()
 	var gutters := float(HudKnowledgeVocab.DETAIL_SECTION_GUTTER) \
 		* float(HudKnowledgeVocab.DETAIL_SECTION_COUNT - 1)
-	var text_width := interior \
+	var text_width := _content_width() \
 		- float(HudKnowledgeVocab.DETAIL_INDENT) \
 		- float(HudKnowledgeVocab.ROW_PADDING_H) \
 		- float(HudKnowledgeVocab.DETAIL_BAR_THICKNESS) \
 		- float(HudKnowledgeVocab.DETAIL_BAR_GUTTER) \
 		- gutters
-	return maxf(text_width / float(HudKnowledgeVocab.DETAIL_SECTION_COUNT), 0.0)
+	# The floor is what keeps the arithmetic meaningful at `PANEL_MIN_WIDTH`, where the fixed terms
+	# above are most of the card: a share driven to zero (or negative) is a `custom_minimum_size.x` of
+	# 0 on an autowrapping Label, which stops wrapping at anything rather than wrapping narrow.
+	return maxf(text_width / float(HudKnowledgeVocab.DETAIL_SECTION_COUNT),
+		HudKnowledgeVocab.DETAIL_SECTION_MIN_WIDTH)
 
 func _caption(text: String, ink: Color, font_size: int) -> Label:
 	var label := Label.new()
@@ -831,3 +886,38 @@ func _scroll_gutter() -> float:
 	if _scroll == null:
 		return 0.0
 	return _scroll.get_v_scroll_bar().get_combined_minimum_size().x
+
+## **THE WIDTH THE CARD WILL BE**, and the ONE expression that answers it: the nominal `PANEL_WIDTH`,
+## narrowed only when the ROOM itself is narrower, floored at `PANEL_MIN_WIDTH`. `refit` applies it and
+## the content measures against it, rather than one of them reading `PANEL_WIDTH` and the other the
+## clamp — which is how the reading came to reserve a column width the card no longer had.
+##
+## Read off the ROOM rather than off `size.x`, because the body is BUILT a frame before the fit that
+## would have applied that width: `size.x` answers for the previous render, and on the first one at a
+## narrow room it answers with the nominal width the card is about to leave.
+func _card_width() -> float:
+	return clampf(_room().size.x,
+		HudKnowledgeVocab.PANEL_MIN_WIDTH, HudKnowledgeVocab.PANEL_WIDTH)
+
+## The width the card OFFERS its scrolled body — its own width less the card chrome and the vertical
+## scroll gutter. What the body's own minimum width has to fit inside for the horizontal bar to stay
+## down.
+func _content_width() -> float:
+	return _card_width() - HudStyle.card_stylebox().get_minimum_size().x - _scroll_gutter()
+
+## The height the HORIZONTAL scrollbar takes off the scrolled viewport, charged to the height fit when
+## the body cannot fit the width the card offers.
+##
+## ⛔ **THE TEST IS THE MINIMUM COMPARISON, NOT `get_h_scroll_bar().is_visible()`.** The bar's
+## visibility is decided by the layout pass that ran on the PREVIOUS size, so reading it here answers
+## about the card as it was rather than as this fit is about to make it — the same class of mistake as
+## reading a cached flag one listener too early, and it oscillates: reserving the bar changes the
+## height, the new layout hides the bar, the next fit un-reserves it. `_body.get_combined_minimum_size().x`
+## against `_content_width()` is the same question asked of the two numbers this pass is working from,
+## so it settles in one pass and cannot disagree with the width the card is being given.
+func _scroll_hbar_reserve() -> float:
+	if _scroll == null or _body == null:
+		return 0.0
+	if _body.get_combined_minimum_size().x <= _content_width():
+		return 0.0
+	return _scroll.get_h_scroll_bar().get_combined_minimum_size().y

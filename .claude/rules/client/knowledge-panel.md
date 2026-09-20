@@ -371,10 +371,13 @@ the pill that earned it. `EMPTY_NOTE_META` and `FILTER_EMPTY_FORMAT` are unchang
 ⛔ **ON the row, not UNDER it, because `_header` is outside the scroll and `_header_height()` feeds
 `fit_to_content`.** Mounted as a row of its own, the caption grows the card by its own height the
 moment a player presses a pill that matches nothing — measured at **477 → 499**, which is the lurch
-the reading's reserve exists to prevent arriving through the other surface. A pill's own minimum
-height (a `Button` with `HudStyle.BUTTON_PADDING_V`) is taller than an `EMPTY_FONT_SIZE` Label, so
-riding the row costs NOTHING whether the note is present or not — no reserve, and no permanent dead
-band under the pills to pay for a caption that is usually absent.
+the reading's reserve exists to prevent arriving through the other surface. A pill is a `Button`
+styled by `HudStyle.apply_pill_toggle`, so its vertical padding is `PILL_PADDING_V` (4) and not the
+`BUTTON_PADDING_V` (9) a plain button carries — and a `FILTER_FONT_SIZE` line inside that padding
+still clears an `EMPTY_FONT_SIZE` Label. **`PILL_PADDING_V` is the constant this rests on**, so that
+is the one to re-measure against if it moves; `BUTTON_PADDING_V` is not. Riding the row therefore
+costs NOTHING whether the note is present or not — no reserve, and no permanent dead band under the
+pills to pay for a caption that is usually absent.
 
 **The WIDTH it adds is real and is not the binding term**: the header's title row (title + tally +
 `✕`) is wider than the pills plus this note, so the card's combined minimum is unmoved — **717

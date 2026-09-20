@@ -33,7 +33,7 @@ extends RefCounted
 ## ## "New this turn" is ONE diff over BOTH webs, and it never was `_announce_knowledge_unlock`'s
 ##
 ## The ladder tracks and the craft tracks arrive through different ingests, so a diff per ingest would
-## make the LAND column's "new" and the CRAFT column's "new" two different rules — and the one that
+## make the LAND row's "new" and the CRAFT row's "new" two different rules — and the one that
 ## drifted would be invisible, since both render as a plausible pill count. One diff over the SAME
 ## roster the panel draws cannot disagree with what is on screen.
 ##
@@ -104,7 +104,7 @@ func setup(host: Node, band_labor: HudBandLaborState, topbar: FactionReadouts,
 ## The world's recipe book and each faction's craft knowledge, forwarded from
 ## `HudLayer.update_crafting_catalogues` — the SAME call `CraftingPanelController.set_catalogues`
 ## takes. Two readers of one wire field rather than a copy: this panel needs `recipes` for the
-## "made of it" join and `craft_knowledge` for the CRAFT column, and re-deriving either would be a
+## "made of it" join and `craft_knowledge` for the CRAFT row, and re-deriving either would be a
 ## second answer to a question the crafting panel already asks.
 ##
 ## A non-Array is ignored (the last value stands), matching every other catalogue setter — a delta
@@ -225,7 +225,7 @@ func unspent_count() -> int:
 static func unspent_count_of(roster: Array) -> int:
 	return KnowledgeRoster.count_matching(roster, HudKnowledgeVocab.FILTER_UNUSED)
 
-## **THE FLATTENED ROSTER — ONE DERIVATION, THREE READERS.** The columns draw it, the launcher's pip
+## **THE FLATTENED ROSTER — ONE DERIVATION, THREE READERS.** The rows draw it, the launcher's pip
 ## counts it, and the orb's knowledge producer is built off it
 ## (`AttentionController.knowledge_attention`). Exposed rather than re-derived per reader because the
 ## walk behind it resolves the faction's patches, herds, kit and bench — so a second call is both a
@@ -323,7 +323,7 @@ func _on_filter_selected(key: StringName) -> void:
 ##
 ## ONE walk of the roster answers both questions this pass asks — which keys are KNOWN, and which
 ## keys are PRESENT at all. Taken off the roster rather than off the two wire vectors, so the diff and
-## the columns can never disagree about what "known" means (a craft's `known` flag is not the
+## the rows can never disagree about what "known" means (a craft's `known` flag is not the
 ## ladder's `>= KNOWLEDGE_COMPLETE`, and re-deriving either here would be a third reading of one
 ## question); taken off ONE walk, because building it twice is both a second cost and a second chance
 ## for the two sets to describe different rosters.

@@ -1107,7 +1107,7 @@ func _assert_knowledge_producers(inherited_tracks: Dictionary) -> void:
 	h._assert_hud("knowledge — %d tracks finishing in one turn raise %d rows, one each (got %d)"
 			% [KNOWLEDGE_TRACKS_TAUGHT.size(), KNOWLEDGE_LEARNED_ROWS, learned.size()],
 		learned.size() == KNOWLEDGE_LEARNED_ROWS)
-	# …and each names its OWN discovery, in the words the knowledge screen's column uses. Asserted over
+	# …and each names its OWN discovery, in the words the knowledge screen's row uses. Asserted over
 	# every taught track rather than one of them, so a producer naming the first track four times passes
 	# the count above and fails here.
 	var all_named := true

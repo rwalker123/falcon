@@ -71,9 +71,9 @@ static func unlock_for_track(track: String) -> String:
 
 ## **THE WHOLE ROSTER: every domain that has nodes, each holding its nodes in order.**
 ##
-## ⛔ **THE LADDER COLUMNS ARE BUILT FROM THE WIRE, NOT FROM A DECLARED LIST.** The sim publishes one
+## ⛔ **THE LADDER ROWS ARE BUILT FROM THE WIRE, NOT FROM A DECLARED LIST.** The sim publishes one
 ## `ladder_knowledge` row per knowledge the ladder teaches, carrying the BRANCH of the rung that
-## teaches it (which column), that rung's ORDER (where in the column) and whether any rung's
+## teaches it (which row), that rung's ORDER (where along the row) and whether any rung's
 ## `unlock_knowledge` names it (step, or capability hanging off the bottom). All three are derived
 ## from `intensification_ladder.json` sim-side, so **a knowledge added to that config appears here
 ## with no client edit** — which is exactly what the retired hard-coded `LADDER_DOMAINS` could not do,
@@ -84,8 +84,8 @@ static func unlock_for_track(track: String) -> String:
 ## were silently derived from an empty world. See `MODEL_*` for the keys.
 static func build_domains(model: Dictionary) -> Array[Dictionary]:
 	var domains: Array[Dictionary] = []
-	# **COLUMN ORDER IS THE ROSTER'S OWN**, i.e. the ladder config's rung order — first branch to
-	# teach anything is the first column. Declaring an order here would be one more thing to edit when
+	# **ROW ORDER IS THE ROSTER'S OWN**, i.e. the ladder config's rung order — first branch to
+	# teach anything is the first row. Declaring an order here would be one more thing to edit when
 	# a branch is added, which is the whole defect this replaced.
 	var branch_order: Array[StringName] = []
 	var by_branch := {}
@@ -102,14 +102,15 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 		(by_branch[branch] as Array).append(entry)
 	for branch in branch_order:
 		var rows: Array = by_branch[branch]
-		# **WITHIN A COLUMN, THE ORDER IS THE TEACHING RUNG'S**, bottom step first, so a column read
-		# top to bottom reads as a progression. A CAPABILITY sorts after every step at the same rung —
-		# `foddering` is taught by the top animal rung and belongs under the chain, not inside it.
+		# **WITHIN A ROW, THE ORDER IS THE TEACHING RUNG'S**, bottom step first, so a row read left to
+		# right reads as a progression. A CAPABILITY sorts after every step at the same rung —
+		# `foddering` is taught by the top animal rung and belongs at the end of the chain, not inside
+		# it.
 		rows.sort_custom(_before_on_the_ladder)
 		var nodes: Array[Dictionary] = []
 		for row_variant in rows:
 			nodes.append(_ladder_node(row_variant as Dictionary, branch, model))
-		# **NEVER DRAW AN EMPTY DOMAIN COLUMN** — a column appears the turn its first branch does, and
+		# **NEVER DRAW AN EMPTY DOMAIN ROW** — a row appears the turn its first branch does, and
 		# an empty one teaches the player that a whole area of the game is closed to them when in
 		# truth it does not exist yet. A branch reaches `branch_order` only by having a row, so this
 		# cannot happen today; it is stated because the guard is the rule.
@@ -134,10 +135,10 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 		})
 	return domains
 
-## Ladder order within one column: by the teaching rung's `order`, and a CAPABILITY after a STEP that
-## shares it. The second term is what puts `foddering` under the animal chain rather than beside
-## `penning` — both are taught by rungs of the same branch, and only one of them is a step somebody
-## climbs to.
+## Ladder order within one row: by the teaching rung's `order`, and a CAPABILITY after a STEP that
+## shares it. The second term is what puts `foddering` at the end of the animal chain rather than
+## beside `penning` — both are taught by rungs of the same branch, and only one of them is a step
+## somebody climbs to.
 static func _before_on_the_ladder(a: Dictionary, b: Dictionary) -> bool:
 	var order_a := int(a.get(HudKnowledgeVocab.ROSTER_ORDER, 0))
 	var order_b := int(b.get(HudKnowledgeVocab.ROSTER_ORDER, 0))
@@ -187,7 +188,7 @@ static func count_matching(nodes: Array, filter: StringName) -> int:
 	return found
 
 ## The header's tally: how many are known, being learned, untouched, and earned-but-idle. Taken over
-## the SAME flattened list the columns draw, for `matches`' reason.
+## the SAME flattened list the rows draw, for `matches`' reason.
 static func tally(nodes: Array) -> Dictionary:
 	var known := 0
 	var learning := 0
@@ -215,8 +216,8 @@ const TALLY_UNSPENT := "unspent"
 # ---- the model the caller hands in ---------------------------------------------------------------
 ## **WHAT THERE IS TO LEARN** — the ladder's knowledge roster as the wire sent it
 ## (`FactionReadouts.ladder_knowledge`), one row per knowledge. **This is the DECLARATION**: the
-## columns, their order and each node's place in them are read off it, so the panel needs no track
-## list of its own.
+## domain rows, their order and each node's place along them are read off it, so the panel needs no
+## track list of its own.
 const MODEL_LADDER_ROSTER := "ladder_roster"
 ## `{track: 0..1}` — the player faction's intensification row, `FactionReadouts.faction_tracks`.
 const MODEL_TRACKS := "tracks"
@@ -245,7 +246,7 @@ const MODEL_LEARNED_THIS_TURN := "learned_this_turn"
 
 # ---- the two node builders -----------------------------------------------------------------------
 
-## One node of a ladder column, built from its ROSTER ROW — the wire's declaration of the knowledge —
+## One node of a ladder row, built from its ROSTER ROW — the wire's declaration of the knowledge —
 ## crossed with this faction's progress on it.
 static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionary) -> Dictionary:
 	var track := String(entry.get(HudKnowledgeVocab.ROSTER_KNOWLEDGE_ID, ""))
@@ -260,6 +261,14 @@ static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionar
 	# ⛔ **STEP OR CAPABILITY IS THE CONFIG'S ANSWER, and `unspent` follows it.** A knowledge no rung
 	# waits on has nothing to stand on it, so *"nothing is using it"* would be a sentence about
 	# nothing. The client used to declare that set; the roster derives it from the ladder.
+	#
+	# ⛔ **`testable` IS TWO QUESTIONS, AND THE SECOND IS THE CLIENT'S.** `is_step` is the config's,
+	# but `unlocks` comes from inverting `RungGates.RUNG_KNOWLEDGE_TRACKS` — a table in this client —
+	# so a branch that IS a step and is missing from it reads `testable = false`, and the chip then
+	# says *"gates nothing"* about a knowledge that gates something (`HudKnowledgeVocab`'s
+	# `CAPABILITY_CAPSULE`). Every synthetic branch in `knowledge_panel_stress` lands there, which is
+	# what makes the blind spot visible rather than theoretical. A new ladder branch needs its verbs
+	# in that table, exactly as `grade` / `pave` did.
 	var is_step := bool(entry.get(HudKnowledgeVocab.ROSTER_IS_STEP, false))
 	var testable := is_step and unlocks != SourceForecast.IMPROVEMENT_NONE
 	var in_use := ladder_in_use_count(unlocks, model) if testable else 0
