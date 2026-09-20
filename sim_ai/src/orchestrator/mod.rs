@@ -23,7 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sim_runtime::{BandLoadoutWindowState, PopulationCohortState};
 
-use crate::board::{Entry, Resource};
+use crate::board::{Entry, Grant, Resource};
 use crate::instruments::decisions::GoalsRecord;
 use crate::profile::{AiProfile, FoodGoalLevers};
 use crate::specialists::{SpecialistId, SPECIALIST_FOOD};
@@ -36,13 +36,13 @@ pub const INTENT_OUTFIT: &str = "outfit";
 
 /// **One window's loadout, resolved**: the kit and material lines to send (coalesced, never a
 /// `none` kit, never above either budget) and, per demand **in the order given**, what each
-/// was granted — what the board is told.
+/// was granted and why less, if less ([`Grant`]) — what the board is told.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outfit {
     pub band: u64,
     pub kits: Vec<(String, u32)>,
     pub materials: Vec<(String, u32)>,
-    pub grants: Vec<(Resource, u32)>,
+    pub grants: Vec<(Resource, Grant)>,
 }
 
 /// The v1 stance set.

@@ -83,11 +83,14 @@ pub struct Behaviors {
 pub struct FoodFloors {
     /// `FoodShort` when the minimum own-band `turns_of_food` is below this.
     pub runway_floor_turns: f32,
-    /// A worked row whose realized take per worker has stayed below `poor_yield_fraction` of the
-    /// frame's forecast for this many consecutive turns is a **dead row**: its crew is moved and its
-    /// source avoided. (A hunt row the sim marks `hunt_useful_workers == 0` is dead at once.)
+    /// **The window a patch is judged over**, in turns; a herd's is its kill cadence
+    /// (`ceil(body_food / likely)` off the sim's crew-take curve). A worked patch row realizing
+    /// under `poor_yield_fraction` of its forecast, summed over this many turns at its current
+    /// crew, is a **dead row**: its crew is moved and its source avoided while it stands at its
+    /// floor.
     pub dead_row_turns: u32,
-    /// The share of the forecast a row must realize, per worker, not to count as dead.
+    /// The share of its forecast a worked row must realize **over its window** not to be a
+    /// **dead row**. (A hunt row the sim marks `hunt_useful_workers == 0` is dead at once.)
     pub poor_yield_fraction: f32,
     /// *Runway*: the share by which the band's best worked row must out-pay its worst, per worker,
     /// before moving a crew between them is worth an order — `(high − low) / high`.
@@ -101,10 +104,13 @@ pub struct FoodFloors {
     /// under a proposed reassignment (`specialists::food::ledger::project`), and the longest
     /// payoff *upgrade the ground* will wait for.
     pub projection_horizon_turns: u32,
-    /// *Split to feed*: how far from the band, in hex steps, a site for a new band is looked for.
+    /// *Split to feed*: the **near ring** — how far from the band, in hex steps, a site for a new
+    /// band is looked for first (the supply-pooling reach). A feasible site here always beats one
+    /// in the far ring.
     pub split_search_tiles: u32,
-    /// *Split to feed*: the working-age crew a new band is given (`split_band <workers>`).
-    pub split_band_workers: u32,
+    /// *Split to feed*: the **far ring** — the furthest, in hex steps, a site is looked for when
+    /// the near ring has nothing feasible. At least `split_search_tiles`.
+    pub split_reach_tiles: u32,
     /// *Split to feed*: turns a pending split waits for its child to appear before it is forgotten
     /// (the sim refused it), and the turns after its birth a child is still "freshly split" —
     /// exempt from *feed while moving*, so it does not strip the parent's ground on its way out.
@@ -152,6 +158,13 @@ pub struct LandFloors {
     /// `food.runway_gain_fraction`: distinctness is not improvement, and without a margin a band
     /// walked between two tiles paying nearly the same, dropping its rows on every arrival.
     pub better_ground_gain_fraction: f32,
+    /// The land reading (`ground.rs`): the band's own hex is kept as the first planned band when
+    /// its value is within this fraction of the best hex's, and a "move everyone" target must
+    /// beat the first planned band by more than it. A fraction, `≥ 0`.
+    pub stay_tolerance: f32,
+    /// The land reading: a candidate hex within `food.split_search_tiles` (the supply-pooling
+    /// reach) of a hex already chosen has its value multiplied by `1 + this`. `≥ 0`.
+    pub pooling_weight: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -316,6 +329,18 @@ impl AiProfiles {
                     "profile `{id}`: land.better_ground_gain_fraction = {better} is not a positive share"
                 ));
             }
+            let stay = profile.land.stay_tolerance;
+            if !stay.is_finite() || stay < 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: land.stay_tolerance = {stay} is not a non-negative fraction"
+                ));
+            }
+            let pooling = profile.land.pooling_weight;
+            if !pooling.is_finite() || pooling < 0.0 {
+                return invalid(format!(
+                    "profile `{id}`: land.pooling_weight = {pooling} is not a non-negative weight"
+                ));
+            }
             if profile.food.dead_row_turns == 0 {
                 return invalid(format!("profile `{id}`: food.dead_row_turns is 0"));
             }
@@ -336,8 +361,11 @@ impl AiProfiles {
                     "profile `{id}`: food.projection_horizon_turns is 0"
                 ));
             }
-            if profile.food.split_band_workers == 0 {
-                return invalid(format!("profile `{id}`: food.split_band_workers is 0"));
+            if profile.food.split_reach_tiles < profile.food.split_search_tiles {
+                return invalid(format!(
+                    "profile `{id}`: food.split_reach_tiles = {} is under food.split_search_tiles = {}",
+                    profile.food.split_reach_tiles, profile.food.split_search_tiles
+                ));
             }
             let near = profile.food.near_positive_fraction;
             if !near.is_finite() || !(0.0..=1.0).contains(&near) {

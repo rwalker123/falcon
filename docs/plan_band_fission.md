@@ -102,6 +102,16 @@ and this doc hands it the trigger: **disconnection + grievance over time, never 
 become independent when the registry holds one faction and every worldgen band is hardcoded into it.
 Build the same-faction case first and completely.
 
+### In plain terms: a local split is not a second band
+
+A split that stays within the supply network's reach (`supply_network_config.json` → `reach_tiles`)
+is part of your band working "over there" — it pools its larder with yours, it is in contact, it did
+not leave. Nothing about it drifts. A split that walks beyond reach and stays there is the one the
+rule above applies to: off the network, stewing, and eventually its own people. Distance is never
+the trigger; being cut off is. `docs/plan_civilization_steps.md` builds on this — the same reach
+decides whether a far band keeps growing (its founding lines merge with yours only while in contact)
+and whether a store is still yours.
+
 ## Q2 — What floors must hold?
 
 **Two, both counted in workers, both evaluated at the split, which is the only moment there is.**

@@ -17,16 +17,23 @@
 //! stamped later than the new tick — nothing is patched.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::{Duration, Instant};
 
 use sim_runtime::{
     decode_frame_flatbuffer, ApplyDeltaError, DecodeError, ForagePatchState, FramePayload,
-    LaborAssignmentState, PopulationCohortState, SnapshotHeader, WorldSnapshot, FIXED_POINT_SCALE,
+    HerdTelemetryState, LaborAssignmentState, PopulationCohortState, SnapshotHeader, WorldSnapshot,
+    FIXED_POINT_SCALE,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::geometry::{Grid, Tile};
+use crate::oracle::{CrewTakeAsk, CrewTakeCurve, CrewTakeOracle};
 use crate::orchestrator::Alarm;
 use crate::profile::NO_MEMORY_DECAY;
+use crate::specialists::food::ledger::BEST_FLOOR;
+use crate::specialists::food::{
+    herd_kit_id, honest_ceiling, kit_units_held, ROLE_FORAGE, ROLE_HUNT,
+};
 use crate::specialists::Memo;
 
 /// **The visibility raster's values.** Restated from `core_sim::visibility::VisibilityState`
@@ -111,6 +118,31 @@ pub fn row_key(band_id: u64, kind: &str, x: u32, y: u32, fauna_id: &str) -> Stri
     }
 }
 
+/// The key a herd's crew-take curve is cached under for `band` ([`CrewTakeKey`]).
+fn crew_take_key(
+    view: &SeatView,
+    band: &PopulationCohortState,
+    herd: &HerdTelemetryState,
+) -> CrewTakeKey {
+    let kit_id = herd_kit_id(view, herd);
+    let attack = band
+        .kit_tiers
+        .iter()
+        .find(|tier| tier.kit_id == kit_id)
+        .map_or(0.0, |tier| tier.attack);
+    let bucket = if herd.carrying_capacity > 0.0 {
+        (herd.biomass / (CREW_TAKE_BIOMASS_BUCKET * herd.carrying_capacity)).floor() as u32
+    } else {
+        0
+    };
+    CrewTakeKey {
+        kit_id: kit_id.to_owned(),
+        attack_bits: attack.to_bits(),
+        units: kit_units_held(view, band, kit_id),
+        bucket,
+    }
+}
+
 fn key_of_row(band_id: u64, row: &LaborAssignmentState) -> String {
     row_key(
         band_id,
@@ -122,13 +154,34 @@ fn key_of_row(band_id: u64, row: &LaborAssignmentState) -> String {
 }
 
 /// The `worked_turns` a row the sim marks `hunt_useful_workers == 0` jumps to: dead at once,
-/// whatever the profile's `dead_row_turns`. **It is not permanent** — the next turn the sim
-/// reports a useful crew on that row clears it back to [`WORKED_ONCE`] ([`SeatMemory::observe`]).
+/// whatever its window. **It is not permanent** — the next turn the sim reports a useful crew on
+/// that row clears it back to [`WORKED_ONCE`] ([`SeatMemory::observe`]).
 pub const WORKED_DEAD_AT_ONCE: u32 = u32::MAX;
 
-/// The `worked_turns` of a row's first measured turn — and of the first turn after a
-/// [`WORKED_DEAD_AT_ONCE`] marking is cleared, since the record before it measured nothing.
+/// The `worked_turns` of a row's first measured turn — the first turn at its current crew, and
+/// the first turn after a [`WORKED_DEAD_AT_ONCE`] marking is cleared, since the record before it
+/// measured nothing.
 const WORKED_ONCE: u32 = 1;
+
+/// **How many crew-take questions a tick may ask** ([`SeatMemory::refresh_crew_takes`]). Each is
+/// a round trip to the server, answered on its main loop; the herds still waiting are asked next
+/// tick, nearest first, so the decide budget is never spent on questions.
+pub const CREW_TAKE_ASKS_PER_TICK: u32 = 8;
+
+/// **How many turns a cached crew-take curve stands** before it is asked again with the same key:
+/// the sim's answer moves with the herd's wounds and the band's wear, which the key does not
+/// carry, so a curve is refreshed on this cadence even when nothing the key reads has changed.
+pub const CREW_TAKE_REFRESH_TURNS: u64 = 5;
+
+/// **The herd-biomass bucket a curve is keyed on**, as a fraction of the herd's `K`: a herd whose
+/// biomass crosses a quarter of its capacity is asked about again, one that drifts within it is
+/// not (the curve's escapement-room term moves with the animals in the herd).
+pub const CREW_TAKE_BIOMASS_BUCKET: f32 = 0.25;
+
+/// The floor a crew-take curve is asked at — [`BEST_FLOOR`], the wire default every assignment
+/// gets with `floor: None` (`HuntCrewTakeQuery::floor` is a term of the answer, so the curve is
+/// asked at the floor the rows are worked at).
+const CREW_TAKE_FLOOR: f32 = BEST_FLOOR;
 
 /// **The denominator of a yield-per-worker observation**: the workers whose work the sim counted.
 ///
@@ -138,25 +191,105 @@ const WORKED_ONCE: u32 = 1;
 /// the crew itself: `hunt_useful_workers` is `0` on a non-hunt row by construction, so it must
 /// never be read as one there, and [`SeatMemory::observe`] only folds rows that carry workers.
 fn useful_workers(row: &LaborAssignmentState) -> u32 {
-    if row.kind == crate::specialists::food::ROLE_HUNT {
+    if row.kind == ROLE_HUNT {
         row.hunt_useful_workers
     } else {
         row.workers
     }
 }
 
-/// What a worked row has actually paid — the measurement a forecast is held against.
+/// What a worked row has actually paid — the measurement a forecast is held against, **accounted
+/// over a window**: since the row was last staffed at its current crew, what it was forecast to
+/// take and what it took, summed, and how many turns that is. A hunt pays in whole animals, so a
+/// turn of nothing is not a verdict until a kill was due ([`Self::window`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Realized {
     /// Last turn's `actual_yield / useful_workers` — **`None` when the row was not a measurement
     /// at all**,
     /// which is a row no worker was useful on ([`useful_workers`]). A zero-denominator observation
     /// is not evidence: folded in as a `0.0` it says "this source pays nothing", which is a claim
-    /// the turn never tested.
+    /// the turn never tested. What the viewer shows; a patch is ranked on it (`Food::rate`), a herd
+    /// is not.
     pub per_worker: Option<f32>,
-    /// Consecutive turns the row has been worked; kept when the row is emptied, so the source it
-    /// named is judged on its record rather than picked afresh the moment it is free.
+    /// Consecutive turns the row has been worked **at [`Self::crew`]** — reset by a crew change;
+    /// kept when the row is emptied, so the source it named is judged on its record rather than
+    /// picked afresh the moment it is free.
     pub worked_turns: u32,
+    /// The crew the sums were kept at.
+    pub crew: u32,
+    /// Σ over those turns of what the row was forecast to take: a hunt row's is the cached
+    /// crew-take curve's `likely` at its crew (`0` with no curve), a patch row's is the hands the
+    /// sim counted × `per_worker_yield`.
+    pub expected_sum: f32,
+    /// Σ over those turns of the row's `actual_yield`.
+    pub realized_sum: f32,
+    /// **The turns the forecast is trusted for before it is judged**: the turns one kill takes
+    /// at this crew, `ceil(body_food / likely)`, on a hunt row; the profile's
+    /// `food.dead_row_turns` on a patch; `0` where the forecast is nothing (a hunt row with no
+    /// curve, or a crew the curve says takes nothing) — a row forecast nothing is never a *poor*
+    /// row.
+    pub window: u32,
+}
+
+impl Realized {
+    /// **Whether the row is dead**: the sim said no crew was useful on it, or its window has
+    /// run and it realized under `fraction` of what it was forecast over that window.
+    pub fn dead_under(&self, fraction: f32) -> bool {
+        self.worked_turns == WORKED_DEAD_AT_ONCE
+            || (self.window > 0
+                && self.worked_turns >= self.window
+                && self.realized_sum < fraction * self.expected_sum)
+    }
+
+    /// The accounting as a reason reads it: `took R of E expected over W turns`.
+    pub fn accounting(&self) -> String {
+        let turns = if self.worked_turns == WORKED_DEAD_AT_ONCE {
+            0
+        } else {
+            self.worked_turns
+        };
+        format!(
+            "took {:.2} of {:.2} expected over {turns} turns",
+            self.realized_sum, self.expected_sum
+        )
+    }
+}
+
+/// What a cached crew-take curve was asked under — a change in any of it is a new question.
+#[derive(Debug, Clone, PartialEq)]
+struct CrewTakeKey {
+    /// The kit the herd is hunted under.
+    kit_id: String,
+    /// The band's resolved `attack` under that kit (`BandKitTiersState::attack`, the tier the
+    /// sim fights at), as bits so the key compares exactly.
+    attack_bits: u32,
+    /// The units of the kit the band holds (`None` for a kit that carries nothing).
+    units: Option<u32>,
+    /// The herd's biomass in [`CREW_TAKE_BIOMASS_BUCKET`]s of its `K`.
+    bucket: u32,
+}
+
+/// One herd's cached crew-take answer for one band.
+#[derive(Debug, Clone, PartialEq)]
+struct CrewTakeEntry {
+    key: CrewTakeKey,
+    asked_tick: u64,
+    /// `None` when the oracle had no answer — kept so the question is not repeated every tick,
+    /// re-asked when the key changes or the refresh cadence passes.
+    curve: Option<CrewTakeCurve>,
+}
+
+/// What one tick's [`SeatMemory::refresh_crew_takes`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CrewTakeAsks {
+    /// Questions asked this tick.
+    pub asked: u32,
+    /// Herds due a question that the budget left for next tick.
+    pub waiting: u32,
+    /// Time spent asking, over all of them.
+    pub elapsed: Duration,
+    /// The slowest single answer.
+    pub slowest: Duration,
 }
 
 /// **A split ordered and not yet seen to happen**: the parent band, the site the child is for,
@@ -185,6 +318,9 @@ pub struct SeatMemory {
     horizon: u64,
     /// The profile's `food.split_settle_turns`: how long a pending split waits for its child.
     split_settle_turns: u32,
+    /// The profile's `food.dead_row_turns`: the window a patch row is judged over
+    /// ([`Realized::window`]).
+    patch_window_turns: u32,
     /// The intents chosen on the last acted tick, and that tick.
     chosen: Option<(u64, BTreeSet<String>)>,
     /// The last tick each tile was in active sight — or first known of, for ground discovered
@@ -197,8 +333,10 @@ pub struct SeatMemory {
     move_targets: BTreeMap<u64, (Tile, String)>,
     /// The own bands the last observed frame carried, so a band not among them is *new*.
     known_bands: BTreeSet<u64>,
-    /// Splits accepted and not yet matched to a child, by parent band.
-    pending_splits: BTreeMap<u64, SplitPending>,
+    /// Splits accepted and not yet matched to a child, by parent band — **several per parent**
+    /// when the shape split it several ways in one turn, in the order they were accepted, which
+    /// is the order the sim founds the children in (each `split_band` applies as it arrives).
+    pending_splits: BTreeMap<u64, Vec<SplitPending>>,
     /// Children this seat split off and their sites, by child band.
     born_by_split: BTreeMap<u64, SplitBirth>,
     /// **The working-age a band had when the sim refused to split it.** The sim's floors
@@ -219,16 +357,22 @@ pub struct SeatMemory {
     /// and over how many row-turns — the seat's experience of a whole web, the prior for a source
     /// of that web it has not worked.
     realized_by_kind: BTreeMap<String, (f32, u32)>,
+    /// **The sim's crew-take curves**, per `(band, herd)` — the forecast every herd is ranked
+    /// on ([`Self::crew_take`]), asked through the oracle and refreshed by key and cadence
+    /// ([`Self::refresh_crew_takes`]).
+    crew_takes: BTreeMap<(u64, String), CrewTakeEntry>,
 }
 
 impl SeatMemory {
-    /// `horizon` is the difficulty's `memory_horizon_turns`; `split_settle_turns` the profile's
-    /// `food.split_settle_turns` — passed here rather than to every `observe`, because it is a
-    /// fact about this seat and not about a frame.
-    pub fn new(horizon: u64, split_settle_turns: u32) -> Self {
+    /// `horizon` is the difficulty's `memory_horizon_turns`; `split_settle_turns` and
+    /// `patch_window_turns` the profile's `food.split_settle_turns` and `food.dead_row_turns` —
+    /// passed here rather than to every `observe`, because they are facts about this seat and
+    /// not about a frame.
+    pub fn new(horizon: u64, split_settle_turns: u32, patch_window_turns: u32) -> Self {
         Self {
             horizon,
             split_settle_turns,
+            patch_window_turns,
             ..Default::default()
         }
     }
@@ -242,16 +386,28 @@ impl SeatMemory {
             for row in band.labor_assignments.iter().filter(|row| row.workers > 0) {
                 let key = key_of_row(band.band_id, row);
                 let useful = useful_workers(row);
-                let previous = self.realized.get(&key).map_or(0, |r| r.worked_turns);
+                let previous = self.realized.get(&key).copied();
+                let (expected, window) = self.forecast_of_row(view, band.band_id, row);
                 // ⛔ **THE SIM'S VERDICT IS PER TURN, SO THE MARK IT LEAVES MUST BE TOO.** A turn
                 // the sim reports a useful crew is a turn the row is alive, whatever it was
                 // yesterday — a bare-handed band's failed hunt must not blacklist the herd for the
                 // rest of the run once the band has a kit. The count starts afresh, so the row is
-                // judged on the record it has since made.
-                let worked_turns = match (useful, previous) {
-                    (0, _) => WORKED_DEAD_AT_ONCE,
-                    (_, WORKED_DEAD_AT_ONCE) => WORKED_ONCE,
-                    (_, previous) => previous + 1,
+                // judged on the record it has since made. **And the sums are the current crew's**:
+                // a crew change restarts them, since the forecast being held to account is the
+                // one this crew was staffed against.
+                let (worked_turns, expected_sum, realized_sum) = match (useful, previous) {
+                    (0, _) => (WORKED_DEAD_AT_ONCE, 0.0, 0.0),
+                    (_, Some(previous))
+                        if previous.worked_turns != WORKED_DEAD_AT_ONCE
+                            && previous.crew == row.workers =>
+                    {
+                        (
+                            previous.worked_turns + 1,
+                            previous.expected_sum + expected,
+                            previous.realized_sum + row.actual_yield,
+                        )
+                    }
+                    _ => (WORKED_ONCE, expected, row.actual_yield),
                 };
                 // ⛔ **DIVIDED BY THE CREW THE SIM COUNTED, NOT THE CREW ASSIGNED.** On a hunt row
                 // `useful_workers` is the crew-take plateau (`hunt_useful_workers`), and
@@ -264,6 +420,10 @@ impl SeatMemory {
                     Realized {
                         per_worker,
                         worked_turns,
+                        crew: row.workers,
+                        expected_sum,
+                        realized_sum,
+                        window,
                     },
                 );
                 // Only a measurement joins the web's mean: a row nobody was useful on would
@@ -296,11 +456,191 @@ impl SeatMemory {
         });
     }
 
+    /// **What `row` was forecast to take this turn, and the window that forecast is trusted
+    /// for.** A hunt row: the cached curve's `likely` at the row's crew, and the turns one kill
+    /// takes at that rate (`ceil(body_food / likely)`); `(0, 0)` with no curve or a crew the curve
+    /// says takes nothing. A patch row: the hands the sim counted × `per_worker_yield` off the
+    /// frame, capped by what the ground can give this turn, over the profile's
+    /// `food.dead_row_turns`. Any other row (a pool, a scout) forecasts nothing.
+    fn forecast_of_row(
+        &self,
+        view: &SeatView,
+        band_id: u64,
+        row: &LaborAssignmentState,
+    ) -> (f32, u32) {
+        match row.kind.as_str() {
+            ROLE_HUNT => {
+                let Some(curve) = self.crew_take(band_id, &row.fauna_id) else {
+                    return (0.0, 0);
+                };
+                let likely = curve.likely(row.workers);
+                if likely <= 0.0 {
+                    return (0.0, 0);
+                }
+                (likely, (curve.body_food / likely).ceil().max(1.0) as u32)
+            }
+            ROLE_FORAGE => {
+                let Some(patch) = view.patch_at(Tile::new(row.target_x, row.target_y)) else {
+                    return (0.0, 0);
+                };
+                let rate = patch.per_worker_yield;
+                // ⛔ **THE HANDS THE SIM COUNTED, NOT THE HANDS ASSIGNED.** `workers_needed` is
+                // the sim's *"minimum workers that would have produced this turn's take"*: the
+                // hands above it were idle by the sim's own reading, and their idleness is the
+                // surplus signal rule 1 reads, not a verdict on the ground. Forecast at the
+                // whole crew, a patch stripped to its floor under fifteen hands read a tenth of
+                // its forecast and was dead in one turn — every patch in seed 54's reach was
+                // dead by t10, rule 1 fell silent with nine surplus hands, and the band split
+                // twice and starved. A row the sim counted nobody on (it produced nothing) is
+                // forecast at its whole crew, and is honestly poor.
+                let counted = if row.workers_needed > 0 {
+                    row.workers.min(row.workers_needed)
+                } else {
+                    row.workers
+                };
+                // ⛔ **CAPPED BY WHAT THE GROUND CAN GIVE THIS TURN**: the room above the Best
+                // floor plus the floor's regrowth, in provisions. A patch standing at its floor
+                // expects only its regrowth — which is what it pays — so the accounting cannot
+                // call it poor for being at the floor; it is poor only when it pays under what
+                // its stand could give.
+                let ground = honest_ceiling(patch);
+                ((counted as f32 * rate).min(ground), self.patch_window_turns)
+            }
+            _ => (0.0, 0),
+        }
+    }
+
+    /// **Ask the oracle for the crew-take curve of every herd an own band could hunt**, within
+    /// the tick's budget. A herd within `hunt_reach` of a band is due a question when the band
+    /// has no curve for it, when its key ([`CrewTakeKey`]: the kit, the band's attack under it,
+    /// the units held, the biomass bucket) has changed, or when the one it has is
+    /// [`CREW_TAKE_REFRESH_TURNS`] old. The herds never asked about come first, then the nearest;
+    /// at most [`CREW_TAKE_ASKS_PER_TICK`] are asked and the rest wait for next tick. A herd
+    /// whose animals are worth no food is never asked about.
+    pub fn refresh_crew_takes(
+        &mut self,
+        view: &SeatView,
+        faction: u32,
+        oracle: &mut dyn CrewTakeOracle,
+    ) -> CrewTakeAsks {
+        let tick = view.tick();
+        let grid = view.grid();
+        // (never asked, distance, herd id, band id, key, ask)
+        let mut due: Vec<(bool, u32, String, u64, CrewTakeKey, CrewTakeAsk)> = Vec::new();
+        for band in view.own_bands(faction) {
+            if band.working_age == 0 {
+                continue;
+            }
+            for herd in view
+                .snapshot
+                .herds
+                .iter()
+                .filter(|herd| herd.huntable && herd.food_per_animal > 0.0)
+            {
+                let distance = grid.distance(band_tile(band), Tile::new(herd.x, herd.y));
+                if distance > band.hunt_reach {
+                    continue;
+                }
+                let key = crew_take_key(view, band, herd);
+                let entry = self.crew_takes.get(&(band.band_id, herd.id.clone()));
+                let fresh = entry.is_some_and(|entry| {
+                    entry.key == key && tick < entry.asked_tick + CREW_TAKE_REFRESH_TURNS
+                });
+                if fresh {
+                    continue;
+                }
+                due.push((
+                    entry.is_none(),
+                    distance,
+                    herd.id.clone(),
+                    band.band_id,
+                    key.clone(),
+                    CrewTakeAsk {
+                        faction,
+                        band_id: band.band_id,
+                        herd_id: herd.id.clone(),
+                        kit_id: key.kit_id.clone(),
+                        floor: CREW_TAKE_FLOOR,
+                        max_workers: band.working_age,
+                        food_per_animal: herd.food_per_animal,
+                    },
+                ));
+            }
+        }
+        due.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.3.cmp(&b.3))
+        });
+        let mut asks = CrewTakeAsks {
+            waiting: due.len().saturating_sub(CREW_TAKE_ASKS_PER_TICK as usize) as u32,
+            ..Default::default()
+        };
+        for (_, _, herd_id, band_id, key, ask) in
+            due.into_iter().take(CREW_TAKE_ASKS_PER_TICK as usize)
+        {
+            let started = Instant::now();
+            let curve = oracle.crew_take(&ask);
+            let took = started.elapsed();
+            asks.asked += 1;
+            asks.elapsed += took;
+            asks.slowest = asks.slowest.max(took);
+            debug!(
+                tick,
+                band = band_id,
+                herd = %herd_id,
+                answered = curve.is_some(),
+                elapsed_ms = took.as_millis(),
+                curve = ?curve.as_ref().map(|curve| curve.rows.iter().map(|row| row.likely).collect::<Vec<_>>()),
+                "crew take asked"
+            );
+            self.crew_takes.insert(
+                (band_id, herd_id),
+                CrewTakeEntry {
+                    key,
+                    asked_tick: tick,
+                    curve,
+                },
+            );
+        }
+        asks
+    }
+
+    /// The cached crew-take curve for `herd_id` as `band_id` would hunt it, if the oracle has
+    /// answered — a herd with none is not a source, and reads `unforecast` in the land reading.
+    pub fn crew_take(&self, band_id: u64, herd_id: &str) -> Option<&CrewTakeCurve> {
+        self.crew_takes
+            .get(&(band_id, herd_id.to_owned()))
+            .and_then(|entry| entry.curve.as_ref())
+    }
+
+    /// Put a curve in the cache directly, as if the oracle had answered it this tick — the
+    /// tests' short cut around the ask.
+    #[cfg(test)]
+    pub fn remember_crew_take(&mut self, band_id: u64, herd_id: &str, curve: CrewTakeCurve) {
+        self.crew_takes.insert(
+            (band_id, herd_id.to_owned()),
+            CrewTakeEntry {
+                key: CrewTakeKey {
+                    kit_id: String::new(),
+                    attack_bits: 0,
+                    units: None,
+                    bucket: 0,
+                },
+                asked_tick: 0,
+                curve: Some(curve),
+            },
+        );
+    }
+
     /// **A new own band standing where a parent with a pending split stands — and which is not
-    /// that parent — is that split's child.** The sim spawns it on the parent's tile the turn after the order
-    /// (`split_band_from_parent`); a pending entry no child has matched within
-    /// `split_settle_turns` is a refused split and is dropped. A child is remembered until it
-    /// reaches its site, or the horizon passes.
+    /// that parent — is that split's child**, matched to the parent's **earliest** pending entry:
+    /// the sim spawns children on the parent's tile the turn after the orders
+    /// (`split_band_from_parent`), one per `split_band` in the order they arrived, and new bands
+    /// are walked in the frame's (ascending id) order. A pending entry no child has matched
+    /// within `split_settle_turns` is a refused split and is dropped. A child is remembered until
+    /// it reaches its site, or the horizon passes.
     fn observe_births(&mut self, view: &SeatView, faction: u32, tick: u64) {
         let own: Vec<&PopulationCohortState> = view.own_bands(faction).collect();
         for child in own
@@ -310,14 +650,30 @@ impl SeatMemory {
             // ⛔ **A BAND IS NEVER ITS OWN CHILD.** `forget_after` clears `known_bands` and keeps
             // a pending split stamped at or before the rewind, so on the next `observe` every own
             // band reads as new — and the parent stands on its own split tile.
-            let parent = self.pending_splits.iter().find(|(parent_id, _)| {
-                **parent_id != child.band_id
-                    && view
-                        .band(**parent_id)
-                        .is_some_and(|parent| band_tile(parent) == band_tile(child))
-            });
-            if let Some((parent_id, pending)) = parent.map(|(id, pending)| (*id, *pending)) {
-                self.pending_splits.remove(&parent_id);
+            let parent = self
+                .pending_splits
+                .iter()
+                .filter(|(_, pending)| !pending.is_empty())
+                .find(|(parent_id, _)| {
+                    **parent_id != child.band_id
+                        && view
+                            .band(**parent_id)
+                            .is_some_and(|parent| band_tile(parent) == band_tile(child))
+                })
+                .map(|(id, _)| *id);
+            if let Some(parent_id) = parent {
+                let pending = self
+                    .pending_splits
+                    .get_mut(&parent_id)
+                    .map(|list| list.remove(0))
+                    .expect("a non-empty list was found");
+                if self
+                    .pending_splits
+                    .get(&parent_id)
+                    .is_some_and(Vec::is_empty)
+                {
+                    self.pending_splits.remove(&parent_id);
+                }
                 self.born_by_split.insert(
                     child.band_id,
                     SplitBirth {
@@ -328,14 +684,16 @@ impl SeatMemory {
             }
         }
         let settle = u64::from(self.split_settle_turns);
-        let expired: Vec<u64> = self
-            .pending_splits
-            .iter()
-            .filter(|(_, pending)| tick.saturating_sub(pending.tick) > settle)
-            .map(|(parent, _)| *parent)
-            .collect();
-        for parent in expired {
-            self.pending_splits.remove(&parent);
+        let mut refused: Vec<u64> = Vec::new();
+        for (parent, list) in self.pending_splits.iter_mut() {
+            let before = list.len();
+            list.retain(|pending| tick.saturating_sub(pending.tick) <= settle);
+            if list.len() < before {
+                refused.push(*parent);
+            }
+        }
+        self.pending_splits.retain(|_, list| !list.is_empty());
+        for parent in refused {
             // No child came: the sim refused the split. What it refused is a band of *this*
             // size, so the size is what is remembered.
             if let Some(band) = view.band(parent) {
@@ -357,9 +715,15 @@ impl SeatMemory {
         self.known_bands = own.iter().map(|band| band.band_id).collect();
     }
 
-    /// The split accepted on `band_id` that no child has yet appeared for.
+    /// The splits accepted on `band_id` that no child has yet appeared for, in the order they
+    /// were accepted; empty when none is pending.
+    pub fn pending_splits(&self, band_id: u64) -> &[SplitPending] {
+        self.pending_splits.get(&band_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// The earliest split accepted on `band_id` that no child has yet appeared for.
     pub fn pending_split(&self, band_id: u64) -> Option<&SplitPending> {
-        self.pending_splits.get(&band_id)
+        self.pending_splits(band_id).first()
     }
 
     /// The birth record of `band_id`, if this seat split it off and it has not reached its site.
@@ -438,14 +802,14 @@ impl SeatMemory {
                     target,
                     workers,
                 }) => {
-                    self.pending_splits.insert(
-                        band,
-                        SplitPending {
+                    self.pending_splits
+                        .entry(band)
+                        .or_default()
+                        .push(SplitPending {
                             tick,
                             target,
                             workers,
-                        },
-                    );
+                        });
                 }
                 None => {}
             }
@@ -518,8 +882,12 @@ impl SeatMemory {
         self.previous_runway.clear();
         self.realized.clear();
         self.realized_by_kind.clear();
-        self.pending_splits
-            .retain(|_, pending| pending.tick <= tick);
+        // The curves were answers about a world that is gone; the next tick asks afresh.
+        self.crew_takes.clear();
+        for list in self.pending_splits.values_mut() {
+            list.retain(|pending| pending.tick <= tick);
+        }
+        self.pending_splits.retain(|_, list| !list.is_empty());
         self.born_by_split.retain(|_, birth| birth.tick <= tick);
         self.known_bands.clear();
         self.split_refused.clear();
@@ -668,6 +1036,9 @@ mod tests {
     const HORIZON: u64 = 2;
     /// The turns a pending split waits for its child in these tests.
     const SETTLE: u32 = 3;
+    /// The patch window these tests judge over: one turn, so a patch's accounting is read off
+    /// one fold.
+    const PATCH_WINDOW: u32 = 1;
 
     fn a_full_frame() -> Vec<u8> {
         let mut snapshot = WorldSnapshot::default();
@@ -829,7 +1200,7 @@ mod tests {
 
     #[test]
     fn sightings_decay_past_the_horizon_unless_it_is_zero() {
-        let mut memory = SeatMemory::new(HORIZON, SETTLE);
+        let mut memory = SeatMemory::new(HORIZON, SETTLE, PATCH_WINDOW);
         memory.observe(&a_view_at(10), 1);
         let active = Tile::new(1, 0);
         let discovered = Tile::new(2, 0);
@@ -849,14 +1220,14 @@ mod tests {
             memory.known_tiles_within(&a_view_at(10), Tile::new(1, 0), 1, 10),
             2
         );
-        let mut forever = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut forever = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         forever.observe(&a_view_at(10), 1);
         assert!(forever.is_known(active, 10_000));
     }
 
     #[test]
     fn a_full_frame_forgets_what_was_stamped_after_it() {
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         memory.observe(&a_view_at(10), 1);
         memory.record_choices(
             10,
@@ -907,7 +1278,7 @@ mod tests {
         const PARENT: u64 = 7;
         const CHILD: u64 = 8;
         let site = Tile::new(3, 1);
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -965,7 +1336,7 @@ mod tests {
         assert_eq!(memory.born_by_split(CHILD), None, "arrived");
 
         // A split the sim refused: no new band ever appears, and the entry expires.
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(20);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -1024,7 +1395,7 @@ mod tests {
             current_y: 1,
             ..Default::default()
         };
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(SPLIT_TICK);
         view.snapshot.populations.push(band_at(PARENT));
         memory.observe(&view, FACTION);
@@ -1068,7 +1439,7 @@ mod tests {
     fn the_tile_a_band_left_is_remembered_for_the_horizon_and_forgotten_by_a_full_frame() {
         const BAND: u64 = 7;
         let from = Tile::new(1, 1);
-        let mut memory = SeatMemory::new(HORIZON, SETTLE);
+        let mut memory = SeatMemory::new(HORIZON, SETTLE, PATCH_WINDOW);
         memory.record_choices(
             10,
             [(
@@ -1086,7 +1457,7 @@ mod tests {
         assert_eq!(memory.left_from(BAND), Some(from), "within the horizon");
         memory.observe(&a_view_at(10 + HORIZON + 1), 1);
         assert_eq!(memory.left_from(BAND), None, "older than the horizon");
-        let mut forever = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut forever = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         forever.record_choices(
             10,
             [(
@@ -1109,7 +1480,7 @@ mod tests {
     fn a_runway_is_falling_only_against_a_remembered_one_and_a_target_clears_on_arrival() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         assert!(!memory.runway_falling(BAND, 5.0), "nothing remembered yet");
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
@@ -1147,7 +1518,7 @@ mod tests {
     fn a_worked_row_is_measured_and_a_useless_hunt_crew_is_dead_at_once() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -1181,7 +1552,13 @@ mod tests {
             memory.realized(&patch),
             Some(Realized {
                 per_worker: Some(0.2),
-                worked_turns: 2
+                worked_turns: 2,
+                crew: 3,
+                // The fixture carries no patch row at 4,2: the forecast is nothing, and a row
+                // forecast nothing has no window to be judged over.
+                expected_sum: 0.0,
+                realized_sum: 1.2,
+                window: 0,
             })
         );
         assert_eq!(
@@ -1189,7 +1566,11 @@ mod tests {
             Some(Realized {
                 // ⛔ Not `Some(0.0)`: no crew was useful, so the turn measured nothing.
                 per_worker: None,
-                worked_turns: WORKED_DEAD_AT_ONCE
+                worked_turns: WORKED_DEAD_AT_ONCE,
+                crew: 5,
+                expected_sum: 0.0,
+                realized_sum: 0.0,
+                window: 0,
             })
         );
         assert_eq!(
@@ -1222,7 +1603,7 @@ mod tests {
     fn a_useless_hunt_row_is_no_evidence_about_the_web_it_belongs_to() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -1267,7 +1648,7 @@ mod tests {
         const ASSIGNED: u32 = 12;
         const PLATEAU: u32 = 2;
         const TAKE: f32 = 3.0;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -1304,7 +1685,7 @@ mod tests {
     fn a_row_the_sim_reports_a_useful_crew_on_again_is_no_longer_dead() {
         const FACTION: u32 = 1;
         const BAND: u64 = 7;
-        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE);
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
         let mut view = a_view_at(10);
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION,
@@ -1334,9 +1715,297 @@ mod tests {
             memory.realized(&herd),
             Some(Realized {
                 per_worker: Some(0.5),
-                worked_turns: WORKED_ONCE
+                worked_turns: WORKED_ONCE,
+                crew: 4,
+                // No curve for the herd: the forecast is nothing and the row is never poor.
+                expected_sum: 0.0,
+                realized_sum: 2.0,
+                window: 0,
             }),
             "the marking is cleared and the record starts from this turn"
         );
+        assert!(!memory.realized(&herd).unwrap().dead_under(0.25));
+    }
+
+    /// **A patch is forecast at the hands the sim counted.** Fifteen hands on a stripped patch
+    /// the sim says needed six take six hands' worth: forecast at fifteen that is a tenth and
+    /// the patch is dead in one turn; forecast at six it is exactly what was expected. A row
+    /// the sim counted nobody on — it produced nothing — is forecast at its whole crew and dead.
+    #[test]
+    fn a_patch_row_is_forecast_at_the_hands_the_sim_counted() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        const RATE: f32 = 0.6;
+        let patch = row_key(BAND, "forage", 4, 2, "");
+        let mut view = a_view_at(10);
+        // A stand well above its floor: room 50 and a regrowth of 1, so the ground's cap of 51
+        // is not what bounds these crews.
+        view.snapshot.forage_patches.push(ForagePatchState {
+            x: 4,
+            y: 2,
+            per_worker_yield: RATE,
+            biomass: 100.0,
+            carrying_capacity: 100.0,
+            provisions_per_biomass: 1.0,
+            regrowth_samples: vec![1.0, 1.0],
+            ..Default::default()
+        });
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            labor_assignments: vec![LaborAssignmentState {
+                kind: "forage".into(),
+                target_x: 4,
+                target_y: 2,
+                workers: 15,
+                workers_needed: 6,
+                actual_yield: 6.0 * RATE,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        memory.observe(&view, FACTION);
+        let stripped = memory.realized(&patch).unwrap();
+        assert_eq!(stripped.expected_sum, 6.0 * RATE);
+        assert!(
+            !stripped.dead_under(0.25),
+            "the crew was wrong, not the ground"
+        );
+        let row = &mut view.snapshot.populations[0].labor_assignments[0];
+        row.workers_needed = 0;
+        row.actual_yield = 0.0;
+        let mut barren = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        barren.observe(&view, FACTION);
+        let nothing = barren.realized(&patch).unwrap();
+        assert_eq!(nothing.expected_sum, 15.0 * RATE);
+        assert!(nothing.dead_under(0.25), "it produced nothing for fifteen");
+    }
+
+    /// **A patch's expectation is capped by what the ground can give.** A full crew on a patch
+    /// standing at its Best floor is forecast the floor's regrowth and nothing more — which is
+    /// what the patch pays — so it is never dead for standing at the floor; and the window is
+    /// the profile's `food.dead_row_turns`, so a patch paying nothing is judged only once that
+    /// many turns at its crew have run.
+    #[test]
+    fn a_patch_at_its_floor_paying_its_regrowth_is_never_dead_and_the_window_is_the_lever() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        const REGROWTH: f32 = 0.8;
+        const WINDOW: u32 = 3;
+        let patch = row_key(BAND, "forage", 4, 2, "");
+        let mut view = a_view_at(10);
+        view.snapshot.forage_patches.push(ForagePatchState {
+            x: 4,
+            y: 2,
+            per_worker_yield: 0.6,
+            biomass: 50.0,
+            carrying_capacity: 100.0,
+            provisions_per_biomass: 1.0,
+            regrowth_samples: vec![REGROWTH, REGROWTH],
+            ..Default::default()
+        });
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            labor_assignments: vec![LaborAssignmentState {
+                kind: "forage".into(),
+                target_x: 4,
+                target_y: 2,
+                workers: 12,
+                workers_needed: 12,
+                actual_yield: REGROWTH,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, WINDOW);
+        for turn in 1..=6 {
+            memory.observe(&view, FACTION);
+            let record = memory.realized(&patch).unwrap();
+            assert_eq!(record.window, WINDOW);
+            assert_eq!(record.expected_sum, REGROWTH * turn as f32);
+            assert!(
+                !record.dead_under(0.25),
+                "turn {turn}: it pays what its stand gives"
+            );
+        }
+        // The same stand paying nothing: poor, but not judged before the window has run.
+        view.snapshot.populations[0].labor_assignments[0].actual_yield = 0.0;
+        let mut barren = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, WINDOW);
+        for turn in 1..=WINDOW {
+            barren.observe(&view, FACTION);
+            let record = barren.realized(&patch).unwrap();
+            assert_eq!(record.dead_under(0.25), turn == WINDOW, "turn {turn}");
+        }
+    }
+
+    /// A hunt row `crew` hunters on `herd_9` of band [`BAND`] paying `actual_yield` this turn.
+    fn a_hunt_of(view: &mut SeatView, crew: u32, actual_yield: f32) {
+        let band = &mut view.snapshot.populations[0];
+        band.labor_assignments = vec![LaborAssignmentState {
+            kind: "hunt".into(),
+            fauna_id: "herd_9".into(),
+            workers: crew,
+            actual_yield,
+            hunt_useful_workers: crew,
+            ..Default::default()
+        }];
+    }
+
+    /// ⛔ **A HUNT IS JUDGED OVER THE TURNS ONE KILL TAKES, NOT PER TURN.** Five hunters the sim
+    /// says likely bring home 0.3 a turn off a herd whose animals are 0.8 food each are due a
+    /// kill every third turn (`ceil(0.8 / 0.3)`): two turns of nothing are not yet a verdict,
+    /// three are — unless the third lands the animal, which is the whole of what was forecast.
+    /// Per-turn, seed 54's boar row read poor on its first zero turn and was emptied before the
+    /// kill it was three turns from.
+    #[test]
+    fn a_hunt_row_is_accounted_over_its_kill_window() {
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        const CREW: u32 = 5;
+        const LIKELY: f32 = 0.3;
+        const BODY_FOOD: f32 = 0.8;
+        const FRACTION: f32 = 0.25;
+        let herd = row_key(BAND, "hunt", 0, 0, "herd_9");
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        memory.remember_crew_take(
+            BAND,
+            "herd_9",
+            crate::oracle::curve_of(&[(1, 0.1), (5, LIKELY)], BODY_FOOD),
+        );
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            ..Default::default()
+        });
+        a_hunt_of(&mut view, CREW, 0.0);
+        memory.observe(&view, FACTION);
+        let first = memory.realized(&herd).unwrap();
+        assert_eq!((first.crew, first.window, first.worked_turns), (CREW, 3, 1));
+        assert_eq!(first.expected_sum, LIKELY);
+        assert!(!first.dead_under(FRACTION), "turn 1: the kill is not due");
+        memory.observe(&view, FACTION);
+        let second = memory.realized(&herd).unwrap();
+        assert_eq!(second.worked_turns, 2);
+        assert!(!second.dead_under(FRACTION), "turn 2: still not due");
+        // The same record, forked: a third zero turn is dead; a third turn landing the animal
+        // is not.
+        let mut starved = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        starved.remember_crew_take(
+            BAND,
+            "herd_9",
+            crate::oracle::curve_of(&[(1, 0.1), (5, LIKELY)], BODY_FOOD),
+        );
+        for _ in 0..3 {
+            starved.observe(&view, FACTION);
+        }
+        let third = starved.realized(&herd).unwrap();
+        assert_eq!(third.worked_turns, 3);
+        assert!(third.dead_under(FRACTION), "turn 3 with nothing: dead");
+        assert_eq!(
+            third.accounting(),
+            "took 0.00 of 0.90 expected over 3 turns"
+        );
+        a_hunt_of(&mut view, CREW, BODY_FOOD);
+        memory.observe(&view, FACTION);
+        let landed = memory.realized(&herd).unwrap();
+        assert_eq!(landed.worked_turns, 3);
+        assert_eq!(landed.realized_sum, BODY_FOOD);
+        assert!(!landed.dead_under(FRACTION), "the kill landed on turn 3");
+        // A crew change restarts the accounting.
+        a_hunt_of(&mut view, CREW + 1, 0.0);
+        memory.observe(&view, FACTION);
+        let restaffed = memory.realized(&herd).unwrap();
+        assert_eq!((restaffed.crew, restaffed.worked_turns), (CREW + 1, 1));
+        assert_eq!(restaffed.realized_sum, 0.0);
+    }
+
+    /// The oracle is asked once per herd in reach per band, nearest first, within the tick's
+    /// budget; a curve stands until its key changes or the cadence passes; a herd out of reach is
+    /// never asked about.
+    #[test]
+    fn crew_takes_are_asked_within_the_budget_and_cached_by_key() {
+        use crate::oracle::{curve_of, Canned};
+        use sim_runtime::HerdTelemetryState;
+        const FACTION: u32 = 1;
+        const BAND: u64 = 7;
+        let mut view = a_view_at(10);
+        view.snapshot.populations.push(PopulationCohortState {
+            faction: FACTION,
+            band_id: BAND,
+            current_x: 4,
+            current_y: 4,
+            working_age: 12,
+            hunt_reach: 3,
+            ..Default::default()
+        });
+        let herd = |id: &str, x: u32, biomass: f32| HerdTelemetryState {
+            id: id.into(),
+            x,
+            y: 4,
+            huntable: true,
+            food_per_animal: 0.24,
+            biomass,
+            carrying_capacity: 100.0,
+            default_kit_id: "big_game".into(),
+            ..Default::default()
+        };
+        // Ten herds in reach, one beyond it, one inedible.
+        let mut herds: Vec<HerdTelemetryState> = (0..10)
+            .map(|i| herd(&format!("herd_{i}"), 4 + (i % 4), 50.0))
+            .collect();
+        herds.push(herd("far", 20, 50.0));
+        herds.push(HerdTelemetryState {
+            food_per_animal: 0.0,
+            ..herd("inedible", 5, 50.0)
+        });
+        view.snapshot.herds = herds;
+        let mut oracle = Canned::new().with("herd_0", curve_of(&[(1, 0.3)], 0.24));
+        let asks = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW).refresh_crew_takes(
+            &view,
+            FACTION,
+            &mut oracle,
+        );
+        assert_eq!(asks.asked, CREW_TAKE_ASKS_PER_TICK);
+        assert_eq!(asks.waiting, 10 - CREW_TAKE_ASKS_PER_TICK);
+        assert!(oracle.asked.iter().all(|ask| ask.herd_id != "far"));
+        assert!(oracle.asked.iter().all(|ask| ask.herd_id != "inedible"));
+        assert_eq!(oracle.asked[0].max_workers, 12);
+        assert_eq!(oracle.asked[0].kit_id, "big_game");
+        assert_eq!(oracle.asked[0].floor, BEST_FLOOR);
+        // The nearest herds came first: herd_0, herd_4, herd_8 stand on the band's own hex.
+        assert_eq!(oracle.asked[0].herd_id, "herd_0");
+
+        let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
+        let mut oracle = Canned::new().with("herd_0", curve_of(&[(1, 0.3)], 0.24));
+        memory.refresh_crew_takes(&view, FACTION, &mut oracle);
+        assert_eq!(
+            memory.crew_take(BAND, "herd_0").map(|c| c.likely(1)),
+            Some(0.3)
+        );
+        assert_eq!(memory.crew_take(BAND, "herd_1"), None, "asked, unanswered");
+        // Next tick: the two left waiting are asked; nothing already asked is asked again.
+        view.snapshot.header.tick = 11;
+        let asks = memory.refresh_crew_takes(&view, FACTION, &mut oracle);
+        assert_eq!((asks.asked, asks.waiting), (2, 0));
+        view.snapshot.header.tick = 12;
+        let asks = memory.refresh_crew_takes(&view, FACTION, &mut oracle);
+        assert_eq!(asks.asked, 0, "every curve is fresh");
+        // A biomass bucket crossed is a new key: that herd alone is asked again.
+        view.snapshot.herds[0].biomass = 24.0;
+        let before = oracle.asked.len();
+        let asks = memory.refresh_crew_takes(&view, FACTION, &mut oracle);
+        assert_eq!(asks.asked, 1);
+        assert_eq!(oracle.asked[before].herd_id, "herd_0");
+        // The cadence passing re-asks everything asked at ticks 10 and 11 (nine herds; herd_0
+        // was re-asked at tick 12 and stands), budget permitting.
+        view.snapshot.header.tick = 11 + CREW_TAKE_REFRESH_TURNS;
+        let asks = memory.refresh_crew_takes(&view, FACTION, &mut oracle);
+        assert_eq!((asks.asked, asks.waiting), (CREW_TAKE_ASKS_PER_TICK, 1));
+        // A rewind forgets the answers.
+        memory.forget_after(5);
+        assert_eq!(memory.crew_take(BAND, "herd_0"), None);
     }
 }

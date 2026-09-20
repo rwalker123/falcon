@@ -30,6 +30,7 @@ use sim_runtime::parse_command_line;
 use tracing::{error, info};
 
 use super::{Cost, Proposal, Proposals, Specialist, SpecialistId, SPECIALIST_SCRIPTED};
+use crate::ground::GroundReadings;
 use crate::orchestrator::Plan;
 use crate::view::{SeatMemory, SeatView};
 
@@ -119,7 +120,13 @@ impl Specialist for Scripted {
         SPECIALIST_SCRIPTED
     }
 
-    fn propose(&mut self, view: &SeatView, _plan: &Plan, _memory: &SeatMemory) -> Proposals {
+    fn propose(
+        &mut self,
+        view: &SeatView,
+        _plan: &Plan,
+        _memory: &SeatMemory,
+        _ground: &GroundReadings,
+    ) -> Proposals {
         let tick = view.tick();
         if self.first_tick.is_none() {
             self.first_tick = Some(tick);
@@ -279,6 +286,7 @@ mod tests {
                 &a_view_at(tick),
                 &Plan::pass_through(tick),
                 &SeatMemory::default(),
+                &GroundReadings::default(),
             )
             .proposals
     }

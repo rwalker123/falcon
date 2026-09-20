@@ -118,4 +118,38 @@ when the file is actually used. A **stale file from a crashed server is expected
 — the existing connect/retry behaviour handles the refused connection. The client never writes,
 deletes, or liveness-checks the file.
 
+## `run_stack.sh`: the client is launched only after the server LISTENS
+
+**The client assumes a ready server, because the packaged launcher gives it one**
+(`launcher.md` → `wait_for_ready`). The menu asks its first question the moment it appears, and
+an unanswered ask latches `MenuShell.NOTICE_NO_SERVER`. `run_stack.sh` once backgrounded
+`cargo run` and launched the client straight after, so whenever `core_sim` had anything to
+compile the client booted in front of a server that did not exist yet and said so. In a
+worktree that was EVERY run: `core_sim/build.rs` registered a rerun trigger on a ref file that a
+worktree's private git dir never holds, and cargo reads a missing trigger as always-changed, so
+an untouched tree still recompiled the crate (~35 s release) each launch. `build.rs` now
+registers only paths that exist; the wait below is what covers a genuine rebuild.
+
+So the both-halves path does what the launcher does, in the script rather than in the game:
+
+- **The server is BUILT in the foreground first** (`cargo build`, same profile flag), so the
+  backgrounded `cargo run` has nothing to compile. A compile error stops the script before any
+  client opens, and the readiness timeout never has to outlast a build.
+- **`wait_for_server` polls the LOG port** until it accepts, at the launcher's own
+  `READY_POLL_INTERVAL` / `READY_TIMEOUT` (0.25 s / 30 s). The block is bound all at once, so
+  one port answering means all three do. The log port is the one probed because a
+  connect-and-close there is only a log client that came and went (one `Dropping log client`
+  line), where the command port would mint a connection identity for the probe.
+- **A server that died is reported at once**, with its exit code, instead of after the whole
+  timeout; either failure exits without launching the client.
+- **The block must be EMPTY before the server starts**, or a stranger's listener answers the
+  probe. An auto-derived base has already been bumped to a free block; an explicit one is
+  checked in `start_server` and refused with the server's own status `2`.
+
+**It is a TCP probe, not the ports file, deliberately.** Pointing `SIM_PORTS_FILE` at a private
+path would give the script the launcher's exact signal, but it would also stop a `run_stack`
+server publishing the shared `ports.json` that a separately-opened Godot editor discovers it
+through — and a ports-file write failure is non-fatal by contract, which would read here as a
+server that never came up.
+
 ---

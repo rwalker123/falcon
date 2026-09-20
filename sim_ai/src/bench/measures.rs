@@ -16,17 +16,24 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::board::{DEMAND_STATE_EXPIRED, DEMAND_STATE_FULFILLED, DEMAND_STATE_POSTED};
+use crate::board::{
+    DEMAND_STATE_DECLINED, DEMAND_STATE_EXPIRED, DEMAND_STATE_FULFILLED, DEMAND_STATE_POSTED,
+};
 use crate::instruments::decisions::{
     DecisionRecord, DemandRecord, LinkEventKind, Outcome, DECISIONS_FILE,
 };
-use crate::instruments::observations::{Observation, ObservationRecord, OBSERVATIONS_FILE};
+use crate::instruments::observations::{
+    GroundRecord, Observation, ObservationRecord, OBSERVATIONS_FILE,
+};
 use crate::instruments::scoreboard::{ScoreRow, DEATH_CAUSES, DEATH_CAUSE_HUNGER, SCOREBOARD_FILE};
 use crate::specialists::food::{INTENT_SPLIT, INTENT_UPGRADE};
 use crate::specialists::{intent_key, INTENT_SEPARATOR, SPECIALIST_FOOD};
 
 /// Measure name → value. `None` is "the log cannot answer this yet".
 pub type Measures = BTreeMap<String, Option<f64>>;
+/// Label name → a word, for what a log answers with a name rather than a number
+/// (`ground.start_kind`). Reported, never compared or checked.
+pub type Labels = BTreeMap<String, String>;
 
 /// **The liveness window** (§8.2): a specialist is live when it has an accepted proposal in every
 /// window of this many turns over the run. Also the churn window.
@@ -79,6 +86,27 @@ pub const M_SPLITS: &str = "food.splits";
 pub const M_GROUND_SUSTAINED_TAKE_AT_START: &str = "ground.sustained_take_at_start";
 pub const M_GROUND_BEST_CLUSTER_IN_HORIZON: &str = "ground.best_cluster_in_horizon";
 pub const M_GROUND_CONSUMPTION_AT_START: &str = "ground.consumption_at_start";
+/// **The land reading at the start** (`observations::GroundRecord`, off the first observation
+/// carrying one): the largest band's people, the people its wild ground feeds under each of the
+/// four coverings (`stay`: its own hex; `local`: within `food.split_search_tiles`; `far`: within
+/// `food.split_reach_tiles`; `visible`: everything discovered), the same near-ring ground farmed
+/// (`tended`, `field`), the bands the near-ring covering plans, and the distance to the "move
+/// everyone" target (0 = none). `ground.start_kind` is the classification as a string, carried
+/// in `report.json`'s `labels` since a measure is a number. **Reported, not ratcheted.**
+pub const M_GROUND_PEOPLE: &str = "ground.people";
+pub const M_GROUND_FED_WILD_STAY: &str = "ground.people_fed_wild_stay";
+pub const M_GROUND_FED_WILD_LOCAL: &str = "ground.people_fed_wild_local";
+pub const M_GROUND_FED_WILD_FAR: &str = "ground.people_fed_wild_far";
+pub const M_GROUND_FED_WILD_VISIBLE: &str = "ground.people_fed_wild_visible";
+pub const M_GROUND_FED_TENDED_LOCAL: &str = "ground.people_fed_tended_local";
+pub const M_GROUND_FED_FIELD_LOCAL: &str = "ground.people_fed_field_local";
+pub const M_GROUND_PLANNED_BANDS_LOCAL: &str = "ground.planned_bands_local";
+pub const M_GROUND_MOVE_TARGET_DISTANCE: &str = "ground.move_target_distance";
+pub const L_GROUND_START_KIND: &str = "ground.start_kind";
+/// The same reading with the herds struck out — the patches alone, no hunt kit assumed.
+pub const M_GROUND_FED_WILD_LOCAL_PATCHES: &str = "ground.people_fed_wild_local_patches";
+pub const M_GROUND_FED_WILD_VISIBLE_PATCHES: &str = "ground.people_fed_wild_visible_patches";
+pub const L_GROUND_START_KIND_PATCHES: &str = "ground.start_kind_patches";
 // --- the demand board -----------------------------------------------------------------------------
 /// `board.*` (`plan_ai_driver.md` §4: *"the board is measurable — fulfilment rate and latency per
 /// requester"*): `posted` (demands posted over the run), `expired`, `fulfilment_rate`
@@ -88,6 +116,9 @@ pub const M_GROUND_CONSUMPTION_AT_START: &str = "ground.consumption_at_start";
 pub const M_BOARD_PREFIX: &str = "board.";
 pub const M_BOARD_POSTED: &str = "board.posted";
 pub const M_BOARD_EXPIRED: &str = "board.expired";
+/// Demands the orchestrator refused with a reason (`board::DemandState::Declined`) — every hoe
+/// craft today, since nothing crafts; neither fulfilled nor expired, so outside the rate.
+pub const M_BOARD_DECLINED: &str = "board.declined";
 pub const M_BOARD_FULFILMENT_RATE: &str = "board.fulfilment_rate";
 pub const M_BOARD_LATENCY: &str = "board.latency_turns";
 const M_FULFILMENT_RATE: &str = "fulfilment_rate";
@@ -132,9 +163,10 @@ pub enum MeasureError {
     },
 }
 
-/// Read one seat's measured logs from `log_dir` and compute its measures. The observation log
-/// is optional: a seat that wrote none reports the ground measures `None`.
-pub fn measures_for_seat(log_dir: &Path) -> Result<Measures, MeasureError> {
+/// Read one seat's measured logs from `log_dir` and compute its measures and labels. The
+/// observation log is optional: a seat that wrote none reports the ground measures `None` and
+/// no labels.
+pub fn measures_for_seat(log_dir: &Path) -> Result<(Measures, Labels), MeasureError> {
     let rows: Vec<ScoreRow> = read_jsonl(&log_dir.join(SCOREBOARD_FILE))?;
     let records: Vec<DecisionRecord> = read_jsonl(&log_dir.join(DECISIONS_FILE))?;
     let observations_path = log_dir.join(OBSERVATIONS_FILE);
@@ -146,7 +178,45 @@ pub fn measures_for_seat(log_dir: &Path) -> Result<Measures, MeasureError> {
     } else {
         Vec::new()
     };
-    Ok(compute(&rows, &records, &observations))
+    Ok((
+        compute(&rows, &records, &observations),
+        labels(&observations),
+    ))
+}
+
+/// The labels of one seat: `ground.start_kind` off the first observation carrying a reading.
+pub fn labels(observations: &[Observation]) -> Labels {
+    let mut labels = Labels::new();
+    if let Some(ground) = first_ground(observations) {
+        labels.insert(
+            L_GROUND_START_KIND.to_owned(),
+            ground.kind.as_str().to_owned(),
+        );
+        labels.insert(
+            L_GROUND_START_KIND_PATCHES.to_owned(),
+            ground.kind_patches.as_str().to_owned(),
+        );
+    }
+    labels
+}
+
+/// **The tick the `ground.*` measures and the `start_kind` labels are read at.** Not the first:
+/// at tick 1 a band holds no kit — the outfit lands after the tick-1 command — so every herd's
+/// crew-take curve reads nothing and the reading describes a bare band, not the start. At tick 2
+/// the kits are in hand and the herds are re-asked under the new key. The observation carries
+/// its `ground` block on every tick; only this capture moves.
+const GROUND_CAPTURE_TICK: u64 = 2;
+
+/// The land reading of the earliest observation at or after [`GROUND_CAPTURE_TICK`] that carries
+/// one.
+fn first_ground(observations: &[Observation]) -> Option<&GroundRecord> {
+    observations
+        .iter()
+        .filter(|observation| {
+            observation.ground.is_some() && observation.tick >= GROUND_CAPTURE_TICK
+        })
+        .min_by_key(|observation| observation.tick)
+        .and_then(|observation| observation.ground.as_ref())
 }
 
 pub(crate) fn read_jsonl<T: serde::de::DeserializeOwned>(
@@ -218,6 +288,59 @@ fn ground(rows: &[ScoreRow], observations: &[Observation], measures: &mut Measur
             measures,
             M_GROUND_CONSUMPTION_AT_START,
             f64::from(row.food_consumption),
+        );
+    }
+    if let Some(ground) = first_ground(observations) {
+        put(measures, M_GROUND_PEOPLE, f64::from(ground.population));
+        put(
+            measures,
+            M_GROUND_FED_WILD_STAY,
+            f64::from(ground.stay.people_fed),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_LOCAL,
+            f64::from(ground.local.people_fed),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_FAR,
+            f64::from(ground.far.people_fed),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_VISIBLE,
+            f64::from(ground.visible.people_fed),
+        );
+        put(
+            measures,
+            M_GROUND_FED_TENDED_LOCAL,
+            f64::from(ground.local.people_fed_tended),
+        );
+        put(
+            measures,
+            M_GROUND_FED_FIELD_LOCAL,
+            f64::from(ground.local.people_fed_field),
+        );
+        put(
+            measures,
+            M_GROUND_PLANNED_BANDS_LOCAL,
+            ground.local.bands.len() as f64,
+        );
+        put(
+            measures,
+            M_GROUND_MOVE_TARGET_DISTANCE,
+            f64::from(ground.move_target_distance),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_LOCAL_PATCHES,
+            f64::from(ground.local_patches.people_fed),
+        );
+        put(
+            measures,
+            M_GROUND_FED_WILD_VISIBLE_PATCHES,
+            f64::from(ground.visible_patches.people_fed),
         );
     }
 }
@@ -509,8 +632,10 @@ fn board(records: &[DecisionRecord], measures: &mut Measures) {
     let posted = with_state(DEMAND_STATE_POSTED);
     let fulfilled = with_state(DEMAND_STATE_FULFILLED);
     let expired = with_state(DEMAND_STATE_EXPIRED);
+    let declined = with_state(DEMAND_STATE_DECLINED);
     put(measures, M_BOARD_POSTED, posted.len() as f64);
     put(measures, M_BOARD_EXPIRED, expired.len() as f64);
+    put(measures, M_BOARD_DECLINED, declined.len() as f64);
     measures.insert(
         M_BOARD_FULFILMENT_RATE.to_owned(),
         fulfilment_rate(fulfilled.len(), expired.len()),
@@ -579,6 +704,7 @@ fn link(rows: &[ScoreRow], records: &[DecisionRecord], measures: &mut Measures) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ground::{PlannedBand, Shape, StartKind};
     use crate::instruments::decisions::{
         AlarmRecord, Decision, LinkRecord, PlanRecord, ReadyRecord,
     };
@@ -666,6 +792,52 @@ mod tests {
                 build_queue: Vec::new(),
             }],
             neighborhood: Vec::new(),
+            ground: None,
+        }
+    }
+
+    /// A land reading: `people` fed under every covering, one planned band, the given kind.
+    fn a_ground(people_fed: f32, kind: StartKind, move_target_distance: u32) -> GroundRecord {
+        let shape = |fed: f32| Shape {
+            bands: vec![PlannedBand {
+                x: 3,
+                y: 2,
+                sites: vec![0],
+                hands: 6,
+                people: 8,
+                food: fed * 0.4,
+                tended_food: fed * 0.8,
+                field_food: fed * 1.6,
+                nearest_planned_distance: None,
+                baskets: 6,
+                hunt_kits: BTreeMap::new(),
+            }],
+            people_fed: fed,
+            people_fed_tended: fed * 2.0,
+            people_fed_field: fed * 4.0,
+            people_uncovered: 4,
+            move_target: None,
+        };
+        GroundRecord {
+            band_id: 7,
+            x: 3,
+            y: 2,
+            population: 12,
+            working_age: 10,
+            k_max: 2,
+            per_person_consumption: 0.4,
+            sites: Vec::new(),
+            kind,
+            stay: shape(people_fed),
+            local: shape(people_fed + 1.0),
+            far: shape(people_fed + 2.0),
+            visible: shape(people_fed + 3.0),
+            move_target: None,
+            move_target_distance,
+            around_target: None,
+            kind_patches: StartKind::Short,
+            local_patches: shape(people_fed - 1.0),
+            visible_patches: shape(people_fed - 2.0),
         }
     }
 
@@ -683,9 +855,44 @@ mod tests {
         assert_eq!(measures[M_GROUND_SUSTAINED_TAKE_AT_START], Some(3.5));
         assert_eq!(measures[M_GROUND_BEST_CLUSTER_IN_HORIZON], Some(6.0));
         assert_eq!(measures[M_GROUND_CONSUMPTION_AT_START], Some(4.0));
+        assert!(
+            !measures.contains_key(M_GROUND_PEOPLE),
+            "no observation carries a reading"
+        );
+        assert!(labels(&observations).is_empty());
         let none = compute(&rows, &[], &[]);
         assert!(!none.contains_key(M_GROUND_SUSTAINED_TAKE_AT_START));
         assert!(!none.contains_key(M_GROUND_CONSUMPTION_AT_START));
+    }
+
+    /// The reading's measures and the start-kind label come off the earliest observation at or
+    /// after the capture tick that carries a reading — not tick 1's, whose herds read a bare band,
+    /// and not a later one.
+    #[test]
+    fn the_reading_measures_and_the_start_kind_read_the_first_observation_with_one() {
+        let rows = vec![row(1, 0), row(GROUND_CAPTURE_TICK, 0)];
+        let mut later = observation(GROUND_CAPTURE_TICK + 1, 9.0, 9.0);
+        later.ground = Some(a_ground(20.0, StartKind::Stay, 0));
+        let mut first = observation(GROUND_CAPTURE_TICK, 3.5, 6.0);
+        first.ground = Some(a_ground(5.0, StartKind::MoveAll, 9));
+        let mut bare = observation(1, 1.0, 1.0);
+        bare.ground = Some(a_ground(1.0, StartKind::Short, 0));
+        let observations = vec![later, bare, first];
+        let measures = compute(&rows, &[], &observations);
+        assert_eq!(measures[M_GROUND_PEOPLE], Some(12.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_STAY], Some(5.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_LOCAL], Some(6.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_FAR], Some(7.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_VISIBLE], Some(8.0));
+        assert_eq!(measures[M_GROUND_FED_TENDED_LOCAL], Some(12.0));
+        assert_eq!(measures[M_GROUND_FED_FIELD_LOCAL], Some(24.0));
+        assert_eq!(measures[M_GROUND_PLANNED_BANDS_LOCAL], Some(1.0));
+        assert_eq!(measures[M_GROUND_MOVE_TARGET_DISTANCE], Some(9.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_LOCAL_PATCHES], Some(4.0));
+        assert_eq!(measures[M_GROUND_FED_WILD_VISIBLE_PATCHES], Some(3.0));
+        let labels = labels(&observations);
+        assert_eq!(labels[L_GROUND_START_KIND], "move_all");
+        assert_eq!(labels[L_GROUND_START_KIND_PATCHES], "short");
     }
 
     fn demand(tick: u64, requester: &str, resource: &str, state: &str) -> DecisionRecord {
@@ -696,7 +903,11 @@ mod tests {
             resource: resource.to_owned(),
             amount: 8,
             state: state.to_owned(),
-            granted: (state != DEMAND_STATE_POSTED && state != DEMAND_STATE_EXPIRED).then_some(8),
+            granted: (state != DEMAND_STATE_POSTED
+                && state != DEMAND_STATE_EXPIRED
+                && state != DEMAND_STATE_DECLINED)
+                .then_some(8),
+            reason: (state == DEMAND_STATE_DECLINED).then(|| "no crafter yet".to_owned()),
         })
     }
 
@@ -717,10 +928,14 @@ mod tests {
                 "kit:gathering",
                 DEMAND_STATE_FULFILLED,
             ),
+            // A declined craft is counted, and is neither fulfilled nor expired.
+            demand(FIRST_TICK, "food", "craft:hoes@t9", DEMAND_STATE_POSTED),
+            demand(FIRST_TICK, "food", "craft:hoes@t9", DEMAND_STATE_DECLINED),
         ];
         let measures = compute(&rows, &records, &[]);
-        assert_eq!(measures[M_BOARD_POSTED], Some(2.0));
+        assert_eq!(measures[M_BOARD_POSTED], Some(3.0));
         assert_eq!(measures[M_BOARD_EXPIRED], Some(1.0));
+        assert_eq!(measures[M_BOARD_DECLINED], Some(1.0));
         assert_eq!(measures[M_BOARD_FULFILMENT_RATE], Some(0.5));
         assert_eq!(measures[M_BOARD_LATENCY], Some(1.0));
         assert_eq!(measures["board.food.fulfilment_rate"], Some(1.0));
@@ -728,6 +943,7 @@ mod tests {
         // No demand records at all: nothing to rate.
         let none = compute(&rows, &[], &[]);
         assert_eq!(none[M_BOARD_POSTED], Some(0.0));
+        assert_eq!(none[M_BOARD_DECLINED], Some(0.0));
         assert_eq!(none[M_BOARD_FULFILMENT_RATE], None);
         assert_eq!(none[M_BOARD_LATENCY], None);
     }

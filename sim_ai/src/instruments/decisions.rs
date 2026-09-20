@@ -117,10 +117,11 @@ pub enum LinkEventKind {
 }
 
 /// **A demand's transition on the board** (`docs/plan_ai_driver.md` §4, the demand board):
-/// `state` is `posted` | `planned` | `fulfilled` | `expired` (`board::DemandState::as_str`),
-/// `resource` the loadout word (`kit:<id>` / `material:<id>`), `granted` what the orchestrator
-/// granted on a `planned` / `fulfilled` row. One row per transition, so a demand's life reads
-/// off the log in order.
+/// `state` is `posted` | `planned` | `fulfilled` | `expired` | `declined`
+/// (`board::DemandState::as_str`), `resource` the loadout word (`kit:<id>` / `material:<id>` /
+/// `craft:<recipe>@t<start>`), `granted` what the orchestrator granted on a `planned` /
+/// `fulfilled` row, and `reason` the orchestrator's on a `declined` row or a trimmed `planned`
+/// one. One row per transition, so a demand's life reads off the log in order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DemandRecord {
     pub tick: u64,
@@ -130,6 +131,10 @@ pub struct DemandRecord {
     pub amount: u32,
     pub state: String,
     pub granted: Option<u32>,
+    /// `default` so a log written before the field existed still reads (`Decision::commands_text`'s
+    /// reason).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// The one line type: every record, tagged by `kind`.
@@ -235,6 +240,7 @@ mod tests {
                 amount: 8,
                 state: "planned".into(),
                 granted: Some(8),
+                reason: None,
             }),
         ]
     }

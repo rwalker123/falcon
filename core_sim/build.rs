@@ -90,17 +90,47 @@ fn resolve_worktree_git_dir(git_file: &Path) -> Option<PathBuf> {
     Some(path)
 }
 
-/// Emit `rerun-if-changed` for `HEAD` and the ref it points at, so committing on
-/// the current branch re-stamps the build id. Best-effort: a detached HEAD (no
-/// symbolic ref) or packed refs simply rely on the `HEAD` trigger.
+/// Emit `rerun-if-changed` for `HEAD`, the ref it points at and the HEAD reflog, so
+/// committing on the current branch re-stamps the build id.
+///
+/// **Only a path that EXISTS is ever registered.** Cargo treats a missing
+/// `rerun-if-changed` path as permanently changed: the build script reruns and the
+/// whole crate recompiles on *every* invocation, with no edit anywhere. That is what
+/// a worktree got from the naive `<git_dir>/<ref>` — a worktree's `git_dir` is its
+/// private `.git/worktrees/<name>`, which holds `HEAD` but **no `refs/`**; branch
+/// refs live in the common dir. A packed ref has no loose file in either place. The
+/// reflog is the trigger that survives both: it is per-worktree and is appended by
+/// every commit, checkout and reset.
 fn register_head_rerun_triggers(git_dir: &Path) {
     let head_path = git_dir.join("HEAD");
-    println!("cargo:rerun-if-changed={}", head_path.display());
+    register_if_present(&head_path);
+    register_if_present(&git_dir.join(HEAD_REFLOG));
 
     if let Ok(head) = std::fs::read_to_string(&head_path) {
         if let Some(ref_rel) = head.strip_prefix("ref:") {
-            let ref_path = git_dir.join(ref_rel.trim());
-            println!("cargo:rerun-if-changed={}", ref_path.display());
+            register_if_present(&common_git_dir(git_dir).join(ref_rel.trim()));
         }
+    }
+}
+
+/// The HEAD reflog, relative to a (worktree-private) git dir.
+const HEAD_REFLOG: &str = "logs/HEAD";
+
+/// The file a worktree's private git dir names its shared git dir in.
+const COMMON_DIR_FILE: &str = "commondir";
+
+fn register_if_present(path: &Path) {
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+/// The git dir that holds the shared refs: a worktree's private dir names it in
+/// `commondir` (a path relative to itself, normally `../..`); a plain checkout has no
+/// such file and is its own common dir.
+fn common_git_dir(git_dir: &Path) -> PathBuf {
+    match std::fs::read_to_string(git_dir.join(COMMON_DIR_FILE)) {
+        Ok(contents) => git_dir.join(contents.trim()),
+        Err(_) => git_dir.to_path_buf(),
     }
 }

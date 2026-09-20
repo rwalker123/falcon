@@ -29,6 +29,7 @@
 //! **The token is a secret.** [`SeatToken`]'s `Debug` is redacted and it has no `Display`,
 //! mirroring `core_sim::SeatToken`, so it cannot reach a log line by accident.
 
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -64,6 +65,10 @@ pub const SEAT_CLAIM_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 pub const SEAT_CLAIM_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long to wait before rebuilding a dropped command link.
 pub const RECONNECT_BACKOFF: Duration = Duration::from_millis(500);
+/// **How long a question on the seated link may go unanswered** ([`Link::ask`]) — the same
+/// allowance a claim gets: the server answers a query on its main loop, behind at most one turn's
+/// resolution, and a question still unanswered after this is reported and dropped, never retried.
+pub const QUERY_REPLY_TIMEOUT: Duration = SEAT_CLAIM_REPLY_TIMEOUT;
 /// **`unknown_seat` is retried forever, slowly.** The seat this process was told to fill may not
 /// exist *yet* — the launcher spawns it off a roster event and a world rebuild can re-seat the
 /// faction later — so an unknown seat is a wait, not a refusal.
@@ -126,6 +131,8 @@ pub enum LinkError {
     },
     #[error("a command could not be encoded: {0}")]
     Encode(String),
+    #[error("question {request_id} went unanswered for {:?}", QUERY_REPLY_TIMEOUT)]
+    QueryUnanswered { request_id: u64 },
 }
 
 /// What the link's reader threads hand the main loop.
@@ -183,6 +190,10 @@ pub struct Link {
     /// would leak another blocked thread and fd clone.
     stream_generation: u64,
     next_request_id: u64,
+    /// **What arrived while [`Link::ask`] was waiting for its answer** — frames, other replies —
+    /// handed out by [`Link::next_event`] ahead of the channel, in the order they came, so a
+    /// mid-turn recapture read during a question is not lost.
+    deferred: VecDeque<Inbound>,
 }
 
 impl Link {
@@ -213,20 +224,25 @@ impl Link {
             generation,
             stream_generation,
             next_request_id,
+            deferred: VecDeque::new(),
         })
     }
 
     /// The next event from either socket, or `None` when `timeout` elapses with nothing to say.
+    /// Whatever [`Link::ask`] set aside while waiting comes first.
     pub fn next_event(&mut self, timeout: Duration) -> Option<LinkEvent> {
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let message = match self.inbound.recv_timeout(remaining) {
-                Ok(message) => message,
-                Err(RecvTimeoutError::Timeout) => return None,
-                Err(RecvTimeoutError::Disconnected) => {
-                    unreachable!("the link holds its own sender, so the channel cannot close")
-                }
+            let message = match self.deferred.pop_front() {
+                Some(message) => message,
+                None => match self.inbound.recv_timeout(remaining) {
+                    Ok(message) => message,
+                    Err(RecvTimeoutError::Timeout) => return None,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        unreachable!("the link holds its own sender, so the channel cannot close")
+                    }
+                },
             };
             let event = match message {
                 Inbound::Reply {
@@ -272,6 +288,48 @@ impl Link {
     /// Ask the server for a full frame of this seat's world.
     pub fn resync(&mut self) -> Result<(), LinkError> {
         self.send(CommandPayload::Resync)
+    }
+
+    /// **Ask one question on the seated link and block for its answer.** A faction-bearing
+    /// question (`HuntCrewTake`) is answered only to the connection sitting at that faction's
+    /// seat, which is this one. The answer comes back on the command socket through the same
+    /// reply reader that carries the claim's — ⛔ never read off the socket here: two readers on
+    /// one socket split a frame between them (`stream_generation`'s doc) — so this waits on the
+    /// channel, sets everything else aside ([`Self::next_event`] hands it out afterwards), and
+    /// gives up after `timeout`. A dropped command socket is both this question's error and the
+    /// next event, so the loop still reconnects.
+    pub fn ask(&mut self, query: QueryPayload, timeout: Duration) -> Result<QueryReply, LinkError> {
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send(CommandPayload::Query { request_id, query })?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.inbound.recv_timeout(remaining) {
+                Ok(Inbound::Reply {
+                    generation,
+                    envelope,
+                }) if generation == self.generation && envelope.request_id == request_id => {
+                    return Ok(envelope.reply);
+                }
+                Ok(Inbound::CommandDropped { generation, detail })
+                    if generation == self.generation =>
+                {
+                    self.deferred.push_back(Inbound::CommandDropped {
+                        generation,
+                        detail: detail.clone(),
+                    });
+                    return Err(LinkError::CommandDropped(detail));
+                }
+                Ok(other) => self.deferred.push_back(other),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(LinkError::QueryUnanswered { request_id });
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    unreachable!("the link holds its own sender, so the channel cannot close")
+                }
+            }
+        }
     }
 
     /// The command socket died: rebuild it, re-claim (a fresh token), and re-greet the stream with
@@ -386,7 +444,8 @@ impl UnseatedConnection {
 
     /// Ask one question that names no faction (`ListSaves`, `FactionCapacity`) and block for its
     /// answer. A faction-bearing question is refused from an unseated connection, and is never
-    /// this connection's to ask.
+    /// this connection's to ask ([`Link::ask`] is the seated one's). This connection has no reply
+    /// reader, so the socket is read here.
     pub fn ask(&mut self, query: QueryPayload, timeout: Duration) -> io::Result<QueryReply> {
         let request_id = self.next_request_id;
         self.next_request_id += 1;

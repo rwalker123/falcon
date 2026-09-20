@@ -54,6 +54,18 @@ RUN_DIR=""
 # from an earlier run is never printed for a session that recorded nothing.
 CURRENT_RUN_FILE="$RUNS_DIR/current-run"
 
+# The client is launched only once the server is LISTENING. The menu asks the server a question
+# the moment it appears, and an unanswered ask is a latched "Unable to connect to the server"
+# notice -- correct for a packaged game, whose launcher hands the client a ready server
+# (`launcher/src/main.rs`: `wait_for_ready`), and wrong here for exactly as long as `cargo run`
+# used to spend compiling in the background while the client booted in front of it. Same two
+# numbers as the launcher's READY_POLL_INTERVAL / READY_TIMEOUT. The timeout covers STARTUP only:
+# the build runs in the foreground before it, so a slow compile can never eat it.
+READY_POLL_SECONDS=0.25
+READY_TIMEOUT_SECONDS=30
+# The server's own exit status for "could not bind the block" (`port_alloc`, under an explicit base).
+PORT_ALLOC_EXIT_CODE=2
+
 usage() {
   cat <<'EOF'
 Usage: scripts/run_stack.sh [--server-only|--client-only|--godot-only] [--port-base N] [--debug] [--no-record] [--help]
@@ -336,6 +348,19 @@ cleanup() {
 
 # The server's environment: ports, and the record directory unless --no-record.
 start_server() {
+  # Built in the FOREGROUND first, so `cargo run` below has nothing left to compile: a compile
+  # error stops the script here, under `set -e`, instead of scrolling past behind a client that
+  # then reports a server it cannot reach, and the readiness wait never has to outlast a build.
+  echo "[run_stack] Building core simulation server..."
+  cargo build $SERVER_PROFILE_FLAG -p core_sim --bin server
+  # The readiness wait asks "is something listening on this block", so the block has to be EMPTY
+  # before the server starts or a stranger's listener answers for it. An auto-derived base was
+  # already bumped to a free block above; an explicit one is honoured exactly, and the server
+  # would refuse it with this same status a moment later.
+  if ! block_free "$PORT_BASE"; then
+    echo "[run_stack] Ports $COMMAND_PORT-$LOG_PORT are not all free -- something (most likely another server) is already listening on port base $PORT_BASE. Stop it, or pass a different --port-base." >&2
+    exit "$PORT_ALLOC_EXIT_CODE"
+  fi
   # An `env` assignment rather than an export, so a later --client-only run in the same shell is
   # never handed a stale record directory. The expansion is guarded so --no-record passes `env`
   # no empty word (bash 3.2 under `set -u` rejects an empty array here, hence a string).
@@ -354,6 +379,37 @@ start_server() {
   trap cleanup EXIT INT TERM
 }
 
+# Block until the server started above is listening, so the client never boots ahead of it.
+# The server binds its whole block at once, before its main loop (`port_alloc::allocate`), so one
+# port answering means all three do. The LOG port is the one probed: a connect-and-close there is
+# a log client that came and went (one "Dropping log client" line in the server's output), where
+# the command port would mint a connection identity for it. A server that has already died will
+# never listen, so that is reported at once rather than after the whole timeout. Exits on either
+# failure; the EXIT trap `start_server` set stops the server and prints the recipe.
+wait_for_server() {
+  local polls_left
+  # Whole polls, in integer arithmetic: bash has no floats, and READY_POLL_SECONDS is a fraction.
+  polls_left="$(awk -v t="$READY_TIMEOUT_SECONDS" -v p="$READY_POLL_SECONDS" 'BEGIN { printf "%d", t / p }')"
+  echo "[run_stack] Waiting for the server to listen on port $LOG_PORT..."
+  while ! port_in_use "$LOG_PORT"; do
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      local server_exit=0
+      wait "$SERVER_PID" || server_exit=$?
+      echo "[run_stack] The server exited (code=$server_exit) before it was ready; its output is above. Not launching the client." >&2
+      # Never 0: a server that returned cleanly without ever listening still failed this run.
+      (( server_exit == 0 )) && server_exit=1
+      exit "$server_exit"
+    fi
+    if (( polls_left <= 0 )); then
+      echo "[run_stack] The server was not listening on port $LOG_PORT after ${READY_TIMEOUT_SECONDS}s. Not launching the client." >&2
+      exit 1
+    fi
+    polls_left="$((polls_left - 1))"
+    sleep "$READY_POLL_SECONDS"
+  done
+  echo "[run_stack] Server is ready."
+}
+
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]]; then
   # Backgrounded rather than exec'd so the exit path above runs: the recipe is printed
   # whether the server is stopped by Ctrl-C or exits on its own.
@@ -367,6 +423,7 @@ fi
 
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == true ]]; then
   start_server
+  wait_for_server
 fi
 
 CLIENT_EXIT_CODE=0

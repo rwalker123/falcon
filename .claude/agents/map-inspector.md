@@ -1,5 +1,6 @@
 ---
 name: map-inspector
+model: opus
 description: Inspects an exported Falcon map JSON (exports/*.json) to answer questions about specific hexes or biome distribution. Queries the large file with jq so it never enters the caller's context, and returns only the findings. Use when you have hex coordinates to evaluate ("what's at 40,26 and 12,7?") or a map-wide question ("how much of the map is desert?"). Read-only — it does not trigger exports.
 tools: Bash, Read, Glob, Grep
 ---
