@@ -2202,7 +2202,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > | ordinary **band / expedition movement** | *13b's* | *13b's* |
     >
     > > **⛔ THIS TABLE READ `mass-tiles` AND `worker-tiles`, TWO LEVERS, AND THE FIRST ONE WAS WRONG.**
-    > > `balance_supply_networks` drops sub-`min_transfer` moves, so a **balanced** network ships
+    > > `balance_supply_networks` drops sub-dead-band moves, so a **balanced** network ships
     > > nothing — a mass-driven rate would leave two camps who have shared a larder for thirty turns
     > > with **no path at all**, exactly the case #532 forbids. It is the *link*, not the tonnage: a
     > > trail forms because they are neighbours who walk to each other. One lever, and it shipped in
@@ -2365,7 +2365,7 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > >
     > > **① THE TRAFFIC RATE IS THE LINK, NOT THE TONNAGE.** This section specified **mass-tiles**
     > > — quantity moved × distance. **That is wrong for the case the branch exists to serve.**
-    > > `balance_supply_networks` drops sub-`min_transfer` moves, so a *balanced* network ships
+    > > `balance_supply_networks` drops sub-dead-band moves, so a *balanced* network ships
     > > nothing: a mass-driven rate leaves two camps who have shared a larder for thirty turns with
     > > **no path at all**, which is exactly the case #532 forbids. A trail forms because they are
     > > neighbours who walk to each other, not because of what they were carrying. One lever —

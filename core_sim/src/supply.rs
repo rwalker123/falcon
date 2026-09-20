@@ -255,13 +255,19 @@ fn find(parent: &mut [usize], mut i: usize) -> usize {
 /// nodes in proportion to how much each is short. Net change over the network is
 /// `-friction × amount shipped`.
 ///
-/// ⛔ **THE DEAD-BAND IS A FRACTION OF `total`, RESOLVED HERE, PER COMMODITY** — which is the whole
-/// of why this signature takes `min_transfer_fraction` and not a quantity. One balancer serves food
-/// (held in the hundreds) and a single `(material, rating)` pile (held in fractions of a unit), and
-/// an absolute floor cannot be the noise threshold for both: at `0.5` it was the noise threshold for
-/// food and a **wall** for every material, dropping a computed move silently every turn. Scaling it
-/// to what the network actually holds of *this* commodity is one rule that means the same thing at
-/// either scale — see [`crate::supply_network_config::SupplyNetworkConfig::min_transfer_fraction`].
+/// ⛔ **THE DEAD-BAND IS A FRACTION OF THE NODE'S OWN `fair` SHARE, RESOLVED HERE, PER COMMODITY
+/// AND PER MEMBER** — which is the whole of why this signature takes `min_transfer_fraction` and not
+/// a quantity. One balancer serves food (held in the hundreds) and a single `(material, rating)`
+/// pile (held in fractions of a unit), and an absolute floor cannot be the noise threshold for both:
+/// at `0.5` it was the noise threshold for food and a **wall** for every material, dropping a
+/// computed move silently every turn.
+///
+/// The denominator is `fair`, not `total`, because `total` makes the threshold grow with member
+/// count while the `send` / `want` it is compared against does not: twelve camps holding what two
+/// camps hold per head would have to clear a bar six times higher for the same shortfall. Against
+/// `fair` the rule is member-count free by construction — twelve equal camps and two equal camps at
+/// the same per-capita stock resolve the *same* dead-band. See
+/// [`crate::supply_network_config::SupplyNetworkConfig::min_transfer_fraction`].
 fn balance_commodity(
     weights: &[Scalar],
     stores: &[Scalar],
@@ -276,12 +282,14 @@ fn balance_commodity(
         return deltas;
     }
     let total = stores.iter().copied().fold(scalar_zero(), |a, b| a + b);
-    // An empty network has nothing to move, and a zero threshold is the right reading for it.
-    let min_transfer = total * min_transfer_fraction;
     let mut sends = vec![scalar_zero(); n];
     let mut wants = vec![scalar_zero(); n];
     for i in 0..n {
         let fair = total * (weights[i] / total_weight);
+        // The dead-band is a fraction of *this node's* fair share — the same quantity `send` and
+        // `want` are measured against — so adding members never raises the bar one node's move has
+        // to clear. An empty network reads as a zero threshold, which is the right reading for it.
+        let min_transfer = fair * min_transfer_fraction;
         if stores[i] > fair {
             let send = min(stores[i] - fair, throughput);
             if send >= min_transfer {
@@ -791,9 +799,9 @@ mod tests {
         assert!(((after0 / 3.0) - (after1 / 1.0)).abs() < 1e-3);
     }
 
-    /// A near-balanced network doesn't churn: a move below the dead-band is dropped. `0.05` of the
-    /// network's 100 is the same `5.0` threshold this case was written against when the lever was
-    /// an absolute quantity.
+    /// A near-balanced network doesn't churn: a move below the dead-band is dropped. Each band's
+    /// fair share of the 100 here is `50`, so `0.1` of it is the same `5.0` threshold this case was
+    /// written against when the lever was an absolute quantity.
     #[test]
     fn min_transfer_dead_band() {
         let d = balance_commodity(
@@ -801,16 +809,16 @@ mod tests {
             &[s(51.0), s(49.0)],
             s(1000.0),
             s(0.0),
-            s(0.05),
+            s(0.1),
         );
         assert!(d[0].to_f32().abs() < 1e-6, "no churn: {}", d[0].to_f32());
         assert!(d[1].to_f32().abs() < 1e-6);
     }
 
-    /// ⛔ **THE DEAD-BAND AT FOOD'S SCALE STILL DOES ITS ONLY JOB.** The shipped `0.001` was chosen
+    /// ⛔ **THE DEAD-BAND AT FOOD'S SCALE STILL DOES ITS ONLY JOB.** The shipped `0.0025` was chosen
     /// to leave food where the retired absolute `0.5` had it, so the anti-churn case has to keep
-    /// passing at the stocks two camps actually hold: on a network of 400 the threshold is `0.4`,
-    /// and a two-tenths imbalance is still noise.
+    /// passing at the stocks two camps actually hold: two camps on 400 between them have a fair
+    /// share of `200`, the threshold is exactly `0.5`, and a two-tenths imbalance is still noise.
     #[test]
     fn the_shipped_fraction_still_damps_churn_at_food_scale() {
         let d = balance_commodity(
@@ -852,17 +860,102 @@ mod tests {
         );
         assert!(shipped[0].to_f32() < 0.0, "and the holder ships it");
 
-        // `0.5 / 0.75` is the fraction that reproduces the retired absolute floor on this network.
+        // The threshold is a fraction of the node's own fair share — `holder / 2.0` for two equal
+        // bands — so `0.5 / (holder / 2.0)` is the fraction that reproduces the retired absolute
+        // floor on this network. Dividing by `holder` instead would denominate it in what the
+        // network holds, which is the reading this test's own subject retired.
         let retired = balance_commodity(
             &[s(1.0), s(1.0)],
             &[s(holder), s(0.0)],
             s(50.0),
             s(0.0),
-            s(0.5 / holder),
+            s(0.5 / (holder / 2.0)),
         );
         assert!(
             retired.iter().all(|d| d.to_f32().abs() < 1e-6),
             "the retired absolute floor moved nothing: {retired:?}"
+        );
+    }
+
+    /// ⛔ **TWELVE BANDS MEET THE SAME DEAD-BAND TWO BANDS DO.** The threshold gates a **per-node**
+    /// move, so denominating it in `Σ stores` made it climb with member count while a node's fair
+    /// share stood still: at the shipped fraction twelve camps resolved a `6.0` bar where two camps
+    /// on the same stock per head resolved `1.0`, and a band `2.0` short of its share was zeroed out
+    /// of both `sends` and `wants` on the larger network — exactly the case the relative form exists
+    /// to serve. Against the node's own fair share the bar is `0.5` for both, by construction.
+    ///
+    /// **Four arms off one stock per head**, because the claim is comparative: the two-band and
+    /// twelve-band networks move the same food under the shipped dial, and the twelve-band one is
+    /// walled by the fraction that reproduces the retired `Σ stores` denominator on it (`× members`,
+    /// since equal weights make `total` exactly `members × fair`) — a bar the two-band network's own
+    /// `Σ stores` denominator never raised.
+    #[test]
+    fn twelve_bands_meet_the_same_dead_band_two_bands_do() {
+        const MEMBERS: usize = 12;
+        let per_capita = 200.0_f32;
+        let imbalance = 2.0_f32;
+
+        let two = balance_commodity(
+            &[s(1.0), s(1.0)],
+            &[s(per_capita + imbalance), s(per_capita - imbalance)],
+            s(50.0),
+            s(0.0),
+            s(shipped_min_transfer_fraction()),
+        );
+
+        let weights = vec![s(1.0); MEMBERS];
+        let mut stores = vec![s(per_capita); MEMBERS];
+        stores[0] = s(per_capita + imbalance);
+        stores[1] = s(per_capita - imbalance);
+        let twelve = balance_commodity(
+            &weights,
+            &stores,
+            s(50.0),
+            s(0.0),
+            s(shipped_min_transfer_fraction()),
+        );
+
+        assert!(
+            (twelve[1].to_f32() - imbalance).abs() < 1e-2,
+            "the short band is topped up on a twelve-band network: {}",
+            twelve[1].to_f32()
+        );
+        assert!(
+            (twelve[1].to_f32() - two[1].to_f32()).abs() < 1e-2,
+            "member count moved the answer: two={} twelve={}",
+            two[1].to_f32(),
+            twelve[1].to_f32()
+        );
+        assert!(
+            twelve[2..].iter().all(|d| d.to_f32().abs() < 1e-6),
+            "the already-balanced members stay put: {twelve:?}"
+        );
+
+        // `fraction × members` is the threshold the retired `Σ stores` denominator resolved on this
+        // network — the bar that grew with the roster.
+        let network_denominated = balance_commodity(
+            &weights,
+            &stores,
+            s(50.0),
+            s(0.0),
+            s(shipped_min_transfer_fraction() * MEMBERS as f32),
+        );
+        assert!(
+            network_denominated.iter().all(|d| d.to_f32().abs() < 1e-6),
+            "the network-denominated threshold walled the move: {network_denominated:?}"
+        );
+        // And on two bands that same denominator let it through, which is the asymmetry.
+        let two_denominated = balance_commodity(
+            &[s(1.0), s(1.0)],
+            &[s(per_capita + imbalance), s(per_capita - imbalance)],
+            s(50.0),
+            s(0.0),
+            s(shipped_min_transfer_fraction() * 2.0),
+        );
+        assert!(
+            two_denominated[1].to_f32() > 0.0,
+            "two bands were never walled by it: {}",
+            two_denominated[1].to_f32()
         );
     }
 

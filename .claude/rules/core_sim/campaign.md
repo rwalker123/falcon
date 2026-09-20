@@ -28,7 +28,7 @@ paths:
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block (see "The opening loadout" below): `material_points` (**30**, one point buys one unit), `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 3` / `fibre 17` / `hide 8`, serde-defaulting to empty — the **default outfit** the sim applies to every band at creation), and **`kit_defaults`** (`big_game 4` / `trapping 4` / `gathering 4`, same optionality — its kit twin, opening on Stalking / Trapping / Harvesting so a band stands in a plausible outfit rather than a column of zeros, with hands still left to spend). ⛔ **These are APPLIED, not suggested** — see `starting-loadout.md`; the window's accepted rows are set by that apply, so they describe gear the band really holds. **There is deliberately no kit budget here.** `validate` rejects a `material_points` of `0`, an empty or duplicated `pickable_materials`, a `material_defaults` key outside the pick list, defaults summing above the budget, and a `kit_defaults` count of `0`; `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`, the one place all three tables are in scope. ⛔ **There is no sum check on `kit_defaults` and there cannot be**, because the kit budget is the spawned band's head count rather than a number in this file; an over-allocation is clamped at publish time instead (see "The opening loadout") |
-| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of what the network holds of that commodity — see "The dead-band is relative, because one balancer serves food and a bone pile" below) |
+| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
 
@@ -494,8 +494,17 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 
 > #### The dead-band is RELATIVE, because one balancer serves food and a bone pile
 >
-> `min_transfer_fraction` (0.001) drops a move smaller than **that fraction of what the network holds
-> of that commodity**. It is not a quantity, and the distinction is the whole of the lever.
+> `min_transfer_fraction` (0.0025) drops a move smaller than **that fraction of the node's own
+> per-capita fair share** of that commodity. It is not a quantity, and the distinction is the whole
+> of the lever.
+>
+> ⛔ **THE DENOMINATOR IS THE FAIR SHARE, NOT THE NETWORK'S TOTAL, AND THAT IS NOT A DETAIL.** The
+> threshold is compared against a **per-node** move, so denominating it in `Σ stores` made it grow
+> linearly with member count while a node's share stayed put: two camps holding 200 food each
+> resolved `0.4`, twelve camps holding 200 each resolved `2.4`, and a band `2.0` short of its share
+> was zeroed out of both `sends` and `wants` and got nothing — worse than the absolute floor it
+> replaced, on exactly the large networks the relative form exists to serve. Against the fair share
+> both cases resolve `0.5`, by construction.
 >
 > The dial was an absolute `min_transfer: 0.5` from the food-only original and never moved; when
 > materials were given to the same balancer they inherited it unexamined. **Food is held in the
@@ -510,18 +519,31 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > because materials have no transfer account (see "Food only — for the IDENTITY"), nothing on the
 > glass could say so.
 >
-> **`0.001` is calibrated to leave food where it was**, not as a fresh tuning judgement: on the few
-> hundred units two camps typically hold between them it lands within a rounding error of the retired
-> `0.5`, and on a sub-unit material pile it is below the `Scalar` quantum's own reach. Both halves are
-> pinned — `supply::tests::the_shipped_fraction_still_damps_churn_at_food_scale` and
-> `a_sub_unit_material_pile_pools_where_the_absolute_floor_walled_it`, the latter asserting the same
-> stores under both dials so the claim stays comparative.
+> **`0.0025` is calibrated to leave food where it was**, not as a fresh tuning judgement: two camps
+> holding 400 food between them have a fair share of 200, and `200 × 0.0025` is exactly the retired
+> `0.5`. On a `0.75` bone pile the same dial resolves `0.00094` — **some 400× smaller than the
+> `0.375` move it would have to block**, so it cannot wall one, and it rises with the pile, which is
+> the point. (It is emphatically *not* "below the `Scalar` quantum": `Scalar::SCALE` is `1_000_000`,
+> so `0.00094` is ~940 quanta and a perfectly live comparison.) All three halves are pinned —
+> `supply::tests::the_shipped_fraction_still_damps_churn_at_food_scale`,
+> `a_sub_unit_material_pile_pools_where_the_absolute_floor_walled_it` (which asserts the same stores
+> under both dials, so the claim stays comparative) and the member-count case above.
 >
-> ⛔ **THIS MAKES MATERIALS MOVE; IT DOES NOT MAKE THEM ARRIVE IN A USABLE LUMP.** Pooling equalizes
-> to a per-capita share, and a recipe wants a whole unit — `hoes` needs `1.0` bone, so a neighbour
-> holding `0.75` can never do more than bring both bands to `0.375`. Getting a whole bone to a
-> particular band is a **shipment** (#517), an explicit act, and the balancer must not be taught to
-> serve a recipe's demand — that would delete the decision the shipment exists to be.
+> ⛔ **EQUALIZING A MATERIAL CAN TAKE A BAND *BELOW* A RECIPE THRESHOLD IT WAS ABOVE**, and the
+> retired floor was hiding that by accident. A recipe's gate is `pass_is_affordable`
+> (`systems/crafting.rs`), which reads `LocalStore::material_total` — **summed across every rating
+> batch**, so fragmentation across the eight bone piles never blocked a craft and a `0.375` arrival
+> genuinely can be what makes a pass affordable. What *can* block one is the equalization itself:
+> band A holding `1.2` bone beside band B holding `0.3` used to keep its `1.2`, because the `0.45`
+> move fell under the absolute floor; now it ships, both land near `0.74`, and **neither can make the
+> hoe either of them could have made**. Concentration is what a whole-unit recipe needs and pooling
+> is what destroys it.
+>
+> **That is a consequence to know, not a bug to engineer around.** It is inherent to per-capita
+> equalization; the floor only masked it inside a `0`–`0.5` window, and re-introducing a
+> craftability guard would make the balancer read a recipe's demand. Getting a whole bone to a
+> particular band is a **shipment** (#517) — an explicit act — and the decision the shipment exists
+> to be is exactly what a demand-aware balancer would delete.
 
 Each turn the same pass also records **network membership** in the `SupplyNetworkMembership`
 resource (`entity → id`, cleared and rebuilt every turn): each connected component with ≥ 2 bands
