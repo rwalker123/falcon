@@ -346,41 +346,23 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
     );
 
     // The sim's rule replayed (`fission::open_splinter_loadout_window` and
-    // `rebalance_partitioned_grant`): per split, the splinter takes `min(asked, remaining)`
-    // slots; the parent is re-fitted to the rest, and only when that binds is what it shed
-    // fitted to the splinter's slots.
+    // `rebalance_partitioned_grant`): per split, the splinter takes `min(asked, remaining)` kit
+    // slots off the parent's budget and MINTS ITS OWN DEFAULT against them
+    // (`starting_loadout::outfit_band_with_defaults`), while the parent's own allocation is
+    // re-fitted to what the partition left it.
+    //
+    // ⛔ **THE PARENT'S SHED ROWS ARE NOT HANDED DOWN.** That arm of `rebalance_partitioned_grant`
+    // was deleted when every band began holding its default outfit from the moment it exists —
+    // handing the leftovers down would fight the default the splinter has already applied. So the
+    // family's per-kit totals are NOT the granted line re-cut: each side is minted from its own
+    // budget, the two budgets still partition the grant exactly, and each side's proportional floor
+    // leaves its own remainder unspent. `split_loadout.rs`
+    // → `the_splinters_outfit_is_its_own_default_rather_than_the_parents_leftovers` pins the rule
+    // in process; this replays it against a real server.
     let parent_budget = *kit_budgets
         .get(&band)
         .unwrap_or_else(|| panic!("band {band} had no open grant window before the AI played"));
-    let mut remaining = parent_budget;
-    let mut parent_holds = granted.clone();
-    let mut expected: BTreeMap<String, u32> = BTreeMap::new();
-    for (child, asked) in children.iter().zip(&splits) {
-        let slots = (*asked).min(remaining);
-        remaining -= slots;
-        let (kept, bound) = clamped_kit_defaults(&parent_holds, remaining);
-        let kept: BTreeMap<String, u32> = kept.into_iter().collect();
-        let shed: BTreeMap<String, u32> = if bound {
-            parent_holds
-                .iter()
-                .filter_map(|(kit_id, count)| {
-                    let left = count - kept.get(kit_id).copied().unwrap_or(0);
-                    (left > 0).then(|| (kit_id.clone(), left))
-                })
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
-        let childs_share: BTreeMap<String, u32> =
-            clamped_kit_defaults(&shed, slots).0.into_iter().collect();
-        parent_holds = kept;
-        for (kit_id, count) in own_lines.get(child).unwrap_or(&childs_share) {
-            *expected.entry(kit_id.clone()).or_default() += count;
-        }
-    }
-    for (kit_id, count) in &parent_holds {
-        *expected.entry(kit_id.clone()).or_default() += count;
-    }
+    let expected = family_kits(&granted, parent_budget, &splits, &children, &own_lines);
     if splits.is_empty() {
         assert_eq!(
             expected, granted,
@@ -412,6 +394,87 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
             );
         }
     }
+}
+
+/// **What the family holds after its grant-turn splits**, per kit — the sim's own rule replayed.
+///
+/// `granted` is the accepted line the parent was outfitted with, `parent_budget` its kit budget
+/// before any split, `splits` the workers each grant-turn split asked for in the order sent, and
+/// `children` the splinters' band ids in the same order. A splinter that sent a loadout order of
+/// its own holds that instead of its default, which is what `own_lines` carries.
+fn family_kits(
+    granted: &BTreeMap<String, u32>,
+    parent_budget: u32,
+    splits: &[u32],
+    children: &[u64],
+    own_lines: &BTreeMap<u64, BTreeMap<String, u32>>,
+) -> BTreeMap<String, u32> {
+    let defaults = opening_kit_defaults();
+    let mut remaining = parent_budget;
+    let mut parent_holds = granted.clone();
+    let mut expected: BTreeMap<String, u32> = BTreeMap::new();
+    for (child, asked) in children.iter().zip(splits) {
+        let slots = (*asked).min(remaining);
+        remaining -= slots;
+        parent_holds = clamped_kit_defaults(&parent_holds, remaining)
+            .0
+            .into_iter()
+            .collect();
+        let childs_default: BTreeMap<String, u32> = clamped_kit_defaults(&defaults, slots)
+            .0
+            .into_iter()
+            .collect();
+        for (kit_id, count) in own_lines.get(child).unwrap_or(&childs_default) {
+            *expected.entry(kit_id.clone()).or_default() += count;
+        }
+    }
+    for (kit_id, count) in &parent_holds {
+        *expected.entry(kit_id.clone()).or_default() += count;
+    }
+    expected
+}
+
+/// ⛔ **THE REPORTED CASE, PINNED WITHOUT A SERVER.**
+///
+/// Whether the utility seat splits at all on its grant turn is the AI's decision, and it does not
+/// on every host — the CI runner split and the developer machine did not, so the arithmetic above
+/// went unexercised locally while it failed in CI. This replays the exact reported numbers: a band
+/// granted 15 `gathering` and 2 `big_game` against a budget of 17, splitting once for 4 workers.
+///
+/// Under the retired rule the parent's shed rows were re-fitted to the splinter's slots, which put
+/// **14** `gathering` in the family. The splinter mints its **own default** now, so the two sides
+/// are minted from two budgets and each floors its own remainder away: 12.
+#[test]
+fn a_grant_turn_split_leaves_the_family_holding_two_minted_defaults() {
+    let granted = BTreeMap::from([("big_game".to_owned(), 2), ("gathering".to_owned(), 15)]);
+    let expected = family_kits(&granted, 17, &[4], &[3], &BTreeMap::new());
+
+    // The parent is re-fitted to the 13 slots the split left it: `floor(2 x 13 / 17) = 1` and
+    // `floor(15 x 13 / 17) = 11`. The splinter mints the profile's `4/4/4` against 4 slots:
+    // `floor(4 x 4 / 12) = 1` of each.
+    assert_eq!(
+        expected,
+        BTreeMap::from([
+            ("big_game".to_owned(), 2),
+            ("gathering".to_owned(), 12),
+            ("trapping".to_owned(), 1),
+        ]),
+        "the family holds each side's own minted default, not the granted line re-cut"
+    );
+}
+
+/// The kit half of the **default outfit every band mints for itself at creation**, off the shipped
+/// start profile the harness builds its world from (`build_world` sends a plain `new_game`, so the
+/// server resolves the same builtin profiles this reads).
+fn opening_kit_defaults() -> BTreeMap<String, u32> {
+    let profiles = core_sim::StartProfiles::builtin();
+    profiles
+        .first()
+        .expect("the builtin start profiles carry a profile")
+        .overrides()
+        .opening_loadout
+        .kit_defaults
+        .clone()
 }
 
 /// The `kit <id> <n>` rows of a `set_starting_loadout` line, summed per kit.
