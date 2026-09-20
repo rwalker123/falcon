@@ -509,17 +509,14 @@ it being a separate band. A separate band would have needed a merge verb and a m
 - `drop_off_within_tiles`: redundant with `reach_tiles` once the party is a network node.
 - The hunt expedition path, its forecast, and the second hunt command.
 
-### Who eats what (open)
+### Who eats what (decided)
 
-Two consistent answers, pick one:
-
-- **The party keeps no larder when near.** It pools 100% and eats from the band's larder. The
-  band's runway readout is unchanged.
-- **Every party has a larder and eats from it.** Consistent with a far party, which must. The
-  band's consumption drops by the party's share and the pooled food is net of what they ate.
-
-If the party is simply a network node, the second answer is what the systems already do, and the
-first would have to be special-cased.
+**Everyone in the party eats, from the party's own take.** What is left after the party is fed goes
+to the connected band — pooled within reach, hauled beyond it — or rots. A party has no store of its
+own: its larder is a pack in transit, never a place, so nothing about it tethers anyone. The band's
+consumption drops by the party's share and what arrives is net of what the party ate, which is what
+the systems already do for a network node. *When* a far party's haul is delivered, and what gates
+its launch, is a decision the work-party slice makes.
 
 ### In the anthropology
 
@@ -542,21 +539,23 @@ case, the haul and the party reading as part of the band, before any sim code.
 
 ## Open questions
 
-- Belief as a tile value: whether it is per-faction or per-place (another faction's dead on your
-  tile), and how much each source adds.
 - The lineage levers: `L`, `K`, contact range; whether lines ever regrow in a long-separated group.
-- Shedding with no route: what happens to people leaving a truly isolated group above its ceiling
-  (a wild/independent cohort? deaths? nothing until a route exists?).
-- The away-from-belief morale term: its scale, and whether it reads distance or only presence.
-- The population-genetics numbers (50/500, ~500 mating networks, founder-group histories): verify
-  before the spec leans on them.
-- The monument in the improvement catalog: the first improvement with no yield — what its
-  `labor_draw` and decay mean for a thing that produces belief.
-- The work party: the shipment launch gate for a far party whose only tie is the haul; which of
-  the two "who eats" answers; whether a far forage party's larder counts toward the tether.
+  The population-genetics numbers behind them are verified when that slice is built, not before.
+- The work party: when a far party's haul is delivered, and what gates its launch when the party's
+  only tie is the haul itself — a decision the work-party slice makes.
 - The storage lesson's pace: measure how much surplus a well-placed band actually runs today before
   setting how fast rot teaches storage.
 - Why moving never paid: measure it before touching depletion tuning.
+- Writing, the third ceiling: what the administration ceiling caps and what record-keeping does —
+  the one rung of the ladder with no design behind it (arc #693).
+
+Decided since first listed: **belief is per place** (it exists to promote settling *there*; whose
+dead are in the ground is The Telling's to narrate). **People shed with no route stay** — they leave
+only when there is somewhere to go; when no practical band can take them, the second choice is to
+break off *as a group* and form their own faction (waits on multi-faction, #513). **Everyone in a
+work party eats** — the party feeds itself from its own take, and what is left goes to the connected
+band or rots; a party has no store, so nothing of its own to tether it. The monument's upkeep and
+decay are a rung's, like any other (see the catalog section).
 
 ## Related
 

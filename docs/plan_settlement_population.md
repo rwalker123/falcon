@@ -76,6 +76,15 @@ lowest-priority demands: under-tended improvements lose condition, builds stall.
 scarce currency**, and idle labor is the signal that you can grow or expand.
 
 ### Improvements — the atom; a config catalog by class
+
+> **Superseded (2026-09-19).** This catalog was specified before the intensification ladder shipped,
+> and the ladder *is* this catalog: every field below maps onto a rung field, and the ladder is
+> already generic across five branches. What remains to build is one seam — a branch whose source is
+> a **tile** — after which storage, belief, defense and dwellings are branch configs plus a payoff.
+> Footprint (multiple per tile) is deliberately not carried over. See
+> `docs/plan_civilization_steps.md` §"The improvement catalog is the intensification ladder". The
+> table below is kept as the record of what was asked for.
+
 Typed, place-bound records on a tile; **multiple per tile** up to a **footprint** budget.
 Grouped into **classes** (dwelling, storage, food/tending, defense, …); each type is pure
 config:
@@ -168,7 +177,8 @@ held until the prior merges (small, focused PRs, matching the Wildlife & Hunting
   **carry-capacity population cap** that storage-class improvements (Phase 3) lift, making the
   nomad→settle transition mechanical. The four roles are the first concrete labor demands; the
   tending/construction/knowledge demands slot into the same allocator.
-- **Phase 3 — Improvement catalog + building + knowledge-gating.** The `Improvement` component +
+- **Phase 3 — Improvement catalog + building + knowledge-gating.** *Superseded: this phase is now
+  the tile-source seam on the intensification ladder (issue #175), see the note above.* The `Improvement` component +
   data-driven catalog + `build` command (stockpiles + knowledge prereq + labor over turns) +
   footprint (multiple per tile) + dwellings housing tile population + tending draw + decay. Sets
   the `CONSTRUCTION` bit. Snapshot + client. Likely splits (3a build+catalog, 3b tending/decay,
