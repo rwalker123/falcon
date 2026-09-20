@@ -551,8 +551,18 @@ const NO_KEEPING_RATE: f32 = 0.0;
 /// against another site's tool is the defect a per-band kit made unavoidable.
 #[derive(Clone)]
 struct KeepingAward {
-    /// This source's share of its web's pool, in **work** units.
+    /// This source's share of its web's pool, in **work** units — the whole of it, step 5's bare
+    /// top-up included ([`KeepingPayment::supplied`]).
     work: f32,
+    /// ⛔ **THE PART OF [`Self::work`] THAT WAS DONE WITH TOOLS IN HAND**
+    /// ([`KeepingPayment::geared`]) — what the wear is billed on, and never [`Self::work`].
+    ///
+    /// A step-5 hand claimed no tool in the band's settlement and therefore holds none, so charging
+    /// the site's kit for its hours would run a tool down against work it took no part in — the one
+    /// way the top-up could silently break the equipment ledger. The two terms ride the award
+    /// together for the same reason the kit does: they describe one site, and re-deriving either at
+    /// the charge site is what lets them come to describe two.
+    geared_work: f32,
     /// The kit that work was done with, already narrowed to the tools serving this web. `None` for a
     /// row that made no claim — it was supplied nothing, so it wore nothing.
     wear_kit: Option<crate::equipment_config::KitChoice>,
@@ -562,6 +572,7 @@ impl Default for KeepingAward {
     fn default() -> Self {
         Self {
             work: NO_UPKEEP_DEMAND,
+            geared_work: NO_UPKEEP_DEMAND,
             wear_kit: None,
         }
     }
@@ -578,6 +589,9 @@ struct ToeFill {
     /// they work, and how fast they work depends on the tools they were issued; re-splitting after
     /// the settlement is exactly the loop the four-step order exists to cut.
     hands: f32,
+    /// **The hands this site ASKED for**, before the pool's size cut them ([`ToeClaim::need`]) —
+    /// what step 5 sizes the pool's idle hands against.
+    need: f32,
     /// This site's tools as a kit ([`crate::equipment_config::PoolToe::kit`]) — what the coverage
     /// partitions and what the wear is billed against.
     kit: crate::equipment_config::KitChoice,
@@ -615,6 +629,16 @@ struct ToeClaim {
     pool: crate::equipment_config::KitJob,
     priority: SourcePriority,
     hands: f32,
+    /// **THE HANDS THIS SITE ASKED FOR** — its own `demand ÷ fully equipped rate`, *before*
+    /// [`distribute_upkeep_pool`] cut it to the pool's size (step 1's input rather than its output).
+    ///
+    /// ⛔ **IT IS WHAT STEP 5 SIZES THE IDLE HANDS AGAINST, and the assigned `hands` cannot do it.**
+    /// Under `Spread` every share is `need × pool ÷ Σ needs`, so `Σ hands` reaches the head count
+    /// only to within float error — a pool that wanted **more** than it had still reports a sliver
+    /// of a keeper left over off `keepers − Σ hands`, and [`bare_hand_top_up`] would spend it. What
+    /// *"nobody took these hands"* actually means is `keepers − Σ what was asked for`, which is
+    /// negative for a committed pool and clamps to none.
+    need: f32,
     kit: crate::equipment_config::KitChoice,
     /// `hands ÷ workers_per_unit`, per tool.
     required: Vec<(std::sync::Arc<str>, f32)>,
@@ -627,12 +651,14 @@ impl ToeClaim {
         pool: crate::equipment_config::KitJob,
         priority: SourcePriority,
         hands: f32,
+        need: f32,
         toe: &crate::equipment_config::PoolToe,
     ) -> Self {
         Self {
             pool,
             priority,
             hands,
+            need,
             kit: toe.kit().clone(),
             required: toe
                 .tools()
@@ -734,8 +760,9 @@ fn pool_toe_claims(
     claims
         .iter()
         .zip(&toes)
+        .zip(&needs)
         .zip(distribute_upkeep_pool(keepers as f32, &needs, mode))
-        .map(|((claim, toe), hands)| ToeClaim::of(pool, claim.priority, hands, toe))
+        .map(|(((claim, toe), need), hands)| ToeClaim::of(pool, claim.priority, hands, *need, toe))
         .collect()
 }
 
@@ -777,6 +804,7 @@ fn settle_pool_tools(
         .iter()
         .map(|claim| ToeFill {
             hands: claim.hands,
+            need: claim.need,
             kit: claim.kit.clone(),
             required: claim.required.clone(),
             units: Vec::new(),
@@ -884,30 +912,165 @@ fn keeping_rate_from(
     }
 }
 
-/// **WHAT EACH OF THIS POOL'S CLAIMS WAS SUPPLIED AND WHAT IT WORE** — `(hands, rate)` per claim,
-/// read back out of the band's settled plan and index-aligned with `claims`.
+/// **WHAT A KEEPER WITH NO TOOL AT ALL BANKS IN A TURN** — `PER_WORKER_OUTPUT`, reached through
+/// [`crate::intensification::build_work_per_worker_turn`] at
+/// [`crate::intensification::NO_BUILD_GEAR`] rather than spelled,
+/// so the top-up's hands and a bare site's hands are priced by the one expression.
+///
+/// It is the rate [`bare_hand_top_up`] both **pays** its hands at and **gates** on: a site may take
+/// a hand that carries nothing only where a hand that carries nothing delivers something.
+fn bare_keeper_rate() -> f32 {
+    crate::intensification::build_work_per_worker_turn(crate::intensification::NO_BUILD_GEAR)
+}
+
+/// **NO HAND WAS LEFT OVER** — the idle count a pool whose plan spent its whole head count reports,
+/// and the share a site that was supplied in full is topped up by.
+const NO_IDLE_HANDS: f32 = 0.0;
+
+/// **WHAT ONE POOL SITE WAS PAID** — the planned hands at the rate their settled tools buy, plus
+/// whatever bare hands the pool had nobody else for (`docs/plan_pool_toe.md` §2.3 steps 4 and 5).
+///
+/// ⛔ **THE TWO ARE KEPT APART BECAUSE ONLY ONE OF THEM WEARS ANYTHING.** A top-up hand claimed no
+/// tool in the settlement and therefore holds none, so charging the site's wear kit against the
+/// whole of [`Self::supplied`] would run down gear that was never issued — the ledger error this
+/// split exists to make unavailable at the call site rather than merely discouraged.
+struct KeepingPayment {
+    /// The hands step 1 put here, working at the rate step 4 resolved.
+    hands: f32,
+    /// What those hands work at, and the kit they wear ([`KeepingRate`]).
+    rate: KeepingRate,
+    /// **Hands nobody took, put on this site's remaining deficit** — step 5. They carry no tool.
+    bare_hands: f32,
+    /// What a hand carrying nothing banks ([`bare_keeper_rate`]) — carried beside the count so the
+    /// two terms of [`Self::supplied`] are read from one place.
+    bare_rate: f32,
+}
+
+impl KeepingPayment {
+    /// **THE WORK THE GEARED HANDS DID** — and the only work the site's tools may be billed for.
+    fn geared(&self) -> f32 {
+        self.hands * self.rate.per_worker
+    }
+
+    /// **EVERY WORK UNIT THIS SITE WAS SUPPLIED** — the geared hands plus the bare ones.
+    fn supplied(&self) -> f32 {
+        self.geared() + self.bare_hands * self.bare_rate
+    }
+}
+
+/// **STEP 5 — THE HANDS NOBODY TOOK GO TO THE SITES STILL SHORT** (`docs/plan_pool_toe.md` §2.3).
+///
+/// # ⛔ THIS IS NOT THE RE-SPLIT STEP 4 REFUSES, AND THE DIFFERENCE IS THE WHOLE ARGUMENT
+///
+/// Step 4's refusal stands untouched: **no site ever loses a hand**. This assigns only hands the
+/// split never assigned to anybody, so it is monotonic — every site's supply is `>=` what step 4
+/// alone would have paid it. And **a top-up hand claims no tool**, so it cannot move the
+/// requirement the settlement was struck from and there is no fixed point to converge on. The loop
+/// the four-step order exists to cut is *hands → tools → hands*; a bare hand is outside it.
+///
+/// # WHAT IT IS FOR
+///
+/// A site owing `1.5` work units is owed `1.5` work units. Whether that arrives as one keeper with
+/// a tool worth `1.5` or two keepers with none is the band's business, not the site's — so where
+/// the plan's hands were struck at a geared rate and the settlement then failed to arm them, the
+/// gap is real work the pool is still holding people to do.
+///
+/// # THE FOUR TERMS
+///
+/// 1. **The deficit** — `demand − delivered`, per site, off the rate step 4 actually resolved.
+/// 2. **The idle hands** — `keepers − Σ what the sites ASKED FOR` ([`ToeFill::need`]).
+///    `distribute_upkeep_pool` caps each site's share at its own need, so a pool whose plan wanted
+///    less than its head count leaves a real remainder standing. That remainder, and nothing else,
+///    is what is spent here.
+///
+///    ⛔ **SIZED OFF THE NEEDS AND NEVER OFF `Σ assigned hands`.** Under `Spread` every share is
+///    `need × pool ÷ Σ needs`, so a **fully committed** pool's shares sum to the head count only to
+///    within float error — `keepers − Σ hands` reports a sliver of a keeper that nobody has, and
+///    spending it moves a bit on a band with no surplus at all. It did:
+///    `forage_cultivation::upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster` is an
+///    `assert_eq!` against the retired split and it caught this at one ULP. Against the **needs**
+///    the answer is negative for a committed pool and clamps to none, exactly.
+/// 3. **The bare-rate gate** — a site participates only where [`bare_keeper_rate`] is above
+///    [`NO_KEEPING_RATE`], which is *"only send the idle keeper if it can actually contribute with
+///    no kit"* stated as a condition. On the shipped roster bare hands always bank
+///    `PER_WORKER_OUTPUT`, so the gate is inert today; it is written because the rule is the
+///    maintainer's and not because the case ships.
+/// 4. **The split** — the **same** [`distribute_upkeep_pool`] under the **same**
+///    [`crate::intensification::UpkeepFundMode`], over the same claim order the first split used.
+///    That is load-bearing rather than tidy: it keeps *"the fund mode decides where hands go, the
+///    priority decides where tools go"* true of the top-up as well, so `Spread` still spreads and
+///    `Priority` still walks the ranking.
+///
+/// Returns one bare-hand count per claim, index-aligned with `claims`.
+fn bare_hand_top_up(
+    keepers: u32,
+    mode: crate::intensification::UpkeepFundMode,
+    claims: &[KeepingClaim],
+    fills: &[ToeFill],
+    planned: &[KeepingPayment],
+    bare_rate: f32,
+) -> Vec<f32> {
+    let idle =
+        (keepers as f32 - fills.iter().map(|fill| fill.need).sum::<f32>()).max(NO_IDLE_HANDS);
+    if idle <= NO_IDLE_HANDS || bare_rate <= NO_KEEPING_RATE {
+        return vec![NO_IDLE_HANDS; claims.len()];
+    }
+    // **In BARE hands**, because that is what these people are — a site whose deficit is `1.4` work
+    // units wants `1.4` of them, whatever the geared plan asked for.
+    let bare_needs: Vec<f32> = claims
+        .iter()
+        .zip(planned)
+        .map(|(claim, payment)| (claim.demand - payment.geared()).max(NO_UPKEEP_DEMAND) / bare_rate)
+        .collect();
+    distribute_upkeep_pool(idle, &bare_needs, mode)
+}
+
+/// **WHAT EACH OF THIS POOL'S CLAIMS WAS SUPPLIED AND WHAT IT WORE** — one [`KeepingPayment`] per
+/// claim, read back out of the band's settled plan and index-aligned with `claims`.
+///
+/// Steps 4 **and 5** of the four-step order: the planned hands at the rate their settled tools buy,
+/// then whatever hands the plan left standing put on whatever deficit is left
+/// ([`bare_hand_top_up`]). **All four keeping pools read their answer back through here**, so the
+/// top-up is one helper rather than four — `spare_keepers_the_band_can_arm`'s arrangement, for the
+/// same reason.
 fn pool_rates(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
     claims: &[KeepingClaim],
     fills: &[ToeFill],
-) -> Vec<(f32, KeepingRate)> {
+    keepers: u32,
+    mode: crate::intensification::UpkeepFundMode,
+) -> Vec<KeepingPayment> {
     debug_assert_eq!(
         claims.len(),
         fills.len(),
         "a pool's settled fills are index-aligned with the claim list they were planned from"
     );
-    claims
+    let bare_rate = bare_keeper_rate();
+    let mut payments: Vec<KeepingPayment> = claims
         .iter()
         .zip(fills)
         .map(|(claim, fill)| {
             let rung_key = claim.rung.map(|rung| rung.wire_key());
-            (
-                fill.hands,
-                keeping_rate_from(equipment, band_kit, fill, claim.branch, rung_key.as_deref()),
-            )
+            KeepingPayment {
+                hands: fill.hands,
+                rate: keeping_rate_from(
+                    equipment,
+                    band_kit,
+                    fill,
+                    claim.branch,
+                    rung_key.as_deref(),
+                ),
+                bare_hands: NO_IDLE_HANDS,
+                bare_rate,
+            }
         })
-        .collect()
+        .collect();
+    let top_up = bare_hand_top_up(keepers, mode, claims, fills, &payments, bare_rate);
+    for (payment, bare_hands) in payments.iter_mut().zip(top_up) {
+        payment.bare_hands = bare_hands;
+    }
+    payments
 }
 
 /// **HOW MANY KEEPERS ONE WEB'S BILL NEEDS THIS TURN** — the sum of every claim's `demand ÷ what one
@@ -1034,6 +1197,11 @@ fn plan_pool_tools(
         ToeClaim::of(
             crate::equipment_config::KitJob::Builders,
             ask.priority,
+            ask.builders as f32,
+            // **THE BUILDERS ASK FOR EVERY HAND THEY HAVE** — all of them go on the queue head
+            // (§2.4), so the pool is never capped below its head count and its `need` is its
+            // `hands`. Nothing reads it: the builders are paid through `BuildersGear`, not through
+            // [`pool_rates`], so step 5 does not reach them.
             ask.builders as f32,
             &toe,
         )
@@ -2382,16 +2550,28 @@ fn maintenance_shares(
     tools: &PoolToolPlan,
 ) -> Vec<KeepingAward> {
     let mut awards = vec![KeepingAward::default(); allocation.assignments.len()];
-    // **The branch rides each claim** ([`KeepingClaim::branch`]), so this names only which pool's
-    // fills it is reading.
-    for (claims, fills) in [(plant, tools.agriculture()), (animal, tools.husbandry())] {
-        for (claim, (hands, rate)) in claims
-            .iter()
-            .zip(pool_rates(equipment, band_kit, claims, fills))
-        {
+    // **The branch rides each claim** ([`KeepingClaim::branch`]), so the role named here is only
+    // which pool's head count and fills are being read — step 5 needs the head count to know how
+    // many hands the split left standing.
+    for (claims, fills, role) in [
+        (plant, tools.agriculture(), LaborTarget::Agriculture),
+        (animal, tools.husbandry(), LaborTarget::Husbandry),
+    ] {
+        for (claim, payment) in claims.iter().zip(pool_rates(
+            equipment,
+            band_kit,
+            claims,
+            fills,
+            allocation.workers_on(&role),
+            allocation.upkeep_fund_mode,
+        )) {
             awards[claim.index] = KeepingAward {
-                work: hands * rate.per_worker,
-                wear_kit: Some(rate.wear_kit),
+                // ⛔ **THE WHOLE SUPPLY, GEARED HANDS AND BARE ONES** — but the wear kit beside it is
+                // billed on [`KeepingPayment::geared`] alone at the charge site
+                // ([`charge_keeping_wear`]'s caller), because a top-up hand holds no tool.
+                work: payment.supplied(),
+                geared_work: payment.geared(),
+                wear_kit: Some(payment.rate.wear_kit),
             };
         }
     }
@@ -2657,27 +2837,31 @@ pub fn settle_bands_extraction(
         &claims,
         tools.map(PoolToolPlan::quarrywork),
     );
-    for (claim, (hands, rate)) in
-        claims
-            .iter()
-            .zip(pool_rates(equipment_cfg, &band_kit, &claims, &fills))
-    {
-        let supplied = hands * rate.per_worker;
+    for (claim, payment) in claims.iter().zip(pool_rates(
+        equipment_cfg,
+        &band_kit,
+        &claims,
+        &fills,
+        keepers,
+        fund_mode,
+    )) {
+        let supplied = payment.supplied();
         let (tile, material) = &held[claim.index];
         if let Some(working) = deposits.source_mut(*tile, material) {
             working.upkeep_supplied += supplied;
         }
         // **(c) this band's own contribution**, accumulated across the workings it holds.
         allocation.last_quarrywork_supplied += supplied;
-        // **The keeper's tools are spent on exactly that work** — billed on what the pool
-        // *supplied*, never on what the rung demanded. The shipped roster declares no keeping tool
-        // on either deposit branch, so the TOE is empty and this is inert; the day a propping set
-        // declares a `build_work` serving `forestry` or `extraction`, it is a config edit.
+        // **The keeper's tools are spent on exactly that work** — billed on the **geared** half of
+        // what the pool supplied, never on what the rung demanded and never on step 5's bare
+        // top-up hands, who hold nothing. The shipped roster declares no keeping tool on either
+        // deposit branch, so the TOE is empty and this is inert; the day a propping set declares a
+        // `build_work` serving `forestry` or `extraction`, it is a config edit.
         charge_keeping_wear(
             band_equipment.as_deref_mut(),
             equipment_cfg,
-            Some(&rate.wear_kit),
-            supplied,
+            Some(&payment.rate.wear_kit),
+            payment.geared(),
         );
     }
 }
@@ -2945,26 +3129,30 @@ pub fn settle_bands_roadwork(
         &claims,
         tools.map(PoolToolPlan::roadwork),
     );
-    for (claim, (hands, rate)) in
-        claims
-            .iter()
-            .zip(pool_rates(equipment_cfg, &band_kit, &claims, &fills))
-    {
-        let supplied = hands * rate.per_worker;
+    for (claim, payment) in claims.iter().zip(pool_rates(
+        equipment_cfg,
+        &band_kit,
+        &claims,
+        &fills,
+        keepers,
+        fund_mode,
+    )) {
+        let supplied = payment.supplied();
         if let Some(road) = registry.road_mut(kept[claim.index]) {
             road.upkeep_supplied += supplied;
         }
         // **(c) this band's own contribution**, accumulated across the roads it keeps.
         allocation.last_roadwork_supplied += supplied;
-        // **The keeper's tools are spent on exactly that work** — billed on what the pool
-        // *supplied* to this road, never on what the rung demanded. ⛔ **A DIRT ROAD AND A PAVED
-        // ROAD WEAR DIFFERENT TOOLS OUT OF ONE POOL**, because the TOE is resolved at each road's
-        // own held rung — which is the case one kit per pool could not express at all.
+        // **The keeper's tools are spent on exactly that work** — billed on the **geared** half of
+        // what the pool supplied to this road, never on what the rung demanded and never on step
+        // 5's bare top-up hands. ⛔ **A DIRT ROAD AND A PAVED ROAD WEAR DIFFERENT TOOLS OUT OF ONE
+        // POOL**, because the TOE is resolved at each road's own held rung — which is the case one
+        // kit per pool could not express at all.
         charge_keeping_wear(
             band_equipment.as_deref_mut(),
             equipment_cfg,
-            Some(&rate.wear_kit),
-            supplied,
+            Some(&payment.rate.wear_kit),
+            payment.geared(),
         );
     }
 }
@@ -4789,6 +4977,12 @@ pub fn advance_labor_allocation(
             let keeping_share = upkeep_shares
                 .get(idx)
                 .map_or(NO_UPKEEP_DEMAND, |award| award.work);
+            // ⛔ **AND THE PART OF IT WORKED WITH TOOLS IN HAND** ([`KeepingAward::geared_work`]) —
+            // the wear basis, because step 5's top-up hands carry nothing
+            // (`docs/plan_pool_toe.md` §2.3 step 5).
+            let keeping_geared_share = upkeep_shares
+                .get(idx)
+                .map_or(NO_UPKEEP_DEMAND, |award| award.geared_work);
             // **AND THE KIT THAT SHARE WAS WORKED WITH** — this site's own, resolved with the share
             // it pays for (`docs/plan_standing_upkeep.md` §2.7). It travels beside the work rather
             // than being re-derived here, so the hours charged and the tool charged for them can
@@ -5201,6 +5395,13 @@ pub fn advance_labor_allocation(
                     let keeping_supplied =
                         crate::forage::patch_upkeep_supply(patch, improvement, keeping_share);
                     patch.upkeep_supplied += keeping_supplied;
+                    // **THE SAME GATE OVER THE GEARED HALF** — a patch that claims no keeping wears
+                    // nothing, and a patch that does wears only the hours its armed hands worked.
+                    let keeping_geared = crate::forage::patch_upkeep_supply(
+                        patch,
+                        improvement,
+                        keeping_geared_share,
+                    );
                     // **AND THE BILL IT ANSWERS**, recorded because the plant demand INTERPOLATES on
                     // the source's position and this stamp is read a whole turn later, after the
                     // build has banked more work. Judged against the risen demand, a fully-staffed
@@ -5242,14 +5443,15 @@ pub fn advance_labor_allocation(
                         &mut patch.upkeep_materials_supplied,
                     );
                     // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
-                    // `WearQuantum::UpkeepWork` charge, billed on what the pool **supplied** to this
-                    // patch and not on what the rung demanded, so an under-staffed pool wears only
-                    // the hours it worked and a pool with nothing at risk wears nothing.
+                    // `WearQuantum::UpkeepWork` charge, billed on the **geared** half of what the
+                    // pool supplied to this patch and not on what the rung demanded, so an
+                    // under-staffed pool wears only the hours it worked, a pool with nothing at risk
+                    // wears nothing, and a bare top-up hand never wears a tool it was not issued.
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
                         keeping_wear_kit,
-                        keeping_supplied,
+                        keeping_geared,
                     );
                     // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
                     // `advance_cultivation` will bleed off the at-risk meter, resolved once here off
@@ -6066,6 +6268,10 @@ pub fn advance_labor_allocation(
                     let keeping_supplied =
                         fauna::herd_upkeep_supply(herd, improvement, keeping_share);
                     herd.upkeep_supplied += keeping_supplied;
+                    // **THE SAME GATE OVER THE GEARED HALF** — the wear basis, since step 5's
+                    // top-up hands carry no crook. See the Forage arm.
+                    let keeping_geared =
+                        fauna::herd_upkeep_supply(herd, improvement, keeping_geared_share);
                     // **AND THE MATERIAL HALF OF THE SAME BILL** — the pen's hurdles, on the plant
                     // twin's own two rules (see the Forage arm). The bill's *work* stamp is struck
                     // pre-loop for this web, so this is the one place the material stamp can be:
@@ -6076,13 +6282,13 @@ pub fn advance_labor_allocation(
                         &mut herd.upkeep_materials_demanded,
                         &mut herd.upkeep_materials_supplied,
                     );
-                    // **The plant twin's charge** — the keeping tools are spent on the work the pool
-                    // actually supplied to this herd. See the Forage arm.
+                    // **The plant twin's charge** — the keeping tools are spent on the **geared**
+                    // work the pool supplied to this herd. See the Forage arm.
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
                         keeping_wear_kit,
-                        keeping_supplied,
+                        keeping_geared,
                     );
                     // **WHAT THE METER IS LOSING** — the plant twin's seam, and on the shipped
                     // ladder always `0`: neither animal rung declares a `meter_decay`, because an
