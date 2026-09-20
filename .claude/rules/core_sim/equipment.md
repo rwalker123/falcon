@@ -420,7 +420,7 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >   on purpose to spare the band's tools. A site marked **Low** is served last when tools run short,
 >   which is what replaces it. The commands retire end to end in #676.
 >
-> #### THE FOUR-STEP ORDER, WHICH IS WHAT KEEPS IT FROM BEING A LOOP
+> #### THE ORDER, AND WHICH FOUR OF ITS STEPS KEEP IT FROM BEING A LOOP
 >
 > How many hands a site gets depends on how fast they work; how fast they work depends on the tools;
 > how many tools a site needs depends on its hands. `systems::labor::plan_pool_tools` resolves it in
@@ -442,7 +442,10 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >    `weighted_rate` as before. **Hands are NOT re-split**: a site the settlement left short works
 >    its own hands slower rather than handing them to a site that was served.
 > 5. **The hands nobody took go to the work still owed** — `bare_hand_top_up`, over the deficit
->    step 4 leaves. See the callout below.
+>    step 4 leaves. See the callout below. ⛔ **It is NOT one of the four.** *"The four-step order"*
+>    names steps 1–4 throughout `systems::labor`, and that name is the loop-cutting claim: step 5
+>    sits deliberately **outside** the cycle, because a top-up hand claims no tool and so cannot
+>    feed back into the requirement step 2 struck.
 >
 > #### ⛔ STEP 5 — A SITE OWING N UNITS OF WORK IS OWED N UNITS OF WORK
 >
@@ -457,11 +460,20 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >
 > **`systems::labor::bare_hand_top_up` is the one helper and `pool_rates` is the one seam**, so all
 > four keeping pools get it from the same place — `spare_keepers_the_band_can_arm`'s arrangement,
-> for the same reason. Per pool: `deficit = demand − hands × rate`, `idle = keepers − Σ hands`, and
+> for the same reason. Per pool: `deficit = demand − hands × rate`, `idle = keepers − Σ need`, and
 > the idle hands split across `deficit ÷ bare_rate` by the **same** `distribute_upkeep_pool` under
 > the **same** `UpkeepFundMode`, over the same claim order the first split used. That last clause is
 > load-bearing rather than tidy: it keeps *"the fund mode decides where hands go, the priority
 > decides where tools go"* true of the top-up as well.
+>
+> ⛔ **THE IDLE COUNT IS STRUCK AGAINST THE NEEDS, NEVER AGAINST THE HANDS HANDED OUT.**
+> `keepers − Σ ToeFill::need`, not `keepers − Σ hands`. The two agree whenever anything is genuinely
+> idle, because that is exactly when `distribute_upkeep_pool`'s coverage clamps at `1.0` and each
+> share **is** its need. Taken against the shares instead, a **fully committed** `Spread` pool's
+> shares sum to its head count only to within float error, so it reports ~`1.2e-7` of a spare keeper
+> and step 5 spends it — which moved
+> `forage_cultivation::upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster` by one ULP.
+> Against the needs it is negative there and clamps to none, exactly, with no tolerance to tune.
 >
 > **A site participates only where a bare hand delivers something** — `bare_keeper_rate()`
 > (`build_work_per_worker_turn(NO_BUILD_GEAR)`) above `NO_KEEPING_RATE`. On the shipped roster that
