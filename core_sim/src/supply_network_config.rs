@@ -39,8 +39,23 @@ pub struct SupplyNetworkConfig {
     pub throughput_per_turn: f32,
     /// Fraction of each transfer lost in transit (`0` = frictionless, `1` = nothing arrives).
     pub friction: f32,
-    /// Dead-band: transfers smaller than this are skipped so a balanced network doesn't churn.
-    pub min_transfer: f32,
+    /// ⛔ **THE DEAD-BAND, AS A FRACTION OF WHAT THE NETWORK HOLDS OF THAT COMMODITY** — never an
+    /// absolute quantity. A move smaller than `this × Σ stores` is skipped so a balanced network
+    /// doesn't churn.
+    ///
+    /// **It is relative because one balancer serves commodities three orders of magnitude apart.**
+    /// The lever was an absolute `0.5` from the food-only original, and materials then inherited it
+    /// unexamined: food is held in the hundreds, where `0.5` is the noise floor it was chosen to be,
+    /// while a material is held in single units **and pools per `(material, rating)`** — bone alone
+    /// lands in eight distinct rating piles across the shipped fauna roster. On a pile of `0.75` a
+    /// `0.5` floor is not a dead-band, it is a wall: the balancer computed the move and dropped it,
+    /// every turn, silently. A neighbour's bone could not reach a band that had none.
+    ///
+    /// **`0.001` is chosen to leave food where it is**, not as a fresh tuning judgement: at the few
+    /// hundred units two camps typically hold between them it lands within a rounding error of the
+    /// retired `0.5`, and on a sub-unit material pile it is ~`0.00075` — below the `Scalar` quantum's
+    /// own reach, which is the honest answer for a commodity that small.
+    pub min_transfer_fraction: f32,
 }
 
 impl Default for SupplyNetworkConfig {
@@ -49,7 +64,7 @@ impl Default for SupplyNetworkConfig {
             reach_tiles: 3,
             throughput_per_turn: 50.0,
             friction: 0.05,
-            min_transfer: 0.5,
+            min_transfer_fraction: 0.001,
         }
     }
 }
@@ -167,6 +182,9 @@ mod tests {
             (0.0..=1.0).contains(&config.friction),
             "friction is a fraction in [0, 1]"
         );
-        assert!(config.min_transfer >= 0.0);
+        assert!(
+            (0.0..=1.0).contains(&config.min_transfer_fraction),
+            "the dead-band is a fraction of the network's holding, not a quantity"
+        );
     }
 }

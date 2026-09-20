@@ -28,7 +28,7 @@ paths:
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block (see "The opening loadout" below): `material_points` (**30**, one point buys one unit), `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 3` / `fibre 17` / `hide 8`, serde-defaulting to empty — the **default outfit** the sim applies to every band at creation), and **`kit_defaults`** (`big_game 4` / `trapping 4` / `gathering 4`, same optionality — its kit twin, opening on Stalking / Trapping / Harvesting so a band stands in a plausible outfit rather than a column of zeros, with hands still left to spend). ⛔ **These are APPLIED, not suggested** — see `starting-loadout.md`; the window's accepted rows are set by that apply, so they describe gear the band really holds. **There is deliberately no kit budget here.** `validate` rejects a `material_points` of `0`, an empty or duplicated `pickable_materials`, a `material_defaults` key outside the pick list, defaults summing above the budget, and a `kit_defaults` count of `0`; `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`, the one place all three tables are in scope. ⛔ **There is no sum check on `kit_defaults` and there cannot be**, because the kit budget is the spawned band's head count rather than a number in this file; an over-allocation is clamped at publish time instead (see "The opening loadout") |
-| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
+| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of what the network holds of that commodity — see "The dead-band is relative, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
 
@@ -403,7 +403,7 @@ Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnSt
 before Population consumes) joins **linked bands of one people** into **supply networks** (union-find
 connected components) and each turn moves every commodity toward a **population-weighted per-capita
 balance** across the network. Transfers are **throughput-limited** (`throughput_per_turn` per node)
-and lose `friction` in transit; sub-`min_transfer` moves are dropped. So a gatherer band
+and lose `friction` in transit; moves below the dead-band are dropped. So a gatherer band
 automatically feeds a scout band it's near (you can specialize labor), while a band beyond reach, one
 nobody has met, or one belonging to another people lives off its own larder. Throughput decides *how fast*, friction the leak — "free neighbor
 sharing" is just the high-throughput/low-friction limit. The per-commodity math is the pure,
@@ -491,6 +491,37 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > The pre-refactor pooling numbers are pinned as literals by
 > `supply_network::a_connected_network_moves_exactly_what_the_proximity_network_moved`, paired with a
 > liveness assertion because "two runs agree" is also what a dead mechanism reports.
+
+> #### The dead-band is RELATIVE, because one balancer serves food and a bone pile
+>
+> `min_transfer_fraction` (0.001) drops a move smaller than **that fraction of what the network holds
+> of that commodity**. It is not a quantity, and the distinction is the whole of the lever.
+>
+> The dial was an absolute `min_transfer: 0.5` from the food-only original and never moved; when
+> materials were given to the same balancer they inherited it unexamined. **Food is held in the
+> hundreds**, where `0.5` is the noise floor it was chosen to be. **A material is held in single
+> units and pools per `(material, rating)`** — bone is rated on `density` × `length`, and the shipped
+> fauna roster spreads it over **eight distinct rating piles**, so a band holding three bone from four
+> species holds four piles of under one unit each, balanced independently.
+>
+> On a pile of `0.75` an absolute `0.5` floor is not a dead-band, it is a **wall**: per-capita
+> equalization computes a `0.375` move and the floor drops it, every turn, in silence. The symptom
+> from play was a band blocked on bone for hoes while the camp three hexes away held some — and
+> because materials have no transfer account (see "Food only — for the IDENTITY"), nothing on the
+> glass could say so.
+>
+> **`0.001` is calibrated to leave food where it was**, not as a fresh tuning judgement: on the few
+> hundred units two camps typically hold between them it lands within a rounding error of the retired
+> `0.5`, and on a sub-unit material pile it is below the `Scalar` quantum's own reach. Both halves are
+> pinned — `supply::tests::the_shipped_fraction_still_damps_churn_at_food_scale` and
+> `a_sub_unit_material_pile_pools_where_the_absolute_floor_walled_it`, the latter asserting the same
+> stores under both dials so the claim stays comparative.
+>
+> ⛔ **THIS MAKES MATERIALS MOVE; IT DOES NOT MAKE THEM ARRIVE IN A USABLE LUMP.** Pooling equalizes
+> to a per-capita share, and a recipe wants a whole unit — `hoes` needs `1.0` bone, so a neighbour
+> holding `0.75` can never do more than bring both bands to `0.375`. Getting a whole bone to a
+> particular band is a **shipment** (#517), an explicit act, and the balancer must not be taught to
+> serve a recipe's demand — that would delete the decision the shipment exists to be.
 
 Each turn the same pass also records **network membership** in the `SupplyNetworkMembership`
 resource (`entity → id`, cleared and rebuilt every turn): each connected component with ≥ 2 bands

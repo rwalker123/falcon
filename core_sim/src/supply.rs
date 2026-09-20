@@ -252,14 +252,22 @@ fn find(parent: &mut [usize], mut i: usize) -> usize {
 /// `weights` and current `stores` of a single commodity, return the net change to apply to each
 /// member (index-aligned): surplus nodes above their per-capita fair share ship (capped at
 /// `throughput`), `friction` is lost in transit, and the remaining pool is split among deficit
-/// nodes in proportion to how much each is short. Transfers below `min_transfer` are dropped so a
-/// balanced network doesn't churn. Net change over the network is `-friction × amount shipped`.
+/// nodes in proportion to how much each is short. Net change over the network is
+/// `-friction × amount shipped`.
+///
+/// ⛔ **THE DEAD-BAND IS A FRACTION OF `total`, RESOLVED HERE, PER COMMODITY** — which is the whole
+/// of why this signature takes `min_transfer_fraction` and not a quantity. One balancer serves food
+/// (held in the hundreds) and a single `(material, rating)` pile (held in fractions of a unit), and
+/// an absolute floor cannot be the noise threshold for both: at `0.5` it was the noise threshold for
+/// food and a **wall** for every material, dropping a computed move silently every turn. Scaling it
+/// to what the network actually holds of *this* commodity is one rule that means the same thing at
+/// either scale — see [`crate::supply_network_config::SupplyNetworkConfig::min_transfer_fraction`].
 fn balance_commodity(
     weights: &[Scalar],
     stores: &[Scalar],
     throughput: Scalar,
     friction: Scalar,
-    min_transfer: Scalar,
+    min_transfer_fraction: Scalar,
 ) -> Vec<Scalar> {
     let n = weights.len();
     let mut deltas = vec![scalar_zero(); n];
@@ -268,6 +276,8 @@ fn balance_commodity(
         return deltas;
     }
     let total = stores.iter().copied().fold(scalar_zero(), |a, b| a + b);
+    // An empty network has nothing to move, and a zero threshold is the right reading for it.
+    let min_transfer = total * min_transfer_fraction;
     let mut sends = vec![scalar_zero(); n];
     let mut wants = vec![scalar_zero(); n];
     for i in 0..n {
@@ -374,7 +384,7 @@ pub fn balance_supply_networks(
     let wrap = sim_config.map_topology.wrap_horizontal;
     let throughput = scalar_from_f32(cfg.throughput_per_turn);
     let friction = scalar_from_f32(cfg.friction).clamp(scalar_zero(), scalar_one());
-    let min_transfer = scalar_from_f32(cfg.min_transfer);
+    let min_transfer_fraction = scalar_from_f32(cfg.min_transfer_fraction);
 
     // Pass 1: snapshot each band's position, population weight, and opening stores.
     let mut nodes: Vec<Node> = Vec::new();
@@ -565,7 +575,13 @@ pub fn balance_supply_networks(
                 .iter()
                 .map(|&m| nodes[m].store_of(commodity))
                 .collect();
-            let deltas = balance_commodity(&weights, &stores, throughput, friction, min_transfer);
+            let deltas = balance_commodity(
+                &weights,
+                &stores,
+                throughput,
+                friction,
+                min_transfer_fraction,
+            );
             for (k, &m) in members.iter().enumerate() {
                 if deltas[k] != scalar_zero() {
                     applied.push((nodes[m].entity, commodity.to_string(), deltas[k]));
@@ -588,7 +604,13 @@ pub fn balance_supply_networks(
                 .iter()
                 .map(|&m| nodes[m].material_amount(rating))
                 .collect();
-            let deltas = balance_commodity(&weights, &stores, throughput, friction, min_transfer);
+            let deltas = balance_commodity(
+                &weights,
+                &stores,
+                throughput,
+                friction,
+                min_transfer_fraction,
+            );
             // The reading everything shipped this turn carries — the amount-weighted average of the
             // **senders'**, which is one rating's worth of readings and therefore cannot smear a
             // mammoth hide into a hare pelt. Resolved before any delta is applied, off the same
@@ -682,9 +704,17 @@ pub fn balance_supply_networks(
 mod tests {
     use super::balance_commodity;
     use crate::scalar::{scalar_from_f32, Scalar};
+    use crate::supply_network_config::SupplyNetworkConfig;
 
     fn s(v: f32) -> Scalar {
         scalar_from_f32(v)
+    }
+
+    /// **Read off the builtin, never typed again** — the two cases below are claims about the
+    /// *shipped* dial, so a retune has to move them rather than leave them quietly describing a
+    /// number nothing uses.
+    fn shipped_min_transfer_fraction() -> f32 {
+        SupplyNetworkConfig::builtin().min_transfer_fraction
     }
 
     /// Two equal bands, one full and one empty, equalize per-capita when throughput allows.
@@ -761,7 +791,9 @@ mod tests {
         assert!(((after0 / 3.0) - (after1 / 1.0)).abs() < 1e-3);
     }
 
-    /// A near-balanced network doesn't churn: sub-`min_transfer` moves are dropped.
+    /// A near-balanced network doesn't churn: a move below the dead-band is dropped. `0.05` of the
+    /// network's 100 is the same `5.0` threshold this case was written against when the lever was
+    /// an absolute quantity.
     #[test]
     fn min_transfer_dead_band() {
         let d = balance_commodity(
@@ -769,10 +801,69 @@ mod tests {
             &[s(51.0), s(49.0)],
             s(1000.0),
             s(0.0),
-            s(5.0),
+            s(0.05),
         );
         assert!(d[0].to_f32().abs() < 1e-6, "no churn: {}", d[0].to_f32());
         assert!(d[1].to_f32().abs() < 1e-6);
+    }
+
+    /// ⛔ **THE DEAD-BAND AT FOOD'S SCALE STILL DOES ITS ONLY JOB.** The shipped `0.001` was chosen
+    /// to leave food where the retired absolute `0.5` had it, so the anti-churn case has to keep
+    /// passing at the stocks two camps actually hold: on a network of 400 the threshold is `0.4`,
+    /// and a two-tenths imbalance is still noise.
+    #[test]
+    fn the_shipped_fraction_still_damps_churn_at_food_scale() {
+        let d = balance_commodity(
+            &[s(1.0), s(1.0)],
+            &[s(200.2), s(199.8)],
+            s(50.0),
+            s(0.0),
+            s(shipped_min_transfer_fraction()),
+        );
+        assert!(d[0].to_f32().abs() < 1e-6, "no churn: {}", d[0].to_f32());
+        assert!(d[1].to_f32().abs() < 1e-6);
+    }
+
+    /// ⛔ **A SUB-UNIT MATERIAL PILE MOVES, AND UNDER THE RETIRED ABSOLUTE FLOOR IT DID NOT.**
+    ///
+    /// The regression this change exists for. One `(material, rating)` pile of bone — the scale a
+    /// material really lives at, since bone lands in eight distinct rating piles across the shipped
+    /// fauna roster — against a neighbour holding none. The balancer computed the move and the
+    /// `0.5` floor dropped it, every turn, silently: a band could sit blocked on bone for a hoe
+    /// while the camp three hexes away held some.
+    ///
+    /// **Both halves are asserted from one call site**, because the claim is comparative: the same
+    /// stores ship under the shipped fraction and are dropped under a fraction that reproduces the
+    /// retired `0.5` on this network. A test that only showed the move would not show what was wrong.
+    #[test]
+    fn a_sub_unit_material_pile_pools_where_the_absolute_floor_walled_it() {
+        let holder = 0.75_f32;
+        let shipped = balance_commodity(
+            &[s(1.0), s(1.0)],
+            &[s(holder), s(0.0)],
+            s(50.0),
+            s(0.0),
+            s(shipped_min_transfer_fraction()),
+        );
+        assert!(
+            (shipped[1].to_f32() - holder / 2.0).abs() < 1e-3,
+            "the needy band is brought to its per-capita share: {}",
+            shipped[1].to_f32()
+        );
+        assert!(shipped[0].to_f32() < 0.0, "and the holder ships it");
+
+        // `0.5 / 0.75` is the fraction that reproduces the retired absolute floor on this network.
+        let retired = balance_commodity(
+            &[s(1.0), s(1.0)],
+            &[s(holder), s(0.0)],
+            s(50.0),
+            s(0.0),
+            s(0.5 / holder),
+        );
+        assert!(
+            retired.iter().all(|d| d.to_f32().abs() < 1e-6),
+            "the retired absolute floor moved nothing: {retired:?}"
+        );
     }
 
     /// Aggregate send capacity can exceed one throughput-capped receiver's demand; the network must
