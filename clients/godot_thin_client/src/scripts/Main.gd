@@ -2484,7 +2484,8 @@ func _send_runtime_command(line: String, message: String,
 ##       of targeting (docs/plan_tile_panel_layout.md §15);
 ##   (3) active targeting keeps ESC for MapView's targeting-cancel path (we must NOT consume it);
 ##   (4) the Band panel's WORK INSPECTOR dialog closes;
-##   (5) otherwise the pause menu opens.
+##   (5) an open KNOWLEDGE READING closes;
+##   (6) otherwise the pause menu opens.
 ## Extracted as a pure static so the ORDER can be asserted without standing up the whole app scene
 ## (ui_preview drives it with the real HUD's own `is_compose_sheet_open` / `is_targeting_active`).
 ##
@@ -2496,14 +2497,25 @@ func _send_runtime_command(line: String, message: String,
 ## the pause menu because a surface with an explicit dismiss must answer ESC before ESC means "leave
 ## the game"; a persistent card that ignored the key would be the only dismissible surface in the
 ## client that does.
+##
+## **THE KNOWLEDGE READING SITS FIFTH, BEHIND THE WORK INSPECTOR AND AHEAD OF THE PAUSE MENU**
+## (`docs/plan_knowledge_rows.md` §4). Behind the inspector because the inspector is a DIALOG and this
+## is a paragraph inside a card — the outermost of the dismissible surfaces. Ahead of the pause menu
+## for the reason the inspector is: a surface with an explicit dismiss (the reading carries a `✕`)
+## answers ESC before ESC means "leave the game".
+##
+## ⛔ **IT CLAIMS THE KEY ONLY WHEN A READING IS OPEN, NEVER MERELY BECAUSE THE SCREEN IS.** With the
+## knowledge screen up and nothing selected, ESC still falls through to the pause menu exactly as it
+## did before — the plan asks ESC to close the reading and asks nothing about closing the screen.
 const ESC_RESUME := "resume"
 const ESC_COMPOSE_SHEET := "compose_sheet"
 const ESC_TARGETING := "targeting"
 const ESC_WORK_INSPECTOR := "work_inspector"
+const ESC_KNOWLEDGE_DETAIL := "knowledge_detail"
 const ESC_PAUSE := "pause"
 
 static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool,
-        work_inspector_open: bool) -> String:
+        work_inspector_open: bool, knowledge_detail_open: bool) -> String:
     if pause_open:
         return ESC_RESUME
     if compose_open:
@@ -2512,6 +2524,8 @@ static func escape_claimant(pause_open: bool, compose_open: bool, targeting: boo
         return ESC_TARGETING
     if work_inspector_open:
         return ESC_WORK_INSPECTOR
+    if knowledge_detail_open:
+        return ESC_KNOWLEDGE_DETAIL
     return ESC_PAUSE
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -2520,7 +2534,8 @@ func _unhandled_input(event: InputEvent) -> void:
             pause_layer != null and pause_layer.visible,
             hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
             hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")),
-            hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")))
+            hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")),
+            hud != null and hud.has_method("is_knowledge_detail_open") and bool(hud.call("is_knowledge_detail_open")))
         match claimant:
             ESC_RESUME:
                 _hide_pause_menu()
@@ -2532,6 +2547,9 @@ func _unhandled_input(event: InputEvent) -> void:
                 return
             ESC_WORK_INSPECTOR:
                 hud.call("close_work_inspector")
+                get_viewport().set_input_as_handled()
+            ESC_KNOWLEDGE_DETAIL:
+                hud.call("close_knowledge_detail")
                 get_viewport().set_input_as_handled()
             _:
                 _show_pause_menu()

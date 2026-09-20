@@ -40,12 +40,14 @@ class_name HudKnowledgeVocab
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
 # ---- the domains -----------------------------------------------------------------------------
-# **A DOMAIN IS A COLUMN, AND ITS SHAPE IS A PROPERTY OF THE DESCRIPTOR RATHER THAN A BRANCH IN THE
-# RENDERER.** A LADDER domain draws a rail down its left edge because its nodes are ORDERED — each
+# **A DOMAIN IS A ROW, AND ITS SHAPE IS A PROPERTY OF THE DESCRIPTOR RATHER THAN A BRANCH IN THE
+# RENDERER.** A LADDER domain draws the rail BETWEEN its rungs because its nodes are ORDERED — each
 # one is earned by practising the one below it — and a FAN domain draws none, because a craft is
-# learned by working its material and gates recipes rather than a next step.
+# learned by working its material and gates recipes rather than a next step. That is the shipped
+# rule rotated ninety degrees (`docs/plan_knowledge_rows.md` §3): the rail used to run down a
+# column's left edge, and it is the connector between chips now.
 
-## A column's key IS the wire's own branch token for a ladder domain, so nothing has to be mapped
+## A row's key IS the wire's own branch token for a ladder domain, so nothing has to be mapped
 ## back and forth; `craft` is the one that is not a ladder branch at all.
 const DOMAIN_KEY_LAND := &"plant"
 const DOMAIN_KEY_HERDS := &"animal"
@@ -62,7 +64,7 @@ const DOMAIN_SHAPE := "shape"
 const DOMAIN_NODES := "nodes"
 
 ## ⛔ **WHAT A PLAYER CALLS EACH LADDER BRANCH.** The wire says `plant` / `animal` / `route`, which is
-## the SIM's vocabulary; these are the words on the column heads. **A LABEL TABLE AND NOTHING ELSE** —
+## the SIM's vocabulary; these are the words in each row's name gutter. **A LABEL TABLE AND NOTHING ELSE** —
 ## it declares no nodes, so a knowledge added to a branch already listed here needs no edit, and one
 ## added to a branch that is NOT listed still draws (see `domain_label`).
 const DOMAIN_BRANCH_LABELS := {
@@ -71,29 +73,22 @@ const DOMAIN_BRANCH_LABELS := {
 	DOMAIN_KEY_ROUTES: "Roads",
 }
 
-## The CRAFT column's label. Its nodes are not declared either: they come off the wire's own
+## The CRAFT row's label. Its nodes are not declared either: they come off the wire's own
 ## `craft_knowledge` vector in the order the sim published it, so a fourth craft appearing in
 ## `recipes.json` needs no client edit.
 const DOMAIN_CRAFT_LABEL := "Craft"
 
-## **A COLUMN APPEARS THE TURN ITS FIRST KNOWLEDGE DOES, AND AN EMPTY ONE IS NEVER DRAWN**
-## (`KnowledgeRoster` drops it). An empty column is worse than a missing one: it teaches the player
+## **A ROW APPEARS THE TURN ITS FIRST KNOWLEDGE DOES, AND AN EMPTY ONE IS NEVER DRAWN**
+## (`KnowledgeRoster` drops it). An empty row is worse than a missing one: it teaches the player
 ## that a whole area of the game is closed to them when in truth it does not exist yet. War and
-## Telling have no ladder branch at all, so they have no column; **Roads gained one the moment the
+## Telling have no ladder branch at all, so they have no row; **Roads gained one the moment the
 ## route branch started teaching something**, with no edit beyond the label above.
 
 ## What a branch this file has no word for reads as — the wire's own token, capitalized. It is the
-## honest answer rather than a blank head, and it is what keeps an unlisted branch DRAWABLE: the
-## panel is built from the roster, so a column must never depend on a client table having heard of it.
+## honest answer rather than a blank gutter, and it is what keeps an unlisted branch DRAWABLE: the
+## panel is built from the roster, so a row must never depend on a client table having heard of it.
 static func domain_label(branch: StringName) -> String:
 	return String(DOMAIN_BRANCH_LABELS.get(branch, String(branch).capitalize()))
-
-## The caption under a domain head, saying what SHAPE the column is and so what the reader is looking
-## at. A few words, because a head that explained itself in a clause would read as part of the list.
-const DOMAIN_SHAPE_NOTES := {
-	DOMAIN_SHAPE_LADDER: "one step at a time",
-	DOMAIN_SHAPE_FAN: "learned by working it",
-}
 
 # ---- a node's three states -------------------------------------------------------------------
 # **THREE, AND THE THIRD IS DRAWN.** `not_begun` is what the faction page's knowledge block used to
@@ -151,11 +146,18 @@ const NODE_GLYPHS := {
 	NODE_STATE_NOT_BEGUN: "○",
 }
 
-## What a node's right-hand cell reads in each state. `learning` takes a percent
-## (`LEARNING_VALUE_FORMAT`).
-const NODE_VALUE_KNOWN := "known"
-const NODE_VALUE_NOT_BEGUN := "not begun"
+## What the DETAIL's state line reads in each state. **Sentence case, because there is no cell any
+## more**: these used to be the right-hand column of a node ROW, which was a cell in a table; the
+## chip that replaced the row has no room for a word beside the name, so the two settled states say
+## themselves in the reading instead (`docs/plan_knowledge_rows.md` §3).
+const NODE_VALUE_KNOWN := "Known"
+const NODE_VALUE_NOT_BEGUN := "Not begun"
+## The `learning` state line — `HudFormat.meter_bar` plus the whole percent. **THE METER SURVIVES THE
+## CHIP'S LOSS HERE**: a block meter does not fit a chip (the chip states the percent alone), and
+## this is where a player still sees how far along the bar really is.
 const LEARNING_VALUE_FORMAT := "%s %d%%"
+## The percent ON A CHIP, which carries no meter beside it.
+const CHIP_PERCENT_FORMAT := "%d%%"
 
 ## The meter beside a learning node's percent, in `HudFormat.meter_bar` cells. It reads
 ## `FactionReadouts.KNOWLEDGE_METER_CELLS` rather than declaring a second one: this panel and the
@@ -167,8 +169,19 @@ const METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## or the client records that a verb was ever exercised, and a persisted latch would make a claim
 ## that cannot survive a reinstall. What IS derivable is the present tense, and the label says
 ## exactly that much (`docs/plan_knowledge_screen.md` §2).
+##
+## ⛔ **IT NO LONGER RIDES AS A ROW OF ITS OWN, AND THE STATE STILL HAS TO BE LEGIBLE WITHOUT A
+## CLICK.** There is no room for a clause under a chip, so the clause now has THREE carriers and all
+## three are wired: the `◇` mark ON the chip, the chip's own `tooltip_text` (the unlock note with
+## this clause appended), and the detail's state line.
 const UNSPENT_CLAUSE := "nothing is using it"
 const UNSPENT_MARK := "◇"
+
+## What a knowledge that GATES NOTHING wears on its chip — `foddering` today. It hangs off the end of
+## its ladder and says so, so it reads as hanging off rather than as continuing the steps. Drawn from
+## `NODE_UNSPENT_TESTABLE` being false, which is the config's own answer (`ROSTER_IS_STEP`), never a
+## client list of exceptions.
+const CAPABILITY_CAPSULE := "gates nothing"
 
 # ---- the filters -----------------------------------------------------------------------------
 # **COUNTS OVER ONE LIST, AND A NON-MATCHING NODE DIMS RATHER THAN DISAPPEARS.** The shape of the
@@ -229,13 +242,20 @@ const TALLY_NOT_BEGUN_FORMAT := "%d not begun"
 const TALLY_UNSPENT_FORMAT := "%d unspent"
 const TALLY_SEPARATOR := " · "
 
-# ---- the detail pane -------------------------------------------------------------------------
-## **IT IS A READING, NOT A PLANNER.** No queue, no research order, no pathing, and nothing here is a
-## button. If the pane reads as somewhere you SPEND something it has taught the wrong thing: a
-## discovery is earned by practice, so the only way to get one is to go and do the work.
-const DETAIL_PLACEHOLDER_HEAD := "What your people know"
-const DETAIL_PLACEHOLDER_BODY := "Pick anything on the left to see what it lets your hands do, and how it is learned."
+# ---- the inline detail -----------------------------------------------------------------------
+## **IT IS A READING, NOT A PLANNER.** No queue, no research order, no pathing, and the only button
+## in it is the `✕`. If the block reads as somewhere you SPEND something it has taught the wrong
+## thing: a discovery is earned by practice, so the only way to get one is to go and do the work.
+##
+## **THERE IS NO "LEFT" ANY MORE** — the pinned pane is gone and the reading opens INLINE, beneath
+## the row whose chip was pressed (`docs/plan_knowledge_rows.md` §4), so the placeholder points UP
+## at the list rather than sideways at a column that no longer exists.
+const DETAIL_PLACEHOLDER_BODY := "Pick anything above to see what it lets your hands do, and how it is learned."
 
+## The three kickers, and they are drawn in the order **does · where · how** — the prototype's
+## (`docs/knowledge_rows_ux_proposal.html` → `detailFor`), which is the design. The pinned pane read
+## does · how · where; side by side in three columns, *where it stands now* belongs next to *what it
+## lets you do* rather than after the practice note.
 const DETAIL_HEAD_UNLOCKS := "What it lets you do"
 const DETAIL_HEAD_PRACTISE := "How it is learned"
 const DETAIL_HEAD_WHERE := "Where, now"
@@ -334,46 +354,92 @@ const CLOSE_GLYPH := "✕"
 const CLOSE_TOOLTIP := "Close"
 
 # ---- geometry --------------------------------------------------------------------------------
-## The card's NOMINAL width; `AutoSizingPanel` fits the real one to the content, so this is the width
-## the first frame is laid out at rather than a cap.
-const PANEL_WIDTH := 900.0
+## ⛔ **THE CARD'S WIDTH IS FIXED — this is not a nominal floor any more.** It was, and that is what
+## `docs/plan_knowledge_rows.md` §1 measured: a column layout's content minimum was
+## `230 × domains + 336`, so six domains wanted ~1,716px and the ten to twelve the civilization-steps
+## plan commits want 2,636–3,096 on a 1,920 viewport that docked panels have already bitten into.
+## Rows put the growth on HEIGHT, which scrolls, and leave width a function of ladder DEPTH — capped
+## at ~4 rungs by design — so one number fits every domain count. 820 is the prototype's
+## `.card { max-width: 820px }`.
+##
+## **`refit` applies exactly this, never the content's demand**, so opening and closing a reading
+## cannot move the card (§4).
+const PANEL_WIDTH := 820.0
+## …and the floor it may shrink to when the ROOM is narrower than `PANEL_WIDTH`. Below this the card
+## would be narrower than one chip plus its name gutter, and the internal horizontal scroll carries
+## the rest.
+const PANEL_MIN_WIDTH := 360.0
 const PANEL_MIN_HEIGHT := 260.0
 const VIEWPORT_MARGIN := 12.0
 
-## One domain column's floor. Wide enough for the longest node name plus its glyph, its meter and its
-## percent on one line — a node name that wrapped would break the column's read as a ladder.
-const COLUMN_MIN_WIDTH := 210.0
-const DETAIL_WIDTH := 300.0
+## The hairline between two domain rows (and under the header). It was the seam between the columns
+## and the detail pane; it is the rule between rows now.
 const COLUMN_SEPARATOR_THICKNESS := 1.0
-const COLUMNS_PADDING_H := 18
-const COLUMNS_PADDING_V := 18
-const DETAIL_PADDING_H := 20
-const DETAIL_PADDING_V := 18
 const HEADER_SEPARATION := 14
 const HEADER_PADDING_H := 18
 const HEADER_PADDING_V := 14
 const FILTER_ROW_SEPARATION := 6
-const NODE_ROW_SEPARATION := 8
-const NODE_ROW_PADDING_V := 5
-## The row's own side padding. It is what the SELECTED row's leading bar and wash are drawn inside, so
-## the two states have identical content margins and selecting a row never moves the column.
-const NODE_ROW_PADDING_H := 6
-## The SELECTED row's leading accent bar. A bar rather than an underline: this is a column of rows, and
-## an underline under one of them reads as a rule between two rows rather than as a selection.
-const NODE_SELECTED_BAR_THICKNESS := 2
-## How far the unspent clause is indented, so it reads as a note about the row above rather than as a
-## row of its own — the node glyph's own column plus the face's separation.
-const NODE_CLAUSE_INDENT := 16
-const DOMAIN_SEPARATION := 6
-const COLUMN_SEPARATION := 20
-const DETAIL_SECTION_SEPARATION := 12
 
-## The ladder RAIL down a ladder column's left edge: the vertical hairline, and the gap between it
-## and the node glyphs. It is what says *these are steps in an order*; the craft column draws none.
+# ---- a domain ROW ------------------------------------------------------------------------------
+## The row's own padding, inside the card's content box.
+const ROW_PADDING_H := 16
+const ROW_PADDING_V := 7
+## The domain NAME's gutter, right-aligned against the chips — a fixed width so every row's first
+## chip starts on the same vertical, which is what makes a stack of rows read as a list of ladders
+## rather than as ragged text. The gutter's own width, then the gap to the first chip.
+const ROW_NAME_WIDTH := 88.0
+const ROW_NAME_GUTTER := 12
+
+## **THE RAIL, ROTATED.** A LADDER draws this hairline BETWEEN two chips; the craft FAN draws
+## `FAN_GAP` of nothing instead. One `if` on the domain's `shape` descriptor, never on its name.
+const CONNECTOR_LENGTH := 14.0
+const FAN_GAP := 5.0
+## The connector's thickness. Deliberately the SAME const the column rail used rather than a twin:
+## it is the same hairline, drawn along the other axis.
 const RAIL_THICKNESS := 1.0
-const RAIL_GUTTER := 10
 
-## How much a node dimmed by the filter keeps. Non-matching nodes DIM rather than disappear, and this
+# ---- a node CHIP -------------------------------------------------------------------------------
+## The chip's box. **Identical in both selection states** — the selected chip's border is drawn
+## inside these margins — so selecting a knowledge never reflows its row.
+const CHIP_PADDING_H := 9
+const CHIP_PADDING_V := 5
+## Between the chip's own parts: glyph, name, percent, unspent mark, capability capsule.
+const CHIP_SEPARATION := 6
+const CHIP_BORDER_THICKNESS := 1
+
+## The capability capsule (`CAPABILITY_CAPSULE`) — a fully-rounded outline, so it reads as a tag
+## hanging off the chip rather than as another word in its name.
+const CAPSULE_FONT_SIZE := 10
+const CAPSULE_PADDING_H := 7
+const CAPSULE_PADDING_V := 3
+
+# ---- the INLINE detail --------------------------------------------------------------------------
+## **DERIVED, so the reading lines up under the row's first chip** rather than under the card's edge:
+## the row's own padding, plus the name gutter, plus the gap to that chip.
+const DETAIL_INDENT := ROW_PADDING_H + int(ROW_NAME_WIDTH) + ROW_NAME_GUTTER
+## The `SIGNAL` bar down the reading's leading edge, and the gap between it and the text.
+const DETAIL_BAR_THICKNESS := 2
+const DETAIL_BAR_GUTTER := 14
+const DETAIL_SECTION_SEPARATION := 12
+## The three kicker/body columns, and the gutter between them.
+const DETAIL_SECTION_GUTTER := 22
+const DETAIL_SECTION_COUNT := 3
+
+## ⛔ **THE RESERVE THAT STOPS THE CARD BREATHING** (`docs/plan_knowledge_rows.md` §4). The detail
+## block is mounted in BOTH states — open, and holding the placeholder — at this minimum height, so
+## the body's minimum does not change when a knowledge is opened or closed: the gap simply moves from
+## the bottom of the list to under the open row. A card fitted to its content instead would narrow on
+## every close and widen on every open, and on a card centred in its room that is a visible lurch in
+## both directions from the middle of the screen, on every click.
+##
+## **MEASURED, not chosen.** Set to `0.0` and walked over every node the shipped roster carries, the
+## card reads 324 closed and 463 open at its widest reading (`cultivation`, whose three sections are
+## the longest copy in the table) — so the open block wants 169 and this leaves ~15px of slack for a
+## copy edit. A shorter reserve does not break the layout, it only lets the card breathe again for
+## whichever node overflows it, which is why the preview chapter opens EVERY node rather than one.
+const DETAIL_BLOCK_MIN_HEIGHT := 184.0
+
+## How much a node dimmed by the filter keeps. Non-matching chips DIM rather than disappear, and this
 ## is how far — far enough to read as "not this" at a glance, not so far as to be unreadable, since
 ## the point of dimming instead of hiding is that the whole tree stays legible.
 const FILTERED_OUT_ALPHA := 0.35
@@ -382,10 +448,9 @@ const TITLE_FONT_SIZE := 12
 const TALLY_FONT_SIZE := 11
 const FILTER_FONT_SIZE := 10
 const DOMAIN_HEAD_FONT_SIZE := 10
-const DOMAIN_SHAPE_FONT_SIZE := 9
 const NODE_NAME_FONT_SIZE := 13
+## The percent on a learning chip.
 const NODE_VALUE_FONT_SIZE := 11
-const NODE_CLAUSE_FONT_SIZE := 10
 const DETAIL_TITLE_FONT_SIZE := 15
 const DETAIL_HEAD_FONT_SIZE := 9
 const DETAIL_BODY_FONT_SIZE := 12
@@ -399,6 +464,10 @@ const DOMAIN_META := "knowledge_domain"
 const RAIL_META := "knowledge_rail"
 const TALLY_META := "knowledge_tally"
 const EMPTY_NOTE_META := "knowledge_empty_note"
+## The INLINE detail block. It carries the key of the node it is reading, or `""` in its placeholder
+## state — so a harness can ask both *how many are mounted* (exactly one, always) and *which row is
+## it sitting under*, which is the pair of claims the toggle rests on.
+const DETAIL_META := "knowledge_detail"
 
 ## The tint each state's name and glyph take. `not_begun` is `INK_FAINT` — GREYED, not hidden.
 ##

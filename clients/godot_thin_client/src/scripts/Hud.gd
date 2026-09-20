@@ -608,6 +608,21 @@ func close_work_inspector() -> void:
     if _bandpanel != null:
         _bandpanel.close_work_inspector()
 
+## Is a KNOWLEDGE READING open on the knowledge screen? Reached BY NAME from `Main._unhandled_input`
+## for the ESC chain, the `is_compose_sheet_open` idiom — a `has_method` probe that fails SILENTLY,
+## so this method must stay callable on the HUD node.
+##
+## ⛔ **IT ANSWERS FOR THE READING, NOT FOR THE SCREEN.** With the screen open and nothing selected
+## this is `false`, so ESC falls through to the pause menu exactly as it did before
+## (`docs/plan_knowledge_rows.md` §4 asks ESC to close the reading and asks nothing about the screen).
+func is_knowledge_detail_open() -> bool:
+    return _knowledge != null and _knowledge.is_detail_open()
+
+## …and put the reading away. ESC's handler, and the twin of `close_work_inspector`.
+func close_knowledge_detail() -> void:
+    if _knowledge != null:
+        _knowledge.close_detail()
+
 func _ready() -> void:
     # FIRST, before any controller is constructed: each is handed `self` as its host and reads
     # `compose_host()` / `work_inspector_host()` back off it lazily, and a null here would silently

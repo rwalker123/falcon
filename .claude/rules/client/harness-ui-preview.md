@@ -2059,8 +2059,9 @@ corner.
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
 **Appended LAST in `CHAPTERS`**, so no existing frame moves. Seven frames and 89 assertions (its
-`EXPECTED_CHECKPOINTS` floor is the measured **96** — frames count too, so the three launcher-face
-frames the cairn arc appended moved it 75 → 85, and the loaded-world block moved it again to 96;
+`EXPECTED_CHECKPOINTS` floor is the measured **124** — frames count too, so the three launcher-face
+frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, and the ROW
+layout (`docs/plan_knowledge_rows.md` slice A) moved it to 124 on one added frame;
 the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
 surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
 a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
@@ -2112,14 +2113,25 @@ is reported distinguishably too: a roster that dropped a track answers `false` t
 of it, and "the node is missing" is not the same failure as "the node says in use".
 
 **Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
-`knowledge_panel_detail` · `knowledge_panel_filtered` · `knowledge_launcher_mark` / `_rail` / `_bar`
-(the launcher's bundled cairn at each of the three action mounts, captured inside the pip block
-because that block is the only one standing a REAL `BandCityPanel` up).
+`knowledge_panel_detail` · `knowledge_panel_filtered` · **`knowledge_panel_stress`** (24 synthetic
+ladder branches, built in the chapter from `KnowledgeFx.ladder_roster()`'s row shape, with the card
+still at its fixed width — `knowledge-panel.md` → "DOMAINS ARE ROWS") · `knowledge_launcher_mark` /
+`_rail` / `_bar` (the launcher's bundled cairn at each of the three action mounts, captured inside
+the pip block because that block is the only one standing a REAL `BandCityPanel` up).
 
-**A clean run is 384 frames / 1710 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
-figure recorded when this chapter landed was 353 / 1405, and the loaded-world block added eleven
-claims and no frame; everything else between the two is drift accumulated un-recorded, exactly as it
-had been the three times before. Measure; do not sum.
+**THE ROW LAYOUT'S OWN CLAIMS ARE RELATIONS BETWEEN TWO RENDERS, never magnitudes.** *The card does
+not resize* is `panel.size` before and after a press, on BOTH axes and on the toggle back — and then
+over EVERY node the roster carries, because `DETAIL_BLOCK_MIN_HEIGHT` is a MINIMUM and a reading
+whose columns wrap past it makes the card breathe for that node alone. *The reading sits under its
+own row* is an INDEX inside `_rows`, exactly one past the row carrying the selected node; "it is in
+the panel" passes with the block appended at the bottom of a twelve-row list, which is the
+arrangement this layout replaces. *Only one is ever open* is a COUNT of `DETAIL_META` nodes.
+
+**A clean run is 452 frames / 2200 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
+and no frame, and the ROW layout added `knowledge_panel_stress` and its claims. Everything else
+between the three is drift accumulated un-recorded, exactly as it had been the times before.
+Measure; do not sum.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 

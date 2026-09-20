@@ -11,17 +11,38 @@ class_name KnowledgePanel
 ## game works. Selecting a node opens a READING of it and nothing else. If it reads as a planner it
 ## has taught the wrong thing, and that is the one review question to ask of any change here.
 ##
-## **DOMAINS ARE COLUMNS AND IT IS NOT A GRAPH.** The rung engine models ~4 steps per web and grows by
-## adding BRANCHES, so the screen never needs pan, zoom or edge routing — and a graph view would spend
-## its whole budget drawing eight nodes' worth of empty space. A LADDER domain draws a rail down its
-## left edge (its nodes are ordered: each is earned by practising the one below); the CRAFT column
-## draws none, because a craft is learned by working its material and gates recipes rather than a next
-## step. **That is a property of the domain descriptor, not a branch in this renderer.**
+## **DOMAINS ARE ROWS AND IT IS NOT A GRAPH** (`docs/plan_knowledge_rows.md`). They were COLUMNS, and
+## the measurement in §1 is why they are not any more: **domains are the axis that GROWS, and the
+## shipped layout put them on the axis that cannot scroll.** A column carried a 210px floor and a 20px
+## separation beside a 300px pinned detail pane, so the card's content minimum was
+## `230 × domains + 336` — ~1,716px at today's six, and 2,636–3,096 at the ten to twelve
+## `docs/plan_civilization_steps.md` commits, on a 1,920 viewport docked panels have already taken a
+## bite out of.
 ##
-## **WHAT EXISTS IS RENDERED, AND NOTHING ELSE.** The prototype
-## (`docs/knowledge_screen_ux_proposal.html`) shows 36 nodes to prove the layout survives the tree it
-## will one day have; the game has EIGHT. Routes / War / Telling have no nodes, so they have no
-## columns — see `KnowledgeRoster.build_domains`, and never draw an empty domain column.
+## Laid out in rows, **width is a function of ladder DEPTH** — which the design caps at ~4 rungs and
+## forbids growing — so one fixed card width fits every domain count, and a new branch costs one row
+## of HEIGHT, on an axis that already scrolls.
+##
+## ⛔ **AND NO CLAMP WOULD HAVE DONE IT.** `refit` raised `max_width` to the room and `fit_width`
+## clamped to it correctly — but Godot will not render a Control below its
+## `get_combined_minimum_size()`, and that minimum ran straight through `KnowledgeScroll`, whose
+## `horizontal_scroll_mode` was `SCROLL_MODE_DISABLED`: **a ScrollContainer that cannot scroll an axis
+## propagates its child's full minimum on that axis rather than absorbing it.** The clamp was computed
+## and then overruled by the layout. The content minimum itself had to come down, which is what the
+## rows do — and the horizontal axis is `SCROLL_MODE_AUTO` now so the card is genuinely shrinkable.
+##
+## A LADDER domain draws the rail BETWEEN its rungs (its nodes are ordered: each is earned by
+## practising the one below); the CRAFT fan draws none, because a craft is learned by working its
+## material and gates recipes rather than a next step. **That is a property of the domain descriptor,
+## not a branch in this renderer** — the same rule the column rail stated, rotated ninety degrees.
+##
+## **WHAT EXISTS IS RENDERED, AND NOTHING ELSE.** Routes / War / Telling have no nodes, so they have
+## no rows — see `KnowledgeRoster.build_domains`, and never draw an empty domain row.
+##
+## **THE DETAIL IS INLINE AND THE SELECTION IS A TOGGLE** (§4). The reading opens beneath the row
+## whose chip was pressed, pressing the open chip closes it, and only one is ever open. The block is
+## mounted in BOTH states at `DETAIL_BLOCK_MIN_HEIGHT`, which is what stops the card breathing as
+## readings open and close.
 ##
 ## **A TRACK AT `0.0` IS DRAWN, GREYED.** See `KnowledgeRoster`'s docstring for why the old skip was
 ## the bug rather than the economy.
@@ -51,6 +72,10 @@ signal closed
 signal node_selected(key: String)
 ## A filter pill was pressed — its key.
 signal filter_selected(key: StringName)
+## The open reading's `✕` was pressed. **Not `node_selected` with the open key** — that would route a
+## close through the controller's TOGGLE, which is a coincidence of the current state rather than the
+## thing being asked for; this says *close the reading* whatever is open.
+signal detail_closed
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 ## `[{key, label, shape, nodes}]` — `KnowledgeRoster.build_domains`' answer, already pruned of empty
@@ -65,8 +90,9 @@ var _card: PanelContainer = null
 var _scroll: ScrollContainer = null
 var _body: VBoxContainer = null
 var _header: VBoxContainer = null
-var _columns: HBoxContainer = null
-var _detail: VBoxContainer = null
+## The domain rows and the detail block, interleaved — the detail sits immediately after the row that
+## owns the selected node, or last when nothing is selected.
+var _rows: VBoxContainer = null
 var _fit_pending: bool = false
 
 ## The last payload rendered, so a re-fit after a viewport change has something to measure.
@@ -108,10 +134,16 @@ func _ready() -> void:
 
 	# ONE scroll around the whole body, for `CraftingPanel`'s reason: this card is measured against
 	# the viewport, so its ceiling is real room — and a short window genuinely can leave less of it
-	# than three columns of nodes need.
+	# than the ladder rows need.
+	#
+	# ⛔ **THE HORIZONTAL AXIS IS `AUTO`, AND THAT IS REQUIRED RATHER THAN COSMETIC.** A
+	# ScrollContainer with an axis DISABLED propagates its child's full minimum on that axis instead
+	# of absorbing it, which is exactly what overruled the old width clamp (see the class docstring).
+	# With it `AUTO` the card can genuinely be bounded, and a room narrower than one reading scrolls
+	# rather than forcing the card wide.
 	_scroll = ScrollContainer.new()
 	_scroll.name = "KnowledgeScroll"
-	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -122,34 +154,11 @@ func _ready() -> void:
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(_body)
 
-	var zones := HBoxContainer.new()
-	zones.name = "KnowledgeZones"
-	zones.add_theme_constant_override("separation", 0)
-	zones.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_child(zones)
-
-	_columns = HBoxContainer.new()
-	_columns.name = "DomainColumns"
-	_columns.add_theme_constant_override("separation", HudKnowledgeVocab.COLUMN_SEPARATION)
-	_columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var columns_host := _wrap_padded(_columns,
-		HudKnowledgeVocab.COLUMNS_PADDING_H, HudKnowledgeVocab.COLUMNS_PADDING_V)
-	columns_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	zones.add_child(columns_host)
-
-	var seam := Panel.new()
-	seam.custom_minimum_size = Vector2(HudKnowledgeVocab.COLUMN_SEPARATOR_THICKNESS, 0.0)
-	seam.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
-	seam.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	zones.add_child(seam)
-
-	_detail = VBoxContainer.new()
-	_detail.name = "KnowledgeDetail"
-	_detail.custom_minimum_size = Vector2(HudKnowledgeVocab.DETAIL_WIDTH, 0.0)
-	_detail.size_flags_horizontal = Control.SIZE_FILL
-	_detail.add_theme_constant_override("separation", HudKnowledgeVocab.DETAIL_SECTION_SEPARATION)
-	zones.add_child(_wrap_padded(_detail,
-		HudKnowledgeVocab.DETAIL_PADDING_H, HudKnowledgeVocab.DETAIL_PADDING_V))
+	_rows = VBoxContainer.new()
+	_rows.name = "DomainRows"
+	_rows.add_theme_constant_override("separation", 0)
+	_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_rows)
 
 # ---- public API -------------------------------------------------------------
 
@@ -161,12 +170,10 @@ func _ready() -> void:
 func render(payload: Dictionary) -> void:
 	_payload = payload
 	HudWidgets.clear_children(_header)
-	HudWidgets.clear_children(_columns)
-	HudWidgets.clear_children(_detail)
+	HudWidgets.clear_children(_rows)
 	var nodes := KnowledgeRoster.flatten(payload.get(PAYLOAD_DOMAINS, []))
 	_build_header(payload, nodes)
-	_build_columns(payload)
-	_build_detail(payload, nodes)
+	_build_rows(payload, nodes)
 	# **VISIBLE BEFORE THE FIT, and that is load-bearing**: `Container._sort_children` early-returns on
 	# a hidden subtree, so a card kept hidden until it had been measured would never lay its content
 	# out and would measure the unwrapped lower bound forever.
@@ -185,8 +192,7 @@ func dismiss() -> void:
 	if _scroll != null:
 		_scroll.scroll_vertical = 0
 	HudWidgets.clear_children(_header)
-	HudWidgets.clear_children(_columns)
-	HudWidgets.clear_children(_detail)
+	HudWidgets.clear_children(_rows)
 
 func is_open() -> bool:
 	return visible
@@ -209,8 +215,14 @@ func refit() -> void:
 		return
 	var room := _room()
 	var chrome := HudStyle.card_stylebox().get_minimum_size()
-	max_width = maxf(room.size.x, target_width)
-	fit_width(_body.get_combined_minimum_size().x, chrome.x + _scroll_gutter())
+	# ⛔ **FIXED WIDTH.** The card is `PANEL_WIDTH` and narrows only when the ROOM itself is narrower —
+	# it never grows or shrinks with its content, so opening and closing a reading cannot move it
+	# (`docs/plan_knowledge_rows.md` §4). `target_width` is therefore the panel's ACTUAL width rather
+	# than the nominal floor it used to be, and `fit_width(0, 0)` has nothing left to fit: it applies
+	# exactly `target_width`.
+	target_width = clampf(room.size.x, HudKnowledgeVocab.PANEL_MIN_WIDTH, HudKnowledgeVocab.PANEL_WIDTH)
+	max_width = target_width
+	fit_width(0.0, 0.0)
 	# The height fit's ceiling is the WHOLE room and the card does not move to be measured —
 	# `centred_in_room` is how the base class is told so. Fitting a centred card against the room
 	# BELOW it throws away everything above it.
@@ -268,6 +280,7 @@ func _build_header(payload: Dictionary, nodes: Array) -> void:
 		pill.pressed.connect(func(): filter_selected.emit(key))
 		filter_row.add_child(pill)
 	_header.add_child(filter_row)
+	_append_filter_note(payload, nodes)
 
 ## **THE TALLY IS THREE STATES PLUS THE NUDGE.** `unspent` rides last and in `WARN` because it is the
 ## only one of the four that is asking for something rather than reporting.
@@ -285,234 +298,388 @@ func _tally_text(nodes: Array) -> String:
 		parts.append(HudKnowledgeVocab.TALLY_UNSPENT_FORMAT % unspent)
 	return HudKnowledgeVocab.TALLY_SEPARATOR.join(parts)
 
-# ---- the domain columns -----------------------------------------------------
 
-func _build_columns(payload: Dictionary) -> void:
+# ---- the domain rows --------------------------------------------------------
+
+## **ONE ROW PER DOMAIN, AND THE READING INTERLEAVED.** The hairline between two rows, then the row,
+## then — when the selected node belongs to THIS domain — the reading, immediately after it.
+##
+## **THE BLOCK IS ALWAYS MOUNTED.** With nothing selected it goes last, holding its placeholder, at
+## the same `DETAIL_BLOCK_MIN_HEIGHT` reserve it takes when open: the body's minimum height does not
+## change when a knowledge is opened or closed, so the card cannot breathe (see the class docstring).
+func _build_rows(payload: Dictionary, nodes: Array) -> void:
 	var filter := StringName(payload.get(PAYLOAD_FILTER, HudKnowledgeVocab.FILTER_ALL))
 	var selected := String(payload.get(PAYLOAD_SELECTED, ""))
+	var open_node := _find_node(nodes, selected)
+	var placed := false
+	var first := true
 	for domain_variant in payload.get(PAYLOAD_DOMAINS, []):
-		if domain_variant is Dictionary:
-			_columns.add_child(_build_domain(domain_variant as Dictionary, filter, selected))
+		if not (domain_variant is Dictionary):
+			continue
+		var domain := domain_variant as Dictionary
+		# **NO RULE BEFORE THE FIRST ROW** — the header already draws one, and a second hairline under
+		# it reads as an empty band rather than as a separator.
+		if not first:
+			_rows.add_child(_rule(HudStyle.LINE_SOFT))
+		first = false
+		_rows.add_child(_build_domain_row(domain, filter, selected))
+		if not open_node.is_empty() and not placed \
+				and String(open_node.get(HudKnowledgeVocab.NODE_DOMAIN, "")) \
+					== String(domain[HudKnowledgeVocab.DOMAIN_KEY]):
+			_rows.add_child(_build_detail_block(open_node))
+			placed = true
+	if not placed:
+		_rows.add_child(_build_detail_block({}))
 
-func _build_domain(domain: Dictionary, filter: StringName, selected: String) -> Control:
-	var col := VBoxContainer.new()
-	col.custom_minimum_size = Vector2(HudKnowledgeVocab.COLUMN_MIN_WIDTH, 0.0)
-	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	col.add_theme_constant_override("separation", HudKnowledgeVocab.DOMAIN_SEPARATION)
-	col.set_meta(HudKnowledgeVocab.DOMAIN_META, String(domain[HudKnowledgeVocab.DOMAIN_KEY]))
+## ONE DOMAIN'S ROW: `NAME   ●chip ── ◐chip ── ○chip`, wrapping when it runs out of width.
+##
+## **THE RUNGS RIDE IN AN `HFlowContainer`, AND THAT IS WHAT KEEPS THE CARD BOUNDED.** It wraps, so
+## its own minimum width is only its WIDEST CHILD — one chip — rather than the sum of the ladder. A
+## row of `HBoxContainer`s would put the whole ladder back into the card's minimum, which is the
+## column layout's defect on the other axis.
+func _build_domain_row(domain: Dictionary, filter: StringName, selected: String) -> Control:
+	var host := MarginContainer.new()
+	host.add_theme_constant_override("margin_left", HudKnowledgeVocab.ROW_PADDING_H)
+	host.add_theme_constant_override("margin_right", HudKnowledgeVocab.ROW_PADDING_H)
+	host.add_theme_constant_override("margin_top", HudKnowledgeVocab.ROW_PADDING_V)
+	host.add_theme_constant_override("margin_bottom", HudKnowledgeVocab.ROW_PADDING_V)
+	host.set_meta(HudKnowledgeVocab.DOMAIN_META, String(domain[HudKnowledgeVocab.DOMAIN_KEY]))
 
-	var head := Label.new()
-	head.text = String(domain[HudKnowledgeVocab.DOMAIN_LABEL]).to_upper()
-	head.add_theme_font_size_override("font_size", HudKnowledgeVocab.DOMAIN_HEAD_FONT_SIZE)
-	head.add_theme_color_override("font_color", HudStyle.INK_DIM)
-	col.add_child(head)
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", HudKnowledgeVocab.ROW_NAME_GUTTER)
+	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	host.add_child(line)
 
-	var shape := String(domain[HudKnowledgeVocab.DOMAIN_SHAPE])
-	col.add_child(_caption(String(HudKnowledgeVocab.DOMAIN_SHAPE_NOTES.get(shape, "")),
-		HudStyle.INK_FAINT, HudKnowledgeVocab.DOMAIN_SHAPE_FONT_SIZE))
+	# The domain's name, right-aligned in a fixed gutter so every row's first chip starts on one
+	# vertical — and pinned to the TOP of the row, so a row whose chips have wrapped onto two lines
+	# still reads as belonging to the name beside its first line.
+	var name_label := Label.new()
+	name_label.text = String(domain[HudKnowledgeVocab.DOMAIN_LABEL]).to_upper()
+	name_label.custom_minimum_size = Vector2(HudKnowledgeVocab.ROW_NAME_WIDTH, 0.0)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	name_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	name_label.add_theme_font_size_override("font_size", HudKnowledgeVocab.DOMAIN_HEAD_FONT_SIZE)
+	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_child(name_label)
 
 	# **THE RAIL IS THE DOMAIN'S SHAPE, DRAWN.** A ladder's nodes are ordered — each earned by
-	# practising the one below — and the rail is what says so; the craft fan has no order to state, so
-	# it draws none and its rows sit at the column's own left edge. One `if` on the DESCRIPTOR, never
-	# on a domain's name.
-	var rows := VBoxContainer.new()
-	rows.add_theme_constant_override("separation", 0)
-	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for node_variant in domain[HudKnowledgeVocab.DOMAIN_NODES]:
-		if node_variant is Dictionary:
-			rows.add_child(_build_node_row(node_variant as Dictionary, filter, selected))
-	if shape == HudKnowledgeVocab.DOMAIN_SHAPE_LADDER:
-		col.add_child(_with_rail(rows))
-	else:
-		col.add_child(rows)
-	return col
+	# practising the one below — and the connector between two chips is what says so; the craft fan
+	# has no order to state, so it draws a bare gap. ONE `if` on the DESCRIPTOR, never on a name.
+	var is_ladder := String(domain[HudKnowledgeVocab.DOMAIN_SHAPE]) \
+		== HudKnowledgeVocab.DOMAIN_SHAPE_LADDER
+	var rungs := HFlowContainer.new()
+	rungs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Both separations are zero: the CONNECTORS carry the spacing, so a wrapped chip lands at the
+	# same pitch as one that did not wrap.
+	rungs.add_theme_constant_override("h_separation", 0)
+	rungs.add_theme_constant_override("v_separation", 0)
+	line.add_child(rungs)
 
-## The vertical hairline plus its gutter, with the rows to its right.
-func _with_rail(rows: Control) -> Control:
-	var host := HBoxContainer.new()
-	host.add_theme_constant_override("separation", HudKnowledgeVocab.RAIL_GUTTER)
-	host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var first := true
+	for node_variant in domain[HudKnowledgeVocab.DOMAIN_NODES]:
+		if not (node_variant is Dictionary):
+			continue
+		if not first:
+			rungs.add_child(_build_connector(is_ladder))
+		first = false
+		rungs.add_child(_build_node_chip(node_variant as Dictionary, filter, selected))
+	return host
+
+## The rail between two rungs — a drawn hairline for a LADDER, and `FAN_GAP` of nothing for a fan.
+## **Only the ladder's carries `RAIL_META`**, so *"a ladder draws its rail and the craft fan draws
+## none"* stays a claim a harness can make about the tree rather than about a pixel.
+func _build_connector(is_ladder: bool) -> Control:
+	if not is_ladder:
+		var gap := Control.new()
+		gap.custom_minimum_size = Vector2(HudKnowledgeVocab.FAN_GAP, 0.0)
+		gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return gap
 	var rail := Panel.new()
-	rail.custom_minimum_size = Vector2(HudKnowledgeVocab.RAIL_THICKNESS, 0.0)
-	rail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rail.custom_minimum_size = Vector2(HudKnowledgeVocab.CONNECTOR_LENGTH,
+		HudKnowledgeVocab.RAIL_THICKNESS)
+	rail.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	rail.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
 	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rail.set_meta(HudKnowledgeVocab.RAIL_META, true)
-	host.add_child(rail)
-	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	host.add_child(rows)
-	return host
+	return rail
 
-## ONE NODE'S ROW: `glyph name ……… value`, with the unspent clause under it when it has one.
+## ONE NODE'S CHIP: `● Cultivation`, plus a percent while it is being learned, plus the `◇` when
+## nothing is using it, plus the capability capsule when it gates nothing.
 ##
 ## **A `PanelContainer` WITH `gui_input`, NOT A `Button`, and that is the panel's own documented
-## rule.** A Button is not a Container, so a `glyph + name + value` row parented to one is NEVER LAID
-## OUT — the children pile up at the origin and the row's height stops being a function of its
-## content — and a `flat` Button ignores its `normal` stylebox outright, so the SELECTION would have
-## been an override reaching nothing the widget draws. Both were shipped here first and both are
-## invisible to a bounds assertion: the row renders, at the wrong height, with no selected state.
-## `BandCityPanel._make_tab_button` records the same finding for the same reason.
+## rule.** A Button is not a Container, so a face parented to one is NEVER LAID OUT — the children
+## pile up at the origin and the chip's height stops being a function of its content — and a `flat`
+## Button ignores its `normal` stylebox outright, so the SELECTED state would be an override reaching
+## nothing the widget draws. Both were shipped here first and both are invisible to a bounds
+## assertion. `BandCityPanel._make_tab_button` records the same finding for the same reason.
 ##
-## **PRESSING IT IS A READING, not a queue.** There is nothing to order and nothing to spend — see the
-## class docstring. It carries `NODE_META` so a harness finds it by the node it IS rather than by
+## **PRESSING IT IS A READING, not a queue.** There is nothing to order and nothing to spend — see
+## the class docstring. It carries `NODE_META` so a harness finds it by the node it IS rather than by
 ## whatever text it happens to be showing.
-func _build_node_row(node: Dictionary, filter: StringName, selected: String) -> Control:
+func _build_node_chip(node: Dictionary, filter: StringName, selected: String) -> Control:
 	var key := String(node[HudKnowledgeVocab.NODE_KEY])
 	var state := String(node[HudKnowledgeVocab.NODE_STATE])
 	var ink: Color = HudKnowledgeVocab.NODE_INKS.get(state, HudStyle.INK)
 	var is_selected := key == selected
 
-	var host := VBoxContainer.new()
-	host.add_theme_constant_override("separation", 0)
-	host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var row := PanelContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_STOP
-	row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	row.tooltip_text = String(node.get(HudKnowledgeVocab.NODE_NOTE, ""))
-	row.set_meta(HudKnowledgeVocab.NODE_META, key)
-	row.add_theme_stylebox_override("panel", _node_row_stylebox(is_selected))
-	row.gui_input.connect(func(event: InputEvent) -> void:
+	var chip := PanelContainer.new()
+	chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chip.tooltip_text = _chip_tooltip(node)
+	chip.set_meta(HudKnowledgeVocab.NODE_META, key)
+	chip.add_theme_stylebox_override("panel", _node_chip_stylebox(is_selected))
+	chip.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 				and event.pressed:
 			node_selected.emit(key))
 
-	# A mouse-transparent row inside the panel, so the glyph, the name and the value read (and click)
-	# as ONE row.
+	# A mouse-transparent face inside the panel, so the glyph, the name and whatever hangs off them
+	# read (and click) as ONE chip.
 	var face := HBoxContainer.new()
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_theme_constant_override("separation", HudKnowledgeVocab.NODE_ROW_SEPARATION)
-	row.add_child(face)
+	face.add_theme_constant_override("separation", HudKnowledgeVocab.CHIP_SEPARATION)
+	chip.add_child(face)
 
-	var glyph := Label.new()
-	glyph.text = String(HudKnowledgeVocab.NODE_GLYPHS.get(state, ""))
-	glyph.add_theme_font_size_override("font_size", HudKnowledgeVocab.NODE_NAME_FONT_SIZE)
-	glyph.add_theme_color_override("font_color", ink)
-	glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(glyph)
+	face.add_child(_chip_label(String(HudKnowledgeVocab.NODE_GLYPHS.get(state, "")), ink,
+		HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
+	face.add_child(_chip_label(String(node[HudKnowledgeVocab.NODE_LABEL]), ink,
+		HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
 
-	var name_label := Label.new()
-	name_label.text = String(node[HudKnowledgeVocab.NODE_LABEL])
-	name_label.add_theme_font_size_override("font_size", HudKnowledgeVocab.NODE_NAME_FONT_SIZE)
-	name_label.add_theme_color_override("font_color", ink)
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(name_label)
+	# **THE BLOCK METER IS DROPPED FROM THE CHIP — it does not fit one.** It survives in the reading's
+	# state line, which is why `METER_CELLS` is still live; the chip states the percent alone.
+	if state == HudKnowledgeVocab.NODE_STATE_LEARNING:
+		face.add_child(_chip_label(HudKnowledgeVocab.CHIP_PERCENT_FORMAT
+			% HudFormat.progress_percent(float(node[HudKnowledgeVocab.NODE_PROGRESS])),
+			HudStyle.WARN, HudKnowledgeVocab.NODE_VALUE_FONT_SIZE))
+
+	# **THE UNSPENT STATE HAS TO BE LEGIBLE WITHOUT A CLICK**, and the clause row it used to ride on
+	# has nowhere to go under a chip. So the MARK rides here, the clause rides in the tooltip
+	# (`_chip_tooltip`) and the sentence rides in the reading's state line — three carriers, all three
+	# wired. `WARN`, the same tint the tally's unspent clause takes.
+	if bool(node.get(HudKnowledgeVocab.NODE_UNSPENT, false)):
+		face.add_child(_chip_label(HudKnowledgeVocab.UNSPENT_MARK, HudStyle.WARN,
+			HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
+
+	# **A KNOWLEDGE THAT GATES NOTHING SAYS SO ON ITS FACE.** `foddering` hangs off the end of its
+	# ladder, and the capsule is what stops it reading as one more step. Off `NODE_UNSPENT_TESTABLE`,
+	# which is the ladder's own `is_step` — never a client list of exceptions. Crafts publish it
+	# `true`, so the capsule cannot land on one.
+	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)):
+		face.add_child(_build_capability_capsule())
+
+	# **DIM, NEVER HIDE** — see the class docstring. `modulate` on the CHIP itself: there is no row
+	# host any more, and a per-Label tint would leave the capsule bright over a faded name.
+	if not KnowledgeRoster.matches(node, filter):
+		chip.modulate = Color(1.0, 1.0, 1.0, HudKnowledgeVocab.FILTERED_OUT_ALPHA)
+	return chip
+
+## The chip's hover. The unlock note is what a player wants off a name they do not recognise; the
+## unspent clause is APPENDED to it rather than replacing it, because the two say different things
+## and the clause has lost its own row on the face.
+func _chip_tooltip(node: Dictionary) -> String:
+	var note := String(node.get(HudKnowledgeVocab.NODE_NOTE, ""))
+	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT, false)):
+		return note
+	var clause := "%s %s" % [HudKnowledgeVocab.UNSPENT_MARK, HudKnowledgeVocab.UNSPENT_CLAUSE]
+	return clause if note == "" else "%s\n%s" % [note, clause]
+
+## The `gates nothing` tag — a fully-rounded outline around a faint caption, so it reads as something
+## hanging off the chip rather than as another word in the knowledge's name.
+func _build_capability_capsule() -> Control:
+	var capsule := PanelContainer.new()
+	capsule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	capsule.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	sb.set_border_width_all(HudKnowledgeVocab.CHIP_BORDER_THICKNESS)
+	sb.border_color = HudStyle.LINE
+	sb.set_corner_radius_all(HudStyle.PILL_CORNER_RADIUS)
+	sb.content_margin_left = HudKnowledgeVocab.CAPSULE_PADDING_H
+	sb.content_margin_right = HudKnowledgeVocab.CAPSULE_PADDING_H
+	sb.content_margin_top = HudKnowledgeVocab.CAPSULE_PADDING_V
+	sb.content_margin_bottom = HudKnowledgeVocab.CAPSULE_PADDING_V
+	capsule.add_theme_stylebox_override("panel", sb)
+	capsule.add_child(_chip_label(HudKnowledgeVocab.CAPABILITY_CAPSULE, HudStyle.INK_FAINT,
+		HudKnowledgeVocab.CAPSULE_FONT_SIZE))
+	return capsule
+
+func _chip_label(text: String, ink: Color, font_size: int) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", ink)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+## The chip's own box. **Transparent either way — a node is text, not a control — and the SELECTED one
+## wears the faint wash this HUD gives a live selection inside a `SIGNAL` border.** Identical content
+## margins in both states, so selecting a chip never moves the ones beside it; that is
+## `BandCityPanel._tab_stylebox`'s rule, and it is what makes the stylebox the honest carrier of the
+## state (a `flat` Button's `normal` override draws nothing at all).
+##
+## **A BORDER ON ALL FOUR SIDES rather than the column layout's leading bar.** A bar down one edge
+## said *this row of a column* and the chips are a horizontal run, where a leading bar reads as a
+## connector to whatever is left of it.
+func _node_chip_stylebox(selected: bool) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = HudStyle.SIGNAL_WASH if selected else Color(0.0, 0.0, 0.0, 0.0)
+	sb.set_border_width_all(HudKnowledgeVocab.CHIP_BORDER_THICKNESS)
+	sb.border_color = HudStyle.SIGNAL if selected else Color(0.0, 0.0, 0.0, 0.0)
+	sb.set_corner_radius_all(HudStyle.READOUT_CORNER_RADIUS)
+	sb.content_margin_left = HudKnowledgeVocab.CHIP_PADDING_H
+	sb.content_margin_right = HudKnowledgeVocab.CHIP_PADDING_H
+	sb.content_margin_top = HudKnowledgeVocab.CHIP_PADDING_V
+	sb.content_margin_bottom = HudKnowledgeVocab.CHIP_PADDING_V
+	return sb
+
+# ---- the inline detail ------------------------------------------------------
+
+## **A READING OF ONE NODE, BENEATH ITS OWN ROW: what it lets you do · where, now · how it is
+## learned.** Nothing here is a control except the `✕`. See the class docstring.
+##
+## ⛔ **THE RESERVE IS THE POINT OF THIS BLOCK BEING MOUNTED IN BOTH STATES.** `DETAIL_BLOCK_MIN_HEIGHT`
+## is claimed whether a knowledge is open or not, so the body's minimum height is the same either way
+## and the card cannot narrow on a close and widen on an open — which, on a card centred in its room,
+## is a lurch in both directions from the middle of the screen on every click
+## (`docs/plan_knowledge_rows.md` §4).
+func _build_detail_block(node: Dictionary) -> Control:
+	var host := MarginContainer.new()
+	host.add_theme_constant_override("margin_left", HudKnowledgeVocab.DETAIL_INDENT)
+	host.add_theme_constant_override("margin_right", HudKnowledgeVocab.ROW_PADDING_H)
+	host.add_theme_constant_override("margin_top", HudKnowledgeVocab.ROW_PADDING_V)
+	host.add_theme_constant_override("margin_bottom", HudKnowledgeVocab.ROW_PADDING_V)
+	host.custom_minimum_size = Vector2(0.0, HudKnowledgeVocab.DETAIL_BLOCK_MIN_HEIGHT)
+	host.set_meta(HudKnowledgeVocab.DETAIL_META,
+		String(node.get(HudKnowledgeVocab.NODE_KEY, "")) if not node.is_empty() else "")
+
+	var pane := PanelContainer.new()
+	pane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pane.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	pane.add_theme_stylebox_override("panel", _detail_stylebox(not node.is_empty()))
+	host.add_child(pane)
+
+	if node.is_empty():
+		pane.add_child(_detail_placeholder())
+		return host
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", HudKnowledgeVocab.DETAIL_SECTION_SEPARATION)
+	pane.add_child(column)
+	column.add_child(_detail_title_row(node))
+	column.add_child(_detail_state_line(node))
+	column.add_child(_detail_sections(node))
+	return host
+
+## The title and the way out. **The `✕` emits `detail_closed`, not `node_selected`** — see that
+## signal for why a close must not route through the controller's toggle.
+func _detail_title_row(node: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudKnowledgeVocab.HEADER_SEPARATION)
+
+	var title := Label.new()
+	title.text = String(node[HudKnowledgeVocab.NODE_LABEL])
+	title.add_theme_font_size_override("font_size", HudKnowledgeVocab.DETAIL_TITLE_FONT_SIZE)
+	title.add_theme_color_override("font_color", HudStyle.INK)
+	row.add_child(title)
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(spacer)
+	row.add_child(spacer)
 
-	var value := Label.new()
-	value.text = _node_value_text(node)
-	value.add_theme_font_size_override("font_size", HudKnowledgeVocab.NODE_VALUE_FONT_SIZE)
-	value.add_theme_color_override("font_color", HudStyle.INK_FAINT \
-		if state == HudKnowledgeVocab.NODE_STATE_NOT_BEGUN else HudStyle.INK_DIM)
-	value.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(value)
-	host.add_child(row)
+	var close := Button.new()
+	close.text = HudKnowledgeVocab.CLOSE_GLYPH
+	close.tooltip_text = HudKnowledgeVocab.CLOSE_TOOLTIP
+	close.focus_mode = Control.FOCUS_NONE
+	HudStyle.apply_button(close, "ghost")
+	close.pressed.connect(func(): detail_closed.emit())
+	row.add_child(close)
+	return row
 
-	# **THE UNSPENT CLAUSE IS ON THE ROW, not only in the pane.** The whole point of the state is that
-	# the player has not noticed it, so it has to be legible without a click. `WARN`, the same tint the
-	# tally's unspent clause takes.
-	if bool(node.get(HudKnowledgeVocab.NODE_UNSPENT, false)):
-		var clause := _caption("%s %s" % [HudKnowledgeVocab.UNSPENT_MARK,
-			HudKnowledgeVocab.UNSPENT_CLAUSE], HudStyle.WARN,
-			HudKnowledgeVocab.NODE_CLAUSE_FONT_SIZE)
-		# Indented onto the NAME's own column, so it reads as a note about this row rather than as a
-		# row of its own. The glyph's width plus the face's separation, derived rather than measured.
-		var clause_host := MarginContainer.new()
-		clause_host.add_theme_constant_override("margin_left",
-			HudKnowledgeVocab.NODE_CLAUSE_INDENT)
-		clause_host.add_child(clause)
-		host.add_child(clause_host)
-
-	# **DIM, NEVER HIDE** — see the class docstring. `modulate` on the whole row host so the glyph, the
-	# name, the value AND the clause fade together; a per-Label tint would leave the clause bright over
-	# a faded name.
-	if not KnowledgeRoster.matches(node, filter):
-		host.modulate = Color(1.0, 1.0, 1.0, HudKnowledgeVocab.FILTERED_OUT_ALPHA)
-	return host
-
-## The row's own box. **Transparent either way — a node is text, not a control — and the SELECTED one
-## wears a `SIGNAL` bar down its leading edge** plus the faint wash the rest of this HUD gives a live
-## selection. Identical content margins in both states, so selecting a row never moves the column;
-## that is `BandCityPanel._tab_stylebox`'s rule, and it is what makes the stylebox the honest carrier
-## of the state (a `flat` Button's `normal` override draws nothing at all).
-func _node_row_stylebox(selected: bool) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = HudStyle.SIGNAL_WASH if selected else Color(0.0, 0.0, 0.0, 0.0)
-	sb.content_margin_left = HudKnowledgeVocab.NODE_ROW_PADDING_H
-	sb.content_margin_right = HudKnowledgeVocab.NODE_ROW_PADDING_H
-	sb.content_margin_top = HudKnowledgeVocab.NODE_ROW_PADDING_V
-	sb.content_margin_bottom = HudKnowledgeVocab.NODE_ROW_PADDING_V
-	if selected:
-		sb.border_width_left = HudKnowledgeVocab.NODE_SELECTED_BAR_THICKNESS
-		sb.border_color = HudStyle.SIGNAL
-	return sb
-
-## `known` · `▓▓▒░░ 62%` · `not begun`. The meter is `HudFormat.meter_bar`'s block glyphs, at
-## `FactionReadouts.KNOWLEDGE_METER_CELLS`, so this screen and the faction page draw one track at one
-## resolution.
+## `Known · nothing is using it` · `▰▰▱▱▱ 62%` · `Not begun` — the THIRD carrier of the unspent state,
+## and the one that says it in words.
 ##
 ## **THE SCALE CONVERSION IS THE POINT OF THE LEARNING BRANCH.** `meter_bar` grades a `0..100` score
 ## and every node's progress is `0..1`, so a bare `progress` fills zero cells at every value under
 ## 0.5 — which is how the faction page's meters shipped EMPTY, indistinguishable from an unstarted
 ## track beside a live percent.
-func _node_value_text(node: Dictionary) -> String:
+func _detail_state_line(node: Dictionary) -> Control:
 	var state := String(node[HudKnowledgeVocab.NODE_STATE])
+	var text := ""
 	if state == HudKnowledgeVocab.NODE_STATE_KNOWN:
-		return HudKnowledgeVocab.NODE_VALUE_KNOWN
-	if state == HudKnowledgeVocab.NODE_STATE_NOT_BEGUN:
-		return HudKnowledgeVocab.NODE_VALUE_NOT_BEGUN
-	var progress := float(node[HudKnowledgeVocab.NODE_PROGRESS])
-	return HudKnowledgeVocab.LEARNING_VALUE_FORMAT % [
-		HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE, HudKnowledgeVocab.METER_CELLS),
-		HudFormat.progress_percent(progress)]
+		text = HudKnowledgeVocab.NODE_VALUE_KNOWN
+		if bool(node.get(HudKnowledgeVocab.NODE_UNSPENT, false)):
+			text = HudKnowledgeVocab.TALLY_SEPARATOR.join(
+				[text, HudKnowledgeVocab.UNSPENT_CLAUSE])
+	elif state == HudKnowledgeVocab.NODE_STATE_NOT_BEGUN:
+		text = HudKnowledgeVocab.NODE_VALUE_NOT_BEGUN
+	else:
+		var progress := float(node[HudKnowledgeVocab.NODE_PROGRESS])
+		text = HudKnowledgeVocab.LEARNING_VALUE_FORMAT % [
+			HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE,
+				HudKnowledgeVocab.METER_CELLS),
+			HudFormat.progress_percent(progress)]
+	return _caption(text, HudStyle.INK_DIM, HudKnowledgeVocab.DETAIL_BODY_FONT_SIZE)
 
-# ---- the detail pane --------------------------------------------------------
-
-## **A READING OF ONE NODE: what it lets you do · how it is learned · where, now.** Nothing here is a
-## control. See the class docstring.
-func _build_detail(payload: Dictionary, nodes: Array) -> void:
-	var selected := String(payload.get(PAYLOAD_SELECTED, ""))
-	var node := _find_node(nodes, selected)
-	if node.is_empty():
-		_detail.add_child(_detail_title(HudKnowledgeVocab.DETAIL_PLACEHOLDER_HEAD))
-		_detail.add_child(_detail_body(HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY))
-		_append_filter_note(payload, nodes)
-		return
-	var state := String(node[HudKnowledgeVocab.NODE_STATE])
-	_detail.add_child(_detail_title(String(node[HudKnowledgeVocab.NODE_LABEL])))
+## The three sections, side by side, in the prototype's order: **does · where · how**.
+##
+## ⛔ **A KNOWLEDGE WITH NO NOTE STILL DRAWS.** Absence leaves the column with less to say; it never
+## removes the section and never removes the node. That is what keeps the panel wire-driven: if a
+## missing sentence could suppress an entry, adding a knowledge would be a client edit again.
+func _detail_sections(node: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudKnowledgeVocab.DETAIL_SECTION_GUTTER)
 
 	# The unlock copy first, because it is the answer to the question that brought the player here.
-	# Read from `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` via the roster — the same sentence the unlock
-	# announcement says, so the two cannot describe one discovery differently.
-	var note := String(node.get(HudKnowledgeVocab.NODE_NOTE, ""))
-	if note != "":
-		_detail.add_child(_detail_head(HudKnowledgeVocab.DETAIL_HEAD_UNLOCKS))
-		_detail.add_child(_detail_body(note))
+	# Read from `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` via the roster — the same sentence any other
+	# surface naming a discovery says, so the two cannot describe one differently.
+	row.add_child(_detail_section(HudKnowledgeVocab.DETAIL_HEAD_UNLOCKS,
+		String(node.get(HudKnowledgeVocab.NODE_NOTE, ""))))
 
-	var practise := String(node.get(HudKnowledgeVocab.NODE_PRACTISE, ""))
-	if practise != "":
-		_detail.add_child(_detail_head(HudKnowledgeVocab.DETAIL_HEAD_PRACTISE))
-		_detail.add_child(_detail_body(practise))
-
+	# **A NODE NOT YET LEARNED HAS NO "WHERE" AT ALL**, and saying "0 sources" about one would read as
+	# a shortfall rather than as a thing not yet learned — so the kicker itself changes.
+	var state := String(node[HudKnowledgeVocab.NODE_STATE])
 	if state == HudKnowledgeVocab.NODE_STATE_KNOWN:
-		_detail.add_child(_detail_head(HudKnowledgeVocab.DETAIL_HEAD_WHERE))
-		_detail.add_child(_detail_body(_where_text(node)))
+		row.add_child(_detail_section(HudKnowledgeVocab.DETAIL_HEAD_WHERE, _where_text(node)))
 	else:
-		# **A NODE NOT YET LEARNED HAS NO "WHERE" AT ALL**, and saying "0 sources" about one would read
-		# as a shortfall rather than as a thing not yet learned.
-		_detail.add_child(_detail_head(HudKnowledgeVocab.DETAIL_NEEDS_HEAD))
-		_detail.add_child(_detail_body(
-			HudKnowledgeVocab.DETAIL_NEEDS_NOT_BEGUN if state == HudKnowledgeVocab.NODE_STATE_NOT_BEGUN
+		row.add_child(_detail_section(HudKnowledgeVocab.DETAIL_NEEDS_HEAD,
+			HudKnowledgeVocab.DETAIL_NEEDS_NOT_BEGUN \
+			if state == HudKnowledgeVocab.NODE_STATE_NOT_BEGUN \
 			else HudKnowledgeVocab.DETAIL_NEEDS_LEARNING_FORMAT % HudFormat.progress_percent(
 				float(node[HudKnowledgeVocab.NODE_PROGRESS]))))
-	_append_filter_note(payload, nodes)
+
+	row.add_child(_detail_section(HudKnowledgeVocab.DETAIL_HEAD_PRACTISE,
+		String(node.get(HudKnowledgeVocab.NODE_PRACTISE, ""))))
+	return row
+
+func _detail_section(kicker: String, body: String) -> Control:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(_detail_head(kicker))
+	column.add_child(_detail_body(body))
+	return column
+
+func _detail_placeholder() -> Control:
+	var label := _detail_body(HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY)
+	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	return label
+
+## The reading's box. **The `SIGNAL` bar down the leading edge is what ties the block to the row above
+## it** — it is the only thing on screen saying this paragraph belongs to that chip. The placeholder
+## state draws no bar: it belongs to nothing.
+func _detail_stylebox(open: bool) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	if open:
+		sb.border_width_left = HudKnowledgeVocab.DETAIL_BAR_THICKNESS
+		sb.border_color = HudStyle.SIGNAL
+		sb.content_margin_left = HudKnowledgeVocab.DETAIL_BAR_GUTTER
+	return sb
 
 ## What `Where, now` says. Three shapes, and the third exists because a knowledge that unlocks
-## nothing has no source to stand on it — see `HudKnowledgeVocab.UNLOCKLESS_TRACKS`.
+## nothing has no source to stand on it — the capsule on its chip says the same thing shorter.
 func _where_text(node: Dictionary) -> String:
 	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)):
 		return HudKnowledgeVocab.DETAIL_WHERE_UNLOCKLESS
@@ -526,9 +693,11 @@ func _where_text(node: Dictionary) -> String:
 		return HudKnowledgeVocab.DETAIL_WHERE_IN_USE_ONE
 	return HudKnowledgeVocab.DETAIL_WHERE_IN_USE_FORMAT % in_use
 
-## The caption a zero-match filter earns. It rides in the DETAIL pane rather than over the columns
-## because the columns still show every node (dimmed) and a banner across them would read as a
-## replacement for the list rather than as a note about it.
+## The caption a zero-match filter earns. **It rides under the FILTER PILLS**, which is where it now
+## belongs: it is a note about the filter, and the filter is right above it. It used to hang in the
+## pinned detail pane because a banner drawn ACROSS the columns would have read as a replacement for
+## the list rather than as a note about it — there is no pinned pane to hang in now, and the header
+## answers the same objection better.
 func _append_filter_note(payload: Dictionary, nodes: Array) -> void:
 	var filter := StringName(payload.get(PAYLOAD_FILTER, HudKnowledgeVocab.FILTER_ALL))
 	if filter == HudKnowledgeVocab.FILTER_ALL:
@@ -541,7 +710,8 @@ func _append_filter_note(payload: Dictionary, nodes: Array) -> void:
 	var label := _caption(HudKnowledgeVocab.FILTER_EMPTY_FORMAT % clause, HudStyle.INK_FAINT,
 		HudKnowledgeVocab.EMPTY_FONT_SIZE)
 	label.set_meta(HudKnowledgeVocab.EMPTY_NOTE_META, String(filter))
-	_detail.add_child(label)
+	_header.add_child(label)
+
 
 func _find_node(nodes: Array, key: String) -> Dictionary:
 	if key == "":
@@ -554,13 +724,6 @@ func _find_node(nodes: Array, key: String) -> Dictionary:
 
 # ---- leaves -----------------------------------------------------------------
 
-func _detail_title(text: String) -> Label:
-	var label := Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", HudKnowledgeVocab.DETAIL_TITLE_FONT_SIZE)
-	label.add_theme_color_override("font_color", HudStyle.INK)
-	return label
-
 func _detail_head(text: String) -> Label:
 	var label := Label.new()
 	label.text = text.to_upper()
@@ -572,11 +735,30 @@ func _detail_body(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.custom_minimum_size = Vector2(HudKnowledgeVocab.DETAIL_WIDTH \
-		- 2.0 * float(HudKnowledgeVocab.DETAIL_PADDING_H), 0.0)
+	label.custom_minimum_size = Vector2(_detail_section_width(), 0.0)
 	label.add_theme_font_size_override("font_size", HudKnowledgeVocab.DETAIL_BODY_FONT_SIZE)
 	label.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	return label
+
+## One reading column's width, DERIVED rather than typed: the card's fixed width, less the card's own
+## chrome and the scroll gutter, less the block's indent and right margin, less the leading bar and
+## its gutter, less the gutters between the columns — shared out between them.
+##
+## **IT SUBTRACTS THE CHROME AND THE GUTTER DELIBERATELY.** A width derived from `PANEL_WIDTH` alone
+## makes the reading's minimum exactly the card's outer width, which is wider than the card's
+## INTERIOR — so the horizontal scrollbar would be showing on every frame of a card that fits.
+func _detail_section_width() -> float:
+	var interior := HudKnowledgeVocab.PANEL_WIDTH \
+		- HudStyle.card_stylebox().get_minimum_size().x - _scroll_gutter()
+	var gutters := float(HudKnowledgeVocab.DETAIL_SECTION_GUTTER) \
+		* float(HudKnowledgeVocab.DETAIL_SECTION_COUNT - 1)
+	var text_width := interior \
+		- float(HudKnowledgeVocab.DETAIL_INDENT) \
+		- float(HudKnowledgeVocab.ROW_PADDING_H) \
+		- float(HudKnowledgeVocab.DETAIL_BAR_THICKNESS) \
+		- float(HudKnowledgeVocab.DETAIL_BAR_GUTTER) \
+		- gutters
+	return maxf(text_width / float(HudKnowledgeVocab.DETAIL_SECTION_COUNT), 0.0)
 
 func _caption(text: String, ink: Color, font_size: int) -> Label:
 	var label := Label.new()
