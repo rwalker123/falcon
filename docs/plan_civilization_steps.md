@@ -187,7 +187,7 @@ model it separates cleanly:
 |---|---|---|---|
 | Lines × `K` (inbreeding) | the **breeding population** — a connected component | contact | 1 → 2 |
 | Cohesion (~150) | the **co-located group** — a band, or a cluster on one site | belief on the tile | 2 → 3 |
-| Administration | a settlement | writing / record-keeping | 7 |
+| Management (a count of stores and routes) | the **things that hold goods** — stores and trade routes | writing / record-keeping | 7 |
 
 Contact lifts the *network's* ceiling but not any one band's: many bands of under 150 each, in
 touch. Belief is what lets a single *place* hold more than 150. Writing is what lets a polity
@@ -453,6 +453,66 @@ reintroduces exactly the many-meters-per-place shape it retired. Footprint is th
 **What this changes on the board.** The settlement arc's catalog phase becomes the tile-source seam
 and is small. Storage, the monument and walls become branch configs plus a payoff each, blocked only
 on that seam and never on a catalog engine.
+
+## Writing: the third ceiling caps management, not people (decided)
+
+### What exists
+
+- **The Telling already has writing as a medium.** `voice.mediums` climbs oral → painted → written
+  (`beat_config.json`, `telling/medium.rs`), gated on `sedentarization.score >= 70` **and**
+  `discovery.progress.cultivation >= 1.0`, never regressing. It is **presentational only**, by rule:
+  it changes how the telling is shown and selects no copy. The concept's fourth rung, `archive`,
+  was deliberately not shipped because no sim state could gate it.
+- **The knowledge ledger** teaches lessons by practice (~20 work each). Writing has no lesson.
+- **Tallies and marked staves** are wayfinding-kit flavor (`equipment.json`). Nothing counts.
+- **Nothing keeps records**: no store knows its contents beyond a number, no polity knows what it
+  is owed, nothing caps how many things one faction can run.
+
+### The unit: things that hold goods
+
+The video's claim is that writing was invented to track *things* — ration lists, inventories,
+payments — not people. A field or a pen needs no books: the band that eats from it keeps it. A
+**store** and a **route** are different: they hold goods that are in nobody's hands right now.
+**Writing tracks goods in storage or in transit, and nothing else.**
+
+- **A store counts** once it is a fixed rung (a pit or granary). A rack on your back is watched by
+  the people carrying it.
+- **A route counts** once traffic runs on it (a trail or better with hauls moving). A path nobody
+  sends anything along is walked, not managed.
+- **A faction has a management capacity** — a small number to start, a config lever like `K` and
+  the cohesion ceiling — and writing lifts it.
+
+### Above the ceiling: lossy, never a refusal
+
+Over capacity, the excess stores and routes are **unaccounted**: a share of what moves through them
+is lost to miscount, shown on the Food line as its own term the way rot is. The player can still
+build a fourth granary and haul along a fifth route; they lose some of it, visibly, and the loss
+says why. Three reasons for lossy over hard:
+
+- **The same shape as the other ceilings.** Cohesion is a morale slope, spoilage bounds a larder
+  without a cap. A refusal would be the ladder's first hard wall.
+- **The loss is the practice signal.** Rot teaches storage; **miscount teaches writing.** Each
+  ceiling's cost is what lifts it.
+- **It reads as history.** The tablets were invented because grain went missing between the field
+  and the ration bowl.
+
+### The lesson, and the medium
+
+Writing is a knowledge-ledger lesson whose practice signal is **traffic through managed things** —
+pooling and hauls between stores — with miscount making it urgent. A lone band on one patch never
+learns it and never needs to; a faction running three granaries and two routes learns it quickly,
+faster once it is over capacity and bleeding. **The Telling's written medium follows the lesson**,
+replacing the two unrelated signals that gate it today, so there is one truth about whether a
+people can write; `archive` becomes reachable later for the same reason.
+
+### Left out on purpose
+
+Payments between factions — what one polity owes another — is the same idea one step later and
+waits on multi-faction (#513). Capacity counts only your own stores and routes; the cross-faction
+ledger is its natural extension.
+
+Levers: management capacity at start, what the writing lesson adds to it, the miscount share, and
+the lesson's pace.
 
 ## One work party: hunt and forage are the same thing (decided)
 
