@@ -1299,3 +1299,465 @@ fn a_roadwork_pool_keeping_two_dirt_roads(tools: u32, keepers: u32, haul: f32) -
     let supplied = [road_supplied(&app, near), road_supplied(&app, far)];
     TwoRoadTurn { app, supplied }
 }
+
+// ---------------------------------------------------------------------------------------------
+// (6) STEP 5 — THE HANDS NOBODY TOOK GO TO THE WORK STILL OWED (issue #714)
+// ---------------------------------------------------------------------------------------------
+//
+// **A site owing N units of work is owed N units of work.** Steps 1–4 plan a pool's hands at the
+// rate their tools *would* buy and then never look at whether the work arrived, so a site the
+// band-wide settlement left bare works its own hands slower while hands the plan never allocated
+// stand idle. Step 5 puts those hands — and only those — on whatever deficit is left, **bare**
+// (`docs/plan_pool_toe.md` §2.3 step 5).
+//
+// Every reading here comes off the shipped path: the bill through `road_bill` /
+// `deposit_keeping_basis`, the supply off the registry the turn wrote, and the hands off the
+// **published** `poolToe.required` — `earthmoving` and `stone_dressing` are both
+// `workers_per_unit: 1`, so a pool's required units ARE the hands the split put on its sites. That
+// published requirement must **not** grow by the top-up: a bare hand claims no tool.
+mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
+    use super::*;
+
+    /// The haul every fixture above uses, so the bills genuinely outrun one keeper.
+    const A_LONG_HAUL: f32 = 12.0;
+    /// **A haul short enough that the two roads' need does not outrun the pool.** A route bill
+    /// scales linearly on the keeper's remoteness (`routes::road_upkeep_measure`), so this is the
+    /// one lever that decides whether a three-keeper pool has a hand to spare at all — at
+    /// [`A_LONG_HAUL`] two dirt roads want 3.96 hands and there is no surplus to strand.
+    const A_SHORT_HAUL: f32 = 4.0;
+
+    /// **What one turn measured.** `bills` are read BEFORE the turn, `supplied` after.
+    struct Measured {
+        app: App,
+        bills: Vec<f32>,
+        supplied: Vec<f32>,
+        /// The band's ledger as stocked, so the plan rate can be struck off the same tools the
+        /// planner reads.
+        ledger: BandEquipment,
+    }
+
+    /// **The rate `fully_equipped_keeper_rate` answers for this rung off this ledger** — its body,
+    /// through the public seams (`pool_toe` → `build_work_per_worker` →
+    /// `build_work_per_worker_turn`), which is how
+    /// `a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_did` already
+    /// reads a rate from outside.
+    fn plan_rate(ledger: &BandEquipment, rung: RungKey) -> f32 {
+        let equipment = EquipmentConfig::builtin();
+        let key = rung.wire_key();
+        let toe = equipment.pool_toe(rung.branch(), Some(&key));
+        core_sim::build_work_per_worker_turn(equipment.build_work_per_worker(
+            toe.kit(),
+            ledger,
+            rung.branch(),
+            Some(&key),
+        ))
+    }
+
+    /// One tool unit arms one hand for both pool tools under test, asserted rather than assumed —
+    /// it is what lets `poolToe.required` be read as a head count.
+    fn one_unit_arms_one_hand(rung: RungKey) -> bool {
+        EquipmentConfig::builtin()
+            .pool_toe(rung.branch(), Some(&rung.wire_key()))
+            .tools()
+            .iter()
+            .all(|tool| tool.workers_per_unit == 1)
+    }
+
+    /// The published `(required, filled)` of one pool's line for one item.
+    fn toe_line(app: &App, pool: &str, item: &str) -> (f32, f32) {
+        published_pool_toe(app)
+            .iter()
+            .find(|line| line.pool == pool && line.item == item)
+            .map(|line| (line.required, line.filled))
+            .unwrap_or_else(|| panic!("the {pool} pool states a '{item}' line"))
+    }
+
+    /// **A `Roadwork` pool keeping `roads` dirt roads**, holding exactly `stock`.
+    fn a_roadwork_pool_over_dirt_roads(
+        stock: &[(&str, u32)],
+        keepers: u32,
+        roads: u32,
+        haul: f32,
+    ) -> Measured {
+        let mut app = spawn_world();
+        let (band, _, band_id, home) = first_band(&mut app);
+        let tiles: Vec<UVec2> = (1..=roads)
+            .map(|step| tile_east_of(&app, home, step))
+            .collect();
+        for tile in &tiles {
+            seat_road(&mut app, *tile, RungKey::RouteDirtRoad, band_id, haul);
+        }
+        staff_one_role(
+            &mut app,
+            band,
+            LaborTarget::Roadwork,
+            keepers,
+            UpkeepFundMode::Spread,
+        );
+        let ledger = stock_exactly(&mut app, band, stock);
+        let bills: Vec<f32> = tiles.iter().map(|tile| road_bill(&app, *tile)).collect();
+        app.update();
+        let supplied: Vec<f32> = tiles
+            .iter()
+            .map(|tile| road_supplied(&app, *tile))
+            .collect();
+        Measured {
+            app,
+            bills,
+            supplied,
+            ledger,
+        }
+    }
+
+    /// ⛔ **A BAND THAT OWNS NO GEAR AT ALL PLANS AT THE BARE RATE, SO NOTHING IS STRANDED** — the
+    /// half of #714 that does **not** reproduce, kept because it is the reading the issue's stated
+    /// trigger rests on.
+    ///
+    /// `fully_equipped_keeper_rate` reads the band's ledger for the tools' tier and condition, and
+    /// an empty ledger has neither: `KitChoice::best_build_work` finds no live item and the rate
+    /// falls back to the bare hand. The need is therefore struck at `bill ÷ 1.0`, outruns the two
+    /// keepers, and **both of them are put to work** — *"no hoe"* cannot by itself leave a keeper
+    /// standing.
+    #[test]
+    fn a_band_with_no_gear_at_all_plans_bare_and_works_every_keeper() {
+        const KEEPERS: u32 = 2;
+        const ONE_ROAD: u32 = 1;
+        /// How close the planned hands must come to the head count for *"every keeper is working"*
+        /// to be a true statement. `distribute_upkeep_pool` scales each need by one coverage, so
+        /// the shares sum to the pool only to within float error.
+        const A_WHOLE_POOL: f32 = 1.0e-5;
+
+        assert!(
+            one_unit_arms_one_hand(RungKey::RouteDirtRoad),
+            "fixture: a dirt road's tool arms one hand per unit, which is what lets the published \
+             requirement be read as a head count"
+        );
+        let turn = a_roadwork_pool_over_dirt_roads(&[], KEEPERS, ONE_ROAD, A_LONG_HAUL);
+        let rate = plan_rate(&turn.ledger, RungKey::RouteDirtRoad);
+        let (required, filled) = toe_line(&turn.app, "roadwork", EARTHMOVING);
+
+        assert_eq!(
+            rate,
+            core_sim::PER_WORKER_OUTPUT,
+            "an empty ledger plans at the BARE hand, not at the gear the band does not own"
+        );
+        assert!(
+            turn.bills[0] / rate > KEEPERS as f32,
+            "fixture: the bill must outrun the pool at that rate, or the cap rather than the \
+             shortage is what this measures — {} over {KEEPERS}",
+            turn.bills[0] / rate
+        );
+        assert!(
+            (KEEPERS as f32 - required).abs() < A_WHOLE_POOL,
+            "both keepers are put on the road: {required} of {KEEPERS}"
+        );
+        assert_eq!(
+            filled, 0.0,
+            "…and the settlement reached the line with nothing, which is the state the issue \
+             describes: {filled}"
+        );
+        assert!(
+            (turn.supplied[0] - KEEPERS as f32 * core_sim::PER_WORKER_OUTPUT).abs() < A_WHOLE_POOL,
+            "so the road is supplied two bare hands' work: {}",
+            turn.supplied[0]
+        );
+    }
+
+    /// ⛔ **A POOL WHOSE PLAN WANTS EVERY HAND IT HAS IS UNTOUCHED — the control.**
+    ///
+    /// Two dirt roads at [`A_LONG_HAUL`] want `3.96` keepers between them and the pool has **3**,
+    /// so `distribute_upkeep_pool`'s coverage binds from below and there is no idle hand for step 5
+    /// to spend. Both roads stay short by exactly what they were short of before step 5 existed.
+    ///
+    /// **Without this, *"the fix closes shortfalls"* would also pass on a step 5 that fired where
+    /// nothing was spare** — which would be the re-split step 4 refuses, arriving by the back door.
+    #[test]
+    fn a_pool_whose_plan_wants_every_hand_supplies_exactly_what_it_did_before() {
+        const KEEPERS: u32 = 3;
+        const TWO_ROADS: u32 = 2;
+        const ONE_TOOL: u32 = 1;
+        /// **What each road was supplied before step 5 existed**, measured on this fixture: `1.5`
+        /// hands at the `1.667` rate one tool split two ways buys them.
+        const THE_SPLIT_THIS_POOL_ALREADY_MADE: f32 = 2.5;
+
+        let turn = a_roadwork_pool_over_dirt_roads(
+            &[(EARTHMOVING, ONE_TOOL)],
+            KEEPERS,
+            TWO_ROADS,
+            A_LONG_HAUL,
+        );
+        let rate = plan_rate(&turn.ledger, RungKey::RouteDirtRoad);
+        let (required, _) = toe_line(&turn.app, "roadwork", EARTHMOVING);
+
+        assert!(
+            (turn.bills[0] + turn.bills[1]) / rate > KEEPERS as f32,
+            "fixture: the two bills must outrun the pool, or there would be a surplus and this \
+             would not be a control — {} over {KEEPERS}",
+            (turn.bills[0] + turn.bills[1]) / rate
+        );
+        assert_eq!(
+            required, KEEPERS as f32,
+            "every keeper is already planned onto a road, so nothing is idle: {required}"
+        );
+        assert_eq!(
+            turn.supplied,
+            vec![
+                THE_SPLIT_THIS_POOL_ALREADY_MADE,
+                THE_SPLIT_THIS_POOL_ALREADY_MADE
+            ],
+            "…and both roads are supplied exactly what the pool supplied them before step 5"
+        );
+        assert!(
+            turn.supplied[0] < turn.bills[0],
+            "liveness: these roads really are short — a saturated pair would be bit-identical \
+             under any model at all: {:?} against {:?}",
+            turn.supplied,
+            turn.bills
+        );
+    }
+
+    /// ⛔ **TWO ROADS SHARING ONE TOOL CLOSE THEIR SHORTFALL OUT OF THE IDLE HANDS.**
+    ///
+    /// At [`A_SHORT_HAUL`] the two bills want `1.32` keepers of the pool's **3**, so the plan caps
+    /// each road at its own need and `1.68` hands are left standing. The band owns **one**
+    /// earthmoving set against a requirement of `1.32`, so both roads worked below the rate they
+    /// were planned at and each fell `0.32` work units short — while those `1.68` hands did
+    /// nothing.
+    ///
+    /// **The roads share one rank**, because `route_keeping_claims` pins every road at
+    /// `SourcePriority::default()`: there is no per-road labor row to carry a mark, so the pair is
+    /// half-armed together rather than one being served and one going bare.
+    #[test]
+    fn two_roads_sharing_one_tool_close_their_shortfall_from_the_idle_hands() {
+        const KEEPERS: u32 = 3;
+        const TWO_ROADS: u32 = 2;
+        const ONE_TOOL: u32 = 1;
+
+        let turn = a_roadwork_pool_over_dirt_roads(
+            &[(EARTHMOVING, ONE_TOOL)],
+            KEEPERS,
+            TWO_ROADS,
+            A_SHORT_HAUL,
+        );
+        let rate = plan_rate(&turn.ledger, RungKey::RouteDirtRoad);
+        let (required, filled) = toe_line(&turn.app, "roadwork", EARTHMOVING);
+
+        // **The two conditions that make this the defect rather than ordinary scarcity.**
+        assert!(
+            required < KEEPERS as f32,
+            "fixture: the plan must leave a hand standing, or there is nothing to put to work — \
+             {required} of {KEEPERS}"
+        );
+        assert!(
+            filled < required,
+            "fixture: and the pool must be short of the tool those hands were planned at, or \
+             there is no deficit to close: filled {filled} against required {required}"
+        );
+        assert_eq!(
+            required,
+            (turn.bills[0] + turn.bills[1]) / rate,
+            "⛔ the published requirement is the GEARED plan's hands and nothing else — a bare \
+             top-up hand claims no tool, so step 5 may not grow this line"
+        );
+
+        assert_eq!(
+            turn.supplied, turn.bills,
+            "both roads are supplied the whole of what they owe, out of hands that were idle"
+        );
+        // ⛔ **LIVENESS — THE PLANNED HANDS COULD NOT HAVE DONE IT ON THEIR OWN.** Coverage arms a
+        // **prefix** of a site's hands, so the most the geared plan can deliver is its armed hands
+        // at the geared rate plus the rest of them bare. That ceiling is struck off the published
+        // line alone, and it is strictly under the two bills — so *"both roads are covered"* above
+        // cannot be a split that was saturated all along.
+        let the_most_the_planned_hands_could_do =
+            filled * rate + (required - filled) * core_sim::PER_WORKER_OUTPUT;
+        assert!(
+            the_most_the_planned_hands_could_do < turn.bills[0] + turn.bills[1],
+            "liveness: the planned hands reach at most {the_most_the_planned_hands_could_do} of \
+             the {} owed, so what closed the gap is the top-up",
+            turn.bills[0] + turn.bills[1]
+        );
+    }
+
+    /// ⛔ **THE WORKING THAT LOST THE TOOL SETTLEMENT IS FILLED BY THE IDLE KEEPERS** — #714 as
+    /// titled, on the one pool whose sites can carry a rank.
+    ///
+    /// A road bids at `SourcePriority::default()` and cannot be marked, so the High/Low pair the
+    /// issue describes is unreachable on the route branch. Two quarries under one `Quarrywork` pool
+    /// can: one `High`, one `Low`, one set of stone-dressing gear between them and **3** keepers
+    /// against a plan that wants `1.4`.
+    ///
+    /// Stage 1 gives the whole tool to the `High` group, so the `Low` working's `0.7` planned hands
+    /// worked **bare** and delivered `0.7` of the `2.1` it owed — while `1.6` keepers stood idle.
+    /// Those keepers close it exactly, and **the `High` working is not touched**, because step 5
+    /// only ever assigns hands nobody took.
+    #[test]
+    fn the_working_that_lost_the_tool_settlement_is_filled_by_the_idle_keepers() {
+        const KEEPERS: u32 = 3;
+        const ONE_TOOL: u32 = 1;
+        const A_TAKE_CREW: u32 = 1;
+
+        let mut app = spawn_world();
+        let (band, _, _, home) = first_band(&mut app);
+        let high_tile = tile_east_of(&app, home, 1);
+        let low_tile = tile_east_of(&app, home, 2);
+        let high_material = seat_a_quarry(&mut app, high_tile);
+        let low_material = seat_a_quarry(&mut app, low_tile);
+
+        let staffed = {
+            let mut allocation = LaborAllocation::default();
+            for (tile, material, rank) in [
+                (high_tile, high_material.clone(), SourcePriority::High),
+                (low_tile, low_material.clone(), SourcePriority::Low),
+            ] {
+                allocation.assignments.push(core_sim::LaborAssignment {
+                    target: LaborTarget::Extract {
+                        tile,
+                        material,
+                        floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+                    },
+                    workers: A_TAKE_CREW,
+                    kit: None,
+                    priority: rank,
+                    upkeep_kit: None,
+                });
+            }
+            allocation.assignments.push(core_sim::LaborAssignment {
+                target: LaborTarget::Quarrywork,
+                workers: KEEPERS,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+            let staffed: u32 = allocation.assignments.iter().map(|row| row.workers).sum();
+            app.world.entity_mut(band).insert(allocation);
+            staffed
+        };
+        size_the_band(&mut app, band, staffed);
+        let ledger = stock_exactly(&mut app, band, &[(STONE_DRESSING, ONE_TOOL)]);
+
+        let bills = quarry_bills(
+            &app,
+            [(high_tile, &high_material), (low_tile, &low_material)],
+        );
+
+        app.update();
+
+        let supplied = {
+            let deposits = app.world.resource::<DepositRegistry>();
+            [
+                deposits
+                    .source(high_tile, &high_material)
+                    .expect("the High working survives the turn")
+                    .upkeep_supplied,
+                deposits
+                    .source(low_tile, &low_material)
+                    .expect("the Low working survives the turn")
+                    .upkeep_supplied,
+            ]
+        };
+        let rate = plan_rate(&ledger, RungKey::ExtractionQuarry);
+        let (required, filled) = toe_line(&app, "quarrywork", STONE_DRESSING);
+
+        assert!(
+            one_unit_arms_one_hand(RungKey::ExtractionQuarry),
+            "fixture: the quarry's tool arms one hand per unit"
+        );
+        assert!(
+            required < KEEPERS as f32,
+            "fixture: the plan must leave keepers standing — {required} of {KEEPERS}"
+        );
+        assert!(
+            filled < required,
+            "fixture: and one of the two groups must have lost the settlement: filled {filled} \
+             against required {required}"
+        );
+        assert_eq!(
+            required,
+            (bills[0] + bills[1]) / rate,
+            "⛔ the published requirement states the GEARED plan's hands alone"
+        );
+
+        assert_eq!(
+            supplied[0], bills[0],
+            "the High working keeps the tool and is supplied its whole bill, exactly as before"
+        );
+        assert_eq!(
+            supplied[1], bills[1],
+            "…and the Low working, which the settlement reached with nothing, is filled the rest \
+             of the way by the keepers the plan left idle"
+        );
+        assert!(
+            supplied[1] > required / 2.0 * core_sim::PER_WORKER_OUTPUT,
+            "liveness: strictly more than its own bare-handed planned hands delivered, which is \
+             what it was paid before step 5: {} against {}",
+            supplied[1],
+            required / 2.0 * core_sim::PER_WORKER_OUTPUT
+        );
+    }
+
+    /// ⛔ **A POOL WITH HANDS TO SPARE AND NOTHING OWED SUPPLIES EXACTLY THE BILL — the second
+    /// control.**
+    ///
+    /// The same two short-haul roads and the same three keepers, with **two** earthmoving sets: the
+    /// requirement is covered, both roads are supplied in full by their geared hands alone, and
+    /// `1.68` keepers are still idle. Step 5 must find no deficit and hand them nothing — a top-up
+    /// struck against anything but the *remaining* gap would push a road past what it owes.
+    #[test]
+    fn a_pool_with_idle_hands_and_nothing_owed_supplies_exactly_the_bill() {
+        const KEEPERS: u32 = 3;
+        const TWO_ROADS: u32 = 2;
+        const A_TOOL_PER_ROAD: u32 = 2;
+
+        let turn = a_roadwork_pool_over_dirt_roads(
+            &[(EARTHMOVING, A_TOOL_PER_ROAD)],
+            KEEPERS,
+            TWO_ROADS,
+            A_SHORT_HAUL,
+        );
+        let (required, filled) = toe_line(&turn.app, "roadwork", EARTHMOVING);
+
+        assert!(
+            required < KEEPERS as f32,
+            "fixture: keepers must be left standing, or this control says nothing about them — \
+             {required} of {KEEPERS}"
+        );
+        assert!(
+            filled >= required,
+            "fixture: and the pool must be armed in full, so there is no deficit at all: filled \
+             {filled} against required {required}"
+        );
+        assert_eq!(
+            turn.supplied, turn.bills,
+            "each road is supplied exactly what it owes — never more, however many hands the pool \
+             still has standing"
+        );
+    }
+
+    /// **What each working owes its keepers this turn**, in work units, read before the turn spends
+    /// against it — `road_bill`'s deposit twin, through the same
+    /// `extraction::deposit_keeping_basis` seam the claim builder reads.
+    fn quarry_bills(app: &App, workings: [(UVec2, &str); 2]) -> [f32; 2] {
+        let ladder = LadderConfig::builtin();
+        let config = core_sim::ExtractionConfig::builtin();
+        let read = |tile: UVec2, material: &str| {
+            let entity = app
+                .world
+                .resource::<TileRegistry>()
+                .index(tile.x, tile.y)
+                .expect("the fixture tile is on the map");
+            let ground = app.world.get::<Tile>(entity).expect("the tile has terrain");
+            let working = app
+                .world
+                .resource::<DepositRegistry>()
+                .source(tile, material)
+                .expect("the seated working is in the registry");
+            let measure = core_sim::extraction::deposit_measure(working, ground, &config);
+            core_sim::extraction::deposit_keeping_basis(working, measure, &ladder)
+        };
+        [
+            read(workings[0].0, workings[0].1),
+            read(workings[1].0, workings[1].1),
+        ]
+    }
+}

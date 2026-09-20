@@ -441,6 +441,59 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > 4. **Rates from what was filled** — `coverage_from_units` over the settled units, then
 >    `weighted_rate` as before. **Hands are NOT re-split**: a site the settlement left short works
 >    its own hands slower rather than handing them to a site that was served.
+> 5. **The hands nobody took go to the work still owed** — `bare_hand_top_up`, over the deficit
+>    step 4 leaves. See the callout below.
+>
+> #### ⛔ STEP 5 — A SITE OWING N UNITS OF WORK IS OWED N UNITS OF WORK
+>
+> Steps 1–4 plan a pool's hands at the rate their tools *would* buy and then never ask whether the
+> work arrived. `distribute_upkeep_pool` caps each site's share at its own need, so a pool whose
+> sites want fewer hands than it has leaves the remainder standing — and a site the band-wide
+> settlement reached with nothing worked below its planned rate and fell short beside them. Measured
+> on one `Quarrywork` pool of **3** keepers holding **one** chisel against a `High` and a `Low`
+> quarry each owing `2.1`: the plan wanted `1.4` hands, the Low working was supplied **`0.7`**, and
+> **`1.6` keepers did nothing**. It is not a hoe-specific fault and not a fault in the settlement —
+> the pool simply stopped at the hands its plan wanted.
+>
+> **`systems::labor::bare_hand_top_up` is the one helper and `pool_rates` is the one seam**, so all
+> four keeping pools get it from the same place — `spare_keepers_the_band_can_arm`'s arrangement,
+> for the same reason. Per pool: `deficit = demand − hands × rate`, `idle = keepers − Σ hands`, and
+> the idle hands split across `deficit ÷ bare_rate` by the **same** `distribute_upkeep_pool` under
+> the **same** `UpkeepFundMode`, over the same claim order the first split used. That last clause is
+> load-bearing rather than tidy: it keeps *"the fund mode decides where hands go, the priority
+> decides where tools go"* true of the top-up as well.
+>
+> **A site participates only where a bare hand delivers something** — `bare_keeper_rate()`
+> (`build_work_per_worker_turn(NO_BUILD_GEAR)`) above `NO_KEEPING_RATE`. On the shipped roster that
+> is always `PER_WORKER_OUTPUT`, so the gate is **inert today**; it is written because *"only send
+> the idle keeper if it can actually contribute with no kit"* is the rule, not because the case
+> ships.
+>
+> ⛔ **IT IS NOT THE RE-SPLIT STEP 4 REFUSES.** Step 4's refusal is untouched — **no site loses a
+> hand** — and step 5 assigns only hands the split never assigned to anybody, so every site's supply
+> is `>=` what step 4 alone paid it. It is monotonic. **And a top-up hand claims no tool**, so it
+> cannot move the requirement the settlement was struck from: the loop the four-step order cuts is
+> *hands → tools → hands*, and a bare hand is outside it. There is no fixed point to converge on.
+>
+> ⛔ **THE PUBLISHED `poolToe.required` DOES NOT GROW BY IT**, for the same reason — `required` is
+> the TOOL requirement, and a bare hand is not a claimant on one.
+>
+> ⛔ **WEAR IS BILLED ON THE GEARED HALF ALONE**, and that is the one way this could silently break
+> the equipment ledger. `KeepingPayment::supplied()` is what a site is credited; `::geared()` is what
+> `charge_keeping_wear` is handed, and the pair rides `KeepingAward::work` / `::geared_work` on the
+> two food webs so the charge site cannot re-derive either. A top-up hand was issued no tool and
+> wears none.
+>
+> **THE BUILDERS' POOL HAS NO SUCH CAP AND IS UNTOUCHED.** `build_workers` puts the **whole** head
+> count on the queue head (§2.5) — there is no `distribute_upkeep_pool` and no per-site need to be
+> capped at — so no builder is ever left standing by a plan that wanted fewer. What a builder's
+> meter clamps at completion is pre-payment for the rung's jump, not an idle hand.
+>
+> Pinned by `pool_toe::a_pool_puts_its_idle_hands_on_the_work_still_owed`, in four: the ranked case
+> (the `Low` working's whole `1.4` shortfall closed, the `High` one unmoved at its full bill), the
+> shared-rank roads (both `0.32` shortfalls closed out of `1.68` idle hands), and **two controls** —
+> a pool whose plan wants every hand supplies bit-for-bit what it supplied before step 5, and a pool
+> with idle hands and no deficit is supplied exactly its bill and never more.
 >
 > **A claim carries a `SourcePriority` now** (`KeepingClaim::priority`): the site row's own on the
 > two food webs and on the deposit branches, the head row's for the builders' single claim, and

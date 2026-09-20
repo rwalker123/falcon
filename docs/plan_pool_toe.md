@@ -108,16 +108,68 @@ tools a site requires depends on its hands. It resolves in one pass:
    TOE is the sum over its sites.
 3. **Fill by priority.** Settle each tool band-wide, as in §2.2.
 4. **Rates from what was filled.** Each site's hands work at the coverage-weighted rate of the share
-   it received — the existing `KitCoverage` seam. **Hands are not re-split.**
+   it received — the existing `KitCoverage` seam. **Hands are not re-split** — a site the settlement
+   left short works its own hands slower; no site ever loses a hand to a site that was served.
+5. **The hands nobody took go to the work still owed.** Step 1 caps each site at the hands its
+   *plan* wanted, so a pool whose sites need fewer hands than it has leaves the remainder standing.
+   Those hands — and only those — are put on whatever each site is still short of, **bare**.
+
+   > ⛔ **A SITE OWING N UNITS OF WORK IS OWED N UNITS OF WORK.** Whether they arrive as one keeper
+   > holding a tool worth 1.5 or as two keepers holding nothing is the band's business, not the
+   > site's. Steps 1–4 plan the hands at the rate the tools *would* buy and then never ask whether
+   > the work arrived, so a site the band-wide settlement reached with nothing worked below its
+   > planned rate and fell short — while keepers the plan had no use for stood idle. Measured, one
+   > `Quarrywork` pool of three keepers holding one chisel against a `High` and a `Low` quarry: the
+   > Low working was supplied `0.7` of the `2.1` it owed, and `1.6` keepers did nothing.
+   >
+   > **The deficit** is `demand − delivered`, per site, off the rate step 4 resolved. **The idle
+   > hands** are `keepers − Σ what the sites ASKED FOR` — step 1's own needs, not the hands it
+   > handed out. The two are the same number whenever anything is actually idle, because that is
+   > exactly when `distribute_upkeep_pool`'s coverage clamps at `1.0` and each share *is* its need;
+   > taking the difference against the shares instead leaves a committed pool reporting ~1e-7 of a
+   > spare keeper out of float, and step 5 would spend it. Struck against the needs it is negative
+   > there and clamps to none, exactly, with no tolerance to tune.
+   >
+   > They are split across the deficits by the **same**
+   > `distribute_upkeep_pool` under the **same** fund mode, over the same claim order the first
+   > split used — which is what keeps *"the fund mode decides where hands go, the priority decides
+   > where tools go"* true of the top-up as well.
+   >
+   > **A site takes a top-up hand only where a hand carrying nothing delivers something** — the
+   > bare rate must be above zero. On the shipped roster a bare hand always banks
+   > `PER_WORKER_OUTPUT`, so the condition is inert today; it is stated because *"only send the idle
+   > keeper if it can actually contribute with no kit"* is the rule, not because the case ships.
+   >
+   > ⛔ **THIS IS NOT THE RE-SPLIT STEP 4 REFUSES, AND THE DIFFERENCE IS WHY THERE IS STILL NO
+   > LOOP.** Step 4's refusal is untouched: **no site loses a hand**. Step 5 assigns only hands the
+   > split never assigned to anybody, so every site's supply is `>=` what step 4 alone paid it — it
+   > is monotonic, not a re-plan. And **a top-up hand claims no tool**, so it cannot move the
+   > requirement step 2 struck or the settlement step 3 made from it. The circularity the order
+   > exists to cut is *hands → tools → hands*; a bare hand is outside it, so there is no fixed point
+   > to converge on.
+   >
+   > **It therefore does not grow the published requirement.** `poolToe.required` states the
+   > **geared** plan's hands and nothing else, because that is the tool line a reader is being asked
+   > about.
+   >
+   > **Wear is billed on the geared half alone.** A top-up hand was issued no tool, so charging the
+   > site's kit for its hours would run gear down against work it took no part in.
 
 **When a band is not short of tools, this is identical to today:** step 1's rate is the rate today's
-split uses on a fully equipped pool.
+split uses on a fully equipped pool, and step 5 finds no deficit to fill. **A pool whose plan wants
+every hand it has is likewise untouched** — the coverage binds from below, nothing is idle, and the
+shortfall it works under is ordinary scarcity of people rather than of tools.
 
-**When a band is short, the shortfall lands by priority** — on the sites that lost the settlement,
-Low first — rather than the pool re-planning its hands around the missing gear. That is what the
-on-screen promise *"when something runs short, the band spends it on high priority first"* means
-applied to tools, and it keeps the two player levers separate: **the fund mode decides where hands
-go, the priority decides where tools go.**
+**When a band is short of TOOLS, the shortfall lands by priority** — on the sites that lost the
+settlement, Low first — rather than the pool re-planning its hands around the missing gear. That is
+what the on-screen promise *"when something runs short, the band spends it on high priority first"*
+means applied to tools, and it keeps the two player levers separate: **the fund mode decides where
+hands go, the priority decides where tools go.**
+
+**What a site that lost the settlement is short of is TOOLS, not necessarily WORK.** Step 5 fills
+what it can out of hands nobody took, so the ranking decides who works *geared* and the leftover
+hands decide how much of the rest gets done at all. A pool short of both — every hand already
+planned onto a site — has nothing spare and the deficit stands.
 
 ### 2.4 Builders fund one entry
 
