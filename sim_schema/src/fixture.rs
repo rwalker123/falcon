@@ -524,6 +524,39 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.material_upkeep_need = rows();
         cohort.material_upkeep_income = rows();
         cohort.material_store = rows();
+        // **THE FIVE STANDING POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — spelled
+        // out rather than `rows()`, on `kit_item_conditions`' rule: the list is keyed by
+        // `(pool, item)` and a duplicate key is not something the server can emit.
+        //
+        // **The pairs below do NOT reach the artifact** — the saturation pass rewrites every float,
+        // so the recorded snapshot carries distinct values rather than these shapes. That costs
+        // nothing here: this fixture exists to make a codec round-trip see a non-default value in
+        // every field, not to model a reachable turn. The shapes a reader genuinely has to tell
+        // apart — filled in full, filled in part, reached with nothing — are asserted against a real
+        // capture in `core_sim/tests/pool_toe.rs` instead.
+        //
+        // Note the saturated artifact may carry `filled > required`, and that is NOT an unreachable
+        // shape: a tool is issued to a person in whole units, so a pool with a fractional
+        // requirement is over-filled on purpose and the satisfied test is `filled >= required`
+        // (see `PoolToeLineState::filled`).
+        //
+        // What the pairs still carry is the KEYING, which saturation does not touch: two pools
+        // sharing `stone_dressing` is the band-wide settlement's own case.
+        cohort.pool_toe = [
+            ("agriculture", "hoes", 6.0, 6.0),
+            ("roadwork", "earthmoving", 4.0, 1.5),
+            ("roadwork", "stone_dressing", 2.0, 0.0),
+            ("quarrywork", "stone_dressing", 3.0, 3.0),
+            ("builders", "hoes", 2.0, 0.5),
+        ]
+        .iter()
+        .map(|(pool, item, required, filled)| PoolToeLineState {
+            pool: (*pool).to_string(),
+            item_id: (*item).to_string(),
+            required: *required,
+            filled: *filled,
+        })
+        .collect();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();

@@ -20,10 +20,12 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 
 use core_sim::{
-    apply_starting_loadout, build_test_app, run_turn, split_band_from_parent, BandEquipment,
-    BandId, KitAllocation, LoadoutRejection, LoadoutSupply, MaterialAllocation, PopulationCohort,
-    ResidentBand, Scalar, SettleConfig, StartingLoadout,
+    apply_starting_loadout, build_test_app, recapture_snapshot_in_place, run_turn,
+    split_band_from_parent, BandEquipment, BandId, KitAllocation, LoadoutRejection, LoadoutSupply,
+    MaterialAllocation, PopulationCohort, ResidentBand, Scalar, SettleConfig, SnapshotHistory,
+    StartingLoadout,
 };
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 /// The faction every shipped profile spawns under.
 const PLAYER: core_sim::FactionId = core_sim::FactionId(0);
@@ -83,6 +85,33 @@ fn set_workers(app: &mut App, entity: Entity, workers: f32) {
         .expect("the band keeps a cohort");
     cohort.working = Scalar::from_f32(workers);
     cohort.sync_size();
+}
+
+/// **Re-declare the fixture band's gear, after the opening outfit has landed on it.**
+///
+/// `build_test_app` installs `for_a_stocked_fixture` and worldgen stocks the band from it — and then
+/// the sim applies that band's **default outfit**, which is a *replacement* and rebuilds the ledger
+/// from the profile's three default kits alone. A fixture whose subject is a *take* against a
+/// well-stocked parent has to declare that stock again (`equipment.md` → "A FIXTURE DECLARES THE
+/// STOCK").
+fn restock_the_fixture_band(app: &mut App, band: Entity) {
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let recipes = app.world.resource::<core_sim::RecipesConfigHandle>().get();
+    let materials = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let workers = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .working
+        .to_f32();
+    let ledger = BandEquipment::start_stocked_owned(&equipment, &recipes, &materials, workers);
+    app.world.entity_mut(band).insert(ledger);
 }
 
 fn count_of(app: &App, entity: Entity, item: &str) -> u32 {
@@ -151,6 +180,11 @@ fn a_settled_split(asked: u32, parent_workers: f32) -> (App, Entity, BandId, Ent
     run_turn(&mut app);
     let (parent, parent_band) = home_band(&mut app);
     set_workers(&mut app, parent, parent_workers);
+    // **The fixture declares the gear it needs.** A band is created holding its *default outfit*
+    // (`starting-loadout.md` → "A default is applied, never suggested"), which is the profile's
+    // three kits and no more — far short of the stock these take fixtures revise against. The
+    // shipped `for_a_stocked_fixture` roster is what they were written for, so it is re-declared.
+    restock_the_fixture_band(&mut app, parent);
     assert!(
         count_of(&app, parent, SPEARS) > 0,
         "**LIVENESS**: the fixture band must own gear, or every take below moves nothing"
@@ -776,11 +810,15 @@ fn material_units_held(app: &App, entity: Entity) -> u32 {
         .sum()
 }
 
-/// ⛔ **A GRANT SPLIT MOVES NOTHING PHYSICAL — a parent with room to spare gives up NOTHING.**
+/// ⛔ **A GRANT SPLIT MOVES NOTHING OFF THE PARENT — a parent with room to spare gives up NOTHING.**
 ///
 /// It used to do **both** things at once: walk the proportional manifest out of the parent's ledger
 /// *and* deduct the splinter's slots and points from the parent's budget. Two ways of paying for one
 /// splinter, so the parent was charged twice.
+///
+/// **The splinter is not empty-handed, and that is the point of the pairing**: it MINTS its own
+/// default against the slice of the grant it was just given, which is a different thing from gear
+/// crossing. Asserting only that the parent is unchanged would pass on a splinter that got nothing.
 ///
 /// **The fixture deliberately leaves the parent inside its reduced budget**, because that is the case
 /// where "moves nothing" is observable end to end: the re-fit does not bite, so a split that still
@@ -835,16 +873,38 @@ fn a_grant_split_moves_nothing_when_the_parent_still_fits_its_reduced_budget() {
         allocation_before,
         "the parent's standing allocation still fits, so the re-fit left it alone"
     );
+    let (child_kits, child_units) = allocated(&app, split.band);
     assert_eq!(
         ledger_of(&app, child).values().sum::<u32>(),
-        0,
-        "the splinter opens holding nothing and spends its own slots"
+        expanded_units(&app, &published_allocation(&app, split.band).0),
+        "the splinter holds exactly its own MINTED default - nothing walked over from the parent"
     );
     assert_eq!(
         material_units_held(&app, child),
-        0,
-        "and holding no material either"
+        child_units,
+        "and its material is what its own card claims"
     );
+    let (child_kit_budget, child_material_budget) = grant_of(&app, split.band);
+    assert!(
+        child_kits <= child_kit_budget && child_units <= child_material_budget,
+        "minted against its own slice of the grant, never over it"
+    );
+}
+
+/// Every item a kit allocation expands to, summed — the ledger a minted outfit comes to.
+fn expanded_units(app: &App, kits: &[KitAllocation]) -> u32 {
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    kits.iter()
+        .map(|row| {
+            equipment
+                .kit_definition(&row.kit_id)
+                .map(|definition| definition.uses.len() as u32 * row.count)
+                .unwrap_or(0)
+        })
+        .sum()
 }
 
 /// ⛔ **THE GRANT PARTITION DIVIDES ON THE RATIO, NOT ON THE ROUNDED SHARE.**
@@ -1008,33 +1068,405 @@ fn a_grant_split_conserves_the_material_grant() {
     );
 }
 
-/// ⛔ **WHAT THE CLAMP TAKES OFF THE PARENT REACHES THE SPLINTER, NOT THE VOID.**
+/// ⛔ **THE SPLINTER'S OUTFIT IS ITS OWN DEFAULT, NOT THE PARENT'S LEFTOVERS.**
 ///
-/// That is the point of the partition: those units are not deleted, they are taken away from the main
-/// band and offered to the new one, inside its own budget.
+/// The clamp used to hand what it took off the parent to the splinter, because a grant split moves
+/// no goods and those leftovers were the only thing there was to open its card on. They are not any
+/// more: the splinter **mints its own default** against its own slice of the grant, which is a
+/// sensible opening outfit rather than whatever a heavily-committed parent happened to be over by.
+///
+/// **Nothing is destroyed by dropping the hand-off**, and the pairing says so: the parent sheds, the
+/// splinter holds its default, and the two budgets still partition the one grant exactly.
 #[test]
-fn the_clamped_remainder_reaches_the_splinter() {
+fn the_splinters_outfit_is_its_own_default_rather_than_the_parents_leftovers() {
     let (mut app, parent, parent_band) = a_fully_outfitted_parent();
     let (_, spent_before) = allocated(&app, parent_band);
+    let (_, budget_before) = grant_of(&app, parent_band);
 
     let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
         .expect("the split is admitted");
     let child = entity_for_band(&mut app, split.band);
 
     let (_, parent_spent) = allocated(&app, parent_band);
-    let shed = spent_before - parent_spent;
     assert!(
-        shed > 0,
-        "**LIVENESS**: the re-fit must actually bite, or there is no remainder to follow"
+        parent_spent < spent_before,
+        "**LIVENESS**: the re-fit must actually bite, or there is nothing to tell the two rules \
+         apart"
     );
     let (_, child_spent) = allocated(&app, split.band);
-    assert_eq!(
-        child_spent, shed,
-        "every unit the clamp took off the parent opens on the splinter's card"
+    let (_, child_budget) = grant_of(&app, split.band);
+    assert!(
+        child_spent > 0,
+        "the splinter is outfitted from creation: {child_spent} units against a budget of \
+         {child_budget}"
+    );
+    assert!(
+        child_spent <= child_budget,
+        "and never over its own budget: {child_spent} against {child_budget}"
     );
     assert_eq!(
         material_units_held(&app, child),
-        shed,
-        "and the splinter is actually holding them"
+        child_spent,
+        "it is actually holding what its card claims - applied, not suggested"
     );
+
+    let (_, parent_budget) = grant_of(&app, parent_band);
+    assert_eq!(
+        parent_budget + child_budget,
+        budget_before,
+        "and the grant is still partitioned exactly - no point is minted twice or lost"
+    );
+}
+
+/// ⛔ **THE PARENT'S ALLOCATION LANDS INSIDE ITS REDUCED BUDGET WITH NOBODY COMMANDING ANYTHING.**
+///
+/// The reported `-6 / 22 left` was a *standing* allocation measured against a budget a split had
+/// just shrunk. Now that the sim applies a band's default at creation, the parent's rows are a real
+/// accepted allocation from turn one — so the re-fit has something to clamp, and the meter cannot go
+/// negative even for a player who never opened a card. **No command is sent in this test.**
+#[test]
+fn a_split_leaves_an_uncommanded_parent_inside_its_reduced_budget() {
+    let mut app = world_on_the_build_turn();
+    let (parent, parent_band) = home_band(&mut app);
+    let (kits_before, units_before) = allocated(&app, parent_band);
+    assert!(
+        kits_before > 0 && units_before > 0,
+        "**LIVENESS**: the parent must be standing on an applied default, or there is no \
+         allocation for the re-fit to clamp"
+    );
+
+    let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
+        .expect("the split is admitted");
+
+    let (kit_budget, material_budget) = grant_of(&app, parent_band);
+    let (kits_after, units_after) = allocated(&app, parent_band);
+    assert!(
+        kits_after <= kit_budget,
+        "the parent claims {kits_after} kits against a budget of {kit_budget}"
+    );
+    assert!(
+        units_after <= material_budget,
+        "and {units_after} units against a budget of {material_budget}"
+    );
+    assert_eq!(
+        material_units_held(&app, parent),
+        units_after,
+        "and it is holding exactly what the re-fitted card claims"
+    );
+    let (child_kits, child_units) = allocated(&app, split.band);
+    let (child_kit_budget, child_material_budget) = grant_of(&app, split.band);
+    assert!(
+        child_kits <= child_kit_budget && child_units <= child_material_budget,
+        "the splinter's own card fits its own budgets too"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// A GRANT splinter's card opens on the campaign pre-fill — and it is asserted ON THE WIRE
+// -------------------------------------------------------------------------------------------
+
+/// One band's outfitting window **as it reaches a client**, decoded off the encoded envelope.
+///
+/// The resource is not the artifact: a row that never reaches the codec still satisfies an
+/// in-process assertion, and the card the player stares at is built from the published frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublishedWindow {
+    open: bool,
+    kit_budget: u32,
+    material_budget: u32,
+    parent_band_id: u64,
+    kits: Vec<(String, u32)>,
+    materials: Vec<(String, u32)>,
+}
+
+impl PublishedWindow {
+    fn kits_allocated(&self) -> u32 {
+        self.kits.iter().map(|(_, count)| count).sum()
+    }
+
+    fn material_units_allocated(&self) -> u32 {
+        self.materials.iter().map(|(_, units)| units).sum()
+    }
+}
+
+/// Recapture the frame and read `band`'s published window out of it.
+///
+/// A split is a command, so it lands *between* two captures — hence the recapture, which is the same
+/// refresh the server runs after every dispatched command. `run_turn` would shut the window instead.
+fn published_window(app: &mut App, band: BandId) -> PublishedWindow {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|row| row.bandId() == band.0)
+        .unwrap_or_else(|| panic!("band {} publishes a row", band.0));
+    let window = row
+        .loadoutWindow()
+        .unwrap_or_else(|| panic!("band {} publishes an outfitting window", band.0));
+    PublishedWindow {
+        open: window.open(),
+        kit_budget: window.kitBudget(),
+        material_budget: window.materialBudget(),
+        parent_band_id: window.parentBandId(),
+        kits: window
+            .kits()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| (row.kitId().unwrap_or_default().to_string(), row.count()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        materials: window
+            .materials()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        (
+                            row.materialId().unwrap_or_default().to_string(),
+                            row.units(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// The campaign's two pre-fills, `(kit_defaults, material_defaults)`, straight off the live profile.
+fn opening_defaults(app: &App) -> (BTreeMap<String, u32>, BTreeMap<String, u32>) {
+    let profile = app.world.resource::<core_sim::ActiveStartProfile>();
+    let opening = &profile.profile().overrides().opening_loadout;
+    (
+        opening.kit_defaults.clone(),
+        opening.material_defaults.clone(),
+    )
+}
+
+/// The clamp the sim fits a pre-fill with, **restated here rather than called**: proportional,
+/// floored, a row that floors to zero dropped, and a declared set that already fits left alone. Id
+/// order, because both sides walk a `BTreeMap`.
+fn proportional_floor(declared: &BTreeMap<String, u32>, budget: u32) -> Vec<(String, u32)> {
+    let total: u32 = declared.values().copied().sum();
+    declared
+        .iter()
+        .filter_map(|(id, count)| {
+            let kept = if total <= budget {
+                *count
+            } else {
+                count * budget / total
+            };
+            (kept > 0).then(|| (id.clone(), kept))
+        })
+        .collect()
+}
+
+/// ⛔ **A TURN-ONE SPLINTER IS CREATED ALREADY HOLDING ITS OWN DEFAULT, AND NOBODY COMMANDED IT.**
+///
+/// Reported from a live server: a band split on turn one published `kitBudget 5` / `materialBudget
+/// 8` with **`kits: []` and `materials: []`**, and the player — who had composed an outfit and never
+/// pressed *Set out* — ended the turn with the band holding nothing. The record showed exactly one
+/// `set_starting_loadout` that game, for the parent.
+///
+/// **A default that exists only as a client-side suggestion cannot survive a card nobody commits**,
+/// so the sim applies it: the splinter mints the campaign default, re-fitted to its own slice of the
+/// grant, through the same accepted-order path a player's own commit takes. No command is sent
+/// anywhere in this test.
+///
+/// Asserted on the **encoded envelope**, because the card is drawn from the published frame — but
+/// the ledger and the store are asserted too, since a published row the band does not hold is
+/// exactly the state this replaces.
+#[test]
+fn a_turn_one_splinter_is_created_already_holding_its_own_default() {
+    let mut app = world_on_the_build_turn();
+    let (parent, _) = home_band(&mut app);
+    set_workers(&mut app, parent, CHAIN_WORKERS);
+
+    let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
+        .expect("the split is admitted");
+    let window = published_window(&mut app, split.band);
+
+    assert!(window.open, "the splinter's window is open");
+    assert_eq!(
+        window.parent_band_id, 0,
+        "the parent still granted, so this is a grant of the splinter's own"
+    );
+    assert!(
+        window.kit_budget > 0 && window.material_budget > 0,
+        "**LIVENESS**: the splinter must hold a real budget, or a blank card is the honest answer \
+         and this test proves nothing: {window:?}"
+    );
+    assert!(
+        !window.kits.is_empty(),
+        "the kit column publishes rows against a budget of {}: {window:?}",
+        window.kit_budget
+    );
+    assert!(
+        !window.materials.is_empty(),
+        "and so does the resources column against a budget of {}: {window:?}",
+        window.material_budget
+    );
+    assert!(
+        window.kits_allocated() <= window.kit_budget,
+        "the rows fit the budget they are drawn against: {window:?}"
+    );
+    assert!(
+        window.material_units_allocated() <= window.material_budget,
+        "and so does the material half: {window:?}"
+    );
+
+    // **The rows are the campaign default, re-fitted to the splinter's own two budgets.**
+    let (kit_defaults, material_defaults) = opening_defaults(&app);
+    assert_eq!(
+        window.kits,
+        proportional_floor(&kit_defaults, window.kit_budget),
+        "the kit rows are `opening_loadout.kit_defaults`, clamped proportionally"
+    );
+    assert_eq!(
+        window.materials,
+        proportional_floor(&material_defaults, window.material_budget),
+        "and the material rows are `opening_loadout.material_defaults`, by the same rule"
+    );
+
+    // ⛔ **AND THE BAND IS ACTUALLY STANDING IN IT.** A published row the band does not hold is the
+    // suggestion this model replaced.
+    let child = entity_for_band(&mut app, split.band);
+    let mut expected: BTreeMap<String, u32> = BTreeMap::new();
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    for (kit_id, count) in &window.kits {
+        let definition = equipment
+            .kit_definition(kit_id)
+            .expect("a published row names a roster kit");
+        for item in &definition.uses {
+            *expected.entry(item.clone()).or_default() += count;
+        }
+    }
+    assert_eq!(
+        ledger_of(&app, child),
+        expected,
+        "the splinter's ledger is the expansion of its published kit rows - minted, not suggested"
+    );
+    for (material_id, units) in &window.materials {
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(child)
+                .expect("the splinter keeps a cohort")
+                .stores
+                .material_total(material_id),
+            Scalar::from_f32(*units as f32),
+            "'{material_id}' is held at exactly the units its card claims"
+        );
+    }
+
+    // ⛔ **AND IT WAS MINTED, NOT MOVED** — the parent's own ledger is untouched by the splinter's
+    // outfit, which is what keeps a grant split from charging the parent twice.
+    assert!(
+        !ledger_of(&app, parent).is_empty(),
+        "**LIVENESS**: the parent is standing on its own default too, so `MINTED not MOVED` is a \
+         real claim rather than a statement about an empty ledger"
+    );
+}
+
+/// **The same holds when the parent has spent its whole grant** — the splinter still mints its own
+/// default, rather than being handed the parent's leftovers.
+#[test]
+fn a_splinter_of_a_fully_committed_parent_is_outfitted_too() {
+    let (mut app, parent, parent_band) = a_fully_outfitted_parent();
+    let (spent_kits, spent_units) = allocated(&app, parent_band);
+    assert!(
+        spent_kits > 0 && spent_units > 0,
+        "fixture: the parent must have committed, or this is the other test"
+    );
+
+    let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
+        .expect("the split is admitted");
+    let window = published_window(&mut app, split.band);
+
+    assert!(window.open && window.parent_band_id == 0, "{window:?}");
+    assert!(
+        window.kit_budget > 0 && window.material_budget > 0,
+        "**LIVENESS**: {window:?}"
+    );
+    assert!(
+        !window.kits.is_empty() && !window.materials.is_empty(),
+        "the splinter of a committed parent publishes both halves: {window:?}"
+    );
+    assert!(
+        window.kits_allocated() <= window.kit_budget
+            && window.material_units_allocated() <= window.material_budget,
+        "and both fit the budgets they are drawn against: {window:?}"
+    );
+}
+
+/// ⛔ **THE TAKE PATH IS UNCHANGED** — a turn-two splinter's card is the default take it was handed,
+/// not a pre-fill.
+///
+/// Both budgets are `0` on a take, so a pre-fill leaking onto this arm would clamp to **nothing**
+/// and put the blank card back where it was first fixed. The rows expanding to exactly the ledger
+/// the split moved is what says they are the take.
+#[test]
+fn a_turn_two_splinters_card_is_still_the_take_it_was_handed() {
+    let (mut app, _, parent_band, child, child_band) = a_settled_split(12, CHAIN_WORKERS);
+    let window = published_window(&mut app, child_band);
+
+    assert!(window.open, "{window:?}");
+    assert_eq!(
+        (window.kit_budget, window.material_budget),
+        (0, 0),
+        "a take mints nothing, so it has no budget: {window:?}"
+    );
+    assert_eq!(
+        window.parent_band_id, parent_band.0,
+        "and it names the band it is drawn from: {window:?}"
+    );
+    assert!(
+        !window.kits.is_empty(),
+        "**LIVENESS**: the default take must have moved something: {window:?}"
+    );
+
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let mut expanded: BTreeMap<String, u32> = BTreeMap::new();
+    for (kit_id, count) in &window.kits {
+        let definition = equipment
+            .kit_definition(kit_id)
+            .expect("a published row names a roster kit");
+        for item in &definition.uses {
+            *expanded.entry(item.clone()).or_default() += count;
+        }
+    }
+    assert_eq!(
+        expanded,
+        ledger_of(&app, child),
+        "the published kit rows expand to exactly the ledger the split moved - they are the take, \
+         not a suggestion"
+    );
+    for (material_id, units) in &window.materials {
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(child)
+                .expect("the splinter keeps a cohort")
+                .stores
+                .material_total(material_id),
+            Scalar::from_f32(*units as f32),
+            "'{material_id}' is published at exactly the units that moved"
+        );
+    }
 }

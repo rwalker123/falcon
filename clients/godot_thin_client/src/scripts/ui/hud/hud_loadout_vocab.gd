@@ -22,22 +22,20 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
 # ---- the wire's own keys: THE CAMPAIGN'S HALF ----------------------------------------------------
 # `CampaignSection.openingLoadout`, decoded onto the snapshot dict as `opening_loadout`
-# (`native/src/dict/campaign.rs`). It is one per WORLD: the pick list and the two pre-fills, and
+# (`native/src/dict/campaign.rs`). It is one per WORLD: the pick list and the craftable ids, and
 # nothing that is true of one band.
 
 ## The pick list, in the order the profile declares it — **and that order is also the draw order**,
 ## shared by the resources column and the legend, so the two cannot disagree.
 const PICKABLE_MATERIALS_KEY := "pickable_materials"
-## The allocation the window OPENS on: a suggestion, never a grant.
-const MATERIAL_DEFAULTS_KEY := "material_defaults"
+## ⛔ **THE TWO PRE-FILLS HAVE NO CLIENT READER, AND MUST NOT GROW ONE.** `openingLoadout` still
+## publishes `materialDefaults` / `kitDefaults`, and the SIM is what applies that spread — at the
+## band's creation, down the same path a player's `set_starting_loadout` takes — so it is already in
+## `WINDOW_KITS_KEY` / `WINDOW_MATERIALS_KEY` by the time a card is drawn. A client that seeded from
+## the campaign section as well would draw, and then order, twice the gear the band holds. The keys
+## naming one ROW's fields survive below, because the window's own rows are in that same shape.
 const MATERIAL_DEFAULT_ID_KEY := "material_id"
 const MATERIAL_DEFAULT_UNITS_KEY := "units"
-## The KIT column's pre-fill, the material one's twin. **ALREADY CLAMPED to `kit_budget` sim-side** —
-## that budget is the spawned band's working-age head count rather than a config number, so the
-## profile cannot sum-check its own pre-fill and the sim scales it proportionally at publish time.
-## **Draw these counts as-is**: re-fitting them against the budget here would be a second clamp, and
-## two clamps disagree.
-const KIT_DEFAULTS_KEY := "kit_defaults"
 const KIT_DEFAULT_ID_KEY := "kit_id"
 const KIT_DEFAULT_COUNT_KEY := "count"
 ## **THE RECIPES THIS FACTION COULD PUT ON A BENCH TODAY, AS IDS.** It is what keeps the
@@ -58,7 +56,7 @@ const WINDOW_KEY := "loadout_window"
 ## `entity`, which is ECS allocation state a rollback renumbers.
 const BAND_ID_KEY := "band_id"
 ## False once THIS band's window has shut. It shuts on the turn advance and on nothing else, so it is
-## never a success signal: a committed order leaves it open, which is what lets a pick be revised.
+## never a success signal: an accepted order leaves it open, which is what lets a pick be revised.
 const OPEN_KEY := "open"
 ## One kit per working-age hand of the band — derived sim-side, never configured. `0` on a TAKE
 ## window, which mints nothing.
@@ -72,15 +70,14 @@ const MATERIAL_BUDGET_KEY := "material_budget"
 const PARENT_BAND_ID_KEY := "parent_band_id"
 ## The value of [PARENT_BAND_ID_KEY] on a grant window. `0` is "no band" throughout this client.
 const GRANT_PARENT_BAND_ID := 0
-## **THE ACCEPTED ALLOCATION** — the rows this band's last accepted order named, in the pre-fills' own
-## row shape, and **what the card opens on**. Empty only for a grant window nobody has ordered against
-## yet, which is what makes the campaign pre-fill that window's seed.
+## ⛔ **WHAT THE BAND ACTUALLY HOLDS — never a suggestion, and never an unspent budget.** The sim
+## applies a band's default outfit at the moment the band is made (the opening band at world start, a
+## splinter at its split), through the same path a player's `set_starting_loadout` takes, so these
+## rows describe gear that is already in hands. A band nobody touches keeps its default.
 ##
-## ⛔ **A FRESH SPLINTER'S ARE NOT EMPTY.** The split's default take is kit-denominated and published
-## here, so the take card opens on the allocation the band is already standing on and an untouched
-## `Set out` re-sends it unchanged — an exact no-op. While these were empty on a splinter (the take
-## being a bare per-item manifest then), that same press ordered *take nothing* and handed the whole
-## dowry back to the parent, an apply being a REPLACEMENT.
+## **The card draws them, and nothing else.** There is no client-side draft to reconcile them against:
+## every stepper press sends a whole-order replacement, so the only two things a published allocation
+## can be are this card's own echo and a move the sim made for its own reasons.
 const WINDOW_KITS_KEY := "kits"
 const WINDOW_MATERIALS_KEY := "materials"
 ## ⛔ **A TAKE'S CAP, PER ITEM — AND A KIT ROW CANNOT BE CAPPED ON ITS OWN AGAINST IT.** `sled` is
@@ -183,15 +180,6 @@ const RECIPE_WORK_FORMAT := "%s work"
 ## column's own order.
 const LEGEND_HEAD := "Materials"
 
-## ⛔ **THE COMMIT CONTROL IS UNCONDITIONAL, AND A FORFEIT VARIANT OF IT WOULD BE A LIE.**
-## **Committing does not shut the window.** The sim treats an apply as a REPLACEMENT rather than an
-## addition, so the order may be sent, revised and sent again as often as the player likes; only the
-## TURN ADVANCE closes the window and forfeits what is left. A label reading *"Set out — forfeit 17
-## kits and 2 units"* therefore described a consequence that pressing it does not have — it named the
-## cost of ending the turn on a button that does not end the turn.
-##
-## The remainder is still worth saying and is said ONCE, on the **turn orb**, which is the surface
-## that already counts down to the advance. Nothing on this card may state it a second time.
 ## **THE FOOTER'S LEADING TEXT — two short declaratives, one fact each.** The card is dismissible and
 ## the orb's row is the way back to it; the TURN is what ends that, and a player who has put the card
 ## away has no other way to learn either.
@@ -206,8 +194,14 @@ const LEGEND_HEAD := "Materials"
 ## survives** — the way back is discoverable by pressing things; the deadline is not.
 const FOOTER_NOTE := "The turn orb reopens this. Ending the turn closes it for good."
 
-const COMMIT_CLEAR_LABEL := "Set out"
-const COMMIT_TOOLTIP := "You can change this until you end the turn."
+## ⛔ **THE FOOTER CONTROL CLOSES THE CARD AND SENDS NOTHING, SO IT MAY NOT READ AS A SEND.** It was
+## `Set out` while an order was DEFERRED to it; every stepper press orders now, so a button still
+## wearing that face would promise the one thing this card no longer holds back — and a player who
+## never pressed it would believe they had lost what they picked. (Before that it read
+## *"Set out — forfeit 17 kits and 2 units"*, which named the cost of ending the turn on a button that
+## does not end the turn; the remainder is said ONCE, on the turn orb, and nothing here may repeat it.)
+const CLOSE_LABEL := "Done"
+const CLOSE_TOOLTIP := "You can change this until you end the turn."
 
 ## **THE BAND SWITCHER, drawn ONLY while more than one window is open.** One button per band with an
 ## open window; the subject's is pressed. It earns no row in the ordinary single-window case, and it is
@@ -239,7 +233,13 @@ const EMPTY_NOTICE := "Waiting for the world's kit roster."
 ## clear would strand a player who had finished picking, put the card away and then wanted to revise.
 ## What moves is the label and the severity: a finished loadout reads as DONE and paints the orb
 ## `READY`, an unfinished one reads as a warning and paints it `WARN`.
-const ATTENTION_LABEL_UNSPENT := "Band not outfitted"
+##
+## ⛔ **`not FULLY outfitted`, because a band is never unoutfitted any more.** The sim applies a
+## band's default outfit when it makes the band, so every band on this row already holds gear; what
+## the warn arm reports is budget still to MINT, which the turn advance forfeits. The bare
+## *"Band not outfitted"* was true while a card held an unsent draft over an empty band and would now
+## contradict the card beside it, which is showing the kits the band is carrying.
+const ATTENTION_LABEL_UNSPENT := "Band not fully outfitted"
 const ATTENTION_LABEL_READY := "Band outfitted"
 ## ⛔ **A THIRD RUNG, BECAUSE OVER-BUDGET AND FULLY-SPENT ARE NOT THE SAME ANSWER.** The completeness
 ## test was `remaining <= 0`, so a band holding MORE than its budget allows passed it and the orb
@@ -337,7 +337,7 @@ const LEGEND_FONT_SIZE := 10
 const FOOTER_PADDING_H := 16
 const FOOTER_PADDING_V := 12
 const FOOTER_SEPARATION := 12
-const COMMIT_FONT_SIZE := 13
+const CLOSE_FONT_SIZE := 13
 
 const REOPEN_PADDING := 10
 const REOPEN_FONT_SIZE := 12
@@ -354,7 +354,7 @@ const MATERIAL_ROW_META := &"loadout_material_row"
 const RECIPE_ROW_META := &"loadout_recipe_row"
 const RECIPE_COUNT_META := &"loadout_recipe_count"
 const BUDGET_METER_META := &"loadout_budget_meter"
-const COMMIT_BUTTON_META := &"loadout_commit"
+const CLOSE_BUTTON_META := &"loadout_close"
 const LEGEND_ENTRY_META := &"loadout_legend_entry"
 
 ## The two meters, by the budget each reports.

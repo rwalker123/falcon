@@ -11034,6 +11034,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CameOfAge => "Came of age",
         CommandEventKind::Aged => "Joined the elders",
         CommandEventKind::Migrated => "Migration",
+        CommandEventKind::BandChangedHands => "Band changed hands",
     }
 }
 
@@ -21326,9 +21327,11 @@ mod tests {
                 is_material: true,
                 amount: 1.0,
             }],
-            // A real material the fixture band holds none of.
+            // A real material the fixture band holds none of. **Not `hide`**: a band is created
+            // holding its default outfit, and the shipped `material_defaults` stock bone, fibre and
+            // hide — so those three are held from turn one. `stone` is pickable and not defaulted.
             vec![TradeCargoItem {
-                id: "hide".to_string(),
+                id: "stone".to_string(),
                 is_material: true,
                 amount: 1.0,
             }],

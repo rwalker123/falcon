@@ -1448,6 +1448,18 @@ impl FactionInventory {
     }
 }
 
+/// **WHAT KIND OF THING HAPPENED** — the vocabulary of the player-facing event feed.
+///
+/// ⛔ **A NEW VARIANT IS APPENDED AT THE END, NEVER INSERTED.** `CommandEventLog` rides
+/// [`crate::sim_state::SimState::command_events`], which is part of the **save payload**, and
+/// bincode encodes a fieldless enum as its **declaration index**. Inserting a variant therefore
+/// shifts every variant after it and silently re-reads an old blob's events as the wrong kinds —
+/// a save-format break with no version to catch it, because the enum is not where
+/// [`crate::save::SAVE_FORMAT_VERSION`] is bumped and nothing in the encoding notices.
+/// Appending costs nothing and cannot break: an index nobody has written cannot be misread.
+///
+/// The wire spelling is [`Self::as_str`] and is keyed by **name**, so the declaration order is a
+/// pure serialization fact and no reader depends on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandEventKind {
     Scout,
@@ -1607,6 +1619,24 @@ pub enum CommandEventKind {
     /// out of the band, but it is a pair of hands the player no longer has, which is why the
     /// workforce shrinking is announced rather than merely happening.
     Aged,
+    /// **A WHOLE BAND CHANGED FACTION** — a knowledge migration completed and the band now belongs
+    /// to the people it defected to (`systems::population`, the `PendingMigration` branch).
+    ///
+    /// **One kind, pushed TWICE — once under the faction that lost the band, once under the faction
+    /// that gained it** — because `snapshot::campaign::command_events_to_state` files a frame's feed
+    /// by `entry.faction == viewer`, so a single entry would reach exactly one of the two players
+    /// who need to know. Which side of the handover a row describes rides the detail
+    /// (`side=lost|gained`), on [`Self::Road`]'s reading: the player is looking at *one band
+    /// changing hands*, not at two unrelated events.
+    ///
+    /// It shipped silent: the migration branch sent `TradeDiffusionEvent` and
+    /// `MigrationKnowledgeEvent` (neither of which has an `EventReader` anywhere — they are
+    /// telemetry/diffusion plumbing) and pushed nothing to the event log at all, so a player gained
+    /// or lost twenty-nine people with no line anywhere.
+    ///
+    /// **Appended last, on the rule stated at the top of this enum**: it arrived after [`Self::Aged`]
+    /// and sits after it, so no shipped variant's bincode index moved.
+    BandChangedHands,
 }
 
 impl CommandEventKind {
@@ -1648,6 +1678,7 @@ impl CommandEventKind {
             CommandEventKind::Died => "died",
             CommandEventKind::CameOfAge => "came_of_age",
             CommandEventKind::Migrated => "migrated",
+            CommandEventKind::BandChangedHands => "band_changed_hands",
             CommandEventKind::Aged => "aged",
         }
     }

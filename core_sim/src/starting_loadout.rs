@@ -1,15 +1,20 @@
 //! **The outfitting window — one per band, open until the turn is finalized.**
 //!
-//! A spawning band owns **nothing**: `equipment.json` ships `start_stock_fraction: 0.0`, and no
-//! material declares a start stock (the mechanism that let one is deleted). Instead the player
-//! composes a loadout *after* seeing the generated map — a budget of one kit per working-age hand
-//! spread across the kit roster, and a separate budget of material points spread across the
-//! profile's pick list.
+//! Nothing at the *spawn* grants a band anything: `equipment.json` ships `start_stock_fraction: 0.0`,
+//! and no material declares a start stock (the mechanism that let one is deleted). Everything a band
+//! owns comes through this window — a budget of one kit per working-age hand spread across the kit
+//! roster, and a separate budget of material points spread across the profile's pick list, composed
+//! *after* the generated map is on screen.
+//!
+//! **A band is never bare-handed while it decides.** The sim commits the campaign's **default
+//! outfit** on the band the moment it exists ([`outfit_band_with_defaults`]), so the player's pick is
+//! a *revision* of an outfit the band is standing in rather than a form that must be submitted for
+//! anything to happen. A default that only a client drew could not survive a card nobody commits.
 //!
 //! **Every band gets a window, not just the one that spawned.** A band that splits off hands its
-//! splinter a window of its own, pre-filled with the proportional share the split already gives the
-//! new band's people and food ([`crate::systems::split_band_from_parent`]). **Turn one is not
-//! special** — only the *parent's state* differs:
+//! splinter a window of its own, standing at the outfit that split has just given it
+//! ([`crate::systems::split_band_from_parent`]). **Turn one is not special** — only the *parent's
+//! state* differs:
 //!
 //! - The spawned band's window carries a **GRANT**, two budgets it may mint against, and a splinter
 //!   of a band whose grant is still unspent takes a slice of that grant rather than of a ledger.
@@ -126,10 +131,11 @@ pub struct LoadoutWindow {
     /// Where this window's gear comes from, and what caps it. See [`LoadoutSupply`].
     pub supply: LoadoutSupply,
     /// **The kit rows the last accepted order named** — the accepted allocation, which is what the
-    /// picker re-draws and what a revision replaces. Empty only for a window nobody has ordered
-    /// against yet: a **splinter's opens at its default take**, denominated in kits by
-    /// [`crate::systems::split_band_from_parent`] so that re-sending it unchanged is a no-op rather
-    /// than an order to take nothing.
+    /// picker re-draws and what a revision replaces. **No fresh window is empty, and on every one of
+    /// them these rows describe gear the band is actually holding**: a take splinter opens at its
+    /// **default take**, denominated in kits by [`crate::systems::split_band_from_parent`], and a
+    /// grant band opens at the **default outfit** [`outfit_band_with_defaults`] has just minted for
+    /// it. Either way re-sending them unchanged is an exact no-op.
     pub kits: Vec<KitAllocation>,
     /// The material rows the last accepted order named, the twin of [`Self::kits`].
     pub materials: Vec<MaterialAllocation>,
@@ -449,6 +455,109 @@ pub fn stamp_starting_loadout(
                  band has hands"
             );
         }
+    }
+}
+
+/// **Outfit every band whose grant window just opened, from the campaign's defaults.**
+///
+/// A Startup system chained immediately after [`stamp_starting_loadout`], which is the first moment
+/// the budgets exist. See [`outfit_band_with_defaults`] for why the default is *applied* rather than
+/// suggested.
+pub fn outfit_opening_bands(world: &mut World) {
+    let opening: Vec<BandId> = match world.get_resource::<StartingLoadout>() {
+        Some(loadout) => loadout
+            .iter()
+            .filter(|(_, window)| window.grants())
+            .map(|(band, _)| band)
+            .collect(),
+        None => return,
+    };
+    if opening.is_empty() {
+        return;
+    }
+    // A band's faction is on its cohort, and `apply_starting_loadout` resolves the entity from the
+    // pair — resolved up front so the mutable applies below borrow nothing else.
+    let factions: BTreeMap<BandId, FactionId> = world
+        .query::<(&BandId, &PopulationCohort)>()
+        .iter(world)
+        .map(|(band, cohort)| (*band, cohort.faction))
+        .collect();
+    for band in opening {
+        let Some(faction) = factions.get(&band).copied() else {
+            continue;
+        };
+        outfit_band_with_defaults(world, faction, band);
+    }
+}
+
+/// **Give `band` its default outfit, re-fitted to its OWN budgets, through the ordinary
+/// accepted-order path.**
+///
+/// # ⛔ A DEFAULT IS APPLIED, NEVER SUGGESTED
+///
+/// A band holds its default outfit **from the moment it is created**, whether or not anybody ever
+/// opens its card. That is not a convenience — it is what closes a reported loss: a player composed
+/// an outfit for a splinter, never pressed *Set out*, ended the turn, and the band walked away with
+/// nothing. The record showed exactly one `set_starting_loadout` that game, for the parent. **A
+/// default that exists only as a client-side seed cannot survive a card nobody commits; one the sim
+/// has applied cannot be lost.**
+///
+/// So this goes through [`apply_starting_loadout`] — the same path a player's own accepted order
+/// takes — rather than writing the window's rows directly. The band's ledger and store really hold
+/// the outfit, and the window's accepted rows say so **because an apply sets them**, which is what
+/// makes the card and the band agree by construction and what makes a later revision a replacement
+/// of something real.
+///
+/// # The budgets are the BAND's, not the campaign's
+///
+/// [`clamped_kit_defaults`] fits the kit half to this band's `kit_budget` and [`clamp_allocation`]
+/// fits the material half to its `material_budget` — the same proportional, floored,
+/// remainder-unspent rule for both, because they are the same question. The material half needs the
+/// clamp even though `material_defaults` is config-validated against `material_points`: that
+/// validation is against the *campaign's* budget, and a splinter's is a slice of it.
+///
+/// **Only a grant window is outfitted.** A take window mints nothing, so both its budgets are `0`
+/// and it has a default take of its own already standing; this returns without touching it.
+///
+/// A refusal is structurally impossible — a clamped allocation fits by construction and its ids come
+/// from a config the boot validated against both rosters — so one is logged rather than handled.
+pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, band: BandId) {
+    let Some((kit_budget, material_budget)) = world
+        .get_resource::<StartingLoadout>()
+        .and_then(|loadout| loadout.window(band))
+        .filter(|window| window.grants())
+        .map(|window| (window.supply.kit_budget(), window.supply.material_budget()))
+    else {
+        return;
+    };
+    let Some(profile) = world.get_resource::<ActiveStartProfile>() else {
+        return;
+    };
+    let opening = &profile.profile().overrides().opening_loadout;
+    let kits: Vec<KitAllocation> = clamped_kit_defaults(&opening.kit_defaults, kit_budget)
+        .0
+        .into_iter()
+        .map(|(kit_id, count)| KitAllocation { kit_id, count })
+        .collect();
+    let materials: Vec<MaterialAllocation> =
+        clamp_allocation(&opening.material_defaults, material_budget)
+            .0
+            .into_iter()
+            .map(|(material_id, units)| MaterialAllocation { material_id, units })
+            .collect();
+    // Nothing to apply is not the same as applying nothing: an apply is a **replacement**, so
+    // committing an empty order here would rebuild a ledger from empty for no reason.
+    if kits.is_empty() && materials.is_empty() {
+        return;
+    }
+    if let Err(reason) = apply_starting_loadout(world, faction, band, &kits, &materials) {
+        warn!(
+            target: "shadow_scale::campaign",
+            faction = faction.0,
+            band = band.0,
+            %reason,
+            "starting_loadout.defaults.refused=a clamped default must always fit"
+        );
     }
 }
 

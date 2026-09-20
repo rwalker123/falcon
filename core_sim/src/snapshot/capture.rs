@@ -2728,32 +2728,20 @@ pub fn capture_snapshot(
     // existed, so the shipped single-player turn pays nothing at all for the loop around it.
     let mut passes_left = capture_list.len();
     // **The rows a patch publishes to every viewer alike**, derived by the first pass and cloned by
-    // the rest — and, inside it, the two kit indices over EVERY faction's bands that decide which
-    // rows those are. `None` with a single audience, which is what keeps a single-player turn paying
-    // for none of it (see [`crate::snapshot::subsistence::WildRowMemo`]).
-    // **The rows a patch publishes to every viewer alike**, derived by the first pass and cloned by
-    // the rest — and, inside it, the two kit indices over EVERY faction's bands that decide which
+    // the rest — and, inside it, the two membership indices over EVERY faction's bands that decide which
     // rows those are. `None` with a single audience, which is what keeps a single-player turn paying
     // for none of it (see [`crate::snapshot::subsistence::WildRowMemo`]).
     let mut wild_rows = (capture_list.len() > 1).then(|| {
-        let equipment_config = equipment.get();
         crate::snapshot::subsistence::WildRowMemo::new(
-            crate::snapshot::subsistence::resolve_build_kit_ids(
+            crate::snapshot::subsistence::resolve_queued_build_sources(
                 populations
                     .iter()
                     .filter_map(|(_, _, allocation, ..)| allocation),
-                &forage_registry,
-                &herd_registry,
-                &equipment_config,
             ),
-            crate::snapshot::subsistence::resolve_upkeep_kits(
+            crate::snapshot::subsistence::resolve_worked_sources(
                 populations
                     .iter()
                     .filter_map(|(_, _, allocation, ..)| allocation),
-                &forage_registry,
-                &herd_registry,
-                &deposits,
-                &equipment_config,
             ),
         )
     });
@@ -3464,10 +3452,10 @@ pub fn capture_snapshot(
                 &quoted_wear,
             ),
         );
-        // **THE LIVE BUILDERS KIT PER QUEUED SOURCE**, resolved once for both source tables
-        // (`docs/plan_standing_upkeep.md` §4.7a ②). It is read off the bands' **queues**, not off the
-        // patch/herd scratch beside it: a `build_kit` command is answered by a recapture in the same
-        // dispatch, so a turn-written field would show the pick a whole turn late.
+        // **WHICH SOURCES THE VIEWER HAS QUEUED**, resolved once for both source tables. It is read
+        // off the bands' **queues**, not off the patch/herd scratch beside it: an entry queued since
+        // the last turn is answered by a recapture in the same dispatch, so a turn-written field
+        // would show it a whole turn late.
         //
         // ⛔ **THE VIEWER'S OWN BANDS, AND THAT IS WHAT MAKES BOTH INDICES A BOUNDARY.** They key purely
         // by tile and herd id, so an unfiltered walk resolved *every* faction's queue onto the shared
@@ -3480,30 +3468,21 @@ pub fn capture_snapshot(
         // scratch on, so this filter is the single seam behind both readings
         // (`factions.md` → "The improvement follows the ground; the BUILDER'S state follows the
         // builder").
-        let build_kit_ids = crate::snapshot::subsistence::resolve_build_kit_ids(
+        let build_kit_ids = crate::snapshot::subsistence::resolve_queued_build_sources(
             populations
                 .iter()
                 .filter(|(_, cohort, ..)| cohort.faction == viewer)
                 .filter_map(|(_, _, allocation, ..)| allocation),
-            &forage_registry,
-            &herd_registry,
-            &equipment_config,
         );
-        // **THE LIVE KEEPING KIT PER WORKED SOURCE**, on the same rule one account over
-        // (`docs/plan_standing_upkeep.md` §2.7): the keeping kit is a property of the band's **row**, so
-        // it is read off the rows rather than off the patch/herd scratch, and an `upkeep_kit` command is
-        // answered by a recapture in the same dispatch. **Filtered to the viewer's bands** on the rule
-        // above — which is also what `UpkeepKitIds::patch`'s own contract has always claimed ("`("",
-        // false)` when no band **of the faction** works it").
-        let upkeep_kit_ids = crate::snapshot::subsistence::resolve_upkeep_kits(
+        // **WHICH SOURCES THE VIEWER'S BANDS WORK**, the second membership, on the same rule one
+        // account over: a row is a property of the band, so it is read off the rows rather than off
+        // the patch/herd scratch, and a row staffed since the last turn is answered by a recapture in
+        // the same dispatch. **Filtered to the viewer's bands** on the rule above.
+        let upkeep_kit_ids = crate::snapshot::subsistence::resolve_worked_sources(
             populations
                 .iter()
                 .filter(|(_, cohort, ..)| cohort.faction == viewer)
                 .filter_map(|(_, _, allocation, ..)| allocation),
-            &forage_registry,
-            &herd_registry,
-            &deposits,
-            &equipment_config,
         );
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
             telemetry: &herds,
@@ -3585,7 +3564,6 @@ pub fn capture_snapshot(
             &ladder_config,
             &extraction_config,
             &build_kit_ids,
-            &upkeep_kit_ids,
             deposit_tiles.iter().copied(),
         );
         let demographics_state = snapshot_demographics(&population_states);

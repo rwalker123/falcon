@@ -1,9 +1,10 @@
 //! **The opening outfitting window** — the one source of a campaign's starting gear and material.
 //!
-//! A spawning band owns nothing, so everything here is about the turn-one allocation: what it buys,
-//! what it refuses, and when it stops being available. The refusal cases each assert **nothing
-//! changed**, because a loadout is one composition against two budgets — honouring the legal half
-//! would spend the player's points on something they did not choose.
+//! Nothing at the *spawn* grants a band anything, so everything here is about the turn-one
+//! allocation: what the sim applies by default, what a player's order buys, what it refuses, and
+//! when it stops being available. The refusal cases each assert **nothing changed**, because a
+//! loadout is one composition against two budgets — honouring the legal half would spend the
+//! player's points on something they did not choose.
 
 use bevy::prelude::*;
 
@@ -216,8 +217,9 @@ fn the_kit_budget_is_the_starting_bands_own_worker_count() {
 fn allocated_kits_stock_every_item_they_use_and_shared_items_add() {
     let (mut app, band, band_id) = open_window();
     assert!(
-        owned(&app, band).is_empty(),
-        "fixture: a spawning band owns nothing, or the counts below are not what the loadout bought"
+        !owned(&app, band).is_empty(),
+        "fixture: a band is created holding its applied default, so the counts below are what the \
+         REPLACEMENT bought rather than an addition to nothing"
     );
     apply_starting_loadout(
         &mut app.world,
@@ -453,9 +455,19 @@ fn a_revised_loadout_does_not_touch_the_bands_provisions() {
 ///
 /// The world-build pass does **not** shut it — that turn is what draws the map the loadout is
 /// composed against.
+///
+/// **What the band HOLDS survives the shut**, which is the other half: the sim applied the default
+/// at creation, so a player who never touched the card still walks away outfitted. Only the
+/// *unspent* remainder of the budget is forfeited.
 #[test]
 fn the_window_shuts_on_the_first_turn_advance_and_a_later_loadout_is_refused() {
     let (mut app, band, band_id) = open_window();
+    let held = owned(&app, band);
+    assert!(
+        !held.is_empty(),
+        "**LIVENESS**: the band must hold its applied default, or the survival claim below is the \
+         old owns-nothing claim under a new name"
+    );
     run_turn(&mut app);
     assert!(
         !app.world.resource::<StartingLoadout>().is_open(band_id),
@@ -468,9 +480,11 @@ fn the_window_shuts_on_the_first_turn_advance_and_a_later_loadout_is_refused() {
         (kits(&[(BIG_GAME, 1)]), materials(&[(BONE, 1)])),
     );
     assert_eq!(reason, LoadoutRejection::WindowClosed);
-    assert!(
-        owned(&app, band).is_empty(),
-        "unspent budget grants nothing - the band that never outfitted owns nothing for ever"
+    assert_eq!(
+        owned(&app, band),
+        held,
+        "the band keeps exactly what it held when the window shut - a refused order changes \
+         nothing, and the applied default is not forfeited with the unspent budget"
     );
 }
 
@@ -756,15 +770,20 @@ fn a_legal_half_beside_an_illegal_half_lands_nothing() {
     );
 }
 
-/// ⛔ **THE PRE-FILL IS A CLIENT SEED AND MUST NEVER BECOME A BACK-DOOR SPAWN STOCK.**
+/// ⛔ **THE DEFAULT IS APPLIED, NEVER SUGGESTED — AND NOBODY HAS TO PRESS ANYTHING.**
 ///
-/// The shipped profile pre-fills twelve kits and twenty-eight material points, and a band that never
-/// receives a `SetStartingLoadout` must still own **nothing at all** — the whole arc rests on the
-/// spawn granting no gear and no material, and a default that quietly applied itself would undo that
-/// while looking like a UI convenience.
+/// The rule this replaces was the exact opposite: the pre-fill was a *client seed*, and a band that
+/// never received a `SetStartingLoadout` owned nothing at all. That lost real gear. A player
+/// composed an outfit for a band, never committed the card, ended the turn — and the band walked
+/// away bare-handed, with the server's record showing no `set_starting_loadout` for it at all. **A
+/// default that exists only on the client cannot survive a card nobody commits.**
+///
+/// So the sim commits it, at creation, through the ordinary accepted-order path: the band's ledger
+/// and its material store really hold the outfit, and the window's accepted rows say so because an
+/// apply sets them. No command is sent anywhere in this test.
 #[test]
-fn the_published_defaults_grant_the_band_nothing() {
-    let (mut app, band, band_id) = open_window();
+fn a_band_is_created_already_holding_its_default_outfit() {
+    let (app, band, band_id) = open_window();
     let (kit_defaults, material_defaults) = {
         let loadout = &app
             .world
@@ -772,30 +791,76 @@ fn the_published_defaults_grant_the_band_nothing() {
             .profile()
             .overrides()
             .opening_loadout;
-        (loadout.kit_defaults.len(), loadout.material_defaults.len())
+        (
+            loadout.kit_defaults.clone(),
+            loadout.material_defaults.clone(),
+        )
     };
     assert!(
-        kit_defaults > 0 && material_defaults > 0,
-        "**LIVENESS**: the shipped profile must pre-fill something, or this asserts nothing"
+        !kit_defaults.is_empty() && !material_defaults.is_empty(),
+        "**LIVENESS**: the shipped profile must default something, or this asserts nothing"
+    );
+    let (kit_budget, material_budget) = grant(&app, band_id);
+    assert!(
+        kit_defaults.values().sum::<u32>() <= kit_budget
+            && material_defaults.values().sum::<u32>() <= material_budget,
+        "fixture: the shipped defaults fit the shipped band's budgets, so the clamp does not bind \
+         here and the quantities below are the declared ones (the clamp has its own case)"
     );
 
-    // A turn passes and the window shuts with the defaults never committed.
-    run_turn(&mut app);
-    assert!(!app.world.resource::<StartingLoadout>().is_open(band_id));
-
-    assert!(
-        owned(&app, band).is_empty(),
-        "a pre-filled kit column is a SUGGESTION - a band that never sent a loadout owns no gear"
+    // --- what the band HOLDS, with no command sent anywhere -------------------------------------
+    let ledger = owned(&app, band);
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let mut expected: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for (kit_id, count) in &kit_defaults {
+        let definition = equipment
+            .kit_definition(kit_id)
+            .expect("a defaulted kit is on the roster");
+        for item in &definition.uses {
+            *expected.entry(item.clone()).or_default() += count;
+        }
+    }
+    assert_eq!(
+        ledger
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        expected,
+        "the band holds exactly the expansion of `kit_defaults` - applied, not suggested"
     );
     let materials_table = app.world.resource::<MaterialsConfigHandle>().get();
     for (id, _) in materials_table.materials() {
         assert_eq!(
             held(&app, band, id),
-            0.0,
-            "'{id}' is pre-filled or pickable, and the band still holds none of it - nothing is \
-             stocked at spawn and a default applies itself to nobody"
+            material_defaults.get(id).copied().unwrap_or_default() as f32,
+            "'{id}' is held at exactly its declared default - and a material nothing defaults is \
+             still held at none, because `start_stock` is deleted"
         );
     }
+
+    // --- and the window's ACCEPTED ROWS say so, because an apply is what set them ----------------
+    let window = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band_id)
+        .expect("the band has a window");
+    assert_eq!(
+        window
+            .kits
+            .iter()
+            .map(|row| (row.kit_id.clone(), row.count))
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        kit_defaults,
+        "the card opens on the outfit the band is standing in, not on a suggestion beside it"
+    );
+    assert_eq!(
+        window
+            .materials
+            .iter()
+            .map(|row| (row.material_id.clone(), row.units))
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        material_defaults,
+        "and so does the material half"
+    );
 }
 
 /// ⛔ **AN OVER-ALLOCATING PRE-FILL IS CLAMPED, PROPORTIONALLY, AND THE REMAINDER IS LEFT UNSPENT.**

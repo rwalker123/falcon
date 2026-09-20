@@ -415,3 +415,166 @@ fn two_rows_paying_nothing_still_fall_back_to_the_earliest_row() {
         "and the later row is untouched"
     );
 }
+
+// ---------------------------------------------------------------------------
+// **STEP 3 IS GATED ON THE TOOLS** — a pool that cannot arm the hands it already has has no spare
+// keeper to give (`.claude/rules/core_sim/yield-forecast.md` → the `spare_*_keepers` row).
+// ---------------------------------------------------------------------------
+
+/// The plant branch's tool. One unit crews one hand, so a pool working `n` hands requires `n`.
+const HOES: &str = "hoes";
+/// The `Agriculture` pool's keepers — **three**, one more than the bill below needs, so there is a
+/// genuine surplus for step 3 to be right or wrong about.
+const KEEPERS: u32 = 3;
+/// **The patch's keeping bill, stated rather than derived.** The whole pair turns on where the bill
+/// sits relative to the hoes on the shelf, and a bill read off the rung and the tile's own `K` is a
+/// number no fixture controls. At any keeper rate between bare hands and the hoed `1.5` this needs
+/// **more than one hand and no more than two** — so two of the three keepers are held and the third
+/// is spare, while the hands actually working require more than a single hoe.
+const A_STATED_BILL: f32 = 1.8;
+/// The crew on the one worked source — two, so step 5 can *thin* it and the row survives onto the
+/// wire where these claims are asserted.
+const TENDERS: u32 = 2;
+
+/// **A fully-committed band keeping one tended patch, holding `hoes` sets of the plant tool.**
+///
+/// Its `working` is one short of what it holds — the elder's death every fixture in this file is
+/// built on — so the shed runs. It staffs **only** the two rows the claims turn on: no scout, no
+/// warrior and no builders, so steps 1, 2 and 4 name nothing and the walk reaches step 3 and then
+/// step 5.
+fn a_band_keeping_a_tended_patch(hoes: u32) -> (App, UVec2) {
+    let mut app = build_test_app();
+    app.update();
+    let (home, _) = two_worked_patches(&app);
+
+    // **The patch carries work on the ladder**, which is what makes the Agriculture pool owe it a
+    // keeping bill at all — a wild stand claims nothing and the pool would have no need to be spare
+    // against.
+    {
+        let ladder = core_sim::LadderConfig::builtin();
+        let cost = ladder
+            .rung(core_sim::RungKey::PlantTended)
+            .build_cost(core_sim::RUNG_COST_UNSCALED)
+            .expect("the tended rung builds");
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(home).expect("the fixture patch exists");
+        patch.set_ladder_position(cost, &ladder);
+        // **The stamped bill is what the keeping is judged against** (`forage::patch_keeping_basis`),
+        // and stating it is what makes this pair a single-variable comparison: the live demand is
+        // the rung's upkeep scaled by the tile's own `K`, which no fixture chooses.
+        patch.upkeep_demanded = Some(A_STATED_BILL);
+    }
+
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(home.x, home.y)
+        .expect("the home patch resolves to a tile");
+    let committed = TENDERS + KEEPERS;
+    let mut allocation = LaborAllocation::default();
+    allocation.set_assignment(forage_on(home), TENDERS, committed, None);
+    allocation.set_source_yield(&forage_on(home), seeded(SETTLED_REALIZED));
+    allocation.set_assignment(LaborTarget::Agriculture, KEEPERS, committed, None);
+    let band = spawn_committed_band(&mut app, tile, committed - 1, allocation);
+
+    // ⛔ **THE LEDGER IS STATED, NOT INHERITED.** An absent `BandEquipment` reads as start-stocked
+    // for the band's whole head count, which is more hoes than this pool could ever want — the one
+    // state that makes every arm of this pair agree.
+    let equipment = core_sim::EquipmentConfig::builtin();
+    let tier = equipment
+        .item(HOES)
+        .expect("the shipped roster carries the hoes")
+        .default_tier()
+        .id
+        .clone();
+    let mut ledger = core_sim::BandEquipment::default();
+    ledger.stock(HOES, hoes, &tier, None);
+    app.world.entity_mut(band).insert(ledger);
+
+    resolve_and_publish(&mut app);
+    (app, home)
+}
+
+/// This band's crew on a standing pool's own row, read back out of the encoded buffer.
+fn published_role_crew(app: &App, role: &str) -> Option<u32> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|row| row.kind().unwrap_or_default() == role)
+        .map(|row| row.workers())
+}
+
+/// # ⛔ A POOL SHORT OF ITS OWN TOOL KEEPS EVERY KEEPER, AND THE SHED TAKES THE NEXT THING DOWN
+///
+/// `keeping_worker_need` is struck at the **fully equipped** rate — the ledger's tier and condition,
+/// no coverage — so a band that cannot arm every hand works slower than that rate and needs *more*
+/// keepers than the count says. Step 3 (*"a keeper above the keeping demand"*, the first thing spent
+/// after a scout and a warrior) was therefore handed a surplus that does not exist.
+///
+/// **Three keepers, ONE hoe**: the bill puts more than one hand on the patch, so the pool requires
+/// more than a hoe, holds one, and reports no spare. The walk falls through to step 5 and thins the
+/// worked row instead.
+///
+/// **Both halves are asserted**, because *"the keeper survived"* alone passes for a band that shed
+/// nothing at all.
+#[test]
+fn a_pool_short_of_its_tool_keeps_the_keeper_the_bill_still_needs() {
+    const ONE_HOE_FOR_TWO_HANDS: u32 = 1;
+    let (app, home) = a_band_keeping_a_tended_patch(ONE_HOE_FOR_TWO_HANDS);
+
+    assert_eq!(
+        published_role_crew(&app, "agriculture"),
+        Some(KEEPERS),
+        "the pool cannot arm the hands it has, so it has no spare keeper to give — every one of \
+         them is still on the row"
+    );
+    assert_eq!(
+        published_crew(&app, home),
+        Some(TENDERS - 1),
+        "…and the hand the band no longer has came off the worked row at step 5 instead"
+    );
+}
+
+/// # ⛔ THE CONTROL — THE SAME BAND WITH THE TOOLS IN HAND DOES YIELD ITS SPARE KEEPER
+///
+/// Without this, *"a short pool never sheds a keeper"* passes on a gate that fires unconditionally,
+/// and step 3 would be dead for every band in the game.
+///
+/// **One variable moves**: the same patch, the same stated bill, the same three keepers, the same
+/// two tenders, and a second hoe on the shelf. The need is struck at the geared rate in **both**
+/// arms — one live hoe is enough for that — so the only thing separating them is whether the pool
+/// can arm the hands the bill puts to work.
+#[test]
+fn the_same_band_with_a_hoe_per_working_hand_sheds_its_spare_keeper() {
+    /// Two, which covers the hands [`A_STATED_BILL`] funds at any keeper rate the ledger resolves.
+    const A_HOE_PER_WORKING_HAND: u32 = 2;
+    let (app, home) = a_band_keeping_a_tended_patch(A_HOE_PER_WORKING_HAND);
+
+    assert_eq!(
+        published_role_crew(&app, "agriculture"),
+        Some(KEEPERS - 1),
+        "armed, the pool's surplus keeper is real and step 3 spends it before anything that costs \
+         output"
+    );
+    assert_eq!(
+        published_crew(&app, home),
+        Some(TENDERS),
+        "…and the worked row is untouched, which is what step 3 existing is for"
+    );
+}

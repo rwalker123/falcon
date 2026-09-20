@@ -205,6 +205,10 @@ fn set_food(app: &mut App, band: Entity, food: i64) {
 /// standing that whole system up. ⛔ **It is a driver, not a second arithmetic**: every number it
 /// produces comes out of the same function production calls, so a change to the split cannot pass
 /// here and fail there.
+/// **THIS HARNESS PLANS NO BAND-WIDE TOOL SETTLEMENT** — see the call site for why one pool in
+/// flight needs none.
+const NO_BAND_WIDE_TOOL_PLAN: Option<&core_sim::PoolToolPlan> = None;
+
 fn pay_road_keepers(
     mut registry: ResMut<RoadRegistry>,
     ladder: Res<LadderConfigHandle>,
@@ -235,6 +239,11 @@ fn pay_road_keepers(
             &ladder,
             &tile_registry,
             &tiles,
+            // **No band-wide tool plan, because this harness drives ONE pool.** The settlement is
+            // band-wide so that Roadwork and Quarrywork cannot each be issued the same
+            // stone-dressing gear; with one pool in flight there is nothing to share it with, and
+            // the payer plans its own through the very same two functions (`pool_or_plan`).
+            NO_BAND_WIDE_TOOL_PLAN,
         );
     }
 }

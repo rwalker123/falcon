@@ -2196,6 +2196,31 @@ impl LaborTarget {
             | LaborTarget::Builders => false,
         }
     }
+
+    /// **Is this row one of the five STANDING POOLS?** — the rows whose tools are derived per site
+    /// from the rung each site stands on and settled band-wide by priority
+    /// (`docs/plan_pool_toe.md`), rather than chosen off the roster and rationed pro-rata.
+    ///
+    /// It is **not** `!is_source()`: Scout and Warrior are band-wide roles too, and they keep the
+    /// kit the player picks and the pro-rata item budget that goes with it. What separates a pool is
+    /// that it works **many sites out of one stock of tools**, which is the thing one kit cannot
+    /// describe.
+    ///
+    /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
+    pub fn is_standing_pool(&self) -> bool {
+        match self {
+            LaborTarget::Agriculture
+            | LaborTarget::Husbandry
+            | LaborTarget::Roadwork
+            | LaborTarget::Quarrywork
+            | LaborTarget::Builders => true,
+            LaborTarget::Forage { .. }
+            | LaborTarget::Hunt { .. }
+            | LaborTarget::Extract { .. }
+            | LaborTarget::Scout
+            | LaborTarget::Warrior => false,
+        }
+    }
 }
 
 /// **HOW THE PLAYER RANKS ONE WORKED ROW AGAINST ANOTHER WHEN THE BAND CANNOT COVER EVERYTHING**
@@ -4045,6 +4070,25 @@ pub struct LaborAllocation {
     /// The supply half of [`Self::last_quarrywork_demand`], and **this band's own contribution**
     /// rather than the workings' totals — two bands holding one working each put a part on it.
     pub last_quarrywork_supplied: f32,
+    /// **WHAT EACH STANDING POOL'S SITES REQUIRED THIS TURN AND WHAT THE SETTLEMENT GAVE THEM** —
+    /// the five pools' tables of equipment, one line per `(pool, item)`
+    /// (`docs/plan_pool_toe.md` §4). Exported as `PopulationCohortState.pool_toe`.
+    ///
+    /// ⛔ **IT IS REPORTED, NEVER RECOMPUTED** — [`Self::last_material_income`]'s discipline. The
+    /// figures are the ones `systems::labor::plan_pool_tools` actually settled this turn, read
+    /// straight off that plan, because a capture that struck the requirement a second time would be
+    /// a second answer free to disagree with the hands that worked.
+    ///
+    /// **A line exists only where the pool required something.** A pool that wants nothing of an
+    /// item has no line; a pool whose requirement was met keeps its line with `filled >= required`
+    /// — ⛔ *covering* the requirement rather than equalling it, see [`PoolToeLine::filled`] — which
+    /// is what lets a reader tell *satisfied* from *not applicable*.
+    ///
+    /// Cleared before every early exit out of the band's turn and rewritten from the settled plan,
+    /// on [`Self::last_fodder_need`]'s rule and for its reason — a band that sheds its last hand
+    /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
+    /// the per-turn telemetry.
+    pub last_pool_toe: Vec<PoolToeLine>,
     /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
     /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
     ///
@@ -4098,6 +4142,42 @@ impl PartialEq for LaborAllocation {
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.build_queue == other.build_queue
     }
+}
+
+/// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
+/// [`LaborAllocation::last_pool_toe`], and the shape the wire's `poolToe` is written from.
+///
+/// ⛔ **IT IS A READOUT OF THE SETTLEMENT, NOT A SECOND DERIVATION.** Both figures come off the
+/// plan `systems::labor::plan_pool_tools` struck for this band this turn: the requirement is the
+/// hands the split put on the pool's sites divided by what one unit crews, and the fill is what
+/// `settle_scarce_store` handed those claims out of the band's own stock.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolToeLine {
+    /// Which pool, as the job it is staffed on — published through
+    /// [`crate::equipment_config::KitJob::as_str`], which is the same token
+    /// [`LaborTarget::kind`] answers for the row, so the wire carries one spelling of a pool name.
+    pub pool: crate::equipment_config::KitJob,
+    /// The equipment item id this line is about.
+    pub item: String,
+    /// **Units the pool's sites require this turn**, summed over its sites — one unit per hand on a
+    /// site the tool serves, divided by the item's `workers_per_unit`. Never zero: a line with
+    /// nothing required is not published at all.
+    pub required: f32,
+    /// **Units the band-wide settlement gave this pool**, summed over the same sites.
+    ///
+    /// ⛔ **IT IS IN WHOLE UNITS AND MAY EXCEED [`Self::required`]**, so the satisfied test is
+    /// `filled >= required` and a shortfall is `(required - filled).max(0.0)` — **never**
+    /// `filled == required`, and never a bare subtraction, which goes negative. A tool is a
+    /// countable object carried by a **person**, so [`crate::settle_scarce_tools`] pays each
+    /// `(pool, tier)` group `ceil` of its bid in whole tools: a pool whose hands come to
+    /// a fraction of a unit — one keeper spending part of a turn on a dirt road requires `0.136` of
+    /// the earthmoving gear — is handed the one whole tool that keeper carries, and the line reads
+    /// `filled 1.0` against `required 0.136`. That is the **common** case, not an edge one, because
+    /// a pool's hands come out of a continuous split.
+    ///
+    /// A positive `filled` short of `required` is what the priority settlement left the pool after
+    /// the tiers above it were served; `0` is a pool it reached with nothing.
+    pub filled: f32,
 }
 
 /// **WHICH SOURCE A BUILD QUEUE ENTRY NAMES** — a patch by its tile, a herd by its id.
@@ -4370,8 +4450,8 @@ impl LaborAllocation {
     ///
     /// **Every row counts, band-wide roles included**: a Scout or a Warrior row is an ordinary
     /// assignment holding ordinary head count, and its wayfinding gear is as much the band's as the
-    /// hunters' spears. **The standing pools count too** — see [`Self::row_kit`] for the rows whose
-    /// kit is not stored on them.
+    /// hunters' spears. ⛔ **The five standing pools do NOT count** — see [`Self::kitted_rows`],
+    /// which filters them out because their tools are settled by priority instead.
     pub fn item_budget(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -4394,10 +4474,15 @@ impl LaborAllocation {
     /// would come back short of the take it is predicting. A source with no row yet simply has
     /// nothing to drop, which is why the same call serves both cases.
     ///
-    /// It resolves each kit through [`Self::row_kit`], exactly as [`Self::item_budget`] does, so a
-    /// prospective row and a committed one are struck against the identical denominator. **A
-    /// standing pool passes its own role row here**, which is what lets the pool re-strike its share
-    /// at the kit and head count it actually put on the ground.
+    /// It resolves each kit through [`Self::kitted_rows`], exactly as [`Self::item_budget`] does, so
+    /// a prospective row and a committed one are struck against the identical denominator.
+    ///
+    /// ⛔ **`source` NAMES A TAKE SOURCE — NEVER A STANDING POOL.** [`Self::kitted_rows`] filters
+    /// every pool row out of the denominator (a pool's tools are settled by `SourcePriority` in
+    /// `systems::labor::settle_pool_tools`, not rationed pro-rata here), so a pool passed in would
+    /// be excluded from a set it is not a member of: the call would silently answer the whole
+    /// take-crew budget and the pool would be struck against a denominator it is not in. Every
+    /// caller passes a `Forage` or `Hunt` target, and nothing should re-add a pool.
     pub fn rows_excluding_source(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -4409,6 +4494,22 @@ impl LaborAllocation {
     /// The rows `keep` accepts, each as its **resolved** kit and head count — the pairs both
     /// [`Self::item_budget`] and [`Self::rows_excluding_source`] are built from, spelled once so a
     /// committed row and a prospective one cannot come to be kitted two ways.
+    ///
+    /// # ⛔ A STANDING POOL IS NOT A BUDGETED CLAIMANT ANY MORE
+    ///
+    /// The five pool rows — `agriculture`, `husbandry`, `roadwork`, `quarrywork`, `builders` — are
+    /// filtered out entirely ([`LaborTarget::is_standing_pool`]), so the budget sees **take crews and
+    /// the two band-wide roles only**.
+    ///
+    /// A pool's tools are settled by `SourcePriority` in
+    /// `systems::labor::settle_pool_tools`, band-wide and per tool
+    /// (`docs/plan_pool_toe.md` §2.2) — a genuinely different rule from the pro-rata-by-head-count
+    /// split this budget makes, and the pools are in one or the other and never both. Leaving them
+    /// here would ration the same stock twice: once here and once in the settlement.
+    ///
+    /// **The take crews' budget is untouched.** Pool tools and take/role tools are disjoint on the
+    /// shipped roster — no take or role kit names `hoes`, `crook`, `earthmoving` or
+    /// `stone_dressing` — so a hunter's share of the sleds is the number it always was.
     fn kitted_rows(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
@@ -4416,70 +4517,23 @@ impl LaborAllocation {
     ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
         self.assignments
             .iter()
-            .filter(|assignment| keep(&assignment.target))
-            .map(|assignment| (self.row_kit(assignment, config), assignment.workers as f32))
+            .filter(|assignment| !assignment.target.is_standing_pool() && keep(&assignment.target))
+            .map(|assignment| (assignment.kit_choice(config), assignment.workers as f32))
             .collect()
     }
 
-    /// **THE KIT ONE ROW'S PEOPLE ACTUALLY HOLD** — the single resolution the band's item budget is
-    /// struck from, the row's share is cut with, and the wire publishes as `kitId`.
-    ///
-    /// ⛔ **A STANDING POOL'S KIT IS NOT STORED ON ITS ROW, AND ASKING
-    /// [`LaborAssignment::kit_choice`] FOR IT IS THE BUG THIS SEAM EXISTS TO CLOSE.**
-    /// `assign_labor` refuses a `kit` token on `builders` / `agriculture` / `husbandry` /
-    /// `roadwork`, so every one of those rows stores `None` and `kit_choice` answers
-    /// `default_kits.<job>` — `none` in all four cases. A row resolved that way puts **no demand**
-    /// on the very items its pool is out with, so the pool armed off the band's whole ledger beside
-    /// a budget that had never heard of it: six hoes arming six builders **and** six keepers, which
-    /// is the last place *"one band, one set of gear"* was broken in the take rather than merely
-    /// mis-reported.
-    ///
-    /// - **`builders`** resolves [`Self::builders_kit`] — the **head** entry's kit, because all
-    ///   hands go on the head, so at any instant the pool funds one queue entry and its demand is
-    ///   `builders` workers on that entry's kit, registered **once**. Registering one reading per
-    ///   branch would count the same people twice, which is the error on the demand side.
-    /// - **`agriculture` / `husbandry`** resolve the web's derived keeping kit
-    ///   ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`] with no site override) —
-    ///   `tillage` and `hurdling`. The *selection* is still per work site
-    ///   ([`LaborAssignment::upkeep_kit`]); what this row states is the derivation every site
-    ///   departs from, and `systems::labor::keeping_rates` re-strikes each kit group's share off
-    ///   this row through [`Self::rows_excluding_source`], so a site that named something else is
-    ///   priced at what it named rather than at this default.
-    /// - **`roadwork` / `quarrywork`** fall through to `kit_choice`, and that is a property of the
-    ///   roster rather than of this seam: every tool serving those two webs declares a `rung`
-    ///   (`earthmoving` on `route:dirt_road`, `stone_dressing` on `route:paved_road` /
-    ///   `extraction:quarry`), a role row stands on **no** rung, and
-    ///   [`crate::equipment_config::EquipmentEffect::serves_build`] refuses a rung-bound tool where
-    ///   no rung was named — so the derivation has nothing to answer and `none` is the honest
-    ///   reading. Their pools are still **cut** from this budget; what they cannot do is register
-    ///   against it.
-    ///
-    /// Every other row keeps [`LaborAssignment::kit_choice`]: its kit really is stored on it.
-    pub fn row_kit(
-        &self,
-        assignment: &LaborAssignment,
-        config: &crate::equipment_config::EquipmentConfig,
-    ) -> crate::equipment_config::KitChoice {
-        /// **A ROLE ROW STANDS ON NO RUNG** — the pool is the band's, and the rung is the site's.
-        const NO_RUNG_ON_A_ROLE_ROW: Option<&str> = None;
-        /// **NO SITE OVERRIDE IS IN HAND HERE** — the row states the web's derivation, and the
-        /// override lives on the worked source's own row.
-        const NO_SITE_OVERRIDE: Option<&crate::equipment_config::KitChoice> = None;
-        match assignment.target {
-            LaborTarget::Builders => self.builders_kit(config),
-            LaborTarget::Agriculture => config.keeping_kit_for(
-                NO_SITE_OVERRIDE,
-                crate::intensification::RungBranch::Plant,
-                NO_RUNG_ON_A_ROLE_ROW,
-            ),
-            LaborTarget::Husbandry => config.keeping_kit_for(
-                NO_SITE_OVERRIDE,
-                crate::intensification::RungBranch::Animal,
-                NO_RUNG_ON_A_ROLE_ROW,
-            ),
-            _ => assignment.kit_choice(config),
-        }
-    }
+    // **RETIRED: `row_kit`** — *"the kit one row's people hold"*, a match whose five pool arms
+    // derived a single kit id for `agriculture`, `husbandry`, `roadwork`, `quarrywork` and
+    // `builders`. Nothing prices a pool from a kit any more: its tools are derived **per site** from
+    // the rung that site stands on and settled band-wide by `SourcePriority`
+    // (`docs/plan_pool_toe.md`), and the capture that was its last reader now publishes a pool row's
+    // `kitId` empty beside a `poolToe` line per tool. What is left is every other row's own
+    // [`LaborAssignment::kit_choice`], which is called directly.
+    //
+    // ⛔ Two of those arms were **silently wrong** and are worth not reinventing: `roadwork` and
+    // `quarrywork` fell through to a role row that stands on no rung, and
+    // [`crate::equipment_config::EquipmentEffect::serves_build`] refuses a rung-bound tool where no
+    // rung is named — so the derivation answered `none` for two pools whose every tool is rung-tied.
 
     /// **The kit staffed on a SINGLETON source**, resolved through the same seam every priced row
     /// reads ([`LaborAssignment::kit_choice`]) — or the job's default when the role is unstaffed.

@@ -397,7 +397,8 @@ fn spawn_forager_at(
     foragers: u32,
     policy: f32,
 ) -> bevy::prelude::Entity {
-    app.world
+    let band = app
+        .world
         .spawn((
             PopulationCohort {
                 home: tile,
@@ -462,14 +463,25 @@ fn spawn_forager_at(
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(declared),
-                        kit: Some(bare_builders()),
+                        // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
+                        // pool's tools follow from the rung. The gear axis is held on the LEDGER
+                        // below.
+                        kit: None,
                     })
                     .into_iter()
                     .collect(),
                 ..Default::default()
             },
         ))
-        .id()
+        .id();
+    // ⛔ **ONLY WHERE THIS FIXTURE IS ACTUALLY BUILDING.** The plant branch's builders and its
+    // keepers reach for the **same** hoe, so taking it off the ledger disarms both — which is right
+    // for a fixture measuring the build's pace and wrong for one measuring the keeping split. A band
+    // with no declaration has no build to hold at its identity and keeps its tools.
+    if improvement.is_some() {
+        core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
+    }
+    band
 }
 
 /// One turn's forage pipeline in stage order: Logistics (regrowth, cultivation decay) then Population
@@ -1705,30 +1717,20 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
         demand: f32,
     }
 
-    let kept_with = |kit_id: Option<&str>| -> Kept {
+    let kept_with = |tools: bool| -> Kept {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         grant_cultivation_knowledge(&mut app, FactionId(0));
         seat_tended_patch(&mut app, coord);
         let band = spawn_forager(&mut app, tile, coord, None);
         set_maintain_workers(&mut app, band, A_KEEPER);
-        // **A NAMED kit wins, `none` included** — that is how a player works one site bare, and it
-        // is the only way to state the bare arm without asserting the derivation away. It goes on
-        // the **patch's** row: the keeping kit is per work site.
-        if let Some(id) = kit_id {
-            let kit = core_sim::EquipmentConfig::builtin()
-                .kit(id)
-                .unwrap_or_else(|| panic!("the shipped roster carries '{id}'"));
-            app.world
-                .get_mut::<LaborAllocation>(band)
-                .expect("band exists")
-                .assignments
-                .iter_mut()
-                .find(|assignment| {
-                    matches!(assignment.target, LaborTarget::Forage { tile, .. } if tile == coord)
-                })
-                .expect("the fixture band carries a row on the patch")
-                .upkeep_kit = Some(kit);
+        // ⛔ **THE BARE ARM IS A BAND THAT OWNS NO HOE, NOT A SITE THAT DECLINED ONE.** It used to
+        // be `upkeep_kit = Some(none)` on the patch's own row — the per-site keeping kit — and that
+        // lever is retired by `docs/plan_pool_toe.md`: a site's tools follow from its rung, so a
+        // named kit prices nothing and the two arms would be one. What can still separate them is
+        // whether the band holds the tool the rung wants.
+        if !tools {
+            core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
         }
         app.world.run_system_once(advance_labor_allocation);
         let registry = app.world.resource::<ForageRegistry>();
@@ -1748,8 +1750,12 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
         }
     };
 
-    let bare = kept_with(Some("none"));
-    let derived = kept_with(None);
+    /// The band owns the hoe its tended patch wants; the bare arm owns none.
+    const HOLDS_ITS_TOOLS: bool = true;
+    const HOLDS_NO_TOOLS: bool = false;
+
+    let bare = kept_with(HOLDS_NO_TOOLS);
+    let derived = kept_with(HOLDS_ITS_TOOLS);
 
     // **(a) THE DEMAND IS THE SAME BILL.** Byte-identical, not merely close: nothing about a kit
     // reaches `RungUpkeep::work_per_turn`.
@@ -1767,8 +1773,8 @@ fn an_equipped_keeper_covers_more_demand_and_the_demand_is_the_same_either_way()
     // `none` would make these two equal, which is the silent no-op this arm exists to catch.
     assert!(
         derived.supplied > bare.supplied,
-        "the derived agriculture kit must raise what a keeper supplies — {} against a bare {}. \
-         Equal numbers mean the derivation resolved `none` and the change did nothing",
+        "the tended rung's own tool must raise what a keeper supplies — {} against a bare {}. \
+         Equal numbers mean the requirement resolved nothing and the change did nothing",
         derived.supplied,
         bare.supplied
     );
@@ -3533,140 +3539,27 @@ fn upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster() {
     }
 }
 
-/// **TWO SITES ON ONE BAND, WORKED WITH TWO DIFFERENT TOOLS — each supplied and each worn at its
-/// own rate** (`docs/plan_standing_upkeep.md` §2.7).
-///
-/// This is the thing the per-band kit could not express at all: one stored id put the same tool on
-/// every site the band kept, so *hoes on the Field, bare hands on the scrub beside it* had no
-/// spelling and the wear of the one tool was charged against the work of both.
-///
-/// # BOTH HALVES, BECAUSE EITHER ALONE PASSES A BROKEN MODEL
-///
-/// 1. **THE SUPPLY.** Under `Priority` the most-invested site is funded first out of the **worker**
-///    pool, so a hoed leader needs fewer hands for the same bill and leaves strictly more for the
-///    bare site behind it. A model that still resolved one rate for the whole web answers the same
-///    number in both arms.
-/// 2. **THE WEAR.** The hoes are spent on the work of the site that named them and on nothing else.
-///    Calibrated against a single hoed site rather than against the config's `0.16`, so a retune of
-///    the wear amount moves the reference with it — and the assertion discriminates because charging
-///    both sites' work would be a materially larger number, which is asserted too.
-#[test]
-fn two_sites_on_one_band_are_kept_and_worn_at_their_own_kits_rates() {
-    const RICH_COST: f32 = 60.0;
-    const POOR_COST: f32 = 30.0;
-    /// Short of the pair, so the leader's rate decides what is left for the follower — but enough
-    /// hands that something reaches the follower, or *"the hoes were not charged for it"* is true
-    /// for free.
-    const KEEPERS: u32 = 2;
-    /// The bare kit, named because *"the player chose none"* is a real selection and not an absence.
-    const BARE: &str = "none";
-    /// The plant keeping kit the roster derives — named explicitly on the arm that wants it, so the
-    /// two arms differ in exactly one statement.
-    const HOED: &str = "tillage";
-
-    /// One run's answer: what each site was supplied, and how much condition the hoes lost.
-    struct Kept {
-        rich: f32,
-        poor: f32,
-        hoes_worn: f32,
-    }
-
-    let run = |rich_kit: &str, poor_kit: &str, mode: core_sim::UpkeepFundMode| -> Kept {
-        let mut app = spawn_world();
-        let (tile, first) = prime_thriving_patch(&mut app);
-        seat_tended_patch(&mut app, first);
-        {
-            let mut registry = app.world.resource_mut::<ForageRegistry>();
-            let patch = registry.patch_mut(first).expect("patch");
-            patch.set_ladder_position(RICH_COST, &core_sim::LadderConfig::builtin());
-        }
-        let second = seat_second_tended_patch(&mut app, first, POOR_COST);
-        let band = spawn_band_keeping_two_patches(&mut app, tile, first, second, KEEPERS, mode);
-        // **Enough hoes that every keeper carries one**, so what the two arms differ in is the
-        // SITES' selections and never the band's scarcity — that is the next test's subject.
-        let fresh = stock_hoes(&mut app, band, KEEPERS + 1);
-        keep_patch_with(&mut app, band, first, rich_kit);
-        keep_patch_with(&mut app, band, second, poor_kit);
-        app.world.run_system_once(advance_labor_allocation);
-        let (rich, poor) = supplied_on(&app, first, second);
-        let equipment = core_sim::EquipmentConfig::builtin();
-        let worn = app
-            .world
-            .get::<core_sim::BandEquipment>(band)
-            .expect("the fixture gave this band a ledger");
-        Kept {
-            rich,
-            poor,
-            hoes_worn: fresh.remaining(HOES, &equipment) - worn.remaining(HOES, &equipment),
-        }
-    };
-
-    // ---- (1) THE SUPPLY -------------------------------------------------------------------------
-    let hoed_leader = run(HOED, BARE, core_sim::UpkeepFundMode::Priority);
-    let bare_leader = run(BARE, BARE, core_sim::UpkeepFundMode::Priority);
-    assert!(
-        hoed_leader.rich > bare_leader.rich,
-        "a hoed site is supplied more of its own bill out of the same hands: {} against {}",
-        hoed_leader.rich,
-        bare_leader.rich
-    );
-    assert!(
-        hoed_leader.rich + hoed_leader.poor > bare_leader.rich + bare_leader.poor,
-        "…and the band's whole keeping rises with it, because the hands went further: {} against {}",
-        hoed_leader.rich + hoed_leader.poor,
-        bare_leader.rich + bare_leader.poor
-    );
-
-    // ---- (2) THE WEAR ---------------------------------------------------------------------------
-    // **⛔ THE CALIBRATION COMES FROM A DIFFERENT RUN, and that is load-bearing.** Dividing the mixed
-    // run's own wear by its own leader's supply would make the assertion below self-referential — it
-    // holds for any wear at all, including a band-wide charge, because the divisor moves with the
-    // dividend. So what one unit of upkeep work costs the hoes is read off a run where **both** sites
-    // name them and every work unit is therefore theirs.
-    let both_hoed = run(HOED, HOED, core_sim::UpkeepFundMode::Priority);
-    let per_work = both_hoed.hoes_worn / (both_hoed.rich + both_hoed.poor);
-    assert!(
-        per_work > 0.0,
-        "fixture: keeping with hoes must spend them, or the wear half is vacuous"
-    );
-    assert!(
-        hoed_leader.poor > 0.0,
-        "fixture: the bare site must actually be supplied something, or 'the hoes were not charged \
-         for it' is true for free"
-    );
-    assert!(
-        (hoed_leader.hoes_worn - per_work * hoed_leader.rich).abs() < 1e-4,
-        "the hoes are spent on the work of the site that named them, and on nothing else: {} \
-         against {}",
-        hoed_leader.hoes_worn,
-        per_work * hoed_leader.rich
-    );
-    assert!(
-        hoed_leader.hoes_worn < per_work * (hoed_leader.rich + hoed_leader.poor) - 1e-4,
-        "…and NOT on the bare site's work beside it — charging both would cost {}, which is what \
-         the retired per-band wear kit did",
-        per_work * (hoed_leader.rich + hoed_leader.poor)
-    );
-
-    // ---- AND `Spread` STILL GOVERNS THE SPLIT ---------------------------------------------------
-    // Under `Spread` every site is held at the same fraction of its own bill whatever it is worked
-    // with — the mode's own promise — so the two sites' supplies stay in the ratio of their bills
-    // while the band's TOTAL still rises with the better tool.
-    let spread_hoed = run(HOED, BARE, core_sim::UpkeepFundMode::Spread);
-    let spread_bare = run(BARE, BARE, core_sim::UpkeepFundMode::Spread);
-    assert!(
-        spread_hoed.rich + spread_hoed.poor > spread_bare.rich + spread_bare.poor,
-        "spread spends the same hands further when one site carries a tool: {} against {}",
-        spread_hoed.rich + spread_hoed.poor,
-        spread_bare.rich + spread_bare.poor
-    );
-    assert!(
-        (spread_hoed.rich / spread_hoed.poor - spread_bare.rich / spread_bare.poor).abs() < 1e-3,
-        "…and both arms still hold every site at the same fraction of its own bill: {} against {}",
-        spread_hoed.rich / spread_hoed.poor,
-        spread_bare.rich / spread_bare.poor
-    );
-}
+// ⛔ **RETIRED: `two_sites_on_one_band_are_kept_and_worn_at_their_own_kits_rates`.**
+//
+// It pinned *"two sites on one band, worked with two different tools — each supplied and each worn
+// at its own rate"*, and it stated that difference the only way the model then allowed: one site's
+// row named `tillage` and the other named `none`.
+//
+// `docs/plan_pool_toe.md` retires the per-site keeping kit. A site's tools follow from **its own
+// rung**, so on the plant web — where every rung wants the same hoe — two sites on one band can no
+// longer be worked with two different tools at all, and the arm that stated the difference is
+// unwritable.
+//
+// **The claim itself is not retired, it moved to the branch that can express it.** A `Roadwork` pool
+// keeping a dirt road and a paved road wants earthmoving gear **and** stone-dressing gear out of one
+// pool, which is the case one kit per pool could never express — see
+// `core_sim/tests/pool_toe.rs::a_roadwork_pool_keeping_both_rungs_requires_both_tools`, which pins
+// the requirement, and `..::stone_dressing_shared_by_roadwork_and_quarrywork_serves_high_first`,
+// which pins the settlement. The **wear-follows-the-site** half rides with them: each claim's rate
+// and its wear kit come from the same `ToeFill`.
+//
+// What survives here unchanged is the test below it: sites reaching for one tool share its scarcity
+// rather than each getting a full set.
 
 /// **⛔ TWO SITES NAMING ONE KIT SHARE ITS SCARCITY — they do not each get a full set of it.**
 ///
@@ -3789,7 +3682,7 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
         allocation.build_queue.push(core_sim::BuildQueueEntry {
             source: core_sim::BuildSource::Patch(build),
             declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
-            kit: Some(bare_builders()),
+            kit: None,
         });
         headroom
     };
@@ -4844,22 +4737,13 @@ fn a_fully_feral_patch_clears_its_owner_species_and_rung_together() {
     );
 }
 
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
-///
-/// It rides the **entry** because that is where a build's kit lives
-/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
-/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
-/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
-/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
-/// the gear axis at its identity so these arms measure the **crew**, exactly as
-/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
-/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
-}
+// **RETIRED: `bare_builders`** — the empty kit these fixtures named on a queue entry to hold the
+// gear axis at its identity.
+//
+// A pool's tools follow from the **rung** since `docs/plan_pool_toe.md`, so an entry's kit prices
+// nothing and a bare one there holds nothing. `core_sim::disarm_the_builders` is what holds the axis
+// now: it takes the rung's own tools off the band's ledger and leaves the take crews' gear exactly
+// as the turn would have found it.
 
 /// **⛔ THE PUBLISHED KEEPING TRIPLE IS INTERNALLY CONSISTENT WHEN TWO BANDS SHARE ONE SOURCE.**
 ///

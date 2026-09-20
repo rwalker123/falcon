@@ -967,12 +967,12 @@ back to `NOT_IN_ANY_BUILD_QUEUE` every turn along with `build_turns_remaining` i
 
 | term | what it rules out |
 |---|---|
-| the source is in a band's **live** queue (`BuildKitIds::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared place, reading as a build about to start |
+| the source is in a band's **live** queue (`QueuedBuildSources::patch_is_queued` / `herd_is_queued`) | every unworked patch on the map, which also carries the cleared place, reading as a build about to start |
 | its stamped place is still `NOT_IN_ANY_BUILD_QUEUE` | a genuinely stalled entry, which *is* live-queued, reading the same way |
 
 The queue membership is read **live off the bands' own `build_queue`s** rather than off the
 turn-written row, for the reason `buildKitId` beside it already is: the row's scratch lags a command
-by a whole turn, and this state exists precisely in the frame before that turn. `BuildKitIds` was
+by a whole turn, and this state exists precisely in the frame before that turn. `QueuedBuildSources` was
 already that index, so it grew a membership predicate rather than a second walk.
 
 **The legs keep `-1`.** `published_build_legs` maps an undated leg to `NO_BUILD_TURNS_ESTIMATE` and
@@ -1147,7 +1147,7 @@ hand is shed:
 | Fact | Resolved from |
 |---|---|
 | `threatened` | the **same trigger** `advance_predator_raids` fires on — a carnivore with `aggression > 0` inside `predators.raid_radius`. That pass runs straight after this one off the same herd positions, so a band the pack reaches this turn keeps its guard. A band whose tile will not resolve reads **threatened**: the guard is the reading that costs people when it is wrong |
-| `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make |
+| `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make, **behind the tool gate below** |
 | `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one. **Step 5 alone reads it, and reads it as a LEVEL** (below) |
 | `improved` | `patch_at_risk_cost` / `herd_at_risk_cost` above `RUNG_UNSTARTED` — work on the ladder, finished or in flight |
 
@@ -1155,6 +1155,50 @@ hand is shed:
 pre-shed allocation, and once below against what survived, which is the reading the split funds. A
 band whose builders row was emptied funds no head at all, and the split must not fund one it no
 longer has the hands to bank.
+
+> #### ⛔ STEP 3 IS GATED ON THE TOOLS — A POOL THAT CANNOT ARM ITS HANDS HAS NO SPARE KEEPER
+>
+> `keeping_worker_need` is struck at **`fully_equipped_keeper_rate`** — the band's ledger read for the
+> tools' tier and condition, with **no coverage applied** (`docs/plan_pool_toe.md` §2.3 step 1). A band
+> that cannot arm every hand works **slower** than that rate and therefore needs **more** keepers than
+> the count says, so the bare `spare_keepers` difference reported a surplus that does not exist — and
+> step 3 is the **first thing spent after a scout and a warrior**, so the walk gave away a keeper the
+> rung was relying on before it touched anything that "costs output".
+>
+> `systems::labor::spare_keepers_the_band_can_arm` puts one question in front of the answer: **per
+> tool this pool's sites require, does the band hold at least that many live units?** If not, the pool
+> reports `0`. The requirement is `pool_toe_claims`' own — the same seam the settlement's stage-1 bid
+> is summed from — so *"what this pool requires"* keeps one definition, and `keeping_worker_need`,
+> `fully_equipped_keeper_rate` and the four-step order are all untouched: this is a **gate in front of
+> the answer**, never a second rate.
+>
+> **It answers `0`, never a smaller number.** Sizing the real surplus needs the rate the pool will be
+> *delivered*, and there is none to read — see the ordering fact below.
+>
+> **⛔ IT READS THE LEDGER, NEVER A SETTLEMENT.** `LaborAllocation::normalize` runs **before**
+> `plan_pool_tools` in `advance_labor_allocation`, so at shed time no tool has been settled. Settling
+> first would mean planning the band's tools against rows the shed is about to delete.
+>
+> **⛔ IT IS CONSERVATIVE IN ONE DIRECTION ONLY.** The gated answer is `<=` the ungated one for every
+> input: it may withhold a keeper the band could in fact spare, and may never offer one it cannot. A
+> keeper wrongly kept costs a little output on a band that is already shedding; a keeper wrongly shed
+> costs a rung. Pinned as a sweep by
+> `keeping_split_tests::the_tool_gate_never_offers_a_keeper_the_ungated_count_would_not`, whose two
+> liveness halves require some point to be genuinely gated and some covered point to pass a real
+> surplus through unchanged — an inequality alone passes for a gate that fires on everything.
+>
+> **It asks about this pool's OWN requirement alone.** A pool can hold enough for itself and still lose
+> the band-wide settlement to another pool bidding on the same tool; that is unknowable before the
+> settlement and the gate does not pretend otherwise. **All four keeping pools go through it** —
+> Roadwork and Quarrywork as much as the two food webs — because the defect was in the shared helper.
+> A pool whose rungs want no tool requires nothing and is never gated
+> (`::a_pool_that_requires_no_tool_keeps_its_spare_keepers`).
+>
+> `shedding_order::a_pool_short_of_its_tool_keeps_the_keeper_the_bill_still_needs` drives it through a
+> real turn — the keeper stays and step 5 thins the worked row instead — against the control
+> `::the_same_band_with_a_hoe_per_working_hand_sheds_its_spare_keeper`, which is half the claim: without
+> it, *"a short pool never sheds a keeper"* would pass on a gate that fired unconditionally and step 3
+> would be dead for every band in the game.
 
 **"Least productive" is FOUR levels at step 5 and THREE everywhere else, and the top one is the
 player's own.**

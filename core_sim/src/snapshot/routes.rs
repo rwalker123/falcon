@@ -55,7 +55,7 @@ pub(crate) fn route_states(
     // **Which tiles some band has QUEUED** — the `queued_live` term of the countdown below, read off
     // the bands' own queues because the row's scratch lags a command by a whole turn and the state
     // it separates exists precisely in that frame.
-    build_kits: &crate::snapshot::subsistence::BuildKitIds,
+    build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
     terrain_at: impl Fn(UVec2) -> Option<sim_runtime::TerrainType>,
 ) -> Vec<sim_runtime::RouteState> {
     registry

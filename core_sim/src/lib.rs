@@ -427,10 +427,10 @@ pub use systems::{
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
     output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_extraction,
-    settle_bands_roadwork, simulate_population, simulate_power, source_has_a_meter_at_risk,
-    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
-    HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams, SplitBand,
-    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PoolToolPlan, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -959,6 +959,9 @@ pub fn build_headless_app() -> App {
                 // **After the spawn, because the kit budget is the spawned band's own worker
                 // count** — one kit per working-age hand is derived from the band, not configured.
                 starting_loadout::stamp_starting_loadout,
+                // **And outfit it at once.** A band holds its default from the moment it exists —
+                // see `outfit_band_with_defaults`, which is also what a split runs on its splinter.
+                starting_loadout::outfit_opening_bands,
                 systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
@@ -1354,6 +1357,48 @@ pub fn build_test_app() -> App {
     app.world
         .insert_resource(crate::equipment_config::EquipmentConfigHandle::for_a_stocked_fixture());
     app
+}
+
+/// **HOLD A PACE FIXTURE'S GEAR AXIS AT ITS IDENTITY** — take the tools `rung` wants off this band's
+/// ledger and leave everything else exactly as the turn would have found it.
+///
+/// A rung's own tool adds `+0.5` work **per covered worker per turn** on top of the builders' own
+/// hands, so a band that holds one delivers `n × 1.5` a turn against `n`: any fixture measuring the
+/// *meter* rather than the tool runs half again as fast as the number it asserts.
+///
+/// ⛔ **THE AXIS IS HELD ON THE LEDGER, NOT ON A KIT NAMED ON THE QUEUE ENTRY.** It used to be
+/// `BuildQueueEntry { kit: Some(the empty kit) }`, because a build's gear was resolved from one kit
+/// the entry named. A pool's tools follow from the **rung** since `docs/plan_pool_toe.md`, so an
+/// entry's kit prices nothing and a bare one there holds nothing at its identity.
+///
+/// ⛔ **AND IT STRIPS THIS RUNG'S TOOLS ONLY, NEVER THE WHOLE LEDGER.** An empty ledger disarms the
+/// **take** crews beside the build — no spears, no baskets — which moves the very yields such
+/// fixtures are measuring. It also cannot be *inserted* blind: an absent [`BandEquipment`] is filled
+/// in by the labour pass from [`BandEquipment::start_stocked_for`] at the band's own head count, so
+/// a fixture that inserted a differently-sized ledger would quietly re-stock every take row. So the
+/// ledger the pass would have resolved is rebuilt here and only this rung's requirement is emptied
+/// out of it.
+pub fn disarm_the_builders(world: &mut World, band: Entity, rung: crate::intensification::RungKey) {
+    let equipment = world
+        .resource::<crate::equipment_config::EquipmentConfigHandle>()
+        .get();
+    let available = available_workers(
+        world
+            .get::<PopulationCohort>(band)
+            .expect("the fixture band has a cohort")
+            .working,
+    );
+    let mut ledger = world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment, available as f32));
+    for tool in equipment
+        .pool_toe(rung.branch(), Some(&rung.wire_key()))
+        .tools()
+    {
+        ledger.restore_batches(&tool.item, Vec::new());
+    }
+    world.entity_mut(band).insert(ledger);
 }
 
 /// Execute a single simulation turn.

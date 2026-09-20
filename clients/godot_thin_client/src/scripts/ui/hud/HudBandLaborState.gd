@@ -1314,20 +1314,20 @@ func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 		return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
 	return {"workers": workers_for_role(band, kind), "pending": false}
 
-## **THE BAND'S STANDING ROW FOR ONE ROLE, RAW** — `{}` when the role is unstaffed. The band-wide
-## twin of `forage_assignment_of` / `hunt_assignment_of` / `extract_assignment_of`, and it exists for
-## their reason: the POOLS cards need the row's own published gear pair (`kit_workers_holding` over
-## `workers`) and `workers_for_role` below throws everything but the head count away.
-##
-## ⛔ **IT IS THE CONFIRMED ROW, SO A CALLER MUST ASK `effective_role_workers` ABOUT PENDING.** The
-## overlay is not merged here — a `+` on a pool moves the very denominator its coverage is a fraction
-## of, and the settled pair then describes a staffing the band no longer has, which is exactly why
-## `effective_worker_map` drops the key on a pending source row rather than carrying it through.
-static func role_assignment_of(band: Dictionary, kind: String) -> Dictionary:
-	for entry in labor_assignments_of(band):
-		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
-			return entry
-	return {}
+## > ### ⛔ RETIRED — `role_assignment_of`, THE POOL ROW'S RAW GEAR PAIR
+## >
+## > It read: *"THE BAND'S STANDING ROW FOR ONE ROLE, RAW … the POOLS cards need the row's own
+## > published gear pair (`kit_workers_holding` over `workers`) and `workers_for_role` below throws
+## > everything but the head count away."* Every word of that described the reader it existed for, and
+## > `docs/plan_pool_toe.md` §4 deleted the QUESTION rather than the reader: a pool row publishes
+## > `kitId` `""` and `kitWorkersHolding == workers`, the *nothing to be short of* reading, so the
+## > pair it returned can no longer state a shortfall for anybody. A pool's gear is
+## > `pool_toe_for`'s now.
+## >
+## > **Its pending caveat outlived it and is stated where it is still true**
+## > (`BandPanelController._pool_toe_short_line`): a settled per-pool reading describes the staffing
+## > the TURN resolved, so the caller gates on `effective_role_workers`' `pending` flag rather than
+## > quoting a requirement the `+` just moved.
 
 ## Workers currently on a band-wide role (scout/warrior); 0 when unstaffed. The role sibling of
 ## `workers_for_forage` / `workers_for_hunt`.
@@ -1468,6 +1468,38 @@ static func as_schedule(value: Variant) -> PackedFloat32Array:
 static func labor_assignments_of(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []
+
+## The wire's per-`(pool, item)` TOE row (`docs/plan_pool_toe.md` §4), decoded onto the band dict by
+## `native/src/dict/population.rs` as `pool_toe`.
+const POOL_TOE_KEY := "pool_toe"
+const POOL_TOE_POOL_KEY := "pool"
+const POOL_TOE_ITEM_KEY := "item_id"
+const POOL_TOE_REQUIRED_KEY := "required"
+const POOL_TOE_FILLED_KEY := "filled"
+
+## **ONE POOL'S TABLE OF EQUIPMENT — the rows of `pool_toe` whose `pool` is this one, in wire order.**
+##
+## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, the same spelling `LaborAssignment.kind` publishes for the
+## row (`agriculture` / `husbandry` / `roadwork` / `quarrywork` / `builders`), so a card joins its
+## lines on a string it already holds and this layer keeps no table of its own.
+##
+## ⛔ **NOTHING IS DROPPED HERE, AND AN ABSENT ROW AND A FILLED ROW ARE DIFFERENT SENTENCES.** A line
+## exists only where `required > 0`, and a pool whose requirement was MET keeps its line with
+## `filled == required` — so *this pool wants nothing of this item* is the row being ABSENT and *it
+## wanted some and got all of it* is the equality. A filter that dropped filled rows here would
+## destroy the only distinction the vector carries; what renders is the reader's decision.
+static func pool_toe_for(band: Dictionary, pool: String) -> Array:
+	var lines: Array = []
+	var v: Variant = band.get(POOL_TOE_KEY, [])
+	if not (v is Array):
+		return lines
+	for row_variant in (v as Array):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(POOL_TOE_POOL_KEY, "")) == pool:
+			lines.append(row)
+	return lines
 
 # ---- Player band roster + per-source labor readers -----------------------------------------------
 

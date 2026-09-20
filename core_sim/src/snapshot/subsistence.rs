@@ -59,7 +59,7 @@ fn published_build_turns(turns: crate::intensification::BuildTurns) -> i32 {
 /// — which also carries the cleared place — reading as a build waiting to start; the position term is
 /// what stops a genuinely stalled entry, which *is* live-queued, reading the same way.
 ///
-/// **`queued_live` is read off the bands' own queues** ([`BuildKitIds`]), not off the turn-written
+/// **`queued_live` is read off the bands' own queues** ([`QueuedBuildSources`]), not off the turn-written
 /// row, for the reason the kit beside it is: the row's scratch lags a command by a whole turn, and
 /// this state exists precisely in the frame before that turn.
 pub(crate) fn published_build_countdown(
@@ -143,180 +143,111 @@ fn published_build_legs(
         .collect()
 }
 
-/// **THE KIT EACH QUEUED SOURCE'S BUILD IS BEING RAISED WITH**, keyed the two ways a source is named
-/// (`docs/plan_standing_upkeep.md` §4.7a ②) — the wire's `buildKitId` on both source tables.
+/// **A WORK SITE NAMES NO KIT** — what `buildKitId` and `upkeepKitId` publish on every patch, herd
+/// and working since `docs/plan_pool_toe.md` §4.
+///
+/// Both fields carried a kit id resolved per site: the entry's build kit, and the keepers' kit off
+/// the player's own `upkeep_kit` pick. **A standing pool's tools follow from the rung each of its
+/// sites stands on now**, are settled band-wide by the player's row priority, and are published per
+/// pool as `PopulationCohortState.poolToe` — so there is no per-site answer left to state, and a
+/// site that kept stating one would name a tool the pool may not have been issued.
+///
+/// ⛔ **The FIELDS stay on the wire.** FlatBuffers ids are positional, and #676 retires the
+/// `upkeep_kit` / `build_kit` commands that fed them while #677 retires the client's pickers.
+pub(crate) const NO_SITE_KIT_ID: &str = "";
+
+/// **NOTHING IS NAMED, SO NOTHING WAS OVERRIDDEN** — what `upkeepKitNamed` publishes beside
+/// [`NO_SITE_KIT_ID`]. The flag's whole job was to say whether an id was the player's stated pick
+/// or the web's derivation, and with no pick to state there is no override to report.
+pub(crate) const NO_SITE_KIT_NAMED: bool = false;
+
+/// **WHICH SOURCES SOME BAND HAS IN ITS LIVE BUILD QUEUE**, keyed the four ways a source is named —
+/// the `queued_live` term of [`published_build_countdown`] and the wire's `isQueued` on a working.
 ///
 /// # IT IS READ LIVE, NOT STAMPED BY THE TURN
 ///
 /// `build_queue_position` beside it on the same row is scratch the labor pass writes, so it lags a
 /// command by a whole turn; the server re-captures and broadcasts after **every** dispatched command
-/// (`recapture_and_broadcast`), so a kit picked on a queue row has to be visible in that frame. This
-/// walks the bands' live queues instead.
+/// (`recapture_and_broadcast`), so an entry queued since the last turn has to be visible in that
+/// frame. This walks the bands' live queues instead.
 ///
-/// # AND IT RIDES THE SAME WINNING BAND AS THE POSITION
+/// # ⛔ IT CARRIES NO KIT ANY MORE (`docs/plan_pool_toe.md` §4)
 ///
-/// Several bands may work one source, and the position on the row is the one that band published.
-/// A kit taken from a *different* band's queue beside that position would be two answers pretending
-/// to be one — so the winner here is **the band whose live entry sits where the row says**, and a
-/// band that does not match only fills a source no matching band claimed.
+/// It was `BuildKitIds`, and each entry's value was the kit that build would be raised with —
+/// `EquipmentConfig::builders_kit_for` over the entry's own named choice, published as `buildKitId`
+/// on both source tables. **A builder's tools follow from the rung the leg in flight stands on
+/// now**, settled band-wide by the player's own row priority and published per pool as
+/// `PopulationCohortState.poolToe`, so there is no per-site kit left to resolve and `buildKitId`
+/// publishes empty on every row.
+///
+/// **The membership survives because it was never about the kit.** This is the one place the bands'
+/// live queues are read, and two published states depend on it.
+///
+/// ⛔ **The claims arbitration went with the kit.** It picked the band whose entry sat where the
+/// row's stamped position said, so that one source worked by several bands published one band's kit
+/// beside that band's position. A set has no such question: *is this source in somebody's queue* has
+/// one answer however many bands queued it.
 #[derive(Default)]
-pub(crate) struct BuildKitIds {
-    patches: HashMap<UVec2, String>,
-    herds: HashMap<String, String>,
-    /// **The road tiles some band has queued**, as a set rather than a map: a road's *kit* is
-    /// published through `RouteState`'s own row and needs no entry here, but *"is this source in a
-    /// band's LIVE queue"* is the term the countdown's `queued_live` test reads and it has to be
-    /// answered off the bands' queues rather than off the turn-written row — the row's scratch lags
-    /// a command by a whole turn, and the state this separates exists precisely in that frame.
+pub(crate) struct QueuedBuildSources {
+    patches: std::collections::HashSet<UVec2>,
+    herds: std::collections::HashSet<String>,
     roads: std::collections::HashSet<UVec2>,
-    /// **The workings some band has queued, and the kit each is being raised with** — keyed
-    /// `(tile, material)`, because one tile can hold two workings and a `fell` queued on the timber
-    /// is not a `quarry` queued on the rock beneath it.
-    ///
-    /// **A map and not a set, where the road's is a set**: a working publishes *both* halves on its
-    /// own row (`buildKitId` and `isQueued`), so the map's **presence** is the membership and its
-    /// value is the kit — one index answering both, rather than two that could disagree.
-    deposits: HashMap<(UVec2, String), String>,
+    /// **The workings some band has queued**, keyed `(tile, material)` because one tile can hold two
+    /// and a `fell` queued on the timber is not a `quarry` queued on the rock beneath it.
+    deposits: std::collections::HashSet<(UVec2, String)>,
 }
 
-impl BuildKitIds {
-    /// The kit id this patch's entry resolves to, `""` when no band has it queued.
-    fn patch(&self, tile: UVec2) -> String {
-        self.patches.get(&tile).cloned().unwrap_or_default()
-    }
-
-    /// The animal twin, keyed by herd id.
-    fn herd(&self, id: &str) -> String {
-        self.herds.get(id).cloned().unwrap_or_default()
-    }
-
+impl QueuedBuildSources {
     /// **Is this road tile in some band's live build queue?** — the route twin of
-    /// `patch_is_queued`, and the `queued_live` term of [`published_build_countdown`].
+    /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
     pub(crate) fn road_is_queued(&self, tile: UVec2) -> bool {
         self.roads.contains(&tile)
     }
 
-    /// **IS THIS PATCH IN SOME BAND'S LIVE QUEUE?** — membership of the same index the kit comes
-    /// out of, which is built by walking the bands' `build_queue`s rather than by reading the
-    /// turn-written row.
-    ///
-    /// It is asked, and cannot be replaced by a `!patch(tile).is_empty()` test, because a resolved
-    /// builders kit is **never** the empty string: `builders_kit_for` always names a roster entry,
-    /// the bare-handed one included.
+    /// **IS THIS PATCH IN SOME BAND'S LIVE QUEUE?** — membership of an index built by walking the
+    /// bands' `build_queue`s, rather than by reading the turn-written row.
     fn patch_is_queued(&self, tile: UVec2) -> bool {
-        self.patches.contains_key(&tile)
+        self.patches.contains(&tile)
     }
 
     /// The animal twin — see [`Self::patch_is_queued`].
     fn herd_is_queued(&self, id: &str) -> bool {
-        self.herds.contains_key(id)
-    }
-
-    /// The kit this working's entry resolves to, `""` when no band has it queued.
-    pub(crate) fn deposit(&self, tile: UVec2, material: &str) -> String {
-        self.deposits
-            .get(&(tile, material.to_string()))
-            .cloned()
-            .unwrap_or_default()
+        self.herds.contains(id)
     }
 
     /// **IS THIS WORKING IN SOME BAND'S LIVE QUEUE?** — the deposit twin of
-    /// [`Self::patch_is_queued`], and the `queued_live` term of [`published_build_countdown`].
-    /// **Membership is the map's own presence**, which is why it cannot be replaced by a
-    /// `!deposit(..).is_empty()` test: a resolved builders kit is never the empty string.
+    /// [`Self::patch_is_queued`], and the source of the working row's own `isQueued`.
     pub(crate) fn deposit_is_queued(&self, tile: UVec2, material: &str) -> bool {
-        self.deposits.contains_key(&(tile, material.to_string()))
+        self.deposits.contains(&(tile, material.to_string()))
     }
 }
 
-/// **The one place a band's live queue becomes the wire's `buildKitId`** — see [`BuildKitIds`].
+/// **The one place a band's live queue becomes a published membership** — see
+/// [`QueuedBuildSources`].
 ///
-/// ⛔ **`allocations` MUST BE THE VIEWER'S OWN BANDS.** The index keys purely by tile and herd id, so
-/// it cannot tell whose queue an entry came from; the caller filters
+/// ⛔ **`allocations` MUST BE THE VIEWER'S OWN BANDS.** The index keys purely by tile, herd id and
+/// working, so it cannot tell whose queue an entry came from; the caller filters
 /// (`snapshot/capture.rs`), and the resulting membership is what both source tables gate a rival's
 /// stamped build scratch on. See `factions.md` → "The improvement follows the ground; the BUILDER'S
 /// state follows the builder".
-pub(crate) fn resolve_build_kit_ids<'a>(
+pub(crate) fn resolve_queued_build_sources<'a>(
     allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
-    forage: &ForageRegistry,
-    herds: &HerdRegistry,
-    equipment: &crate::equipment_config::EquipmentConfig,
-) -> BuildKitIds {
-    let mut resolved = BuildKitIds::default();
-    // A band matching the row's own published position is the winner; anything else is only a
-    // fallback for a source no matching band claimed, so it must never displace one.
-    let mut claimed_patches: std::collections::HashSet<UVec2> = std::collections::HashSet::new();
-    let mut claimed_herds: std::collections::HashSet<String> = std::collections::HashSet::new();
+) -> QueuedBuildSources {
+    let mut resolved = QueuedBuildSources::default();
     for allocation in allocations {
-        for (position, entry) in allocation.build_queue.iter().enumerate() {
-            // **The entry's declared destination names the ladder** — the same reading
-            // `LaborAllocation::head_build_branch` takes, and for its reason: a deposit is worked by
-            // either `forestry` or `extraction` and the *source kind* cannot say which.
-            let branch = entry.declared.destination().branch();
-            // **The one resolution seam**, so the row cannot state a kit the pool is not using.
-            // The rung is the entry's **destination**, on `LaborAllocation::builders_kit`'s own
-            // rule and for its reason: this pass walks a queue and holds no source standing.
-            let destination = entry.declared.destination().wire_key();
-            let kit = equipment
-                .builders_kit_for(entry.kit.as_ref(), Some(branch), Some(&destination))
-                .id()
-                .to_string();
-            let position = position as i32;
+        for entry in &allocation.build_queue {
             match &entry.source {
                 crate::components::BuildSource::Patch(tile) => {
-                    let wins = forage
-                        .patch(*tile)
-                        .is_some_and(|patch| patch.build_queue_position == position);
-                    if wins || !claimed_patches.contains(tile) {
-                        resolved.patches.insert(*tile, kit);
-                    }
-                    if wins {
-                        claimed_patches.insert(*tile);
-                    }
+                    resolved.patches.insert(*tile);
                 }
                 crate::components::BuildSource::Herd(id) => {
-                    let wins = herds
-                        .herds
-                        .iter()
-                        .find(|herd| &herd.id == id)
-                        .is_some_and(|herd| herd.build_queue_position == position);
-                    if wins || !claimed_herds.contains(id) {
-                        resolved.herds.insert(id.clone(), kit);
-                    }
-                    if wins {
-                        claimed_herds.insert(id.clone());
-                    }
+                    resolved.herds.insert(id.clone());
                 }
-                // **A road publishes no `buildKitId` YET**, and the reason is not that it has
-                // nowhere to put one: `RouteState` is the road's source row and carries its build
-                // state. This map is keyed by patch tile and herd id because those are the two rows
-                // that publish a kit field today, and adding a third is a wire change nobody has
-                // needed — a road's kit is the roster's own answer for the rung in flight
-                // (`roadbuilding` or `paving`) and no surface asks the sim for it.
-                // **A road records only its MEMBERSHIP here.** Its kit rides its own row, but
-                // whether some band has it queued is the term the published countdown needs, and
-                // this pass is the one place that reads the bands' live queues.
                 crate::components::BuildSource::Road(tile) => {
                     resolved.roads.insert(*tile);
                 }
-                // **A working records BOTH halves here** — the kit its build is being raised with
-                // *and*, in the map's own presence, whether some band has it queued at all. The
-                // road records only membership because its kit rides its own row's build arm; a
-                // working's `DepositState` publishes both, so one index answers both rather than
-                // two that could disagree.
-                //
-                // ⛔ **NO CLAIMS ARBITRATION, unlike the patch and herd arms above.** Those pick a
-                // winner because several bands can work one source and the row's own published
-                // position names which band's answer it is. A working carries no such published
-                // position on the wire — the entry's date is stamped straight onto the source by
-                // the chain pass, exactly as a road's is — so the fallback here is the first band
-                // in iteration order, the same arbitrary-but-deterministic rule the two food webs
-                // fall back to for a source no matching band claimed.
                 crate::components::BuildSource::Deposit { tile, material } => {
-                    resolved
-                        .deposits
-                        .entry((*tile, material.clone()))
-                        .or_insert(kit);
+                    resolved.deposits.insert((*tile, material.clone()));
                 }
             }
         }
@@ -324,164 +255,73 @@ pub(crate) fn resolve_build_kit_ids<'a>(
     resolved
 }
 
-/// **WHAT EACH WORKED SOURCE IS KEPT WITH**, keyed the two ways a source is named
-/// (`docs/plan_standing_upkeep.md` §2.7) — the wire's `upkeepKitId` / `upkeepKitNamed` on both
-/// source tables.
+/// **WHICH SOURCES THE VIEWER'S OWN BANDS WORK**, keyed the two ways a worked source is named — the
+/// second of the two memberships a source row's build scratch is gated on.
 ///
 /// # IT IS READ LIVE, NOT STAMPED BY THE TURN
 ///
-/// [`BuildKitIds`]'s rule, for its reason: the server re-captures and broadcasts after **every**
-/// dispatched command, so a kit picked on a row has to be visible in that frame where a turn-written
-/// field would lag a whole turn. This walks the bands' live assignment rows.
+/// [`QueuedBuildSources`]'s rule, for its reason: the server re-captures and broadcasts after
+/// **every** dispatched command, so a row staffed this frame has to be visible in it where a
+/// turn-written field would lag a whole turn. This walks the bands' live assignment rows.
 ///
-/// # A STATED OVERRIDE BEATS A DERIVATION, AND THE FIRST STATED ONE WINS
+/// # ⛔ IT CARRIES NO KIT ANY MORE (`docs/plan_pool_toe.md` §4)
 ///
-/// Several bands may work one source. Every band that named nothing answers the **same** derived
-/// kit — it is a pure function of the site's web — so the only way two bands can disagree is that one
-/// of them stated something, and publishing the derivation over a real pick would hide the pick
-/// entirely. Among two bands that both stated one the first in iteration order wins, which is the
-/// same arbitrary-but-deterministic fallback `BuildKitIds` uses for a source no band claims.
+/// It was `UpkeepKitIds`, and each entry's value was the kit that site's keepers carried —
+/// `EquipmentConfig::keeping_kit_for` over the player's per-site `upkeep_kit` pick, published as
+/// `upkeepKitId` / `upkeepKitNamed`. **A site's keeping tools follow from its own rung now**, so
+/// there is nothing per site left to name and both fields publish empty. The *"a stated override
+/// beats a derivation, and the first stated one wins"* arbitration went with them: it existed only
+/// to decide which of several bands' picks a shared site should publish.
 #[derive(Default)]
-pub(crate) struct UpkeepKitIds {
-    patches: HashMap<UVec2, ResolvedUpkeepKit>,
-    herds: HashMap<String, ResolvedUpkeepKit>,
-    /// The deposit twin, keyed the way a working is named — `(tile, material)`, because one tile
-    /// can hold two and keeping the timber is not keeping the rock.
-    deposits: HashMap<(UVec2, String), ResolvedUpkeepKit>,
+pub(crate) struct WorkedSources {
+    patches: std::collections::HashSet<UVec2>,
+    herds: std::collections::HashSet<String>,
 }
 
-/// One site's answer: the kit its keepers carry, and whether a band stated it.
-#[derive(Clone, Default)]
-struct ResolvedUpkeepKit {
-    id: String,
-    /// **Not recoverable from the id** — a player may name the very kit the derivation would have
-    /// picked — which is why it rides the wire beside it rather than being re-derived on the client.
-    named: bool,
-}
-
-impl UpkeepKitIds {
-    /// The kit this patch's keepers carry and whether it was stated, `("", false)` when no band of
-    /// the faction works it.
-    fn patch(&self, tile: UVec2) -> (String, bool) {
-        self.patches
-            .get(&tile)
-            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
-    }
-
-    /// The animal twin, keyed by herd id.
-    fn herd(&self, id: &str) -> (String, bool) {
-        self.herds
-            .get(id)
-            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
-    }
-
-    /// The deposit twin, keyed `(tile, material)`.
-    pub(crate) fn deposit(&self, tile: UVec2, material: &str) -> (String, bool) {
-        self.deposits
-            .get(&(tile, material.to_string()))
-            .map_or_else(Default::default, |kit| (kit.id.clone(), kit.named))
-    }
-
-    /// **DOES ONE OF THE VIEWER'S OWN BANDS WORK THIS PATCH?** — asked, not inferred from an empty
-    /// kit id, because a resolved keeping kit is never the empty string: `keeping_kit_for` always
-    /// names a roster entry. The twin of [`BuildKitIds::patch_is_queued`], and the second of the two
-    /// ways the labor arm reaches a source — `publish_build_chain` stamps its estimate onto the
-    /// band's **queued** entries and onto everything the band **works**, so those two memberships
-    /// together are exactly *"this scratch could be ours"*.
+impl WorkedSources {
+    /// **DOES ONE OF THE VIEWER'S OWN BANDS WORK THIS PATCH?** — the twin of
+    /// [`QueuedBuildSources::patch_is_queued`], and the second of the two ways the labor arm reaches
+    /// a source: `publish_build_chain` stamps its estimate onto the band's **queued** entries and
+    /// onto everything the band **works**, so those two memberships together are exactly *"this
+    /// scratch could be ours"*.
     fn patch_is_worked(&self, tile: UVec2) -> bool {
-        self.patches.contains_key(&tile)
+        self.patches.contains(&tile)
     }
 
     /// The animal twin — see [`Self::patch_is_worked`].
     fn herd_is_worked(&self, id: &str) -> bool {
-        self.herds.contains_key(id)
+        self.herds.contains(id)
     }
 }
 
-/// **The one place a band's live rows become the wire's `upkeepKitId`** — see [`UpkeepKitIds`].
+/// **The one place a band's live rows become a published membership** — see [`WorkedSources`].
 ///
-/// ⛔ **`allocations` MUST BE THE VIEWER'S OWN BANDS**, on [`resolve_build_kit_ids`]' rule and for its
-/// reason — which is also what [`UpkeepKitIds::patch`]'s contract already claimed.
-pub(crate) fn resolve_upkeep_kits<'a>(
+/// ⛔ **`allocations` MUST BE THE VIEWER'S OWN BANDS**, on [`resolve_queued_build_sources`]' rule and
+/// for its reason.
+///
+/// **A working is deliberately not indexed.** The two memberships gate a *build scratch*, and the
+/// deposit row gates its own on the queue alone (`snapshot::deposits`) — so a worked-deposit set
+/// would have no reader, and a set nothing asks about is a set free to be wrong.
+pub(crate) fn resolve_worked_sources<'a>(
     allocations: impl Iterator<Item = &'a crate::components::LaborAllocation>,
-    // **Both webs' registries, for the RUNG each worked site stands on** — a keeping tool may be
-    // bound to a rung, so the derivation cannot be answered off the row alone.
-    forage: &ForageRegistry,
-    herds: &HerdRegistry,
-    // **The workings' registry, for the same reason** — a `quarrywork` keeping tool may be bound to
-    // a rung, and only the source knows which rung it stands on.
-    deposits: &crate::extraction::DepositRegistry,
-    equipment: &crate::equipment_config::EquipmentConfig,
-) -> UpkeepKitIds {
-    let mut resolved = UpkeepKitIds::default();
+) -> WorkedSources {
+    let mut resolved = WorkedSources::default();
     for allocation in allocations {
         for assignment in &allocation.assignments {
-            // **The site's own rung beside its web**, because a keeping tool may be bound to
-            // one ([`crate::equipment_config::EquipmentEffect::rung`]) — the same pair
-            // `systems::labor::keeping_claims` resolves the live kit at, so the published row and
-            // the keepers cannot name two different tools.
-            let (branch, rung, key) = match &assignment.target {
-                crate::components::LaborTarget::Forage { tile, .. } => (
-                    crate::intensification::RungBranch::Plant,
-                    forage.patch(*tile).map(crate::forage::patch_rung_key),
-                    SourceKey::Patch(*tile),
-                ),
-                crate::components::LaborTarget::Hunt { fauna_id, .. } => (
-                    crate::intensification::RungBranch::Animal,
-                    herds.find(fauna_id).map(crate::fauna::herd_rung_key),
-                    SourceKey::Herd(fauna_id.clone()),
-                ),
-                // **The working's own branch, off the SOURCE and never off the row** — one row kind
-                // serves both ladders (`LaborTarget::Extract`), so the branch is the deposit's
-                // (`DepositDef::branch`) as read back through the rung it stands on. A row naming
-                // ground that holds none of the material resolves no source and therefore no rung,
-                // which is the same forgiveness the two food webs give an unplaced source.
-                crate::components::LaborTarget::Extract { tile, material, .. } => {
-                    let working = deposits.source(*tile, material);
-                    (
-                        working.map_or(crate::intensification::RungBranch::Extraction, |source| {
-                            source.rung().branch()
-                        }),
-                        working.map(crate::extraction::DepositSource::rung),
-                        SourceKey::Deposit(*tile, material.clone()),
-                    )
+            match &assignment.target {
+                crate::components::LaborTarget::Forage { tile, .. } => {
+                    resolved.patches.insert(*tile);
                 }
-                // A band-wide role stands on no ground, so it keeps nothing.
+                crate::components::LaborTarget::Hunt { fauna_id, .. } => {
+                    resolved.herds.insert(fauna_id.clone());
+                }
+                // A band-wide role stands on no ground, and a working's scratch is gated on the
+                // queue alone.
                 _ => continue,
-            };
-            let rung = rung.map(|rung| rung.wire_key());
-            // **The one resolution seam**, so the row cannot state a kit the keepers are not using.
-            let entry = ResolvedUpkeepKit {
-                id: equipment
-                    .keeping_kit_for(assignment.upkeep_kit.as_ref(), branch, rung.as_deref())
-                    .id()
-                    .to_string(),
-                named: assignment.upkeep_kit.is_some(),
-            };
-            let slot = match key {
-                SourceKey::Patch(tile) => resolved.patches.entry(tile).or_default(),
-                SourceKey::Herd(id) => resolved.herds.entry(id).or_default(),
-                SourceKey::Deposit(tile, material) => {
-                    resolved.deposits.entry((tile, material)).or_default()
-                }
-            };
-            // A stated override beats a derivation; among two stated ones the first wins, so a slot
-            // already carrying a named pick is never displaced. An empty slot is the fresh entry in
-            // the map, which every band fills.
-            if (entry.named && !slot.named) || slot.id.is_empty() {
-                *slot = entry;
             }
         }
     }
     resolved
-}
-
-/// The three ways a worked source is named, so [`resolve_upkeep_kits`]'s arms share one body.
-enum SourceKey {
-    Patch(UVec2),
-    Herd(String),
-    /// **Both halves**, because one tile can hold two workings.
-    Deposit(UVec2, String),
 }
 
 /// **The viewer's own settling score, and nobody else's** — a bare number with nothing on the map to
@@ -671,11 +511,11 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// Answers for a penned herd too: with no species there is no row to quote either axis from.
     pub(crate) fallback_party: &'a QuotedParty,
     /// **The live builders kit per queued source** — the animal half of the same map the patch rows
-    /// read, resolved off the bands' queues at capture. See [`BuildKitIds`].
-    pub(crate) build_kits: &'a BuildKitIds,
+    /// read, resolved off the bands' queues at capture. See [`QueuedBuildSources`].
+    pub(crate) build_kits: &'a QueuedBuildSources,
     /// **The live keeping kit per worked source** — the animal half of the same map the patch rows
-    /// read, resolved off the bands' rows at capture. See [`UpkeepKitIds`].
-    pub(crate) upkeep_kits: &'a UpkeepKitIds,
+    /// read, resolved off the bands' rows at capture. See [`WorkedSources`].
+    pub(crate) upkeep_kits: &'a WorkedSources,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -1476,11 +1316,11 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // that, and lost it silently on the one crew a compose sheet is *for*: a proposed
                 // one, of a size the sim never resolved.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                // **What this herd's build is being raised with** — the animal twin of the patch
-                // row's, resolved live off the winning band's queue entry.
-                build_kit_id: build_kits.herd(&entry.id),
-                upkeep_kit_id: upkeep_kits.herd(&entry.id).0,
-                upkeep_kit_named: upkeep_kits.herd(&entry.id).1,
+                // **A herd names no kit** — see [`NO_SITE_KIT_ID`]. Its keepers' and its builders'
+                // tools are the pool's, derived from the rung and published as `poolToe`.
+                build_kit_id: NO_SITE_KIT_ID.to_string(),
+                upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
+                upkeep_kit_named: NO_SITE_KIT_NAMED,
             }
         })
         .collect()
@@ -1527,7 +1367,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// regrowth samples — and at 80×52 there are ~2100 of them, which makes this section over half of a
 /// capture. But **the viewer enters the row in exactly two places**: it decides which patch struct
 /// the row is derived from (the real one, the wild-ground stand-in, or the one with its build
-/// estimate withheld), and it decides which of the two kit indices name the tile. Where neither can
+/// estimate withheld), and it decides whether either of the two membership indices names the tile.
+/// Where neither can
 /// apply for *any* viewer, the row is a pure function of ground and config, so the first seat's
 /// derivation is every seat's answer.
 ///
@@ -1539,20 +1380,20 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// stack for the length of one sweep over the audiences.
 pub struct WildRowMemo {
     rows: HashMap<UVec2, ForagePatchState>,
-    /// **The two kit indices over EVERY faction's bands**, which is the third condition below. They
-    /// live here rather than beside the per-viewer indices because they are *only* the sharing
-    /// rule's input: nothing published reads them, and a single-audience capture — which has no
-    /// sharing rule — must not pay to build them (0.29 ms at 80×52, measured; see
+    /// **The two membership indices over EVERY faction's bands**, which is the third condition
+    /// below. They live here rather than beside the per-viewer indices because they are *only* the
+    /// sharing rule's input: nothing published reads them, and a single-audience capture — which has
+    /// no sharing rule — must not pay to build them (0.29 ms at 80×52, measured; see
     /// `.claude/rules/core_sim/turn-profiling.md` → "One frame per seat").
-    queued_by_anyone: BuildKitIds,
-    worked_by_anyone: UpkeepKitIds,
+    queued_by_anyone: QueuedBuildSources,
+    worked_by_anyone: WorkedSources,
 }
 
 impl WildRowMemo {
     /// The memo for a capture with **more than one audience**. `queued_by_anyone` / `worked_by_anyone`
     /// are the unfiltered twins of the per-viewer indices — every faction's queues and every
-    /// faction's keeping.
-    pub fn new(queued_by_anyone: BuildKitIds, worked_by_anyone: UpkeepKitIds) -> Self {
+    /// faction's worked rows.
+    pub fn new(queued_by_anyone: QueuedBuildSources, worked_by_anyone: WorkedSources) -> Self {
         Self {
             rows: HashMap::new(),
             queued_by_anyone,
@@ -1590,7 +1431,7 @@ impl WildRowMemo {
 /// |---|---|
 /// | the patch has **no owner** | the wild-ground substitution — an unowned patch has no improvement to withhold, so `improvement_is_legible` is true for every viewer |
 /// | it carries **no build estimate** | the withheld-build substitution, which only ever replaces a patch that has one |
-/// | **nobody** has it queued or worked | the two kit indices, which are built from *the viewer's own* bands and reach `buildKitId`, `upkeepKitId` and the build countdown |
+/// | **nobody** has it queued or worked | the two membership indices, which are built from *the viewer's own* bands and reach the build countdown and the withheld build scratch |
 ///
 /// The third is asked of **every faction's** allocations rather than of the viewer's, and that is
 /// the whole point of it: a tile a rival queued this turn is a row that differs between viewers
@@ -1598,8 +1439,8 @@ impl WildRowMemo {
 /// turn resolves, so the second condition does not catch it.
 fn patch_row_is_viewer_invariant(
     patch: &ForagePatch,
-    queued_by_anyone: &BuildKitIds,
-    worked_by_anyone: &UpkeepKitIds,
+    queued_by_anyone: &QueuedBuildSources,
+    worked_by_anyone: &WorkedSources,
 ) -> bool {
     patch.owner.is_none()
         && !patch.has_build_estimate()
@@ -1622,11 +1463,11 @@ pub(crate) fn snapshot_forage_patches(
     tile_capacities: &HashMap<UVec2, f32>,
     tile_quotes: &FloraQuoteCache,
     // **The live builders kit per queued source** — read off the bands' queues at capture rather
-    // than off the patch, so a kit picked this turn shows in the recapture. See [`BuildKitIds`].
-    build_kits: &BuildKitIds,
+    // than off the patch, so a kit picked this turn shows in the recapture. See [`QueuedBuildSources`].
+    build_kits: &QueuedBuildSources,
     // **The live keeping kit per worked source**, on the same rule one account over. See
-    // [`UpkeepKitIds`].
-    upkeep_kits: &UpkeepKitIds,
+    // [`WorkedSources`].
+    upkeep_kits: &WorkedSources,
     // ⛔ **WHO IS LOOKING, AND WHAT THEY HAVE SEEN.** A patch row is a fact about a TILE, and tiles
     // are published whole — the client fogs the map from `visibility_raster`. What is *not* a fact
     // about the tile is the improvement standing on it: who tends it and how far along their
@@ -2054,11 +1895,11 @@ pub(crate) fn snapshot_forage_patches(
                 patch,
                 forage,
             ),
-            // **What this patch's build is being raised with** — the RESOLVED kit of the winning
-            // band's queue entry, read live so a pick shows in this frame rather than next turn.
-            build_kit_id: build_kits.patch(patch.tile),
-            upkeep_kit_id: upkeep_kits.patch(patch.tile).0,
-            upkeep_kit_named: upkeep_kits.patch(patch.tile).1,
+            // **A patch names no kit** — see [`NO_SITE_KIT_ID`]. Its tenders' and its builders'
+            // tools are the pool's, derived from the rung and published as `poolToe`.
+            build_kit_id: NO_SITE_KIT_ID.to_string(),
+            upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
+            upkeep_kit_named: NO_SITE_KIT_NAMED,
             // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
             // ungained twin of `carrying_capacity` above and the denominator every upkeep figure
             // on this row is quoted per. **The reading already resolved once above**, never a

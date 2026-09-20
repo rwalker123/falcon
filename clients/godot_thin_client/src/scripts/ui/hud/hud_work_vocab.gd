@@ -1004,23 +1004,24 @@ const WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIG
 ## crew's tool. **It is the only section a row can LACK** — `_work_inspector_has_kits` gates it, a
 ## section with an empty picker in it being a control that answers nothing.
 ##
-## ⛔ **THE UPKEEP ROW IS NOT IN HERE, AND THAT IS THE FIX** (issue: the wild source's Upkeep row).
+## ⛔ **THE SITE'S BILL IS NOT IN HERE, AND THAT IS THE FIX** (issue: the wild source's Upkeep row).
 ## The retired reading was *"the one that grew: its header, its two control lines, and the HINT line
 ## the strip could not afford"* — a flat two-row price, which is what let the card draw an Upkeep
-## picker on a source that stands on no rung and therefore has nothing to keep. The second row and the
-## line under it are `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`, added only where the site really owes a bill.
+## picker on a source that stands on no rung and therefore has nothing to keep. What a site owes is
+## `WORK_INSPECTOR_KITS_BILL_HEIGHT`, added only where it really owes something.
 const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
     + WORK_COMPACT_PICKER_LINE_HEIGHT
 
-## …and what the UPKEEP half costs ON TOP of that floor: its own control line, and the line beneath
-## that states what the site is billed per turn (`WORK_INSPECT_KITS_UPKEEP_FORMAT`).
+## …and what the SITE'S BILL costs ON TOP of that floor: the one line that states what this site is
+## billed per turn (`WORK_INSPECT_KITS_UPKEEP_FORMAT`), where it is billed at all.
 ##
-## **BOTH ARE GATED ON ONE ANSWER AND THE PAIR IS INDIVISIBLE.** An Upkeep picker with no bill beside
-## it is the control this constant exists to stop drawing, and a bill with no picker beside it is a
-## number the player cannot act on — so the two are one term, added by `_work_inspector_has_upkeep`
-## and by nothing else.
-const WORK_INSPECTOR_KITS_UPKEEP_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT \
-    + WORK_INSPECTOR_NOTE_HEIGHT
+## ⛔ **IT WAS `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT` AND CARRIED A CONTROL LINE TOO.** The retired
+## reading: *"BOTH ARE GATED ON ONE ANSWER AND THE PAIR IS INDIVISIBLE. An Upkeep picker with no bill
+## beside it is the control this constant exists to stop drawing, and a bill with no picker beside it
+## is a number the player cannot act on."* The first half stands; the second died with the choice
+## (`docs/plan_pool_toe.md` §3 — a site's tools follow from its rung), so the picker went and the
+## bill stayed, and the term is one prose line rather than a line plus a control.
+const WORK_INSPECTOR_KITS_BILL_HEIGHT := WORK_INSPECTOR_NOTE_HEIGHT
 
 ## …and what the KIT SHORTFALL line under the take picker costs when the row has one to state — one
 ## prose line and the block gap above it, exactly as every other conditional sentence on this card is
@@ -1046,11 +1047,20 @@ const WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT := WORK_INSPECTOR_NOTE_HEIGHT
 ##
 ## (`docs/plan_standing_upkeep.md` §4.9 item 12d). A model carrying every conditional child at once —
 ## the overdraw line, the `note`, the `muted_note` and the `ArrivalStrip` — on a row that HAS kits
-## reserves **374px**: the base 64, three note lines at 20, the arrivals at 14, the actions rule at 7,
-## and the POLICY / PRIORITY / KITS sections at 59 / 79 / 91. That figure is the
+## reserves **372px**: the base 64, three note lines at 20, the arrivals at 14, the actions rule at 7,
+## the POLICY / PRIORITY / KITS sections at 59 / 79 / 69, and the take crew's own gear-shortfall
+## line at 20. **It was 394 while the KITS section carried an Upkeep PICKER beside the bill**
+## (`docs/plan_pool_toe.md` §3 retired it), and the 22px that came off is exactly that control line.
+##
+## ⛔ **THE PROSE FIGURE WAS 374 AND HAD BEEN 20 LOW SINCE `WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT`
+## JOINED THE SUM — re-added term by term rather than adjusted by the difference.** That term is in
+## the expression below and was missing from this paragraph, which is the one way a stated ceiling
+## drifts from the expression under it; re-derive from the `const` if the two ever disagree again.
+##
+## That figure is the
 ## `WorkInspectorDialog`\'s own `min_height` at that model rather than a debt anybody owes the work
-## zone. **It clears the shortest viewport this client renders at with room to spare** — 374 of the
-## 696px a 720-high window leaves inside `WorkInspectorDialog.VIEWPORT_MARGIN`, a margin of 322 — and
+## zone. **It clears the shortest viewport this client renders at with room to spare** — 372 of the
+## 696px a 720-high window leaves inside `WorkInspectorDialog.VIEWPORT_MARGIN`, a margin of 324 — and
 ## where a window ever is too short, the card\'s own scroll carries the remainder instead of a zone
 ## clipping the board.
 ##
@@ -1081,7 +1091,7 @@ const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
     + WORK_INSPECTOR_KITS_SECTION_HEIGHT \
     + WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
-    + WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
+    + WORK_INSPECTOR_KITS_BILL_HEIGHT \
     + WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
 ## Gaps the work column always spends: head→chips, chips→board.
@@ -1166,16 +1176,134 @@ const KIT_SHORT_MARK := "◆"
 ## flown* and a claim about *which Label flew it* are the same read.
 const WORK_ROW_MARKS_META := &"work_row_marks"
 
-## **A POOL CARD'S GEAR-SHORTFALL SENTENCE, ON THE CARD AS META** — `KitRoster.shortfall_sentence`'s
-## line, or `""` for a pool with nothing to be short of. The card draws no gear glyph of its own — a
-## tool shortfall flies the same `⚠` a hands shortfall does — and the sentence is on its hover, so this
-## is what a harness asks *is the triangle flying for the TOOLS, and what does it say* without
-## re-composing the wording it is checking.
+## **A POOL CARD'S TOOL-SHORTFALL LINE, ON THE CARD AS META** — `pool_toe_short_line`'s answer, or
+## `""` for a pool with nothing to be short of. The card draws no gear glyph of its own — a tool
+## shortfall flies the same `⚠` a hands shortfall does — and the line is on its hover, so this is what
+## a harness asks *is the triangle flying for the TOOLS, and what does it say* without re-composing
+## the wording it is checking.
 ##
 ## It is a second meta rather than a value on `BandPanelController.POOL_CARD_SHORT_META` because that
 ## one is the BOOLEAN *is the triangle flying*, true for either reason; this one is the tool reason
 ## alone. The hands reason has no meta — it is the hover's coverage line.
-const POOL_CARD_KIT_SHORT_META := &"pool_card_kit_short"
+##
+## ⛔ **IT WAS `POOL_CARD_KIT_SHORT_META` AND THE KIT IS WHAT WENT.** A pool resolved ONE kit until
+## `docs/plan_pool_toe.md`, and the sentence this meta carried was `KitRoster.shortfall_sentence`'s —
+## read off the pool row's `kitWorkersHolding` of `workers`. That pair publishes the *nothing to be
+## short of* reading on every pool row now (§4), so the retired name points at a mechanism that can no
+## longer answer; what it carries is the pool's own TOE.
+const POOL_CARD_TOOL_SHORT_META := &"pool_card_tool_short"
+
+## **ONE TERM OF A POOL'S TOOL LINE** — `4 of 6 hoes`, `0 of 1 hoe`.
+##
+## ⛔ **IT IS `HudComposeVocab.KIT_SHORTFALL_FORMAT` WITHOUT THE TRAILING WORD, and the omission is
+## the only thing that differs.** That sentence states ONE shortfall and closes with ` available`; a
+## pool states a TOE, which is a LIST — `4 of 6 hoes · 0 of 2 dressing hammers` — and repeating the
+## word on every term reads as a run of sentences rather than as one line. The `N of M <thing>`
+## phrasing itself is the client's existing one, which is the whole point of not inventing a second.
+const POOL_TOE_TERM_FORMAT := "%d of %d %s"
+
+## ⛔ **RETIRED — `POOL_TOE_MIN_UNITS`, THE FLOOR THAT ROUNDED A SHORTFALL AWAY.** It read: *"a line
+## exists only where `required > 0`, so its DENOMINATOR may never read zero … a real requirement can
+## round down to nothing; the floor is what keeps `0 of 0 hoes` off the card."* The goal was right and
+## the mechanism produced the defect: at `required 0.7906 / filled 0.5666` — a live playtest reading,
+## Teasel's Agriculture pool at 72% coverage — `round(0.7906)` floored UP to a denominator of 1 and
+## the apportion then drove the numerator to 1 as well, so a 28% shortfall printed `1 of 1 hoe` and
+## the card produced NO line and flew NO triangle.
+##
+## **THE FLOOR IS STRUCTURAL NOW.** A term is emitted only for a row the raw floats call SHORT, so
+## `required > POOL_TOE_SHORT_MIN` holds and `ceil` of it is at least one — a denominator can no
+## longer reach zero without a shortfall test having already declined to print anything.
+
+## **THE SMALLEST GAP IN TOOL UNITS THAT IS A SHORTFALL** — the ONE test the triangle, the line and
+## the work row's remedy all fork on, made against the WIRE'S OWN FLOATS rather than against the
+## rounded pair the card prints.
+##
+## ⛔ **THE SHORT TEST AND THE DISPLAY PAIR ARE DIFFERENT QUESTIONS, and conflating them is what let a
+## sub-unit shortfall read as covered.** *Is this pool short* is answered by `required − filled`, which
+## the sim settled and published; *what does the card say* is a rounding of that pair for a line with
+## no room for decimals. The old code asked the second and inferred the first from it.
+##
+## The value is this client's family floor for a rate that is nothing to state
+## (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap under it is float
+## noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody is missing.
+const POOL_TOE_SHORT_MIN := 0.005
+
+## **A SHORT ROW'S DENOMINATOR EXCEEDS ITS NUMERATOR BY AT LEAST THIS MANY WHOLE UNITS.** The
+## structural guarantee that `N of N` can never be printed beside a shortfall the floats affirm —
+## which is the exact reading the retired apportion produced. The ceil/floor pair below almost always
+## satisfies it on its own; the clamp is what makes *almost* into *never*, at every tolerance.
+const POOL_TOE_SHORT_UNIT_GAP := 1
+
+## **IS THIS TOE ROW SHORT — asked of the wire's floats.** `required` and `filled` are what the sim's
+## `settle_scarce_store` settled for this `(pool, item)`; the card's whole-number pair is downstream of
+## this answer and may never be the basis for it.
+static func pool_toe_row_is_short(row: Dictionary) -> bool:
+    var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
+    var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)), 0.0, required)
+    return required - filled > POOL_TOE_SHORT_MIN
+
+## **AND IS THIS POOL SHORT OF ANY OF ITS TOOLS** — `lines` is `HudBandLaborState.pool_toe_for`'s
+## answer for ONE pool. The boolean the work row's remedy forks on, so the pool card's triangle and
+## that remedy provably answer to the same test rather than to two readings of one vector.
+static func pool_toe_is_short(lines: Array) -> bool:
+    for row_variant in lines:
+        if row_variant is Dictionary and pool_toe_row_is_short(row_variant):
+            return true
+    return false
+
+## **A POOL'S SHORT TOE LINES, AS ONE SENTENCE — `4 of 6 hoes · 0 of 2 dressing hammers`, or `""`.**
+## `lines` is `HudBandLaborState.pool_toe_for`'s answer for THIS pool, in wire order.
+##
+## ⛔ **A POOL WHOSE TOOLS ARE ALL FILLED SHOWS NO LINE AT ALL — not a satisfied one, not a zero.** A
+## filled line is present in the vector precisely so a reader can tell *satisfied* from *not
+## applicable*; both render nothing here, and only one of them is a line. Collapsing them at the
+## DECODER would destroy that distinction — which is why the filter is here and not there.
+##
+## ⛔ **THE SHORT TEST IS `pool_toe_row_is_short`, ON THE RAW FLOATS — never a comparison of the two
+## rounded numbers this function then prints.** A pool short by less than a whole unit is short, and
+## the card must say so; what the rounding may decide is how the numbers READ, never whether the
+## shortfall exists.
+##
+## ⛔ **THE DENOMINATOR CEILS AND THE NUMERATOR FLOORS — they are NOT apportioned.**
+##
+## > **RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*.** The dead rule: *"`filled` and the
+## > shortfall behind it PARTITION `required`, so rounding each on its own gives a `4 of 6` whose
+## > remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic, and the target it sums to
+## > is the rounded requirement."* **`apportion_people_to`'s premise does not hold here.** It divides
+## > WHOLE PEOPLE by a share the player chose — the target is a real count and the parts must sum to
+## > it exactly — whereas the target here is itself a rounding of a float, and the card prints `N of
+## > M` rather than `N + S`, so nothing is partitioned on screen. What the apportion actually does to
+## > a sub-unit row is round the numerator UP to the denominator, which is the defect.
+##
+## **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** *How many whole tools
+## does this pool want* — you cannot buy 0.4 of a hoe, so `0.79` wants one. *How many whole tools are
+## in its hands* — `0.5666` of a hoe's service is no whole hoe, so it holds none. Together they read
+## `0 of 1 hoe` for the playtest row: still a rounding, and one that can only ever OVERSTATE the gap
+## by less than a unit, where the retired pair understated it to nothing. Both are taken with the
+## short floor's tolerance so an `f32` sum landing a hair either side of a whole unit cannot invent a
+## denominator (`6.0000005 → 7`) or lose a held one.
+static func pool_toe_short_line(lines: Array) -> String:
+    var terms: Array[String] = []
+    for row_variant in lines:
+        if not (row_variant is Dictionary):
+            continue
+        var row: Dictionary = row_variant
+        if not pool_toe_row_is_short(row):
+            continue
+        var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
+        var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)),
+            0.0, required)
+        var held := int(floor(filled + POOL_TOE_SHORT_MIN))
+        var units: int = maxi(int(ceil(required - POOL_TOE_SHORT_MIN)),
+            held + POOL_TOE_SHORT_UNIT_GAP)
+        # ⛔ **THE NOUN AGREES WITH THE DENOMINATOR, NOT WITH WHAT IS HELD.** `N of M <item>` names
+        # the M — *four of six earthmoving tools*, *one of two crooks* — so a term whose noun followed
+        # `held` would read `1 of 2 crook`, and one that never inflected would read `0 of 1 hoes`.
+        # `DetailFormat.kit_item_count_word` is the one place an item label is inflected.
+        terms.append(POOL_TOE_TERM_FORMAT % [held, units,
+            DetailFormat.kit_item_count_word(
+                String(row.get(HudBandLaborState.POOL_TOE_ITEM_KEY, "")), units)])
+    return RUNG_TRACK_PRICE_SEPARATOR.join(terms)
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
@@ -1504,6 +1632,38 @@ const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — raise this band's 
 ## picker below is one function and not a branch at each call site.
 const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's Agriculture role."
 
+## ---- THE FOURTH ARM: THE POOL HAS THE HANDS AND NOT THE TOOLS ----------------------------------
+##
+## ⛔ **THE ROLE SENTENCE IS WRONG ADVICE WHENEVER THE HEAD COUNT IS NOT WHAT BINDS.** Reported from
+## play, on Teasel's plant site at (72,28) mid-Cultivate: the row read *"This ground is slipping —
+## raise this band's Agriculture role."* while the pool held **2** workers against a commitment of
+## `demand 1.1859 ÷ 1.5 = 0.79` hands. The cap was nowhere near binding, so a third worker would have
+## stood idle and the shortfall would not have moved a decimal. What was actually short was HOES —
+## `pool_toe` said `0.5666 of 0.7906`, 72% covered, the band's two hoes split pro-rata against a
+## Builders pool bidding 2.0 at the same priority.
+##
+## **THE SENTENCE NAMES TOOLS AND REFUSES HANDS**, the register `MATERIAL_SHORT_REMEDY` already uses
+## one account over (*"…not more hands."*) — so the two arms that decline a head count decline it in
+## the same words, and a player learns the refusal once. **Same first clause as the hands arm**: the
+## CONSEQUENCE is identical (this ground is slipping, these animals are drifting) and only the remedy
+## forks, which is what keeps the pair readable as one family.
+##
+## ⛔ **MEASURED TO THE HANDS ARM'S WIDTH, and that is a constraint rather than a coincidence.**
+## `build_status_part` is a bare `Label` with no autowrap in a 354px narrow-shell strip, so this
+## sentence is a width budget: at 61 and 56 characters it is exactly as long as the note it replaces,
+## and a longer rewording overruns the clipping host (`band_panel_preview`'s recursive bounds
+## assertion is what says so).
+##
+## ⛔ **IT STAYS IN THE *WARN* REGISTER, beside the hands arm and NOT beside the missing-good one.**
+## The three-register rule under `MATERIAL_SHORT_REMEDY` is about what the shortfall DOES: a missing
+## GOOD stops the work outright and takes DANGER; a pool short of tools is still working, bare-handed
+## and slower, which is the same *losing ground gradually* the hands arm describes. `under_kept_note_severity`
+## therefore takes no tools argument.
+const WORK_ROW_UNDER_KEPT_TOOLS_NOTE := "This ground is slipping — Agriculture needs tools, not hands."
+
+## The animal web's twin, and the pool is `husbandry`.
+const WORK_ROW_UNDER_HERDED_TOOLS_NOTE := "Animals drifting off — Husbandry needs tools, not hands."
+
 ## RETIRED — **`WORK_ROW_UNDER_KEPT_TOOLTIP` AND `WORK_ROW_UNDER_HERDED_TOOLTIP`**, a four-sentence
 ## hover each (*"Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its
 ## gatherers, so this row's + will not stop the slide. …"*). They explained the MODEL — which pool
@@ -1712,11 +1872,46 @@ static func _worst_material_shortfall(demand: Array[Dictionary],
 ## names a remedy the stepper cannot reach, so a row short of hands AND of hurdles is told about the
 ## hurdles. Callers with no material pair in hand pass nothing and get the staffing pair, which is
 ## every caller that existed before this arm.
-static func under_kept_note(kind: String, material_note: String = "") -> String:
+##
+## **AND `tools_short` FORKS THE STAFFING PAIR ITSELF** — `HudWorkVocab.pool_toe_is_short` over the
+## keeping pool's own TOE. **A keeping shortfall has exactly two causes and the wire says which**, and
+## the reasoning is worth writing down because the inference runs backwards:
+##
+##   - The sim splits the pool's HEAD COUNT across its sites' worker-needs (`distribute_upkeep_pool`)
+##     and prices each hand at the FULLY EQUIPPED rate, then settles the tools those committed hands
+##     bid for against the band's store. **So a pool whose `sum(needs) <= keepers` is paid in full**:
+##     every site gets its need, `supplied == demand`, and no row on it is under-kept at all.
+##   - Therefore a source that IS under-kept means the split was capped — **unless the hands it did
+##     commit are working bare**, which is exactly what a short TOE line reports.
+##   - **Tools short ⇒ say tools. Tools filled and still short ⇒ the head count is what bound it, so
+##     say hands.** Both arms are POSITIVE statements; neither is a fallback.
+##
+## ⛔ **WHERE BOTH BIND, TOOLS WIN — and the reason is which fact is PUBLISHED.** A pool can be
+## hand-capped *and* tool-short at once. The tool shortfall is a settlement the sim resolved and put
+## on the wire; the hand cap is not published in any form this client can read (neither the committed
+## hands nor the per-site worker-needs ride the snapshot), so the client can only ever INFER it from
+## the absence of the other. Naming the fact the wire states outright, over the one recovered by
+## elimination, is the same discipline every other producer in this file follows. It is also the
+## cheaper remedy of the two: an arriving tool lifts a hand the pool has ALREADY committed from the
+## bare rate to the equipped one, where a new worker is a whole body.
+static func under_kept_note(kind: String, material_note: String = "",
+        tools_short: bool = false) -> String:
     if material_note != "":
         return material_note
+    if tools_short:
+        return WORK_ROW_UNDER_HERDED_TOOLS_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
+            else WORK_ROW_UNDER_KEPT_TOOLS_NOTE
     return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_NOTE
+
+## **WHICH POOL KEEPS THIS WEB'S SOURCES, AS THE POOL'S OWN WIRE TOKEN** — `husbandry` on the animal
+## web, `agriculture` on the plant one. `keeping_role_name`'s twin: that one answers the display NAME
+## off a SOURCE kind, this one the token `HudBandLaborState.pool_toe_for` joins on, off a LABOR kind.
+## One picker, for `under_kept_note`'s own reason — a caller that reached for the other web's pool
+## would read a TOE that is a wrong answer looking like a right one.
+static func keeping_pool_kind(labor_kind: String) -> String:
+    return HudConst.LABOR_KIND_HUSBANDRY if labor_kind == SourceForecast.LABOR_KIND_HUNT \
+        else HudConst.LABOR_KIND_AGRICULTURE
 
 ## **AND ITS SEVERITY, ASKED THE SAME WAY** — DANGER for a missing good, WARN for missing hands. One
 ## producer for the pair, so a note and its ink can never describe different shortfalls.
@@ -1728,8 +1923,9 @@ static func under_kept_note_severity(material_note: String = "") -> String:
 ## one counter, the decay riding the worst of the two fractions — so the hover says how long you have
 ## whichever term came up short.
 static func under_kept_tooltip(kind: String, rung_word: String = "",
-        grace: int = UNDER_KEPT_NO_COUNTDOWN, material_note: String = "") -> String:
-    var note := under_kept_note(kind, material_note)
+        grace: int = UNDER_KEPT_NO_COUNTDOWN, material_note: String = "",
+        tools_short: bool = false) -> String:
+    var note := under_kept_note(kind, material_note, tools_short)
     if rung_word == "" or grace == UNDER_KEPT_NO_COUNTDOWN:
         return note
     var countdown := UNDER_KEPT_LOST_NOW % rung_word
@@ -2706,30 +2902,34 @@ const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
 ## 1920 bottom dock, the queue claimed 3 rows instead of 1 and `Zone_work` drew **414 into its 396px
 ## box** the moment a strip opened.
 ##
-## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: the WRAPPED control pair, which
-## is what an entry carrying both a crop and a kit draws wherever the strip is too narrow for one
-## line. **LEGS ARE DELIBERATELY NOT COUNTED** — a multi-leg climb is the rarer entry, and reserving
-## for it would shrink the block on every dock for a state most bands never reach, which is the same
-## trade the retired constant's own comment made.
+## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: ONE control line plus the
+## strip's chrome, which is what an entry carrying a crop draws. **LEGS ARE DELIBERATELY NOT
+## COUNTED** — a multi-leg climb is the rarer entry, and reserving for it would shrink the block on
+## every dock for a state most bands never reach, which is the same trade the retired constant's own
+## comment made.
+##
+## ⛔ **IT WAS THE WRAPPED CONTROL PAIR AND IS ONE LINE SHORTER.** The second line was the KIT
+## picker's, which `docs/plan_pool_toe.md` §3 retired — a build's tools are the rung's — so a strip
+## can no longer draw two control rows and a headroom term that still paid for one would hold a board
+## row back for a line nothing draws. `build_queue_settings_height`'s own retirement note carries the
+## measurement.
 ##
 ## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
-## GDScript `const` may not read one declared below it and both of its terms are on the lines above.
-const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
-    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+## GDScript `const` may not read one declared below it and its term is on the lines above.
+const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT
 
-## **THE KEY COLUMN BOTH SETTINGS KEYS DECLARE — `CROP` and `KIT` alike.** One constant, because the
-## whole point of a stacked layout is that the two keys line up: two independently-measured widths
-## would put the pickers on two different left edges the moment the strip wraps, and a reader would
-## see that as a misdrawn panel rather than as two rows.
+## **THE SETTINGS KEY'S DECLARED COLUMN.** It was shared by `CROP` and a `KIT` key beside it so the
+## two pickers could not land on two different left edges when the strip wrapped; the kit went with
+## `docs/plan_pool_toe.md` §3 and the width stays DECLARED rather than natural, because it is what
+## keeps the surviving picker where a player last saw it.
 const BUILD_QUEUE_SETTINGS_KEY_WIDTH := 30.0
 
-## The kit control's declared width, the crop's own (`BUILD_QUEUE_CROP_WIDTH`) — the two pickers are
-## the same kind of control naming the same kind of thing, and a pair of unequal columns beside two
-## equal keys reads as an accident.
-const BUILD_QUEUE_KIT_WIDTH := 168.0
-
-## The kit half's key, in the CROP key's register.
-const BUILD_QUEUE_SETTINGS_KIT_KEY := "KIT"
+## > ⛔ RETIRED — **`BUILD_QUEUE_KIT_WIDTH` and `BUILD_QUEUE_SETTINGS_KIT_KEY`**, the kit half's
+## > declared column and its `KIT` key. They were *"the crop's own … the two pickers are the same kind
+## > of control naming the same kind of thing, and a pair of unequal columns beside two equal keys
+## > reads as an accident"* — and `docs/plan_pool_toe.md` §3 retired the picker they measured.
+## > `BUILD_QUEUE_SETTINGS_KEY_WIDTH` above stays DECLARED rather than falling back to a natural
+## > width: it is what keeps the surviving crop picker's left edge where a player last saw it.
 
 ## ---- THE INSPECTOR STRIP'S KIT PAIR (`docs/plan_standing_upkeep.md` §4.9 item 12c) --------------
 ##
@@ -2776,7 +2976,7 @@ const BUILD_QUEUE_SETTINGS_KIT_KEY := "KIT"
 ## standing rung and therefore nothing to keep — so a constant that folds two rows into one figure
 ## cannot be asked how tall the section is on the shape that has one. The take row rides
 ## `WORK_INSPECTOR_KITS_SECTION_HEIGHT` and the upkeep row rides
-## `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`, which is what makes *reserved ≥ drawn* hold on BOTH shapes.
+## `WORK_INSPECTOR_KITS_BILL_HEIGHT`, which is what makes *reserved ≥ drawn* hold on BOTH shapes.
 
 ## The crew key's declared width — wider than the queue strip's `CROP`/`KIT` because this key is a
 ## crew NOUN (`Harvesters` / `Hunters` / `Herders`) rather than a three-letter tag, and both keys in
@@ -2788,10 +2988,11 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## the strip's whole width and one control per row, so the picker expands into whatever the key leaves
 ## and a fixed column would be dead space on a wide dock and a clipped kit name on a narrow one.
 
-## The RIGHT key. One word, and deliberately not the role's name (`Agriculture` / `Husbandry`): the
-## pair is *what this crew carries* beside *what holds the site*, and naming a band ROLE here would
-## read as a control over that role's pool — which this is not, the kit being per SITE since §2.5.
-const WORK_INSPECT_UPKEEP_KEY := "Upkeep"
+## > ⛔ RETIRED — **`WORK_INSPECT_UPKEEP_KEY`** (`"Upkeep"`), the pair's RIGHT key. It was
+## > *"deliberately not the role's name (`Agriculture` / `Husbandry`) … naming a band ROLE here would
+## > read as a control over that role's pool"*, which was the right call for a control and is moot
+## > without one. The card still states what the site is billed — see
+## > `WORK_INSPECT_KITS_UPKEEP_FORMAT` — and that line is a READOUT, so it names no key at all.
 
 ## ⛔ RETIRED — **`WORK_INSPECT_KITS_HINT`**, which read *"\"No kit\" is a real choice — the site worked
 ## bare-handed."* and sat under the pair on every kitted row. **It said nothing the section needed and
@@ -2832,7 +3033,9 @@ const WORK_INSPECT_KITS_UPKEEP_FORMAT := "Kept at %s a turn."
 ## against the site\'s) and the upkeep one\'s SCOPE.
 const WORK_INSPECT_TAKE_KIT_TOOLTIP := "What this crew carries when it works the source. `none` is a real choice, not an empty one — it is how a site is worked bare-handed to conserve the tool."
 
-const WORK_INSPECT_UPKEEP_KIT_TOOLTIP := "What this SITE is held with, turn after turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no other. `none` is a real choice, not an empty one — it is how a site is held bare-handed to conserve the tool."
+## > ⛔ RETIRED — **`WORK_INSPECT_UPKEEP_KIT_TOOLTIP`**: *"What this SITE is held with, turn after
+## > turn — the keeping tool, not the take one. Set per site, so a pick here moves this row and no
+## > other."* Every clause of it described a per-site PICK, which `docs/plan_pool_toe.md` §3 retired.
 
 ## ⛔ RETIRED — **`work_inspector_kits_one_line_width` / `work_inspector_kits_one_line` /
 ## `work_inspector_kits_height(has_kits, one_line)`**, the block form's width predicate and its
@@ -2840,57 +3043,39 @@ const WORK_INSPECT_UPKEEP_KIT_TOOLTIP := "What this SITE is held with, turn afte
 ## unconditionally, so there is no width branch left to state — and the height is a plain constant in
 ## the `max` above rather than a term added to every strip whether or not anyone asked for it.
 
-## The stable handle on each picker, valued the kit id it currently states — `BUILD_QUEUE_KIT_PICKER_META`'s
-## twin one host over, and for its reason: the face is presentation, so a harness identifying the
-## control by `text` would be asserting the string it had already composed.
+## The stable handle on the take picker, valued the kit id it currently states — the queue crop
+## picker's own rule one host over: the face is presentation, so a harness identifying the control by
+## `text` would be asserting the string it had already composed. `WORK_INSPECT_UPKEEP_KIT_META` was
+## its twin and retired with the Upkeep picker (`docs/plan_pool_toe.md` §3).
 const WORK_INSPECT_TAKE_KIT_META := &"work_inspect_take_kit"
 
-const WORK_INSPECT_UPKEEP_KIT_META := &"work_inspect_upkeep_kit"
 
+## > ⛔ RETIRED — **`BUILD_QUEUE_KIT_TOOLTIP`**, the queue kit picker's hover: *"Which tools this
+## > build is raised with. Left alone, the job derives its own from the food web it is on … A pick
+## > here changes THIS job alone."* Both halves were load-bearing — the derivation is the thing the
+## > player was overriding, and *this job alone* was the promise the `builders`-row picker before it
+## > could not keep. `docs/plan_pool_toe.md` §3 made the DERIVATION the whole answer, so there is no
+## > override left to explain.
 
-## **WHY THE JOB HAS A TOOL AT ALL, AND HOW FAR THIS PICK REACHES**
-## (`docs/plan_standing_upkeep.md` §4.7a ②). Both sentences are load-bearing: the derivation is the
-## thing the player is overriding, and *this job alone* is the promise the retired `builders`-row
-## picker could not keep — one click there pinned a web's tool onto every later build with no way back.
-const BUILD_QUEUE_KIT_TOOLTIP := "Which tools this build is raised with. Left alone, the job derives its own from the food web it is on — hoes for a crop, a crook for stock. A pick here changes THIS job alone."
-
-## **DOES THE SETTINGS STRIP FIT ITS TWO CONTROLS ON ONE LINE?** — the flow, computed rather than
-## discovered (`docs/plan_standing_upkeep.md` §4.7b ②). Ray, on the layout: *"make it flow, so on
-## horizontal layouts it would be 1 line and vertical 2, most likely because of space available."*
-##
-## ⛔ **IT IS A WIDTH PREDICATE AND NOT A CONTAINER BEHAVIOUR, and the zone's clipping is why.** The
-## strip's height is RESERVED before it is drawn — `build_queue_settings_height` is the one arithmetic
-## both `_work_board_capacity`'s chrome term and the strip's own `custom_minimum_size` read — so a
-## Godot flow container that wrapped at LAYOUT time would leave the reservation unable to know how
-## many lines were drawn, and the difference would come silently off the bottom of the board. Both
-## sides read this one answer instead.
-##
-## **NEITHER PICKER EVER SHRINKS.** The whole objection to fitting the pair into a narrow dock by
-## trimming them was that a truncated crop name reads as a word; so the widths are fixed and the LINE
-## COUNT is what gives.
-##
-## `line_width` is the width the strip actually gets — `BandPanelController._queue_settings_line_width`
-## derives it once from the zone box less the strip's own chrome and feeds the same answer to the
-## reservation and the builder.
-static func queue_settings_one_line(line_width: float) -> bool:
-    return line_width >= queue_settings_one_line_width()
-
-## **WHAT ONE LINE COSTS — the two keys, the two pickers, AND THE WITHDRAWAL RIDING THE LAST LINE.**
-## One expression, exported so nothing re-spells it: the predicate above and every report of *how far
-## short this dock is* read the same number, and a harness that added the terms up itself would be
-## asserting its own arithmetic.
-##
-## ⛔ **THE `✕`'s WIDTH IS A TERM HERE BECAUSE THE `✕` IS ON THIS LINE** (§4.7b ③). It left the row
-## when the reorder arrows took that column, and it lands right-aligned on the strip's LAST control
-## line — so a predicate that still priced two keys and two pickers alone would say ONE LINE at a
-## width where the pair plus the button does not fit, and the withdrawal would be squeezed off the
-## right edge of a zone that clips. The separations are one per gap: 3 between the four settings
-## controls, and a fourth before the button.
-static func queue_settings_one_line_width() -> float:
-    return BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) \
-        + BUILD_QUEUE_CROP_WIDTH + float(WORK_ROW_SEPARATION) \
-        + BUILD_QUEUE_SETTINGS_KEY_WIDTH + float(WORK_ROW_SEPARATION) + BUILD_QUEUE_KIT_WIDTH \
-        + float(WORK_ROW_SEPARATION) + BUILD_QUEUE_UNQUEUE_WIDTH
+## > ### ⛔ RETIRED — `queue_settings_one_line` / `queue_settings_one_line_width`, THE STRIP'S FLOW
+## >
+## > They answered *does the settings strip fit its TWO controls on one line*, and the rule they were
+## > built on outlives them: **a width predicate and not a container behaviour**, because the strip's
+## > height is RESERVED before it is drawn (`build_queue_settings_height` is the one arithmetic both
+## > `_work_board_capacity`'s chrome term and the strip's own `custom_minimum_size` read), so a Godot
+## > flow container that wrapped at LAYOUT time would leave the reservation unable to know how many
+## > lines were drawn and the difference would come silently off the bottom of the board.
+## >
+## > `docs/plan_pool_toe.md` §3 retired the kit picker, so the strip has ONE control and the answer is
+## > always yes. The width term the `✕` contributed retires with them
+## > (§4.7b ③: *"a predicate that still priced two keys and two pickers alone would say ONE LINE at a
+## > width where the pair plus the button does not fit"*) — with one picker the button rides the same
+## > line at every dock the game ships.
+## >
+## > **The measurement they produced is kept as the record it is**: no shipped dock ever reached the
+## > one-line side — 342px of strip on the tall LEFT dock and 368 on the 1920 BOTTOM one, against the
+## > 444 the pair plus the button needed — so the pair STACKED everywhere and what the retirement
+## > actually removes is a second line nobody ever saw a strip drawn without.
 
 ## The strip's key label — the word the retired compose-sheet picker's own header carried, so a player
 ## who learned it there reads it here.
@@ -2903,13 +3088,16 @@ const BUILD_QUEUE_CROP_DEFAULT_LABEL := "Sim picks"
 
 const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Leave it to the sim and it takes the patch's dominant legal plant."
 
-## The expandable row's own hover, appended to the face/date pair — a row that opens has to say so,
-## the board row's `WORK_ROW_OPEN_HINT` being the pattern.
+## Every row's own hover, appended to the face/date pair — a row that opens has to say so, the board
+## row's `WORK_ROW_OPEN_HINT` being the pattern.
 ##
-## **IT NAMES THE KIT FIRST BECAUSE EVERY ENTRY HAS ONE** (`docs/plan_standing_upkeep.md` §4.7a ②).
-## The crop is the plant web's alone — a `Tame` commits no species — so a hint promising only the crop
-## was false on every animal row the moment the kit made those rows expandable.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click to set this job's tools and crop."
+## ⛔ **IT NAMES NEITHER THE KIT NOR THE CROP, AND BOTH REFUSALS ARE FORCED.** It read *"Click to set
+## this job's tools and crop"*: the TOOLS half named the per-entry kit picker, which
+## `docs/plan_pool_toe.md` §3 retired — a build's tools follow from its rung — and the CROP half is
+## the plant web's alone, a `Tame` committing no species, so on a hunt row the sentence promised two
+## controls that are not in the strip. **The `✕` is what every entry's strip carries**, so the hint
+## names the settings and the one control it can promise on every row.
+const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's settings, and to withdraw it."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
@@ -3012,11 +3200,10 @@ const BUILD_QUEUE_PROMOTE_META := "build_queue_promote"
 
 const BUILD_QUEUE_DEMOTE_META := "build_queue_demote"
 
-## The settings strip's two controls, each valued its own selected id — so an assertion can name the
-## picker it wants rather than taking whichever `OptionButton` the strip happens to build first.
+## The settings strip's control, valued its own selected id — so an assertion names the picker it
+## wants rather than taking whichever `OptionButton` the strip happens to build first. It was a PAIR
+## until `docs/plan_pool_toe.md` §3 retired `BUILD_QUEUE_KIT_PICKER_META` with the control it handled.
 const BUILD_QUEUE_CROP_PICKER_META := "build_queue_crop_picker"
-
-const BUILD_QUEUE_KIT_PICKER_META := "build_queue_kit_picker"
 
 ## The open SETTINGS strip, valued the entry KEY it belongs to — so an assertion can say *this* row's
 ## strip is the one that opened rather than *a* strip exists somewhere in the block.
@@ -3049,17 +3236,23 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## `rows_max` is `build_queue_rows_max`'s answer for the zone being drawn into, so both callers hand
 ## over the SAME number rather than each reading the ceiling.
 ##
-## **`settings_legs` / `settings_crop` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
+## **`settings_open` / `settings_legs` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
 ## (§4.7a ②, ③). The strip is open-only and one-at-a-time, so it adds its height exactly when it
 ## draws — the shape the work board's own inspector term used to have in this block's arithmetic,
 ## before §4.9 item 12d took that strip out of the zone entirely and left this the only expansion in
 ## the column that costs it anything.
 ##
-## **THEY ARE THE STRIP'S TWO INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
-## It was a lone BOOL for exactly that reason — a caller passing a float could pass a different one
-## from the strip's own — and a strip that also lists an entry's LEGS has a height that varies, so
-## what a caller states is the CONTENT and `build_queue_settings_height` remains the one arithmetic
-## both the reservation and the render read.
+## ⛔ **`settings_open` IS A SEPARATE ARGUMENT BECAUSE THE CONTENT CANNOT ANSWER IT.** A closed block
+## and an open HUNT strip both state *no legs, no crop*, so a height keyed on the content alone
+## charges 34px for a strip the block then declines to build — and this zone answers that by clipping
+## board rows off the bottom in silence. The caller resolves `_queue_settings_state` ONCE and hands
+## the same answer here and to the builder.
+##
+## **THEY ARE THE STRIP'S INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
+## A caller passing a float could pass a different one from the strip's own, and a strip that also
+## lists an entry's LEGS has a height that varies — so what a caller states is *whether it draws* and
+## *what is in it*, and `build_queue_settings_height` remains the one arithmetic both the reservation
+## and the render read.
 ##
 ## ⛔ **THERE IS NO `+1` FOR AN OVERFLOW ROW ANY MORE**, and it had to come out of `build_queue_rows_max`
 ## in the same breath. The `+N more` door moved ONTO the head, so the block draws its head, the rows
@@ -3070,13 +3263,12 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## ⛔ **AND THE HEAD TERM IS `BUILD_QUEUE_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head carries
 ## the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_legs: int = 0, settings_crop: bool = false, settings_kit: bool = false,
-        settings_one_line: bool = true) -> float:
+        settings_open: bool = false, settings_legs: int = 0) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
     return BUILD_QUEUE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
-        + build_queue_settings_height(settings_legs, settings_crop, settings_kit, settings_one_line)
+        + build_queue_settings_height(settings_open, settings_legs)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
 #
@@ -3282,35 +3474,42 @@ const MICROSECONDS_PER_SECOND := 1_000_000.0
 ## one unit and its legs are what the row opens into.
 ## **THE LEG LIST'S OWN KEY COSTS A LINE, and forgetting it is how a strip draws taller than it was
 ## paid for** — which this zone answers by clipping the bottom of the BOARD, silently.
-## **AND THE CONTROL ROWS COST ONE LINE OR TWO — never a measured height**
-## (`docs/plan_standing_upkeep.md` §4.7b ②). The pair flows: where the strip is wide enough for both
-## keys and both pickers (`queue_settings_one_line`) they sit side by side, and where it is not they
-## stack. **A LONE CONTROL IS ALWAYS ONE LINE whatever the width** — an ANIMAL entry has a kit and no
-## crop, so it has nothing to wrap against, and letting the predicate answer for it would reserve a
-## second line for a strip that draws one.
+## **AND THE CONTROL ROW COSTS ONE LINE — never a measured height.**
 ##
-## ⛔ **THE SECOND LINE COSTS A CONTROL, NOT A WHOLE STRIP.** There is ONE stylebox around the pair
-## however they stack, so the wrapped height is `chrome + 2 × control` = 56 and never
-## `2 × BUILD_QUEUE_SETTINGS_HEIGHT` = 68 — which reserved 12px the strip never draws, rendered as
-## dead space inside it and cost the work board a row wherever that 12px straddled a boundary.
-static func build_queue_settings_height(legs: int, has_crop: bool, has_kit: bool = false,
-        one_line: bool = true) -> float:
-    var controls := 0
-    if has_crop:
-        controls += 1
-    if has_kit:
-        controls += 1
-    var height := 0.0
-    if controls > 0:
-        height = BUILD_QUEUE_SETTINGS_HEIGHT if (controls <= 1 or one_line) \
-            else BUILD_QUEUE_SETTINGS_HEIGHT + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
-    elif legs > 0:
-        # **THE WITHDRAWAL RIDES THE LAST CONTROL LINE, so a strip with no pickers still buys one**
-        # (§4.7b ③). Every queued entry has a KIT, so this branch does not fire on anything the sim
-        # publishes today — but a strip that opened on legs alone and then drew a `✕` with no line
-        # under it would draw taller than it was paid for, in a zone that answers that by clipping
-        # the board. The reservation and the builder take the same branch.
-        height = BUILD_QUEUE_SETTINGS_HEIGHT
+## > ⛔ RETIRED — **THE FLOW, AND THE `has_kit` / `one_line` PAIR THAT PRICED IT**
+## > (`docs/plan_standing_upkeep.md` §4.7b ②). The strip carried TWO controls and they flowed: *"where
+## > the strip is wide enough for both keys and both pickers (`queue_settings_one_line`) they sit side
+## > by side, and where it is not they stack"*, at `chrome + 2 × control` = 56 rather than
+## > `2 × BUILD_QUEUE_SETTINGS_HEIGHT` = 68, *"which reserved 12px the strip never draws"*.
+## > `docs/plan_pool_toe.md` §3 retired the kit picker, so there is ONE control and the strip's own
+## > rule — **A LONE CONTROL IS ALWAYS ONE LINE whatever the width** — is the whole of the answer.
+## >
+## > **The measured 12px lesson is what the retirement preserves**: the chrome is charged ONCE per
+## > strip however many lines open inside it (`BUILD_QUEUE_SETTINGS_CHROME`), which is what a second
+## > control row would pay against if one ever comes back.
+##
+## ⛔ **THE CONTROL LINE IS UNCONDITIONAL *WITHIN AN OPEN STRIP*, BECAUSE THE `✕` IS** (§4.7b ③). The
+## withdrawal left the ROW when the reorder arrows took its 32px column, and the strip is where it
+## went — so **every confirmed entry has a control line whether or not it has a crop to put on it**,
+## and a strip that charged only for the crop would draw a `✕` on a line it was never paid for, in a
+## zone that answers that by clipping the board. It shipped conditional for one pass after
+## `docs/plan_pool_toe.md` §3 retired the per-entry kit, and what that cost was reachability: a queued
+## HUNT entry has no crop and no legs, so it stopped expanding and its `✕` became **unreachable from
+## the UI**. `has_crop` retired with that branch — the strip's height does not vary with the crop, one
+## control line being one control line either way.
+##
+## ⛔ **AND `is_open` IS WHY THE CROP COULD NOT BE THE ZERO TEST.** Making the control line
+## unconditional left `(legs 0, crop false)` meaning two different things — *a closed block* and *an
+## open HUNT strip* — so a height keyed on the CONTENT alone answered `BUILD_QUEUE_SETTINGS_HEIGHT`
+## for the closed case and the block reserved 34px nothing drew. The zone does not overflow, it
+## CLIPS: `_work_board_capacity` subtracts the same 34 and the work board silently loses a row
+## (`WORK_ROW_HEIGHT` is 28). So the caller states whether a strip is OPEN, which is the one fact the
+## content cannot carry, and `_build_build_queue_block` is where both the reservation and the render
+## read it from one `_queue_settings_state` answer.
+static func build_queue_settings_height(is_open: bool, legs: int) -> float:
+    if not is_open:
+        return 0.0
+    var height := BUILD_QUEUE_SETTINGS_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     return height

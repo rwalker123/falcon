@@ -353,11 +353,17 @@ fn spawn_keepers_of(
 /// **entry** rather than off a stored id. The liveness arm carries them both — a filter that zeroed
 /// everything would pass the negatives on its own.
 #[test]
-fn an_animal_build_is_geared_by_the_hurdles_and_by_nothing_else() {
-    let published = |kit_id: Option<&str>| -> f32 {
+fn an_animal_build_is_geared_by_the_rungs_own_tool_and_by_nothing_else() {
+    let published = |tools: bool| -> f32 {
         let (mut app, id, pos) = world_with_a_tameable_herd();
         let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth, KEEPERS);
-        set_builders_kit(&mut app, keepers, kit_id);
+        // ⛔ **THE ARMS DIFFER IN THE LEDGER, NOT IN A KIT NAMED ON THE ENTRY.** They used to name
+        // `hurdling`, `tillage` and `none` on the queue entry. A pool's tools follow from the
+        // **rung** since `docs/plan_pool_toe.md`, so an entry's kit prices nothing; what can still
+        // separate a geared pool from a bare one is whether the band owns the tool the rung wants.
+        if !tools {
+            core_sim::disarm_the_builders(&mut app.world, keepers, RungKey::AnimalPastoral);
+        }
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
@@ -375,52 +381,62 @@ fn an_animal_build_is_geared_by_the_hurdles_and_by_nothing_else() {
             .build_work_from_gear
     };
 
-    let derived = published(None);
+    let geared = published(true);
     assert!(
-        derived > core_sim::NO_BUILD_GEAR,
-        "**LIVENESS**: an unnamed builders row derives the animal web's own kit, so a Tame is \
-         geared — got {derived}"
+        geared > core_sim::NO_BUILD_GEAR,
+        "**LIVENESS**: a band holding the animal branch's own tool gears its Tame — got {geared}"
     );
     assert_eq!(
-        published(Some(BUILDERS_KIT)),
-        derived,
-        "naming the kit the derivation would have picked changes nothing"
-    );
-    assert_eq!(
-        published(Some(TILLAGE_KIT)),
+        published(false),
         core_sim::NO_BUILD_GEAR,
-        "a hoe is a plant tool and takes NOTHING off a Tame — the branch qualifier's whole job"
+        "…and a band that owns none of it works bare-handed, however much the rung wants one"
     );
+
+    // ⛔ **AND THE OTHER WEB'S TOOL IS NOT THE ONE IT READS.** The bare arm above owns no crook
+    // **and no hoes**, so on its own it would also pass for a model that read whichever tool it
+    // found. This arm leaves the band its hoes and takes only the crook.
+    let (mut app, id, pos) = world_with_a_tameable_herd();
+    let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth, KEEPERS);
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let mut ledger = core_sim::BandEquipment::start_stocked(&equipment);
+    ledger.restore_batches("crook", Vec::new());
+    assert!(
+        ledger.live_units("hoes", &equipment) > 0,
+        "fixture: the band must still own the PLANT branch's tool, or this arm repeats the one \
+         above"
+    );
+    app.world.entity_mut(keepers).insert(ledger);
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+    let hoes_only = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot
+        .herds
+        .iter()
+        .find(|row| row.id == id)
+        .expect("the watched herd is on the wire")
+        .build_work_from_gear;
     assert_eq!(
-        published(Some("none")),
+        hoes_only,
         core_sim::NO_BUILD_GEAR,
-        "going out bare is a real selection and must not fall back to the derived kit"
+        "a hoe serves no animal rung, so it is never in a Tame's requirement — the branch \
+         qualifier's whole job"
     );
 }
 
-/// Re-kit a band's queued build after the fact — `None` clears the override, which is *derive from
-/// this entry's own web* (`docs/plan_standing_upkeep.md` §4.7a ②).
-///
-/// **It rides the queue ENTRY, not the `builders` row**, which carries no kit at all: one stored id
-/// per band cannot be right for both food webs, so `assign_labor` refuses a token there.
-fn set_builders_kit(app: &mut App, band: bevy::prelude::Entity, kit_id: Option<&str>) {
-    let kit = kit_id.map(|id| {
-        EquipmentConfig::builtin()
-            .kit(id)
-            .unwrap_or_else(|| panic!("the shipped roster carries '{id}'"))
-    });
-    let mut allocation = app
-        .world
-        .get_mut::<LaborAllocation>(band)
-        .expect("the fixture band keeps its allocation");
-    assert!(
-        !allocation.build_queue.is_empty(),
-        "the fixture band carries a queue entry to re-kit"
-    );
-    for entry in allocation.build_queue.iter_mut() {
-        entry.kit = kit.clone();
-    }
-}
+// **RETIRED: `set_builders_kit`** — named a kit on a band's queue entry to pick the tools its pool
+// went out with.
+//
+// A pool's tools follow from the **rung** since `docs/plan_pool_toe.md`, so an entry's kit prices
+// nothing. What separates a geared pool from a bare one is the band's own ledger, and
+// `core_sim::disarm_the_builders` is how a fixture states it.
 
 /// **A POOL CARRYING NOTHING THAT HELPS** — `intensification::NO_BUILD_GEAR` in the client's own
 /// units, so the bare arm of a pair is a stated fact rather than an unexplained `0.0`.

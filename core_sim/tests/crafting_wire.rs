@@ -96,6 +96,27 @@ fn world() -> (App, Entity) {
     (app, band)
 }
 
+/// **Re-declare the fixture band's gear, after the opening outfit has landed on it.**
+///
+/// `build_test_app` installs `for_a_stocked_fixture` and worldgen stocks the band from it — and then
+/// the sim applies that band's **default outfit**, which is a *replacement*
+/// (`.claude/rules/core_sim/starting-loadout.md`) and so rebuilds the ledger from the profile's three
+/// default kits alone. A fixture whose subject is some *other* item has to declare its stock again,
+/// which is exactly what `equipment.md` → "A FIXTURE DECLARES THE STOCK" asks of it.
+fn restock_the_fixture_band(app: &mut App, band: Entity) {
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let recipes = app.world.resource::<RecipesConfigHandle>().get();
+    let materials = app.world.resource::<MaterialsConfigHandle>().get();
+    let workers = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .working
+        .to_f32();
+    let ledger = BandEquipment::start_stocked_owned(&equipment, &recipes, &materials, workers);
+    app.world.entity_mut(band).insert(ledger);
+}
+
 /// Bank `amount` of `material` on the band at an exact per-axis reading — the same seam a take
 /// credits through, so the batch merges by the store's ordinary rule.
 fn deposit(app: &mut App, band: Entity, material: &str, amount: f32, axes: &[(&str, f32)]) {
@@ -992,6 +1013,9 @@ fn a_never_made_item_is_distinguishable_from_one_worn_dry() {
 #[test]
 fn the_life_wording_is_in_the_items_own_use_quanta_and_the_noun_comes_from_its_quantum() {
     let (mut app, band) = world();
+    // `clubs` are the `warrior` kit's, which the profile's default outfit does not include, so the
+    // fixture declares the gear it needs rather than inheriting whatever the opening happens to buy.
+    restock_the_fixture_band(&mut app, band);
     // Charge one use of each, so no row is `Untouched` and every one has to state a count.
     {
         let equipment = app.world.resource::<EquipmentConfigHandle>().get();
@@ -1437,19 +1461,37 @@ fn a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_a
     );
     let spawned = publish(&mut app, band);
     let spawned_rows = rows_for(&spawned, SLED_ITEM);
-    assert_eq!(
-        spawned_rows.len(),
-        1,
-        "a spawn stocks exactly one batch of the item, which is the row under test"
+    // **The band opens holding its default outfit** (`starting-loadout.md` → "A default is applied,
+    // never suggested"), and `mint_loadout` stocks a batch per KIT — so the sled, the roster's one
+    // item two kits share, arrives as two batches rather than one. The count is read rather than
+    // asserted, because what is under test is the grade every one of them carries.
+    let spawned_batches = spawned_rows.len();
+    assert!(
+        spawned_batches > 0,
+        "**LIVENESS**: the default outfit must stock the item, or there is no row under test"
     );
-    assert_eq!(
-        spawned_rows[0].grade, anchor,
-        "a spawned unit is the item's default tier, and `validate` ties the anchor grade to that \
-         same tier — so it performs as an anchor-grade craft and now says which"
-    );
+    for row in &spawned_rows {
+        assert_eq!(
+            row.grade, anchor,
+            "a spawned unit is the item's default tier, and `validate` ties the anchor grade to \
+             that same tier — so it performs as an anchor-grade craft and now says which"
+        );
+    }
 
     // THE PAIRING: the same band's own bench, off hide far richer than the bare hand can reach, so
     // the ceiling — not the pile — decides the grade, exactly as the anchor is defined.
+    //
+    // **The default outfit's own hide is cleared first.** A band opens holding `material_defaults`
+    // at `OPENING_MATERIAL_READING`, which is *poorer* than the reading below, and a bench drawing
+    // from both comes out a band lower — the fixture would then be measuring the pile it did not
+    // declare rather than the ceiling it did.
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band has a cohort");
+        cohort.stores.clear_materials();
+    }
     deposit(
         &mut app,
         band,
@@ -1477,16 +1519,15 @@ fn a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_a
     let crafted_rows = rows_for(&crafted, SLED_ITEM);
     assert_eq!(
         crafted_rows.len(),
-        2,
-        "the bench delivered a SECOND batch — *the next ten are their own batch* — so there are two \
-         rows to compare"
+        spawned_batches + 1,
+        "the bench delivered a FURTHER batch — *the next ten are their own batch* — so there is a \
+         crafted row to compare against the outfit's"
     );
     let grades: Vec<&str> = crafted_rows.iter().map(|row| row.grade.as_str()).collect();
-    assert_eq!(
-        grades,
-        vec![anchor.as_str(), anchor.as_str()],
-        "the spawned unit and the bare-handed craft beside it are the same grade, which is what \
-         makes the stamp a statement of fact rather than a display default"
+    assert!(
+        grades.iter().all(|grade| *grade == anchor.as_str()),
+        "the outfit's units and the bare-handed craft beside them are the same grade, which is \
+         what makes the stamp a statement of fact rather than a display default: {grades:?}"
     );
 }
 
@@ -2373,10 +2414,10 @@ fn the_benchs_rank_reaches_the_client_running_or_idle() {
 /// Two of the three fields have producers this world can reach, and each proves a different one:
 ///
 /// - **`materialStore`** proves the **deposit** path, and it is asserted as a PAIR against the
-///   spawn: a spawned band's store is **empty** (nothing is stocked at spawn any more — every
-///   material is either produced or picked in the turn-one opening loadout), and the row appears
-///   only once something is actually put there. `wood` has **no producer at all** until forest
-///   foraging lands, so an opening pick is the only way a band ever holds any.
+///   spawn: a spawned band holds **no `wood`** (nothing stocks it — every material is either
+///   produced or picked in the outfitting window, and `wood` is not one the profile defaults), and
+///   the row appears only once something is actually put there. `wood` has **no producer at all**
+///   until forest foraging lands, so an opening pick is the only way a band ever holds any.
 /// - **`materialUpkeepIncome`** proves the **bench** term. It is a *projection* off the bench's own
 ///   `ratePerTurn`, and on the shipped roster the pen's `hurdles` have **no producer but a bench** —
 ///   a ledger without that term would read zero income for ever for the one material a pen eats.
@@ -2392,11 +2433,17 @@ fn the_standing_material_bill_reaches_the_client() {
     const HURDLES: &str = "hurdles";
     let (mut app, band) = world();
 
-    // --- the STORE, empty at the spawn and populated by what the player picked -------------------
+    // --- the STORE, without WOOD at the spawn and populated by what the player picked ------------
+    // A band is created holding its **default outfit**, so its store is not empty — but the
+    // per-material `start_stock` that used to seed `wood` here is deleted, mechanism and all, and
+    // `wood` is not one of the profile's `material_defaults`. So the pairing still holds on the one
+    // material this test deposits.
     assert!(
-        publish(&mut app, band).material_store.is_empty(),
-        "a spawning band holds NO material at all - the per-material `start_stock` that used to \
-         seed `wood` here is deleted, mechanism and all"
+        !publish(&mut app, band)
+            .material_store
+            .iter()
+            .any(|(id, _)| id == WOOD),
+        "a spawning band holds no WOOD - nothing stocks it, and it has no producer either"
     );
     deposit(
         &mut app,

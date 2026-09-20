@@ -5059,6 +5059,38 @@
       "name": "populations[0].name",
       "output_multiplier": 0.000001,
       "pending_reveal_count": 3,
+      "pool_toe": [
+        {
+          "filled": 75.68,
+          "item_id": "hoes",
+          "pool": "agriculture",
+          "required": 45.049999
+        },
+        {
+          "filled": 87.029999,
+          "item_id": "earthmoving",
+          "pool": "roadwork",
+          "required": 102.550003
+        },
+        {
+          "filled": 28.26,
+          "item_id": "stone_dressing",
+          "pool": "roadwork",
+          "required": 70.599998
+        },
+        {
+          "filled": 49.139999,
+          "item_id": "stone_dressing",
+          "pool": "quarrywork",
+          "required": 20.5
+        },
+        {
+          "filled": 41.650002,
+          "item_id": "hoes",
+          "pool": "builders",
+          "required": 30.620001
+        }
+      ],
       "quarrywork_demand": 73.029999,
       "quarrywork_shortfall": 76.830002,
       "quarrywork_supplied": 34.189999,
@@ -5888,6 +5920,38 @@
       "name": "populations[1].name",
       "output_multiplier": 0.000118,
       "pending_reveal_count": 3,
+      "pool_toe": [
+        {
+          "filled": 65.529999,
+          "item_id": "hoes",
+          "pool": "agriculture",
+          "required": 31.26
+        },
+        {
+          "filled": 13.28,
+          "item_id": "earthmoving",
+          "pool": "roadwork",
+          "required": 23.450001
+        },
+        {
+          "filled": 59.580002,
+          "item_id": "stone_dressing",
+          "pool": "roadwork",
+          "required": 70.019997
+        },
+        {
+          "filled": 44.110001,
+          "item_id": "stone_dressing",
+          "pool": "quarrywork",
+          "required": 43.040001
+        },
+        {
+          "filled": 72.599998,
+          "item_id": "hoes",
+          "pool": "builders",
+          "required": 84.980003
+        }
+      ],
       "quarrywork_demand": 108.370003,
       "quarrywork_shortfall": 103.940002,
       "quarrywork_supplied": 106.830002,
@@ -6812,6 +6876,38 @@
       "name": "populations[2].name",
       "output_multiplier": 0.000051,
       "pending_reveal_count": 3,
+      "pool_toe": [
+        {
+          "filled": 100.459999,
+          "item_id": "hoes",
+          "pool": "agriculture",
+          "required": 20.35
+        },
+        {
+          "filled": 62.610001,
+          "item_id": "earthmoving",
+          "pool": "roadwork",
+          "required": 20.65
+        },
+        {
+          "filled": 89.190002,
+          "item_id": "stone_dressing",
+          "pool": "roadwork",
+          "required": 99.480003
+        },
+        {
+          "filled": 62.779999,
+          "item_id": "stone_dressing",
+          "pool": "quarrywork",
+          "required": 108.269997
+        },
+        {
+          "filled": 75.800003,
+          "item_id": "hoes",
+          "pool": "builders",
+          "required": 26.959999
+        }
+      ],
       "quarrywork_demand": 68.559998,
       "quarrywork_shortfall": 36.98,
       "quarrywork_supplied": 83.269997,

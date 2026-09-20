@@ -201,6 +201,20 @@ fn booted_band() -> (bevy::prelude::App, Entity, u32, UVec2) {
         .get::<Tile>(tile_entity)
         .expect("band tile")
         .position;
+    // ⛔ **THE FIXTURE RE-DECLARES ITS STOCK, BECAUSE THE SIM HAS JUST OUTFITTED THE BAND.**
+    // `build_test_app` installs `for_a_stocked_fixture` and worldgen stocks the band from it — and
+    // then `starting_loadout::outfit_opening_bands` commits that band's default outfit, which is an
+    // ordinary *replacement* (`.claude/rules/core_sim/starting-loadout.md` → "A default is applied,
+    // never suggested") and rebuilds the ledger from the profile's three default kits alone. This
+    // suite's subject **is** `start_stock_fraction`, so it says so out loud rather than inheriting
+    // whatever the opening happens to buy — `equipment.md` → "A FIXTURE DECLARES THE GEAR IT NEEDS".
+    let stocked = BandEquipment::start_stocked_owned(
+        &EquipmentConfig::for_a_stocked_fixture(),
+        &RecipesConfig::builtin(),
+        &MaterialsConfig::builtin(),
+        workers as f32,
+    );
+    app.world.entity_mut(band).insert(stocked);
     (app, band, workers, band_pos)
 }
 

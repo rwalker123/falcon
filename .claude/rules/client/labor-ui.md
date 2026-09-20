@@ -3402,13 +3402,18 @@ ENTRY"). Three client consequences, and the first is a defect the sheets shipped
   no new wire field was needed to know which web a sheet is composing for.
 - **`kit_offer` WITHHOLDS A BUILDERS KIT WHOSE TOOL SERVES THE OTHER WEB**, with its reason, and that
   is the same rule as the snare against a Red Deer asked one job over: it takes a `build_branch`
-  parameter rather than a quarry, because the builders stand on no source. **ITS PICKER IS THE QUEUE
-  ROW'S** (`docs/plan_standing_upkeep.md` §4.7a ②): the per-entry override lives in that row's
-  settings strip, and `_queue_kit_listing` hands the entry's own branch down, so a hoe in front of a
-  `Tame` is greyed WITH ITS REASON rather than hidden. The other live reader is
-  `KitRoster.resolve_selection`'s selectable list, which is what keeps the BUILD QUEUE head off a kit
-  the entry's web cannot use. `none` is still never withheld, carrying nothing to be inapplicable
-  with.
+  parameter rather than a quarry, because the builders stand on no source.
+  > ⛔ **IT HAS NO PICKER TO WITHHOLD FROM ANY MORE.** It read *"ITS PICKER IS THE QUEUE ROW'S
+  > (`docs/plan_standing_upkeep.md` §4.7a ②): the per-entry override lives in that row's settings
+  > strip, and `_queue_kit_listing` hands the entry's own branch down, so a hoe in front of a `Tame`
+  > is greyed WITH ITS REASON rather than hidden."* `docs/plan_pool_toe.md` §3 retired that control —
+  > **a build's tools follow from the RUNG it raises** — so there is no per-entry override and
+  > nothing for a greyed row to explain.
+  >
+  > **The TEST survives its caller**, which is why this bullet is not deleted: the live reader is
+  > `KitRoster.resolve_selection`'s selectable list, which is what keeps the BUILD QUEUE HEAD's
+  > readout off a kit the entry's web cannot use. `none` is still never withheld, carrying nothing to
+  > be inapplicable with.
 
 > #### THE ROW PUBLISHES THE **RESOLVED** KIT, AND ONE CASE IS THEREFORE UNRESOLVABLE HERE
 >
@@ -3814,8 +3819,14 @@ retires, so no rung of that picker can be disabled.
 > as a permanent override, so one click pinned a band raising a plant Cultivate to the animal web's
 > tool with no way back. `handle_assign_labor` **refuses a `kit` token on this role by name** now, and
 > `BandPanelController._commanded_role_kit_id` answers `NO_KIT_ID` on that branch so the stepper emits
-> `assign_labor … builders <n>` with no tail. The override's home is the queue row's settings strip
-> (`build_kit`, `band-city-panel.md` → "THE QUEUE'S OWN CONTROLS").
+> `assign_labor … builders <n>` with no tail.
+>
+> ⛔ **AND THE OVERRIDE NOW HAS NO HOME AT ALL, which is the END of this argument rather than a gap
+> in it.** It read *"the override's home is the queue row's settings strip (`build_kit`)"*;
+> `docs/plan_pool_toe.md` §3 retired that picker on the reasoning this bullet was already halfway to
+> — a build's tools are a property of the RUNG being raised, so neither the BAND nor the ENTRY is the
+> right place to name one. `build_kit` is unreachable from the UI and `cargo xtask command-guard` is
+> its only driver until the verb retires end to end in a later slice.
 >
 > **The refusal is in the HANDLER, not the parser**, so `command_guard` — a parser-level gate — cannot
 > see it; the `builders` role is swept BARE there for that reason.
@@ -7317,10 +7328,22 @@ never load that one:
 ⛔ **AND THE PICKER TERMS BECAME SECTION TERMS — the ceiling is a SUM** (§4.9 item 12d, second pass).
 `WORK_PICKER_NONE`/`_FLOOR`/`_PRIORITY`/`_KITS` are retired outright with
 `BandPanelController._work_picker_open` and `_toggle_work_picker`: the card draws POLICY, PRIORITY and
-KITS at once, so `_work_inspector_height` adds all three rather than one, and the ceiling is **374**
-(base 64 + 3×20 notes + 14 arrivals + 59 + 79 + [49 + 42] + a 7px actions rule) rather than 210. The
-KITS term is TWO terms since the wild-source fix below — 49 at its floor, plus 42 where the site owes
-upkeep — and 374 did not move, `27 + 44 + 20` and `27 + 22 + 22 + 20` being the same 91.
+KITS at once, so `_work_inspector_height` adds all three rather than one, and the ceiling is a sum
+rather than 210. The KITS term is TWO terms since the wild-source fix below — 49 at its floor, plus
+the conditional half where the site owes upkeep.
+
+⛔ **THE CEILING IS 372 AND THAT CONDITIONAL HALF IS 20 — it was 394 and 42.**
+`docs/plan_pool_toe.md` §3 retired the Upkeep PICKER, so `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT`
+(22 + 20) is `WORK_INSPECTOR_KITS_BILL_HEIGHT` (20): the standing BILL survived on its own, being the
+card's only statement of this site's price, while the CHOICE it sat under went with the rule that a
+site's keeping tools follow from its rung.
+
+> ⛔ **BOTH FIGURES WERE WRITTEN 20 LOW FOR SEVERAL SLICES — 374 and, briefly, 352.**
+> `WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT` (the take crew's own gear-shortfall line, 20) is a term of
+> the `const` and was never in the prose. The sum is **base 64 + 3×20 notes + 14 arrivals + 59 POLICY
+> + 79 PRIORITY + [49 KITS + 20 bill] + 20 shortfall + 7 actions rule = 372**. Re-derive from
+> `hud_work_vocab.WORK_INSPECTOR_CEILING_HEIGHT` rather than from any paragraph; the expression is
+> the authority and the prose has now drifted from it twice.
 
 - **`WORK_INSPECTOR_SECTION_HEAD_HEIGHT` (27)** is what one header costs: the rule (1), the gap under
   it (6), the label's own measured line (14) and the gap under that (6). The label is
@@ -7344,7 +7367,8 @@ upkeep — and 374 did not move, `27 + 44 + 20` and `27 + 22 + 22 + 20` being th
   and the first draft of this one ran seven characters past it and drew ellipsised."*
 - **`WORK_INSPECT_KITS_UPKEEP_FORMAT` ("Kept at %s a turn.") is composed from the STAMPED pair.**
   `RungLadder.upkeep_price_terms` joins `upkeepDemand` (work) and `upkeepMaterialDemand` (goods) into
-  terms — `Kept at 1 work · 0.05 hurdles a turn.` — and its EMPTINESS is the gate on the Upkeep row.
+  terms — `Kept at 1 work · 0.05 hurdles a turn.` — and its EMPTINESS is the gate on the keeping row,
+  which is that line ALONE since `docs/plan_pool_toe.md` §3 retired the picker above it.
   It is deliberately NOT `build_upkeep_demand`'s per-rung quote: that answers *what would a rung cost
   to hold* for a rung nobody has started, this answers *what is this source billed right now*, and
   `SourceForecast.upkeep_state`'s own ⛔ forbids reading one as the other. The full rationale for the

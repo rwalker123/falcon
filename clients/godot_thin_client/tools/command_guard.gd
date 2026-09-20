@@ -76,6 +76,10 @@ const LOADOUT_KIT_COUNT := 2
 const LOADOUT_KIT_BUDGET := 12
 const LOADOUT_MATERIAL_BUDGET := 30
 
+## The stepper face pressed to compose an order on the outfitting card. `HudWidgets` stamps no meta on
+## either stepper button, so the face is the handle.
+const STEPPER_PLUS_FACE := "+"
+
 ## Scratch prefs, never the player's real ones (the `band_panel_preview` rule).
 const GUARD_PREFS_PATH := "user://command_guard_prefs.cfg"
 const GUARD_DOCK_PREFS_PATH := "user://command_guard_dock.cfg"
@@ -280,28 +284,33 @@ func _ready() -> void:
 ## makes — so the band is positional and required, and this guard is what proves the client sends the
 ## durable `BandId` down it rather than the ECS `entity` the picker also holds.
 ##
-## **DRIVEN LAST, and through the REAL commit control.** Pushing an open window earlier would stand a
-## card up over every drive above it; and the payload is composed inside the controller (the picks,
-## the subject band), so pressing the button is the only way to reach the code a player reaches.
+## ⛔ **DRIVEN THROUGH A ROW'S OWN `+`, BECAUSE THE CARD NO LONGER DEFERS AN ORDER.** It was the
+## footer button until the outfitting draft was deleted; that control closes the card and sends
+## nothing now, so pressing it captures no line at all. A stepper press is where the command is
+## composed — the picks and the subject band are the controller's — so it is the only way to reach the
+## code a player reaches.
 ##
-## The kit tail's ids come from the campaign PRE-FILL, which is what the controller seeds a fresh
-## grant window from — so a formatter that dropped the band token would still emit a parseable line,
-## which is exactly the substitution the Rust half refuses.
+## **THE KIT TAIL COMES OFF THE WINDOW'S OWN ROWS**, which is what the band HOLDS: the sim applies a
+## band's default outfit when it makes the band, so a card that has never been touched already carries
+## a kit row, and one press on a MATERIAL row sends the whole allocation — both tails at once. A
+## formatter that dropped the band token would still emit a parseable line, which is exactly the
+## substitution the Rust half refuses.
+##
+## **DRIVEN LAST**: pushing an open window earlier would stand a card up over every drive above it.
 func _drive_set_starting_loadout() -> void:
 	_hud.update_opening_loadout({
 		"pickable_materials": LOADOUT_MATERIALS,
-		"material_defaults": [{"material_id": LOADOUT_MATERIALS[0], "units": LOADOUT_UNITS}],
-		"kit_defaults": [{"kit_id": LOADOUT_KIT_ID, "count": LOADOUT_KIT_COUNT}],
 		"craftable_recipe_ids": [],
 	})
 	_hud.update_band_alerts([_outfitting_band_fixture(), _party_fixture()])
 	await _settle()
-	_press_meta_button(_hud, String(HudLoadoutVocab.COMMIT_BUTTON_META), "outfitting card")
+	_press_row_plus(String(HudLoadoutVocab.MATERIAL_ROW_META), LOADOUT_MATERIALS[0])
 	await _settle()
 
-## The band fixture with an OPEN GRANT window on it — the turn-one shape, budgets large enough that
-## the pre-fill above is inside them (the client draws a published pre-fill as-is and the sim is what
-## clamps it, so a budget under it would be a fixture no server can send).
+## The band fixture with an OPEN GRANT window on it — the turn-one shape. **Its allocation is what the
+## band already holds**, the default outfit the sim applied at its creation, and the budgets are large
+## enough to leave room for the press below (the client draws a published allocation as-is and the sim
+## is what clamps it, so a budget under it would be a fixture no server can send).
 func _outfitting_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["loadout_window"] = {
@@ -309,8 +318,8 @@ func _outfitting_band_fixture() -> Dictionary:
 		"kit_budget": LOADOUT_KIT_BUDGET,
 		"material_budget": LOADOUT_MATERIAL_BUDGET,
 		"parent_band_id": 0,
-		"kits": [],
-		"materials": [],
+		"kits": [{"kit_id": LOADOUT_KIT_ID, "count": LOADOUT_KIT_COUNT}],
+		"materials": [{"material_id": LOADOUT_MATERIALS[0], "units": LOADOUT_UNITS}],
 		"parent_item_supply": [],
 		"parent_material_supply": [],
 	}
@@ -545,10 +554,15 @@ func _drive_assign_labor_kits() -> void:
 ## source holds the same entry. That is exactly the kind of thing this guard exists to pin — the
 ## grammar is the one place a client can be well-formed and mean something else.
 ##
-## **A NON-DEFAULT KIT, DELIBERATELY.** Picking the DERIVED entry emits no `kit` token (that is how
-## the override is cleared), and `_record` treats an expectation equal to the default as a fixture
-## error — rightly, since the assertion could never fail there. The clearing case is asserted where it
-## can be: `band_panel_preview` reads it off `Main.format_build_kit` on the live picker.
+## **A NON-DEFAULT KIT, DELIBERATELY.** A payload whose kit equals the DERIVED one emits no `kit`
+## token (that is how the override was cleared), and `_record` treats an expectation equal to the
+## default as a fixture error — rightly, since the assertion could never fail there.
+##
+## ⛔ **THIS IS THE VERB'S ONLY LIVE DRIVER NOW, and nothing in the UI emits it.**
+## `docs/plan_pool_toe.md` §3 retired the queue row's kit picker — a build's tools follow from the
+## RUNG it raises — so `band_panel_preview`'s live-picker claim (which carried the clearing case) is
+## retired with it and this drive reaches `_emit_build_kit` directly. Leaving the seam unreachable
+## from the UI is the expected state until the command retires end to end in a later slice.
 func _drive_build_kit() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
 	# **`BUILD_RUNG_ANY` IS STATED, NOT DEFAULTED** — no plant or animal kit binds a rung, so the
@@ -735,6 +749,39 @@ func _press_meta_button(root: Node, meta: String, where: String) -> void:
 		_fail("the %s's confirm is disabled — the fixture order must be launchable" % where)
 		return
 	button.pressed.emit()
+
+## Press the `+` of one stepper row, found by the row's own meta VALUE and then by the stepper's face.
+## The row is identified by meta because a face carries live numbers; the `+` inside it is identified
+## by its face because `HudWidgets.add_stepper_controls` stamps no meta on either button.
+func _press_row_plus(meta: String, row_id: String) -> void:
+	var row := _find_meta_row(_hud, meta, row_id)
+	if row == null:
+		_fail("no `%s` row for `%s` to press" % [meta, row_id])
+		return
+	var plus := _find_button_by_text(row, STEPPER_PLUS_FACE)
+	if plus == null or plus.disabled:
+		_fail("the `%s` row's `+` is missing or disabled" % row_id)
+		return
+	plus.pressed.emit()
+
+func _find_meta_row(node: Node, meta: String, row_id: String) -> Control:
+	if node is Control and (node as Control).has_meta(meta) \
+			and str((node as Control).get_meta(meta)) == row_id:
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_row(child, meta, row_id)
+		if found != null:
+			return found
+	return null
+
+func _find_button_by_text(node: Node, face: String) -> Button:
+	if node is Button and (node as Button).text == face:
+		return node
+	for child in node.get_children():
+		var found := _find_button_by_text(child, face)
+		if found != null:
+			return found
+	return null
 
 func _find_meta_button(node: Node, meta: String) -> Button:
 	if node is Button and node.has_meta(meta):

@@ -330,6 +330,15 @@ real band both, and `demographic_events::every_resident_band_carries_a_flow_accu
 spawn seam forgets — a band that silently never narrates is the failure mode that would otherwise
 ship unnoticed.
 
+## One EVENT, two ROWS — the only kind pushed twice
+
+`CommandEventKind::BandChangedHands` is filed under **both** factions of a knowledge migration's
+handover, because `snapshot::campaign::command_events_to_state` keeps only `entry.faction == viewer`
+and a single entry would reach exactly one of the two players it happened to. Which side a row
+describes rides the detail (`side=lost|gained`), and both halves carry the same `band=/from=/to=`
+so they can be matched up. The mechanism, the rung and the dead diffusion events it replaced are
+`.claude/rules/core_sim/ecs-systems.md` → "THE HANDOVER IS TOLD TO BOTH PEOPLES".
+
 ## What is NOT here
 
 There is **no `System` event kind**. System/console lines are synthesized client-side; the sim

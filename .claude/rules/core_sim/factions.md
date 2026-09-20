@@ -940,11 +940,18 @@ already carries.
 **② The builder's state follows the builder.** *Who* is raising that improvement, *with what kit*,
 *how many turns from done* and *where it sits in their queue* is not a fact about the ground at all —
 it is the builder's internal state, the same category as the larder, the bench and the build queue a
-foreign band's row already withholds. So `buildKitId`, `upkeepKitId` / `upkeepKitNamed`,
-`buildTurnsRemaining`, `buildQueuePosition`, `buildWorkFromGear`, `buildBlockedReason`,
-`buildDestinationRung` / `buildDestinationCapacity` and `buildLegs` are the **viewer's own bands or
-nothing**, on explored ground exactly as on unexplored. Both source tables carry it, plants and herds
-alike; a per-web asymmetry here would be a second model.
+foreign band's row already withholds. So `buildTurnsRemaining`, `buildQueuePosition`,
+`buildWorkFromGear`, `buildBlockedReason`, `buildDestinationRung` / `buildDestinationCapacity` and
+`buildLegs` are the **viewer's own bands or nothing**, on explored ground exactly as on unexplored.
+Both source tables carry it, plants and herds alike; a per-web asymmetry here would be a second
+model.
+
+> **`buildKitId` and `upkeepKitId` / `upkeepKitNamed` were the first three names on that list and are
+> no longer on it.** They publish empty on **every** row since `docs/plan_pool_toe.md` §4 — a site's
+> tools follow from its own rung and are published per pool on the cohort — so there is nothing left
+> for the rule to withhold, and an assertion that a rival's row states no kit would hold whatever the
+> redaction did. `core_sim/tests/patch_row_is_viewer_scoped.rs` asserts their emptiness on the
+> **viewer's own** row for exactly that reason, and the redaction cases no longer mention them.
 
 > #### ⛔ RULE ① IS AN ALLOW-LIST ON THE **SOURCE**, NOT A LIST OF FIELDS
 >
@@ -977,10 +984,10 @@ alike; a per-web asymmetry here would be a second model.
 
 > #### ⛔ RULE ② IS ENFORCED AT THE CAPTURE'S ITERATOR, and the two source tables share it
 >
-> `resolve_build_kit_ids` / `resolve_upkeep_kits` key purely by tile and herd id, so they cannot tell
+> `resolve_queued_build_sources` / `resolve_worked_sources` key purely by tile and herd id, so they cannot tell
 > whose queue an entry came from — an unfiltered walk resolved *every* faction's queue onto the
 > shared source tables. `snapshot/capture.rs` filters both allocation iterators on
-> `cohort.faction == viewer_faction`, which is also what `UpkeepKitIds::patch`'s own contract had
+> `cohort.faction == viewer_faction`, which is also what `WorkedSources::patch`'s own contract had
 > always claimed (*"`("", false)` when no band **of the faction** works it"*).
 >
 > **The stamped scratch needs the same gate and does not come from those indices.**
@@ -988,7 +995,7 @@ alike; a per-web asymmetry here would be a second model.
 > the patch and the herd by `publish_build_chain` for whichever band worked the source, and the
 > stamp records no faction. What the two filtered indices give is the membership that answers *"could
 > one of our bands have stamped this"* — the source is in a viewer band's **queue**
-> (`BuildKitIds::patch_is_queued`) or a viewer band **works** it (`UpkeepKitIds::patch_is_worked`) —
+> (`QueuedBuildSources::patch_is_queued`) or a viewer band **works** it (`WorkedSources::patch_is_worked`) —
 > and those are precisely the two ways `publish_build_chain` reaches a source at all. Where neither
 > holds, the row is built from `ForagePatch::without_build_estimate` / `Herd::without_build_estimate`.
 >

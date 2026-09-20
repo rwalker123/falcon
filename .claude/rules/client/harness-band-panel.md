@@ -171,8 +171,41 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 183 frames / 1328 `PASS` / 536 `assert OK`, exit 0 — RE-MEASURED ON THE MERGED
-TREE, and this line is the harness's ONLY tally.** An earlier arc removed one frame
+**A clean run is 184 frames / 1334 `PASS` / 542 `assert OK`, exit 0 — RE-MEASURED, and this line is
+the harness's ONLY tally.**
+
+**THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
+for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,
+an open one adds exactly its strip, and the rendered board really does draw more rows closed) and
+**+3** for `_assert_pending_role_edit_keeps_card_and_row_in_step` (the settled pair both speak, the
+pending pair both fall silent, and the two AGREE).
+
+**32 of the 184 frames MOVED** — measured by A/B against the sabotaged build rather than guessed.
+(Nothing is re-recorded: `ui_preview_out/` is gitignored, so a frame is a run artifact and "moved"
+means it renders differently, never that a baseline was committed.) Every one of the 32 has a
+non-empty BUILD QUEUE — the only state `build_queue_block_height` can return non-zero for — and
+every one gains back the work-board row the phantom 34px reservation was eating. A frame with an
+**open** strip did **not** move, which is the arithmetic working rather than a frame set that
+shifted wholesale.
+
+**THE POOL-TOE SUB-UNIT FIX MOVED IT 183 / 1323 / 536 → 184 / 1328 / 542**, re-measured rather than
+summed: **+1 frame** (`band_panel_keepers_tools_short`), **+5 `PASS`** (`_assert_pool_toe_rounding`'s
+`_assert_pool_toe_sub_unit_shortfall` block is four of them, the new frame's
+`_assert_work_inspector_fits` the fifth) and **+6 `assert OK`** (the frame's bounds/content-fits pair,
+its width claim, and `_assert_keeping_remedy`'s three `print`-reported answers — that producer lands
+in the `assert OK` tally for the same reason `_assert_keeper_warning` does).
+
+⛔ **THE `PASS` COUNT WENT DOWN (1328 → 1323) AND NO CLAIM WAS LOST** — `docs/plan_pool_toe.md` §3
+retired two kit PICKERS and every claim that could only be made about a control, while §5's pool TOE
+added a new set. Retired: the queue strip's kit picker (its derivation, its `(default)` mark,
+`_assert_build_kit_command_grammar`'s two command claims and the FLOW pair
+`_assert_queue_settings_flow` / `_assert_queue_settings_predicate`), the work inspector's Upkeep
+picker (`_assert_unstated_upkeep_kit_falls_through`'s three, and the roster/`none`/`(default)` half
+of `_assert_kits_section_draws_its_control`), and the queue HEAD-vs-ROW kit AGREEMENT
+(`_open_queue_row_kit_face`), which needed two readings and now has one. Added: the pool TOE's
+four-card SET, `_assert_pool_toe_filled_is_not_absent`, `_assert_pool_toe_shared_item` and
+`_assert_pool_toe_rounding`, and `_assert_pool_toe_inflection`'s nine. **A tally that falls is a
+thing to explain, not a thing to adjust.** An earlier arc removed one frame
 (`band_panel_faction_knowledge`) and added none, and measured 126 / 404 / 685 on its own; the
 build-queue arc (#576) landed in `main` in between and the two sets of numbers were neither
 branch's. **That is the "RE-MEASURED, never summed" rule arriving through a MERGE rather than
@@ -1177,18 +1210,24 @@ at all. Every band has an outfitting window of its own now — the spawned band'
 the home band for every splinter a split makes — so the band is **positional and required**, and this
 is the gate that says the client sends the durable `BandId` down it rather than the ECS `entity` the
 picker also holds. `xtask/src/command_guard.rs`'s `band_handle` gained the matching arm; the emitted
-line is `set_starting_loadout 0 71204 kit big_game 2 material hide 4`, the band token being the
+line is `set_starting_loadout 0 71204 kit big_game 2 material hide 5`, the band token being the
 fixture's `BAND_ID` and never its deliberately different `BAND_ENTITY`.
 
-- **It is driven LAST, and through the REAL commit control.** Pushing an open window earlier would
-  stand a card up over every drive above it; and the payload is composed inside the controller (the
-  picks, the subject band), so pressing the button by `HudLoadoutVocab.COMMIT_BUTTON_META` is the only
-  way to reach the code a player reaches.
+- ⛔ **IT IS DRIVEN THROUGH A ROW'S OWN `+`, AND IT WAS THE FOOTER BUTTON.** That control closed
+  nothing and sent everything; the outfitting draft is deleted, so it closes the card and sends
+  nothing, and a press on it captures no line at all. The command is composed on a STEPPER press now
+  (`_press_row_plus`, by the row's `HudLoadoutVocab.MATERIAL_ROW_META` and then by the stepper's `+`
+  face, `HudWidgets.add_stepper_controls` stamping no meta on either button), which is the only way to
+  reach the code a player reaches. Still driven LAST: pushing an open window earlier would stand a card
+  up over every drive above it.
 - **The window rides the BAND fixture** (`_outfitting_band_fixture`), which is what makes the emitted
   band the one this gate already asserts everything else against.
-- **The order is one kit line and one material line**, seeded from the campaign pre-fill. What is read
-  off the line is the BAND TOKEN; a longer order would be more tokens saying the same thing. Both
-  budgets sit above the pre-fill, the client drawing a published pre-fill as-is.
+- **The order is one kit line and one material line, and the KIT line comes from a row nobody
+  pressed.** The band HOLDS its default outfit — the sim applies it when it makes the band — so the
+  window's own `kits` / `materials` are what the card draws, and one press on the material row sends
+  the whole allocation: both tails, from one gesture. What is read off the line is the BAND TOKEN; a
+  longer order would be more tokens saying the same thing. Both budgets sit above the allocation, the
+  client drawing a published one as-is.
 - **It carries no `expected_kit`.** `SetStartingLoadout` has no kit AXIS — its `kit <id> <n>` tail is
   an allocation rather than the selection `Main._kit_token` omits — so `kit_token` answers
   `NotKitBearing` and the kit gate correctly says nothing about it.
@@ -1314,14 +1353,20 @@ can stage alone.
 > (`_pending_labor.clear()` / `drop_pending_unqueue`) so they stay grammar probes. Without that, the
 > pending-queue states one block down lose their rows and fail for a reason nothing in them names.
 
-**The FLOW is asserted where it is DECIDED, not where it is drawn.** No shipped dock is wide enough
-for the settings pair on one line (342px of strip on the tall LEFT dock, 368 on the 1920 BOTTOM one,
-against 444 — 408 of pickers plus the withdrawal's 32 and its gap, since the `✕` rides that line
-now), so a rendered one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
-`HudWorkVocab.queue_settings_one_line` on both sides of its threshold and that the reserved height
-follows the wrap, and `_assert_queue_settings_flow` REPORTS the width at every dock it renders. That
-is the payoff of the wrap being a predicate both the reservation and the builder read: it is checkable
-without a layout.
+> ⛔ **RETIRED — THE FLOW, ASSERTED WHERE IT WAS DECIDED.** It read: *"No shipped dock is wide
+> enough for the settings pair on one line (342px of strip on the tall LEFT dock, 368 on the 1920
+> BOTTOM one, against 444 — 408 of pickers plus the withdrawal's 32 and its gap), so a rendered
+> one-line frame is unreachable — `_assert_queue_settings_predicate` asserts
+> `HudWorkVocab.queue_settings_one_line` on both sides of its threshold and that the reserved height
+> follows the wrap, and `_assert_queue_settings_flow` REPORTS the width at every dock it renders."*
+>
+> `docs/plan_pool_toe.md` §3 retired the kit picker, so the strip has ONE control and the predicate
+> one answer. **The reasoning survives the pair and is why `_assert_queue_settings_strip` still
+> exists**: the height is RESERVED before it is drawn, so anything that decides how many lines a
+> strip takes has to be checkable WITHOUT a layout — a container that wrapped at layout time could
+> not tell the reservation what it did, and this zone answers the difference by clipping the board.
+> What the replacement checks is the half that still bites: the crop picker does not shrink, no kit
+> picker stands beside it, and the strip DREW what it RESERVED.
 
 **The DRAG is driven TWICE — through the controller's callables AND as a real mouse gesture — because
 the two pin different halves and neither implies the other.** `_render_queue_drag_state` calls
@@ -2332,11 +2377,16 @@ states, i.e. every state in this file that draws one.
   real roster id on a source row, so a fixture omitting it left the take picker resolving through its
   FALLBACK on every frame in this file. Each row states its own job's DEFAULT, so **no frame moved**;
   what it buys is that "the picker names the row's kit" is a claim about the row.
-- **The three KEPT fixtures state `upkeep_kit_id` + `upkeep_kit_named`.** `resolve_upkeep_kits`
-  answers a real id for every source a band works, so the same argument holds one account over, and
-  without it all three kept states would have been testing the client's fall-through rather than the
-  wire path. `KEEPING_POOL_PATCH_UPKEEP_KIT` / `_HERD_UPKEEP_KIT` are the two webs' derivations,
-  spelled from the shared roster's ids.
+- **The three KEPT fixtures state `upkeep_kit_id` + `upkeep_kit_named`.** They did so because
+  `resolve_upkeep_kits` answered a real id for every source a band works, so the same argument held
+  one account over. **That account is retired** (`docs/plan_pool_toe.md` §4): the resolver is now
+  `resolve_worked_sources`, a MEMBERSHIP SET carrying no kit at all — it answers only *does one of
+  the viewer's bands work this source*, which gates a build scratch — and every patch, herd and
+  working publishes `upkeep_kit_id` `""` with `upkeep_kit_named` `false`, a site's keeping tools
+  following from its own rung and being read off the cohort's `pool_toe`. So the pair these three
+  fixtures state is one no server sends any more, and what they exercise is the client's Upkeep
+  picker rather than a wire path. `KEEPING_POOL_PATCH_UPKEEP_KIT` / `_HERD_UPKEEP_KIT` are still the
+  two webs' derivations, spelled from the shared roster's ids.
 
 **`_assert_unstated_upkeep_kit_falls_through` is PNG-LESS and DRIVEN because no fixture here can
 render its state.** The wire states `""` only for a source no band works, and every kept source in
@@ -2679,3 +2729,147 @@ on every frame in the chapter — measured, the first cut of this state failed o
 > tile's `units` list are stripped of their own `tile_info` (`_roster_row`), which is the shape
 > `MapView` already has: `tile_info` is stamped onto the payload handed out, never onto the rows inside
 > it.
+
+## The POOL TOE's four-card SET, and the two claims no card can carry
+
+`docs/plan_pool_toe.md` §5. `band_panel_pool_kit_short` stages **four pools, four answers, one
+frame**, and the behaviour is `band-city-panel.md` → "⛔ A POOL CAN BE SHORT OF ITS TOOLS". What
+belongs here is the fixture and what each claim can tell apart.
+
+| card | its TOE rows | what the card must say |
+|---|---|---|
+| Agriculture | hoes **4 of 4** | hands only — the tools are **FILLED** and say nothing |
+| Husbandry | crook **0 of 2** | hands, then one tool term, in that order |
+| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | tools only, TWO terms on one line |
+| Builders | none at all | nothing — **NOT APPLICABLE**, and the calm ink's negative |
+
+⛔ **THE SET IS THE CLAIM, AND THE TWO SILENT CARDS ARE WHY.** A tooltip builder that always renders
+a tool line passes the two SHORT cards on its own; one that never renders passes the two silent ones.
+Neither can pass all four.
+
+⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY**, so what separates them is
+asserted against the FIXTURE rather than against the card
+(`_assert_pool_toe_filled_is_not_absent`): the filled pool really has a row and the calm one has
+none, and BOTH render no line. Without the first half, *"a filled pool states no tool line"* is
+satisfied by a decoder that dropped the filled row on the way in — which would destroy the
+distinction the vector exists to carry, silently, and look exactly like this.
+
+**THE SHARED ITEM IS TWO ROWS AT DIFFERENT NUMBERS, AND QUARRYWORK'S COMES FIRST.** Roadwork and
+Quarrywork both want stone-dressing tools; the two rows are adjacent and deliberately in the wrong order
+for a reader that trusts position, so a card taking the first row naming its item states the quarry
+gang's figures. The three readings are pairwise distinct by construction — roadwork `0 of 2`,
+quarrywork `3 of 5`, their sum `3 of 7` — so `_assert_pool_toe_shared_item`'s two negatives bite on
+the figures rather than coinciding with the right answer. **Quarrywork has no card of its own** (its
+stepper rides the WORKINGS ROSTER head), so the claim is made where the shared item is visible, on
+the Roadwork card.
+
+**THE ROUNDING IS DRIVEN, NOT RENDERED** (`_assert_pool_toe_rounding`). Every row in the fixture is
+whole on purpose, so the frame says nothing about what happens between two integers; the rows that
+bite are constructed and handed to `HudWorkVocab.pool_toe_short_line` directly — a fractional
+shortfall (`5.5` required, `2.5` filled → `2 of 6 hoes`), one whose two halves ROUND to equality and
+whose floats do not (`3.0` / `2.9` → `2 of 3 hoes`) and one whose requirement is under a whole unit
+(`0.4` / `0.0` → `0 of 1 hoe`, never `0 of 0`). **The expectations are hand-worked from the documented
+rule**, never re-derived through the arithmetic under test, which would agree with itself whatever it
+does.
+
+⛔ **THE `3.0 / 2.9` ROW REVERSED ITS CLAIM, and the reversal IS the rule.** It used to read *"one
+that rounds UP to covered → **nothing**"*; a pool short of a tool now flies the triangle at any
+magnitude, and that row is the only one in the set that tells the raw-float short test apart from a
+comparison of the printed pair (`band-city-panel.md` → "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND
+AWAY").
+
+**`_assert_pool_toe_sub_unit_shortfall` IS THE PLAYTEST ROW, TRANSCRIBED** (`0.5666 of 0.7906`, which
+the retired apportion printed as `1 of 1 hoe` and therefore skipped). It asserts **both producers** —
+the raw-float `pool_toe_is_short` the triangle and the work row's remedy fork on, and the SENTENCE the
+hover carries — because a fix that made the line print while leaving the boolean rounding would fly no
+triangle, and one that flew the triangle over an empty hover would say nothing. A FILLED row is paired
+against both, and a standalone claim asserts a short row never reads `N of N`: that equality beside a
+live shortfall was the defect's actual output, and inferring its absence from the equality above would
+not pin it.
+
+**THE EXPECTATIONS ARE COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS**
+(`_pool_toe_term` / `_pool_toe_line`), never through `pool_toe_short_line` — the material-short
+guard's rule, which this file has already recorded twice: an expectation re-derived through the code
+under test collapses with it.
+
+⛔ **THE NEGATIVE NEEDLE IS A SHAPE, NOT A WORD.** `POOL_TOE_LINE_PATTERN` (`^[0-9]+ of [0-9]+ `) is
+what *"states NO tool shortfall"* is asked with. It was the retired sentence's fixed tail
+(` available`), which a TOE term no longer carries; a needle spelled as one item's word would be
+blind to a stray line naming a different item, which is exactly the failure the claim exists to catch.
+
+⛔ **THE WARN-AMBER CLAIM MOVED CARDS.** Builders was the tools-short card and is now the calm one,
+so the amber is asserted on ROADWORK and the calm ink on BUILDERS. The FILLED card cannot serve as
+the calm negative — it is short of HANDS on this band, so its title is amber for a reason that says
+nothing about tools.
+
+### …and what the two retired PICKERS cost the rest of the file
+
+- **`WIDE_DOCK_QUEUE_ROWS` 1 → 2** and **`DIALOG_PROBE_WIDE_BOARD_ROWS` 2 → 1**, both RE-MEASURED off
+  a failing run rather than adjusted. `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` fell 56 → 34 with the
+  strip's second control, and the zone's standing allocation rule — *the queue claims up to its
+  authored cap and the board takes the remainder* — hands that 22px to a second QUEUE row before the
+  board sees any. The claim §4.9 item 12d actually made is untouched: the board's count does not
+  change when a row is SELECTED, which `_assert_zone_budget_has_no_inspector_term` pins by EQUALITY.
+- **`_assert_queue_settings_strip` replaced `_assert_queue_settings_flow` / `_assert_queue_settings_predicate`.**
+  With one control the flow predicate has one answer, so what is left is the half that still bites:
+  the crop picker does not shrink, there is no kit picker beside it, and the strip DREW no taller than
+  it RESERVED.
+- **Two RETIRED metas are spelled in the harness** — `RETIRED_UPKEEP_KIT_META` and
+  `RETIRED_QUEUE_KIT_PICKER_META`. The client's consts went with their controls and an ABSENCE claim
+  still needs a needle, so the harness carries the dead strings rather than the client carrying dead
+  consts. If either ever matches a node again, a retired picker has come back.
+- ⛔ **A QUEUED HUNT ENTRY LOST ITS `✕` FOR ONE PASS, and the harness is what found it.** The strip
+  was made conditional on `legs or crop` when the kit left, so an animal entry stopped expanding —
+  and §4.7b ③ had moved the withdrawal INTO that strip when the reorder arrows took its column. The
+  failing claim was `…and on a HERD entry `unqueue 0 game_deer_07` (got "")`: a well-formed queue row
+  with no way to take it back. The strip opens on every confirmed entry again, and the `✕` is what
+  guarantees it.
+
+### …and the counted noun is INFLECTED, which one suffix rule could not do
+
+`_assert_pool_toe_inflection`, PNG-less and driven — a counted noun is a string, and the card renders
+a perfectly ordinary line whichever form it chose. It exists because `0 of 2 crook` was reported on
+its way into a playtest.
+
+**`DetailFormat.KIT_ITEM_LABELS` IS MIXED**, so neither rule works on the whole table: *append an
+`s`* gives `Spearss` and *leave it alone* gives `0 of 2 crook`. Four readings, and the SET is the
+claim — a builder that never inflected passes the two singular rows and one that always appended
+passes the two plural rows:
+
+| item | its label | at 1 | at 2 |
+|---|---|---|---|
+| `hoes` | already plural | `0 of 1 hoe` | `1 of 2 hoes` |
+| `crook` | singular | `0 of 1 crook` | `1 of 2 crooks` |
+
+⛔ **THE `1 of 2` CASE IS ASSERTED FOR ITS OWN SAKE.** A noun following the NUMERATOR reads singular
+there and is wrong; the noun agrees with the DENOMINATOR, which is the quantity `N of M` names. The
+`0 of 1` case is the other half and is the easy one to miss — it is also reachable in play, since a
+sub-unit requirement CEILS to a denominator of one (`POOL_TOE_MIN_UNITS`, which floored it there, is
+retired: the floor is structural now, a term being emitted only for a row the raw floats call short).
+
+**A third claim per item requires the two forms to DIFFER**, or *"it inflects"* is satisfied by a row
+that spells the same word twice — which is exactly what the FALLBACK does, deliberately.
+
+**THE FALLBACK IS ASSERTED AS SAFE RATHER THAN AS RIGHT** (`POOL_TOE_INFLECT_UNLISTED_ITEM`, a
+deliberately PLURAL label, since `Spearss` is the failure it exists to refuse): an item with no
+counted row reads its label at every count and appends nothing, so it does not inflect — `0 of 1
+spears` — and **a new item a pool can require needs a row in `KIT_ITEM_COUNTED_NAMES`** rather than a
+cleverer rule. The claim pins both counts against the label and that the line does not end in `ss`.
+
+**AND NO SHIPPED POOL ITEM LEAKS A WIRE UNDERSCORE**, at either count — the reason the two road tools
+were given labels at all.
+
+> ⛔ **THE LABELS THEMSELVES MOVED, AND THE CONFIG IS WHY.** `earthmoving` / `stone_dressing` shipped
+> for one pass as `Mattocks` / `Dressing hammers`, taken from client prose in `KitRoster.gd`.
+> `equipment.json._comment_road_tools` refuses the first outright — *"a mattock beside them would
+> blur the exact plant/route line"* — and shows the second names one of three tools (*"the maul,
+> wedges and dressing hammer"*). They are `Earthmoving tools` / `Stone-dressing tools`, which is the
+> phrasing `.claude/rules/core_sim/routes.md` already uses for these two ids.
+
+⛔ **THE AUTO-SCROLL BLOCK FLAKED ONCE UNDER LOAD, and it is the wall-clock budget doing what it is
+for.** A run started immediately after a `--import` failed three claims with
+`the engine's own pump carried the list 1 → 5px (56px wanted) over 427 frames` — the pump is on
+`Time.get_ticks_usec` with a `QUEUE_AUTOSCROLL_TRAVEL_BUDGET_SECONDS` deadline, so a machine busy
+enough to starve the frame loop blows the budget and FAILS LOUDLY rather than hanging. The immediate
+re-run was green. **Judge it by a second run before treating it as a regression**; nothing in the
+pool-TOE arc is anywhere near that gesture.

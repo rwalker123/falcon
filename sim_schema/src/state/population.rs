@@ -1565,6 +1565,52 @@ pub struct PopulationCohortState {
     /// See [`Self::quarrywork_demand`] — `demand − supplied`, verbatim.
     #[serde(default)]
     pub quarrywork_shortfall: f32,
+    /// **WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND GAVE THEM** —
+    /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4).
+    ///
+    /// ⛔ **IT REPLACES A POOL ROW'S [`LaborAssignmentState::kit_id`]**, which had room for one tool
+    /// where a pool needs as many as it has kinds of site: a Roadwork pool keeping a dirt road and a
+    /// paved road wants earthmoving gear *and* stone-dressing gear at once. A pool row therefore
+    /// publishes an empty `kit_id` and a [`LaborAssignmentState::kit_workers_holding`] equal to its
+    /// `workers` — *nothing to be short of* — and its gear is stated here instead.
+    ///
+    /// **A row exists only where `required > 0`**, and a met requirement **keeps** its row with
+    /// `filled >= required` — ⛔ *covering* it rather than equalling it, because tools are issued in
+    /// whole units. See [`PoolToeLineState::filled`]. Appended last (append-only).
+    #[serde(default)]
+    pub pool_toe: Vec<PoolToeLineState>,
+}
+
+/// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
+/// [`PopulationCohortState::pool_toe`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PoolToeLineState {
+    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"agriculture"`,
+    /// `"husbandry"`, `"roadwork"`, `"quarrywork"` or `"builders"`.
+    pub pool: String,
+    /// The `equipment.json` item id this line is about.
+    pub item_id: String,
+    /// **Units the pool's sites require this turn** — one per hand standing on a site the tool
+    /// serves, divided by the item's `workers_per_unit`. ⛔ **Never `0`**: a line exists only where
+    /// something is required, so a reader may divide by it.
+    pub required: f32,
+    /// **Units the band's settlement actually handed this pool.**
+    ///
+    /// ⛔ **IT IS IN WHOLE UNITS AND MAY EXCEED [`Self::required`]**, so the satisfied test is
+    /// `filled >= required` and a shortfall is `(required - filled).max(0.0)` — **never**
+    /// `filled == required`, and never a bare subtraction, which goes negative. A tool is a
+    /// countable object carried by a **person**, so the settlement pays each `(pool, tier)` group
+    /// `ceil` of its bid in whole tools: a pool whose hands come to a fraction of a unit — one
+    /// keeper spending part of a turn on a dirt road requires `0.136` of the earthmoving gear — is
+    /// handed the one whole tool that keeper carries, and the line reads `filled 1.0` against
+    /// `required 0.136`. That is the **common** case, not an edge one, because a pool's hands come
+    /// out of a continuous split.
+    ///
+    /// `0` is a pool the settlement reached with nothing (its sites work bare on this line); a
+    /// positive `filled` short of `required` is the part-served share of a priority tier the stock
+    /// could not cover. Tools are settled **band-wide per item**, so two pools reaching for one
+    /// stock divide it here.
+    pub filled: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

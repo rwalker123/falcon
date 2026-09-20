@@ -443,7 +443,8 @@ fn spawn_forager_of(
             .rung(RungKey::PlantField)
             .upkeep_crew_needed(loads)
     };
-    app.world
+    let band = app
+        .world
         .spawn((
             PopulationCohort {
                 home: tile,
@@ -516,14 +517,23 @@ fn spawn_forager_of(
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(declared),
-                        kit: Some(bare_builders()),
+                        // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
+                        // pool's tools follow from the rung. The gear axis is held on the LEDGER.
+                        kit: None,
                     })
                     .into_iter()
                     .collect(),
                 ..Default::default()
             },
         ))
-        .id()
+        .id();
+    // **Only where this fixture is actually building** — the plant branch's builders and its keepers
+    // reach for the same hoe, so taking it off disarms both, which is right for a fixture measuring
+    // the build's pace and wrong for one measuring the keeping.
+    if improvement.is_some() {
+        core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantField);
+    }
+    band
 }
 
 /// One turn's forage pipeline in stage order: Logistics (regrowth, feral decay) then Population

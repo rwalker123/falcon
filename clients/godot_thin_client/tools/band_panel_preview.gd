@@ -3653,6 +3653,43 @@ func _render_keeper_warning_states() -> void:
 	_assert_keeper_warning("keepers_short_with_hunters_piled_on", true)
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
+	# ---- …AND WHICH LEVER THE NOTE NAMES (the playtest's second half) --------------------------
+	# The SAME herd and the SAME hunt crew again, with only the husbandry pool's TABLE OF EQUIPMENT
+	# moving. The frame is the TOOLS arm, because that is the one the board could not say before and
+	# the one a reader will want to look at; the two HANDS arms beside it are driven, a board naming
+	# one lever looking exactly like a board naming the other.
+	_set_world_herds(_under_herded_work_herd_fixtures())
+	_push_bands([_keeper_tools_band_fixture(KEEPER_STATE_HUNTERS, KEEPER_TOOLS_FILLED_SHORT)])
+	await _settle()
+	_open_work_inspector_for_herd(UNDER_HERDED_WORK_HERD_ID)
+	await _settle()
+	await _save("band_panel_keepers_tools_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_keeping_remedy("band_panel_keepers_tools_short", true)
+	# …and the strip still HOLDS the reworded note, which is a width claim and not a wording one:
+	# the tools sentence is measured to the hands sentence's length precisely so this stays true.
+	_assert_work_inspector_fits("band_panel_keepers_tools_short")
+
+	# THE SAME POOL WITH ITS TOE FILLED — the fork is on SHORTNESS, not on the vector's presence.
+	_push_bands([_keeper_tools_band_fixture(KEEPER_STATE_HUNTERS, KEEPER_TOOLS_FILLED_WHOLE)])
+	await _settle()
+	_assert_keeping_remedy("keepers_tools_filled", false)
+
+	# …and the band with NO TOE at all, which is every other frame in this file.
+	_push_bands([_keeper_work_band_fixture(KEEPER_STATE_HUNTERS)])
+	await _settle()
+	_assert_keeping_remedy("keepers_no_toe", false)
+
+	# ⛔ …AND THE CARD AND THE ROW ANSWER FROM ONE TEST WHILE A ROLE EDIT IS PENDING. Driven rather
+	# than rendered: a board whose rows name tools beside a card that has fallen silent looks exactly
+	# like a board where they agree.
+	_push_bands([_keeper_tools_band_fixture(KEEPER_STATE_HUNTERS, KEEPER_TOOLS_FILLED_SHORT)])
+	await _settle()
+	await _assert_pending_role_edit_keeps_card_and_row_in_step()
+
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+
 	# ---- THE OTHER WAY A SOURCE BLEEDS: a part-built rung nobody is building -------------------
 	# A Tame the player started and then re-tasked the crew off. The rung is owed its BUILDERS, so the
 	# keeper demand is honestly `0` and every keeper-shaped reading says nothing is wanted — while the
@@ -3815,7 +3852,7 @@ func _render_upkeep_mode_states() -> void:
 	_assert_work_inspector_fits("band_panel_pools_wide_selected")
 	await _assert_work_inspector_worst_case_fits("band_panel_pools_wide_selected")
 	_assert_sections_are_drawn_and_cost_the_sum()
-	await _assert_kits_section_draws_both_controls()
+	await _assert_kits_section_draws_its_control()
 	# The PRECONDITION, without which the state is `band_panel_pools_wide` rendered twice: a strip
 	# really is open, and the queue block really is up beside it.
 	_assert_work_inspector_is_a_dialog("band_panel_pools_wide_selected")
@@ -3994,11 +4031,16 @@ func _assert_work_inspector_fits(where: String) -> void:
 	_assert_band_panel("%s: the work inspector RESERVES what it DRAWS (%.0f reserved, %.0f drawn)"
 			% [where, reserved, drawn], reserved + ZONE_BOUNDS_TOLERANCE >= drawn)
 
-## GUARD: **THE KITS SECTION REALLY DRAWS BOTH CONTROLS, ITS HEADER AND THE SITE'S BILL.** Staged on a
+## GUARD: **THE KITS SECTION REALLY DRAWS ITS CONTROL, ITS HEADER AND THE SITE'S BILL.** Staged on a
 ## source that stands on a rung — `_assert_wild_source_offers_no_upkeep` is the other arm, and neither
-## is worth anything without the other. Every claim about
-## the pair's HEIGHT is satisfied by a section that renders nothing at all — an empty block reserves
-## 91px and draws 0, which fits any card — so the liveness half is asserted here, on the rendered tree.
+## is worth anything without the other. Every claim about the section's HEIGHT is satisfied by a
+## section that renders nothing at all — an empty block reserves its term and draws 0, which fits any
+## card — so the liveness half is asserted here, on the rendered tree.
+##
+## ⛔ **IT ASSERTED A PAIR OF PICKERS AND THERE IS ONE.** `docs/plan_pool_toe.md` §3 retired the
+## Upkeep picker — a site's tools follow from its own rung — so the take control and the site's BILL
+## are what the section draws, and the claims about the second picker's roster and its `(default)`
+## mark are gone rather than re-pointed at the survivor: they were about a CHOICE.
 ##
 ## ⛔ **ITS PAIRED NEGATIVE INVERTED WITH §4.9 item 12d's SECOND PASS, and inverting it is the point.**
 ## It used to read *"the two pickers must be ABSENT while the expansion is closed, or 'both are drawn'
@@ -4007,44 +4049,43 @@ func _assert_work_inspector_fits(where: String) -> void:
 ## is now the specification**, so the negative that survives is a different one: the two ACTIONS must
 ## still be buttons and the three SECTIONS must not, or "everything is drawn" is satisfied by a card
 ## that has stopped distinguishing a control from a verb.
-func _assert_kits_section_draws_both_controls() -> void:
+func _assert_kits_section_draws_its_control() -> void:
 	await _settle()
 	# **THE ONE FRAME THE PAIR HAS.** It is no longer a picker state — there is none — so it is simply
 	# the card, which is what every inspector frame in this file now shows.
 	await _save("band_panel_work_kits_picker")
 	_report_zone_content_extent("band_panel_work_kits_picker")
 	var take := _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
-	var upkeep := _find_meta_control(_work_inspector_root(), HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
-	_assert_band_panel("kits section — it draws BOTH pickers with NO click at all (take %s, upkeep %s)"
-			% ["yes" if take != null else "no", "yes" if upkeep != null else "no"],
-		take != null and upkeep != null)
-	# …and each is a live `OptionButton` with entries in it, not an empty control shaped like one.
-	_assert_band_panel("kits section — …and each really carries its roster (take %d, upkeep %d entries)"
-			% [(take as OptionButton).item_count if take is OptionButton else -1,
-				(upkeep as OptionButton).item_count if upkeep is OptionButton else -1],
-		take is OptionButton and upkeep is OptionButton
-			and (take as OptionButton).item_count > 0
-			and (upkeep as OptionButton).item_count > 0)
-	# ⛔ **AND `none` IS ON BOTH ROSTERS**, which is the choice both pickers' TOOLTIPS promise and the
+	_assert_band_panel("kits section — it draws the TAKE picker with NO click at all (%s)"
+			% ["yes" if take != null else "no"], take != null)
+	# …and it is a live `OptionButton` with entries in it, not an empty control shaped like one.
+	_assert_band_panel("kits section — …and it really carries its roster (%d entries)"
+			% [(take as OptionButton).item_count if take is OptionButton else -1],
+		take is OptionButton and (take as OptionButton).item_count > 0)
+	# ⛔ **AND `none` IS ON THE ROSTER**, which is the choice the picker's TOOLTIP promises and the
 	# one a job-filtered roster silently drops when a config edit forgets a `jobs` entry — the exact
 	# staleness `fixtures_band.gd`'s own kit roster carried until §4.9 item 12c.
-	_assert_band_panel("kits section — …and `none` is offered on both, which both tooltips promise",
-		_option_has_item(take as OptionButton, KIT_NONE_FACE)
-			and _option_has_item(upkeep as OptionButton, KIT_NONE_FACE))
+	_assert_band_panel("kits section — …and `none` is offered, which the tooltip promises",
+		_option_has_item(take as OptionButton, KIT_NONE_FACE))
+	# ⛔ **AND NO UPKEEP PICKER, ANYWHERE ON A KEPT SOURCE'S CARD.** This is the card that HAS a
+	# standing bill, so it is the one shape on which a re-added keeping control would look right —
+	# `_assert_wild_source_offers_no_upkeep`'s own absence claim cannot see it.
+	_assert_band_panel("kits section — …and NO keeping picker beside it: a site's tools follow from its rung",
+		_find_meta_control(_work_inspector_root(), RETIRED_UPKEEP_KIT_META) == null)
 	# …and NEITHER is a dead control: lit on an entry, with a face that names it.
 	_assert_kit_pickers_state_a_selection("band_panel_work_kits_picker")
-	# **AND THE SITE'S BILL IS DRAWN BESIDE THE PICKER, not merely afforded.**
+	# **AND THE SITE'S BILL IS DRAWN UNDER THE PICKER, not merely afforded.**
 	#
 	# ⛔ **THIS ASSERTED A HINT LINE AND THE HINT LINE WAS THE DEFECT.** It read *"THE HINT IS DRAWN,
 	# not merely afforded. It was cut for 12px of zone height and brought back when the card stopped
 	# competing for any; a section that reserved for it and drew nothing would leave the `none` rule
 	# stated in no visible place at all."* The line it guarded said *"\"No kit\" is a real choice — the
 	# site worked bare-handed."*, which was nonsense on a card whose Upkeep picker should not have been
-	# there at all. What the slot carries now is what the picker cannot be read without — the rate the
-	# keeping kit speeds — so the claim is INVERTED rather than deleted: the line is present AND it
-	# carries the terms this source really owes.
+	# there at all. What the slot carries now is the site's standing PRICE — the one statement of it on
+	# the card — so the claim is INVERTED rather than deleted: the line is present AND it carries the
+	# terms this source really owes.
 	var bill := _kits_upkeep_bill_label()
-	_assert_band_panel("kits section — …and the SITE'S BILL is drawn beside the pickers (\"%s\")"
+	_assert_band_panel("kits section — …and the SITE'S BILL is drawn under the picker (\"%s\")"
 			% ("<none>" if bill == null else bill.text),
 		bill != null and bill.text != "" and bill.text != _kits_upkeep_bill_face([]))
 
@@ -4094,19 +4135,17 @@ func _find_label_prefixed(node: Node, prefix: String) -> Label:
 ## `HudWidgets.build_option_picker` takes the index and the face as two parameters and writes the face
 ## AFTER the select, so a picker can be lit on the right entry and still read blank (and the reverse).
 ##
-## **THE LIVENESS HALF IS THE TAKE PICKER'S PRESENCE.** The loop skips a picker that is not drawn —
-## the Upkeep one is conditional by design — so without it "no picker is blank" is satisfied by a card
-## that drew no pickers at all.
+## **THE LIVENESS HALF IS THE TAKE PICKER'S PRESENCE**, or "no picker is blank" is satisfied by a card
+## that drew no picker at all. It was a LOOP over a pair until `docs/plan_pool_toe.md` §3 retired the
+## Upkeep control beside it; one picker is the whole of what a card offers now.
 func _assert_kit_pickers_state_a_selection(where: String) -> void:
 	var root := _work_inspector_root()
 	var take := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
 	_assert_band_panel("%s: the card draws a TAKE kit picker to judge" % where,
 		take is OptionButton)
-	for meta in KIT_PICKER_METAS:
-		var found := _find_meta_control(root, meta)
-		if not (found is OptionButton):
-			continue
-		var picker := found as OptionButton
+	if take is OptionButton:
+		var meta := HudWorkVocab.WORK_INSPECT_TAKE_KIT_META
+		var picker := take as OptionButton
 		_assert_band_panel("%s: the `%s` picker carries its roster (%d entries)"
 				% [where, meta, picker.item_count], picker.item_count > 0)
 		_assert_band_panel("%s: …and `%s` is LIT on one of them (index %d of %d)"
@@ -4116,13 +4155,11 @@ func _assert_kit_pickers_state_a_selection(where: String) -> void:
 		_assert_band_panel("%s: …and its FACE names the kit `%s` is holding (\"%s\")"
 				% [where, meta, picker.text], picker.text.strip_edges() != "")
 
-## The two kit pickers a work-inspector card can draw. The TAKE one is unconditional; the UPKEEP one
-## renders only where the SITE owes a standing bill, which is why the walk above skips a missing one
-## rather than failing on it.
-const KIT_PICKER_METAS: Array[StringName] = [
-	HudWorkVocab.WORK_INSPECT_TAKE_KIT_META,
-	HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META,
-]
+## **THE META THE RETIRED UPKEEP PICKER WORE, SPELLED HERE AND NOWHERE ELSE.** The vocabulary entry
+## went with the control (`docs/plan_pool_toe.md` §3), and the ABSENCE claims below still need a
+## needle — so the harness carries the dead string rather than the client carrying a dead const. If it
+## ever matches a node again, a keeping picker has been re-added to a card that offers no such choice.
+const RETIRED_UPKEEP_KIT_META := &"work_inspect_upkeep_kit"
 
 ## GUARD: **A WILD SOURCE OFFERS A TAKE KIT AND NOTHING TO KEEP — on BOTH WEBS.**
 ##
@@ -4132,11 +4169,11 @@ const KIT_PICKER_METAS: Array[StringName] = [
 ## to a kit. Every claim in this file about the kit pair asserted the pair was PRESENT, so all of them
 ## passed on exactly the card that was wrong.
 ##
-## ⛔ **THE NEGATIVE IS PAIRED WITH LIVENESS, or it passes on a card rendering no kits at all.** Three
-## absences are asserted — the upkeep picker, the `Upkeep` key beside it and the bill line under it —
-## against a take picker that really is drawn, really is an `OptionButton`, really carries its roster
-## and really offers `none`. Without the second half, "no upkeep picker" is satisfied by a KITS section
-## that failed to build.
+## ⛔ **THE NEGATIVE IS PAIRED WITH LIVENESS, or it passes on a card rendering no kits at all.** The
+## absences — the bill line, and (since `docs/plan_pool_toe.md` §3 retired it) any keeping picker at
+## all — are asserted against a take picker that really is drawn, really is an `OptionButton`, really
+## carries its roster and really offers `none`. Without the second half, "no keeping row" is satisfied
+## by a KITS section that failed to build.
 func _assert_wild_source_offers_no_upkeep(where: String) -> void:
 	var root := _work_inspector_root()
 	var take := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
@@ -4144,15 +4181,11 @@ func _assert_wild_source_offers_no_upkeep(where: String) -> void:
 			% [where, (take as OptionButton).item_count if take is OptionButton else -1],
 		take is OptionButton and (take as OptionButton).item_count > 0
 			and _option_has_item(take as OptionButton, KIT_NONE_FACE))
-	# …and NOTHING of the keeping half: not the picker, not its key, not the bill.
-	var upkeep := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
-	_assert_band_panel("%s: …and NO upkeep picker anywhere on the card — a wild source has nothing to keep"
-		% where, upkeep == null)
-	_assert_band_panel("%s: …and no `%s` key beside it either"
-			% [where, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY],
-		_label_titled_under(root, HudWorkVocab.WORK_INSPECT_UPKEEP_KEY) == null)
-	_assert_band_panel("%s: …and no standing bill under it" % where,
-		_kits_upkeep_bill_label() == null)
+	# …and NOTHING of the keeping half: no bill, and no keeping CONTROL of any kind.
+	_assert_band_panel("%s: …and no standing bill on the card — a wild source has nothing to keep"
+		% where, _kits_upkeep_bill_label() == null)
+	_assert_band_panel("%s: …and no keeping picker either, at the meta the retired one wore" % where,
+		_find_meta_control(root, RETIRED_UPKEEP_KIT_META) == null)
 	# **AND THE HEAD LINE AGREES**: a wild source states no rung at all, which is the same fact read
 	# through the producer the head line uses. Asserted here so "no upkeep row" cannot pass on a KEPT
 	# source whose section simply failed to build its second half.
@@ -4161,28 +4194,27 @@ func _assert_wild_source_offers_no_upkeep(where: String) -> void:
 	# …and the take picker it DOES draw is a live control rather than a blank one.
 	_assert_kit_pickers_state_a_selection(where)
 
-## GUARD: **A KEPT SOURCE OFFERS BOTH, AND SAYS WHAT IT COSTS — on BOTH WEBS.** The positive half of
-## the fork above, on a source that really does stand on a rung: the take picker, the upkeep picker
-## AND the non-empty bill line the picker cannot be read without.
+## GUARD: **A KEPT SOURCE SAYS WHAT IT COSTS TO STAND — on BOTH WEBS.** The positive half of the fork
+## above, on a source that really does stand on a rung: the take picker and the non-empty BILL line.
+##
+## ⛔ **IT ASSERTED A SECOND PICKER BESIDE THE BILL AND NO LONGER DOES** (`docs/plan_pool_toe.md`
+## §3) — a site's tools follow from its rung. The bill is what SURVIVED that retirement, and it is
+## the half worth guarding: it is the only statement of this site's standing price on the card.
 func _assert_kept_source_offers_upkeep(where: String) -> void:
 	var root := _work_inspector_root()
 	var take := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_TAKE_KIT_META)
-	var upkeep := _find_meta_control(root, HudWorkVocab.WORK_INSPECT_UPKEEP_KIT_META)
-	_assert_band_panel("%s: a kept source draws BOTH pickers (take %s, upkeep %s)"
-			% [where, "yes" if take != null else "no", "yes" if upkeep != null else "no"],
-		take is OptionButton and upkeep is OptionButton
-			and (take as OptionButton).item_count > 0
-			and (upkeep as OptionButton).item_count > 0)
+	_assert_band_panel("%s: a kept source draws its TAKE picker (%s)"
+			% [where, "yes" if take != null else "no"],
+		take is OptionButton and (take as OptionButton).item_count > 0)
 	var bill := _kits_upkeep_bill_label()
-	_assert_band_panel("%s: …and the standing bill beneath them, with real terms in it (\"%s\")"
+	_assert_band_panel("%s: …and the standing bill beneath it, with real terms in it (\"%s\")"
 			% [where, "<none>" if bill == null else bill.text],
 		bill != null and bill.text != "" and bill.text != _kits_upkeep_bill_face([]))
 	# **AND THE HEAD LINE NAMES THE RUNG**, which is why the bill states TERMS and not a rung word: one
 	# rung worded twice on one card is what this section refused to do.
 	_assert_band_panel("%s: …and the head line names the rung the bill is for (\"%s\")"
 			% [where, _inspected_rung_face()], _inspected_rung_face() != "")
-	# …and BOTH pickers state a selection — the UPKEEP one is only judged where it is drawn, which is
-	# here, so this is the arm that covers the site's keeping kit as well as the crew's tool.
+	# …and the picker states a selection rather than a blank face.
 	_assert_kit_pickers_state_a_selection(where)
 
 ## The rung face the OPEN card's model carries — `""` on a wild source, `🐄 Corralled 100%` on a penned
@@ -4242,10 +4274,11 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	var model: Dictionary = models[0]
 	var reserved: float = _hud._bandpanel._work_inspector_height(model)
 	var kitted: bool = _hud._bandpanel._work_inspector_has_kits(model)
-	# **AND THE KITS SECTION'S OWN SECOND SHAPE.** The Upkeep picker and the bill line under it are one
-	# conditional term, gated on whether the SITE owes anything at all — so a WILD row reserves one
-	# control line and a KEPT one reserves two plus the line, and `reserved >= drawn` has to hold on
-	# both. Asked through the builder's own predicate rather than assumed, exactly as `kitted` is.
+	# **AND THE KITS SECTION'S OWN SECOND SHAPE.** The bill line is one conditional term, gated on
+	# whether the SITE owes anything at all — so a WILD row reserves the control line alone and a KEPT
+	# one reserves the bill on top, and `reserved >= drawn` has to hold on both. Asked through the
+	# builder's own predicate rather than assumed, exactly as `kitted` is. **It carried an Upkeep
+	# PICKER's line too until `docs/plan_pool_toe.md` §3**, which is the 22px the card's ceiling fell by.
 	var kept: bool = _hud._bandpanel._work_inspector_has_upkeep(model)
 	# **THE SUM, TERM FOR TERM, AGAINST THE PRODUCER.** The KITS term is conditional on the ONE
 	# predicate the builder uses, asked here rather than assumed, so a row without kits is measured
@@ -4256,8 +4289,8 @@ func _assert_sections_are_drawn_and_cost_the_sum() -> void:
 	if kitted:
 		sections += HudWorkVocab.WORK_INSPECTOR_KITS_SECTION_HEIGHT
 		if kept:
-			# …and the bill line under the Upkeep picker wraps like the notes do, same reason.
-			sections += HudWorkVocab.WORK_INSPECTOR_KITS_UPKEEP_HEIGHT \
+			# …and the bill line wraps like the notes do, same reason.
+			sections += HudWorkVocab.WORK_INSPECTOR_KITS_BILL_HEIGHT \
 				+ HudWidgets.wrapped_status_part_overflow(
 					_hud._bandpanel._work_inspector_upkeep_bill(model),
 					_hud._bandpanel._work_inspector_note_width())
@@ -4557,7 +4590,7 @@ func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles
 				% [where, role, card.tooltip_text],
 			not bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false))
 			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
-			and String(card.get_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, "")) == "")
+			and String(card.get_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, "")) == "")
 
 ## **THE SHORTFALL SENTENCE'S OWN MIDDLE, AND THE TAIL THAT NAMES ITS WEB.** The lead was `"Short "`
 ## for one run and it was VACUOUS in both directions: the Agriculture card's ordinary role HINT reads
@@ -4720,57 +4753,112 @@ func _keeping_pool_herd_fixtures() -> Array:
 ## the triangle is already flying for HANDS on the two keeping cards, and a tool shortfall has a hands
 ## one on the same row to be told apart FROM on the hover.
 ##
-## ⛔ **`ROADWORK` IS THE CONFIRMATION, NOT A SPECIAL CASE.** `LaborAllocation::row_kit` leaves it on
-## `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers` for it and the
-## client falls silent on the EQUALITY — the same test that silences a covered pool. If it ever
-## marked, the equality contract would be what broke, not a missing branch naming this role.
+## > ⛔ RETIRED — **the per-row GEAR PAIR these rows used to carry**, `kit_id` plus
+## > `kitWorkersHolding`, which the card read through `KitRoster.row_coverage`. Its note read:
+## > *"`ROADWORK` IS THE CONFIRMATION, NOT A SPECIAL CASE — `LaborAllocation::row_kit` leaves it on
+## > `kit_choice`, which is `none`, so the sim publishes `kitWorkersHolding == workers` for it and the
+## > client falls silent on the EQUALITY."* `docs/plan_pool_toe.md` §4 publishes that *nothing to be
+## > short of* reading on **every** pool row, so the equality now silences every card in the game and
+## > the pair describes a site the sim no longer has an opinion about. The tools are the band's
+## > **TOE** (`_pool_toe_fixture` below), and the rows carry their crews and nothing else.
 const POOL_GEAR_KEEPER_CREW := 1
-## The BUILDERS pool: three hands, one complete Tillage kit. It is the card whose triangle flies for
-## its TOOLS alone — `_build_pools_block` passes it no `cover` at all, so it can never be short of hands.
+## The BUILDERS pool: three hands and no TOE row at all — the *not applicable* card. It is also the
+## one card that can never be short of HANDS, `_build_pools_block` passing it no `cover`, so a calm
+## card here is a calm card for the one reason.
 const POOL_GEAR_BUILDERS_CREW := 3
-const POOL_GEAR_BUILDERS_ARMED := 1.0
 const POOL_GEAR_ROADWORK_CREW := 2
 
-## The band those four rows belong to. It keeps `_keeping_pool_band_fixture`'s source rows and its
-## short keeping demand; what it adds is the per-row gear pair the sim now publishes on a pool.
+## **THE BAND'S TOE, WHICH IS WHERE A POOL'S TOOLS COME FROM NOW** — one row per `(pool, item)`,
+## `{pool, item_id, required, filled}`, exactly as `PopulationCohortState.poolToe` publishes it.
+##
+## The four cards it stages are the four answers a TOE can give, and the SET is the claim:
+##
+## | pool | its rows | what the card says |
+## |---|---|---|
+## | `agriculture` | hoes **4 of 4** | nothing — **FILLED**, and a row is present so this is not *not applicable* |
+## | `husbandry` | crook **0 of 2** | one term, beside a hands shortfall on the same card |
+## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | TWO terms on one line, and its own share of a SHARED item |
+## | `builders` | none at all | nothing — **NOT APPLICABLE** |
+##
+## ⛔ **THE NUMBERS ARE WHOLE, DELIBERATELY.** `required` is a float in units and the line
+## apportions `filled` against its rounded denominator, so a fractional fixture would make the
+## expectation an exercise in re-deriving the apportionment rather than a statement of what the card
+## must say. The ROUNDING is asserted where it can be seen — `_assert_pool_toe_rounding`, driven.
+const POOL_TOE_AGRICULTURE_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
+const POOL_TOE_AGRICULTURE_REQUIRED := 4.0
+const POOL_TOE_AGRICULTURE_FILLED := 4.0
+const POOL_TOE_HUSBANDRY_ITEM := DetailFormat.KIT_DURABILITY_KEY_CROOK
+const POOL_TOE_HUSBANDRY_REQUIRED := 2.0
+const POOL_TOE_HUSBANDRY_FILLED := 0.0
+const POOL_TOE_ROADWORK_ITEM := "earthmoving"
+const POOL_TOE_ROADWORK_REQUIRED := 6.0
+const POOL_TOE_ROADWORK_FILLED := 4.0
+## **THE SHARED ITEM.** Roadwork and Quarrywork both want stone-dressing tools, and a pool card states
+## **its own share** — never the other gang's numbers and never the two added up. The three readings
+## are pairwise distinct on purpose (roadwork `0 of 2`, quarrywork `3 of 5`, their sum `3 of 7`), so a
+## card that joined on the ITEM instead of on the POOL fails on the figures rather than coinciding.
+const POOL_TOE_SHARED_ITEM := "stone_dressing"
+const POOL_TOE_ROADWORK_SHARED_REQUIRED := 2.0
+const POOL_TOE_ROADWORK_SHARED_FILLED := 0.0
+const POOL_TOE_QUARRYWORK_SHARED_REQUIRED := 5.0
+const POOL_TOE_QUARRYWORK_SHARED_FILLED := 3.0
+
+## One wire row of that vector.
+func _pool_toe_row(pool: String, item_id: String, required: float, filled: float) -> Dictionary:
+	return {
+		HudBandLaborState.POOL_TOE_POOL_KEY: pool,
+		HudBandLaborState.POOL_TOE_ITEM_KEY: item_id,
+		HudBandLaborState.POOL_TOE_REQUIRED_KEY: required,
+		HudBandLaborState.POOL_TOE_FILLED_KEY: filled,
+	}
+
+## The whole vector, in WIRE ORDER — and the two dressing-hammer rows are deliberately **adjacent and
+## in the wrong order for a reader that trusts position**: quarrywork's comes FIRST, so a card taking
+## the first row naming its item states the quarry gang's numbers.
+func _pool_toe_fixture() -> Array:
+	return [
+		_pool_toe_row(HudConst.LABOR_KIND_AGRICULTURE, POOL_TOE_AGRICULTURE_ITEM,
+			POOL_TOE_AGRICULTURE_REQUIRED, POOL_TOE_AGRICULTURE_FILLED),
+		_pool_toe_row(HudConst.LABOR_KIND_HUSBANDRY, POOL_TOE_HUSBANDRY_ITEM,
+			POOL_TOE_HUSBANDRY_REQUIRED, POOL_TOE_HUSBANDRY_FILLED),
+		_pool_toe_row(HudConst.LABOR_KIND_ROADWORK, POOL_TOE_ROADWORK_ITEM,
+			POOL_TOE_ROADWORK_REQUIRED, POOL_TOE_ROADWORK_FILLED),
+		_pool_toe_row(HudConst.LABOR_KIND_QUARRYWORK, POOL_TOE_SHARED_ITEM,
+			POOL_TOE_QUARRYWORK_SHARED_REQUIRED, POOL_TOE_QUARRYWORK_SHARED_FILLED),
+		_pool_toe_row(HudConst.LABOR_KIND_ROADWORK, POOL_TOE_SHARED_ITEM,
+			POOL_TOE_ROADWORK_SHARED_REQUIRED, POOL_TOE_ROADWORK_SHARED_FILLED),
+	]
+
+## The band those four pools belong to. It keeps `_keeping_pool_band_fixture`'s source rows and its
+## short keeping demand; what it adds is the two unstaffed pools and the band's own TOE.
 func _pool_gear_band_fixture() -> Dictionary:
 	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
 	band["entity"] = 963
 	band["id"] = "Band 25"
-	var rows: Array = []
-	for row_variant in band["labor_assignments"]:
-		var row: Dictionary = (row_variant as Dictionary).duplicate(true)
-		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
-			# HANDS SHORT, TOOLS FINE — every keeper on it holds a Tillage kit.
-			row["kit_id"] = BandFx.KIT_ID_TILLAGE
-			row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = float(POOL_GEAR_KEEPER_CREW)
-		elif String(row.get("kind", "")) == HudConst.LABOR_KIND_HUSBANDRY:
-			# SHORT OF BOTH — the card that has to say two things at once.
-			row["kit_id"] = BandFx.KIT_ID_HURDLING
-			row[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = 0.0
-		rows.append(row)
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
 	# The two pools `_keeping_pool_band_fixture` does not staff, added here because the frame is about
-	# what a POOL card says and an unstaffed pool has no row to say it with.
-	rows.append({"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_GEAR_ROADWORK_CREW,
-		"kit_id": BandFx.KIT_ID_NONE,
-		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(POOL_GEAR_ROADWORK_CREW)})
-	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW,
-		"kit_id": BandFx.KIT_ID_TILLAGE,
-		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: POOL_GEAR_BUILDERS_ARMED})
+	# what a POOL card says and an unstaffed pool has no row to say it with. **They carry a crew and
+	# nothing else** — a pool's tools follow from its SITES now, so a row has no gear to state.
+	rows.append({"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_GEAR_ROADWORK_CREW})
+	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW})
 	band["labor_assignments"] = rows
+	band[HudBandLaborState.POOL_TOE_KEY] = _pool_toe_fixture()
 	return band
 
 ## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
-## `KitRoster.shortfall_sentence`** — the material-short guard's rule: an expectation re-derived
-## through the code under test collapses with it. It is also what pins *"one phrasing wherever gear
-## runs short"*, this being the compose sheets' and the work rows' own `KIT_SHORTFALL_FORMAT`.
-func _pool_gear_sentence(held: int, crew: int, kit_id: String) -> String:
-	return HudComposeVocab.KIT_SHORTFALL_FORMAT % [held, crew,
-		KitRoster.display_name_for_id(BandFx.kit_roster_fixture(), kit_id)
-			+ HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+## `HudWorkVocab.pool_toe_short_line`** — the material-short guard's rule: an expectation re-derived
+## through the code under test collapses with it. It is also what pins *"the client's existing `N of
+## M` phrasing"*, `POOL_TOE_TERM_FORMAT` being `KIT_SHORTFALL_FORMAT` less its trailing word.
+func _pool_toe_term(filled: int, required: int, item_id: String) -> String:
+	return HudWorkVocab.POOL_TOE_TERM_FORMAT % [filled, required,
+		DetailFormat.kit_item_count_word(item_id, required)]
+
+## …and the whole line, joined the way the card joins it.
+func _pool_toe_line(terms: Array) -> String:
+	return HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join(PackedStringArray(terms))
 
 ## What one pool card is flying, as the answers it publishes and draws: `{mark, gear, lines, drawn}` —
-## the triangle (`POOL_CARD_SHORT_META`), the TOOL reason's sentence (`POOL_CARD_KIT_SHORT_META`), its
+## the triangle (`POOL_CARD_SHORT_META`), the TOOL reason's sentence (`POOL_CARD_TOOL_SHORT_META`), its
 ## hover split into lines, and how many `⚠` Labels it actually DREW. The drawn count is read by the
 ## mark's own `WORK_ROW_MARKS_META` handle, never by glyph, which is `_assert_pool_card_marks`' rule and
 ## for its reason — and it is asserted beside the meta so the decision and the render cannot disagree.
@@ -4782,7 +4870,7 @@ func _pool_card_answers(role_name: String) -> Dictionary:
 	_collect_meta_controls(card, HudWorkVocab.WORK_ROW_MARKS_META, drawn)
 	return {
 		"mark": bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)),
-		"gear": String(card.get_meta(HudWorkVocab.POOL_CARD_KIT_SHORT_META, "")),
+		"gear": String(card.get_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, "")),
 		"lines": Array(card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR)),
 		"drawn": drawn.size(),
 	}
@@ -4802,10 +4890,19 @@ func _pool_hands_line_index(lines: Array) -> int:
 			return i
 	return POOL_HOVER_LINE_ABSENT
 
-## The tool sentence's fixed TAIL (` available`), taken off the vocabulary's own format rather than
-## spelled here — the negative half's needle for *no hover line states a tool shortfall*.
-func _pool_tool_line_tail() -> String:
-	return HudComposeVocab.KIT_SHORTFALL_FORMAT.get_slice("%s", 1)
+## **THE TOOL LINE'S SHAPE, for the negative half** — `N of M <item>` at the head of a line.
+##
+## ⛔ **IT IS SPELLED AS A SHAPE RATHER THAN AS A WORD, and that is the point.** It was the retired
+## sentence's fixed tail (` available`), which a term no longer carries; a needle spelled as one
+## item's word instead would be blind to a stray line naming a different item, which is exactly the
+## failure *"no tool shortfall is stated"* exists to catch.
+const POOL_TOE_LINE_PATTERN := "^[0-9]+ of [0-9]+ "
+
+## Which of a hover's lines state a tool shortfall, by that shape.
+func _pool_toe_lines(lines: Array) -> Array:
+	var probe := RegEx.new()
+	probe.compile(POOL_TOE_LINE_PATTERN)
+	return lines.filter(func(l: Variant) -> bool: return probe.search(String(l)) != null)
 
 ## One card's whole answer: the triangle (meta AND drawn), the tool reason's meta, and the hover's
 ## lines — which reason is stated, on a line of its own, in its existing words, hands first.
@@ -4829,8 +4926,7 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 		_assert_band_panel("pool gear — %s: …and states the TOOL shortfall as a line of its own, \"%s\" (%s)"
 				% [label, want_gear, lines], lines.find(want_gear) != POOL_HOVER_LINE_ABSENT)
 	else:
-		var tail := _pool_tool_line_tail()
-		var tool_lines := lines.filter(func(l: Variant) -> bool: return String(l).ends_with(tail))
+		var tool_lines := _pool_toe_lines(lines)
 		_assert_band_panel("pool gear — %s: …and states NO tool shortfall (%s)" % [label, tool_lines],
 			tool_lines.is_empty())
 	if want_hands and want_gear != "":
@@ -4838,48 +4934,288 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 				% [label, hands_at, lines.find(want_gear)],
 			hands_at != POOL_HOVER_LINE_ABSENT and hands_at < lines.find(want_gear))
 
-## GUARD: **THE FOUR ANSWERS A POOL CARD CAN GIVE, ASSERTED AS A SET ON ONE FRAME.**
+## GUARD: **THE FOUR ANSWERS A POOL'S TOE CAN GIVE, ASSERTED AS A SET ON ONE FRAME.**
 ##
 ## The triangle flies on THREE of them — short of hands, of tools, of both — so its presence alone
-## tells those three apart from nothing but the fine card. What separates them is the hover, so every
+## tells those three apart from nothing but the calm card. What separates them is the hover, so every
 ## card is asserted on BOTH halves: the triangle (the meta and the one `⚠` it drew) and which reasons
-## its hover states, each on its own line, hands first. Any one card alone passes a client that marks
-## everything, marks nothing, or states one reason for all three.
+## its hover states, each on its own line, hands first.
+##
+## ⛔ **THE SET IS THE CLAIM, AND THE TWO SILENT CARDS ARE WHY.** A tooltip builder that always
+## renders a tool line passes the SHORT cards on its own; one that never renders passes the FILLED and
+## NOT-APPLICABLE ones on its own. Neither can pass all four — which is the whole reason
+## `docs/plan_pool_toe.md` §6 asks for a short pool, a filled pool and a shared-tool pool together.
+##
+## | card | its TOE | what it must say |
+## |---|---|---|
+## | Agriculture | hoes 4 of 4 | hands only — **FILLED tools say nothing** |
+## | Husbandry | crook 0 of 2 | hands, then one tool term |
+## | Roadwork | earthmoving tools 4 of 6 · stone-dressing tools 0 of 2 | tools only, TWO terms, its own share of a shared item |
+## | Builders | — | nothing at all — **NOT APPLICABLE** |
 func _assert_pool_kit_marks() -> void:
 	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
 	var both := _pool_card_answers(HudWorkVocab.ROLE_NAME_HUSBANDRY)
-	var itemless := _pool_card_answers(HudWorkVocab.ROLE_NAME_ROADWORK)
-	var gear := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
-	if hands.is_empty() or both.is_empty() or itemless.is_empty() or gear.is_empty():
+	var tools := _pool_card_answers(HudWorkVocab.ROLE_NAME_ROADWORK)
+	var absent := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
+	if hands.is_empty() or both.is_empty() or tools.is_empty() or absent.is_empty():
 		_fail("pool gear — the POOLS block is missing one of its four cards")
 		return
-	_assert_pool_card_state("a pool short of HANDS only", HudWorkVocab.ROLE_NAME_AGRICULTURE, hands,
-		true, "")
+	_assert_pool_card_state("a pool short of HANDS, its tools FILLED",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, hands, true, "")
 	_assert_pool_card_state("a pool short of BOTH", HudWorkVocab.ROLE_NAME_HUSBANDRY, both, true,
-		_pool_gear_sentence(0, POOL_GEAR_KEEPER_CREW, BandFx.KIT_ID_HURDLING))
-	_assert_pool_card_state("a pool on an ITEMLESS kit, short of nothing", HudWorkVocab.ROLE_NAME_ROADWORK,
-		itemless, false, "")
-	_assert_pool_card_state("a pool short of TOOLS only", HudWorkVocab.ROLE_NAME_BUILDERS, gear, false,
-		_pool_gear_sentence(int(POOL_GEAR_BUILDERS_ARMED), POOL_GEAR_BUILDERS_CREW,
-			BandFx.KIT_ID_TILLAGE))
+		_pool_toe_term(int(POOL_TOE_HUSBANDRY_FILLED), int(POOL_TOE_HUSBANDRY_REQUIRED),
+			POOL_TOE_HUSBANDRY_ITEM))
+	_assert_pool_card_state("a pool short of TOOLS only, on TWO items",
+		HudWorkVocab.ROLE_NAME_ROADWORK, tools, false, _pool_toe_line([
+			_pool_toe_term(int(POOL_TOE_ROADWORK_FILLED), int(POOL_TOE_ROADWORK_REQUIRED),
+				POOL_TOE_ROADWORK_ITEM),
+			_pool_toe_term(int(POOL_TOE_ROADWORK_SHARED_FILLED),
+				int(POOL_TOE_ROADWORK_SHARED_REQUIRED), POOL_TOE_SHARED_ITEM),
+		]))
+	_assert_pool_card_state("a pool with NO TOE at all, short of nothing",
+		HudWorkVocab.ROLE_NAME_BUILDERS, absent, false, "")
+	_assert_pool_toe_filled_is_not_absent(hands, absent)
+	_assert_pool_toe_shared_item(tools)
+	_assert_pool_toe_rounding()
+	_assert_pool_toe_inflection()
 	# ⛔ **AND THE CARD SAYS SO AT A GLANCE IN ITS TITLE'S INK, beside the one triangle.** A second
 	# glyph (the work rows' `◆`) was built and measured on the drawn card — two `Label`s (96px), one
 	# packed run (92px), the stepper row (94px) — against this block's 83px floor, and each took the
 	# four-card row past the left dock's 356px box. So the existing `⚠` widened to both shortfalls and
 	# the reason is on the hover; what costs no width is the triangle and the ink.
-	var builders_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS),
-		HudWorkVocab.ROLE_NAME_BUILDERS)
-	_assert_band_panel("pool gear — …and the gear-short card's NAME takes the WARN amber (%s)"
-			% ("found" if builders_title != null else "no title Label on the card"),
-		builders_title != null \
-			and builders_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
+	# ⛔ **THE TOOLS-SHORT CARD IS ROADWORK NOW, NOT BUILDERS.** The builders pool carries no TOE at
+	# all on this band, so it is the CALM card; asking it for the amber would pin the opposite claim.
+	var tools_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK),
+		HudWorkVocab.ROLE_NAME_ROADWORK)
+	_assert_band_panel("pool gear — …and the tool-short card's NAME takes the WARN amber (%s)"
+			% ("found" if tools_title != null else "no title Label on the card"),
+		tools_title != null \
+			and tools_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
 	# …and the calm card's does not, or "the ink says short" is satisfied by a block that reddens
 	# every title it draws.
-	var roadwork_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK),
-		HudWorkVocab.ROLE_NAME_ROADWORK)
+	#
+	# ⛔ **THE CALM CARD IS THE ONE WITH NO TOE AT ALL, NOT THE ONE WHOSE TOOLS ARE FILLED.** The
+	# filled pool is short of HANDS on this band, so its title is amber for that reason and cannot
+	# serve as the negative — asking it would pass the ink claim while saying nothing about tools.
+	var builders_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS),
+		HudWorkVocab.ROLE_NAME_BUILDERS)
 	_assert_band_panel("pool gear — …while the card with nothing to say keeps the calm ink",
-		roadwork_title != null \
-			and roadwork_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK))
+		builders_title != null \
+			and builders_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK))
+
+## ⛔ GUARD: **A FILLED POOL AND A POOL WITH NO TOOLS BOTH SAY NOTHING, AND THEY ARE NOT THE SAME
+## STATE.** A row is present at `filled == required` precisely so a reader can tell *satisfied* from
+## *not applicable*; the CARD renders nothing either way, so the distinction is unfalsifiable from the
+## rendered card alone and is asserted against the fixture that produced it.
+##
+## Both halves are needed. Without the first, *"a filled pool states no tool line"* is satisfied by a
+## client whose decoder dropped the filled row on the way in — which would destroy the distinction
+## the vector exists to carry, silently, and look exactly like this.
+func _assert_pool_toe_filled_is_not_absent(filled: Dictionary, absent: Dictionary) -> void:
+	var band := _hud._band_labor.panel_band()
+	var filled_rows := HudBandLaborState.pool_toe_for(band, HudConst.LABOR_KIND_AGRICULTURE)
+	var absent_rows := HudBandLaborState.pool_toe_for(band, HudConst.LABOR_KIND_BUILDERS)
+	_assert_band_panel("pool gear — the FILLED pool really has a TOE row (%d) while the calm one has none (%d)"
+			% [filled_rows.size(), absent_rows.size()],
+		filled_rows.size() > 0 and absent_rows.is_empty())
+	_assert_band_panel("pool gear — …and BOTH render no tool line at all (\"%s\" / \"%s\")"
+			% [filled["gear"], absent["gear"]],
+		String(filled["gear"]) == "" and String(absent["gear"]) == "")
+
+## ⛔ GUARD: **A SHARED ITEM IS STATED AS THIS POOL'S SHARE — never the other gang's, never the sum.**
+## Roadwork and Quarrywork both want stone-dressing tools at different numbers, and the card joins the TOE
+## vector on the POOL. The three readings are pairwise distinct by construction, so the negatives bite
+## on the figures rather than coinciding with the right answer.
+##
+## **The quarry gang has no card of its own** — its stepper rides the WORKINGS ROSTER head — so the
+## claim is made where the shared item is visible, which is the Roadwork card.
+func _assert_pool_toe_shared_item(tools: Dictionary) -> void:
+	var line := String(tools["gear"])
+	var mine := _pool_toe_term(int(POOL_TOE_ROADWORK_SHARED_FILLED),
+		int(POOL_TOE_ROADWORK_SHARED_REQUIRED), POOL_TOE_SHARED_ITEM)
+	var theirs := _pool_toe_term(int(POOL_TOE_QUARRYWORK_SHARED_FILLED),
+		int(POOL_TOE_QUARRYWORK_SHARED_REQUIRED), POOL_TOE_SHARED_ITEM)
+	var summed := _pool_toe_term(
+		int(POOL_TOE_ROADWORK_SHARED_FILLED + POOL_TOE_QUARRYWORK_SHARED_FILLED),
+		int(POOL_TOE_ROADWORK_SHARED_REQUIRED + POOL_TOE_QUARRYWORK_SHARED_REQUIRED),
+		POOL_TOE_SHARED_ITEM)
+	_assert_band_panel("pool gear — the SHARED item reads this pool's own share, \"%s\" (line \"%s\")"
+			% [mine, line], line.contains(mine))
+	_assert_band_panel("pool gear — …and never the quarry gang's \"%s\"" % theirs,
+		not line.contains(theirs))
+	_assert_band_panel("pool gear — …and never the two added up, \"%s\"" % summed,
+		not line.contains(summed))
+
+## ⛔ GUARD: **THE ROUNDING, DRIVEN — because `required` and `filled` are FLOATS and the card prints
+## WHOLE numbers.** Every TOE row in the fixture above is whole on purpose, so the frame says nothing
+## about what happens between two integers; these rows are the cases that bite, and each is a sentence
+## the card must or must not produce rather than an arithmetic identity.
+##
+## **THE EXPECTATIONS ARE HAND-WORKED FROM THE DOCUMENTED RULE, never re-derived through
+## `pool_toe_short_line` itself** — an expectation composed through the arithmetic under test agrees
+## with it by construction, whatever the arithmetic does.
+##
+## ⛔ **THE SUB-UNIT ROW IS THE PLAYTEST DEFECT AND IS THE POINT OF THE SET.** Teasel's Agriculture
+## pool at `0.5666 of 0.7906` — 72% covered, a live wire reading — printed `1 of 1 hoe` under the
+## retired apportion, which produced NO line and therefore NO triangle while the tile it keeps was
+## complaining. Two of the rows below are the same claim at two magnitudes; a rule that only handled
+## the playtest numbers would pass one and fail the other.
+##
+## | row | reads | why |
+## |---|---|---|
+## | required 5.5, filled 2.5 | `2 of 6 hoes` | ceil the want, floor the held — was `3 of 6` |
+## | required 3.0, filled 2.9 | `2 of 3 hoes` | **short by a tenth is SHORT** — was silent |
+## | required 0.4, filled 0.0 | `0 of 1 hoe` | never `0 of 0` and never `0 of 1 hoes` |
+## | required 0.7906, filled 0.5666 | `0 of 1 hoe` | the playtest row — was `1 of 1` and silent |
+## | required 4.0, filled 4.0 | **nothing** | the negative: a filled row is still not a line |
+const POOL_TOE_ROUNDING_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
+const POOL_TOE_ROUNDING_SHORT_REQUIRED := 5.5
+const POOL_TOE_ROUNDING_SHORT_FILLED := 2.5
+const POOL_TOE_ROUNDING_SHORT_UNITS := 6
+const POOL_TOE_ROUNDING_SHORT_HELD := 2
+## A row whose halves ROUND to equality and whose floats do not. The one case that tells the raw-float
+## short test apart from a comparison of the printed pair.
+const POOL_TOE_ROUNDING_NEAR_REQUIRED := 3.0
+const POOL_TOE_ROUNDING_NEAR_FILLED := 2.9
+const POOL_TOE_ROUNDING_NEAR_UNITS := 3
+const POOL_TOE_ROUNDING_NEAR_HELD := 2
+const POOL_TOE_ROUNDING_TINY_REQUIRED := 0.4
+const POOL_TOE_ROUNDING_TINY_FILLED := 0.0
+const POOL_TOE_ROUNDING_TINY_UNITS := 1
+const POOL_TOE_ROUNDING_TINY_HELD := 0
+## ⛔ **THE LIVE PLAYTEST ROW, TRANSCRIBED FROM THE WIRE** — Teasel's `agriculture` / `hoes` line at
+## the plant site (72,28), the band holding two hoes against a Builders pool bidding 2.0 at the same
+## priority. Do not "tidy" these to round numbers: what they pin is that a shortfall smaller than one
+## whole unit still flies the triangle.
+const POOL_TOE_ROUNDING_LIVE_REQUIRED := 0.7906
+const POOL_TOE_ROUNDING_LIVE_FILLED := 0.5666
+const POOL_TOE_ROUNDING_LIVE_UNITS := 1
+const POOL_TOE_ROUNDING_LIVE_HELD := 0
+## …and the FILLED row beside it, so "states a line" is a claim rather than a builder that always does.
+const POOL_TOE_ROUNDING_FILLED_REQUIRED := 4.0
+const POOL_TOE_ROUNDING_FILLED_FILLED := 4.0
+func _assert_pool_toe_rounding() -> void:
+	var pool := HudConst.LABOR_KIND_AGRICULTURE
+	var short_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
+		POOL_TOE_ROUNDING_SHORT_REQUIRED, POOL_TOE_ROUNDING_SHORT_FILLED)])
+	var want_short := _pool_toe_term(POOL_TOE_ROUNDING_SHORT_HELD, POOL_TOE_ROUNDING_SHORT_UNITS,
+		POOL_TOE_ROUNDING_ITEM)
+	_assert_band_panel("pool gear — a FRACTIONAL shortfall CEILS its want and FLOORS what it holds — \"%s\" (want \"%s\")"
+			% [short_line, want_short], short_line == want_short)
+	# ⛔ **THE SHORT TEST IS ON THE FLOATS, and this row is the only one that says so.** Both halves
+	# round to 3, so a builder comparing its own printed pair reads `3 of 3` and falls silent — which
+	# is exactly the shape that swallowed the playtest row one order of magnitude down.
+	var near_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
+		POOL_TOE_ROUNDING_NEAR_REQUIRED, POOL_TOE_ROUNDING_NEAR_FILLED)])
+	var want_near := _pool_toe_term(POOL_TOE_ROUNDING_NEAR_HELD, POOL_TOE_ROUNDING_NEAR_UNITS,
+		POOL_TOE_ROUNDING_ITEM)
+	_assert_band_panel("pool gear — …a pool short by a TENTH of a unit still states a line — \"%s\" (want \"%s\")"
+			% [near_line, want_near], near_line == want_near)
+	var tiny_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
+		POOL_TOE_ROUNDING_TINY_REQUIRED, POOL_TOE_ROUNDING_TINY_FILLED)])
+	var want_tiny := _pool_toe_term(POOL_TOE_ROUNDING_TINY_HELD, POOL_TOE_ROUNDING_TINY_UNITS,
+		POOL_TOE_ROUNDING_ITEM)
+	_assert_band_panel("pool gear — …and a requirement under a whole unit still states a DENOMINATOR — \"%s\" (want \"%s\")"
+			% [tiny_line, want_tiny], tiny_line == want_tiny)
+	_assert_pool_toe_sub_unit_shortfall()
+
+## ⛔ GUARD: **THE PLAYTEST ROW — a SUB-UNIT tool shortfall flies the triangle and states a tool line.**
+##
+## Reported from play: the Agriculture pool card was SILENT about the exact shortage the tile at
+## (72,28) was complaining about, while the Builders card beside it (`1.4334 of 2.0`, which survives
+## rounding) warned correctly. Both pools were genuinely short of the same two hoes.
+##
+## **BOTH HALVES OF THE CONTRACT ARE ASSERTED, because they are different producers**: the raw-float
+## predicate the triangle and the work row's remedy fork on (`pool_toe_is_short`), and the SENTENCE
+## the card's hover carries (`pool_toe_short_line`). A fix that made the line print while leaving the
+## boolean rounding would fly no triangle; one that flew the triangle over an empty hover would say
+## nothing.
+##
+## **PAIRED WITH A FILLED ROW, or "it states a line" passes on a builder that states one for
+## everything** — and the filled row is asserted on BOTH producers for the same reason.
+func _assert_pool_toe_sub_unit_shortfall() -> void:
+	var pool := HudConst.LABOR_KIND_AGRICULTURE
+	var live := [_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM, POOL_TOE_ROUNDING_LIVE_REQUIRED,
+		POOL_TOE_ROUNDING_LIVE_FILLED)]
+	var filled := [_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM, POOL_TOE_ROUNDING_FILLED_REQUIRED,
+		POOL_TOE_ROUNDING_FILLED_FILLED)]
+	_assert_band_panel("pool gear — the PLAYTEST row (%.4f of %.4f) is SHORT on the raw floats"
+			% [POOL_TOE_ROUNDING_LIVE_FILLED, POOL_TOE_ROUNDING_LIVE_REQUIRED],
+		HudWorkVocab.pool_toe_is_short(live))
+	var live_line := HudWorkVocab.pool_toe_short_line(live)
+	var want_live := _pool_toe_term(POOL_TOE_ROUNDING_LIVE_HELD, POOL_TOE_ROUNDING_LIVE_UNITS,
+		POOL_TOE_ROUNDING_ITEM)
+	_assert_band_panel("pool gear — …and states it as \"%s\" rather than reading as covered (got \"%s\")"
+			% [want_live, live_line], live_line == want_live)
+	# ⛔ **AND IT MAY NEVER PRINT `N of N`.** The retired apportion's whole failure was an equality
+	# beside a live shortfall, which reads as covered whatever the triangle does — so the shape is
+	# asserted on its own rather than inferred from the equality above.
+	_assert_band_panel("pool gear — …and a short row NEVER reads `N of N` (\"%s\")" % live_line,
+		live_line != _pool_toe_term(POOL_TOE_ROUNDING_LIVE_UNITS, POOL_TOE_ROUNDING_LIVE_UNITS,
+			POOL_TOE_ROUNDING_ITEM))
+	_assert_band_panel("pool gear — …while a FILLED row is short of nothing and states nothing (\"%s\")"
+			% HudWorkVocab.pool_toe_short_line(filled),
+		not HudWorkVocab.pool_toe_is_short(filled)
+			and HudWorkVocab.pool_toe_short_line(filled) == "")
+
+## ⛔ GUARD: **THE COUNTED NOUN AGREES WITH THE DENOMINATOR — on a PLURAL-labelled item and on a
+## SINGULAR-labelled one, which is the whole of why one suffix rule cannot serve this table.**
+## `DetailFormat.KIT_ITEM_LABELS` is MIXED (`Hoes` is already plural, `Crook` is not), so *append an
+## `s`* gives `Spearss` and *leave it alone* gives `0 of 2 crook` — reported going into a playtest.
+##
+## **FOUR READINGS, AND THE SET IS THE CLAIM.** A builder that never inflected passes the two
+## singular rows; one that always appended passes the two plural rows. The `1 of 2` case is asserted
+## for its own sake because a noun following the NUMERATOR reads singular there and is wrong.
+##
+## | item | label | at 1 | at 2 |
+## |---|---|---|---|
+## | `hoes` | plural | `0 of 1 hoe` | `1 of 2 hoes` |
+## | `crook` | singular | `0 of 1 crook` | `1 of 2 crooks` |
+##
+## **PNG-LESS and driven**: this is a string, and the card renders a perfectly ordinary line whichever
+## form it chose.
+const POOL_TOE_INFLECT_PLURAL_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
+const POOL_TOE_INFLECT_SINGULAR_ITEM := DetailFormat.KIT_DURABILITY_KEY_CROOK
+## An item with a label but NO counted row — the fallback arm. `spears` is deliberately a PLURAL
+## label, since the failure the fallback exists to refuse is `Spearss`.
+const POOL_TOE_INFLECT_UNLISTED_ITEM := "spears"
+const POOL_TOE_INFLECT_DOUBLED_SUFFIX := "ss"
+func _assert_pool_toe_inflection() -> void:
+	var pool := HudConst.LABOR_KIND_AGRICULTURE
+	for item_variant in [POOL_TOE_INFLECT_PLURAL_ITEM, POOL_TOE_INFLECT_SINGULAR_ITEM]:
+		var item := String(item_variant)
+		var one := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, item, 1.0, 0.0)])
+		var many := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, item, 2.0, 1.0)])
+		_assert_band_panel("pool gear — `%s` at ONE reads its SINGULAR — \"%s\" (want \"%s\")"
+				% [item, one, _pool_toe_term(0, 1, item)], one == _pool_toe_term(0, 1, item))
+		_assert_band_panel("pool gear — …and `1 of 2` its PLURAL — \"%s\" (want \"%s\")"
+				% [many, _pool_toe_term(1, 2, item)], many == _pool_toe_term(1, 2, item))
+		# ⛔ **AND THE TWO FORMS DIFFER**, or "it inflects" is satisfied by a table whose row spells the
+		# same word twice — which is exactly what the FALLBACK does, deliberately, one claim down.
+		_assert_band_panel("pool gear — …and the two really are different words (\"%s\" / \"%s\")"
+				% [one, many], one != many)
+	# **THE FALLBACK APPENDS NOTHING, which is what makes it SAFE rather than right.** An item with no
+	# counted row reads its label at every count — today's behaviour — and structurally cannot produce
+	# `Spearss`. The cost is stated rather than hidden: it does NOT inflect, so a pool that starts
+	# requiring this item needs a row in `KIT_ITEM_COUNTED_NAMES`.
+	var bare_one := HudWorkVocab.pool_toe_short_line(
+		[_pool_toe_row(pool, POOL_TOE_INFLECT_UNLISTED_ITEM, 1.0, 0.0)])
+	var bare_many := HudWorkVocab.pool_toe_short_line(
+		[_pool_toe_row(pool, POOL_TOE_INFLECT_UNLISTED_ITEM, 2.0, 1.0)])
+	var bare_word := DetailFormat.kit_item_word(POOL_TOE_INFLECT_UNLISTED_ITEM)
+	_assert_band_panel("pool gear — an item with no counted row falls back to its LABEL at both counts (\"%s\" / \"%s\")"
+			% [bare_one, bare_many],
+		bare_one == _pool_toe_term(0, 1, POOL_TOE_INFLECT_UNLISTED_ITEM)
+			and bare_many == _pool_toe_term(1, 2, POOL_TOE_INFLECT_UNLISTED_ITEM)
+			and bare_one.ends_with(bare_word) and bare_many.ends_with(bare_word))
+	_assert_band_panel("pool gear — …and never doubles its suffix (\"%s\")" % bare_many,
+		not bare_many.ends_with(POOL_TOE_INFLECT_DOUBLED_SUFFIX))
+	# **AND NO SHIPPED POOL ITEM LEAKS A WIRE UNDERSCORE INTO THE SENTENCE**, at either count — the
+	# reason the two road tools were given labels at all.
+	var underscored := HudWorkVocab.pool_toe_short_line(
+		[_pool_toe_row(pool, POOL_TOE_SHARED_ITEM, 2.0, 0.0)])
+	_assert_band_panel("pool gear — …and an underscored wire id never reaches the line — \"%s\""
+		% underscored, not underscored.contains("_"))
 
 ## GUARD: the fund-mode control states the band's OWN mode, offers both, and quotes the pool's
 ## arithmetic — asserted together, since a control that lit no button and one that lit both are the
@@ -5475,6 +5811,169 @@ func _keeper_work_band_fixture(hunters: int) -> Dictionary:
 		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
 			(entry as Dictionary)["workers"] = hunters
 	return band
+
+## ---- THE KEEPING REMEDY FORKS ON THE POOL'S TOOLS (the playtest's second half) ------------------
+##
+## The under-herded row read *"raise this band's Husbandry role"* whatever was actually binding. On
+## Teasel's plant site the pool had committed `demand ÷ fully-equipped-rate` = **0.79** hands against
+## a head count of **2**, so the cap was nowhere near binding and a third worker would have stood idle
+## — what was short was HOES (`0.5666 of 0.7906`). The remedy has to name the constraint that binds.
+##
+## The item the husbandry pool wants. `crook` is the roster's SINGULAR-labelled item, deliberately:
+## nothing about the remedy reads it, so any shipped item serves — and if a future claim ever did
+## quote the line, a singular label is the one that catches a naive plural rule.
+const KEEPER_TOOLS_ITEM := DetailFormat.KIT_DURABILITY_KEY_CROOK
+## The pool's whole want, and the two fills that fork the remedy. The SHORT fill is sub-unit against a
+## sub-unit requirement — the playtest's own shape, so this pair also pins that FIX 1's raw-float test
+## is what the remedy reads rather than the rounded display pair.
+const KEEPER_TOOLS_REQUIRED := 0.7906
+const KEEPER_TOOLS_FILLED_SHORT := 0.5666
+const KEEPER_TOOLS_FILLED_WHOLE := 0.7906
+
+## The same band with a husbandry TOE line stamped on it, at a stated fill.
+##
+## ⛔ **THE POOL IS `husbandry`, NOT `hunt`.** `pool_toe_for` joins on the POOL's own wire token while
+## the row carries the LABOR kind, and a fixture that stamped the labor kind would leave the pool's
+## TOE empty — every assertion below would then pass on the hands arm for the wrong reason.
+func _keeper_tools_band_fixture(hunters: int, filled: float) -> Dictionary:
+	var band := _keeper_work_band_fixture(hunters)
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(
+		HudWorkVocab.keeping_pool_kind(SourceForecast.LABOR_KIND_HUNT),
+		KEEPER_TOOLS_ITEM, KEEPER_TOOLS_REQUIRED, filled)]
+	return band
+
+## ⛔ GUARD: **THE UNDER-KEPT ROW NAMES THE BINDING CONSTRAINT — and BOTH ARMS are asserted, because
+## either alone passes on a producer stuck on one answer.**
+##
+## Three bands, one herd, one hunt crew, and only the husbandry pool's TOE moving:
+##
+## | the pool's TOE | the row's note |
+## |---|---|
+## | no line at all | **hands** — the state every frame before this one stages |
+## | one line, FILLED | **hands** — the fork is on SHORTNESS, not on the vector's presence |
+## | one line, SHORT by 0.22 of a unit | **tools** |
+##
+## The middle row is what stops "it has a TOE" standing in for "it is short of one", and the
+## sub-unit fill is what ties the remedy to the raw-float test rather than to the rounded pair.
+##
+## **THE NOTE AND ITS HOVER ARE ASSERTED TOGETHER** — they are two producers (`under_kept_note` and
+## `under_kept_tooltip`), so a fork threaded into one and not the other puts one remedy on the row and
+## the opposite one under the pointer. The countdown is asserted to SURVIVE the tools arm: what
+## changed is which lever is named, not whether the source is being lost.
+func _assert_keeping_remedy(state_name: String, want_tools: bool) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var hands_note := HudWorkVocab.under_kept_note(SourceForecast.LABOR_KIND_HUNT)
+	var tools_note := HudWorkVocab.WORK_ROW_UNDER_HERDED_TOOLS_NOTE
+	var want := tools_note if want_tools else hands_note
+	var other := hands_note if want_tools else tools_note
+	var found := false
+	var failures: Array[String] = []
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
+			continue
+		found = true
+		if not bool(model.get("at_risk", false)):
+			failures.append("the row is not at risk, so it states no remedy at all")
+		var note := String(model.get("note", ""))
+		if note != want:
+			failures.append("expected \"%s\", got \"%s\"" % [want, note])
+		if note == other:
+			failures.append("it states the OTHER remedy: \"%s\"" % [other])
+		# ⛔ **THE TOOLS ARM KEEPS THE WARN REGISTER.** A pool working bare-handed is slower, not
+		# stopped — the DANGER ink belongs to a missing GOOD, which halts the work outright — so a
+		# fork that reached the severity would restate a hazard this one is not.
+		var severity := String(model.get("note_severity", ""))
+		if severity != HudWorkVocab.NOTE_SEVERITY_WARN:
+			failures.append("expected the WARN register, got \"%s\"" % [severity])
+		var tooltip := String(model.get("tooltip", ""))
+		if not tooltip.contains(want):
+			failures.append("the row hover states a different remedy: %s" % [tooltip])
+		if tooltip.contains(other):
+			failures.append("the row hover states the OTHER remedy too: %s" % [tooltip])
+		if not tooltip.contains(UNDER_KEPT_COUNTDOWN_NEEDLE):
+			failures.append("the row hover lost its countdown: %s" % [tooltip])
+	if not found:
+		_fail("%s — no Hunt work row for %s" % [state_name, UNDER_HERDED_WORK_HERD_ID])
+		return
+	if failures.is_empty():
+		print("band_panel_preview: assert OK — %s the remedy names %s" % [
+			state_name, "TOOLS" if want_tools else "HANDS"])
+		return
+	for failure in failures:
+		_fail("%s — %s" % [state_name, failure])
+
+## The crew a pending `husbandry` edit stages. Any count will do — what the gate reads is that the
+## role's `effective` answer is PENDING, never how many hands it names.
+const KEEPING_PENDING_CREW := 3
+
+## Does the KEEPING pool's card state a tool shortfall, and does the work row it is failing to keep
+## name TOOLS — as one answer each, so the pair can be compared.
+func _husbandry_tool_answers() -> Dictionary:
+	var card := _pool_card_answers(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	var tools_note := HudWorkVocab.WORK_ROW_UNDER_HERDED_TOOLS_NOTE
+	var row := POOL_HOVER_LINE_ABSENT
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
+			continue
+		row = 1 if String(model.get("note", "")) == tools_note else 0
+	return {
+		"card": (not card.is_empty()) and String(card.get("gear", "")) != "",
+		"row": row,
+		"has_card": not card.is_empty(),
+	}
+
+## ⛔ GUARD: **THE POOL CARD AND THE WORK ROW ANSWER THE TOOL QUESTION FROM ONE TEST, PENDING EDIT
+## INCLUDED.** `_pool_toe_settled_rows` is that test; the card composes its hover through it and the
+## board forks `under_kept_note` on it, so neither can fall silent while the other goes on naming
+## tools.
+##
+## **IT IS DRIVEN, NOT RENDERED**, and it has to be: a board whose every under-kept plant row reads
+## *"Husbandry needs tools, not hands"* beside a card with no triangle on it is a perfectly ordinary
+## board. What separates the fix from the defect is a RELATION between two producers, which no
+## picture holds.
+##
+## ⛔ **THE SETTLED HALF IS THE PRECONDITION AND IS HALF THE CLAIM.** Under the pending edit both
+## surfaces are silent, so *"they agree"* is satisfied by a client that had stopped answering at all —
+## the same vacuity the four-card SET exists to refuse. The pair is asserted in BOTH states, with the
+## settled one requiring both to speak.
+##
+## **THE COUNT IS `KEEPING_PENDING_CREW` AND NOTHING TURNS ON IT.** The gate reads the role's
+## `pending` flag, not its head count, which is why the staged value is stated rather than derived
+## from the band.
+func _assert_pending_role_edit_keeps_card_and_row_in_step() -> void:
+	var settled := _husbandry_tool_answers()
+	if not bool(settled["has_card"]) or int(settled["row"]) == POOL_HOVER_LINE_ABSENT:
+		_fail("pending keeping edit — no Husbandry card or no Hunt row for %s"
+			% [UNDER_HERDED_WORK_HERD_ID])
+		return
+	_assert_band_panel("pending keeping edit — SETTLED, both surfaces name TOOLS (card %s, row %s)"
+			% [settled["card"], int(settled["row"]) == 1],
+		bool(settled["card"]) and int(settled["row"]) == 1)
+
+	var entity := int(_hud._band_labor._panel_band.get("entity", -1))
+	_hud._band_labor.record_pending_assign(entity, HudConst.LABOR_KIND_HUSBANDRY,
+		KEEPING_PENDING_CREW, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR)
+	_hud._bandpanel.rerender()
+	await _settle()
+
+	var pending := _husbandry_tool_answers()
+	if not bool(pending["has_card"]) or int(pending["row"]) == POOL_HOVER_LINE_ABSENT:
+		_fail("pending keeping edit — the card or the row went missing under the pending edit")
+	else:
+		_assert_band_panel("pending keeping edit — …and under it BOTH fall silent (card %s, row %s)"
+				% [pending["card"], int(pending["row"]) == 1],
+			not bool(pending["card"]) and int(pending["row"]) == 0)
+		# THE CLAIM ITSELF: whatever each answers, they answer the same. A gate on one surface alone
+		# fails here naming the disagreement, which is the reported defect in its own words.
+		_assert_band_panel("pending keeping edit — the card and the row AGREE (card %s, row %s)"
+				% [pending["card"], int(pending["row"]) == 1],
+			bool(pending["card"]) == (int(pending["row"]) == 1))
+
+	_hud._band_labor._pending_labor.clear()
+	_hud._bandpanel.rerender()
+	await _settle()
 
 ## GUARD: the under-herded ⚠, its note and its instruction, asserted TOGETHER — the flag the row tints
 ## from, the amber mark, and (when up) the note naming the band's HUSBANDRY role. Asserting the flag
@@ -16186,7 +16685,13 @@ const QUEUE_ROW_WORKERS := 1
 ## **The tall LEFT dock still draws all three**, and the authored third row on a horizontal dock still
 ## needs a taller strip nobody wants — the 480px box that would restore it crosses
 ## `HudWorkVocab.BAND_ZONE_TALL_MIN_HEIGHT` and flips the band flank's tier, weighed and declined twice.
-const WIDE_DOCK_QUEUE_ROWS := 1
+##
+## ⛔ **IT WENT 1 → 2 WITH THE QUEUE STRIP'S SECOND CONTROL, and the room came from a reservation
+## rather than from the box.** `docs/plan_pool_toe.md` §3 retired the strip's KIT picker, so
+## `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` fell from the WRAPPED pair (56) to one control line (34) — and
+## `build_queue_rows_max` holds that room back from the queue's own ceiling, so 22px is one more entry
+## row. **RE-MEASURED, never adjusted**: the harness reported `2 drawn` against this constant's 1.
+const WIDE_DOCK_QUEUE_ROWS := 2
 
 func _render_build_queue_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
@@ -16244,6 +16749,7 @@ func _render_build_queue_states() -> void:
 	await _settle()
 	await _save("band_panel_build_queue_wide")
 	await _assert_open_settings_fits_the_wide_zone()
+	await _assert_closed_settings_costs_the_board_nothing()
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_build_queue_wide")
@@ -16286,9 +16792,10 @@ func _render_build_queue_states() -> void:
 ## the block as drawn rather than about a fixture of its own — and the last of them is a claim about
 ## two lists at once, which no fixture can stage on its own.
 func _render_queue_control_states() -> void:
-	# **(a) THE STRIP AT TWO LINES — the tall LEFT dock, which is the shipped default edge.** The pair
-	# does not fit a ~354px column, so the kit stacks under the crop and the two KEYS line up. The
-	# widths are the claim: neither picker shrinks, which was the whole objection to fitting them in.
+	# **(a) THE STRIP ON THE TALL LEFT DOCK, which is the shipped default edge.** It held a PAIR of
+	# controls that flowed — the kit stacking under the crop where a ~354px column could not hold
+	# both — until `docs/plan_pool_toe.md` §3 retired the kit picker; what is claimed now is that the
+	# one surviving control does not shrink and that the strip drew what it reserved.
 	_panel.set_dock(SIDE_LEFT)
 	var plant_key := _queue_entry_key(false)
 	if plant_key == "":
@@ -16298,25 +16805,21 @@ func _render_queue_control_states() -> void:
 	await _settle()
 	await _save("band_panel_queue_settings_stacked")
 	_assert_zone_content_fits()
-	_assert_queue_settings_flow("the tall LEFT dock", false)
-	# **(b) …AND AT ONE LINE, WHERE THE ZONE IS WIDE ENOUGH FOR THE PAIR.** Same strip, same widths,
-	# one line — which is what "it flows" means, and a predicate answering the same either way would
-	# pass (a) alone.
+	_assert_queue_settings_strip("the tall LEFT dock")
+	# **(b) …AND THE SAME STRIP ON THE 1920 BOTTOM DOCK**, the other shipped width. The pair of docks
+	# is what stops a claim about the strip passing on one layout's arithmetic alone.
 	#
-	# ⛔ **THE 1920 BOTTOM DOCK IS *NOT* THAT LAYOUT, and the numbers say so** — its work zone is 382px
-	# wide (one board column of `WORK_COLUMN_MIN_WIDTH`), which leaves the strip 368 of the 408 the
-	# pair needs. The zone's width is the board's COLUMN COUNT times a column, so one line arrives when
-	# the board earns a second column: `_affordable_work_columns` needs ~760px of card span for that,
-	# which a 1920 wide shell does not have once both flanks are paid for. It is reported at every dock
-	# above rather than asserted at one, because *which layouts get one line* is a fact about the
-	# widths and is Ray's to move if 1920 should be one of them.
+	# ⛔ **THE FLOW ARGUMENT THAT USED TO LIVE HERE IS RETIRED WITH THE SECOND CONTROL.** It read:
+	# *"the 1920 BOTTOM dock is NOT the one-line layout — its work zone is 382px wide, which leaves
+	# the strip 368 of the 408 the pair needs … one line arrives when the board earns a second
+	# column"*, and the measurement stands as the record of why no shipped dock ever drew the pair
+	# abreast. With one control the strip is one line at every width.
 	await _pin_canvas(DOCKROW_CANVAS)
 	_panel.set_dock(SIDE_BOTTOM)
 	await _settle()
 	await _save("band_panel_queue_settings_wide")
 	_assert_zone_content_fits()
-	_assert_queue_settings_flow("the 1920 BOTTOM dock", false)
-	_assert_queue_settings_predicate()
+	_assert_queue_settings_strip("the 1920 BOTTOM dock")
 	# **(c) ONE EXPANSION AT A TIME IN THE WHOLE ZONE.** With the queue's strip open, opening a WORK
 	# row's inspector must CLOSE it — the defect this closes drew 426 into a 396 box on exactly this
 	# dock, and it was one click each to reach. `_assert_zone_content_fits` is the assertion that
@@ -16439,94 +16942,50 @@ func _work_board_rows() -> Array[Control]:
 			rows.append(node as Control)
 	return rows
 
-## **THE FLOW, MEASURED RATHER THAN LOOKED AT.** The claim has three parts and all three are numbers:
-## the two pickers sit on ONE line or TWO (their `global_position.y`), NEITHER is narrower than its
-## declared width (the objection the flow exists to answer), and the strip DREW no taller than
-## `build_queue_settings_height` RESERVED for it — which is the invariant the whole computed-wrap
-## design exists to keep, in a zone that clips rather than overflows.
-func _assert_queue_settings_flow(where: String, want_one_line: bool) -> void:
+## **THE STRIP, MEASURED RATHER THAN LOOKED AT.** Two numbers: the crop picker is not narrower than
+## its declared width, and the strip DREW no taller than `build_queue_settings_height` RESERVED for
+## it — the invariant the whole reserved-height design exists to keep, in a zone that clips rather
+## than overflows.
+##
+## > ⛔ RETIRED — **`_assert_queue_settings_flow` / `_assert_queue_settings_predicate`**, the FLOW.
+## > The strip carried TWO controls and the pair sat on one line or two by a width predicate both the
+## > reservation and the builder read; those claims were *"the two pickers sit on ONE line or TWO
+## > (their `global_position.y`), NEITHER is narrower than its declared width, and the strip drew no
+## > taller than it reserved"*, plus a PNG-less pair asserting the predicate on both sides of its own
+## > threshold because **no shipped dock ever reached the one-line side**. `docs/plan_pool_toe.md` §3
+## > retired the kit picker, so there is one control, the predicate has one answer, and what is left
+## > to check is the half that still bites: reserved == drawn.
+func _assert_queue_settings_strip(where: String) -> void:
 	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
 	if strip == null:
 		_fail("%s — the settings strip is not open" % where)
 		return
 	var crop := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) as Control
-	var kit := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) as Control
-	if crop == null or kit == null:
-		_fail("%s — the settings strip is missing a picker (crop %s, kit %s)"
-			% [where, crop != null, kit != null])
+	if crop == null:
+		_fail("%s — the settings strip is missing its crop picker" % where)
 		return
-	var one_line := is_equal_approx(crop.global_position.y, kit.global_position.y)
-	# **THE WIDTH IS REPORTED BESIDE THE VERDICT**, because the verdict is a pure function of it: the
-	# strip flows on the room the WORK ZONE has, and that zone's width is the board's column count
-	# times a column — so *"which layout gets one line"* is answerable from this line alone.
-	print("band_panel_preview: %s — settings strip line width %.0f of the %.0f one line needs (the pair, plus the withdrawal's %.0f)"
-		% [where, _hud._bandpanel._queue_settings_line_width(),
-			HudWorkVocab.queue_settings_one_line_width(),
-			HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH])
-	_assert_band_panel("%s draws the settings pair on %s — crop y %.0f, kit y %.0f"
-			% [where, "ONE line" if want_one_line else "TWO lines",
-				crop.global_position.y, kit.global_position.y],
-		one_line == want_one_line)
-	_assert_band_panel("…with NEITHER picker shrunk — crop %.0f of %.0f, kit %.0f of %.0f"
-			% [crop.size.x, HudWorkVocab.BUILD_QUEUE_CROP_WIDTH,
-				kit.size.x, HudWorkVocab.BUILD_QUEUE_KIT_WIDTH],
-		crop.size.x >= HudWorkVocab.BUILD_QUEUE_CROP_WIDTH
-			and kit.size.x >= HudWorkVocab.BUILD_QUEUE_KIT_WIDTH)
+	# ⛔ **AND NO KIT PICKER BESIDE IT.** The absence is asserted on the DRAWN strip rather than
+	# assumed from the builder: a re-added per-entry control would render a perfectly plausible row.
+	_assert_band_panel("%s — the strip draws its CROP picker and no kit beside it" % where,
+		_find_meta_control(strip, RETIRED_QUEUE_KIT_PICKER_META) == null)
+	_assert_band_panel("%s …with the picker unshrunk — %.0f of %.0f"
+			% [where, crop.size.x, HudWorkVocab.BUILD_QUEUE_CROP_WIDTH],
+		crop.size.x >= HudWorkVocab.BUILD_QUEUE_CROP_WIDTH)
 	# **RESERVED == DRAWN, which is the one thing a clipping zone cannot check for itself.** Both
 	#  inequalities cost the board: drawing TALLER than the reservation takes the difference off the
 	#  bottom in silence, and drawing SHORTER reserves rows the strip never fills — which is exactly
 	#  what a wrapped strip priced at `2 × BUILD_QUEUE_SETTINGS_HEIGHT` did, 68 reserved against 56
 	#  drawn. A one-sided claim passed throughout that.
 	var reserved := strip.custom_minimum_size.y
-	_assert_band_panel("…and the strip drew %.0fpx of the %.0f it reserved"
-		% [strip.size.y, reserved],
+	_assert_band_panel("%s …and the strip drew %.0fpx of the %.0f it reserved"
+		% [where, strip.size.y, reserved],
 		absf(strip.size.y - reserved) <= QUEUE_FACE_WIDTH_TOLERANCE)
 
-## **THE FLOW PREDICATE ITSELF, ON BOTH SIDES OF ITS THRESHOLD** — because NO SHIPPED DOCK REACHES
-## the one-line side today and a rendered frame therefore cannot assert it
-## (`docs/plan_standing_upkeep.md` §4.7b ②).
-##
-## **THE WORK ZONE IS ONE BOARD COLUMN WIDE AT EVERY DOCK THE PANEL SHIPS WITH** — 342px of strip on
-## the tall LEFT dock, 368 on the 1920 BOTTOM one, against the 408 the two full-width pickers and
-## their two keys need. One line arrives when the board earns a SECOND column, which needs ~760px of
-## card span the 1920 wide shell does not have once both flanks are paid for.
-##
-## So the wrap is asserted where it is DECIDED. That is the whole point of it being a width predicate
-## both the reservation and the builder read rather than a container behaviour: it is checkable
-## without a layout, and the reserved height moves with it — which is the invariant a clipping zone
-## has no other way to keep.
-func _assert_queue_settings_predicate() -> void:
-	var needed := HudWorkVocab.queue_settings_one_line_width()
-	_assert_band_panel("the flow predicate says ONE line at exactly the width the pair needs — %.0fpx"
-		% needed, HudWorkVocab.queue_settings_one_line(needed))
-	_assert_band_panel("…and TWO a pixel under it, so neither picker is ever asked to shrink",
-		not HudWorkVocab.queue_settings_one_line(needed - 1.0))
-	# ⛔ **AND THE WITHDRAWAL IS A TERM IN THAT WIDTH** (§4.7b ③). The `✕` rides the strip's LAST
-	# control line now, so a predicate priced at the two keys and two pickers alone would call ONE
-	# LINE at a width where the button does not fit — and this zone answers an overhang by clipping it
-	# off the right edge. The claim is the arithmetic: the pair's own width plus a separation plus the
-	# button is what one line costs.
-	var pair_only := HudWorkVocab.BUILD_QUEUE_SETTINGS_KEY_WIDTH * 2.0 \
-		+ HudWorkVocab.BUILD_QUEUE_CROP_WIDTH + HudWorkVocab.BUILD_QUEUE_KIT_WIDTH \
-		+ float(HudWorkVocab.WORK_ROW_SEPARATION) * 3.0
-	_assert_band_panel("…and one line PAYS FOR THE WITHDRAWAL riding it — %.0fpx of pickers plus %.0f of `%s` and its gap = %.0f"
-			% [pair_only, HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH,
-				HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH, needed],
-		is_equal_approx(needed, pair_only + float(HudWorkVocab.WORK_ROW_SEPARATION)
-			+ HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH))
-	# **AND THE RESERVATION MOVES WITH IT**, which is the half that keeps the board honest: a strip
-	# that wrapped without the height following would take the second line off the bottom of a zone
-	# that clips.
-	var one := HudWorkVocab.build_queue_settings_height(0, true, true, true)
-	var two := HudWorkVocab.build_queue_settings_height(0, true, true, false)
-	_assert_band_panel("…and the reserved height follows the wrap — %.0fpx on one line, %.0f on two"
-		% [one, two], two > one)
-	# **A LONE CONTROL IS ONE LINE WHATEVER THE WIDTH.** An ANIMAL entry has a kit and no crop, so it
-	# has nothing to wrap against — letting the predicate answer for it would reserve a second line for
-	# a strip that draws one.
-	_assert_band_panel("…while a kit-only strip stays one line even where the pair would wrap — %.0fpx"
-		% HudWorkVocab.build_queue_settings_height(0, false, true, false),
-		is_equal_approx(HudWorkVocab.build_queue_settings_height(0, false, true, false), one))
+## **THE META THE RETIRED QUEUE KIT PICKER WORE**, spelled in the harness for
+## `RETIRED_UPKEEP_KIT_META`'s reason: the client's const went with the control, and an absence claim
+## still needs a needle. A node matching it again means a per-entry kit control has come back to a
+## queue whose tools are the RUNG's.
+const RETIRED_QUEUE_KIT_PICKER_META := "build_queue_kit_picker"
 
 ## **THE REORDER GESTURE, THROUGH ITS OWN CALLABLES.** `set_drag_forwarding` is what a real drag runs,
 ## so the drag data, the hover verdict and the drop are asked of the very nodes the block drew — a
@@ -17390,19 +17849,11 @@ func _road_kit_roster() -> Array:
 	})
 	return roster
 
-## The kit face the expanded head row's own picker is showing — the DETAIL half of claim ①.
-func _open_queue_row_kit_face(key: String) -> String:
-	_hud._bandpanel._queue_open_key = ""
-	_hud._bandpanel._toggle_queue_settings(key)
-	await _settle()
-	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
-	if strip == null:
-		return ""
-	var picker := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META)
-	if picker == null:
-		return ""
-	return KitRoster.display_name_for_id(_hud._band_labor.kits(),
-		String(picker.get_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META)))
+## > ⛔ RETIRED — `_open_queue_row_kit_face`, which opened a queue row's settings strip and read the
+## > KIT PICKER's own selected id back. `docs/plan_pool_toe.md` §3 retired that control — a build's
+## > tools are the RUNG's — so the row has no kit to state and the head-vs-row AGREEMENT it made
+## > possible is not a claim anybody can make. What survives is the HEADER's own reading, asserted by
+## > EQUALITY against the kit the roster binds to the rung being raised.
 
 func _assert_a_road_under_way_reads_its_verb_and_its_kit() -> void:
 	_hud.update_kit_roster(_road_kit_roster(),
@@ -17459,35 +17910,32 @@ func _assert_a_road_under_way_reads_its_verb_and_its_kit() -> void:
 	_assert_band_panel("…and wears no hazard mark, a road being graded on schedule having nothing wrong with it",
 		not date_face.contains(HudSelectionVocab.RUNG_HAZARD_GLYPH))
 
-	# ---- ① THE HEADER'S KIT AND THE HEAD ENTRY'S KIT AGREE --------------------------------------
-	# ⛔ **THE AGREEMENT IS THE CLAIM, NOT THE ID.** Both surfaces ask the roster the same question
-	# about the same entry, so any call site that names the branch and forgets the RUNG breaks the
-	# equality — `KitRoster.kit_serves_build`'s third arm refuses every rung-bound tool to an
-	# unqualified caller, and `_role_kit_id` then falls through to `bare_kit_id` and prints `No kit`.
-	# That is what Ray photographed: `1 builders · No kit` over a dropdown reading `Roadbuilding kit`.
-	var road_key := _hud._band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK,
-		ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y, "")
-	var row_kit_face := await _open_queue_row_kit_face(road_key)
-	# **THE BLOCK IS RE-READ AFTER THE EXPANSION, and the ordering is load-bearing**: opening a row
-	# re-renders the zone, so a handle taken before the toggle points into a freed subtree and every
-	# label search over it answers `false` for a reason that has nothing to do with the claim.
+	# ---- ① THE HEADER NAMES THE ROSTER'S TOOL FOR THE RUNG BEING RAISED ------------------------
+	# ⛔ **THE CLAIM WAS AN AGREEMENT BETWEEN TWO SURFACES AND IS NOW ONE SURFACE BY EQUALITY.** The
+	# queue ROW's kit picker retired with `docs/plan_pool_toe.md` §3, so there is no second reading to
+	# agree with; what the defect actually was survives intact — a call site that names the BRANCH and
+	# forgets the RUNG hits `KitRoster.kit_serves_build`'s third arm, which refuses every rung-bound
+	# tool to an unqualified caller, and `_role_kit_id` then falls through to `bare_kit_id`. That is
+	# what Ray photographed: `1 builders · No kit` on a band grading a trail.
+	#
+	# **THE EXPECTATION IS SPELLED, NOT RESOLVED** (`ROAD_HEAD_KIT_NAME`): re-deriving it through
+	# `build_kit_for_branch` would agree with the code under test by construction.
 	var block := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_BLOCK_META)
-	var head_face := HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [QUEUE_BUILDERS, row_kit_face]
+	var head_face := HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [QUEUE_BUILDERS, ROAD_HEAD_KIT_NAME]
 	print("band_panel_preview: road queue head -> %s" % head_face)
-	_assert_band_panel("the queue HEADER names the head ROW's own kit — \"%s\"" % head_face,
+	# The roster binds `roadbuilding` to `route:dirt_road` and `paving` to `route:paved_road`; this
+	# road holds a trail, so the rung being worked is the dirt road and the earthmoving tools are what
+	# the sim will hand the pool.
+	_assert_band_panel("the queue HEADER names the roster's tool for the rung being raised — \"%s\""
+			% head_face,
 		block != null and _has_label_containing(block, head_face))
-	# **AND BY EQUALITY, so the pair cannot agree on the WRONG kit.** The roster binds `roadbuilding`
-	# to `route:dirt_road` and `paving` to `route:paved_road`; this road holds a trail, so the rung
-	# being worked is the dirt road and the earthmoving tools are what the sim will hand the pool.
-	_assert_band_panel("…and that kit is `%s`, the roster's tool for the rung being raised (got \"%s\")"
-			% [ROAD_HEAD_KIT_NAME, row_kit_face],
-		row_kit_face == ROAD_HEAD_KIT_NAME)
 	# **THE PAIRED NEGATIVE: the bare-handed fall-through is what the defect rendered.** Naming it
 	# makes a regression report the reported face instead of an inequality.
 	var bare_face := KitRoster.display_name_for_id(_hud._band_labor.kits(), BandFx.KIT_ID_NONE)
+	var bare_head := HudWorkVocab.BUILD_QUEUE_BUILDERS_FORMAT % [QUEUE_BUILDERS, bare_face]
 	_assert_band_panel("…and never the bare kit's `%s`, which is what an unqualified lookup falls through to"
 			% bare_face,
-		row_kit_face != bare_face)
+		block != null and not _has_label_containing(block, bare_head))
 	_hud._bandpanel._queue_open_key = ""
 	_restore_road_kit_roster()
 	_restore_road_queue_fixture()
@@ -21089,37 +21537,20 @@ func _find_queue_row(animal: bool) -> Control:
 			return row
 	return null
 
-## **THE KIT PICK'S COMMAND, READ OFF `Main.format_build_kit` — and the claim is the OMISSION.**
-##
-## Picking the DERIVED entry must emit `build_kit <faction> <x> <y>` with NO `kit` token, because an
-## absent token is how the sim is told to go back to deriving; a client that echoed `kit tillage`
-## there would PIN the derivation the player was handing back. Picking anything else must carry its
-## token, or the assertion above passes on a builder that never emits one.
-func _assert_build_kit_command_grammar(picker: OptionButton) -> void:
-	var derived_index := HudWidgets.NO_ENTRY_SELECTED
-	var other_index := HudWidgets.NO_ENTRY_SELECTED
-	for index in picker.item_count:
-		if picker.get_item_text(index).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
-			derived_index = index
-		elif not picker.is_item_disabled(index):
-			other_index = index
-	var seen: Array = []
-	var sink := func(payload: Dictionary) -> void: seen.append(payload)
-	_hud.build_kit_requested.connect(sink)
-	if derived_index != HudWidgets.NO_ENTRY_SELECTED:
-		picker.item_selected.emit(derived_index)
-	if other_index != HudWidgets.NO_ENTRY_SELECTED:
-		picker.item_selected.emit(other_index)
-	_hud.build_kit_requested.disconnect(sink)
-	if seen.size() < 2:
-		_fail("the queue row's KIT picker emitted %d build_kit payload(s), not 2" % seen.size())
-		return
-	var derived_line := String(MAIN_SCRIPT.format_build_kit(seen[0] as Dictionary).get("line", ""))
-	var other_line := String(MAIN_SCRIPT.format_build_kit(seen[1] as Dictionary).get("line", ""))
-	_assert_band_panel("…and picking `(default)` emits NO `kit` token, which is what CLEARS the override — `%s`"
-		% derived_line, not derived_line.contains(" kit "))
-	_assert_band_panel("…while picking another kit carries its token — `%s`" % other_line,
-		other_line.contains(" kit %s" % String((seen[1] as Dictionary).get("kit_id", ""))))
+## > ### ⛔ RETIRED — `_assert_build_kit_command_grammar`
+## >
+## > It drove the queue row's KIT PICKER over two entries and read both lines off
+## > `Main.format_build_kit`: picking the `(default)` one had to emit `build_kit <faction> <x> <y>`
+## > with **no** `kit` token — an absent token being how the sim was told to resume DERIVING, so a
+## > client echoing `kit tillage` there would pin the very derivation the player was handing back —
+## > while any other pick had to carry its own token, or the first claim passed on a builder that
+## > never emitted one.
+## >
+## > `docs/plan_pool_toe.md` §3 retired the picker: a build's tools follow from the RUNG it raises,
+## > so there is no per-entry override to set or clear and no control left to drive. **The verb's
+## > grammar is still gated** — `cargo xtask command-guard` drives `_emit_build_kit` directly on both
+## > source forms and parses each line with the real server parser, and it is now that gate's ONLY
+## > live driver. The `build_kit` command itself retires end to end in a later slice.
 
 ## How many WORK BOARD rows are rendered — the board's own rows, told from the queue's by the meta
 ## only a board row carries (`HudWorkVocab.WORK_ROW_RUNG_META`, its reserved rung slot).
@@ -21508,11 +21939,17 @@ func _assert_queue_row_settings() -> void:
 	# is what `build_queue_block_height`'s open-only term means in arithmetic.
 	_assert_band_panel("no settings strip is open until a row is clicked",
 		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) == null)
-	# **THE ANIMAL HALF OF THE PAIR, AND IT IS THE OPPOSITE CLAIM NOW** (§4.7a ②). An animal entry
-	# commits no species and it is still RAISED WITH A TOOL, so it expands into a KIT-only strip where
-	# it used to refuse to expand at all — which is the point of moving the override here, not a
-	# regression in the *never invite a click that opens nothing* rule. Driven through the REAL
+	# **THE ANIMAL HALF OF THE PAIR, AND WHAT MAKES IT A PAIR IS NOW THE STRIP'S CONTENTS.** A `tame`
+	# commits no species and carries no legs, so it opens into a strip holding nothing but its `✕` —
+	# which is exactly why the strip is not optional: the withdrawal LIVES there (§4.7b ③), so a row
+	# that refused to expand would be a queued job the player cannot take back. Driven through the REAL
 	# `gui_input`, so this is the row's own handler and not a state poke.
+	#
+	# > ⛔ RETIRED — the reason §4.7a ② gave for this: *"an ANIMAL entry EXPANDS now — every queued
+	# > job derives its own builders kit"*, into a kit-only strip whose picker had to answer `hurdling`
+	# > rather than the plant web's `tillage`. `docs/plan_pool_toe.md` §3 retired that derivation, and
+	# > for one pass the strip went with it — measured here as a HERD entry whose `✕` emitted nothing
+	# > at all, because there was no strip to reach it in.
 	if animal_row == null:
 		# **A SKIPPED HALF IS A FAILED HALF.** The pair is the claim, so a fixture that has stopped
 		# staging an animal entry must say so rather than leave the positive half passing alone.
@@ -21521,25 +21958,20 @@ func _assert_queue_row_settings() -> void:
 		_click_control(animal_row)
 		await _settle()
 		var animal_strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
-		_assert_band_panel("an ANIMAL entry EXPANDS now — every queued job derives its own builders kit",
+		_assert_band_panel("an ANIMAL entry EXPANDS — its `✕` lives in the strip, so the strip is not optional",
 			animal_strip != null)
 		if animal_strip != null:
-			_assert_band_panel("…into a KIT picker",
-				_find_meta_control(animal_strip, HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) != null)
 			# …and the crop half stays the PLANT web's, which is what keeps this a pair rather than
 			# "everything expands into everything".
 			_assert_band_panel("…and NO crop picker — a Tame commits no species",
 				_find_meta_control(animal_strip, HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) == null)
-			# **THE KIT IS THE ANIMAL WEB'S, DERIVED FROM THIS ENTRY'S OWN BRANCH.** A picker that
-			# answered the plant web's tool here would be the per-BAND mistake the override exists to
-			# undo, restored one surface over.
-			var animal_kit := _find_meta_control(animal_strip,
-				HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) as OptionButton
-			if animal_kit != null:
-				_assert_band_panel("…deriving the ANIMAL web's tool, not the plant web's — \"%s\""
-						% animal_kit.text,
-					String(animal_kit.get_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META))
-						== BandFx.KIT_ID_HURDLING)
+			# ⛔ **AND NO KIT PICKER EITHER** — asked on the DRAWN strip rather than assumed from the
+			# builder, an animal entry being the shape a re-added per-entry control would look right on.
+			_assert_band_panel("…and no kit picker — a build's tools are the RUNG's",
+				_find_meta_control(animal_strip, RETIRED_QUEUE_KIT_PICKER_META) == null)
+			# …and the WITHDRAWAL really is there, which is the whole reason the strip opens at all.
+			_assert_band_panel("…and it carries the `✕` that takes the entry back",
+				_find_meta_control(animal_strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) != null)
 	# **RE-FIND THE PLANT ROW: the click above re-rendered the zone and freed every row this function
 	# was holding.** `_click_control` on a freed object raises, which ends the block with no `FAIL`
 	# line and leaves the strip open over every state that follows — the exact failure the CLOSER
@@ -21564,29 +21996,21 @@ func _assert_queue_row_settings() -> void:
 	if picker == null:
 		_fail("the settings strip carries no crop picker")
 		return
-	# **THE PLANT ENTRY CARRIES BOTH CONTROLS**, which is what makes the strip *the job's settings*
-	# rather than *the crop's home*. Its kit is the PLANT web's, derived from this entry's own branch.
-	var plant_kit := _find_meta_control(strip,
-		HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META) as OptionButton
-	if plant_kit == null:
-		_fail("the PLANT settings strip carries no kit picker")
-		return
-	_assert_band_panel("the PLANT entry's kit derives the plant web's tool — \"%s\"" % plant_kit.text,
-		String(plant_kit.get_meta(HudWorkVocab.BUILD_QUEUE_KIT_PICKER_META))
-			== BandFx.KIT_ID_TILLAGE)
-	# **AND IT IS MARKED `(default)` ON THE ENTRY ITSELF**, which is what makes an override legible as
-	# one: the mark names the kit the player gets by touching nothing.
-	var marked_default := ""
-	for index in plant_kit.item_count:
-		if plant_kit.get_item_text(index).contains(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
-			marked_default = plant_kit.get_item_text(index)
-	_assert_band_panel("…and the derived answer wears `(default)` in the list — \"%s\"" % marked_default,
-		marked_default.begins_with(KitRoster.display_name_for_id(
-			_hud._band_labor.kits(), BandFx.KIT_ID_TILLAGE)))
-	# **PICKING THE DERIVED DEFAULT SENDS NO `kit` TOKEN, AND THAT IS WHAT CLEARS THE OVERRIDE.**
-	# Read off the REAL builder, because a client that emitted `kit tillage` here would PIN the very
-	# derivation the player was handing the choice back to.
-	_assert_build_kit_command_grammar(plant_kit)
+	# **THE PLANT ENTRY CARRIES THE ONE CONTROL, AND NO KIT BESIDE IT.**
+	#
+	# > ⛔ RETIRED — the strip's KIT picker and its three claims: that it derived `tillage` from this
+	# > ENTRY's own branch, that the derived answer wore `(default)` in the list, and
+	# > `_assert_build_kit_command_grammar`, which pressed both entries and required the derived pick
+	# > to emit NO `kit` token (an absent token being how the sim was told to resume deriving) while
+	# > any other pick carried one. `docs/plan_pool_toe.md` §3 retired the control: a build's tools
+	# > follow from the RUNG it raises, so there is no per-entry override to clear. **The `build_kit`
+	# > GRAMMAR is still driven — by `cargo xtask command-guard`, which is now its only live driver
+	# > and parses the line with the real server parser; the verb itself retires in a later slice.**
+	#
+	# The absence is asserted on the DRAWN strip rather than assumed from the builder: a re-added
+	# per-entry control would render a perfectly plausible second row here.
+	_assert_band_panel("…and NO kit picker beside it — a build's tools are the RUNG's",
+		_find_meta_control(strip, RETIRED_QUEUE_KIT_PICKER_META) == null)
 	# It opens on the band's own committed crop rather than on the list's first entry — the picker's
 	# `select` contract, and the difference between stating a choice and inventing one.
 	_assert_band_panel("…opening on the crop the band's own row carries — \"%s\"" % picker.text,
@@ -21672,6 +22096,58 @@ func _assert_open_settings_fits_the_wide_zone() -> void:
 		% _work_board_row_count(), _work_board_row_count() > 0)
 	_hud._bandpanel._toggle_queue_settings(plant)
 	await _settle()
+
+## ⛔ GUARD: **A CLOSED BLOCK RESERVES NO STRIP, AND THE BOARD IS WHERE THAT IS PAID.** The strip is
+## open-only, so the height a CLOSED block claims must be its head and its rows and nothing else —
+## and because the same term is subtracted in `_work_board_capacity`'s chrome, 34px charged for a
+## strip that never draws comes off the board as a whole row (`WORK_ROW_HEIGHT` is 28) with no
+## overflow and no warning, this zone clipping rather than growing.
+##
+## **THE ARITHMETIC HALF IS A RE-DERIVATION THAT NAMES EVERY TERM IT MAY CONTAIN**, the shape
+## `_assert_zone_budget_has_no_inspector_term` uses: `build_queue_block_height`'s closed answer is
+## compared by EQUALITY against head + rows composed here, so a term that comes back fails rather
+## than being absorbed into a "looks about right" tolerance.
+##
+## **PAIRED WITH THE RENDERED HALF, and the pairing is the whole claim.** The closed board must draw
+## STRICTLY MORE rows than the open one on this same band — without that, "the closed block charges
+## nothing" is satisfied by a block that charges nothing in either state, which is the opposite
+## defect and would slice the board the moment a strip opened.
+func _assert_closed_settings_costs_the_board_nothing() -> void:
+	var queued := _build_queue_rows().size()
+	var rows := mini(queued, HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
+	var wanted := HudWorkVocab.BUILD_QUEUE_HEAD_HEIGHT + float(rows) * HudWorkVocab.WORK_ROW_HEIGHT
+	var closed := HudWorkVocab.build_queue_block_height(queued,
+		HudWorkVocab.BUILD_QUEUE_ROWS_MAX, false, 0)
+	_assert_band_panel("a CLOSED build-queue block reserves its head and its rows and nothing else — %.0f, wanted %.0f (%d entries, %d drawn)"
+			% [closed, wanted, queued, rows],
+		queued > 0 and is_equal_approx(closed, wanted))
+	# …and an OPEN one costs exactly the strip, so the term is missing-when-closed rather than
+	# missing outright.
+	var open_h := HudWorkVocab.build_queue_block_height(queued,
+		HudWorkVocab.BUILD_QUEUE_ROWS_MAX, true, 0)
+	_assert_band_panel("…while an OPEN one adds exactly the strip — %.0f against %.0f"
+			% [open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT],
+		is_equal_approx(open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT))
+	# THE RENDERED HALF. Same band, same dock, only the strip moving.
+	var plant := ""
+	for entry_variant in _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+			_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)):
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+			plant = String(entry.get("key", ""))
+			break
+	if plant == "":
+		_fail("closed queue settings — no plant entry to open a strip on")
+		return
+	var closed_rows := _work_board_row_count()
+	_hud._bandpanel._toggle_queue_settings(plant)
+	await _settle()
+	var open_rows := _work_board_row_count()
+	_hud._bandpanel._toggle_queue_settings(plant)
+	await _settle()
+	_assert_band_panel("…and the board draws MORE rows with the strip closed than open — %d against %d"
+			% [closed_rows, open_rows],
+		closed_rows > open_rows and open_rows > 0)
 
 ## A laid-out width may sit a sub-pixel under the text server's float for the same string, the
 ## faction page's `KEYLESS_KEY_WIDTH_TOLERANCE` reason.
@@ -23541,7 +24017,18 @@ const DIALOG_PROBE_TIGHTEST_CANVAS := Vector2i(1152, 720)
 ## outright — the strip charged `_work_inspector_height` to the zone and the board, floored at
 ## `maxi(1, …)`, paid — so the figure is asserted rather than merely printed: it is the one place the
 ## reclaimed room is a COUNT a reader can check rather than a pixel budget.
-const DIALOG_PROBE_WIDE_BOARD_ROWS := 2
+##
+## ⛔ **IT WENT 2 → 1, AND NOT ONE PIXEL OF IT IS THE INSPECTOR COMING BACK.** §4.9 item 12d's
+## reclaimed row is spent by the QUEUE: `docs/plan_pool_toe.md` §3 retired the settings strip's kit
+## picker, `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` fell 56 → 34, and the zone's standing allocation rule —
+## *the queue claims up to its authored cap and the board takes the remainder* — hands 22px of it to a
+## second entry row (`WIDE_DOCK_QUEUE_ROWS`, 1 → 2) before the board sees any.
+##
+## **THE CLAIM THAT MATTERS IS UNMOVED AND IS ASSERTED ELSEWHERE**: the count does not change when a
+## row is SELECTED, which `_assert_zone_budget_has_no_inspector_term` pins by EQUALITY against the
+## same board with nothing selected. This constant is the absolute, and the absolute is a function of
+## how much room the queue wanted.
+const DIALOG_PROBE_WIDE_BOARD_ROWS := 1
 
 ## How far off the viewport's own centre the card may land. **A rounding tolerance, not a placement
 ## budget**: `_place` centres by arithmetic on two floats and the rect is read back after a layout
@@ -23962,47 +24449,27 @@ func _render_pending_row_kit_states() -> void:
 	_assert_crew_edit_keeps_the_kit("band_panel_work_kits_pending_herd", band, PENDING_KIT_HERD,
 		Vector2i(-1, -1))
 
-	_assert_unstated_upkeep_kit_falls_through()
-
 	_hud._bandpanel.close_work_inspector()
 	_clear_pending_labor()
 	await _settle()
 
-## GUARD: **AN UNSTATED KEEPING KIT RESOLVES TO THE DERIVATION, NOT TO A BLANK CONTROL.**
-##
-## ⛔ **PNG-LESS AND DRIVEN, BECAUSE NO FIXTURE IN THIS FILE CAN RENDER THE STATE.** The wire's
-## `upkeep_kit_id` is resolved by walking the BANDS' LABOR ROWS, so it is empty only for a source no
-## band works yet — and every kept source in this harness is one its band works, which is what a live
-## server publishes too. What reaches it in play is a brand-new PENDING assignment on a kept source:
-## the bill comes off the source's own RUNG and is there, the kit comes off the assignment map and is
-## not. Staging that would need a kept patch no fixture band works, so the BUILDER is driven directly
-## with the model the wire would produce.
-##
-## Three claims, and the third is what stops the first two passing on a picker that simply defaults:
-## it is LIT, its face names the derivation, and the entry it lit wears the `(default)` mark — an
-## unnamed row's resolved kit IS the derivation, so anything else would be a second one.
-func _assert_unstated_upkeep_kit_falls_through() -> void:
-	var band: Dictionary = _stamp_band_ids([_band_fixture()])[0]
-	var kits: Array = _hud._band_labor.kits()
-	var want := KitRoster.keeping_kit_for(kits, KitRoster.JOB_AGRICULTURE)
-	if want == KitRoster.NO_KIT_ID:
-		_fail("the roster derives no agriculture keeping kit — the fall-through claim would be vacuous")
-		return
-	var picker := _hud._bandpanel._build_work_inspector_upkeep_kit_picker(band, {
-		"kind": SourceForecast.LABOR_KIND_FORAGE,
-		"upkeep_kit_id": KitRoster.NO_KIT_ID, "upkeep_kit_named": false,
-	})
-	_assert_band_panel("an unstated keeping kit LITS the derived entry (index %d of %d)"
-			% [picker.selected, picker.item_count],
-		picker.selected != HudWidgets.NO_ENTRY_SELECTED and picker.item_count > 0)
-	_assert_band_panel("…and the face names it (\"%s\", want \"%s\")"
-			% [picker.text, KitRoster.display_name_for_id(kits, want)],
-		picker.text == KitRoster.display_name_for_id(kits, want))
-	_assert_band_panel("…and the entry it lit wears the `(default)` mark (\"%s\")"
-			% picker.get_item_text(picker.selected),
-		picker.get_item_text(picker.selected).ends_with(
-			HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX))
-	picker.free()
+## > ### ⛔ RETIRED — `_assert_unstated_upkeep_kit_falls_through`
+## >
+## > It pinned *"an unstated keeping kit resolves to the DERIVATION, not to a blank control"* on three
+## > claims — lit, its face names the derivation, and the entry it lit wears the `(default)` mark —
+## > driven directly through `_build_work_inspector_upkeep_kit_picker`, PNG-less, because no fixture
+## > here could render the state it was about (a brand-new PENDING assignment on a kept source, whose
+## > bill comes off the RUNG and is there while the kit came off the assignment map and was not).
+## >
+## > **`docs/plan_pool_toe.md` §3 retired the picker, so all three claims are about a control that
+## > does not exist** — and by then the third had stopped discriminating anyway: §4 publishes
+## > `upkeepKitNamed` `false` on every source, so EVERY entry wore the mark and the assertion could
+## > not fail.
+## >
+## > What replaced the claim is an ABSENCE, asserted on two rendered shapes rather than driven:
+## > `_assert_kits_section_draws_its_control` requires no keeping picker on a KEPT source (the one
+## > card on which a re-added one would look right) and `_assert_wild_source_offers_no_upkeep` on a
+## > wild one.
 
 ## The roster's SECOND deer — a herd `_band_fixture()` does not hunt, so a pending assignment on it
 ## has no confirmed row behind it. Named because both the emit and the row lookup spell it.

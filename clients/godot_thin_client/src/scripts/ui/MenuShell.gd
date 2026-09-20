@@ -38,7 +38,12 @@ const TextEntryFocus = preload("res://src/scripts/TextEntryFocus.gd")
 ## when they were never offered the choice (the capacity ask went unanswered). The two are different
 ## requests and the owner must keep them apart: `0` says "I play alone", while `NO_COUNT` says "send
 ## no count at all" — which the server answers with its unattended roster, no rivals.
-signal new_game_requested(preset_id: String, width: int, height: int, seed: int, profile_id: String, ai_faction_count: int)
+##
+## **`seed` IS A STRING OF DIGITS, and that is not cosmetic.** The server parses the seed as a u64,
+## whose top half does not fit a GDScript `int`; carrying the text is what lets the whole range
+## survive the handoff. `"0"` means "derive from the run clock". Never emitted with a value this
+## shell would refuse — `seed_error` gates the press.
+signal new_game_requested(preset_id: String, width: int, height: int, seed: String, profile_id: String, ai_faction_count: int)
 signal resume_requested
 signal abandon_requested
 signal exit_requested
@@ -247,8 +252,31 @@ const CTRL_RADIUS := 7
 const NAV_PAD_X := 13
 const NAV_PAD_Y := 10
 const CARD_PAD := 13
-const SEED_FIELD_MIN_WIDTH := 160.0
-const SEED_MAX_LENGTH := 12
+## Wide enough to show `SEED_MAX_LENGTH` digits in the field's own font plus the stylebox padding
+## `HudStyle.apply_line_edit` sets, so a seed pasted back in is READ back rather than scrolled. It
+## was 160.0, sized for the 12-character cap below; `menu_preview` MEASURES a full-width seed in the
+## field's own font (206px at the shipped one) and fails if this constant is under it, so a theme
+## that grows the text cannot quietly start clipping. The slack above the measurement is the caret's
+## room after the last digit. The field is `SIZE_FILL` inside a pane far wider than this, so the
+## number only bites on a narrow window.
+const SEED_FIELD_MIN_WIDTH := 260.0
+## **THE FULL DECIMAL WIDTH OF A u64**, which is what a seed is. The cap was 12, so a seed the game
+## itself minted — `6186994682829664034`, 19 digits — was TRUNCATED on the way back in and replayed a
+## different world. See `SEED_MAX_TEXT` for why the value is carried as text.
+const SEED_MAX_LENGTH := 20
+## The largest seed the server can parse, **as digits, because that is the only form that holds it**.
+## A GDScript `int` is signed 64-bit and stops at 9223372036854775807; roughly half of all
+## clock-derived seeds are above that, so a seed round-tripped through an `int` would be accepted,
+## silently changed, and generate a different world. The comparison below is made on the text.
+const SEED_MAX_TEXT := "18446744073709551615"
+## The seed that means "derive from the run clock" — what an empty field sends.
+const SEED_UNSEEDED := "0"
+## The field's caption while the text can be used, and the two refusals. A u64 has no sign and no
+## separators, so anything but digits is a seed the server cannot parse — refused HERE rather than
+## discovered by a `new_game` that never answers and a loading overlay that never lifts.
+const SEED_NOTE_HINT := "0 = derive from clock"
+const SEED_NOTE_NOT_DIGITS := "A seed is digits only."
+const SEED_NOTE_TOO_LARGE_FORMAT := "The largest seed is %s."
 
 # ---- font sizes ----
 const TITLE_SIZE_LANDING := 44
@@ -325,6 +353,10 @@ var _active_pane := PANE_NEW_GAME
 var _selected_preset := "earthlike"
 var _selected_size := MapSizes.DEFAULT_KEY
 var _seed_edit: LineEdit
+## The caption under the seed field, held so it can be RE-WORDED in place on every keystroke. Same
+## reason the rival row's nodes are held: rebuilding the pane would take the caret out of the field
+## the player is typing into (`.claude/rules/client/save-load-menu.md`).
+var _seed_note: Label = null
 var _summary_box: HBoxContainer
 var _nav_rows := {}   # id -> {row, item, hover}
 ## The Options-pane speed sliders (rebuilt each time the pane is opened), so
@@ -721,6 +753,7 @@ func _show_pane(pane_id: String) -> void:
 	_rival_caption = null
 	_rivals_answered_once = false
 	_begin_button = null
+	_seed_note = null
 	for child in _pane_body.get_children():
 		child.queue_free()
 	match pane_id:
@@ -765,9 +798,10 @@ func _build_setup_pane() -> void:
 	_seed_edit.custom_minimum_size.x = SEED_FIELD_MIN_WIDTH
 	_seed_edit.size_flags_horizontal = Control.SIZE_FILL
 	_style_line_edit(_seed_edit)
-	_seed_edit.text_changed.connect(func(_t): _refresh_summary())
+	_seed_edit.text_changed.connect(func(_t): _on_seed_changed())
 	_pane_body.add_child(_seed_edit)
-	_add_note("0 = derive from clock")
+	_seed_note = _add_note(SEED_NOTE_HINT)
+	_refresh_seed_note()
 
 	_summary_box = HBoxContainer.new()
 	_summary_box.add_theme_constant_override("separation", 22)
@@ -1251,29 +1285,94 @@ func _build_exit_pane() -> void:
 	_pane_body.add_child(actions)
 
 
-## The seed entered in the New Game field, clamped to a non-negative value — the single read
-## point for the seed. The server parses the seed as a u64, so a negative seed fails the parse
-## and the world never generates (the client is stranded on the loading overlay); 0 still means
-## "derive from the run clock".
-func _seed_value() -> int:
-	# Same reason as `_refresh_summary`, which is what reads this: the field goes with its pane, and a
-	# capacity answer can drive the summary after that pane has been swapped out.
+## **WHY A SEED FIELD CANNOT BE USED AS TYPED, or `""` when it can.** Static and pure, so the one
+## rule is callable from `Main`'s wire boundary and from a harness without standing a shell up —
+## the same shape `SaveSlots.slot_name_error` has, and for the same reason: a refusal the player can
+## see while typing beats one discovered by a command the server cannot parse.
+##
+## An EMPTY field is not an error; it is `SEED_UNSEEDED`, "derive from the run clock".
+static func seed_error(text: String) -> String:
+	var trimmed := text.strip_edges()
+	if trimmed.is_empty():
+		return ""
+	for i in trimmed.length():
+		if not _is_seed_digit(trimmed[i]):
+			return SEED_NOTE_NOT_DIGITS
+	if _exceeds_seed_max(trimmed):
+		return SEED_NOTE_TOO_LARGE_FORMAT % SEED_MAX_TEXT
+	return ""
+
+
+## The digits a seed field holding `text` puts on the `new_game` line. Only meaningful for text
+## `seed_error` accepts.
+static func seed_digits(text: String) -> String:
+	var trimmed := text.strip_edges()
+	return SEED_UNSEEDED if trimmed.is_empty() else trimmed
+
+
+## One character of a u64's decimal spelling. A seed has no sign, no separators and no `0x`, so the
+## whitelist is the ten digits and nothing else.
+static func _is_seed_digit(ch: String) -> bool:
+	if ch.length() != 1:
+		return false
+	var code := ch.unicode_at(0)
+	return code >= 48 and code <= 57
+
+
+## **COMPARED AS TEXT, BECAUSE NO NUMBER HERE CAN HOLD BOTH SIDES.** `SEED_MAX_TEXT` is above a
+## GDScript `int`'s ceiling, so `int(digits) > int(SEED_MAX_TEXT)` would compare two saturated values
+## and answer `false` for every seed in the top half of the range. Leading zeros are dropped first;
+## after that, equal-length digit strings order lexicographically exactly as they order numerically.
+static func _exceeds_seed_max(digits: String) -> bool:
+	var significant := digits.lstrip("0")
+	if significant.length() != SEED_MAX_TEXT.length():
+		return significant.length() > SEED_MAX_TEXT.length()
+	return significant > SEED_MAX_TEXT
+
+
+## The seed the New Game field holds, as raw text — the single read point. `""` when the pane is
+## gone, for the same reason `_refresh_summary` checks: the field goes with its pane, and a capacity
+## answer can drive the summary after that pane has been swapped out.
+func _seed_field_text() -> String:
 	if _seed_edit == null or not is_instance_valid(_seed_edit):
-		return 0
-	if not _seed_edit.text.strip_edges().is_valid_int():
-		return 0
-	return maxi(0, int(_seed_edit.text.strip_edges()))
+		return ""
+	return _seed_edit.text
+
+
+func _seed_problem() -> String:
+	return seed_error(_seed_field_text())
+
+
+func _on_seed_changed() -> void:
+	_refresh_summary()
+	_refresh_seed_note()
+	_refresh_begin_enabled()
+
+
+## The caption under the field: the hint while the seed can be used, the refusal while it cannot.
+## The label is RE-WORDED, never rebuilt — this runs on every keystroke, and the field beside it is
+## holding the caret.
+func _refresh_seed_note() -> void:
+	if _seed_note == null or not is_instance_valid(_seed_note):
+		return
+	var problem := _seed_problem()
+	_seed_note.text = SEED_NOTE_HINT if problem.is_empty() else problem
+	_seed_note.add_theme_color_override(
+		"font_color", HudStyle.INK_FAINT if problem.is_empty() else HudStyle.WARN)
 
 
 func _on_begin_pressed() -> void:
+	# The button is disabled for this, and the caption says why; the guard is here so the one rule
+	# holds however the press arrives — the same belt `_on_save_pressed` wears.
+	if _seed_problem() != "":
+		return
 	var dims := MapSizes.option_for(_selected_size)
-	var seed_value := _seed_value()
 	emit_signal(
 		"new_game_requested",
 		_selected_preset,
 		int(dims["width"]),
 		int(dims["height"]),
-		seed_value,
+		seed_digits(_seed_field_text()),
 		DEFAULT_PROFILE_ID,
 		_resolved_rival_count()
 	)
@@ -1397,14 +1496,16 @@ func _note_server_reachability() -> void:
 		_notice_text = ""
 
 
-## **THE ONE ACTION THIS SCREEN WITHHOLDS, AND ONLY FOR THE ONE STATE THAT MAKES IT A LIE.** With no
-## server there is nothing to send `new_game` to: pressing Begin swapped to `Main.tscn`, which sat on
-## a black loading screen forever. Every other unanswered state still starts a game (a count is simply
-## omitted), so this is the only gate — see `.claude/rules/client/new-game-setup.md`.
+## **THE TWO STATES THIS SCREEN WITHHOLDS THE RUN FOR, and they are the two that would strand it.**
+## With no server there is nothing to send `new_game` to: pressing Begin swapped to `Main.tscn`, which
+## sat on a black loading screen forever. A seed the server cannot parse ends the same way — the
+## command is refused and no world is ever built — so it is refused here instead, with the field's
+## caption saying which. Every other unanswered state still starts a game (a count is simply
+## omitted) — see `.claude/rules/client/new-game-setup.md`.
 func _refresh_begin_enabled() -> void:
 	if _begin_button == null or not is_instance_valid(_begin_button):
 		return
-	_begin_button.disabled = _server_unreachable
+	_begin_button.disabled = _server_unreachable or _seed_problem() != ""
 
 
 ## Run the re-ask clock exactly while it can do something: the setup pane is the pane, and the screen
@@ -2046,11 +2147,13 @@ func _refresh_summary() -> void:
 	var paren := world_name.find(" (")
 	if paren >= 0:
 		world_name = world_name.substr(0, paren)
+	# **THE WHOLE SEED, not a number it was squeezed through.** This row is what a player copies down
+	# to replay a world, so it states the digits that go on the wire verbatim.
 	var seed_text := "clock"
 	if bool(preset.get("pinned", false)):
 		seed_text = "pinned"
-	elif _seed_value() != 0:
-		seed_text = str(_seed_value())
+	elif seed_digits(_seed_field_text()) != SEED_UNSEEDED:
+		seed_text = seed_digits(_seed_field_text())
 	_add_summary_pair("World", world_name)
 	_add_summary_pair("Grid", "%s · %d × %d" % [String(dims["label"]), int(dims["width"]), int(dims["height"])])
 	_add_summary_pair("Seed", seed_text)
@@ -2123,7 +2226,9 @@ func _add_field_label(text: String) -> void:
 	_pane_body.add_child(l)
 
 
-func _add_note(text: String) -> void:
+## Returns the Label so a caller whose note CHANGES can hold it and re-word it in place; every other
+## caller ignores it and builds a note that never moves.
+func _add_note(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2131,6 +2236,7 @@ func _add_note(text: String) -> void:
 	l.add_theme_font_size_override("font_size", NOTE_SIZE)
 	l.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_pane_body.add_child(l)
+	return l
 
 
 ## A note the player has to ACT on — a name the whitelist will not take. `WARN`, not `DANGER`: nothing

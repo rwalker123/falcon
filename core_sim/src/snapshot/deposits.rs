@@ -79,7 +79,7 @@ const NO_NEGLECT_REMAINING: u32 = 0;
 /// at zero: every number on the row is a function of that ground, so a row without it would state a
 /// capacity of nothing, a runway off it and an empty rate — three false readings where the honest
 /// answer is that the sim cannot see the tile.
-#[allow(clippy::too_many_arguments)] // the registry, the fog pair, both configs, both kit indexes
+#[allow(clippy::too_many_arguments)] // the registry, the fog pair, both configs, the queue index
 pub(crate) fn deposit_states<'a>(
     registry: &DepositRegistry,
     visibility: &crate::visibility::VisibilityLedger,
@@ -87,12 +87,10 @@ pub(crate) fn deposit_states<'a>(
     fog_enabled: bool,
     ladder: &LadderConfig,
     config: &crate::extraction_config::ExtractionConfig,
-    // **The live builders kit per queued working, and its membership flag** — read off the bands'
-    // queues at capture rather than off the source, because the row's scratch lags a command by a
-    // whole turn and the state the countdown separates exists precisely in that frame.
-    build_kits: &crate::snapshot::subsistence::BuildKitIds,
-    // **The live keeping kit per worked working**, on the same rule one account over.
-    upkeep_kits: &crate::snapshot::subsistence::UpkeepKitIds,
+    // **Which workings some band of the viewer's has queued** — read off the bands' queues at
+    // capture rather than off the source, because the row's scratch lags a command by a whole turn
+    // and the state the countdown separates exists precisely in that frame.
+    build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
     ground: impl Iterator<Item = &'a Tile>,
 ) -> Vec<sim_runtime::DepositState> {
     let mut rows: Vec<sim_runtime::DepositState> = ground
@@ -122,13 +120,7 @@ pub(crate) fn deposit_states<'a>(
                     }
                 };
                 Some(deposit_row(
-                    source,
-                    tile,
-                    capacity,
-                    ladder,
-                    config,
-                    build_kits,
-                    upkeep_kits,
+                    source, tile, capacity, ladder, config, build_kits,
                 ))
             })
         })
@@ -186,8 +178,7 @@ fn deposit_row(
     capacity: f32,
     ladder: &LadderConfig,
     config: &crate::extraction_config::ExtractionConfig,
-    build_kits: &crate::snapshot::subsistence::BuildKitIds,
-    upkeep_kits: &crate::snapshot::subsistence::UpkeepKitIds,
+    build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
 ) -> sim_runtime::DepositState {
     let tile = source.tile;
     let payoff = deposit_payoff(source.standing(), ladder);
@@ -198,10 +189,6 @@ fn deposit_row(
     // floor on and `deposit_runway` forks the readout on. The field published below scales it by the
     // rung; these are two different questions off one number, so it is read once.
     let regrowth_rate = tile_deposit_regrowth(config, &source.material, ground);
-    // **A tile nobody has worked is in no queue and carries no kit** — both indexes are keyed
-    // `(tile, material)` and answer the empty/false default for a key they do not hold, which is
-    // the honest reading rather than a fabricated one.
-    let (upkeep_kit_id, upkeep_kit_named) = upkeep_kits.deposit(tile, &source.material);
     sim_runtime::DepositState {
         tile_x: tile.x,
         tile_y: tile.y,
@@ -276,8 +263,12 @@ fn deposit_row(
         // decay pass on the one-turn cycle, so it describes the turn just resolved.
         build_blocked_reason: source.build_blocked_reason.key().to_string(),
         is_queued: build_kits.deposit_is_queued(tile, &source.material),
-        build_kit_id: build_kits.deposit(tile, &source.material),
-        upkeep_kit_id,
-        upkeep_kit_named,
+        // **A working names no kit** — see
+        // [`crate::snapshot::subsistence::NO_SITE_KIT_ID`]. Its keepers' and its builders' tools
+        // are the `quarrywork` and `builders` pools', derived from the rung this working stands on
+        // and published as `poolToe`.
+        build_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
+        upkeep_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
+        upkeep_kit_named: crate::snapshot::subsistence::NO_SITE_KIT_NAMED,
     }
 }

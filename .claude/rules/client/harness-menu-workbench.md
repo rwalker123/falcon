@@ -113,6 +113,23 @@ would otherwise be inherited from the frames above), then walks both ends of the
 decides between a trailing count and none is callable without standing a client up. Sabotage-verified
 by making the shell send only an explicit pick: it fails naming `showed 2 … carried -1`.
 
+**`_run_seed_states` is the seed's own block, and it asserts the COMPOSED COMMAND LINE rather than any
+internal** — the thing that was wrong was what reached the socket. It stages a reachable server first,
+because the block before it leaves the screen believing nothing is listening and that withholds Begin
+for an unrelated reason. Both seeds are from the session that reported the defect: `6186994682829664034`
+(19 digits, the one the 12-character cap ate) and `16811688588392450970` (above a signed `int`'s
+ceiling, the one a raised cap alone would have silently changed). Each is typed through
+`insert_text_at_caret` — `set_text` does not enforce `max_length`, so an assignment would leave this
+harness green against the very cap that caused the bug — and then walked through the shell's real
+`new_game_requested` into `Main.new_game_line`. An empty field must compose `0`; a seed above u64 max
+and one holding a space must each be refused with a caption under the field, a locked `Begin the
+trail` and NO emission. `menu_new_game_seed_refused` is the one still. A separate leg measures a full
+seed in the field's own font against `SEED_FIELD_MIN_WIDTH` — against the CONSTANT, since the field is
+`SIZE_FILL` in a pane far wider than its minimum and would pass on any value at this window size.
+Sabotage-verified both ways: carrying the seed through an `int` again fails naming
+`16811688588392450970` → `9223372036854775807`, and restoring the 12-character cap fails ten legs, one
+of them naming the truncation `618699468282` verbatim.
+
 Five more assertions ride with the state frames, and every one covers something the PNG cannot show: opening the pane
 must put an ask in flight, a size click must put a fresh one in flight, **no slider may be offered
 without a ceiling to offer it against** (a 0..0 range would look like a deliberate layout),

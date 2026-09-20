@@ -411,11 +411,23 @@ fn the_viewers_own_field_reads_through_in_every_field() {
         field_of(own, "buildWorkFromGear"),
         STAGED_BUILD_GEAR.to_string()
     );
-    assert_ne!(
-        field_of(own, "buildKitId"),
-        "",
-        "the viewer's own queue resolves a builders kit onto its own row — without this the kit \
-         assertions below pass on an index that is simply empty"
+    // ⛔ **THE THREE KIT FIELDS ARE RETIRED, AND THEY ARE ASSERTED HERE RATHER THAN BELOW**
+    // (`docs/plan_pool_toe.md` §4). This used to be the liveness half of the redaction: the
+    // viewer's own row *had* to resolve a builders kit, or the "a rival publishes no kit" assertions
+    // would have passed on an index that was simply empty. A site names no kit at all now — its
+    // tools follow from its own rung and are published per pool as `PopulationCohortState.poolToe`
+    // — so the viewer's own row reads empty too, and the redaction tests below therefore assert
+    // nothing about them. What still carries the builder's state, and is still staged live above, is
+    // the date, the place and the gear figure.
+    assert_eq!(
+        (
+            field_of(own, "buildKitId"),
+            field_of(own, "upkeepKitId"),
+            field_of(own, "upkeepKitNamed"),
+        ),
+        ("", "", "false"),
+        "a site names no kit on ANY row, the viewer's own included — which is why the redaction \
+         tests below cannot be written against these three"
     );
 }
 
@@ -484,20 +496,16 @@ fn a_rivals_field_on_unexplored_ground_is_indistinguishable_from_wild_ground() {
 
 /// ⛔ **AND IT CARRIES NONE OF THE BUILDER'S STATE** — the second rule, on the same row.
 #[test]
-fn a_rivals_build_on_unexplored_ground_publishes_no_kit_date_or_place() {
+fn a_rivals_build_on_unexplored_ground_publishes_no_date_or_place() {
     let (app, tiles) = a_world_where_both_peoples_farm();
     let rows = patch_rows(&app);
     let row = rows
         .get(&key(tiles.rival_unexplored))
         .expect("a patch row is a fact about a tile and always rides");
 
-    assert_eq!(
-        field_of(row, "buildKitId"),
-        "",
-        "a rival's builders kit is not the viewer's to read"
-    );
-    assert_eq!(field_of(row, "upkeepKitId"), "");
-    assert_eq!(field_of(row, "upkeepKitNamed"), "false");
+    // **The three kit fields are deliberately absent from this list** — they publish empty on every
+    // row now, the viewer's own included, so an assertion on them here would hold whatever the
+    // redaction did. See `the_viewers_own_field_reads_through_in_every_field`.
     assert_eq!(
         field_of(row, "buildTurnsRemaining"),
         NO_BUILD_TURNS.to_string(),
@@ -539,14 +547,13 @@ fn a_rivals_field_on_explored_ground_reads_improved_but_not_who_is_building_it()
         "the improvement's own capacity gain reads through on explored ground"
     );
 
-    assert_eq!(
-        field_of(row, "buildKitId"),
-        "",
-        "the improvement follows the ground; WHO is raising it follows the builder"
-    );
+    // The kit fields say nothing on any row (see the own-row test), so the builder's state is
+    // asserted on the three that still carry it: the improvement follows the ground, WHO is raising
+    // it follows the builder.
     assert_eq!(
         field_of(row, "buildTurnsRemaining"),
-        NO_BUILD_TURNS.to_string()
+        NO_BUILD_TURNS.to_string(),
+        "a rival's finish date is not the viewer's to read, explored ground or not"
     );
     assert_eq!(field_of(row, "buildQueuePosition"), NOT_QUEUED.to_string());
     assert_eq!(field_of(row, "buildWorkFromGear"), "0");

@@ -32,10 +32,10 @@ const METERS_PER_ELEVATION_BONUS_STEP: f32 = 100.0;
 /// so it can never be blinded to its own tile/ring.
 const MIN_EFFECTIVE_SIGHT_RANGE: i32 = 1;
 
-/// Squared offset-space distance at or below which no tile can lie *between* the
-/// viewer and the target, so the line-of-sight ray-cast is skipped. `dist² ≤ 2`
-/// covers the eight immediate neighbours (orthogonal `dist²=1`, diagonal `dist²=2`).
-const ADJACENT_LOS_SKIP_DIST_SQ: i32 = 2;
+/// Hex distance at or below which no tile can lie *between* the viewer and the target,
+/// so the line-of-sight ray-cast is skipped. A tile one hex step away is adjacent by
+/// definition; anything further has room for a blocker and must be cast.
+const ADJACENT_LOS_SKIP_DISTANCE: u32 = 1;
 
 use std::collections::HashMap;
 
@@ -49,7 +49,9 @@ use crate::{
     connections::ContactsThisTurn,
     equipment_config::EquipmentConfigHandle,
     fauna::HerdRegistry,
-    grid_utils::{hex_neighbor, shortest_delta_x, wrap_x, wrapped_distance_x, HEX_DIRECTION_COUNT},
+    grid_utils::{
+        hex_distance_wrapped, hex_neighbor, shortest_delta_x, wrap_x, HEX_DIRECTION_COUNT,
+    },
     heightfield::ElevationField,
     labor_config::LaborConfigHandle,
     orders::FactionId,
@@ -841,7 +843,12 @@ fn for_each_visible_tile_in_range(
     let width = elevation.width;
     let height = elevation.height;
 
-    // Use max possible range for bounding box (base + max bonus)
+    // Use max possible range for bounding box (base + max bonus). This stays a **superset** of the
+    // hex disc filtered for below: every hex step changes the offset column and row by at most one
+    // (see `HEX_NEIGHBOR_OFFSETS`), so a tile `n` hex steps away lies within `n` columns and `n`
+    // rows. `water_bonus` is the only positive terrain modifier (`get_terrain_modifier` returns the
+    // water bonus, the negative forest penalty, or zero), so `effective_range <= max_range`. The
+    // caller has already folded the elevation bonus into `base_range`.
     let max_range = base_range + terrain_modifiers.water_bonus.max(0) as u32;
 
     // Y bounds (no vertical wrap)
@@ -875,10 +882,28 @@ fn for_each_visible_tile_in_range(
                 raw_x as u32
             };
 
-            // Calculate distance using wrapped distance for X
-            let actual_dx = wrapped_distance_x(center.x, x, width, wrap_horizontal) as i32;
-            let dy = y as i32 - center.y as i32;
-            let dist_sq = actual_dx * actual_dx + dy * dy;
+            // **Sight is measured in HEX STEPS**, the same metric every other radius in the sim
+            // uses (`band_work_range`, supply reach, `raid_radius`). Euclidean distance over odd-r
+            // *offset* coordinates — what this used to compute — is not the hex metric at all, and
+            // it disagreed with it in **both directions**:
+            //
+            // - it **understated** hex distance on the column-heavy diagonals, so every source saw
+            //   further there than its configured range. That is the bug this landed for: a
+            //   wrapped `(dcol 8, drow 4)` reads `8.94` under offset-Euclid and is **10** hex
+            //   steps, so a scout at effective range 9 revealed a band ten hexes off across deep
+            //   ocean, recorded a contact, and that contact satisfied the defection gate;
+            // - it **overstated** hex distance on the row-heavy axis, so a source saw *less* far
+            //   there than its range. At effective range 9 an offset delta of `(dcol 4, drow 9)` is
+            //   exactly 9 hex steps — in both row parities — while offset-Euclid reads
+            //   `√97 ≈ 9.85 > 9` and excluded it.
+            //
+            // So the disc did not merely shrink: at range 9 it drops **8** over-reaching tiles,
+            // gains **26** it was wrongly excluding, and grows **253 → 271** overall (the hex disc
+            // `1 + 3·r·(r+1)`). Contact, trade ties and defection all key off this sweep, so the
+            // widened axis can create contacts that did not exist before — it is not a pure
+            // tightening of the sight radius.
+            let hex_distance =
+                hex_distance_wrapped(center, UVec2::new(x, y), width, wrap_horizontal);
 
             // Calculate terrain modifier for target tile
             let idx = (y * width + x) as usize;
@@ -891,16 +916,15 @@ fn for_each_visible_tile_in_range(
             // Calculate effective range for this target tile
             let effective_range =
                 (base_range as i32 + terrain_modifier).max(MIN_EFFECTIVE_SIGHT_RANGE) as u32;
-            let range_sq = (effective_range * effective_range) as i32;
 
-            // Skip tiles outside circular range (accounting for terrain modifier)
-            if dist_sq > range_sq {
+            // Skip tiles outside the hex disc of that range (accounting for terrain modifier)
+            if hex_distance > effective_range {
                 continue;
             }
 
             // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
             if los_enabled
-                && dist_sq > ADJACENT_LOS_SKIP_DIST_SQ
+                && hex_distance > ADJACENT_LOS_SKIP_DISTANCE
                 && !has_line_of_sight_wrapped(
                     center,
                     UVec2::new(x, y),
@@ -1797,5 +1821,223 @@ mod tests {
         // Water takes precedence over wetland (coastal wetland)
         let coastal_wetland = TerrainTags::WATER | TerrainTags::WETLAND;
         assert_eq!(get_terrain_modifier(coastal_wetland, &cfg), 1);
+    }
+}
+
+/// **Sight is measured in HEX STEPS, not Euclidean distance over offset coordinates.**
+///
+/// The sweep used to compare `dx² + dy²` (odd-r *offset* coordinates) against `range²`. Offset
+/// Euclidean understates true hex distance on the diagonals, so every vision source saw further
+/// diagonally than its configured range. See `docs`/`.claude/rules/core_sim/visibility.md` for the
+/// live case these numbers come from.
+#[cfg(test)]
+mod hex_sight_range_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use crate::components::{
+        BandId, LocalStore, MoraleCause, MoraleContributions, PopulationCohort, ResidentBand,
+    };
+    use crate::connections::ConnectionKey;
+    use crate::labor_config::LaborConfigHandle;
+    use crate::scalar::{scalar_from_f32, scalar_zero};
+    use crate::visibility::VisibilityLedger;
+    use crate::visibility_config::VisibilityConfig;
+
+    /// The live map this defect was found on: 80 columns, wrapping.
+    const WIDTH: u32 = 80;
+    /// Tall enough to hold the observer's whole disc around row 31.
+    const HEIGHT: u32 = 41;
+
+    /// The observer's tile — `Rookhollow` in the reported game.
+    const OBSERVER: UVec2 = UVec2::new(73, 31);
+    /// The subject's tile — `Shepherd's Fold`, **10 hex steps away** across the wrap seam. The old
+    /// comparison read it as `√(8² + 4²) ≈ 8.94` and revealed it.
+    const TOO_FAR: UVec2 = UVec2::new(1, 35);
+    /// One tile nearer along the same line: **9 hex steps**, i.e. exactly the observer's effective
+    /// range, so it stays visible. The control that keeps the fix from being "see less everywhere".
+    const IN_RANGE: UVec2 = UVec2::new(0, 35);
+
+    /// Normalized elevation that buys a `BandScout` exactly `+3` sight:
+    /// `0.25 × 1000 m ÷ 100 m = 2` steps × `bonus_per_100m` 1 = 2, × `elevation_bonus_factor` 1.5
+    /// = 3 (capped at `max_bonus` 4). With `BandScout`'s shipped `base_range` 6 that is an
+    /// **effective range of 9** over the untagged tiles in this fixture.
+    const OBSERVER_ELEVATION: f32 = 0.25;
+    /// What [`OBSERVER_ELEVATION`] and the shipped `BandScout` entry add up to.
+    const EFFECTIVE_RANGE: u32 = 9;
+
+    fn cohort_at(home: Entity, faction: FactionId) -> PopulationCohort {
+        PopulationCohort {
+            home,
+            current_tile: home,
+            size: 0,
+            children: scalar_zero(),
+            working: scalar_from_f32(4.0),
+            elders: scalar_zero(),
+            stores: LocalStore::new(),
+            morale: scalar_zero(),
+            last_food_consumption: 0.0,
+            last_turn_food_transfers: Default::default(),
+            last_turn_fodder_transfers: Default::default(),
+            last_morale_delta: scalar_zero(),
+            last_morale_cause: MoraleCause::None,
+            last_morale_contributions: MoraleContributions::default(),
+            last_fertility_factors: Default::default(),
+            discontent_fraction: scalar_zero(),
+            grievance: scalar_zero(),
+            last_emigrated: 0,
+            last_immigrated: 0,
+            age_turns: 10,
+            generation: 0,
+            faction,
+            knowledge: Vec::new(),
+            migration: None,
+        }
+    }
+
+    /// A `BandScout` at [`OBSERVER`] and a rival resident band at `subject`, swept once by
+    /// `calculate_visibility` on the shipped visibility config. Returns the faction map and the
+    /// turn's contacts.
+    fn sweep_with_subject(subject: UVec2) -> (VisibilityLedger, ContactsThisTurn) {
+        const OBSERVER_BAND: BandId = BandId(1);
+        const SUBJECT_BAND: BandId = BandId(2);
+
+        let mut world = World::new();
+        // The **shipped** config, untouched: the point of the regression is the geometry, and a
+        // retuned range would hide it.
+        world.insert_resource(VisibilityConfigHandle::new(Arc::new(
+            VisibilityConfig::default(),
+        )));
+        world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
+
+        let mut sim = SimulationConfig::builtin();
+        sim.map_topology.wrap_horizontal = true;
+        world.insert_resource(sim);
+        world.insert_resource(SimulationTick(1));
+        world.insert_resource(VisibilityLedger::default());
+        world.insert_resource(VisibilitySweepTracker::default());
+        world.insert_resource(ContactsThisTurn::default());
+        world.insert_resource(HerdRegistry::default());
+        // Flat at the observer's height, so LOS never blocks and the bonus is the same everywhere.
+        world.insert_resource(ElevationField::new(
+            WIDTH,
+            HEIGHT,
+            vec![OBSERVER_ELEVATION; (WIDTH * HEIGHT) as usize],
+        ));
+
+        let observer_tile = world
+            .spawn(Tile {
+                position: OBSERVER,
+                ..Default::default()
+            })
+            .id();
+        let subject_tile = world
+            .spawn(Tile {
+                position: subject,
+                ..Default::default()
+            })
+            .id();
+
+        world.spawn((
+            cohort_at(observer_tile, FactionId(0)),
+            StartingUnit::new("BandScout".to_string(), vec![]),
+            OBSERVER_BAND,
+            ResidentBand,
+        ));
+        world.spawn((
+            cohort_at(subject_tile, FactionId(1)),
+            StartingUnit::new("BandCrafter".to_string(), vec![]),
+            SUBJECT_BAND,
+            ResidentBand,
+        ));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(calculate_visibility);
+        schedule.run(&mut world);
+
+        assert!(
+            world
+                .resource::<ContactsThisTurn>()
+                .iter()
+                .all(|(key, _)| *key == ConnectionKey::new(OBSERVER_BAND, SUBJECT_BAND)),
+            "the fixture holds exactly one observer/subject pair"
+        );
+        (
+            world.remove_resource::<VisibilityLedger>().unwrap(),
+            world.remove_resource::<ContactsThisTurn>().unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_tile_ten_hexes_away_is_neither_revealed_nor_contacted() {
+        assert_eq!(
+            crate::grid_utils::hex_distance_wrapped(OBSERVER, TOO_FAR, WIDTH, true),
+            EFFECTIVE_RANGE + 1,
+            "the fixture's far tile must sit one step outside the observer's range"
+        );
+
+        let (ledger, contacts) = sweep_with_subject(TOO_FAR);
+        assert_eq!(
+            ledger.visibility_state(FactionId(0), TOO_FAR.x, TOO_FAR.y),
+            VisibilityState::Unexplored,
+            "a tile 10 hex steps from a range-9 observer stays dark"
+        );
+        assert!(
+            contacts.is_empty(),
+            "no reveal, no contact — and it was a contact here that flipped a whole band's faction"
+        );
+    }
+
+    #[test]
+    fn a_tile_at_exactly_the_range_is_revealed_and_contacted() {
+        assert_eq!(
+            crate::grid_utils::hex_distance_wrapped(OBSERVER, IN_RANGE, WIDTH, true),
+            EFFECTIVE_RANGE,
+            "the fixture's control tile must sit exactly on the observer's range"
+        );
+
+        let (ledger, contacts) = sweep_with_subject(IN_RANGE);
+        assert_eq!(
+            ledger.visibility_state(FactionId(0), IN_RANGE.x, IN_RANGE.y),
+            VisibilityState::Active,
+            "the same direction one step nearer is still seen"
+        );
+        assert_eq!(contacts.len(), 1, "seeing them is meeting them");
+    }
+
+    #[test]
+    fn the_reveal_set_is_exactly_the_hex_disc_across_the_seam() {
+        // No terrain tags anywhere, flat elevation, so every tile's effective range is the
+        // observer's own — the reveal set is a pure hex disc, and LOS never trims it.
+        let elevation = ElevationField::new(
+            WIDTH,
+            HEIGHT,
+            vec![OBSERVER_ELEVATION; (WIDTH * HEIGHT) as usize],
+        );
+        let cfg = VisibilityConfig::default();
+        let tags = vec![TerrainTags::empty(); (WIDTH * HEIGHT) as usize];
+
+        let mut seen = visible_tiles_in_range(
+            OBSERVER,
+            EFFECTIVE_RANGE,
+            &elevation,
+            cfg.line_of_sight.enabled,
+            &tags,
+            &cfg.terrain_modifiers,
+            parse_blocking_tags(&cfg.line_of_sight.blocking_terrain_tags),
+            true,
+        );
+        seen.sort_by_key(|tile| (tile.y, tile.x));
+
+        let mut expected =
+            crate::grid_utils::hex_range_tiles(OBSERVER, EFFECTIVE_RANGE, WIDTH, HEIGHT, true);
+        expected.sort_by_key(|tile| (tile.y, tile.x));
+
+        assert_eq!(seen, expected);
+        assert!(
+            seen.iter().any(|tile| tile.x < OBSERVER.x),
+            "the disc must straddle the wrap seam for this to prove anything about wrapping"
+        );
     }
 }

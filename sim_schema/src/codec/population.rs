@@ -12,8 +12,8 @@ use crate::state::population::{
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
     EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PendingMigrationState,
-    PopulationCohortState, PopulationDemographicsState, ScoutTaskState, SettlementStageViewState,
-    SourcePriorityState,
+    PoolToeLineState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
+    SettlementStageViewState, SourcePriorityState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -487,6 +487,38 @@ fn create_populations<'a>(
                     })
                     .collect();
                 builder.create_vector(&rows)
+            };
+            // **EACH STANDING POOL'S TABLE OF EQUIPMENT** — nested vector, built before the parent
+            // table like the two around it.
+            //
+            // **Absent rather than an empty vector** when no pool requires anything, the
+            // `buildQueue` convention: an absent vector reads as empty, and empty *is* "no pool has
+            // a tool out". Every row the sim does write is a real requirement — the capture drops
+            // the `required == 0` lines — so a reader never has to filter.
+            let pool_toe = if cohort.pool_toe.is_empty() {
+                None
+            } else {
+                let rows: Vec<_> = cohort
+                    .pool_toe
+                    .iter()
+                    .map(|line| {
+                        let pool = builder.create_string(&line.pool);
+                        let item_id = builder.create_string(&line.item_id);
+                        fb::PoolToeLine::create(
+                            builder,
+                            &fb::PoolToeLineArgs {
+                                pool: Some(pool),
+                                itemId: Some(item_id),
+                                required: line.required,
+                                // **Both terms, never their difference** — the client's `N of M`
+                                // phrasing is the pair, and a shortfall a reader subtracts for
+                                // itself cannot tell a met line from an absent one.
+                                filled: line.filled,
+                            },
+                        )
+                    })
+                    .collect();
+                Some(builder.create_vector(&rows))
             };
             // **What each offered kit grants THIS band** — the resolved answer, so the client does no
             // tier stepping. Nested vector, built before the parent table like the one above.
@@ -1008,6 +1040,10 @@ fn create_populations<'a>(
                     quarryworkDemand: cohort.quarrywork_demand,
                     quarryworkSupplied: cohort.quarrywork_supplied,
                     quarryworkShortfall: cohort.quarrywork_shortfall,
+                    // THE FIVE STANDING POOLS' TABLES OF EQUIPMENT — appended last. A pool row's
+                    // `kitId` publishes empty and this is where its tools are stated instead; a
+                    // line exists only where the pool requires something.
+                    poolToe: pool_toe,
                 },
             )
         })
@@ -1460,6 +1496,12 @@ fn decode_population(
         quarrywork_demand: cohort.quarryworkDemand(),
         quarrywork_supplied: cohort.quarryworkSupplied(),
         quarrywork_shortfall: cohort.quarryworkShortfall(),
+        pool_toe: map_rows(cohort.poolToe(), |line| PoolToeLineState {
+            pool: text(line.pool()),
+            item_id: text(line.itemId()),
+            required: line.required(),
+            filled: line.filled(),
+        }),
         transfer_local_received_turn: cohort.transferLocalReceivedTurn(),
         transfer_local_sent_turn: cohort.transferLocalSentTurn(),
         transfer_route_received_turn: cohort.transferRouteReceivedTurn(),

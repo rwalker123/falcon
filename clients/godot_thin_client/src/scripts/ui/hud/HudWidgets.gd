@@ -281,7 +281,7 @@ const WRAPPING_STATUS_PART_BREAK_FLAGS := TextServer.BREAK_MANDATORY \
 ##
 ## **STATED AS AN OVERFLOW, NOT AS A HEIGHT, so no existing reservation constant has to change its
 ## meaning.** `WORK_INSPECTOR_NOTE_HEIGHT`, `WORK_INSPECTOR_SECTION_HEAD_HEIGHT` and
-## `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT` each charge exactly one line of this type and go on doing so;
+## `WORK_INSPECTOR_KITS_BILL_HEIGHT` each charge exactly one line of this type and go on doing so;
 ## a host that lets a line wrap adds this on top of the term it already had. `WORK_INSPECTOR_CEILING_
 ## HEIGHT` stays the ceiling AT ONE LINE PER NOTE, which is a floor on the wrapped worst case rather
 ## than a number that quietly stopped describing anything.
