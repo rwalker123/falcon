@@ -361,12 +361,26 @@ nowhere to go under a chip. So:
 Dropping any one of them is a state the player can only find by opening the reading, which is the
 defect the clause row existed to prevent.
 
-### THE EMPTY-FILTER NOTE RIDES UNDER THE FILTER PILLS
+### THE EMPTY-FILTER NOTE RIDES ON THE FILTER ROW, AND THAT IS A SIZING RULE
 
 It hung in the pinned detail pane because a banner drawn ACROSS the columns would have read as a
 replacement for the list rather than as a note about it. There is no pinned pane to hang in now, and
-the header answers the same objection better: it is a note about the FILTER, and the filter is the row
-directly above it. `EMPTY_NOTE_META` and `FILTER_EMPTY_FORMAT` are unchanged.
+the filter row answers the same objection better: it is a note about the FILTER, and it sits beside
+the pill that earned it. `EMPTY_NOTE_META` and `FILTER_EMPTY_FORMAT` are unchanged.
+
+⛔ **ON the row, not UNDER it, because `_header` is outside the scroll and `_header_height()` feeds
+`fit_to_content`.** Mounted as a row of its own, the caption grows the card by its own height the
+moment a player presses a pill that matches nothing — measured at **477 → 499**, which is the lurch
+the reading's reserve exists to prevent arriving through the other surface. A pill's own minimum
+height (a `Button` with `HudStyle.BUTTON_PADDING_V`) is taller than an `EMPTY_FONT_SIZE` Label, so
+riding the row costs NOTHING whether the note is present or not — no reserve, and no permanent dead
+band under the pills to pay for a caption that is usually absent.
+
+**The WIDTH it adds is real and is not the binding term**: the header's title row (title + tally +
+`✕`) is wider than the pills plus this note, so the card's combined minimum is unmoved — **717
+against the fixed 820** with the note up. That is the one way this placement could push the card past
+`PANEL_WIDTH`, so the preview chapter asserts it rather than leaving it to a longer clause or a sixth
+pill to discover.
 
 ## The inline reading uses `FactionReadouts`' copy, and authors only the half that did not exist
 

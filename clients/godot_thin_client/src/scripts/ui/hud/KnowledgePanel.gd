@@ -279,8 +279,8 @@ func _build_header(payload: Dictionary, nodes: Array) -> void:
 		HudStyle.apply_pill_toggle(pill, key == live)
 		pill.pressed.connect(func(): filter_selected.emit(key))
 		filter_row.add_child(pill)
+	_append_filter_note(payload, nodes, filter_row)
 	_header.add_child(filter_row)
-	_append_filter_note(payload, nodes)
 
 ## **THE TALLY IS THREE STATES PLUS THE NUDGE.** `unspent` rides last and in `WARN` because it is the
 ## only one of the four that is asking for something rather than reporting.
@@ -693,12 +693,24 @@ func _where_text(node: Dictionary) -> String:
 		return HudKnowledgeVocab.DETAIL_WHERE_IN_USE_ONE
 	return HudKnowledgeVocab.DETAIL_WHERE_IN_USE_FORMAT % in_use
 
-## The caption a zero-match filter earns. **It rides under the FILTER PILLS**, which is where it now
-## belongs: it is a note about the filter, and the filter is right above it. It used to hang in the
-## pinned detail pane because a banner drawn ACROSS the columns would have read as a replacement for
-## the list rather than as a note about it — there is no pinned pane to hang in now, and the header
-## answers the same objection better.
-func _append_filter_note(payload: Dictionary, nodes: Array) -> void:
+## The caption a zero-match filter earns. **It rides ON the filter row, at its trailing end** — it is
+## a note about the filter and it sits beside the pill that earned it. It used to hang in the pinned
+## detail pane because a banner drawn ACROSS the columns would have read as a replacement for the list
+## rather than as a note about it; there is no pinned pane to hang in now.
+##
+## ⛔ **ON THE ROW, NOT UNDER IT, AND THAT IS A SIZING RULE RATHER THAN A TASTE ONE.** `_header` is
+## OUTSIDE the scroll and `_header_height()` feeds `fit_to_content`, so a caption mounted as a row of
+## its own grows the card by its own height the moment a player presses a pill that matches nothing —
+## measured at **477 → 499** on a centred card, which is the same lurch the reading's reserve exists
+## to prevent, arriving through the other surface. A pill's own minimum height (a `Button` with
+## `HudStyle.BUTTON_PADDING_V`) is taller than an `EMPTY_FONT_SIZE` Label, so riding the row costs
+## NOTHING whether the note is there or not — no reserve, and no permanent dead band under the pills
+## to pay for a caption that is usually absent.
+##
+## The width it adds is real but is not the binding term: the TITLE row (title + tally + `✕`) is wider
+## than the pills plus this note, so the card's combined minimum is unmoved. The preview chapter
+## asserts that, because it is the one way this placement could push the card past `PANEL_WIDTH`.
+func _append_filter_note(payload: Dictionary, nodes: Array, filter_row: HBoxContainer) -> void:
 	var filter := StringName(payload.get(PAYLOAD_FILTER, HudKnowledgeVocab.FILTER_ALL))
 	if filter == HudKnowledgeVocab.FILTER_ALL:
 		return
@@ -707,10 +719,17 @@ func _append_filter_note(payload: Dictionary, nodes: Array) -> void:
 	var clause := String(HudKnowledgeVocab.FILTER_EMPTY_CLAUSES.get(filter, ""))
 	if clause == "":
 		return
+	# The header's own gap between two clusters, so the note reads as a remark about the pills rather
+	# than as a sixth one.
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(float(HudKnowledgeVocab.HEADER_SEPARATION), 0.0)
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	filter_row.add_child(gap)
+
 	var label := _caption(HudKnowledgeVocab.FILTER_EMPTY_FORMAT % clause, HudStyle.INK_FAINT,
 		HudKnowledgeVocab.EMPTY_FONT_SIZE)
 	label.set_meta(HudKnowledgeVocab.EMPTY_NOTE_META, String(filter))
-	_header.add_child(label)
+	filter_row.add_child(label)
 
 
 func _find_node(nodes: Array, key: String) -> Dictionary:

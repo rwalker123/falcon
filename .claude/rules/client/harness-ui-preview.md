@@ -2058,10 +2058,10 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Seven frames and 89 assertions (its
-`EXPECTED_CHECKPOINTS` floor is the measured **124** — frames count too, so the three launcher-face
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Nine frames and 124 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured **133** — frames count too, so the three launcher-face
 frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, and the ROW
-layout (`docs/plan_knowledge_rows.md` slice A) moved it to 124 on one added frame;
+layout (`docs/plan_knowledge_rows.md` slice A) moved it to 133 on two added frames;
 the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
 surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
 a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
@@ -2115,9 +2115,12 @@ of it, and "the node is missing" is not the same failure as "the node says in us
 **Frames:** `knowledge_panel` · `knowledge_panel_untouched` (**the frame this arc is about**) ·
 `knowledge_panel_detail` · `knowledge_panel_filtered` · **`knowledge_panel_stress`** (24 synthetic
 ladder branches, built in the chapter from `KnowledgeFx.ladder_roster()`'s row shape, with the card
-still at its fixed width — `knowledge-panel.md` → "DOMAINS ARE ROWS") · `knowledge_launcher_mark` /
-`_rail` / `_bar` (the launcher's bundled cairn at each of the three action mounts, captured inside
-the pip block because that block is the only one standing a REAL `BandCityPanel` up).
+still at its fixed width — `knowledge-panel.md` → "DOMAINS ARE ROWS") ·
+**`knowledge_panel_empty_filter`** (the zero-match note, ON the filter row beside the pill that
+earned it — the PLACEMENT is the claim a picture answers, every height claim beside it being about
+the card not moving) · `knowledge_launcher_mark` / `_rail` / `_bar` (the launcher's bundled cairn at
+each of the three action mounts, captured inside the pip block because that block is the only one
+standing a REAL `BandCityPanel` up).
 
 **THE ROW LAYOUT'S OWN CLAIMS ARE RELATIONS BETWEEN TWO RENDERS, never magnitudes.** *The card does
 not resize* is `panel.size` before and after a press, on BOTH axes and on the toggle back — and then
@@ -2127,11 +2130,21 @@ own row* is an INDEX inside `_rows`, exactly one past the row carrying the selec
 the panel" passes with the block appended at the bottom of a twelve-row list, which is the
 arrangement this layout replaces. *Only one is ever open* is a COUNT of `DETAIL_META` nodes.
 
-**A clean run is 452 frames / 2200 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+⛔ **AND THE SAME CLAIM IS MADE ACROSS A FILTER PRESS, because the note had its own way of moving the
+card.** `_assert_the_empty_filter_note_does_not_move_the_card` parks on `learning` (3 matches),
+presses through to `new` (0 — asserted as a precondition, with `learning`'s own count beside it, or
+the whole block measures a filter that matches something) and requires `panel.size` unchanged. It
+FAILED when written, at **477 → 499**: the note was a child of `_header`, `_header_height()` feeds
+`fit_to_content`, and a caption mounted on a press grows the card by its own height. The note rides
+the filter ROW now, which costs nothing — see `knowledge-panel.md`. The walk presses BACK and
+asserts the note is GONE, without which the size claim is measured around a permanent fixture, and a
+**minimum-WIDTH** claim rides beside them, that being the term the new placement could break.
+
+**A clean run is 453 frames / 2208 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
-and no frame, and the ROW layout added `knowledge_panel_stress` and its claims. Everything else
-between the three is drift accumulated un-recorded, exactly as it had been the times before.
-Measure; do not sum.
+and no frame, and the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and
+their claims. Everything else between the three is drift accumulated un-recorded, exactly as it had
+been the times before. Measure; do not sum.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 

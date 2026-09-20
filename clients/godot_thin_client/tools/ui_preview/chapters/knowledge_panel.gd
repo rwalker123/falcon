@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 124
+const EXPECTED_CHECKPOINTS := 133
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -526,6 +526,7 @@ func _knowledge_frames() -> void:
 	_assert_filter_dims_rather_than_hides()
 	await h._save("knowledge_panel_filtered")
 
+	await _assert_the_empty_filter_note_does_not_move_the_card()
 	await _assert_escape_closes_only_the_reading()
 	h._hud.close_knowledge_panel()
 	await h._settle()
@@ -619,6 +620,71 @@ func _assert_filter_dims_rather_than_hides() -> void:
 		dimmed > 0 and bright > 0)
 
 # ---- the row layout's own claims (`docs/plan_knowledge_rows.md`) ------------
+
+## **A ZERO-MATCH FILTER MUST NOT MOVE THE CARD EITHER.** §4 words its claim about READINGS, and the
+## intent is the card: this one is centred in its room, so anything that changes its height on a press
+## is a lurch in both directions from the middle of the screen. The empty-filter note is a child of
+## `_header`, and `_header_height()` feeds `fit_to_content` — so a caption mounted on a filter press
+## is exactly the same failure the reading's reserve exists to prevent, arriving through the other
+## surface.
+##
+## **`new` IS THE FILTER THAT IS GENUINELY EMPTY ON THIS BLOCK'S MODEL.** Nothing completes on the
+## turn these frames render, so the pill reads `New this turn 0` while `Learning now` reads 3 — which
+## makes this a real before/after on ONE card rather than two cards compared. Both counts are asserted
+## as preconditions, because a fixture in which `new` had quietly gained a member would make the whole
+## block a measurement of a filter that matches something.
+##
+## **The note is found by `EMPTY_NOTE_META`, never by its text** — the wording is copy and the claim is
+## about the control — and the walk presses BACK afterwards, which is what says the note really came
+## and went rather than being a permanent fixture the size claim was measured around.
+func _assert_the_empty_filter_note_does_not_move_the_card() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge empty-filter — the panel is open", false)
+		return
+	var nodes := controller.nodes()
+	var empty_count := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_NEW)
+	var live_count := KnowledgeRoster.count_matching(nodes, HudKnowledgeVocab.FILTER_LEARNING)
+	h._assert_hud("knowledge empty-filter — `%s` really matches nothing and `%s` really matches something (%d, %d)"
+			% [HudKnowledgeVocab.FILTER_NEW, HudKnowledgeVocab.FILTER_LEARNING,
+				empty_count, live_count],
+		empty_count == 0 and live_count > 0)
+	h._assert_hud("knowledge empty-filter — …and no note is on screen before the press",
+		NodeQuery.find_meta_node(panel, HudKnowledgeVocab.EMPTY_NOTE_META) == null)
+
+	var before := panel.size
+	var before_card := panel.card().size
+	await _press_filter(HudKnowledgeVocab.FILTER_NEW)
+	h._assert_hud("knowledge empty-filter — the zero-match filter renders its note",
+		NodeQuery.find_meta_node(panel, HudKnowledgeVocab.EMPTY_NOTE_META) != null)
+	h._assert_hud("knowledge empty-filter — …and the panel does not resize around it (%s → %s)"
+			% [str(before), str(panel.size)],
+		panel.size.is_equal_approx(before))
+	h._assert_hud("knowledge empty-filter — …nor does the card inside it (%s → %s)"
+			% [str(before_card), str(panel.card().size)],
+		panel.card().size.is_equal_approx(before_card))
+	# ⛔ **THE NOTE RIDES THE FILTER ROW, SO WIDTH IS THE TERM IT COULD BREAK.** `_header` is outside
+	# the scroll, so its minimum reaches the card — and Godot renders a Control at its combined
+	# minimum whatever the fit asked for, which is how the old clamp was overruled. The title row is
+	# the wider of the two today; a longer clause or a sixth pill is what would change that.
+	var minimum := panel.card().get_combined_minimum_size().x
+	h._assert_hud("knowledge empty-filter — …and the note has not pushed the card's minimum past `PANEL_WIDTH` (%.0f <= %.0f)"
+			% [minimum, HudKnowledgeVocab.PANEL_WIDTH],
+		minimum <= HudKnowledgeVocab.PANEL_WIDTH)
+	# **THE PLACEMENT IS A LAYOUT CLAIM, so it gets a picture.** Every assertion above is about height
+	# and identity; whether the note reads as a remark on the pills or as a crowded sixth one is the
+	# one thing only a frame can answer.
+	await h._save("knowledge_panel_empty_filter")
+
+	# Back to the filter the frame was left on, which restores the walk AND makes the claim above
+	# non-vacuous: a note that never went away would be part of both measurements.
+	await _press_filter(HudKnowledgeVocab.FILTER_LEARNING)
+	h._assert_hud("knowledge empty-filter — the note goes away again with the filter",
+		NodeQuery.find_meta_node(panel, HudKnowledgeVocab.EMPTY_NOTE_META) == null)
+	h._assert_hud("knowledge empty-filter — …and the card is where it started (%s → %s)"
+			% [str(before_card), str(panel.card().size)],
+		panel.card().size.is_equal_approx(before_card))
 
 ## **THE CARD DOES NOT RESIZE AS READINGS OPEN AND CLOSE — the claim the whole layout rests on.**
 ##
