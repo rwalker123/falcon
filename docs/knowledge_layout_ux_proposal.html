@@ -1,0 +1,1300 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Panel Layouts</title>
+
+<style>
+  /* ============================================================
+     Tokens. The DOCUMENT shell is theme-aware; every PROTOTYPE
+     keeps the game's own dark console palette in both themes on
+     purpose — the HUD is dark and stays dark. The `--g-*` set is
+     lifted verbatim from clients/.../ui/HudStyle.gd, so a swatch
+     here is the colour the client actually draws.
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    /* The game palette — fixed across both document themes. */
+    --g-ground:    #0b1114;
+    --g-panel:     #111a1e;
+    --g-panel-2:   #0e161a;
+    --g-line:      #26363c;
+    --g-line-soft: #1b282d;
+    --g-ink:       #e9efe9;
+    --g-dim:       #9db0ad;
+    --g-faint:     #6f8380;
+    --g-signal:    #4fe0cf;
+    --g-signal-deep: #1f9c8e;
+    --g-signal-wash: rgba(79, 224, 207, 0.14);
+    --g-warn:      #f2b13f;
+    --g-danger:    #e8746a;
+    --g-healthy:   #76cd80;
+    --g-pigment:   #c89c66;
+    --g-ghost:     #13211f;
+    --g-primary:   #163a34;
+    --g-primary-t: #d8fff8;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 72ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+  :root[data-theme="dark"] {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 96px; }
+  .prose { max-width: var(--measure); }
+
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 36px 0 26px;
+    margin-bottom: 0;
+  }
+  header.top h1 {
+    font-size: 27px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.01em;
+  }
+  header.top .sub { color: var(--dim); margin: 0; max-width: var(--measure); }
+  header.top .wrap { padding-bottom: 0; }
+
+  h2 {
+    font-size: 20px; margin: 52px 0 6px; letter-spacing: -0.01em;
+    padding-top: 18px; border-top: 1px solid var(--line-soft);
+  }
+  h2 .tag {
+    font: 600 11px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase;
+    color: var(--faint); display: block; margin-bottom: 7px;
+  }
+  h3 { font-size: 15px; margin: 26px 0 6px; }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 20px; }
+  li { margin-bottom: 5px; }
+  code { font: 12.5px/1.4 var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: var(--r); }
+  a { color: var(--signal); }
+
+  .lede { color: var(--dim); }
+
+  /* ---- verdict chips -------------------------------------- */
+  .verdicts { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
+  .chip {
+    font: 600 11.5px/1 var(--sans); letter-spacing: .02em;
+    padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--dim);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip b { font-weight: 700; color: var(--ink); }
+  .chip.good { border-color: color-mix(in srgb, var(--healthy) 45%, var(--line)); color: var(--healthy); }
+  .chip.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); color: var(--warn); }
+  .chip.bad  { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); color: var(--danger); }
+
+  /* ---- the sticky stress bar ------------------------------ */
+  .controls {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 11px 0;
+    margin-bottom: 8px;
+  }
+  .controls .row {
+    max-width: 1180px; margin: 0 auto; padding: 0 16px;
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+  }
+  .ctl { display: flex; align-items: center; gap: 8px; }
+  .ctl > span {
+    font: 600 10.5px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint);
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .seg button {
+    font: 500 12.5px/1 var(--sans); color: var(--dim);
+    background: var(--panel); border: 0; border-right: 1px solid var(--line);
+    padding: 7px 11px; cursor: pointer; white-space: nowrap;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { background: var(--panel-2); color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--signal-wash); color: var(--signal); font-weight: 650; }
+
+  /* ---- the simulated screen ------------------------------- */
+  .stage { margin: 20px 0 8px; }
+  .screen {
+    position: relative;
+    background: var(--g-ground);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 26px 22px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+  }
+  .screen::before {
+    content: attr(data-vw);
+    position: absolute; top: 0; right: 0;
+    font: 500 10px/1 var(--mono); letter-spacing: .06em;
+    color: var(--g-faint); background: var(--g-panel-2);
+    border-left: 1px solid var(--g-line-soft); border-bottom: 1px solid var(--g-line-soft);
+    padding: 4px 7px; border-radius: 0 var(--r) 0 var(--r);
+    z-index: 3;
+  }
+  .screen.narrow { max-width: var(--vw); }
+
+  .fitline {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 9px;
+    font: 500 12px/1.4 var(--mono); color: var(--faint);
+  }
+  .fitline .badge {
+    font: 650 11px/1 var(--sans); letter-spacing: .01em;
+    padding: 4px 8px; border-radius: 999px; border: 1px solid;
+  }
+  .fitline .badge.fits { color: var(--healthy); border-color: color-mix(in srgb, var(--healthy) 45%, var(--line)); }
+  .fitline .badge.over { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
+  /* ============================================================
+     THE PANEL — shared chrome across every option
+     ============================================================ */
+  .card {
+    background: var(--g-panel);
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    color: var(--g-ink);
+    font-size: 13px;
+    display: inline-flex; flex-direction: column;
+    vertical-align: top;
+    box-shadow: 0 14px 34px rgba(0,0,0,.42);
+    max-width: 100%;
+  }
+  .card.block { display: flex; }
+
+  .cardhead {
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--g-line-soft);
+    flex: 0 0 auto;
+  }
+  .titlerow { display: flex; align-items: baseline; gap: 14px; justify-content: space-between; }
+  .ptitle { font-weight: 650; font-size: 13.5px; letter-spacing: .01em; }
+  .tally { font: 11.5px/1 var(--mono); color: var(--g-dim); white-space: nowrap; }
+  .tally b { color: var(--g-signal); font-weight: 600; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; align-items: center; }
+  .filters .lbl { font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-faint); margin-right: 3px; }
+  .pill {
+    font: 500 11.5px/1 var(--sans);
+    background: var(--g-panel-2); border: 1px solid var(--g-line-soft);
+    color: var(--g-dim); border-radius: 999px; padding: 4px 9px; cursor: pointer;
+  }
+  .pill:hover { border-color: var(--g-line); color: var(--g-ink); }
+  .pill[aria-pressed="true"] { background: var(--g-primary); border-color: var(--g-signal-deep); color: var(--g-primary-t); }
+  .pill .n { font-family: var(--mono); font-size: 10.5px; opacity: .8; margin-left: 4px; }
+
+  /* ---- node vocabulary ------------------------------------ */
+  .glyph { font-family: var(--mono); width: 11px; display: inline-block; text-align: center; flex: 0 0 auto; }
+  .g-known    { color: var(--g-signal); }
+  .g-learning { color: var(--g-warn); }
+  .g-unknown  { color: var(--g-faint); }
+
+  .nname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nval { font: 11px/1 var(--mono); color: var(--g-dim); flex: 0 0 auto; margin-left: auto; padding-left: 8px; }
+  .nval.pct { color: var(--g-warn); }
+
+  .dot {
+    width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; display: inline-block;
+  }
+  .dot.unspent { background: var(--g-pigment); }
+  .dot.fresh   { background: var(--g-signal); }
+
+  .node {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 7px; border-radius: var(--r);
+    border-left: 2px solid transparent;
+    cursor: pointer; user-select: none;
+  }
+  .node:hover { background: var(--g-ghost); }
+  .node[aria-selected="true"] {
+    background: var(--g-signal-wash); border-left-color: var(--g-signal);
+  }
+  .node.dim { opacity: .34; }
+  .node .clause {
+    font-size: 10.5px; color: var(--g-pigment);
+  }
+
+  .meter {
+    height: 2px; background: var(--g-line-soft); border-radius: 2px;
+    flex: 0 0 28px; overflow: hidden;
+  }
+  .meter i { display: block; height: 100%; background: var(--g-warn); }
+
+  /* ---- domain heads --------------------------------------- */
+  .dhead {
+    font: 650 10.5px/1 var(--mono); letter-spacing: .13em; text-transform: uppercase;
+    color: var(--g-dim); white-space: nowrap;
+  }
+  .dshape { font: 10px/1.3 var(--sans); letter-spacing: 0; text-transform: none; color: var(--g-faint); font-weight: 400; margin-top: 3px; }
+
+  /* ---- detail pane ---------------------------------------- */
+  .detail {
+    width: 300px; flex: 0 0 300px;
+    border-left: 1px solid var(--g-line-soft);
+    padding: 14px 16px;
+    overflow-y: auto;
+  }
+  .detail h4 { margin: 0 0 3px; font-size: 13.5px; font-weight: 650; }
+  .detail .kicker { font: 600 10px/1 var(--mono); letter-spacing: .11em; text-transform: uppercase; color: var(--g-faint); margin: 13px 0 3px; }
+  .detail p { margin: 0 0 4px; font-size: 12px; color: var(--g-dim); line-height: 1.5; }
+  .detail .where { color: var(--g-signal); font-size: 12px; }
+  .detail .empty { color: var(--g-faint); font-style: italic; font-size: 12px; }
+
+  /* ============================================================
+     A — columns, horizontal scroll
+     ============================================================ */
+  .colstrip {
+    display: flex; gap: 20px; padding: 16px 18px;
+    overflow-x: auto; scrollbar-width: thin;
+    flex: 1 1 auto; min-width: 0;
+  }
+  /* The SHIPPED state: no scroll anywhere, so the strip takes its full
+     content width and pushes the card past the screen edge — which is
+     the bug, drawn. It must not merely overflow ON TOP of the detail
+     pane, or the demo reads as a z-order glitch rather than a width one. */
+  .colstrip.noscroll { overflow-x: visible; flex: 0 0 auto; min-width: max-content; }
+  .colstrip .col { flex: 0 0 210px; min-width: 210px; }
+  .col .rows { margin-top: 9px; }
+  .col.ladder .rows {
+    border-left: 1px solid var(--g-line); padding-left: 10px; margin-left: 4px;
+  }
+  .moremark {
+    position: absolute; right: 301px; top: 50%; transform: translateY(-50%);
+    font: 600 10.5px/1 var(--sans); color: var(--g-warn);
+    background: linear-gradient(90deg, transparent, var(--g-panel) 42%);
+    padding: 9px 10px 9px 26px; pointer-events: none; z-index: 2; white-space: nowrap;
+  }
+
+  /* ============================================================
+     B — wrapped domain cards
+     ============================================================ */
+  .gridwrap { padding: 15px 17px; overflow-y: auto; flex: 1 1 auto; }
+  .dgrid { display: grid; gap: 13px; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
+  .dcard {
+    background: var(--g-panel-2); border: 1px solid var(--g-line-soft);
+    border-radius: var(--r); padding: 10px 11px 9px;
+  }
+  .dcard .rows { margin-top: 8px; }
+  .dcard.ladder .rows { border-left: 1px solid var(--g-line); padding-left: 9px; margin-left: 3px; }
+
+  /* ============================================================
+     E — ladder rows (rotated)
+     ============================================================ */
+  .rowsview { padding: 6px 0 8px; overflow-y: auto; flex: 1 1 auto; }
+  .lrow {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--g-line-soft);
+  }
+  .lrow:last-child { border-bottom: 0; }
+  .lrow > .dhead { flex: 0 0 96px; padding-top: 6px; text-align: right; }
+  .rungs { display: flex; flex-wrap: wrap; align-items: center; gap: 0; min-width: 0; flex: 1 1 auto; }
+  .rung {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 9px; border-radius: var(--r);
+    border: 1px solid transparent;
+    cursor: pointer; white-space: nowrap;
+  }
+  .rung:hover { background: var(--g-ghost); }
+  .rung[aria-selected="true"] { background: var(--g-signal-wash); border-color: var(--g-signal-deep); }
+  .rung.dim { opacity: .34; }
+  .link { width: 15px; height: 1px; background: var(--g-line); flex: 0 0 auto; }
+  .link.none { background: transparent; width: 5px; }
+  .capsule {
+    font: 10px/1 var(--mono); color: var(--g-faint);
+    border: 1px dashed var(--g-line); border-radius: 999px; padding: 3px 7px; margin-left: 4px;
+  }
+  .inlinedetail {
+    margin: 0 18px 8px 128px;
+    border-left: 2px solid var(--g-signal-deep);
+    padding: 6px 0 2px 14px;
+  }
+  /* Inline, the three sections run ACROSS rather than down — a stacked
+     pane pushed the rest of the ladder list a screenful down, which
+     defeats the point of the row layout. */
+  .inlinedetail .dsecs { display: flex; gap: 22px; align-items: flex-start; }
+  .inlinedetail .dsec { flex: 1 1 0; min-width: 0; }
+  .inlinedetail .kicker { margin-top: 6px; }
+  .inlinedetail h4 { font-size: 12.5px; }
+  .inlinedetail > div > p:first-of-type { font-size: 11.5px; }
+  @media (max-width: 700px) { .inlinedetail .dsecs { flex-direction: column; gap: 0; } }
+
+  /* ============================================================
+     D — domain rail, master / detail
+     ============================================================ */
+  .railview { display: flex; flex: 1 1 auto; min-height: 0; }
+  .rail {
+    flex: 0 0 168px; border-right: 1px solid var(--g-line-soft);
+    padding: 9px 0; overflow-y: auto;
+  }
+  .railitem {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 14px; cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .railitem:hover { background: var(--g-ghost); }
+  .railitem[aria-selected="true"] { background: var(--g-signal-wash); border-left-color: var(--g-signal); }
+  .railitem .rn { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pips { display: flex; gap: 3px; margin-left: auto; flex: 0 0 auto; }
+  .stack { flex: 1 1 auto; padding: 13px 16px; min-width: 0; overflow-y: auto; }
+
+  /* ============================================================
+     G — state-first list
+     ============================================================ */
+  .listview { flex: 1 1 auto; overflow-y: auto; padding: 4px 0 8px; min-width: 0; }
+  .sechead {
+    display: flex; align-items: center; gap: 8px;
+    font: 650 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--g-faint); padding: 12px 18px 6px;
+    position: sticky; top: 0; background: var(--g-panel); z-index: 1;
+  }
+  .sechead .n { font-weight: 500; opacity: .75; }
+  .lrowitem {
+    display: flex; align-items: center; gap: 9px;
+    padding: 6px 18px; cursor: pointer; border-left: 2px solid transparent;
+  }
+  .lrowitem:hover { background: var(--g-ghost); }
+  .lrowitem[aria-selected="true"] { background: var(--g-signal-wash); border-left-color: var(--g-signal); }
+  .dchip {
+    font: 10px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase;
+    color: var(--g-dim); background: var(--g-panel-2);
+    border: 1px solid var(--g-line-soft); border-radius: 999px;
+    padding: 3px 7px; flex: 0 0 auto;
+  }
+  .step { font: 10px/1 var(--mono); color: var(--g-faint); flex: 0 0 auto; }
+
+  /* ---- doc furniture -------------------------------------- */
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 18px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font: 600 11px/1.3 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+  td.y { color: var(--healthy); font-weight: 600; }
+  td.n { color: var(--danger); font-weight: 600; }
+  td.m { color: var(--warn); font-weight: 600; }
+
+  .note {
+    border-left: 2px solid var(--signal); background: var(--signal-wash);
+    padding: 11px 14px; margin: 16px 0; border-radius: 0 var(--r) var(--r) 0;
+    max-width: var(--measure);
+  }
+  .note p:last-child { margin-bottom: 0; }
+
+  .themebtn {
+    position: fixed; right: 14px; bottom: 14px; z-index: 40;
+    font: 500 12px/1 var(--sans); color: var(--dim);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 8px 13px; cursor: pointer;
+  }
+  .themebtn:hover { color: var(--ink); }
+
+  @media (max-width: 720px) {
+    .controls .row { gap: 11px; }
+    header.top h1 { font-size: 22px; }
+  }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <h1>Five ways to hold a knowledge screen that keeps growing</h1>
+    <p class="sub">
+      The panel is columns-per-domain with a pinned detail pane, and it no longer fits the screen.
+      The cause is structural, not cosmetic: <b>domains are the axis that grows, and they sit on the
+      axis that cannot scroll.</b> These five prototypes are judged on one question — what happens at
+      four times today's tree. Use the stress bar to grow it.
+    </p>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="row">
+    <div class="ctl">
+      <span>Tree</span>
+      <div class="seg" id="seg-size">
+        <button data-n="6"  aria-pressed="true">Today · 6 domains</button>
+        <button data-n="10">Planned · 10</button>
+        <button data-n="16">4× · 16</button>
+        <button data-n="24">Stress · 24</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <span>Screen</span>
+      <div class="seg" id="seg-vw">
+        <button data-vw="0" aria-pressed="true">Your window</button>
+        <button data-vw="1440">1440</button>
+        <button data-vw="1180">1180</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <span>Filter</span>
+      <div class="seg" id="seg-filter">
+        <button data-f="all" aria-pressed="true">All</button>
+        <button data-f="learning">Learning</button>
+        <button data-f="unspent">Unused</button>
+        <button data-f="new">New</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <section>
+    <h2><span class="tag">The measurement</span>Why it overflows, in numbers</h2>
+    <div class="prose">
+    <p>
+      A domain column has a <code>COLUMN_MIN_WIDTH</code> floor of 210px and a
+      <code>COLUMN_SEPARATION</code> of 20, and the detail pane is pinned at
+      <code>DETAIL_WIDTH</code> 300 plus padding. So the content minimum is a straight function of
+      the domain count:
+    </p>
+    <p style="font-family: var(--mono); font-size: 13px; color: var(--dim);">
+      card ≈ 230 × domains + 336 + chrome
+    </p>
+    <p>
+      The ladder config today teaches <b>five branches</b> — plant, animal, route, forestry,
+      extraction — plus the craft fan, so six columns ask for about 1,716px before chrome.
+      <code>docs/plan_civilization_steps.md</code> commits four more branches (Storage, Belief,
+      Defense, Dwellings) and calls a sixth branch "config"; War and Telling are already named in
+      <code>DOMAIN_BRANCH_LABELS</code>' neighbourhood as absent-for-now. <b>Ten to twelve domains is
+      the planned shape, not the stress case</b> — and twelve columns is 3,096px, on a 1920 design
+      viewport that docked panels have already taken a bite out of.
+    </p>
+    <p>
+      <b>And the clamp that should have caught it cannot.</b> <code>KnowledgePanel.refit</code> does
+      raise <code>max_width</code> to the room before calling <code>fit_width</code>, and
+      <code>fit_width</code> does clamp the request to it — but
+      <code>AutoSizingPanel._apply_width</code> then writes that number to <code>size.x</code>, and
+      Godot will not render a Control below its <code>get_combined_minimum_size()</code>. The card's
+      combined minimum runs straight through <code>KnowledgeScroll</code>, whose
+      <code>horizontal_scroll_mode</code> is <code>SCROLL_MODE_DISABLED</code> — a ScrollContainer
+      that cannot scroll an axis propagates its child's full minimum on that axis rather than
+      absorbing it. So the clamp is computed correctly and then overruled by the layout.
+      <b>No clamp will make the shipped arrangement fit; the content minimum itself has to come
+      down</b>, which is what every option below does.
+    </p>
+    </div>
+    <div class="stage">
+      <div class="screen" id="screen-now"><div id="mount-now"></div></div>
+      <div class="fitline" id="fit-now"></div>
+    </div>
+    <p>
+      That is the panel as it ships, with no cap and no scroll — the strip below the card is the
+      screen edge it has already gone past. Grow the tree in the stress bar and watch the number.
+    </p>
+
+    <div class="note" style="margin-left:0;">
+      <p>
+        <b>The asymmetry is the whole design problem.</b> The ladder is deliberately <em>shallow</em>
+        — the rung engine models about four steps per web and the plan forbids pan, zoom and edge
+        routing — and it grows by <em>adding branches</em>. So the bounded axis (depth) is on the
+        scrollable one, and the unbounded axis (branches) is on the one that cannot move. Every
+        option below is a way of swapping them.
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================================================= A -->
+  <section>
+    <h2><span class="tag">Option A · your option 1</span>Columns, with the strip scrolling sideways</h2>
+    <div class="prose">
+      <p>
+        Smallest possible change: turn the column strip's horizontal scroll back on, clamp the card to
+        the room, keep the detail pane pinned. Nothing about the shipped renderer changes.
+      </p>
+    </div>
+    <div class="verdicts">
+      <span class="chip good">Cheapest to build</span>
+      <span class="chip bad">Breaks the "filters dim, never hide" rule</span>
+      <span class="chip bad">Dead by 10 domains</span>
+    </div>
+    <div class="stage">
+      <div class="screen" id="screen-a"><div id="mount-a"></div></div>
+      <div class="fitline" id="fit-a"></div>
+    </div>
+    <div class="prose">
+      <p>
+        Grow the tree and the failure shows itself: a knowledge that is learning, unspent or new can
+        sit entirely off-screen, and the player has no way to know it is there but to drag. The
+        panel's own contract — <em>non-matching nodes dim rather than disappear, so the shape of the
+        tree stays legible</em> — is silently void the moment content leaves the viewport. The
+        "3 more →" cue patches the symptom and concedes the point.
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================================================= B -->
+  <section>
+    <h2><span class="tag">Option B · your option 2</span>Domains wrap into a grid of cards</h2>
+    <div class="prose">
+      <p>
+        Each domain becomes a card; the card count wraps at a computed columns-per-row, and growth
+        goes into the vertical scroll the panel already has. Rails, filters, node rows and the detail
+        pane are untouched — this is the least invasive option that actually scales.
+      </p>
+    </div>
+    <div class="verdicts">
+      <span class="chip good">Reuses every existing part</span>
+      <span class="chip good">Width is fixed forever</span>
+      <span class="chip warn">At 16+ it is a wall, not a glance</span>
+    </div>
+    <div class="stage">
+      <div class="screen" id="screen-b"><div id="mount-b"></div></div>
+      <div class="fitline" id="fit-b"></div>
+    </div>
+    <div class="prose">
+      <p>
+        Honest and cheap, and it survives the planned ten. Past that the weakness is legibility rather
+        than geometry: four rows of cards is a scrolling field of fifty-odd nodes, and "what is
+        happening right now" stops being answerable by looking. Note also that the cards have ragged
+        heights — the craft fan is much taller than a two-rung ladder — so a computed column count
+        beats a free flow, or the rows jitter as the tree changes.
+      </p>
+      <p>
+        <b>Watch the node names as you grow it.</b> Three cards across a card that also carries the
+        detail pane leaves each one about 186px — under the 210px
+        <code>COLUMN_MIN_WIDTH</code> floor — and <em>Seed Selection</em> starts ellipsizing. The
+        floor exists for a stated reason (a node name that wrapped would break the column's read as
+        a ladder), so B only works if the detail pane moves out of the row, or the card is allowed
+        past 1,100px, or the grid drops to two columns and gets taller. That choice is B's real
+        design question, and it is the same trade C avoids by not putting names in narrow boxes.
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================================================= E -->
+  <section>
+    <h2><span class="tag">Option C · recommended</span>Rotate it: one domain per row, rungs running across</h2>
+    <div class="prose">
+      <p>
+        The swap stated directly. A domain is a <em>row</em>: its label on the left, its rungs left to
+        right along the rail, a capability that gates nothing hanging off the end. Width is bounded by
+        <b>ladder depth</b> — which the design caps at about four — and every new branch costs one
+        row of height on an axis that already scrolls.
+      </p>
+    </div>
+    <div class="verdicts">
+      <span class="chip good">Width bounded by design, not by luck</span>
+      <span class="chip good">24 domains still read at a glance</span>
+      <span class="chip good">The rail still says "these are steps"</span>
+      <span class="chip warn">The craft fan needs its own treatment</span>
+    </div>
+    <div class="stage">
+      <div class="screen" id="screen-e"><div id="mount-e"></div></div>
+      <div class="fitline" id="fit-e"></div>
+    </div>
+    <div class="prose">
+      <p>
+        Grow this one to 24 and the difference from B is stark: one line per domain means the whole
+        tree is still scannable, because scanning a column of labels is what eyes are good at. The
+        detail opens <em>inline beneath the selected row</em> rather than in a pinned pane, which
+        returns another 336px and lets the card sit at about 800px wide at any domain count.
+      </p>
+      <p>
+        Two things need deciding if you take this one. <b>The craft fan is not a ladder</b> — it is
+        unordered and will grow with <code>recipes.json</code>, so it wraps as connector-less chips
+        and may want its own section below the ladders rather than a peer row. And <b>a capability
+        like Foddering</b>, which the config says no rung waits on, needs to read as hanging off the
+        ladder rather than continuing it; shown here as a dashed capsule.
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================================================= D -->
+  <section>
+    <h2><span class="tag">Option D</span>A domain rail, one ladder at a time</h2>
+    <div class="prose">
+      <p>
+        Master–detail. A scrolling rail of domains on the left, each carrying its own state pips; the
+        selected domain's ladder in the middle; detail on the right. The card is a fixed ~780px at six
+        domains or at sixty.
+      </p>
+    </div>
+    <div class="verdicts">
+      <span class="chip good">Scales to any count, unconditionally</span>
+      <span class="chip good">Narrowest card of the five</span>
+      <span class="chip bad">The whole-tree reading is gone</span>
+    </div>
+    <div class="stage">
+      <div class="screen" id="screen-d"><div id="mount-d"></div></div>
+      <div class="fitline" id="fit-d"></div>
+    </div>
+    <div class="prose">
+      <p>
+        The one option that provably never overflows. The cost is the panel's stated purpose: the
+        screen is <em>"what your people know"</em>, and a rail answers "what do my people know about
+        herds" instead. The pips carry some of the loss back — a domain with something learning or
+        unspent says so without being opened — but a player must now click six times to take the
+        reading they used to take by looking. Worth prototyping as the fallback if the domain count
+        ends up past what a screen of rows can hold.
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================================================= G -->
+  <section>
+    <h2><span class="tag">Option E · the scales-to-200 answer</span>Drop the tree; sort by what is happening</h2>
+    <div class="prose">
+      <p>
+        No domain layout at all. One list, grouped by state — learning now, ready and unused, new this
+        turn, known, not begun — with the domain as a chip on each row and ladder position as
+        <code>step 2 of 4</code>. The filters stop being a dimming pass and become the navigation.
+      </p>
+    </div>
+    <div class="verdicts">
+      <span class="chip good">Indifferent to domain count</span>
+      <span class="chip good">Answers "what is happening" first</span>
+      <span class="chip bad">Loses the ladder shape the rail exists to state</span>
+    </div>
+    <div class="stage">
+      <div class="screen" id="screen-g"><div id="mount-g"></div></div>
+      <div class="fitline" id="fit-g"></div>
+    </div>
+    <div class="prose">
+      <p>
+        This is what the panel would be if it were designed for sixty nodes from the start, and it is
+        included to mark the far end of the range. It directly contradicts a shipped decision — the
+        rule file is explicit that a ladder domain's rail is <em>what says these are steps in an
+        order</em> — so it is only the right answer if the tree grows past the point where shape is
+        readable anyway. A plausible hybrid is C as the map with this as a second tab.
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================================================= -->
+  <section class="prose">
+    <h2><span class="tag">Comparison</span>How each holds up as the tree grows</h2>
+    <table>
+      <thead>
+        <tr><th>&nbsp;</th><th>A · h-scroll</th><th>B · grid</th><th>C · rows</th><th>D · rail</th><th>E · list</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Fits at 6 domains</td><td class="m">with scroll</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+        <tr><td>Fits at 12 domains</td><td class="n">no</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+        <tr><td>Fits at 24 domains</td><td class="n">no</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+        <tr><td>Whole tree at a glance</td><td class="n">no</td><td class="m">to ~9</td><td class="y">yes</td><td class="n">no</td><td class="n">no</td></tr>
+        <tr><td>Filters can dim, not hide</td><td class="n">no</td><td class="y">yes</td><td class="y">yes</td><td class="m">per domain</td><td class="n">no</td></tr>
+        <tr><td>Ladder order stays stated</td><td class="y">rail</td><td class="y">rail</td><td class="y">rail</td><td class="y">rail</td><td class="m">as text</td></tr>
+        <tr><td>Craft fan fits the shape</td><td class="y">yes</td><td class="y">yes</td><td class="m">needs work</td><td class="y">yes</td><td class="y">yes</td></tr>
+        <tr><td>Renderer churn</td><td class="y">tiny</td><td class="y">small</td><td class="m">medium</td><td class="m">medium</td><td class="n">large</td></tr>
+      </tbody>
+    </table>
+
+    <h3>What I would take forward</h3>
+    <p>
+      <b>C, with B as the fallback.</b> C is the only option that both survives the planned tree and
+      keeps the reading the screen exists to give, and it does so because it puts growth on the axis
+      the design already made cheap. B is the safe version of the same insight — it also fixes the
+      geometry permanently and costs almost nothing to build — and it is the right answer if the row
+      treatment of the craft fan proves awkward.
+    </p>
+    <p>
+      <b>A should not ship on its own at any tree size.</b> Its one genuine contribution is that
+      re-enabling <code>KnowledgeScroll</code>'s horizontal scroll is what makes the card
+      <em>shrinkable at all</em> — without it the clamp in <code>refit</code> is unenforceable. B, C,
+      D and E do not need it, because each one brings the content minimum itself under the room;
+      that is the difference between hiding the overflow and not having any.
+    </p>
+    <p>
+      <b>D and E are the insurance.</b> If the count really heads for sixty, D keeps the ladder shape
+      and gives up the overview, E keeps the overview and gives up the shape. Neither needs building
+      yet.
+    </p>
+  </section>
+
+</div>
+
+<button class="themebtn" id="themebtn">Theme</button>
+
+<script>
+"use strict";
+
+/* ============================================================
+   THE TREE. Domains 1–6 are what the ladder config teaches
+   today (core_sim/src/data/intensification_ladder.json plus the
+   craft fan off recipes.json). 7–10 are the branches
+   docs/plan_civilization_steps.md commits to. 11+ are plausible
+   later ones, present only to stress the layouts.
+   ============================================================ */
+const K = (n, s, p, f) => ({ n, s, p: p || 0, f: f || "" });
+
+const TREE = [
+  { key: "land", label: "Land", shape: "ladder", nodes: [
+      K("Cultivation", "known"), K("Seed Selection", "learning", 0.62) ] },
+  { key: "herds", label: "Herds", shape: "ladder", nodes: [
+      K("Herding", "known"), K("Penning", "known", 0, "unspent"),
+      K("Foddering", "learning", 0.71, "capability") ] },
+  { key: "roads", label: "Roads", shape: "ladder", nodes: [
+      K("Roadbuilding", "known", 0, "new"), K("Paving", "unknown") ] },
+  { key: "forestry", label: "Forestry", shape: "ladder", nodes: [
+      K("Woodcraft", "known"), K("Conservationism", "unknown") ] },
+  { key: "extraction", label: "Extraction", shape: "ladder", nodes: [
+      K("Quarrying", "learning", 0.18) ] },
+  { key: "craft", label: "Craft", shape: "fan", nodes: [
+      K("Tanning", "known"), K("Bone Working", "learning", 0.40),
+      K("Weaving", "known", 0, "unspent") ] },
+
+  { key: "storage", label: "Storage", shape: "ladder", nodes: [
+      K("Drying Rack", "known"), K("Pit Store", "learning", 0.33), K("Granary", "unknown") ] },
+  { key: "belief", label: "Belief", shape: "ladder", nodes: [
+      K("Gathering Ground", "known"), K("Monument", "unknown") ] },
+  { key: "defense", label: "Defense", shape: "ladder", nodes: [
+      K("Palisade", "learning", 0.55), K("Walls", "unknown"), K("Bastion", "unknown") ] },
+  { key: "dwellings", label: "Dwellings", shape: "ladder", nodes: [
+      K("Shelter", "known"), K("Longhouse", "known", 0, "unspent"), K("Quarter", "unknown") ] },
+
+  { key: "war", label: "War", shape: "ladder", nodes: [
+      K("Drilling", "known"), K("Massed Ranks", "unknown"), K("Siegecraft", "unknown") ] },
+  { key: "telling", label: "Telling", shape: "ladder", nodes: [
+      K("Lore Keeping", "known"), K("Script", "learning", 0.12), K("Archive", "unknown") ] },
+  { key: "water", label: "Water", shape: "ladder", nodes: [
+      K("Wells", "known"), K("Irrigation", "learning", 0.47), K("Canals", "unknown") ] },
+  { key: "fishing", label: "Fishing", shape: "ladder", nodes: [
+      K("Netting", "known"), K("Weirs", "unknown") ] },
+  { key: "trade", label: "Trade", shape: "ladder", nodes: [
+      K("Bartering", "known", 0, "unspent"), K("Markets", "unknown") ] },
+  { key: "metals", label: "Metals", shape: "ladder", nodes: [
+      K("Smelting", "learning", 0.08), K("Alloying", "unknown"), K("Forging", "unknown") ] },
+  { key: "pottery", label: "Pottery", shape: "ladder", nodes: [
+      K("Coiling", "known"), K("The Wheel", "unknown") ] },
+  { key: "medicine", label: "Medicine", shape: "ladder", nodes: [
+      K("Herblore", "known", 0, "new"), K("Setting Bones", "unknown") ] },
+  { key: "astronomy", label: "Astronomy", shape: "ladder", nodes: [
+      K("Star Reading", "known"), K("The Calendar", "learning", 0.66) ] },
+  { key: "law", label: "Law", shape: "ladder", nodes: [
+      K("Custom", "known"), K("Judgement", "unknown") ] },
+  { key: "music", label: "Music", shape: "ladder", nodes: [
+      K("Drumming", "known"), K("Pipes", "known", 0, "unspent") ] },
+  { key: "navigation", label: "Navigation", shape: "ladder", nodes: [
+      K("Coasting", "known"), K("Open Water", "unknown") ] },
+  { key: "glass", label: "Glass", shape: "ladder", nodes: [
+      K("Fusing", "learning", 0.21), K("Blowing", "unknown") ] },
+  { key: "textiles", label: "Textiles", shape: "fan", nodes: [
+      K("Spinning", "known"), K("Dyeing", "known", 0, "unspent"), K("Felting", "unknown") ] },
+];
+
+/* Authored copy for the detail pane — the real panel reads this off
+   FactionReadouts' KNOWLEDGE_UNLOCK_NOTES; two entries stand in here. */
+const NOTES = {
+  "Seed Selection": {
+    does: "Your harvesters keep back the best seed, so a tended patch yields more each season it is worked.",
+    where: "3 patches standing on the tended rung",
+    how: "By working a patch you have already cultivated."
+  },
+  "Penning": {
+    does: "A tamed herd can be held in a pen, which stops the drift and lets you feed it through a bad season.",
+    where: "Nothing is using it",
+    how: "By keeping a herd you have already tamed."
+  }
+};
+const FALLBACK = {
+  does: "Unlocks the next thing your hands can do with this, across the whole map.",
+  where: "2 sources standing on the rung it unlocks",
+  how: "By practising the step below it."
+};
+
+const STATE = { n: 6, vw: 0, filter: "all", sel: "Seed Selection", railDomain: "herds" };
+
+/* ---- helpers ---------------------------------------------- */
+const el = (tag, cls, txt) => {
+  const d = document.createElement(tag);
+  if (cls) d.className = cls;
+  if (txt != null) d.textContent = txt;
+  return d;
+};
+const domains = () => TREE.slice(0, STATE.n);
+const allNodes = () => domains().flatMap(d => d.nodes.map(x => ({ ...x, d })));
+const glyphOf = s => s === "known" ? "●" : s === "learning" ? "◐" : "○";
+const gclass  = s => s === "known" ? "g-known" : s === "learning" ? "g-learning" : "g-unknown";
+
+function matches(node) {
+  switch (STATE.filter) {
+    case "learning": return node.s === "learning";
+    case "unspent":  return node.f === "unspent";
+    case "new":      return node.f === "new";
+    default:         return true;
+  }
+}
+function counts() {
+  const ns = allNodes();
+  return {
+    all: ns.length,
+    known: ns.filter(n => n.s === "known").length,
+    learning: ns.filter(n => n.s === "learning").length,
+    unknown: ns.filter(n => n.s === "unknown").length,
+    unspent: ns.filter(n => n.f === "unspent").length,
+    fresh: ns.filter(n => n.f === "new").length
+  };
+}
+
+/* ---- shared chrome ---------------------------------------- */
+function head(showFilters) {
+  const c = counts();
+  const h = el("div", "cardhead");
+  const row = el("div", "titlerow");
+  row.append(el("div", "ptitle", "What your people know"));
+  const t = el("div", "tally");
+  t.innerHTML = `<b>${c.known}</b> known · <b>${c.learning}</b> learning · ${c.unknown} unknown · <b>${c.unspent}</b> unspent`;
+  row.append(t);
+  h.append(row);
+
+  if (showFilters !== false) {
+    const f = el("div", "filters");
+    f.append(el("span", "lbl", "Show"));
+    [["all", "All", c.all], ["learning", "Learning now", c.learning],
+     ["unspent", "Ready · unused", c.unspent], ["new", "New this turn", c.fresh]
+    ].forEach(([k, label, n]) => {
+      const b = el("button", "pill");
+      b.innerHTML = `${label}<span class="n">${n}</span>`;
+      b.setAttribute("aria-pressed", STATE.filter === k);
+      b.onclick = () => { STATE.filter = k; syncFilterSeg(); renderAll(); };
+      f.append(b);
+    });
+    h.append(f);
+  }
+  return h;
+}
+
+function nodeRow(node, domain) {
+  const on = matches(node);
+  const r = el("div", "node" + (on ? "" : " dim"));
+  r.setAttribute("aria-selected", STATE.sel === node.n);
+  r.append(el("span", "glyph " + gclass(node.s), glyphOf(node.s)));
+  r.append(el("span", "nname", node.n));
+  if (node.s === "learning") {
+    const m = el("div", "meter"); const i = el("i");
+    i.style.width = Math.round(node.p * 100) + "%"; m.append(i);
+    r.append(m);
+    r.append(el("span", "nval pct", Math.round(node.p * 100) + "%"));
+  } else {
+    r.append(el("span", "nval", node.s === "known" ? "known" : "—"));
+  }
+  if (node.f === "unspent") r.append(el("span", "dot unspent"));
+  if (node.f === "new") r.append(el("span", "dot fresh"));
+  r.onclick = () => { STATE.sel = node.n; if (domain) STATE.railDomain = domain.key; renderAll(); };
+  return r;
+}
+
+function detailPane(asPane) {
+  const node = allNodes().find(n => n.n === STATE.sel);
+  const d = el("div", asPane === false ? "" : "detail");
+  if (!node) { d.append(el("p", "empty", "Select a knowledge to read what it lets your people do.")); return d; }
+  const copy = NOTES[node.n] || FALLBACK;
+  d.append(el("h4", null, node.n));
+  const sub = el("p", null,
+    node.s === "known" ? (node.f === "unspent" ? "Known · nothing is using it" : "Known")
+    : node.s === "learning" ? "Learning · " + Math.round(node.p * 100) + "%"
+    : "Not begun");
+  d.append(sub);
+  const secs = el("div", "dsecs");
+  [["What it lets you do", copy.does, null],
+   ["Where, now", copy.where, "where"],
+   ["How it is learned", copy.how, null]
+  ].forEach(([k, body, cls]) => {
+    const s = el("div", "dsec");
+    s.append(el("div", "kicker", k));
+    s.append(el("p", cls, body));
+    secs.append(s);
+  });
+  d.append(secs);
+  return d;
+}
+
+function domainHead(d) {
+  const h = el("div");
+  h.append(el("div", "dhead", d.label));
+  h.append(el("div", "dshape", d.shape === "ladder" ? "one step at a time" : "learned by working it"));
+  return h;
+}
+
+/* ============================================================
+   TODAY — columns, uncapped, no scroll. The shipped panel.
+   ============================================================ */
+function renderNow(mount) {
+  mount.textContent = "";
+  const card = el("div", "card");
+  card.style.width = "max-content";
+  card.style.maxWidth = "none";
+  card.append(head());
+  const body = el("div");
+  body.style.cssText = "display:flex; min-height:0;";
+  const strip = el("div", "colstrip noscroll");
+  domains().forEach(d => {
+    const col = el("div", "col " + d.shape);
+    col.append(domainHead(d));
+    const rows = el("div", "rows");
+    d.nodes.forEach(n => rows.append(nodeRow(n, d)));
+    col.append(rows);
+    strip.append(col);
+  });
+  body.append(strip);
+  body.append(detailPane());
+  card.append(body);
+  mount.append(card);
+  return card;
+}
+
+/* ============================================================
+   A — columns + horizontal scroll
+   ============================================================ */
+function renderA(mount) {
+  mount.textContent = "";
+  const card = el("div", "card");
+  card.style.width = "min(100%, 1180px)";
+  card.append(head());
+  const body = el("div");
+  body.style.cssText = "display:flex; position:relative; min-height:0;";
+  const strip = el("div", "colstrip");
+  domains().forEach(d => {
+    const col = el("div", "col " + d.shape);
+    col.append(domainHead(d));
+    const rows = el("div", "rows");
+    d.nodes.forEach(n => rows.append(nodeRow(n, d)));
+    col.append(rows);
+    strip.append(col);
+  });
+  body.append(strip);
+  // Filled by reportFit once the strip has a measured width — the count of
+  // hidden columns and the cue that admits to them must not disagree.
+  body.append(el("div", "moremark"));
+  body.append(detailPane());
+  card.append(body);
+  mount.append(card);
+  return card;
+}
+
+/* ============================================================
+   B — wrapped domain cards
+   ============================================================ */
+function renderB(mount) {
+  mount.textContent = "";
+  const card = el("div", "card");
+  card.style.width = "min(100%, 1020px)";
+  card.append(head());
+  const body = el("div");
+  body.style.cssText = "display:flex; min-height:0;";
+  const wrap = el("div", "gridwrap");
+  wrap.style.maxHeight = "430px";
+  const grid = el("div", "dgrid");
+  grid.style.setProperty("--cols", STATE.n <= 6 ? 3 : 3);
+  domains().forEach(d => {
+    const c = el("div", "dcard " + d.shape);
+    c.append(domainHead(d));
+    const rows = el("div", "rows");
+    d.nodes.forEach(n => rows.append(nodeRow(n, d)));
+    c.append(rows);
+    grid.append(c);
+  });
+  wrap.append(grid);
+  body.append(wrap);
+  body.append(detailPane());
+  card.append(body);
+  mount.append(card);
+  return card;
+}
+
+/* ============================================================
+   C (E) — ladder rows, detail inline
+   ============================================================ */
+function renderE(mount) {
+  mount.textContent = "";
+  const card = el("div", "card");
+  card.style.width = "min(100%, 820px)";
+  card.append(head());
+  const view = el("div", "rowsview");
+  view.style.maxHeight = "440px";
+
+  domains().forEach(d => {
+    const row = el("div", "lrow");
+    row.append(el("div", "dhead", d.label));
+    const rungs = el("div", "rungs");
+    d.nodes.forEach((n, i) => {
+      if (i > 0) rungs.append(el("div", "link" + (d.shape === "fan" ? " none" : "")));
+      if (n.f === "capability") {
+        const cap = el("div", "rung" + (matches(n) ? "" : " dim"));
+        cap.setAttribute("aria-selected", STATE.sel === n.n);
+        cap.append(el("span", "glyph " + gclass(n.s), glyphOf(n.s)));
+        cap.append(el("span", "nname", n.n));
+        if (n.s === "learning") cap.append(el("span", "nval pct", Math.round(n.p * 100) + "%"));
+        cap.append(el("span", "capsule", "gates nothing"));
+        cap.onclick = () => { STATE.sel = n.n; renderAll(); };
+        rungs.append(cap);
+        return;
+      }
+      const r = el("div", "rung" + (matches(n) ? "" : " dim"));
+      r.setAttribute("aria-selected", STATE.sel === n.n);
+      r.append(el("span", "glyph " + gclass(n.s), glyphOf(n.s)));
+      r.append(el("span", "nname", n.n));
+      if (n.s === "learning") r.append(el("span", "nval pct", Math.round(n.p * 100) + "%"));
+      if (n.f === "unspent") r.append(el("span", "dot unspent"));
+      if (n.f === "new") r.append(el("span", "dot fresh"));
+      r.onclick = () => { STATE.sel = n.n; renderAll(); };
+      rungs.append(r);
+    });
+    row.append(rungs);
+    view.append(row);
+
+    if (d.nodes.some(n => n.n === STATE.sel)) {
+      const det = el("div", "inlinedetail");
+      det.append(detailPane(false));
+      view.append(det);
+    }
+  });
+  card.append(view);
+  mount.append(card);
+  return card;
+}
+
+/* ============================================================
+   D — domain rail
+   ============================================================ */
+function renderD(mount) {
+  mount.textContent = "";
+  const card = el("div", "card");
+  card.style.width = "min(100%, 790px)";
+  card.append(head());
+  const view = el("div", "railview");
+  view.style.maxHeight = "420px";
+
+  const rail = el("div", "rail");
+  domains().forEach(d => {
+    const it = el("div", "railitem");
+    it.setAttribute("aria-selected", STATE.railDomain === d.key);
+    it.append(el("span", "rn", d.label));
+    const pips = el("div", "pips");
+    if (d.nodes.some(n => n.s === "learning")) {
+      const p = el("span", "dot"); p.style.background = "var(--g-warn)"; pips.append(p);
+    }
+    if (d.nodes.some(n => n.f === "unspent")) pips.append(el("span", "dot unspent"));
+    if (d.nodes.some(n => n.f === "new")) pips.append(el("span", "dot fresh"));
+    it.append(pips);
+    it.onclick = () => { STATE.railDomain = d.key; STATE.sel = d.nodes[0].n; renderAll(); };
+    rail.append(it);
+  });
+  view.append(rail);
+
+  const d = domains().find(x => x.key === STATE.railDomain) || domains()[0];
+  const stack = el("div", "stack " + d.shape);
+  stack.append(domainHead(d));
+  const rows = el("div", "rows");
+  rows.style.cssText = d.shape === "ladder"
+    ? "border-left:1px solid var(--g-line); padding-left:10px; margin:9px 0 0 4px;"
+    : "margin-top:9px;";
+  d.nodes.forEach(n => rows.append(nodeRow(n, d)));
+  stack.append(rows);
+  view.append(stack);
+  view.append(detailPane());
+  card.append(view);
+  mount.append(card);
+  return card;
+}
+
+/* ============================================================
+   E (G) — state-first list
+   ============================================================ */
+function renderG(mount) {
+  mount.textContent = "";
+  const card = el("div", "card");
+  card.style.width = "min(100%, 880px)";
+  card.append(head(false));
+  const body = el("div");
+  body.style.cssText = "display:flex; min-height:0;";
+  const list = el("div", "listview");
+  list.style.maxHeight = "430px";
+
+  const ns = allNodes();
+  const sections = [
+    ["Learning now", ns.filter(n => n.s === "learning").sort((a, b) => b.p - a.p)],
+    ["Ready · nothing using it", ns.filter(n => n.f === "unspent")],
+    ["New this turn", ns.filter(n => n.f === "new")],
+    ["Known", ns.filter(n => n.s === "known" && n.f !== "unspent" && n.f !== "new")],
+    ["Not begun", ns.filter(n => n.s === "unknown")]
+  ];
+
+  sections.forEach(([label, items]) => {
+    if (!items.length) return;
+    const h = el("div", "sechead");
+    h.append(el("span", null, label));
+    h.append(el("span", "n", items.length));
+    list.append(h);
+    items.forEach(n => {
+      const r = el("div", "lrowitem");
+      r.setAttribute("aria-selected", STATE.sel === n.n);
+      r.append(el("span", "glyph " + gclass(n.s), glyphOf(n.s)));
+      r.append(el("span", "nname", n.n));
+      if (n.s === "learning") {
+        const m = el("div", "meter"); const i = el("i");
+        i.style.width = Math.round(n.p * 100) + "%"; m.append(i);
+        r.append(m);
+        r.append(el("span", "nval pct", Math.round(n.p * 100) + "%"));
+      } else {
+        r.append(el("span", "nval", " "));
+      }
+      const idx = n.d.nodes.indexOf(n.d.nodes.find(x => x.n === n.n));
+      if (n.d.shape === "ladder") r.append(el("span", "step", `step ${idx + 1} of ${n.d.nodes.length}`));
+      r.append(el("span", "dchip", n.d.label));
+      r.onclick = () => { STATE.sel = n.n; renderAll(); };
+      list.append(r);
+    });
+  });
+
+  body.append(list);
+  body.append(detailPane());
+  card.append(body);
+  mount.append(card);
+  return card;
+}
+
+/* ---- fit reporting ----------------------------------------
+   Two different failures, so two different measurements. A card
+   with NO horizontal scroll fails by being wider than the room;
+   a card whose strip scrolls fails by HIDING content, and always
+   reports "fits" if you only measure the card. Options that grow
+   downward are told apart from both — vertical scroll is the one
+   the panel already has and is not a defect.                     */
+function reportFit(id, card, screen, mode) {
+  const out = document.getElementById(id);
+  if (!out || !card) return;
+  const have = Math.round(screen.clientWidth - 44);
+  const shipped = 230 * STATE.n + 336;
+  out.textContent = "";
+
+  let bad, badge;
+  if (mode === "hscroll") {
+    const strip = card.querySelector(".colstrip");
+    const hiddenPx = strip ? Math.round(strip.scrollWidth - strip.clientWidth) : 0;
+    const shown = strip ? Math.floor((strip.clientWidth + 20) / 230) : 0;
+    const hidden = Math.max(0, STATE.n - shown);
+    bad = hiddenPx > 1;
+    badge = bad ? `${hidden} domains hidden off-screen` : "all domains visible";
+    const cue = card.querySelector(".moremark");
+    if (cue) cue.textContent = hidden > 0 ? hidden + " more →" : "";
+  } else {
+    const want = Math.round(card.scrollWidth);
+    const over = want - have;
+    bad = over > 1;
+    badge = bad ? `overflows by ${over}px` : `fits · card is ${want}px`;
+  }
+
+  out.append(el("span", "badge " + (bad ? "over" : "fits"), badge));
+  out.append(el("span", null,
+    `${STATE.n} domains · ${counts().all} knowledges · room is ${have}px · shipped columns layout would want ${shipped}px`));
+}
+
+/* ---- orchestration ---------------------------------------- */
+const VIEWS = [
+  ["now", renderNow, "width"], ["a", renderA, "hscroll"], ["b", renderB, "width"],
+  ["e", renderE, "width"], ["d", renderD, "width"], ["g", renderG, "width"]
+];
+
+function renderAll() {
+  VIEWS.forEach(([id, fn, mode]) => {
+    const mount = document.getElementById("mount-" + id);
+    const screen = document.getElementById("screen-" + id);
+    if (!mount) return;
+    const card = fn(mount);
+    screen.dataset.vw = STATE.vw ? STATE.vw + "px screen" : "your window";
+    if (STATE.vw) { screen.classList.add("narrow"); screen.style.setProperty("--vw", STATE.vw + "px"); }
+    else { screen.classList.remove("narrow"); screen.style.removeProperty("--vw"); }
+    // Measured synchronously so a page loaded in a BACKGROUND TAB still reports —
+    // rAF does not fire while a tab is hidden — then refined once layout settles.
+    reportFit("fit-" + id, card, screen, mode);
+    requestAnimationFrame(() => reportFit("fit-" + id, card, screen, mode));
+  });
+}
+
+function wireSeg(id, fn) {
+  const seg = document.getElementById(id);
+  seg.querySelectorAll("button").forEach(b => {
+    b.onclick = () => {
+      seg.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
+      b.setAttribute("aria-pressed", "true");
+      fn(b);
+      renderAll();
+    };
+  });
+}
+function syncFilterSeg() {
+  document.querySelectorAll("#seg-filter button").forEach(b =>
+    b.setAttribute("aria-pressed", b.dataset.f === STATE.filter));
+}
+
+wireSeg("seg-size", b => { STATE.n = +b.dataset.n;
+  if (!domains().some(d => d.nodes.some(n => n.n === STATE.sel))) STATE.sel = "Seed Selection";
+  if (!domains().some(d => d.key === STATE.railDomain)) STATE.railDomain = domains()[0].key; });
+wireSeg("seg-vw", b => { STATE.vw = +b.dataset.vw; });
+wireSeg("seg-filter", b => { STATE.filter = b.dataset.f; });
+
+document.getElementById("themebtn").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+};
+
+addEventListener("resize", () => VIEWS.forEach(([id, , mode]) => {
+  const screen = document.getElementById("screen-" + id);
+  if (!screen) return;
+  reportFit("fit-" + id, screen.querySelector(".card"), screen, mode);
+}));
+
+renderAll();
+</script>
