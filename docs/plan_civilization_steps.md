@@ -334,9 +334,10 @@ The storage lesson's practice signal is **food lost to spoilage while a surplus 
 excess never learns storage; a band whose excess rots learns it fast. "Excess makes you want storage"
 and "spoilage makes you need it" are the same accrual read off one number.
 
-**Workers build storage, which needs the improvement catalog.** The catalog from
-`docs/plan_settlement_population.md` (footprint, `labor_draw`, decay) is not shipped. Storage is its
-first entry, before the monument. The catalog slice belongs to the settlement arc, not this one.
+**Workers build storage, and storage is a ladder branch.** The improvement catalog is the
+intensification ladder (see "The improvement catalog is the intensification ladder" below); storage
+is a branch whose source is a tile, before the monument. It is blocked only on the tile-source seam,
+which belongs to the settlement arc, not this one.
 
 **Split by how food keeps, not plant vs animal.** The video's step 4 property is the one that
 matters: grain is legible because it keeps dry and can be counted. A food kind carries one property —
@@ -371,8 +372,9 @@ surplus**:
 - **Not modelled:** who within the band holds the granary. That is The Telling's to narrate; a second
   political layer inside a thirty-person band is more than the early game can carry.
 
-**Order for the arc (leaning):** spoilage with the storage lesson → the catalog with storage as its
-first entry (settlement arc) → the granary as a tether → directed labor and the `leadership` term.
+**Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
+(settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
+`leadership` term.
 Measure how much surplus a well-placed band actually runs today before setting the lesson's pace.
 
 **There is no carry cap (decided).** The stale plan decision above argued for a hard bound on what
@@ -389,6 +391,68 @@ slowly. The only thing a store adds to the network is that it is a node with no 
 no carry cap, the first turns differ from today only in that the larder shrinks a little each turn —
 which is the signal that teaches the storage lesson — so base rates should stay slow enough that a
 well-fed band still sees its runway grow, and the rot should show on the Food line as its own term.
+
+## The improvement catalog is the intensification ladder (decided)
+
+**The finding.** `docs/plan_settlement_population.md` §"Improvements — the atom; a config catalog
+by class" specifies a catalog: class/type, footprint, occupancy, `labor_draw`, `build_cost`,
+`yield`, `decay_rate`, `prerequisite`. It was written before the ladder shipped. The intensification
+ladder (`.claude/rules/core_sim/intensification.md`, `core_sim/src/data/intensification_ladder.json`)
+*is* that catalog: a rung has a branch, an order, a verb, `unlock_knowledge`, `earns_knowledge`,
+`requires_rung`, a `site_requirement`, `build.work_cost`, `upkeep.{work_per_turn, scaled_by,
+meter_decay, grace_turns}`, and a materials half. The catalog's fields are the ladder's under older
+names:
+
+| Catalog field | Ladder field |
+|---|---|
+| `labor_draw` | `upkeep.work_per_turn` |
+| `decay_rate` | `upkeep.meter_decay` |
+| `prerequisite` | `unlock_knowledge` |
+| `build_cost` | `build.work_cost` + the materials half |
+| `yield` | the branch's payoff config — as cultivation's payoffs live in `labor_config` and pastoral gains in `fauna_config`, never in the ladder file |
+| `occupancy` | a dwelling branch's payoff |
+| `footprint` | not carried over (see below) |
+
+**The ladder is already generic.** Five branches ship — plant, animal, route, forestry, extraction —
+each keyed to one position per source (`RungStanding`), built and held through the one build engine
+("the seam both tracks call"), learned by practice. A sixth branch is config.
+
+**What is genuinely new: a branch whose source is a tile.** Every shipped branch climbs a patch, a
+herd, a route link, a stand or a deposit. Storage, belief (the monument), defense (walls) and
+dwellings have no source under them; their source is the ground. The one prerequisite slice is: let
+a branch key its standing to a tile. Then:
+
+| Branch | Rungs | Learned by | Payoff lives in |
+|---|---|---|---|
+| Storage | carried → drying rack → pit/granary | rot teaches the first rung; holding a rack teaches the next | the spoilage config: rate, and what keeps |
+| Belief | gathering ground → monument | gatherings | the belief config |
+| Defense | walls (arc #693, later) | — | — |
+| Dwellings | settlement arc | — | occupancy |
+
+**Whoever gets the yield keeps the rung (decided).** Keeping is a band-level pool per activity today,
+never a worker pinned to a tile. For a tile branch the rule is: **the band that draws the rung's yield
+contributes its keeping workers** — the band drawing food from a field, drawing from a store, standing
+on a monument's belief. A store within reach of two bands is kept by the one drawing on it; a rung
+nobody draws from decays after its grace. Drawing on a store already means being within
+`reach_tiles` of it, so this is the network-node rule stated as who pays.
+
+**What comes free.**
+
+- **Keeping by reach gives "walk away and your granary rots"** with no new code: no band within reach
+  draws on it, so nobody keeps it, so it decays after its grace.
+- **Materials are already a rung cost.** A rack wants wood from the forestry branch and a wall wants
+  stone from extraction, priced the way a pen's hurdles are.
+- **The client already renders a ladder** — its meter, turns remaining and blocked reason — so a tile
+  branch appears on the tile panel the way a patch's rungs do.
+
+**Left out on purpose: footprint and multiple improvements per tile.** One position per tile per
+branch. The ladder's argument is that one position cannot express a contradictory state — the
+Field-99%-Cultivation defect in `docs/plan_standing_upkeep.md` §2.8 — and a footprint budget
+reintroduces exactly the many-meters-per-place shape it retired. Footprint is the arcology problem.
+
+**What this changes on the board.** The settlement arc's catalog phase becomes the tile-source seam
+and is small. Storage, the monument and walls become branch configs plus a payoff each, blocked only
+on that seam and never on a catalog engine.
 
 ## One work party: hunt and forage are the same thing (decided)
 
