@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 133
+const EXPECTED_CHECKPOINTS := 145
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -106,6 +106,8 @@ func run(harness) -> void:
 	await _assert_opens_on_filter()
 	await _assert_late_catalogue_is_not_learned()
 	await _assert_loaded_world_is_not_learned()
+	await _assert_a_long_domain_name_cannot_move_the_chips()
+	await _assert_a_narrow_room_keeps_the_last_row_reachable()
 
 # ---- the greyed `0.0` track --------------------------------------------------
 
@@ -883,6 +885,20 @@ func _assert_the_card_survives_a_planned_domain_count() -> void:
 	h._assert_hud("knowledge stress — …and it is not being rendered above a minimum it cannot hold (%.0f <= %.0f)"
 			% [minimum, HudKnowledgeVocab.PANEL_WIDTH],
 		minimum <= HudKnowledgeVocab.PANEL_WIDTH)
+	# ⛔ **AND THE OTHER AXIS — the one the growth MOVED ONTO, which the two claims above cannot
+	# see.** §1's promise is that a branch costs one row of HEIGHT "on an axis that already scrolls",
+	# and at 24 domains that containment rests entirely on `AutoSizingPanel.fit_to_content` flipping
+	# `_scroll.vertical_scroll_mode` from `DISABLED` (its value at `_ready`) to `AUTO`. With that flip
+	# regressed the card simply renders past the room's bottom edge — every width claim above stays
+	# green, and the frame beside them looks like a long list.
+	var room := panel.available_room(HudKnowledgeVocab.VIEWPORT_MARGIN)
+	h._assert_hud("knowledge stress — …and the card is still INSIDE the room's height at %d domains (%.0f <= %.0f)"
+			% [drawn, panel.size.y, room.size.y],
+		panel.size.y <= room.size.y + LAYOUT_EPSILON)
+	var scroll := _scroll_of(panel)
+	h._assert_hud("knowledge stress — …because the LIST scrolls at %d domains rather than the card growing (vertical mode %d)"
+			% [drawn, -1 if scroll == null else scroll.vertical_scroll_mode],
+		scroll != null and scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_AUTO)
 	await h._save("knowledge_panel_stress")
 	controller.close()
 	await h._settle()
@@ -916,6 +932,296 @@ func _stress_roster() -> Array:
 				KnowledgeFx.KEY_IS_STEP: true,
 			})
 	return roster
+
+# ---- the gutter is a cap, and the narrow room is reachable ------------------
+
+## Float slack for a comparison between two FITTED pixel rects. Both sides are rounded layout
+## numbers, so this is about the last bit rather than about tolerance.
+const LAYOUT_EPSILON := 0.5
+
+## A branch token no label table has ever heard of, chosen so `HudKnowledgeVocab.domain_label`'s
+## fallback (`String(branch).capitalize()`) produces a name far wider than `ROW_NAME_WIDTH` — which is
+## the SHIPPABLE way to reach this state, a new branch drawing with no client edit being the point of
+## that fallback. `STRESS_BRANCH_FORMAT` cannot reach it: `BRANCH 07` is short.
+const LONG_DOMAIN_BRANCH := "water_management_and_irrigation"
+## Two ordinary branches beside it, so "every row's first chip is on one vertical" is a claim about
+## more than one row.
+const PLAIN_DOMAIN_BRANCHES := ["kilnwork", "netting"]
+const GUTTER_RUNGS_PER_DOMAIN := 2
+
+## **THE DOMAIN-NAME GUTTER IS A CAP AS WELL AS A FLOOR.** `custom_minimum_size` is only the floor,
+## and a `Label` that neither clips nor trims reports its whole text as its minimum width — so a
+## domain label wider than `ROW_NAME_WIDTH` widened THAT ROW'S gutter alone, breaking the one vertical
+## the chips start on and desynchronising `DETAIL_INDENT` from it, so a reading no longer lined up
+## under the chip it belonged to.
+##
+## **ASSERTED AS THE VERTICAL, not as the label's width** — that is the promise the constant's own
+## comment makes, and it survives a different way of capping the gutter. The label's width is asserted
+## beside it as the MECHANISM, and the tooltip as the rule that truncating is only allowed while the
+## whole name stays reachable.
+func _assert_a_long_domain_name_cannot_move_the_chips() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	h._hud.update_ladder_knowledge(_gutter_roster())
+	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
+	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
+	controller.open()
+	await h._settle()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge gutter — the panel is open", false)
+		return
+
+	# NON-VACUOUS FIRST: the fixture has to have produced a name that really does overflow the gutter,
+	# or every claim below passes on three short labels.
+	var long_label := HudKnowledgeVocab.domain_label(StringName(LONG_DOMAIN_BRANCH)).to_upper()
+	var long_row := _domain_node(panel, StringName(LONG_DOMAIN_BRANCH))
+	var long_name := _domain_name_label(long_row)
+	var natural := 0.0 if long_name == null else EventDockPanel.natural_label_width(long_name)
+	h._assert_hud("knowledge gutter — the fixture's `%s` really is wider than the gutter (%.0f > %.0f)"
+			% [long_label, natural, HudKnowledgeVocab.ROW_NAME_WIDTH],
+		natural > HudKnowledgeVocab.ROW_NAME_WIDTH)
+
+	# THE CLAIM: every row's first chip starts on ONE vertical, the over-long name included.
+	var branches: Array[StringName] = [StringName(LONG_DOMAIN_BRANCH)]
+	for plain in PLAIN_DOMAIN_BRANCHES:
+		branches.append(StringName(plain))
+	var lefts: Array[float] = []
+	for branch in branches:
+		var row := _domain_node(panel, branch)
+		var chip := _first_chip_in(row)
+		if chip == null:
+			h._assert_hud("knowledge gutter — `%s`'s row has a first chip" % branch, false)
+			return
+		lefts.append(chip.global_position.x)
+	var spread := 0.0
+	for left in lefts:
+		spread = maxf(spread, absf(left - lefts[0]))
+	h._assert_hud("knowledge gutter — every row's first chip starts on ONE vertical, the over-long name included (%s)"
+			% str(lefts),
+		spread <= LAYOUT_EPSILON)
+
+	# …and the mechanism, so a failure above says WHICH half moved.
+	h._assert_hud("knowledge gutter — …because the name label is held to the gutter (%.0f, want %.0f)"
+			% [0.0 if long_name == null else long_name.size.x, HudKnowledgeVocab.ROW_NAME_WIDTH],
+		long_name != null and is_equal_approx(long_name.size.x, HudKnowledgeVocab.ROW_NAME_WIDTH))
+	# **TRUNCATING IS ONLY ALLOWED WHILE THE WHOLE NAME STAYS REACHABLE.** Through
+	# `HudWidgets.set_label_tooltip`, so the hover is actually reachable — a `Label` defaults to
+	# `MOUSE_FILTER_IGNORE`, where a bare `tooltip_text` is a silent no-op.
+	h._assert_hud("knowledge gutter — …and the trimmed name keeps the WHOLE label on its hover (`%s`)"
+			% ("" if long_name == null else long_name.tooltip_text),
+		long_name != null and long_name.tooltip_text == long_label)
+	h._assert_hud("knowledge gutter — …and it can receive that hover at all (a Label ignores the mouse by default)",
+		long_name != null and long_name.mouse_filter != Control.MOUSE_FILTER_IGNORE)
+	# A name that FITS gets NO tooltip — a hover repeating what is on screen is noise, and the claim
+	# above would pass on a panel that tooltipped every row.
+	var plain_name := _domain_name_label(_domain_node(panel, StringName(PLAIN_DOMAIN_BRANCHES[0])))
+	h._assert_hud("knowledge gutter — …while a name that FITS carries none (`%s`)"
+			% ("" if plain_name == null else plain_name.tooltip_text),
+		plain_name != null and plain_name.tooltip_text == "")
+
+	controller.close()
+	await h._settle()
+
+## `LONG_DOMAIN_BRANCH` plus the two plain ones, in the roster's own row shape.
+func _gutter_roster() -> Array:
+	var roster: Array = []
+	var branches: Array[String] = [LONG_DOMAIN_BRANCH]
+	for plain in PLAIN_DOMAIN_BRANCHES:
+		branches.append(String(plain))
+	for branch in branches:
+		for step in GUTTER_RUNGS_PER_DOMAIN:
+			roster.append({
+				KnowledgeFx.KEY_ID: "%s_step_%d" % [branch, step + 1],
+				KnowledgeFx.KEY_DISPLAY: "%s Step %d" % [branch.capitalize(), step + 1],
+				KnowledgeFx.KEY_BRANCH: branch,
+				KnowledgeFx.KEY_ORDER: step + 1,
+				KnowledgeFx.KEY_IS_STEP: true,
+			})
+	return roster
+
+## The room the reachability claim is staged in: `PANEL_MIN_WIDTH` plus the margin the card insets
+## itself by on each side, so `refit` clamps the card to exactly `PANEL_MIN_WIDTH` and the claim is
+## made at the narrowest the card is allowed to be.
+const NARROW_ROOM_WIDTH := HudKnowledgeVocab.PANEL_MIN_WIDTH \
+	+ 2.0 * HudKnowledgeVocab.VIEWPORT_MARGIN
+## A SHORT roster for it, because the state under test is the one where the room's HEIGHT does not
+## bind: a body taller than the room turns the vertical scroll on for a reason that has nothing to do
+## with the horizontal bar, and the claim would pass with the bar's reserve deleted.
+const NARROW_ROOM_DOMAINS := 2
+const NARROW_ROOM_RUNGS := 2
+## How much shorter than the card the squeezed room is made — inside one scrollbar's height (8px in
+## this theme) and not zero, so the room genuinely binds and does so by less than the bar.
+const NARROW_ROOM_SQUEEZE := 4.0
+const NARROW_ROOM_BRANCH_FORMAT := "narrow_%02d"
+const NARROW_ROOM_KNOWLEDGE_FORMAT := "narrow_%02d_step_%d"
+## **WIDE ON PURPOSE, and it is the SIM's own field** (`display_name`): one chip wearing a name this
+## long is wider than the whole interior of a `PANEL_MIN_WIDTH` card, so the horizontal bar is up for
+## a reason that survives the reading's columns being re-derived at the narrow width. A name of
+## ordinary length leaves the bar's appearance resting on the detail block alone, which is exactly the
+## term the fix in `_detail_section_width` removes.
+const NARROW_ROOM_DISPLAY_FORMAT := "Terraced Hillside Irrigation Works %02d-%d"
+
+## ⛔ **A ROOM NARROWER THAN THE NOMINAL CARD MUST NOT PUT THE LAST ROW OUT OF REACH.**
+##
+## The horizontal axis became `SCROLL_MODE_AUTO` in this arc, so an h-scrollbar is reachable for the
+## first time — and `ScrollContainer` takes that bar's height off the CHILD'S VIEWPORT. A height fit
+## that did not include it returns `desired == clamped`, `AutoSizingPanel` therefore DISABLES the
+## vertical scroll, and `_body` (vertically `SIZE_FILL`, not `SIZE_EXPAND`) lays out at its full
+## minimum from `y = 0`: the bottom of the list is clipped with no way to scroll to it.
+##
+## **THE ROOM IS SWAPPED, WHICH IS THE PANEL'S OWN SEAM FOR IT.** `room_bounds` is how a card is told
+## what rectangle it may use (`AutoSizingPanel`), and a probe Control standing in for it drives the
+## real `_room()` → `refit` path rather than a hand-set width. The card is then asked the question the
+## player would: **is the bottom of the list inside the scroll's own VISIBLE area, or can the card be
+## scrolled to it** — with the precondition that the bar is up and that the room's height is NOT what
+## put it there, so neither leg can pass for the other's reason.
+##
+## **THE ROOM CHANGE IS DRIVEN AS A REFIT AND THEN A RE-RENDER**, which is the order the app produces
+## one in: a window resize re-fits alone (`KnowledgePanelController.refit_room`) and the next snapshot
+## re-renders. The claim is made on the SETTLED state, because the interim is where the body's
+## minimum is still a frame behind the width it was measured at — and that lag is not a detail: the
+## first form of this block asserted on it and an 8px discrepancy between the two measurements masked
+## a deleted reserve exactly, so the sabotage passed.
+func _assert_a_narrow_room_keeps_the_last_row_reachable() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	h._hud.update_ladder_knowledge(_narrow_room_roster())
+	h._hud.update_crafting_catalogues([], [], [], [])
+	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
+	controller.open()
+	await h._settle()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge narrow-room — the panel is open", false)
+		return
+
+	# **WITH A READING OPEN**, the state that has the most to lose — the reading is what sits at the
+	# bottom of the list, so it is what a clipped viewport takes first.
+	await _press_node(NARROW_ROOM_KNOWLEDGE_FORMAT % [0, 1])
+
+	var home_bounds: Control = panel.room_bounds
+	var full_room := panel.available_room(0.0)
+	var probe := Control.new()
+	probe.name = "KnowledgeNarrowRoomProbe"
+	probe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h._hud.add_child(probe)
+	probe.position = full_room.position
+	probe.size = Vector2(NARROW_ROOM_WIDTH, full_room.size.y)
+	panel.room_bounds = probe
+	# The room change alone, which is all a window resize does
+	# (`KnowledgePanelController.refit_room` re-fits rather than re-rendering)…
+	panel.refit()
+	await h._settle()
+	# …and then the RE-RENDER the next snapshot brings, which is the state the claim is made on: it is
+	# the settled one, where the body's minimum has stopped moving between the fit and the frame after
+	# it. Measured on the interim instead, an 8px lag between the two measurements happened to mask a
+	# deleted reserve exactly — the sabotage passed.
+	controller.render()
+	await h._settle()
+	panel.refit()
+	await h._settle()
+
+	# NON-VACUOUS, LEG 1: the card really did narrow to the room it was given.
+	h._assert_hud("knowledge narrow-room — the card narrows to the room (%.0f, want %.0f)"
+			% [panel.size.x, HudKnowledgeVocab.PANEL_MIN_WIDTH],
+		is_equal_approx(panel.size.x, HudKnowledgeVocab.PANEL_MIN_WIDTH))
+	var scroll := _scroll_of(panel)
+	if scroll == null:
+		h._assert_hud("knowledge narrow-room — the card has its scroll", false)
+		return
+	# NON-VACUOUS, LEG 2: the horizontal bar is actually up. Read HERE, a settled frame later — which
+	# is exactly why `KnowledgePanel` may not read it: inside the fit it answers for the previous
+	# layout.
+	var hbar := scroll.get_h_scroll_bar()
+	h._assert_hud("knowledge narrow-room — …and the horizontal scrollbar is UP, which is the state under test (%s)"
+			% str(hbar.visible),
+		hbar.visible)
+
+	# ⛔ **AND NOW THE ROOM IS SQUEEZED INTO THE BAR'S OWN HEIGHT, which is the ONLY band where the
+	# reserve decides anything.** Anywhere else the answer is the same either way: a room with room to
+	# spare lets the card simply grow, and a room several rows short turns the vertical scroll on
+	# whatever the bar costs. Between them lies the case the reserve is for — a room shorter than the
+	# card by LESS than one scrollbar — so the probe is resized to exactly that, off the height the
+	# card has just told us it wants rather than off a typed number.
+	var wanted_height := panel.card().size.y
+	probe.size = Vector2(NARROW_ROOM_WIDTH,
+		wanted_height - NARROW_ROOM_SQUEEZE + 2.0 * HudKnowledgeVocab.VIEWPORT_MARGIN)
+	panel.refit()
+	await h._settle()
+	var ceiling := panel.available_room(HudKnowledgeVocab.VIEWPORT_MARGIN).size.y
+	h._assert_hud("knowledge narrow-room — …and the room is now shorter than the card by less than the bar (%.0f short, bar %.0f)"
+			% [wanted_height - ceiling, hbar.size.y],
+		wanted_height - ceiling > 0.0 and wanted_height - ceiling <= hbar.size.y)
+
+	# THE CLAIM: the card stays INSIDE that room, and what does not fit is scrollable.
+	#
+	# ⛔ **ASSERTED ON `card()`, THE DRAWN RECT, NEVER ON `panel.size`** — the panel is a plain Control
+	# whose size is arithmetic, while the card is a real Container and Godot will not draw one below
+	# its own combined minimum. That minimum is where the bar is actually charged: a `ScrollContainer`
+	# with its vertical axis DISABLED reports its child's whole height PLUS the horizontal bar, so a
+	# fit that did not budget the bar leaves the card demanding more than the fit gave it, and the card
+	# spills out of the bottom of the room with the vertical scroll switched off — measured on a
+	# sabotaged build at 455 against a 451 room.
+	var drawn_inside := panel.card().size.y <= ceiling + LAYOUT_EPSILON
+	var can_scroll := scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_AUTO
+	h._assert_hud("knowledge narrow-room — the card stays inside the squeezed room (%.0f <= %.0f) and the rest SCROLLS (%s)"
+			% [panel.card().size.y, ceiling, str(can_scroll)],
+		drawn_inside and can_scroll)
+
+	# **PUT THE ROOM BACK**, then the shipped roster: this HUD is long-lived and three chapters run
+	# after this one. A stranded probe would keep every later card measured against a 384px room.
+	panel.room_bounds = home_bounds
+	controller.close()
+	await h._settle()
+	probe.queue_free()
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_crafting_catalogues([], [], [], [])
+	await h._settle()
+
+## Two short synthetic branches — see `NARROW_ROOM_DOMAINS` for why the body has to stay short.
+func _narrow_room_roster() -> Array:
+	var roster: Array = []
+	for branch in NARROW_ROOM_DOMAINS:
+		for step in NARROW_ROOM_RUNGS:
+			roster.append({
+				KnowledgeFx.KEY_ID: NARROW_ROOM_KNOWLEDGE_FORMAT % [branch, step + 1],
+				KnowledgeFx.KEY_DISPLAY: NARROW_ROOM_DISPLAY_FORMAT % [branch, step + 1],
+				KnowledgeFx.KEY_BRANCH: NARROW_ROOM_BRANCH_FORMAT % branch,
+				KnowledgeFx.KEY_ORDER: step + 1,
+				KnowledgeFx.KEY_IS_STEP: true,
+			})
+	return roster
+
+## The panel's own scroll, by the name the panel builds it under — the layout claims are about THAT
+## node, and a subtree search for a `ScrollContainer` would find whichever one happened to match.
+func _scroll_of(panel: KnowledgePanel) -> ScrollContainer:
+	var found := panel.find_child("KnowledgeScroll", true, false)
+	return found as ScrollContainer if found is ScrollContainer else null
+
+## A domain row's NAME label — the first Label in the row, which is how `_build_domain_row` mounts it
+## (name, then the chips' flow). Found structurally rather than by text, the text being the thing
+## under test.
+func _domain_name_label(row: Node) -> Label:
+	if row == null:
+		return null
+	if row is Label:
+		return row as Label
+	for child in row.get_children():
+		var found := _domain_name_label(child)
+		if found != null:
+			return found
+	return null
+
+## A domain row's FIRST chip, in child order — the one every row's gutter is supposed to line up.
+func _first_chip_in(row: Node) -> Control:
+	if row == null:
+		return null
+	if row is Control and String((row as Control).get_meta(HudKnowledgeVocab.NODE_META, "")) != "":
+		return row as Control
+	for child in row.get_children():
+		var found := _first_chip_in(child)
+		if found != null:
+			return found
+	return null
 
 # ---- the launcher and its pip ----------------------------------------------
 

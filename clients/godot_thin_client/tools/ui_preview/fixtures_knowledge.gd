@@ -8,11 +8,11 @@ extends RefCounted
 ##
 ## ⛔ **THE ROSTER IS THE DECLARATION NOW, AND THAT IS WHY IT IS A FIXTURE AT ALL.** The client used to
 ## hold the ladder's node list itself (`HudKnowledgeVocab.LADDER_DOMAINS`), so a harness needed no
-## roster — it only ever pushed progress. The columns are built from the wire now: which column a
-## knowledge is in (the branch of the rung that TEACHES it), where in that column (that rung's order)
+## roster — it only ever pushed progress. The domain ROWS are built from the wire now: which row a
+## knowledge is in (the branch of the rung that TEACHES it), where along that row (that rung's order)
 ## and whether it is a step or a capability (whether any rung's `unlock_knowledge` names it) all come
 ## off `intensification_ladder.json` sim-side. **So a harness that pushes no roster renders no ladder
-## columns at all**, which is the honest consequence of the panel building itself.
+## rows at all**, which is the honest consequence of the panel building itself.
 ##
 ## ⛔ **IT IS A TRANSCRIPTION OF THE SHIPPED LADDER, and it is deliberately not derived here.** A
 ## fixture that recomputed the roster would pass against a producer that had stopped producing one.
@@ -20,7 +20,7 @@ extends RefCounted
 ## (`core_sim/src/snapshot/mod.rs::the_published_roster_places_every_knowledge_the_ladder_teaches`);
 ## what this file is for is proving the CLIENT renders whatever roster arrives.
 
-## The wire keys, spelled once. A typo in one of these is a silent empty column.
+## The wire keys, spelled once. A typo in one of these is a silent empty row.
 const KEY_ID := "knowledge_id"
 const KEY_DISPLAY := "display_name"
 const KEY_BRANCH := "branch"
@@ -50,7 +50,7 @@ const KNOWLEDGE_PAVING := "paving"
 ##
 ## **`roadbuilding` and `paving` are the proof of the whole arrangement**: they are taught by
 ## `route:trail` and `route:dirt_road`, they went onto the wire with the ladder's other five, and the
-## panel grows a **Roads** column for them without a line of client code naming either.
+## panel grows a **Roads** row for them without a line of client code naming either.
 static func ladder_roster() -> Array:
 	return [
 		_row(KNOWLEDGE_CULTIVATION, "Cultivation", BRANCH_PLANT, 1, true),

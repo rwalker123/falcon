@@ -486,7 +486,7 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 
 	# **THE LADDER'S KNOWLEDGE ROSTER — what there IS to learn.** Pushed BEFORE any progress, because
-	# the knowledge screen's columns are built from it: a HUD with no roster has no ladder nodes at
+	# the knowledge screen's domain rows are built from it: a HUD with no roster has no ladder nodes at
 	# all, whatever a faction's meters say.
 	_hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
 

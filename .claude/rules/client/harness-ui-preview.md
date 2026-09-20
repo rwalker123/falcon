@@ -2058,10 +2058,12 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Nine frames and 124 assertions (its
-`EXPECTED_CHECKPOINTS` floor is the measured **133** — frames count too, so the three launcher-face
-frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, and the ROW
-layout (`docs/plan_knowledge_rows.md` slice A) moved it to 133 on two added frames;
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Nine frames and 136 assertions (its
+`EXPECTED_CHECKPOINTS` floor is the measured **145** — frames count too, so the three launcher-face
+frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, the ROW
+layout (`docs/plan_knowledge_rows.md` slice A) moved it to 133 on two added frames, and the row
+layout's review pass added the gutter-cap and narrow-room blocks and two height claims to the stress
+block, taking it to 145 with NO new frame;
 the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
 surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
 a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
@@ -2074,7 +2076,7 @@ shape of the drive.
 | what only IT can say | how |
 |---|---|
 | a faction that knows NOTHING renders every ladder track, all `not begun` | asked of an EMPTY tracks dict, which is what the wire really sends on turn one |
-| a domain with no nodes draws NO column | the craft fan is the only one that can be empty, the two ladder columns' nodes being DECLARED |
+| a domain with no nodes draws NO row | the craft fan is the only one that can be empty, the two ladder rows' nodes being DECLARED |
 | the tracks that unlock nothing are exactly `UNLOCKLESS_TRACKS` | the derived set against the declared one — the ONLY thing that tells a deliberate omission from a forgotten `RUNG_KNOWLEDGE_TRACKS` entry, which reads identically |
 | at-or-ABOVE, not the done FLAGS | a patch carrying `is_field` and NO `is_cultivated` must read Cultivation as in use — the reading a per-verb-flag test gets backwards |
 | the two webs' pools do not cross | a plant patch must not satisfy an animal knowledge |
@@ -2140,11 +2142,47 @@ the filter ROW now, which costs nothing — see `knowledge-panel.md`. The walk p
 asserts the note is GONE, without which the size claim is measured around a permanent fixture, and a
 **minimum-WIDTH** claim rides beside them, that being the term the new placement could break.
 
-**A clean run is 453 frames / 2208 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**THE STRESS BLOCK ASSERTS BOTH AXES, and the height half is the one the arc's premise rests on.**
+Its two width claims say the card did not grow sideways at 24 branches; they pass unchanged with the
+vertical containment regressed, since a card that renders past the room's bottom edge is still 820
+wide. So `panel.size.y` is asserted against the ROOM and `_scroll.vertical_scroll_mode` against
+`SCROLL_MODE_AUTO` — that flip, off its `_ready` value of `DISABLED`, is the whole of *"a new branch
+costs one row of height, on an axis that already scrolls"*.
+
+⛔ **THE DOMAIN-NAME GUTTER IS A CAP, AND ITS BLOCK NEEDS AN OVER-LONG LABEL THE STRESS ROSTER CANNOT
+PRODUCE.** `STRESS_BRANCH_FORMAT` yields `BRANCH 07`, which fits the 88px gutter, so the stress block
+is blind to a name that does not — and an unlisted branch reaching `domain_label`'s capitalized
+fallback is the SHIPPABLE way to get one. `_assert_a_long_domain_name_cannot_move_the_chips` stages
+`water_management_and_irrigation` beside two ordinary branches and asserts every row's first chip
+shares one `global_position.x`, with the label's natural width (192 against 88) asserted first or the
+whole block is three short labels. The tooltip legs are the other half of the rule: a trimmed name
+keeps the full label on its hover, through `HudWidgets.set_label_tooltip` so the hover is reachable
+at all, and a name that FITS carries none.
+
+⛔ **AND THE NARROW ROOM IS STAGED BY SWAPPING `room_bounds`, NOT BY SETTING A WIDTH.** A probe
+`Control` stands in for the HUD's `FloatingRoom` so the real `_room()` → `refit` path runs;
+`NARROW_ROOM_WIDTH` is `PANEL_MIN_WIDTH` plus the card's own margins, so the card clamps to exactly
+its floor. **Then the probe is SQUEEZED to within one scrollbar of the height the card just said it
+wanted** — that band is the only place the horizontal bar's reserve decides anything, since a taller
+room lets the card grow and a much shorter one turns the vertical scroll on regardless. The claim is
+that `card().size.y` stays inside the room AND the vertical scroll is live.
+
+> **Three forms of that claim passed under sabotage before this one failed.** Asserting `_body`'s
+> rect says nothing (a `ScrollContainer` sizes a `SIZE_FILL` child to the viewport, so it ends at the
+> visible bottom either way); asserting the last row's rect says nothing (the `VBoxContainer` squeezes
+> its children into whatever it was given); and comparing the content's minimum against the visible
+> area says nothing in an unsqueezed room, because **Godot already charges the bar inside the card's
+> own minimum** — a `ScrollContainer` with its vertical axis DISABLED reports its child's height PLUS
+> the horizontal bar, and a Control is never drawn below its minimum. That is also what the defect
+> really looks like: not a clipped last row, but a card that SPILLS past the room it was fitted to
+> with the vertical scroll switched off. Measured on the sabotaged build at **463 in a 459 room**.
+
+**A clean run is 453 frames / 2220 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
-and no frame, and the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and
-their claims. Everything else between the three is drift accumulated un-recorded, exactly as it had
-been the times before. Measure; do not sum.
+and no frame, the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and their
+claims, and its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220). Everything
+else between them is drift accumulated un-recorded, exactly as it had been the times before.
+Measure; do not sum.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 

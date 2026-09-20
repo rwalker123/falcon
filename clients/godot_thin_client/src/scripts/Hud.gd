@@ -1248,7 +1248,7 @@ func update_crafting_catalogues(materials: Variant, characteristic_bands: Varian
     _loadout.set_recipes(recipes)
     # The craft half of the readouts, re-run for `update_intensification`'s reason: a world whose
     # recipe book or craft tracks moved without its populations moving is a delta this section arrives
-    # alone on, so the pip, the orb's knowledge rows and the columns would otherwise disagree about
+    # alone on, so the pip, the orb's knowledge rows and the screen's domain rows would otherwise disagree about
     # what the faction knows. Idempotent within a turn.
     _refresh_knowledge_readouts()
 

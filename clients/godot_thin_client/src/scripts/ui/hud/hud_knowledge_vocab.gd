@@ -12,7 +12,7 @@ class_name HudKnowledgeVocab
 ## hex asked to "climb a rung" is a metaphor the game never taught. Nothing in this file says either
 ## word, and that is a rule rather than an accident.
 ##
-## ⛔ **THE COLUMNS ARE NOT DECLARED HERE EITHER — THE WIRE'S OWN ROSTER BUILDS THEM.** Land and Herds
+## ⛔ **THE DOMAIN ROWS ARE NOT DECLARED HERE EITHER — THE WIRE'S OWN ROSTER BUILDS THEM.** Land and Herds
 ## used to be hard-coded node lists (`DOMAIN_NODES: ["cultivation", "seed_selection"]`), and the
 ## reason was that their WIRE was hard-coded too: the ladder's knowledges rode as named float fields,
 ## so adding one meant adding a schema field. That is why the route branch's Roadbuilding and Paving
@@ -179,8 +179,13 @@ const UNSPENT_MARK := "◇"
 
 ## What a knowledge that GATES NOTHING wears on its chip — `foddering` today. It hangs off the end of
 ## its ladder and says so, so it reads as hanging off rather than as continuing the steps. Drawn from
-## `NODE_UNSPENT_TESTABLE` being false, which is the config's own answer (`ROSTER_IS_STEP`), never a
-## client list of exceptions.
+## `NODE_UNSPENT_TESTABLE` being false, never a client list of exceptions.
+##
+## ⛔ **BUT THAT FLAG IS TWO TERMS.** `KnowledgeRoster._ladder_node` crosses the config's own
+## `ROSTER_IS_STEP` with a verb resolved by inverting `RungGates.RUNG_KNOWLEDGE_TRACKS`, which is a
+## CLIENT table — so a branch that is a step and is simply missing from that table says *"gates
+## nothing"* about a knowledge that gates something. Every chip in `knowledge_panel_stress` wears the
+## capsule for exactly that reason, the synthetic branches being in no rung table.
 const CAPABILITY_CAPSULE := "gates nothing"
 
 # ---- the filters -----------------------------------------------------------------------------
@@ -324,7 +329,7 @@ const CRAFT_UNLOCK_NOTE_FORMAT := "Things made of %s can be worked at a bench."
 ## It was a declared set holding exactly `foddering`, and it had to be declared because the client
 ## could not tell a knowledge that gates nothing from one somebody forgot to wire up. The roster's
 ## `is_step` answers that from the ladder itself — *does any rung's `unlock_knowledge` name this* —
-## so `foddering` hangs off the bottom of the Herds column because the config says no rung waits on
+## so `foddering` hangs off the end of the Herds ladder because the config says no rung waits on
 ## it, rather than because this file says so. A knowledge that stops gating a rung stops being a step
 ## with no second table to remember.
 ##
@@ -424,6 +429,16 @@ const DETAIL_SECTION_SEPARATION := 12
 ## The three kicker/body columns, and the gutter between them.
 const DETAIL_SECTION_GUTTER := 22
 const DETAIL_SECTION_COUNT := 3
+## The FLOOR on one reading column's share (`KnowledgePanel._detail_section_width`, which derives the
+## share from the width the card was actually fitted to). The fixed terms — the indent, the right
+## margin, the leading bar and the two gutters — are most of the card at `PANEL_MIN_WIDTH`, so the
+## share genuinely can be driven small there; below this it is not a narrow column but a broken one,
+## and at zero or less it stops being a wrap width at all (a `custom_minimum_size.x` of 0 on an
+## autowrapping Label wraps at nothing). It does NOT bind at any width the card can take today — the
+## derivation answers around 200 at `PANEL_WIDTH` and still comfortably above this at
+## `PANEL_MIN_WIDTH` — so it is the guard against a future chrome or indent change rather than a term
+## in the ordinary layout.
+const DETAIL_SECTION_MIN_WIDTH := 40.0
 
 ## ⛔ **THE RESERVE THAT STOPS THE CARD BREATHING** (`docs/plan_knowledge_rows.md` §4). The detail
 ## block is mounted in BOTH states — open, and holding the placeholder — at this minimum height, so

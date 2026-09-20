@@ -49,7 +49,7 @@ const SEDENTARIZATION_STAGE_NONE := "none"
 ## It was a hard-coded `{track: "Name"}` table that doubled as the DECLARED track list, and its two
 ## jobs are both the wire's now: `ladder_knowledge` carries one row per knowledge the ladder teaches,
 ## with the player-facing name resolved sim-side, the branch of the rung that teaches it and that
-## rung's order. That is what lets the knowledge screen build its own columns — and why the route
+## rung's order. That is what lets the knowledge screen build its own domain rows — and why the route
 ## branch's Roadbuilding and Paving appear with no client edit, where a table like this one had
 ## nowhere to put them and the panel went on saying *"All 8"*.
 ##
@@ -113,7 +113,7 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 
 # --- Owned state (moved off HudLayer) ---
 # Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding, …},
-# each 0..1. Backs the faction page's knowledge rows, the knowledge screen's LAND and HERDS columns
+# each 0..1. Backs the faction page's knowledge rows, the knowledge screen's LAND and HERDS rows
 # (through `faction_tracks`) and the policy-gate reasons (through `faction_knowledge()`).
 var _intensification_knowledge: Dictionary = {}
 ## The player faction's own sedentarization entry (`{score, stage}`) and discovered sites from the
@@ -249,7 +249,7 @@ func _ingest_intensification(intensification_variant: Variant) -> void:
 ## *"this world has no ladder"*.
 ##
 ## It renders nothing here. This cluster is the one place a per-world/per-faction knowledge fact is
-## retained, and the knowledge screen reads its columns off this.
+## retained, and the knowledge screen reads its domain rows off this.
 func update_ladder_knowledge(roster_variant: Variant) -> void:
 	if not (roster_variant is Array):
 		return

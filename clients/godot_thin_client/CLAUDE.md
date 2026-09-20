@@ -267,7 +267,7 @@ shown build can never go stale.
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |
 | `R` | Show/hide the **event dock** (the notification bar; **shown by default**, persisted) |
 | Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |
-| `Esc` | Close the compose sheet, else cancel targeting, else open/close the pause menu (`Main.escape_claimant`) |
+| `Esc` | Close the compose sheet, else cancel targeting, else close the Band panel's work inspector, else close the knowledge screen's open reading, else open/close the pause menu (`Main.escape_claimant`) |
 
 **EVERY KEY ABOVE IS INERT WHILE SOMETHING ELSE OWNS THE KEYBOARD** — while a `LineEdit`/`TextEdit`
 holds focus, or while the pause menu is open. `Esc` is the exception, since it is how the player gets
