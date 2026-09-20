@@ -608,6 +608,11 @@ const NO_UNITS_SETTLED: f32 = 0.0;
 /// **ONE CLAIMANT'S ASK ON THE BAND'S TOOLS** — steps 1 and 2 for a single site, before anything is
 /// settled.
 struct ToeClaim {
+    /// **THE POOL WHOSE HANDS THESE ARE** — the unit the whole-unit settlement is struck between
+    /// ([`settle_scarce_tools`]), because a tool is issued to a **person**: one pool's keepers carry
+    /// their tools from one of that pool's sites to the next, and only a different pool is a
+    /// different set of hands.
+    pool: crate::equipment_config::KitJob,
     priority: SourcePriority,
     hands: f32,
     kit: crate::equipment_config::KitChoice,
@@ -618,8 +623,14 @@ struct ToeClaim {
 impl ToeClaim {
     /// **THIS SITE'S WHOLE REQUIREMENT, FROM ITS HANDS** — one unit of each of its tools per hand,
     /// divided by what one unit crews (`docs/plan_pool_toe.md` §2.1).
-    fn of(priority: SourcePriority, hands: f32, toe: &crate::equipment_config::PoolToe) -> Self {
+    fn of(
+        pool: crate::equipment_config::KitJob,
+        priority: SourcePriority,
+        hands: f32,
+        toe: &crate::equipment_config::PoolToe,
+    ) -> Self {
         Self {
+            pool,
             priority,
             hands,
             kit: toe.kit().clone(),
@@ -691,6 +702,7 @@ fn toe_worker_need(rate: f32, demand: f32) -> f32 {
 fn pool_toe_claims(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
+    pool: crate::equipment_config::KitJob,
     keepers: u32,
     mode: crate::intensification::UpkeepFundMode,
     claims: &[KeepingClaim],
@@ -723,7 +735,7 @@ fn pool_toe_claims(
         .iter()
         .zip(&toes)
         .zip(distribute_upkeep_pool(keepers as f32, &needs, mode))
-        .map(|((claim, toe), hands)| ToeClaim::of(claim.priority, hands, toe))
+        .map(|((claim, toe), hands)| ToeClaim::of(pool, claim.priority, hands, toe))
         .collect()
 }
 
@@ -734,9 +746,26 @@ fn pool_toe_claims(
 ///
 /// Stone-dressing gear is wanted by **Roadwork** (paved roads) and by **Quarrywork** (quarries), so
 /// a settlement struck per pool would issue one stock twice — the same double-issue that armed six
-/// builders and six keepers off six hoes. One [`settle_scarce_store`] call per item id, over every
-/// pool's claims together: [`SourcePriority::High`] in full, then `Normal`, then `Low`, and
-/// proportionally within a tier.
+/// builders and six keepers off six hoes. One [`settle_scarce_tools`] call per item id, over every
+/// pool's claims together: [`SourcePriority::High`] in full, then `Normal`, then `Low`.
+///
+/// # ⛔ WHOLE UNITS **BETWEEN** POOLS, CONTINUOUSLY **WITHIN** ONE — the unit of a tool is a PERSON
+///
+/// **Stage 1** settles whole tools across one bid per `(pool, priority tier)` group
+/// ([`settle_scarce_tools`]); **stage 2** splits each group's whole allocation across that group's
+/// own claims, pro-rata by what each site requires.
+///
+/// A band's stock of an item is a count of objects and a *pool* paid 0.567 of a hoe holds no hoe —
+/// which is the played defect: Agriculture and the builders are **different people**, they cannot
+/// pass one hoe between them, and a pro-rata split left a plant site at 72% cover off a stock that
+/// could have armed it outright. But **one pool's hands are one crew moving between that pool's own
+/// sites**: a roadwork keeper funding two dirt roads carries a single hoe to both, so a fractional
+/// unit at a site is the correct statement *"this hand works here part of the time and brings its
+/// tool"*, and charging that person a whole tool per site would bill two hoes for one pair of hands.
+///
+/// **The group key is `(pool, tier)` and not the pool alone.** A pool's sites carry their **own**
+/// `SourcePriority`, so aggregating a whole pool into one bid would throw the per-site rank away and
+/// break *"priority decides where tools go"* at the site level.
 ///
 /// Returns one fill per claim, index-aligned with `claims`.
 fn settle_pool_tools(
@@ -764,19 +793,72 @@ fn settle_pool_tools(
                 .map(|(id, _)| std::sync::Arc::clone(id))
         })
         .collect();
+    // **The claimants of one tool, grouped by the crew that would carry it.** In first-appearance
+    // order, which is the claim vector's own — Agriculture, Husbandry, Roadwork, Quarrywork, then
+    // the builders — so the largest-remainder tie-break lands on a stated order rather than on a map
+    // iteration.
+    let groups = tool_claim_groups(claims);
     for id in &ids {
-        let bids: Vec<(SourcePriority, f32)> = claims
+        let bids: Vec<(SourcePriority, f32)> = groups
             .iter()
-            .map(|claim| (claim.priority, claim.required_of(id)))
+            .map(|group| {
+                (
+                    group.priority,
+                    group
+                        .members
+                        .iter()
+                        .map(|index| claims[*index].required_of(id))
+                        .sum(),
+                )
+            })
             .collect();
-        let settled = settle_scarce_store(&bids, band_kit.live_units(id, equipment) as f32);
-        for (fill, paid) in fills.iter_mut().zip(&settled) {
-            if *paid > NO_UNITS_SETTLED {
-                fill.units.push((std::sync::Arc::clone(id), *paid));
+        // **STAGE 1** — whole tools, between the pools.
+        let settled = settle_scarce_tools(&bids, band_kit.live_units(id, equipment));
+        // `settled` is index-aligned with `bids`, which is index-aligned with `groups`.
+        for ((group, (_, wanted)), paid) in groups.iter().zip(&bids).zip(&settled) {
+            let paid = *paid;
+            if paid <= NO_UNITS_SETTLED || *wanted <= NOTHING_DEMANDED {
+                continue;
+            }
+            // **STAGE 2** — the group's own crew splits what it was issued, pro-rata by what each of
+            // its sites requires. It sums to exactly what stage 1 handed the group over.
+            for index in &group.members {
+                let share = claims[*index].required_of(id) / wanted * paid;
+                if share > NO_UNITS_SETTLED {
+                    fills[*index].units.push((std::sync::Arc::clone(id), share));
+                }
             }
         }
     }
     fills
+}
+
+/// **ONE CREW'S CLAIM ON ONE TOOL** — the `(pool, priority tier)` group [`settle_pool_tools`] settles
+/// whole units between, and the indices into the claim vector that share it.
+struct ToolClaimGroup {
+    pool: crate::equipment_config::KitJob,
+    priority: SourcePriority,
+    members: Vec<usize>,
+}
+
+/// **THE CLAIMANTS, GROUPED BY THE CREW THAT CARRIES THE TOOL** — one entry per `(pool, tier)`, in
+/// the claim vector's own first-appearance order.
+fn tool_claim_groups(claims: &[ToeClaim]) -> Vec<ToolClaimGroup> {
+    let mut groups: Vec<ToolClaimGroup> = Vec::new();
+    for (index, claim) in claims.iter().enumerate() {
+        match groups
+            .iter_mut()
+            .find(|group| group.pool == claim.pool && group.priority == claim.priority)
+        {
+            Some(group) => group.members.push(index),
+            None => groups.push(ToolClaimGroup {
+                pool: claim.pool,
+                priority: claim.priority,
+                members: vec![index],
+            }),
+        }
+    }
+    groups
 }
 
 /// **THE RATE THIS SITE'S HANDS ACTUALLY WORK AT** — step 4: the coverage-weighted worth of the
@@ -887,13 +969,24 @@ pub struct PoolToolPlan {
 /// shape [`plan_pool_tools`] takes five of, so adding a sixth pool is one more entry rather than a
 /// sixth parameter triple.
 struct PoolAsk<'a> {
+    /// **WHICH POOL'S HANDS THESE ARE** — the group key the whole-unit settlement is struck between
+    /// ([`settle_pool_tools`]).
+    pool: crate::equipment_config::KitJob,
     claims: &'a [KeepingClaim],
     keepers: u32,
 }
 
 impl<'a> PoolAsk<'a> {
-    fn new(claims: &'a [KeepingClaim], keepers: u32) -> Self {
-        Self { claims, keepers }
+    fn new(
+        pool: crate::equipment_config::KitJob,
+        claims: &'a [KeepingClaim],
+        keepers: u32,
+    ) -> Self {
+        Self {
+            pool,
+            claims,
+            keepers,
+        }
     }
 }
 
@@ -923,7 +1016,14 @@ fn plan_pool_tools(
     let mut claims: Vec<ToeClaim> = Vec::new();
     let mut spans: Vec<usize> = Vec::with_capacity(pools.len());
     for pool in &pools {
-        let planned = pool_toe_claims(equipment, band_kit, pool.keepers, mode, pool.claims);
+        let planned = pool_toe_claims(
+            equipment,
+            band_kit,
+            pool.pool,
+            pool.keepers,
+            mode,
+            pool.claims,
+        );
         spans.push(planned.len());
         claims.extend(planned);
     }
@@ -931,7 +1031,12 @@ fn plan_pool_tools(
     // and the build's share is the tail — `settle_material_upkeep`'s own convention.
     let builders_claim = builders.as_ref().map(|ask| {
         let toe = equipment.pool_toe(ask.branch, ask.rung.as_deref());
-        ToeClaim::of(ask.priority, ask.builders as f32, &toe)
+        ToeClaim::of(
+            crate::equipment_config::KitJob::Builders,
+            ask.priority,
+            ask.builders as f32,
+            &toe,
+        )
     });
     let has_builders = builders_claim.is_some();
     claims.extend(builders_claim);
@@ -1072,6 +1177,7 @@ fn pool_toe_lines(
 fn pool_or_plan(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
+    pool: crate::equipment_config::KitJob,
     mode: crate::intensification::UpkeepFundMode,
     keepers: u32,
     claims: &[KeepingClaim],
@@ -1082,7 +1188,7 @@ fn pool_or_plan(
         _ => settle_pool_tools(
             equipment,
             band_kit,
-            &pool_toe_claims(equipment, band_kit, keepers, mode, claims),
+            &pool_toe_claims(equipment, band_kit, pool, keepers, mode, claims),
         ),
     }
 }
@@ -2452,6 +2558,7 @@ pub fn settle_bands_extraction(
     let fills = pool_or_plan(
         equipment_cfg,
         &band_kit,
+        crate::equipment_config::KitJob::Quarrywork,
         fund_mode,
         keepers,
         &claims,
@@ -2739,6 +2846,7 @@ pub fn settle_bands_roadwork(
     let fills = pool_or_plan(
         equipment_cfg,
         &band_kit,
+        crate::equipment_config::KitJob::Roadwork,
         fund_mode,
         keepers,
         &claims,
@@ -2925,6 +3033,132 @@ fn settle_scarce_store(demands: &[(SourcePriority, f32)], available: f32) -> Vec
             }
         }
         remaining = (remaining - tier_demand.min(remaining)).max(NOTHING_DEMANDED);
+    }
+    settled
+}
+
+/// **NO TOOLS LEFT ON THE SHELF** — the `u32` companion to [`NO_UNITS_SETTLED`], and the boundary
+/// [`settle_scarce_tools`] stops handing gear out at. Named for [`NOTHING_DEMANDED`]'s reason: it is
+/// the exact *"the stock is empty"* reading and not a small quantity of gear.
+const NO_UNITS_IN_STOCK: u32 = 0;
+
+/// **ONE TOOL** — what a lap of [`settle_scarce_tools`]'s largest-remainder pass hands a claim,
+/// because a tool is a countable object and the smallest amount of one that can be issued is all of
+/// it.
+const ONE_WHOLE_TOOL: u32 = 1;
+
+/// **WHAT A CLAIM ASKS FOR IN WHOLE TOOLS** — `ceil(demand)`, because **a claim cannot use a
+/// fraction of a tool**: a plant site that needs 0.79 hoes to arm its hands wants a hoe.
+fn whole_tools_wanted(demand: f32) -> u32 {
+    demand.ceil() as u32
+}
+
+/// **SERVE ONE SCARCE STOCK OF *TOOLS* ACROSS EVERY POOL CLAIM ON IT AT ONCE** —
+/// [`settle_scarce_store`]'s sibling for a countable object: [`SourcePriority::High`] in full, then
+/// `Normal`, then `Low`, and **within a short tier by largest remainder** rather than pro-rata.
+///
+/// Returns one settled count per input claim, index-aligned to `demands` and **whole** in every
+/// entry (`f32` only so [`ToeFill::units`] keeps its type).
+///
+/// # ⛔ WHY THIS IS NOT [`settle_scarce_store`], AND WHY THAT FUNCTION WAS NOT CHANGED
+///
+/// A tool is a **discrete object**: nobody holds 0.567 of a hoe. Settled pro-rata, a band owning two
+/// hoes split them 1.433 to its builders and 0.567 to its Agriculture pool, and
+/// [`crate::equipment_config::EquipmentConfig::coverage_from_units`] arms a *prefix* of the hands
+/// off that — so the plant site worked at 72% cover with its ground slipping, on a stock that could
+/// have armed it outright. The other three callers of [`settle_scarce_store`] ration genuinely
+/// continuous quantities (pen hay out of the `FODDER` store, material upkeep, build materials);
+/// fixed-point fodder is not a countable object and must keep splitting pro-rata, so this is a
+/// second function rather than a flag on that one.
+///
+/// # ⛔ LARGEST REMAINDER, PROPORTIONAL TO THE **RAW** DEMAND
+///
+/// Both halves of that rule are load-bearing:
+///
+/// - **Proportional to the raw bid, never to `ceil`.** Two claims bidding `0.2` and `2.0` both want
+///   whole tools; ranked on the ceil, the trivial claim ties with the large one for the single unit
+///   on the shelf. Ranked on the bid, the tool goes to the claim that needs it.
+/// - **Largest remainder, never greedy in claim order.** The claim vector is a fixed order —
+///   Agriculture, Husbandry, Roadwork, Quarrywork, then the builders — so a greedy walk would arm
+///   Agriculture first on every band at equal priority.
+///
+/// Ties on the remainder go to the **earlier claim**, so one band's turn settles the same way on
+/// every run.
+pub fn settle_scarce_tools(demands: &[(SourcePriority, f32)], available: u32) -> Vec<f32> {
+    let mut settled = vec![NO_UNITS_SETTLED; demands.len()];
+    let mut remaining = available;
+    for tier in SourcePriority::SERVED_FIRST_TO_LAST {
+        // A claim asking for nothing is skipped entirely, exactly as `settle_scarce_store` skips it.
+        let members: Vec<usize> = demands
+            .iter()
+            .enumerate()
+            .filter(|(_, (priority, demand))| *priority == tier && *demand > NOTHING_DEMANDED)
+            .map(|(index, _)| index)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let wants: Vec<u32> = members
+            .iter()
+            .map(|index| whole_tools_wanted(demands[*index].1))
+            .collect();
+        let tier_want: u32 = wants.iter().sum();
+        // The remainder covers this tier's whole ask: every claim is armed and the next tier gets
+        // what is left.
+        if tier_want <= remaining {
+            for (index, want) in members.iter().zip(&wants) {
+                settled[*index] = *want as f32;
+            }
+            remaining -= tier_want;
+            continue;
+        }
+        // **The tier is short, so it consumes everything.** Each claim's proportional share of what
+        // is left, floored and capped at its own want, then the leftover handed out one tool at a
+        // time down the remainder ranking.
+        let tier_demand: f32 = members.iter().map(|index| demands[*index].1).sum();
+        let shares: Vec<f32> = members
+            .iter()
+            .map(|index| demands[*index].1 / tier_demand * remaining as f32)
+            .collect();
+        let mut base: Vec<u32> = shares
+            .iter()
+            .zip(&wants)
+            .map(|(share, want)| (share.floor() as u32).min(*want))
+            .collect();
+        let mut leftover = remaining - base.iter().sum::<u32>();
+        let mut ranking: Vec<usize> = (0..members.len()).collect();
+        ranking.sort_by(|left, right| {
+            let left_remainder = shares[*left] - base[*left] as f32;
+            let right_remainder = shares[*right] - base[*right] as f32;
+            right_remainder
+                .partial_cmp(&left_remainder)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(left.cmp(right))
+        });
+        while leftover > NO_UNITS_IN_STOCK {
+            let mut handed = NO_UNITS_IN_STOCK;
+            for slot in &ranking {
+                if leftover == NO_UNITS_IN_STOCK {
+                    break;
+                }
+                if base[*slot] < wants[*slot] {
+                    base[*slot] += ONE_WHOLE_TOOL;
+                    leftover -= ONE_WHOLE_TOOL;
+                    handed += ONE_WHOLE_TOOL;
+                }
+            }
+            // **The guard, and it must be here even though it cannot fire.** `Σ want > remaining` on
+            // this branch, so some claim is always below its want and a lap always hands something
+            // out — but a lap that handed nothing would spin the turn thread for ever, which is not
+            // a recoverable state.
+            if handed == NO_UNITS_IN_STOCK {
+                break;
+            }
+        }
+        for (index, paid) in members.iter().zip(&base) {
+            settled[*index] = *paid as f32;
+        }
+        remaining = NO_UNITS_IN_STOCK;
     }
     settled
 }
@@ -4039,18 +4273,22 @@ pub fn advance_labor_allocation(
             allocation.upkeep_fund_mode,
             [
                 PoolAsk::new(
+                    crate::equipment_config::KitJob::Agriculture,
                     &plant_claims,
                     allocation.workers_on(&LaborTarget::Agriculture),
                 ),
                 PoolAsk::new(
+                    crate::equipment_config::KitJob::Husbandry,
                     &animal_claims,
                     allocation.workers_on(&LaborTarget::Husbandry),
                 ),
                 PoolAsk::new(
+                    crate::equipment_config::KitJob::Roadwork,
                     &road_claims_funded,
                     allocation.workers_on(&LaborTarget::Roadwork),
                 ),
                 PoolAsk::new(
+                    crate::equipment_config::KitJob::Quarrywork,
                     &extraction_claims_funded,
                     allocation.workers_on(&LaborTarget::Quarrywork),
                 ),

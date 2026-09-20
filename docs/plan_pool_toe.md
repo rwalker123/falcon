@@ -59,9 +59,19 @@ serves the whole web?"* — so the silent failure in §1 cannot happen.
 
 ### 2.2 Tools are filled by the existing priority
 
-**Tools are a scarce store, handled exactly as hurdles already are.** For each tool item, every
-pool's claims on it are settled together by `settle_scarce_store` (`systems/labor.rs`): **High in
-full, then Normal, then Low, and proportionally within a tier** when the remainder cannot cover it.
+**Tools are a scarce store of COUNTABLE objects, and the unit of a tool is a PERSON.** For each tool
+item the settlement runs in two stages (`systems/labor.rs`):
+
+1. **Whole units between pools** — one bid per `(pool, priority tier)` group, summed over that
+   group's sites, served by `settle_scarce_tools`: **High in full, then Normal, then Low**, a group
+   wanting `ceil(its bid)`, and — because two pools are different people and cannot pass one hoe
+   between them — a short tier apportioned **in whole units by largest remainder on the raw bid**.
+2. **Continuously within a pool** — the group's whole allocation split across its own sites pro-rata
+   by each site's `required`. One pool's hands are one crew carrying their tools from site to site,
+   so a fractional unit there states *"this hand works here part of the time and brings its tool"*.
+
+The `settle_scarce_store` beside it keeps splitting the *continuous* stores (pen hay, material
+upkeep, build materials) pro-rata.
 
 - A site's claim ranks at **that site row's** `SourcePriority`.
 - A build's claim ranks at **its queue head row's** priority — the rule a build's materials follow

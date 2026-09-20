@@ -3503,12 +3503,15 @@ fn a_builders_pool_and_a_keeping_row_cannot_arm_more_hands_than_the_band_owns() 
         "the two claims together are exactly the band's stock of hoes: {armed_builders} builders \
          + {armed_keepers} keepers against {HOES_FOR_A_SHORT_BAND} held"
     );
-    // …and pro-rata by head count, which is the split rule rather than a second one.
-    let claimants = (BUILDERS + KEEPERS_SHORT_OF_THE_BILL) as f32;
+    // …and each claim's share is a WHOLE tool. The two pools bid at one priority, so the short tier
+    // is split by largest remainder on the raw bid (`systems::labor::settle_scarce_tools`) and the
+    // band's two hoes are one apiece — never the 1.33 / 0.67 the retired pro-rata split paid, which
+    // armed two thirds of a builder off two thirds of a hoe.
+    const A_WHOLE_TOOL: f32 = 1.0;
     assert!(
-        (armed_builders - HOES_FOR_A_SHORT_BAND as f32 * BUILDERS as f32 / claimants).abs() < 1e-4,
-        "the pool's share is its head count's share of the demand, not a priority — got \
-         {armed_builders}"
+        (armed_builders - A_WHOLE_TOOL).abs() < 1e-4 && (armed_keepers - A_WHOLE_TOOL).abs() < 1e-4,
+        "a tool is a countable object, so each claim is armed in whole units — got \
+         {armed_builders} builders and {armed_keepers} keepers off {HOES_FOR_A_SHORT_BAND} hoes"
     );
 }
 

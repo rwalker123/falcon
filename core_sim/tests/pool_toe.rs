@@ -540,10 +540,17 @@ fn a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_
 /// with the earthmoving gear and **none** of the stone-dressing gear, so one line is filled and one
 /// is not — which is the pair a reader has to be able to tell apart:
 ///
-/// - **a filled line KEEPS its row**, `filled == required`. A surface shows no tool line when every
-///   line is filled, and it cannot tell *satisfied* from *not applicable* off an absent row;
+/// - **a filled line KEEPS its row**, with `filled` **covering** `required`. A surface shows no tool
+///   line when every line is filled, and it cannot tell *satisfied* from *not applicable* off an
+///   absent row;
 /// - **a line the settlement reached with nothing reads `filled == 0` beside a positive
 ///   `required`** — the shortfall, in the client's own `N of M` terms.
+///
+/// ⛔ **`filled` COVERS `required` RATHER THAN EQUALLING IT, because a tool is issued to a POOL in
+/// WHOLE UNITS** (`settle_scarce_tools`). This pool wants `0.136` of the earthmoving gear — a
+/// keeper's fraction of a turn on the dirt road — and is handed the whole tool that keeper carries,
+/// so the line reads `filled 1.0` against `required 0.136`. The client clamps `filled` to `required`
+/// before testing shortness, so an over-filled line reads as covered, which is the intended reading.
 ///
 /// **And a pool that requires nothing has no row at all**, which is the other half of the same
 /// distinction: this band staffs no `agriculture`, so the whole pool is absent rather than present
@@ -565,10 +572,15 @@ fn a_pools_toe_crosses_the_wire_with_both_terms_on_every_line() {
         earthmoving.required > 0.0,
         "a published line always states a real requirement: {earthmoving:?}"
     );
-    assert_eq!(
-        earthmoving.filled, earthmoving.required,
+    assert!(
+        earthmoving.filled >= earthmoving.required,
         "the band holds the earthmoving gear, and a filled line KEEPS its row rather than dropping \
          out of the table: {earthmoving:?}"
+    );
+    assert_eq!(
+        earthmoving.filled, ONE_TOOL as f32,
+        "…and the pool was issued the WHOLE tool its keeper carries — one site claims the item \
+         here, so the pool's whole allocation lands on this line: {earthmoving:?}"
     );
 
     let dressing = toe
@@ -916,4 +928,374 @@ fn road_supplied(app: &App, tile: UVec2) -> f32 {
         .road(tile)
         .expect("the seated road survives the turn")
         .upkeep_supplied
+}
+
+// ---------------------------------------------------------------------------------------------
+// (5) A TOOL IS ISSUED TO A PERSON — whole units BETWEEN pools, continuous WITHIN one
+// ---------------------------------------------------------------------------------------------
+//
+// `settle_pool_tools` used to serve its claims through the `settle_scarce_store` every *material*
+// claim goes through, which splits a short tier **pro-rata** — the right rule for hay out of the
+// `FODDER` store and for a material upkeep bill, and the wrong one for a hoe. `settle_scarce_tools`
+// is that function's sibling and is **stage 1** of the settlement the turn now runs: one bid per
+// `(pool, priority tier)` group, `High` → `Normal` → `Low`, and within a short tier **largest
+// remainder on the raw bid**. Stage 2 splits a group's whole allocation across that group's own
+// sites, pro-rata — one pool's hands are one crew carrying their tools from site to site, so a
+// fractional unit there is correct and only a different POOL is a different set of hands.
+//
+// The tests below drive stage 1 directly; `one_pools_two_sites_share_the_whole_tool_between_them`
+// drives both stages through a real turn.
+
+/// ⛔ **THE PLAYED CASE — band Teasel, turn 32.** Both pools bid at `Normal` on the band's two hoes:
+/// the Agriculture pool `0.7906` for a plant site mid-Cultivate, the builders `2.0`. Pro-rata paid
+/// them `0.5666` and `1.4334`.
+///
+/// **The two pools are different PEOPLE and cannot pass one hoe between them**, and nobody holds
+/// 0.5666 of a hoe either. [`EquipmentConfig::coverage_from_units`] arms a **prefix** of a site's
+/// hands off the units it was settled, so the fractional share left the plant site working at 72%
+/// cover with its ground slipping — off a stock that could have armed it outright. In whole units
+/// each pool takes one hoe, and the Agriculture pool's single site is then **not short**: its share
+/// of that hoe covers its whole requirement.
+///
+/// The group order is the settlement's own — Agriculture first, the builders last
+/// (`docs/plan_pool_toe.md` §2.3) — so this is the vector the turn really handed over. The second
+/// half reads the answer back through the seam that **consumes** it, which is where being short is
+/// a fact rather than a number.
+#[test]
+fn the_played_case_arms_both_pools_with_a_whole_hoe_each() {
+    /// The Agriculture pool's bid, off the published `poolToe` line.
+    const AGRICULTURE_BID: f32 = 0.7906;
+    /// The builders' bid, off the same frame.
+    const BUILDERS_BID: f32 = 2.0;
+    /// What the band owned.
+    const TWO_HOES: u32 = 2;
+    /// What the retired pro-rata split paid Agriculture — the published `filled 0.5666`.
+    const THE_FRACTIONAL_SHARE_THE_RETIRED_SPLIT_PAID: f32 = 0.5666;
+    const ONE_HOE: f32 = 1.0;
+
+    let settled = core_sim::settle_scarce_tools(
+        &[
+            (SourcePriority::Normal, AGRICULTURE_BID),
+            (SourcePriority::Normal, BUILDERS_BID),
+        ],
+        TWO_HOES,
+    );
+    assert_eq!(
+        settled,
+        vec![ONE_HOE, ONE_HOE],
+        "two hoes across a 0.79 claim and a 2.0 claim are one hoe each — never 0.5666 and 1.4334"
+    );
+
+    // **AND THE SITE IS THEREFORE NOT SHORT.** `keeping_rate_from` arms a pool's hands through
+    // `coverage_from_units` over exactly these settled units, and a hoe crews one hand — so 0.7906
+    // hands are covered outright by one hoe and only partly by 0.5666 of one.
+    let equipment = EquipmentConfig::builtin();
+    let toe = equipment.pool_toe(RungBranch::Plant, Some(&RungKey::PlantTended.wire_key()));
+    let mut ledger = BandEquipment::default();
+    let tier = equipment
+        .item(HOES)
+        .expect("the shipped roster carries the hoes")
+        .default_tier()
+        .id
+        .clone();
+    ledger.stock(HOES, TWO_HOES, &tier, None);
+    // The site's hands are its requirement times what one unit crews, which is one for a hoe.
+    let hands = AGRICULTURE_BID;
+    let armed = equipment
+        .coverage_from_units(toe.kit(), hands, &ledger, |_| settled[0])
+        .workers_holding_whole_kit();
+    assert_eq!(
+        armed, hands,
+        "the whole hoe arms every one of the site's {hands} hands — it is not short"
+    );
+    let armed_pro_rata = equipment
+        .coverage_from_units(toe.kit(), hands, &ledger, |_| {
+            THE_FRACTIONAL_SHARE_THE_RETIRED_SPLIT_PAID
+        })
+        .workers_holding_whole_kit();
+    assert!(
+        armed_pro_rata < hands,
+        "…and the fractional share did not, which is the defect this replaces: {armed_pro_rata} of \
+         {hands} hands armed"
+    );
+}
+
+/// ⛔ **EVERY POOL IS SETTLED A WHOLE NUMBER OF TOOLS** — the claim the whole change is about,
+/// asserted directly over a tier the stock cannot cover.
+///
+/// Four **pools** whose bids are fractional or over-large, so a pro-rata split would land every one
+/// of them on a fraction of a tool no crew can carry.
+#[test]
+fn every_settled_tool_is_a_whole_unit() {
+    const BIDS: [f32; 4] = [0.7906, 2.0, 1.25, 3.5];
+    const A_SHORT_STOCK: u32 = 4;
+
+    let demands: Vec<(SourcePriority, f32)> = BIDS
+        .iter()
+        .map(|bid| (SourcePriority::Normal, *bid))
+        .collect();
+    let settled = core_sim::settle_scarce_tools(&demands, A_SHORT_STOCK);
+
+    assert!(
+        settled.iter().all(|units| units.fract() == 0.0),
+        "no pool may hold a fraction of a tool, because no crew can carry one: {settled:?}"
+    );
+    assert_eq!(
+        settled.iter().sum::<f32>(),
+        A_SHORT_STOCK as f32,
+        "…and a short tier consumes the stock exactly, so the whole units are not bought by \
+         throwing gear away: {settled:?}"
+    );
+}
+
+/// ⛔ **A TRIVIAL POOL DOES NOT EAT A LARGE ONE'S TOOL.**
+///
+/// Both bids `ceil` to a whole tool, so a tier ranked on what each pool *wants* would let the `0.2`
+/// pool tie with the `2.0` one for the single unit on the shelf — and the fixed group order
+/// (Agriculture, Husbandry, Roadwork, Quarrywork, builders) would then settle that tie by vector
+/// position, arming Agriculture first on every band in the game. Ranked on the **raw bid**, the tool
+/// goes to the pool that needs it.
+#[test]
+fn a_trivial_pool_does_not_eat_a_large_ones_tool() {
+    const A_TRIVIAL_BID: f32 = 0.2;
+    const A_LARGE_BID: f32 = 2.0;
+    const ONE_TOOL: u32 = 1;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[
+                (SourcePriority::Normal, A_TRIVIAL_BID),
+                (SourcePriority::Normal, A_LARGE_BID),
+            ],
+            ONE_TOOL,
+        ),
+        vec![0.0, 1.0],
+        "the band's one tool goes to the pool bidding 2.0, not to the 0.2 pool that happens to \
+         stand earlier in the vector"
+    );
+}
+
+/// ⛔ **THE PLAYER'S RANK STILL OUTRANKS SIZE.** A `High` group bidding `0.3` takes the band's last
+/// tool from a `Normal` group bidding `5.0`: the tiers are served in order, and largest remainder is
+/// a rule *within* one tier and never across two. The group key is `(pool, tier)` rather than the
+/// pool alone precisely so a site's own rank still decides where the tools go.
+#[test]
+fn priority_still_outranks_size() {
+    const A_MARKED_TRICKLE: f32 = 0.3;
+    const AN_UNMARKED_TORRENT: f32 = 5.0;
+    const ONE_TOOL: u32 = 1;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[
+                (SourcePriority::Normal, AN_UNMARKED_TORRENT),
+                (SourcePriority::High, A_MARKED_TRICKLE),
+            ],
+            ONE_TOOL,
+        ),
+        vec![0.0, 1.0],
+        "the High group is served first and in full, whatever the Normal group beside it bid"
+    );
+}
+
+/// ⛔ **NOTHING IS HANDED OUT TWICE** — `Σ settled <= available` across all three tiers and five
+/// groups, which is what a per-tier remainder that failed to shrink would break.
+#[test]
+fn no_tool_is_handed_out_twice_across_three_tiers() {
+    const A_SHORT_STOCK: u32 = 3;
+    let demands = [
+        (SourcePriority::High, 1.5),
+        (SourcePriority::Normal, 2.2),
+        (SourcePriority::Normal, 0.9),
+        (SourcePriority::Low, 0.4),
+        (SourcePriority::Low, 3.0),
+    ];
+
+    let settled = core_sim::settle_scarce_tools(&demands, A_SHORT_STOCK);
+    assert!(
+        settled.iter().sum::<f32>() <= A_SHORT_STOCK as f32,
+        "the three tiers between them may not issue more than the band owns: {settled:?} off \
+         {A_SHORT_STOCK}"
+    );
+    // **LIVENESS**: the stock really was spent, so the bound above is not the trivially-satisfied
+    // reading a settlement that paid nobody would give.
+    assert_eq!(
+        settled.iter().sum::<f32>(),
+        A_SHORT_STOCK as f32,
+        "…and every tool is issued to somebody: {settled:?}"
+    );
+    assert_eq!(
+        settled[0], 2.0,
+        "the High group is armed to its own ceil ahead of both tiers beneath it: {settled:?}"
+    );
+}
+
+/// ⛔ **THE SPLIT IS DETERMINISTIC, AND A TIE GOES TO THE EARLIER GROUP.** Two equal `Normal` pools
+/// against an odd count cannot both take the odd tool; which of them does must not depend on float
+/// ordering or on a sort's stability, because a turn is replayed from a checkpoint.
+#[test]
+fn an_odd_tool_between_two_equal_pools_goes_to_the_earlier_one_every_run() {
+    const AN_EQUAL_BID: f32 = 2.0;
+    const AN_ODD_STOCK: u32 = 3;
+    /// Enough repetitions that an ordering decided by anything but the rule would show.
+    const RUNS: usize = 32;
+
+    let demands = [
+        (SourcePriority::Normal, AN_EQUAL_BID),
+        (SourcePriority::Normal, AN_EQUAL_BID),
+    ];
+    let first = core_sim::settle_scarce_tools(&demands, AN_ODD_STOCK);
+    assert_eq!(
+        first,
+        vec![2.0, 1.0],
+        "the tied remainder goes to the earlier pool, and the later one takes what is left"
+    );
+    for _ in 0..RUNS {
+        assert_eq!(
+            core_sim::settle_scarce_tools(&demands, AN_ODD_STOCK),
+            first,
+            "the same pools settle the same way on every run"
+        );
+    }
+}
+
+/// **A tier the stock covers is paid every pool's whole want** — `ceil(demand)`, because a crew
+/// cannot carry a fraction of a tool — and the remainder falls through to the tier beneath it. This
+/// is the regime a band that is **not short** lives in, where the change may move no rate.
+#[test]
+fn a_covered_tier_is_paid_its_whole_want_and_passes_the_rest_down() {
+    const A_FULL_SHELF: u32 = 6;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[
+                (SourcePriority::High, 1.2),
+                (SourcePriority::Normal, 2.0),
+                (SourcePriority::Low, 0.1),
+            ],
+            A_FULL_SHELF,
+        ),
+        vec![2.0, 2.0, 1.0],
+        "each pool is armed to its own ceil, and six tools cover all three tiers"
+    );
+}
+
+/// **A pool that asks for nothing settles nothing**, exactly as `settle_scarce_store` skips it — so
+/// a pool naming a tool it needs none of never holds one while a bidder goes bare.
+#[test]
+fn a_pool_that_asks_for_nothing_is_handed_nothing() {
+    const ONE_TOOL: u32 = 1;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[(SourcePriority::High, 0.0), (SourcePriority::Normal, 0.5)],
+            ONE_TOOL,
+        ),
+        vec![0.0, 1.0],
+        "the High pool demanded nothing, so the tool falls to the Normal pool that did"
+    );
+}
+
+/// **An empty shelf arms nobody and the settlement terminates saying so** — the largest-remainder
+/// pass's lap guard, stated as a behaviour rather than as a comment.
+#[test]
+fn an_empty_shelf_arms_nobody() {
+    const NOTHING_ON_THE_SHELF: u32 = 0;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[(SourcePriority::High, 1.0), (SourcePriority::Normal, 2.5)],
+            NOTHING_ON_THE_SHELF,
+        ),
+        vec![0.0, 0.0],
+        "a band that owns no tools arms nobody"
+    );
+}
+
+/// ⛔ **ONE POOL'S TWO SITES SHARE THE WHOLE TOOL BETWEEN THEM, AND NEITHER IS SHORT** — stage 2,
+/// through a real turn.
+///
+/// A `Roadwork` pool of **one keeper** funding **two** dirt roads splits its hands `0.5 / 0.5`, so
+/// each site requires half a set of earthmoving gear and the pool requires one. **The band owns
+/// exactly one**, and that one tool is the keeper's: they carry it from the first road to the second
+/// as they split their turn between them. Each site is settled half a unit — a *fraction* of a tool,
+/// which is correct here and meaningless between pools — and both roads are kept at the geared rate.
+///
+/// **The falsifiable claim is the EQUALITY.** Were the whole-unit rule struck per *site* rather than
+/// per pool, each site's `0.5` would `ceil` to a whole tool, the pair would want two, and the
+/// largest-remainder pass would arm one road and leave the other bare-handed — so the two roads'
+/// supply would differ. They must not.
+///
+/// The bare control is the liveness half: the same band owning **no** tool supplies strictly less on
+/// both roads, so *"equal"* above is not the trivial truth about two bare-handed keepers.
+#[test]
+fn one_pools_two_sites_share_the_whole_tool_between_them() {
+    /// One keeper, two roads: the hands split `0.5 / 0.5` and the pool wants one whole set.
+    const ONE_KEEPER: u32 = 1;
+    const ONE_TOOL: u32 = 1;
+    /// A haul long enough that both bills genuinely outrun the keeper, so each road's share of the
+    /// supply is the rate it worked at rather than a saturated bill.
+    const A_LONG_HAUL: f32 = 12.0;
+
+    let geared = a_roadwork_pool_keeping_two_dirt_roads(ONE_TOOL, ONE_KEEPER, A_LONG_HAUL);
+    let bare = a_roadwork_pool_keeping_two_dirt_roads(0, ONE_KEEPER, A_LONG_HAUL);
+
+    let line = published_pool_toe(&geared.app)
+        .into_iter()
+        .find(|line| line.pool == "roadwork" && line.item == EARTHMOVING)
+        .unwrap_or_else(|| panic!("the roadwork pool states its earthmoving line"));
+    assert!(
+        line.required > 0.0 && line.filled >= line.required,
+        "the pool wants one whole set for its two half-hands and holds one, so its line is \
+         covered: {line:?}"
+    );
+    assert_eq!(
+        line.filled, ONE_TOOL as f32,
+        "…and what it holds is the one whole tool the band owns: {line:?}"
+    );
+
+    assert_eq!(
+        geared.supplied, [geared.supplied[0]; 2],
+        "the keeper carries their one tool to BOTH roads, so the two sites are kept at the same \
+         rate — a per-SITE whole-unit rule would arm one and leave the other bare: {:?}",
+        geared.supplied
+    );
+    assert!(
+        geared.supplied[0] > bare.supplied[0] && geared.supplied[1] > bare.supplied[1],
+        "liveness: the tool is really doing something on both roads — geared {:?} against bare {:?}",
+        geared.supplied,
+        bare.supplied
+    );
+}
+
+/// One `Roadwork` turn over two dirt roads, and what each road was supplied.
+struct TwoRoadTurn {
+    app: App,
+    supplied: [f32; 2],
+}
+
+/// **A band keeping two dirt roads with one `Roadwork` pool**, holding `tools` sets of earthmoving
+/// gear. Both roads stand on one rung at one remoteness, so their bills — and therefore the hands
+/// the pool splits between them — are equal, and any difference in what they are supplied is the
+/// settlement rather than the ground.
+fn a_roadwork_pool_keeping_two_dirt_roads(tools: u32, keepers: u32, haul: f32) -> TwoRoadTurn {
+    let mut app = spawn_world();
+    let (band, _, band_id, home) = first_band(&mut app);
+    let near = tile_east_of(&app, home, 1);
+    let far = tile_east_of(&app, home, 2);
+    seat_road(&mut app, near, RungKey::RouteDirtRoad, band_id, haul);
+    seat_road(&mut app, far, RungKey::RouteDirtRoad, band_id, haul);
+    staff_one_role(
+        &mut app,
+        band,
+        LaborTarget::Roadwork,
+        keepers,
+        UpkeepFundMode::Spread,
+    );
+    stock_exactly(&mut app, band, &[(EARTHMOVING, tools)]);
+
+    app.update();
+
+    let supplied = [road_supplied(&app, near), road_supplied(&app, far)];
+    TwoRoadTurn { app, supplied }
 }

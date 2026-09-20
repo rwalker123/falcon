@@ -432,10 +432,12 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >    tools' tier and condition and applies no coverage, because the requirement is struck *from* the
 >    hands it produces.
 > 2. **Requirement**, per the expression above.
-> 3. **Fill**, band-wide per tool, through `settle_scarce_store` — `High` in full, then `Normal`,
->    then `Low`, proportionally within a tier. **Stone-dressing wanted by Roadwork and by Quarrywork
->    goes into ONE settlement**, because a per-pool one would issue a shared stock twice; each pool's
->    TOE is its own share of it.
+> 3. **Fill**, band-wide per tool, in **two stages**: whole units across `(pool, priority tier)`
+>    groups through `settle_scarce_tools` — `High` in full, then `Normal`, then `Low`, by largest
+>    remainder within a tier the stock cannot cover — then each group's allocation split pro-rata
+>    across its own sites. **Stone-dressing wanted by Roadwork and by Quarrywork goes into ONE
+>    settlement**, because a per-pool one would issue a shared stock twice; each pool's TOE is its own
+>    share of it.
 > 4. **Rates from what was filled** — `coverage_from_units` over the settled units, then
 >    `weighted_rate` as before. **Hands are NOT re-split**: a site the settlement left short works
 >    its own hands slower rather than handing them to a site that was served.
@@ -450,8 +452,68 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > `distribute_upkeep_pool` in the same units — pinned against the retired `keeping_kit_for` +
 > `coverage` seam itself by
 > `pool_toe::a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_did`, both
-> fund modes, `assert_eq!`.
+> fund modes, `assert_eq!`. **"Not short" is `Σ ceil(pool's bid) <= units held`**, summed per pool
+> and not per site — see the whole-unit rule below.
 >
+> #### ⛔ THE UNIT OF A TOOL IS A **PERSON** — whole units BETWEEN pools, continuous WITHIN one
+>
+> **Nobody holds 0.567 of a hoe.** Band Teasel, turn 32: a plant site mid-Cultivate bid `0.7906`
+> hoes and the builders bid `2.0`, both at `Normal`, against a stock of **two**. Split pro-rata the
+> band's own gear came out `0.5666` and `1.4334` — and because `coverage_from_units` arms a
+> **prefix** of a site's hands, the plant site then worked at 72% cover with its ground slipping, off
+> a stock that could have armed it outright. Agriculture and the builders are **different people**
+> and cannot pass one hoe between them; in whole units each takes one and the plant site is covered.
+>
+> **But one pool's hands are one CREW moving between that pool's own sites.** A roadwork keeper
+> funding two dirt roads carries a single hoe to both, so a fractional unit *at a site* is the honest
+> statement *"this hand works here part of the time and brings its tool"*. `settle_pool_tools` is
+> therefore two stages:
+>
+> 1. **Whole units between `(pool, priority tier)` groups** — one bid per group, summed over that
+>    group's sites, served by `settle_scarce_tools`.
+> 2. **Continuous within a group** — its whole allocation split across its own claims pro-rata by
+>    each site's `required`, summing to exactly what stage 1 issued it.
+>
+> **The group key is `(pool, tier)` and never the pool alone.** A pool's sites carry their **own**
+> `SourcePriority`, so one bid per pool would throw the per-site rank away and break *"priority
+> decides where tools go"* at the site level.
+>
+> ⛔ **A PER-SITE `ceil` WAS BUILT AND REVERTED, and the roadwork case is why.** Struck per site, one
+> keeper funding two roads bids `0.5` on each, each `ceil`s to a whole tool, the pair wants **two**,
+> and a band holding one arms one road and sends the other out bare — billing two hoes for one pair
+> of hands. It fails
+> `pool_toe::a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_did`, which
+> is the fixture that named the error. `pool_toe::one_pools_two_sites_share_the_whole_tool_between_them`
+> pins the shipped rule directly: the two roads are kept at the **same** rate off one tool, and
+> strictly better than the same band holding none.
+>
+> **`settle_scarce_store` was NOT changed, and must not be.** Its three other callers ration
+> genuinely continuous quantities — pen hay out of the `FODDER` store, material upkeep, and a build's
+> materials — and fixed-point fodder is not a countable object. So the tools got a **sibling**
+> function rather than a flag: one rule per kind of quantity, and neither can be retuned into the
+> other. `BandEquipment::live_units` already answers in `u32`, and that `u32` now reaches the
+> settlement rather than being cast to `f32` at the call site — the one place a tool count used to
+> become fractional.
+>
+> **Stage 1's rule, per tier in `SERVED_FIRST_TO_LAST` order:** a group wants `ceil(its bid)`; a tier
+> the remainder covers is paid every want in full; a tier it cannot is apportioned by **largest
+> remainder on the RAW bid**, each group capped at its own want, ties to the earlier group, and the
+> tier consumes everything. Both halves of that are load-bearing:
+>
+> - **Proportional to the raw bid, never to the ceil.** Bids of `0.2` and `2.0` both ceil to a whole
+>   tool, so a ranking on the want lets the trivial pool tie with the large one for the single unit
+>   on the shelf.
+> - **Largest remainder, never greedy in group order.** The group order is the claim vector's —
+>   Agriculture, Husbandry, Roadwork, Quarrywork, then the builders — so a greedy walk would arm
+>   Agriculture first on every band at equal priority.
+>
+> **The published `filled` line moves and the RATES do not.** A pool wanting `0.79` hoes and holding
+> one publishes `filled 1.0` against `required 0.7906`; the client clamps `filled` to `required`
+> before testing shortness, so an over-filled line reads as covered. Coverage arms a prefix of the
+> hands, so a site holding at least `hands ÷ workers_per_unit` units is fully covered either way and
+> the `KeepingRate` it works at is unmoved.
+>
+
 > **AND THE POOLS LEFT THE PRO-RATA ITEM BUDGET.** `LaborAllocation::kitted_rows` filters every
 > `LaborTarget::is_standing_pool` row out, so `BandItemBudget` sees take crews and the two band-wide
 > roles only. The two rules must not both ration one stock: the budget splits **pro rata by head
