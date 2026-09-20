@@ -171,8 +171,22 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 184 frames / 1328 `PASS` / 542 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 184 frames / 1334 `PASS` / 542 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
+for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,
+an open one adds exactly its strip, and the rendered board really does draw more rows closed) and
+**+3** for `_assert_pending_role_edit_keeps_card_and_row_in_step` (the settled pair both speak, the
+pending pair both fall silent, and the two AGREE).
+
+**32 of the 184 frames MOVED** — measured by A/B against the sabotaged build rather than guessed.
+(Nothing is re-recorded: `ui_preview_out/` is gitignored, so a frame is a run artifact and "moved"
+means it renders differently, never that a baseline was committed.) Every one of the 32 has a
+non-empty BUILD QUEUE — the only state `build_queue_block_height` can return non-zero for — and
+every one gains back the work-board row the phantom 34px reservation was eating. A frame with an
+**open** strip did **not** move, which is the arithmetic working rather than a frame set that
+shifted wholesale.
 
 **THE POOL-TOE SUB-UNIT FIX MOVED IT 183 / 1323 / 536 → 184 / 1328 / 542**, re-measured rather than
 summed: **+1 frame** (`band_panel_keepers_tools_short`), **+5 `PASS`** (`_assert_pool_toe_rounding`'s

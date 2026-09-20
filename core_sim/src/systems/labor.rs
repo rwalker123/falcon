@@ -1954,6 +1954,12 @@ fn keeping_claims(
 /// **MOST-INVESTED FIRST, TIE-BROKEN ON A STABLE PER-WEB KEY** — the one ordering every pool's
 /// claim list carries, stated once so the three builders cannot each spell it.
 ///
+/// ⛔ **ALL THREE GO THROUGH IT** — [`keeping_claims`] for the two food webs,
+/// [`route_keeping_claims`] and [`extraction_keeping_claims`] — so a retune here moves the funding
+/// order of all five pools together. The two route/deposit builders used to spell the identical
+/// comparator inline, which meant a change here silently applied to three pools and not the other
+/// two.
+///
 /// It is **total and deterministic**, which is what lets a checkpoint restore the same allocation
 /// ([`crate::intensification::distribute_upkeep_pool`] funds in slice order and the caller owns the
 /// ranking).
@@ -2459,11 +2465,7 @@ fn route_keeping_claims(
         });
         kept.push(tile);
     }
-    claims.sort_by(|a, b| {
-        b.invested
-            .total_cmp(&a.invested)
-            .then_with(|| a.tiebreak.cmp(&b.tiebreak))
-    });
+    sort_keeping_claims(&mut claims);
     (kept, claims)
 }
 
@@ -2553,11 +2555,7 @@ fn extraction_keeping_claims(
         });
         held.push((*tile, material.clone()));
     }
-    claims.sort_by(|a, b| {
-        b.invested
-            .total_cmp(&a.invested)
-            .then_with(|| a.tiebreak.cmp(&b.tiebreak))
-    });
+    sort_keeping_claims(&mut claims);
     (held, claims)
 }
 
@@ -14659,9 +14657,17 @@ mod labor_yield_tests {
     #[test]
     fn the_handling_kit_speeds_the_crew_rather_than_shrinking_the_job() {
         let equipment = crate::equipment_config::EquipmentConfig::builtin();
+        // **The contribution the roster declares for this rung** — the `max` of what the serving
+        // items say, which is how `build_work` folds everywhere (a worker uses the better tool; two
+        // do not compound). Read here rather than off a field on `PoolToe`: this assertion is its
+        // only reader in the workspace, and `pool_toe()` is called once per claim per band per
+        // turn, so carrying it would be a second full `items` scan on every one of them.
         let declared = equipment
-            .pool_toe(crate::intensification::RungBranch::Animal, None)
-            .fresh_build_work();
+            .items()
+            .flat_map(|(_, item)| {
+                item.build_work_serving(crate::intensification::RungBranch::Animal, None)
+            })
+            .fold(crate::intensification::NO_BUILD_GEAR, f32::max);
         assert!(
             declared > crate::intensification::NO_BUILD_GEAR,
             "fixture: the hurdling kit must declare a build contribution above neutral, got \

@@ -529,12 +529,16 @@ fn seed_snapshot() -> WorldSnapshot {
         // `(pool, item)` and a duplicate key is not something the server can emit.
         //
         // **The pairs below do NOT reach the artifact** — the saturation pass rewrites every float,
-        // so the recorded snapshot carries distinct values rather than these shapes, and it carries
-        // `filled > required`, which no capture emits. That costs nothing here: this fixture exists
-        // to make a codec round-trip see a non-default value in every field, not to model a
-        // reachable turn. The shapes a reader genuinely has to tell apart — filled in full, filled
-        // in part, reached with nothing — are asserted against a real capture in
-        // `core_sim/tests/pool_toe.rs` instead.
+        // so the recorded snapshot carries distinct values rather than these shapes. That costs
+        // nothing here: this fixture exists to make a codec round-trip see a non-default value in
+        // every field, not to model a reachable turn. The shapes a reader genuinely has to tell
+        // apart — filled in full, filled in part, reached with nothing — are asserted against a real
+        // capture in `core_sim/tests/pool_toe.rs` instead.
+        //
+        // Note the saturated artifact may carry `filled > required`, and that is NOT an unreachable
+        // shape: a tool is issued to a person in whole units, so a pool with a fractional
+        // requirement is over-filled on purpose and the satisfied test is `filled >= required`
+        // (see `PoolToeLineState::filled`).
         //
         // What the pairs still carry is the KEYING, which saturation does not touch: two pools
         // sharing `stone_dressing` is the band-wide settlement's own case.

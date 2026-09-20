@@ -1443,8 +1443,9 @@ the *special case* for a caller holding one party, not a second copy of the part
 predicate stays inside it, so a budget naming units of a worn-out item still arms nobody.
 
 **The budget is per ITEM, and deliberately not per kit id.** The upkeep side groups its claims by kit
-id (`keeping_rates`, `docs/plan_standing_upkeep.md` §2.7), which is enough there because no two kits
-on one web share an item. The hunt roster is not so lucky: `big_game` and `trapping` both carry the
+id (`keeping_rates`, `docs/plan_standing_upkeep.md` §2.7 — **both retired**; the pools group their
+claims by `(pool, priority tier)` and settle per item now), which was enough there because no two
+kits on one web share an item. The hunt roster is not so lucky: `big_game` and `trapping` both carry the
 **sled**, so a kit-id grouping would still sled a full crew on each of two rows off one stock.
 
 ```text
@@ -1452,14 +1453,32 @@ demand[item] = Σ assignment.workers over the rows whose RESOLVED kit uses that 
 units(row, item) = live_units(item) × min(row.workers ÷ demand[item], 1)
 ```
 
-- **Pro-rata, not priority**, matching `keeping_rates`. `SourcePriority` decides who sheds a worker;
-  making it decide who gets the spears as well would be a design lever nobody has asked for.
+- **Pro-rata, not priority — for TAKE and ROLE rows, which is all this budget now holds.**
+  `SourcePriority` decides who sheds a worker; making it decide who gets the spears as well would be
+  a design lever nobody has asked for.
+
+  ⛔ **The POOL settlement goes the other way, deliberately, and this bullet no longer speaks for
+  it.** It used to read *"matching `keeping_rates`"*; `settle_pool_tools` serves **High in full,
+  then Normal, then Low** (`docs/plan_pool_toe.md` §2.2) because a pool's tools are exactly what the
+  on-screen promise *"when something runs short, the band spends it on high priority first"* is
+  about. The two allocations answer differently on purpose — take gear is split between crews doing
+  the same kind of work, pool gear between holdings the player has ranked.
 - **Fractional units are fine** — `Crew::workers` is fractional by design, and the cut clamps the
   share against the people on the row anyway.
-- **Every row counts, the band-wide roles included, and the STANDING POOLS too**: a Scout or Warrior
-  row is an ordinary assignment holding ordinary head count, and its gear is as much the band's as
-  the hunters' spears. A `builders` / `agriculture` / `husbandry` row holds ordinary head count as
-  well — its *kit* is simply not stored on it, which is `LaborAllocation::row_kit`'s whole subject.
+- **Every row counts, the band-wide roles included — and the FIVE STANDING POOLS deliberately do
+  NOT.** A Scout or Warrior row is an ordinary assignment holding ordinary head count, and its gear
+  is as much the band's as the hunters' spears. A `builders` / `agriculture` / `husbandry` /
+  `roadwork` / `quarrywork` row is filtered out entirely (`LaborTarget::is_standing_pool`), because
+  a pool's tools are rationed by **its own settlement** (`settle_pool_tools`, `docs/plan_pool_toe.md`
+  §2.2) rather than out of this budget.
+
+  > ⛔ **PUTTING THEM BACK RATIONS ONE STOCK TWICE.** This bullet read *"and the STANDING POOLS
+  > too"* for one arc, over `LaborAllocation::row_kit` — a seam that registered each pool's demand
+  > here so the budget and the pool could not over-issue. Both are **retired**: the pools left this
+  > budget and took their claims to the per-tool settlement, which is the one place a band's tools
+  > are now divided. A row re-added here would be counted in the budget **and** bid in the
+  > settlement, and six hoes would arm six builders and six keepers again — the exact defect that
+  > seam existed to close, reopened from the other side.
 - **An item nothing asks for is not rationed.** `demand == 0` means no budgeted row carries it, so
   the caller asking is the only claimant and gets the whole live stock. That is what keeps a detached
   **party** (empty allocation) reading exactly what the ledger-wide `coverage` gave it. ⛔ It used to
@@ -1475,9 +1494,13 @@ units(row, item) = live_units(item) × min(row.workers ÷ demand[item], 1)
 `LaborAllocation::item_budget` builds it, and **every site holding the band's allocation cuts from
 it**: `advance_labor_allocation`'s source-row loop (once per band, beside `band_kit`, for the same
 reason — a row that read all of the ledger would arm its own crew off gear the row beside it is
-already holding), the **builders' pool** (`BuildersGear::for_source`), the **keeping pools**
-(`keeping_rates`, per kit group), `advance_predator_raids`' warrior line, and the capture's per-row
-coverages.
+already holding), `advance_predator_raids`' warrior line, and the capture's per-row coverages.
+
+⛔ **THE FIVE STANDING POOLS ARE NOT ON THAT LIST, AND `keeping_rates` IS RETIRED.** The builders'
+pool (`BuildersGear::for_source`) and the keeping pools (`keeping_rates`, cutting per kit group)
+both used to draw here. Their tools come out of `settle_pool_tools` now — one settlement per item
+across every pool's claims at once — so they neither register demand against this budget nor cut a
+take from it. They are in one allocation or the other and never both.
 
 #### ⛔ A PROSPECTIVE ROW COMPETES EXACTLY AS A COMMITTED ONE DOES — THREE MORE READERS
 
@@ -1564,13 +1587,26 @@ scout-capable kit would end it.
 > pool**, not pool against row — which is why closing the builders' end alone would have been
 > cosmetic, and why `keeping_rates` had to move in the same breath.
 
-#### ⛔ A STANDING POOL'S KIT IS NOT STORED ON ITS ROW — `LaborAllocation::row_kit`
+#### ⛔ RETIRED — `LaborAllocation::row_kit`, AND EVERYTHING BELOW IT IS HISTORY
 
-`kitted_rows` asked `LaborAssignment::kit_choice` for every row, which is *"the kit stored on this
-row, else the job's default"*. For the three standing pools that is always the job default, always
-`none`, and always wrong: their kit is derived elsewhere, so the row put **no demand** on the very
-items its pool was out with. `row_kit` is the one resolution the budget is struck from, the pool cuts
-from, and the wire publishes as `kitId`:
+**`row_kit` no longer exists, and neither does the problem it solved.** It is kept because the
+reasoning is the argument for the settlement that replaced it, and because a reader who finds only
+its absence is one step from rebuilding it.
+
+**What it was for:** `kitted_rows` asked `LaborAssignment::kit_choice` for every row — *"the kit
+stored on this row, else the job's default"* — which for a standing pool is always the job default,
+always `none`, and always wrong, so the row put **no demand** on the very items its pool was out
+with. `row_kit` registered that demand so the budget and the pool could not over-issue.
+
+**What replaced it:** a pool's tools are not a row's kit at all. They are derived **per site, at that
+site's own rung** (`EquipmentConfig::pool_toe`) and settled band-wide per item across every pool's
+claims together (`settle_pool_tools`) — which is what lets one Roadwork pool hold a dirt road and a
+paved road at two different tools, something one kit id per row structurally could not express. The
+pools are filtered out of `BandItemBudget` entirely now; see the ⛔ under "Every row counts" above
+for why re-adding them rations one stock twice.
+
+**The table below is the retired resolution**, preserved for its third row's reasoning — which is
+still true of the roster and is why those two pools could never have been served by a row kit:
 
 | row | resolves | why |
 |---|---|---|

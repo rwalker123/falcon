@@ -3088,13 +3088,16 @@ const BUILD_QUEUE_CROP_DEFAULT_LABEL := "Sim picks"
 
 const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Leave it to the sim and it takes the patch's dominant legal plant."
 
-## The expandable row's own hover, appended to the face/date pair — a row that opens has to say so,
-## the board row's `WORK_ROW_OPEN_HINT` being the pattern.
+## Every row's own hover, appended to the face/date pair — a row that opens has to say so, the board
+## row's `WORK_ROW_OPEN_HINT` being the pattern.
 ##
-## **IT NAMES THE KIT FIRST BECAUSE EVERY ENTRY HAS ONE** (`docs/plan_standing_upkeep.md` §4.7a ②).
-## The crop is the plant web's alone — a `Tame` commits no species — so a hint promising only the crop
-## was false on every animal row the moment the kit made those rows expandable.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click to set this job's tools and crop."
+## ⛔ **IT NAMES NEITHER THE KIT NOR THE CROP, AND BOTH REFUSALS ARE FORCED.** It read *"Click to set
+## this job's tools and crop"*: the TOOLS half named the per-entry kit picker, which
+## `docs/plan_pool_toe.md` §3 retired — a build's tools follow from its rung — and the CROP half is
+## the plant web's alone, a `Tame` committing no species, so on a hunt row the sentence promised two
+## controls that are not in the strip. **The `✕` is what every entry's strip carries**, so the hint
+## names the settings and the one control it can promise on every row.
+const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's settings, and to withdraw it."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
@@ -3233,17 +3236,23 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## `rows_max` is `build_queue_rows_max`'s answer for the zone being drawn into, so both callers hand
 ## over the SAME number rather than each reading the ceiling.
 ##
-## **`settings_legs` / `settings_crop` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
+## **`settings_open` / `settings_legs` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
 ## (§4.7a ②, ③). The strip is open-only and one-at-a-time, so it adds its height exactly when it
 ## draws — the shape the work board's own inspector term used to have in this block's arithmetic,
 ## before §4.9 item 12d took that strip out of the zone entirely and left this the only expansion in
 ## the column that costs it anything.
 ##
-## **THEY ARE THE STRIP'S TWO INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
-## It was a lone BOOL for exactly that reason — a caller passing a float could pass a different one
-## from the strip's own — and a strip that also lists an entry's LEGS has a height that varies, so
-## what a caller states is the CONTENT and `build_queue_settings_height` remains the one arithmetic
-## both the reservation and the render read.
+## ⛔ **`settings_open` IS A SEPARATE ARGUMENT BECAUSE THE CONTENT CANNOT ANSWER IT.** A closed block
+## and an open HUNT strip both state *no legs, no crop*, so a height keyed on the content alone
+## charges 34px for a strip the block then declines to build — and this zone answers that by clipping
+## board rows off the bottom in silence. The caller resolves `_queue_settings_state` ONCE and hands
+## the same answer here and to the builder.
+##
+## **THEY ARE THE STRIP'S INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
+## A caller passing a float could pass a different one from the strip's own, and a strip that also
+## lists an entry's LEGS has a height that varies — so what a caller states is *whether it draws* and
+## *what is in it*, and `build_queue_settings_height` remains the one arithmetic both the reservation
+## and the render read.
 ##
 ## ⛔ **THERE IS NO `+1` FOR AN OVERFLOW ROW ANY MORE**, and it had to come out of `build_queue_rows_max`
 ## in the same breath. The `+N more` door moved ONTO the head, so the block draws its head, the rows
@@ -3254,12 +3263,12 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## ⛔ **AND THE HEAD TERM IS `BUILD_QUEUE_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head carries
 ## the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_legs: int = 0, settings_crop: bool = false) -> float:
+        settings_open: bool = false, settings_legs: int = 0) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
     return BUILD_QUEUE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
-        + build_queue_settings_height(settings_legs, settings_crop)
+        + build_queue_settings_height(settings_open, settings_legs)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
 #
@@ -3479,14 +3488,27 @@ const MICROSECONDS_PER_SECOND := 1_000_000.0
 ## > strip however many lines open inside it (`BUILD_QUEUE_SETTINGS_CHROME`), which is what a second
 ## > control row would pay against if one ever comes back.
 ##
-## ⛔ **THE CONTROL LINE IS UNCONDITIONAL, BECAUSE THE `✕` IS** (§4.7b ③). The withdrawal left the
-## ROW when the reorder arrows took its 32px column, and the strip is where it went — so **every
-## confirmed entry has a control line whether or not it has a crop to put on it**, and a strip that
-## charged only for the crop would draw a `✕` on a line it was never paid for, in a zone that answers
-## that by clipping the board. It shipped conditional for one pass after `docs/plan_pool_toe.md` §3
-## retired the per-entry kit, and what that cost was reachability: a queued HUNT entry has no crop and
-## no legs, so it stopped expanding and its `✕` became **unreachable from the UI**.
-static func build_queue_settings_height(legs: int, has_crop: bool) -> float:
+## ⛔ **THE CONTROL LINE IS UNCONDITIONAL *WITHIN AN OPEN STRIP*, BECAUSE THE `✕` IS** (§4.7b ③). The
+## withdrawal left the ROW when the reorder arrows took its 32px column, and the strip is where it
+## went — so **every confirmed entry has a control line whether or not it has a crop to put on it**,
+## and a strip that charged only for the crop would draw a `✕` on a line it was never paid for, in a
+## zone that answers that by clipping the board. It shipped conditional for one pass after
+## `docs/plan_pool_toe.md` §3 retired the per-entry kit, and what that cost was reachability: a queued
+## HUNT entry has no crop and no legs, so it stopped expanding and its `✕` became **unreachable from
+## the UI**. `has_crop` retired with that branch — the strip's height does not vary with the crop, one
+## control line being one control line either way.
+##
+## ⛔ **AND `is_open` IS WHY THE CROP COULD NOT BE THE ZERO TEST.** Making the control line
+## unconditional left `(legs 0, crop false)` meaning two different things — *a closed block* and *an
+## open HUNT strip* — so a height keyed on the CONTENT alone answered `BUILD_QUEUE_SETTINGS_HEIGHT`
+## for the closed case and the block reserved 34px nothing drew. The zone does not overflow, it
+## CLIPS: `_work_board_capacity` subtracts the same 34 and the work board silently loses a row
+## (`WORK_ROW_HEIGHT` is 28). So the caller states whether a strip is OPEN, which is the one fact the
+## content cannot carry, and `_build_build_queue_block` is where both the reservation and the render
+## read it from one `_queue_settings_state` answer.
+static func build_queue_settings_height(is_open: bool, legs: int) -> float:
+    if not is_open:
+        return 0.0
     var height := BUILD_QUEUE_SETTINGS_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT

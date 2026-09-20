@@ -884,8 +884,24 @@ fn for_each_visible_tile_in_range(
 
             // **Sight is measured in HEX STEPS**, the same metric every other radius in the sim
             // uses (`band_work_range`, supply reach, `raid_radius`). Euclidean distance over odd-r
-            // *offset* coordinates — what this used to compute — understates the true hex distance
-            // on the diagonals, so every source saw further diagonally than its configured range.
+            // *offset* coordinates — what this used to compute — is not the hex metric at all, and
+            // it disagreed with it in **both directions**:
+            //
+            // - it **understated** hex distance on the column-heavy diagonals, so every source saw
+            //   further there than its configured range. That is the bug this landed for: a
+            //   wrapped `(dcol 8, drow 4)` reads `8.94` under offset-Euclid and is **10** hex
+            //   steps, so a scout at effective range 9 revealed a band ten hexes off across deep
+            //   ocean, recorded a contact, and that contact satisfied the defection gate;
+            // - it **overstated** hex distance on the row-heavy axis, so a source saw *less* far
+            //   there than its range. At effective range 9 an offset delta of `(dcol 4, drow 9)` is
+            //   exactly 9 hex steps — in both row parities — while offset-Euclid reads
+            //   `√97 ≈ 9.85 > 9` and excluded it.
+            //
+            // So the disc did not merely shrink: at range 9 it drops **8** over-reaching tiles,
+            // gains **26** it was wrongly excluding, and grows **253 → 271** overall (the hex disc
+            // `1 + 3·r·(r+1)`). Contact, trade ties and defection all key off this sweep, so the
+            // widened axis can create contacts that did not exist before — it is not a pure
+            // tightening of the sight radius.
             let hex_distance =
                 hex_distance_wrapped(center, UVec2::new(x, y), width, wrap_horizontal);
 

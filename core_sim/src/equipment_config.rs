@@ -1496,7 +1496,6 @@ pub const POOL_TOE_KIT_ID: &str = "";
 pub struct PoolToe {
     kit: KitChoice,
     tools: Vec<PoolTool>,
-    fresh_build_work: f32,
 }
 
 impl PoolToe {
@@ -1509,13 +1508,6 @@ impl PoolToe {
     /// One line per tool, in roster order.
     pub fn tools(&self) -> &[PoolTool] {
         &self.tools
-    }
-
-    /// **What one hand adds per turn with every line FILLED** — the planning rate the pool's hands
-    /// are split at before anything is settled (`docs/plan_pool_toe.md` §2.3 step 1), read off the
-    /// fresh tier. [`NO_BUILD_GEAR`] where nothing serves this build, which is bare hands.
-    pub fn fresh_build_work(&self) -> f32 {
-        self.fresh_build_work
     }
 }
 
@@ -1940,24 +1932,12 @@ impl EquipmentConfig {
                 workers_per_unit: item.workers_per_unit,
             })
             .collect();
-        // **The rate a filled line buys, read off the FRESH tier** — the same tier
-        // [`Self::work_kit_for`] resolves a derivation at, and for the same reason: what a tool is
-        // worth to a pool that holds it is a property of the roster, not of how worn this band's
-        // are. `build_work` is the **max** of what the live items declare (a worker uses the better
-        // tool; two do not compound), so this folds the same way.
-        let fresh_build_work = self
-            .items
-            .iter()
-            .filter(|(_, item)| item.declares_build_work_serving(branch, rung))
-            .flat_map(|(_, item)| item.build_work_serving(branch, rung))
-            .fold(NO_BUILD_GEAR, f32::max);
         PoolToe {
             kit: KitChoice {
                 id: Arc::from(POOL_TOE_KIT_ID),
                 uses: tools.iter().map(|tool| Arc::clone(&tool.item)).collect(),
             },
             tools,
-            fresh_build_work,
         }
     }
 

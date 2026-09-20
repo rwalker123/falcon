@@ -4080,8 +4080,9 @@ pub struct LaborAllocation {
     /// a second answer free to disagree with the hands that worked.
     ///
     /// **A line exists only where the pool required something.** A pool that wants nothing of an
-    /// item has no line; a pool whose requirement was met keeps its line with `filled == required`,
-    /// which is what lets a reader tell *satisfied* from *not applicable*.
+    /// item has no line; a pool whose requirement was met keeps its line with `filled >= required`
+    /// — ⛔ *covering* the requirement rather than equalling it, see [`PoolToeLine::filled`] — which
+    /// is what lets a reader tell *satisfied* from *not applicable*.
     ///
     /// Cleared before every early exit out of the band's turn and rewritten from the settled plan,
     /// on [`Self::last_fodder_need`]'s rule and for its reason — a band that sheds its last hand
@@ -4162,9 +4163,20 @@ pub struct PoolToeLine {
     /// site the tool serves, divided by the item's `workers_per_unit`. Never zero: a line with
     /// nothing required is not published at all.
     pub required: f32,
-    /// **Units the band-wide settlement gave this pool**, summed over the same sites. `filled ==
-    /// required` is a pool that got everything; a shortfall is what the priority settlement left it
-    /// after the tiers above it were served.
+    /// **Units the band-wide settlement gave this pool**, summed over the same sites.
+    ///
+    /// ⛔ **IT IS IN WHOLE UNITS AND MAY EXCEED [`Self::required`]**, so the satisfied test is
+    /// `filled >= required` and a shortfall is `(required - filled).max(0.0)` — **never**
+    /// `filled == required`, and never a bare subtraction, which goes negative. A tool is a
+    /// countable object carried by a **person**, so [`crate::settle_scarce_tools`] pays each
+    /// `(pool, tier)` group `ceil` of its bid in whole tools: a pool whose hands come to
+    /// a fraction of a unit — one keeper spending part of a turn on a dirt road requires `0.136` of
+    /// the earthmoving gear — is handed the one whole tool that keeper carries, and the line reads
+    /// `filled 1.0` against `required 0.136`. That is the **common** case, not an edge one, because
+    /// a pool's hands come out of a continuous split.
+    ///
+    /// A positive `filled` short of `required` is what the priority settlement left the pool after
+    /// the tiers above it were served; `0` is a pool it reached with nothing.
     pub filled: f32,
 }
 
@@ -4463,9 +4475,14 @@ impl LaborAllocation {
     /// nothing to drop, which is why the same call serves both cases.
     ///
     /// It resolves each kit through [`Self::kitted_rows`], exactly as [`Self::item_budget`] does, so
-    /// a prospective row and a committed one are struck against the identical denominator. **A
-    /// standing pool passes its own role row here**, which is what lets the pool re-strike its share
-    /// at the kit and head count it actually put on the ground.
+    /// a prospective row and a committed one are struck against the identical denominator.
+    ///
+    /// ⛔ **`source` NAMES A TAKE SOURCE — NEVER A STANDING POOL.** [`Self::kitted_rows`] filters
+    /// every pool row out of the denominator (a pool's tools are settled by `SourcePriority` in
+    /// `systems::labor::settle_pool_tools`, not rationed pro-rata here), so a pool passed in would
+    /// be excluded from a set it is not a member of: the call would silently answer the whole
+    /// take-crew budget and the pool would be struck against a denominator it is not in. Every
+    /// caller passes a `Forage` or `Hunt` target, and nothing should re-add a pool.
     pub fn rows_excluding_source(
         &self,
         config: &crate::equipment_config::EquipmentConfig,

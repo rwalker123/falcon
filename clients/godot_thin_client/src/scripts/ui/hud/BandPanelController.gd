@@ -2026,7 +2026,8 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
     var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
-        int(queue_settings["legs"]), bool(queue_settings["crop"]), roster_h, workings_h)
+        _queue_settings_is_open(queue_settings), int(queue_settings["legs"]),
+        roster_h, workings_h)
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -2072,12 +2073,12 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
 ## the two reservations that pay for it cannot disagree. `0.0` where the block does not render, and
 ## the block's own gap is counted only then, exactly as the queue's is.
 func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
-        pools_fund_mode: bool, queue_settings_legs: int = 0,
-        queue_settings_crop: bool = false, roster_height: float = 0.0,
+        pools_fund_mode: bool, queue_settings_open: bool = false,
+        queue_settings_legs: int = 0, roster_height: float = 0.0,
         workings_height: float = 0.0) -> Dictionary:
     var box := _zone_box()
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
-        queue_settings_legs, queue_settings_crop)
+        queue_settings_open, queue_settings_legs)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
@@ -2395,9 +2396,17 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_ROADWORK,
         HudWorkVocab.ROADWORK_ROLE_HINT, HudConst.LABOR_KIND_ROADWORK, roadwork_eff, idle,
         road_cover))
-    # **THE BUILDERS CARD WEARS NO MARK, and it is not an omission.** It funds a QUEUE, one entry at a
-    # time, and an entry that is not being built is not being LOST — the queue block one down states
-    # its own blocked head. There is no keeping shortfall for this pool to be short of.
+    # **THE BUILDERS CARD IS THE ONE CARD THAT CAN NEVER BE SHORT OF HANDS, and that is why it is
+    # passed no `cover`.** It funds a QUEUE, one entry at a time, and an entry that is not being built
+    # is not being LOST — the queue block one down states its own blocked head. There is no KEEPING
+    # shortfall for this pool to be short of.
+    #
+    # ⛔ **IT CAN STILL BE SHORT OF TOOLS, AND IT FLIES THE TRIANGLE FOR THAT.** A builders pool has a
+    # TABLE OF EQUIPMENT like any other — the wire carries a `builders`/`hoes` row — so `_build_pool_card`
+    # resolves its `tool_line` on this branch too and folds it into `wants_mark`. The dead claim was
+    # that this card *"wears no mark"*, which was true only while the mark meant SHORT OF HANDS;
+    # widening the triangle to either shortfall made the hands half this card's exemption and the
+    # tools half everybody's.
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_BUILDERS,
         HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle))
     block.add_child(cards)
@@ -3321,14 +3330,46 @@ func _pool_card_mark(glyph: String) -> Label:
 ## **THE TRIANGLE IS UNCHANGED AND FLIES ON EITHER SHORTFALL** — hands, tools or both. What moved is
 ## where the tool half's answer comes from.
 ##
-## ⛔ **PENDING IS STILL THIS FUNCTION'S OWN GATE.** The TOE is the settlement the turn RESOLVED, so a
-## `+` the player just pressed is answered with the requirement of the staffing they have left behind
-## — exactly what the retired reading's own gate existed for. The work board gets this free
-## (`effective_worker_map` drops the key on a pending source) and a pool has no such merge.
+## ⛔ **PENDING IS STILL A GATE, AND IT IS `_pool_toe_settled_rows`' NOW** — the card's sentence and the
+## work row's remedy both read the TOE through it, so neither can answer for a staffing the turn has
+## not resolved while the other answers for the one it has.
 func _pool_toe_short_line(band: Dictionary, kind: String, effective: Dictionary) -> String:
+    return HudWorkVocab.pool_toe_short_line(_pool_toe_settled_rows(band, kind, effective))
+
+## ⛔ **THIS POOL'S TOE ROWS, OR NOTHING WHILE A ROLE EDIT IS PENDING** — the ONE gated reading of
+## `HudBandLaborState.pool_toe_for`, and the seam that makes *the card and the row answer from one
+## test* structural rather than a discipline two call sites have to keep.
+##
+## **THE GATE IS WHY IT EXISTS.** The TOE is the settlement the turn RESOLVED, so a `+` the player just
+## pressed would be answered with the requirement of the staffing they have left behind. The work
+## BOARD gets that free on a SOURCE (`effective_worker_map` drops the key on a pending source) and a
+## POOL has no such merge — so a work row's tool arm, which joins on a pool rather than on its own
+## source, needs the same gate the pool card applies.
+##
+## ⛔ **AND UNGATING EITHER CALLER PUTS THE TWO SURFACES BACK INTO DISAGREEMENT.** With the row's arm
+## ungated, pressing `+` on a tool-short Agriculture pool dropped the card's tool line and — absent a
+## hands shortfall — its ⚠, while every under-kept plant row simultaneously switched to *"Agriculture
+## needs tools, not hands"*: the triangle and the remedy contradicting each other on one screen, which
+## is the defect the shared predicate was introduced to close.
+##
+## **AN EMPTY ARRAY IS THE GATED ANSWER, never a second sentinel**: `pool_toe_short_line` answers `""`
+## and `pool_toe_is_short` answers `false` for it, which is exactly *nothing to be short of* — the same
+## reading a pool with no TOE row at all gets.
+func _pool_toe_settled_rows(band: Dictionary, kind: String, effective: Dictionary) -> Array:
     if bool(effective.get("pending", false)):
-        return ""
-    return HudWorkVocab.pool_toe_short_line(HudBandLaborState.pool_toe_for(band, kind))
+        return []
+    return HudBandLaborState.pool_toe_for(band, kind)
+
+## **THE KEEPING POOL'S SETTLED TOE FOR ONE WEB** — the work board's door onto
+## `_pool_toe_settled_rows`, which resolves the pool's own staffing rather than being handed it.
+##
+## The board asks about a SOURCE and the shortfall is a fact about the POOL that keeps it, so the
+## `effective` the gate reads is the keeping ROLE's (`effective_role_workers`, pending-aware like
+## every other readout on this panel) and never the source row's. `keeping_pool_kind` is the one
+## labor-kind → pool-token picker, so the rows joined here are the rows the card joins.
+func _settled_keeping_toe(band: Dictionary, labor_kind: String) -> Array:
+    var pool := HudWorkVocab.keeping_pool_kind(labor_kind)
+    return _pool_toe_settled_rows(band, pool, _band_labor.effective_role_workers(band, pool))
 
 ## **THE BAND'S BUILD QUEUE, IN THE BAND'S OWN ORDER** — its `PopulationCohortState.buildQueue`
 ## entries joined to the work-source models, in wire order (`docs/plan_standing_upkeep.md` §4.9
@@ -3730,7 +3771,7 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     # (`NOT_IN_ANY_BUILD_QUEUE`), so they take neither end-stop.
     var confirmed := _queue_rank_keys(band).size()
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
-        queued.size(), rows_max, int(settings["legs"]), bool(settings["crop"])))
+        queued.size(), rows_max, _queue_settings_is_open(settings), int(settings["legs"])))
     # The drag reaches its target rows through this map rather than through the tree, because the
     # drop indicator is a stylebox swap and must not re-render the block it is hovering over.
     _queue_row_nodes.clear()
@@ -4123,8 +4164,11 @@ func _make_zone_head_a_toggle(head: HBoxContainer, expanded: bool, noun: String,
 ## **IT ALSO PRUNES THE KEY**, the way `_work_open_key` is pruned for a source that leaves the board:
 ## an entry that finished, was withdrawn or scrolled past the row cap takes its expansion with it
 ## rather than leaving a strip pinned to nothing.
+##
+## `index` is `QUEUE_SETTINGS_CLOSED_INDEX` when nothing is open; ask `_queue_settings_is_open` for
+## that rather than comparing, since the reservation and the render both turn on it.
 func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dictionary:
-    var closed := {"index": -1, "legs": 0, "crop": false}
+    var closed := {"index": QUEUE_SETTINGS_CLOSED_INDEX, "legs": 0, "crop": false}
     if _queue_open_key == "":
         return closed
     for index in range(drawn):
@@ -4136,6 +4180,19 @@ func _queue_settings_state(band: Dictionary, queued: Array, drawn: int) -> Dicti
         return state
     _queue_open_key = ""
     return closed
+
+## `_queue_settings_state`'s `index` for **no row is open** — not a drawable row index, so it can
+## never collide with one and `if index == open_index` is false on every row for free.
+const QUEUE_SETTINGS_CLOSED_INDEX := -1
+
+## ⛔ **DOES A SETTINGS STRIP DRAW AT ALL** — the one test the block's RESERVATION and its RENDER both
+## turn on, so the height paid for and the height drawn cannot disagree about whether there is a
+## strip. It is a question about the BLOCK and not about the entry: a closed block and an open HUNT
+## strip both hold `legs 0, crop false`, so nothing in `_queue_settings_content`'s answer can stand in
+## for it — which is exactly the reading that reserved `BUILD_QUEUE_SETTINGS_HEIGHT` for a closed
+## block and took a row off the work board, this zone clipping rather than overflowing.
+static func _queue_settings_is_open(settings: Dictionary) -> bool:
+    return int(settings.get("index", QUEUE_SETTINGS_CLOSED_INDEX)) != QUEUE_SETTINGS_CLOSED_INDEX
 
 ## > ⛔ RETIRED — **`_queue_settings_line_width` / `_queue_settings_one_line`**, the strip's FLOW.
 ## > They answered *does this strip fit its two controls on one line*, computed rather than discovered
@@ -4193,8 +4250,10 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     var strip := PanelContainer.new()
     strip.set_meta(HudWorkVocab.BUILD_QUEUE_SETTINGS_META, String(model.get("key", "")))
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # `true` unconditionally: reaching this builder IS the strip drawing, so the one thing the
+    # reservation has to be told — does it draw — is settled here by construction.
     strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
-        int(content["legs"]), bool(content["crop"])))
+        true, int(content["legs"])))
     strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", 0)
@@ -4233,9 +4292,9 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     # ⛔ **IT ADDS NO LINE OF ITS OWN WHERE THERE IS A CONTROL TO RIDE, and buys one where there is
     # not.** A LEGS-ONLY strip is reachable again — an entry whose crop list is empty but whose climb
     # has rungs — since the kit picker retired, and a `✕` drawn with no line under it would draw
-    # taller than it was paid for in a zone that answers that by clipping the board.
-    # `build_queue_settings_height` takes the same branch, so the line bought here is a line that was
-    # reserved.
+    # taller than it was paid for in a zone that answers that by clipping the board. **Either way it
+    # is ONE control line**, which is why `build_queue_settings_height` charges one unconditionally
+    # and asks nothing about the crop: the line bought here is always the line that was reserved.
     if line == null:
         line = _build_queue_settings_line(column, "")
     var spacer := Control.new()
@@ -4405,7 +4464,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_META, _build_queue_row_rank(model))
     row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # **CLICKING AN ENTRY OPENS ITS SETTINGS, and only an entry that HAS any is clickable**
+    # **CLICKING AN ENTRY OPENS ITS SETTINGS, AND EVERY ENTRY HAS SOME**
     # (`docs/plan_standing_upkeep.md` §4.7a ②, ③). The crop left the compose sheet for the job it
     # belongs to, and then left the ROW: five columns in the tall LEFT dock ellipsised the job face and
     # the crop into fragments, and a tooltip cannot repair a list a player is reading DOWN. The
@@ -4418,35 +4477,42 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # kit and for one pass this predicate went back to `legs or crop`, which left a queued HUNT
     # entry — no crop, no legs — unexpandable and its `✕` unreachable from the UI.
     #
-    # `_queue_settings_content` still decides the CONTENTS (and their height); a PENDING entry is the
-    # one that does not expand, the wire not having placed it.
-    var content := _queue_settings_content(band, model)
-    var expandable := true
-    var open := expandable and String(model.get("key", "")) == _queue_open_key
+    # `_queue_settings_content` still decides the CONTENTS (and their height), and this predicate is
+    # UNCONDITIONAL: EVERY row expands, a PENDING one included.
+    #
+    # ⛔ **A PENDING ENTRY EXPANDS AND ITS `✕` IS THE UNDO, which is not the contradiction it looks
+    # like.** PENDING here means the press-to-reply window and nothing wider: the declaration's own
+    # verb is already on the SEATED command connection, which is ordered, so the sim resolves the
+    # declare and then the `unqueue` — taking back a job the player declared a second ago, on the one
+    # row that is standing in front of them. Withholding the strip there would withhold the undo from
+    # the state it is most wanted in, which is the same reachability defect the ⛔ above records.
+    # What a pending row DOES withhold is everything keyed on a RANK the wire has not assigned — the
+    # head marker, the reorder arrows, the drag forwarding — and that is `_build_queue_row_is_pending`'s
+    # to decide, row by row, rather than the whole strip's.
+    var open := String(model.get("key", "")) == _queue_open_key
     row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
-    if expandable:
-        row.mouse_filter = Control.MOUSE_FILTER_STOP
-        row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-        # ⛔ **ON THE RELEASE, NOT THE PRESS — BECAUSE THE PRESS IS WHERE A DRAG BEGINS.**
-        # `_toggle_queue_settings` ends in `_repage_work_zone`, which frees every node in the zone.
-        # Fired on the PRESS, that rebuild ran before the pointer had travelled far enough for Godot
-        # to ask the marker for drag data: the Viewport's `mouse_focus` was the marker Label, the
-        # rebuild took it out of the tree, `_gui_remove_control` nulled the focus, and no drag was
-        # ever attempted. The reorder gesture therefore degraded to *a click that opens the settings
-        # strip* — which is exactly how it played — and it shipped that way because the harness drove
-        # the drag callables directly and never pressed a real mouse button. The reproduction is
-        # `band_panel_preview._assert_queue_reorder_by_real_gesture`, which pushes the events.
-        #
-        # **The release is also the event a completed drag CONSUMES**: the Viewport performs the drop
-        # on the button-up and never forwards it to `gui_input`, so a reorder cannot also open the row
-        # it moved. **And it must land INSIDE the row** — `mouse_focus` latches on the press, so a
-        # press here released three rows away would otherwise still toggle this one, which is the rule
-        # `BaseButton` keeps for the same reason.
-        row.gui_input.connect(func(event: InputEvent) -> void:
-            if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-                    and not event.pressed \
-                    and Rect2(Vector2.ZERO, row.size).has_point(event.position):
-                _toggle_queue_settings(String(model.get("key", ""))))
+    row.mouse_filter = Control.MOUSE_FILTER_STOP
+    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    # ⛔ **ON THE RELEASE, NOT THE PRESS — BECAUSE THE PRESS IS WHERE A DRAG BEGINS.**
+    # `_toggle_queue_settings` ends in `_repage_work_zone`, which frees every node in the zone.
+    # Fired on the PRESS, that rebuild ran before the pointer had travelled far enough for Godot
+    # to ask the marker for drag data: the Viewport's `mouse_focus` was the marker Label, the
+    # rebuild took it out of the tree, `_gui_remove_control` nulled the focus, and no drag was
+    # ever attempted. The reorder gesture therefore degraded to *a click that opens the settings
+    # strip* — which is exactly how it played — and it shipped that way because the harness drove
+    # the drag callables directly and never pressed a real mouse button. The reproduction is
+    # `band_panel_preview._assert_queue_reorder_by_real_gesture`, which pushes the events.
+    #
+    # **The release is also the event a completed drag CONSUMES**: the Viewport performs the drop
+    # on the button-up and never forwards it to `gui_input`, so a reorder cannot also open the row
+    # it moved. **And it must land INSIDE the row** — `mouse_focus` latches on the press, so a
+    # press here released three rows away would otherwise still toggle this one, which is the rule
+    # `BaseButton` keeps for the same reason.
+    row.gui_input.connect(func(event: InputEvent) -> void:
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+                and not event.pressed \
+                and Rect2(Vector2.ZERO, row.size).has_point(event.position):
+            _toggle_queue_settings(String(model.get("key", ""))))
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     row.add_child(line)
@@ -4574,12 +4640,11 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     if price != "":
         tooltip_lines.append(price)
     tooltip_lines.append_array(blocked_lines)
-    # **A ROW THAT OPENS HAS TO SAY SO**, the board row's `WORK_ROW_OPEN_HINT` being the pattern. It
-    # names the KIT first because every entry has one and only a plant entry has a crop — the sentence
-    # that promised the crop alone was false on every animal row the moment §4.7a ②'s kit made those
-    # rows expandable.
-    if expandable:
-        tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_ROW_OPEN_HINT)
+    # **A ROW THAT OPENS HAS TO SAY SO**, the board row's `WORK_ROW_OPEN_HINT` being the pattern —
+    # and it is appended UNCONDITIONALLY because every row opens. The sentence that promised the crop
+    # alone was false on every animal row the moment §4.7a ②'s kit made those rows expandable, which
+    # is why it names the withdrawal instead: the `✕` is the one control every entry's strip carries.
+    tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_ROW_OPEN_HINT)
     row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
     line.add_child(_build_queue_reorder_column(band, model, confirmed))
     return row
@@ -6518,18 +6583,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
     # hands arm sends the player to a role card, which only moves the number while the head count is
     # what binds.
     #
-    # ⛔ **IT IS THE POOL CARD'S OWN TEST AND MUST STAY SO.** `_pool_toe_short_line` composes the
-    # card's hover off the same `pool_toe_is_short` predicate, so the triangle on the Agriculture card
-    # and the remedy on the row it is failing to keep cannot disagree about which shortfall this is —
-    # which was the reported defect's other half (the card said nothing at all while the tile
-    # complained).
+    # ⛔ **IT IS THE POOL CARD'S OWN TEST AND MUST STAY SO, PENDING GATE INCLUDED.**
+    # `_pool_toe_settled_rows` is the one gated reading both surfaces go through, so the triangle on
+    # the Agriculture card and the remedy on the row it is failing to keep cannot disagree about which
+    # shortfall this is — which was the reported defect's other half (the card said nothing at all
+    # while the tile complained). Reading `pool_toe_for` directly here re-opens it from the other end:
+    # a `+` on a tool-short pool silences the CARD, whose gate is the TOE's own settlement, while every
+    # row it keeps goes on naming tools.
     var pool_tools_short := {
         SourceForecast.LABOR_KIND_FORAGE: HudWorkVocab.pool_toe_is_short(
-            HudBandLaborState.pool_toe_for(band,
-                HudWorkVocab.keeping_pool_kind(SourceForecast.LABOR_KIND_FORAGE))),
+            _settled_keeping_toe(band, SourceForecast.LABOR_KIND_FORAGE)),
         SourceForecast.LABOR_KIND_HUNT: HudWorkVocab.pool_toe_is_short(
-            HudBandLaborState.pool_toe_for(band,
-                HudWorkVocab.keeping_pool_kind(SourceForecast.LABOR_KIND_HUNT))),
+            _settled_keeping_toe(band, SourceForecast.LABOR_KIND_HUNT)),
     }
     for key in merged:
         var m: Dictionary = merged[key]

@@ -116,8 +116,9 @@ signal abandon_working_requested(payload: Dictionary)
 
 ## The KIT one queued build is raised with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
 ## formatting `build_kit <faction> <x> <y> [kit <id>]` / `build_kit <faction> <herd_id> [kit <id>]`
-## (`docs/plan_standing_upkeep.md` §4.7a ②). RELAYED from `BandPanelController`'s queue-row settings
-## strip, its only emitter.
+## (`docs/plan_standing_upkeep.md` §4.7a ②). It was RELAYED from `BandPanelController`'s queue-row
+## settings strip, which was its only emitter; **that picker is gone and nothing emits it now** — see
+## the ⛔ below for what the relay is still here for.
 ##
 ## **ITS OWN SIGNAL BECAUSE THE BUILDERS' KIT IS PER QUEUE ENTRY, not per band.** `assign_labor`
 ## REFUSES a `kit` token on the `builders` role now: one stored id per band is the one thing the

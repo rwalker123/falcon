@@ -69,16 +69,16 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## a pre-fill of one, because what this guard reads off the line is the BAND TOKEN — a longer order
 ## would be more tokens saying the same thing. Both budgets sit above the pre-fill, the client drawing
 ## a published pre-fill as-is.
-## The stepper face pressed to compose an order on the outfitting card. `HudWidgets` stamps no meta on
-## either stepper button, so the face is the handle.
-const STEPPER_PLUS_FACE := "+"
-
 const LOADOUT_MATERIALS := ["hide"]
 const LOADOUT_UNITS := 4
 const LOADOUT_KIT_ID := "big_game"
 const LOADOUT_KIT_COUNT := 2
 const LOADOUT_KIT_BUDGET := 12
 const LOADOUT_MATERIAL_BUDGET := 30
+
+## The stepper face pressed to compose an order on the outfitting card. `HudWidgets` stamps no meta on
+## either stepper button, so the face is the handle.
+const STEPPER_PLUS_FACE := "+"
 
 ## Scratch prefs, never the player's real ones (the `band_panel_preview` rule).
 const GUARD_PREFS_PATH := "user://command_guard_prefs.cfg"

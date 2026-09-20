@@ -87,7 +87,23 @@ How many hands a site gets depends on how fast those hands work, which depends o
 tools a site requires depends on its hands. It resolves in one pass:
 
 1. **Hands, as if fully equipped.** Split each pool's hands across its sites under the band's fund
-   mode (Spread or Priority), at the rate each site's hands would work with its TOE lines filled.
+   mode (Spread or Priority), at the rate each site's hands would work with its TOE lines filled
+   **from the band's own ledger**.
+
+   > ⛔ **"AS IF FILLED" MEANS UNCOVERED, NOT AT THE ROSTER'S FRESH TIER — and the literal reading
+   > was tried and rejected.** `fully_equipped_keeper_rate` reads the band's ledger for each tool's
+   > **tier and condition** (a spent tool is not a filled line) and then applies **no coverage** —
+   > so a band that owns none of a tool plans at the **bare** rate, and a band that owns one worn
+   > one plans at that worn tier.
+   >
+   > Planning at the roster's fresh tier instead — what "as if its lines were filled" says if read
+   > literally — would quote every pool a rate its band cannot reach, and at the shipped
+   > `start_stock_fraction` of `0.0` that cut every pool's keeping supply by a third, permanently,
+   > on a band that owns no tools at all.
+   >
+   > The uncovered part is what keeps the pass from being a loop: the requirement is struck **from**
+   > the hands this rate produces, so a rate that already knew how many hands the stock could arm
+   > would be the very circularity this four-step order exists to cut.
 2. **Requirement.** Each site requires one unit of each of its tools per hand from step 1. A pool's
    TOE is the sum over its sites.
 3. **Fill by priority.** Settle each tool band-wide, as in §2.2.

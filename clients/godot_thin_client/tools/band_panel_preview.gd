@@ -3680,6 +3680,14 @@ func _render_keeper_warning_states() -> void:
 	_push_bands([_keeper_work_band_fixture(KEEPER_STATE_HUNTERS)])
 	await _settle()
 	_assert_keeping_remedy("keepers_no_toe", false)
+
+	# ⛔ …AND THE CARD AND THE ROW ANSWER FROM ONE TEST WHILE A ROLE EDIT IS PENDING. Driven rather
+	# than rendered: a board whose rows name tools beside a card that has fallen silent looks exactly
+	# like a board where they agree.
+	_push_bands([_keeper_tools_band_fixture(KEEPER_STATE_HUNTERS, KEEPER_TOOLS_FILLED_SHORT)])
+	await _settle()
+	await _assert_pending_role_edit_keeps_card_and_row_in_step()
+
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# ---- THE OTHER WAY A SOURCE BLEEDS: a part-built rung nobody is building -------------------
@@ -5894,6 +5902,78 @@ func _assert_keeping_remedy(state_name: String, want_tools: bool) -> void:
 		return
 	for failure in failures:
 		_fail("%s — %s" % [state_name, failure])
+
+## The crew a pending `husbandry` edit stages. Any count will do — what the gate reads is that the
+## role's `effective` answer is PENDING, never how many hands it names.
+const KEEPING_PENDING_CREW := 3
+
+## Does the KEEPING pool's card state a tool shortfall, and does the work row it is failing to keep
+## name TOOLS — as one answer each, so the pair can be compared.
+func _husbandry_tool_answers() -> Dictionary:
+	var card := _pool_card_answers(HudWorkVocab.ROLE_NAME_HUSBANDRY)
+	var tools_note := HudWorkVocab.WORK_ROW_UNDER_HERDED_TOOLS_NOTE
+	var row := POOL_HOVER_LINE_ABSENT
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != UNDER_HERDED_WORK_HERD_ID:
+			continue
+		row = 1 if String(model.get("note", "")) == tools_note else 0
+	return {
+		"card": (not card.is_empty()) and String(card.get("gear", "")) != "",
+		"row": row,
+		"has_card": not card.is_empty(),
+	}
+
+## ⛔ GUARD: **THE POOL CARD AND THE WORK ROW ANSWER THE TOOL QUESTION FROM ONE TEST, PENDING EDIT
+## INCLUDED.** `_pool_toe_settled_rows` is that test; the card composes its hover through it and the
+## board forks `under_kept_note` on it, so neither can fall silent while the other goes on naming
+## tools.
+##
+## **IT IS DRIVEN, NOT RENDERED**, and it has to be: a board whose every under-kept plant row reads
+## *"Husbandry needs tools, not hands"* beside a card with no triangle on it is a perfectly ordinary
+## board. What separates the fix from the defect is a RELATION between two producers, which no
+## picture holds.
+##
+## ⛔ **THE SETTLED HALF IS THE PRECONDITION AND IS HALF THE CLAIM.** Under the pending edit both
+## surfaces are silent, so *"they agree"* is satisfied by a client that had stopped answering at all —
+## the same vacuity the four-card SET exists to refuse. The pair is asserted in BOTH states, with the
+## settled one requiring both to speak.
+##
+## **THE COUNT IS `KEEPING_PENDING_CREW` AND NOTHING TURNS ON IT.** The gate reads the role's
+## `pending` flag, not its head count, which is why the staged value is stated rather than derived
+## from the band.
+func _assert_pending_role_edit_keeps_card_and_row_in_step() -> void:
+	var settled := _husbandry_tool_answers()
+	if not bool(settled["has_card"]) or int(settled["row"]) == POOL_HOVER_LINE_ABSENT:
+		_fail("pending keeping edit — no Husbandry card or no Hunt row for %s"
+			% [UNDER_HERDED_WORK_HERD_ID])
+		return
+	_assert_band_panel("pending keeping edit — SETTLED, both surfaces name TOOLS (card %s, row %s)"
+			% [settled["card"], int(settled["row"]) == 1],
+		bool(settled["card"]) and int(settled["row"]) == 1)
+
+	var entity := int(_hud._band_labor._panel_band.get("entity", -1))
+	_hud._band_labor.record_pending_assign(entity, HudConst.LABOR_KIND_HUSBANDRY,
+		KEEPING_PENDING_CREW, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR)
+	_hud._bandpanel.rerender()
+	await _settle()
+
+	var pending := _husbandry_tool_answers()
+	if not bool(pending["has_card"]) or int(pending["row"]) == POOL_HOVER_LINE_ABSENT:
+		_fail("pending keeping edit — the card or the row went missing under the pending edit")
+	else:
+		_assert_band_panel("pending keeping edit — …and under it BOTH fall silent (card %s, row %s)"
+				% [pending["card"], int(pending["row"]) == 1],
+			not bool(pending["card"]) and int(pending["row"]) == 0)
+		# THE CLAIM ITSELF: whatever each answers, they answer the same. A gate on one surface alone
+		# fails here naming the disagreement, which is the reported defect in its own words.
+		_assert_band_panel("pending keeping edit — the card and the row AGREE (card %s, row %s)"
+				% [pending["card"], int(pending["row"]) == 1],
+			bool(pending["card"]) == (int(pending["row"]) == 1))
+
+	_hud._band_labor._pending_labor.clear()
+	_hud._bandpanel.rerender()
+	await _settle()
 
 ## GUARD: the under-herded ⚠, its note and its instruction, asserted TOGETHER — the flag the row tints
 ## from, the amber mark, and (when up) the note naming the band's HUSBANDRY role. Asserting the flag
@@ -16669,6 +16749,7 @@ func _render_build_queue_states() -> void:
 	await _settle()
 	await _save("band_panel_build_queue_wide")
 	await _assert_open_settings_fits_the_wide_zone()
+	await _assert_closed_settings_costs_the_board_nothing()
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_build_queue_wide")
@@ -22015,6 +22096,58 @@ func _assert_open_settings_fits_the_wide_zone() -> void:
 		% _work_board_row_count(), _work_board_row_count() > 0)
 	_hud._bandpanel._toggle_queue_settings(plant)
 	await _settle()
+
+## ⛔ GUARD: **A CLOSED BLOCK RESERVES NO STRIP, AND THE BOARD IS WHERE THAT IS PAID.** The strip is
+## open-only, so the height a CLOSED block claims must be its head and its rows and nothing else —
+## and because the same term is subtracted in `_work_board_capacity`'s chrome, 34px charged for a
+## strip that never draws comes off the board as a whole row (`WORK_ROW_HEIGHT` is 28) with no
+## overflow and no warning, this zone clipping rather than growing.
+##
+## **THE ARITHMETIC HALF IS A RE-DERIVATION THAT NAMES EVERY TERM IT MAY CONTAIN**, the shape
+## `_assert_zone_budget_has_no_inspector_term` uses: `build_queue_block_height`'s closed answer is
+## compared by EQUALITY against head + rows composed here, so a term that comes back fails rather
+## than being absorbed into a "looks about right" tolerance.
+##
+## **PAIRED WITH THE RENDERED HALF, and the pairing is the whole claim.** The closed board must draw
+## STRICTLY MORE rows than the open one on this same band — without that, "the closed block charges
+## nothing" is satisfied by a block that charges nothing in either state, which is the opposite
+## defect and would slice the board the moment a strip opened.
+func _assert_closed_settings_costs_the_board_nothing() -> void:
+	var queued := _build_queue_rows().size()
+	var rows := mini(queued, HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
+	var wanted := HudWorkVocab.BUILD_QUEUE_HEAD_HEIGHT + float(rows) * HudWorkVocab.WORK_ROW_HEIGHT
+	var closed := HudWorkVocab.build_queue_block_height(queued,
+		HudWorkVocab.BUILD_QUEUE_ROWS_MAX, false, 0)
+	_assert_band_panel("a CLOSED build-queue block reserves its head and its rows and nothing else — %.0f, wanted %.0f (%d entries, %d drawn)"
+			% [closed, wanted, queued, rows],
+		queued > 0 and is_equal_approx(closed, wanted))
+	# …and an OPEN one costs exactly the strip, so the term is missing-when-closed rather than
+	# missing outright.
+	var open_h := HudWorkVocab.build_queue_block_height(queued,
+		HudWorkVocab.BUILD_QUEUE_ROWS_MAX, true, 0)
+	_assert_band_panel("…while an OPEN one adds exactly the strip — %.0f against %.0f"
+			% [open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT],
+		is_equal_approx(open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT))
+	# THE RENDERED HALF. Same band, same dock, only the strip moving.
+	var plant := ""
+	for entry_variant in _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),
+			_hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)):
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+			plant = String(entry.get("key", ""))
+			break
+	if plant == "":
+		_fail("closed queue settings — no plant entry to open a strip on")
+		return
+	var closed_rows := _work_board_row_count()
+	_hud._bandpanel._toggle_queue_settings(plant)
+	await _settle()
+	var open_rows := _work_board_row_count()
+	_hud._bandpanel._toggle_queue_settings(plant)
+	await _settle()
+	_assert_band_panel("…and the board draws MORE rows with the strip closed than open — %d against %d"
+			% [closed_rows, open_rows],
+		closed_rows > open_rows and open_rows > 0)
 
 ## A laid-out width may sit a sub-pixel under the text server's float for the same string, the
 ## faction page's `KEYLESS_KEY_WIDTH_TOLERANCE` reason.

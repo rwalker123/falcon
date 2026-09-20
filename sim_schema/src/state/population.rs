@@ -1574,8 +1574,9 @@ pub struct PopulationCohortState {
     /// publishes an empty `kit_id` and a [`LaborAssignmentState::kit_workers_holding`] equal to its
     /// `workers` — *nothing to be short of* — and its gear is stated here instead.
     ///
-    /// **A row exists only where `required > 0`**, and a fully-met requirement **keeps** its row
-    /// with `filled == required`. See [`PoolToeLineState`]. Appended last (append-only).
+    /// **A row exists only where `required > 0`**, and a met requirement **keeps** its row with
+    /// `filled >= required` — ⛔ *covering* it rather than equalling it, because tools are issued in
+    /// whole units. See [`PoolToeLineState::filled`]. Appended last (append-only).
     #[serde(default)]
     pub pool_toe: Vec<PoolToeLineState>,
 }
@@ -1593,11 +1594,22 @@ pub struct PoolToeLineState {
     /// serves, divided by the item's `workers_per_unit`. ⛔ **Never `0`**: a line exists only where
     /// something is required, so a reader may divide by it.
     pub required: f32,
-    /// **Units the band's settlement actually handed this pool.** `== required` is a pool that got
-    /// everything; `0` is a pool the settlement reached with nothing (its sites work bare on this
-    /// line); between the two is the proportional share of a priority tier the stock could not
-    /// cover. Tools are settled **band-wide per item**, so two pools reaching for one stock divide
-    /// it here.
+    /// **Units the band's settlement actually handed this pool.**
+    ///
+    /// ⛔ **IT IS IN WHOLE UNITS AND MAY EXCEED [`Self::required`]**, so the satisfied test is
+    /// `filled >= required` and a shortfall is `(required - filled).max(0.0)` — **never**
+    /// `filled == required`, and never a bare subtraction, which goes negative. A tool is a
+    /// countable object carried by a **person**, so the settlement pays each `(pool, tier)` group
+    /// `ceil` of its bid in whole tools: a pool whose hands come to a fraction of a unit — one
+    /// keeper spending part of a turn on a dirt road requires `0.136` of the earthmoving gear — is
+    /// handed the one whole tool that keeper carries, and the line reads `filled 1.0` against
+    /// `required 0.136`. That is the **common** case, not an edge one, because a pool's hands come
+    /// out of a continuous split.
+    ///
+    /// `0` is a pool the settlement reached with nothing (its sites work bare on this line); a
+    /// positive `filled` short of `required` is the part-served share of a priority tier the stock
+    /// could not cover. Tools are settled **band-wide per item**, so two pools reaching for one
+    /// stock divide it here.
     pub filled: f32,
 }
 
