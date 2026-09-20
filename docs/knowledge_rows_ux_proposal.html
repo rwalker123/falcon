@@ -1,0 +1,912 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Rows</title>
+
+<style>
+  /* ============================================================
+     Tokens. The DOCUMENT shell is theme-aware; the PROTOTYPE keeps
+     the game's own dark console palette in both themes on purpose —
+     the HUD is dark and stays dark. The `--g-*` set is lifted from
+     clients/.../ui/HudStyle.gd.
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    /* The game palette — fixed across both document themes. */
+    --g-ground:    #0b1114;
+    --g-panel:     #111a1e;
+    --g-panel-2:   #0e161a;
+    --g-line:      #26363c;
+    --g-line-soft: #1b282d;
+    --g-ink:       #e9efe9;
+    --g-dim:       #9db0ad;
+    --g-faint:     #6f8380;
+    --g-signal:    #4fe0cf;
+    --g-signal-deep: #1f9c8e;
+    --g-signal-wash: rgba(79, 224, 207, 0.14);
+    --g-warn:      #f2b13f;
+    --g-danger:    #e8746a;
+    --g-healthy:   #76cd80;
+    --g-pigment:   #c89c66;
+    --g-ghost:     #13211f;
+    --g-primary:   #163a34;
+    --g-primary-t: #d8fff8;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 72ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+  :root[data-theme="dark"] {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 96px; }
+  .prose { max-width: var(--measure); }
+
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 34px 0 24px;
+  }
+  header.top .wrap { padding-bottom: 0; }
+  header.top h1 { font-size: 27px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.01em; }
+  header.top .sub { color: var(--dim); margin: 0; max-width: var(--measure); }
+
+  h2 {
+    font-size: 20px; margin: 48px 0 6px; letter-spacing: -0.01em;
+    padding-top: 18px; border-top: 1px solid var(--line-soft);
+  }
+  h2 .tag {
+    font: 600 11px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase;
+    color: var(--faint); display: block; margin-bottom: 7px;
+  }
+  h3 { font-size: 15.5px; margin: 26px 0 6px; }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  code { font: 12.5px/1.4 var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: var(--r); }
+  a { color: var(--signal); }
+
+  /* ---- controls ------------------------------------------- */
+  .controls {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 11px 0;
+  }
+  .controls .row {
+    max-width: 1120px; margin: 0 auto; padding: 0 16px;
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+  }
+  .ctl { display: flex; align-items: center; gap: 8px; }
+  .ctl > span {
+    font: 600 10.5px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint);
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .seg button {
+    font: 500 12.5px/1 var(--sans); color: var(--dim);
+    background: var(--panel); border: 0; border-right: 1px solid var(--line);
+    padding: 7px 11px; cursor: pointer; white-space: nowrap;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { background: var(--panel-2); color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--signal-wash); color: var(--signal); font-weight: 650; }
+
+  /* ---- the simulated screen ------------------------------- */
+  .stage { margin: 22px 0 10px; }
+  .screen {
+    position: relative;
+    background: var(--g-ground);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 26px 22px;
+    display: flex; justify-content: center;
+  }
+  /* The mount is the flex item, so it has to carry the width — otherwise the
+     card shrink-to-fits and RESIZES every time a detail opens, which is the
+     one thing a centred panel must never do. */
+  .screen > div { width: 100%; display: flex; justify-content: center; }
+  .fitline {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 9px;
+    font: 500 12px/1.4 var(--mono); color: var(--faint);
+  }
+  .fitline .badge {
+    font: 650 11px/1 var(--sans); padding: 4px 8px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--healthy) 45%, var(--line)); color: var(--healthy);
+  }
+
+  /* ============================================================
+     THE PANEL
+     ============================================================ */
+  .card {
+    background: var(--g-panel);
+    border: 1px solid var(--g-line);
+    border-radius: var(--r);
+    color: var(--g-ink);
+    font-size: 13px;
+    width: 100%; max-width: 820px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 14px 34px rgba(0,0,0,.42);
+  }
+  .cardhead { padding: 12px 16px 10px; border-bottom: 1px solid var(--g-line-soft); flex: 0 0 auto; }
+  .titlerow { display: flex; align-items: baseline; gap: 14px; justify-content: space-between; }
+  .ptitle { font-weight: 650; font-size: 13.5px; }
+  .tally { font: 11.5px/1 var(--mono); color: var(--g-dim); white-space: nowrap; }
+  .tally b { color: var(--g-signal); font-weight: 600; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; align-items: center; }
+  .filters .lbl {
+    font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--g-faint); margin-right: 3px;
+  }
+  .pill {
+    font: 500 11.5px/1 var(--sans);
+    background: var(--g-panel-2); border: 1px solid var(--g-line-soft);
+    color: var(--g-dim); border-radius: 999px; padding: 4px 9px; cursor: pointer;
+  }
+  .pill:hover { border-color: var(--g-line); color: var(--g-ink); }
+  .pill[aria-pressed="true"] { background: var(--g-primary); border-color: var(--g-signal-deep); color: var(--g-primary-t); }
+  .pill .n { font-family: var(--mono); font-size: 10.5px; opacity: .8; margin-left: 4px; }
+
+  .scrollbody { overflow-y: auto; max-height: 460px; flex: 1 1 auto; }
+
+  /* ---- category ------------------------------------------- */
+  .cat { border-bottom: 1px solid var(--g-line-soft); }
+  .cat:last-child { border-bottom: 0; }
+  .cathead {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 16px 7px;
+    background: var(--g-panel-2);
+    border-bottom: 1px solid var(--g-line-soft);
+    cursor: pointer; user-select: none;
+  }
+  .cathead:hover { background: var(--g-ghost); }
+  .caret {
+    font-family: var(--mono); font-size: 10px; color: var(--g-faint);
+    width: 10px; flex: 0 0 auto; transition: transform .12s ease;
+  }
+  .cat.closed .caret { transform: rotate(-90deg); }
+  .catname {
+    font: 650 11px/1 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--g-ink);
+  }
+  .catsum { margin-left: auto; font: 11px/1 var(--mono); color: var(--g-faint); white-space: nowrap; }
+  .catsum b { color: var(--g-warn); font-weight: 600; }
+  .catsum i { color: var(--g-pigment); font-style: normal; font-weight: 600; }
+  .cat.closed .catbody { display: none; }
+
+  /* ---- domain row ----------------------------------------- */
+  .lrow {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 7px 16px 7px 30px;
+  }
+  .lrow + .lrow { border-top: 1px solid color-mix(in srgb, var(--g-line-soft) 55%, transparent); }
+  .dname {
+    flex: 0 0 88px; padding-top: 6px; text-align: right;
+    font: 650 10.5px/1.25 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-dim);
+  }
+  .rungs { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1 1 auto; }
+
+  .rung {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 9px; border-radius: var(--r);
+    border: 1px solid transparent;
+    cursor: pointer; white-space: nowrap;
+  }
+  .rung:hover { background: var(--g-ghost); }
+  .rung[aria-expanded="true"] {
+    background: var(--g-signal-wash); border-color: var(--g-signal-deep);
+  }
+  .rung.dim { opacity: .32; }
+  .link { width: 14px; height: 1px; background: var(--g-line); flex: 0 0 auto; }
+  .link.none { background: transparent; width: 5px; }
+
+  .glyph { font-family: var(--mono); width: 11px; text-align: center; flex: 0 0 auto; }
+  .g-known { color: var(--g-signal); }
+  .g-learning { color: var(--g-warn); }
+  .g-unknown { color: var(--g-faint); }
+  .pct { font: 11px/1 var(--mono); color: var(--g-warn); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; }
+  .dot.unspent { background: var(--g-pigment); }
+  .dot.fresh { background: var(--g-signal); }
+  .capsule {
+    font: 10px/1 var(--mono); color: var(--g-faint);
+    border: 1px dashed var(--g-line); border-radius: 999px; padding: 3px 7px; margin-left: 5px;
+  }
+
+  /* ---- the expanding detail ------------------------------- */
+  .detail {
+    margin: 0 16px 9px 130px;
+    border-left: 2px solid var(--g-signal-deep);
+    padding: 7px 0 3px 14px;
+    position: relative;
+  }
+  .detail h4 { margin: 0 0 2px; font-size: 13px; font-weight: 650; }
+  .detail .state { font-size: 11.5px; color: var(--g-dim); margin: 0 0 6px; }
+  .dsecs { display: flex; gap: 22px; align-items: flex-start; }
+  .dsec { flex: 1 1 0; min-width: 0; }
+  .kicker {
+    font: 600 10px/1 var(--mono); letter-spacing: .11em; text-transform: uppercase;
+    color: var(--g-faint); margin-bottom: 3px;
+  }
+  .dsec p { margin: 0; font-size: 11.5px; color: var(--g-dim); line-height: 1.5; }
+  .dsec p.where { color: var(--g-signal); }
+  .closex {
+    position: absolute; top: 4px; right: 0;
+    font: 12px/1 var(--mono); color: var(--g-faint);
+    background: transparent; border: 0; cursor: pointer; padding: 4px 6px;
+  }
+  .closex:hover { color: var(--g-ink); }
+  @media (max-width: 660px) {
+    .dsecs { flex-direction: column; gap: 9px; }
+    .detail { margin-left: 30px; }
+    .dname { flex-basis: 70px; }
+  }
+
+  /* ---- doc furniture -------------------------------------- */
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 18px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font: 600 11px/1.3 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+  td.mono { font: 12.5px/1.4 var(--mono); color: var(--dim); }
+
+  .note {
+    border-left: 2px solid var(--signal); background: var(--signal-wash);
+    padding: 11px 14px; margin: 16px 0; border-radius: 0 var(--r) var(--r) 0;
+    max-width: var(--measure);
+  }
+  .note.warn { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+  .note p:last-child { margin-bottom: 0; }
+
+  pre {
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: var(--r);
+    padding: 12px 14px; overflow-x: auto; font: 12.5px/1.55 var(--mono); margin: 12px 0 16px;
+    max-width: var(--measure);
+  }
+
+  .themebtn {
+    position: fixed; right: 14px; bottom: 14px; z-index: 40;
+    font: 500 12px/1 var(--sans); color: var(--dim);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 8px 13px; cursor: pointer;
+  }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <h1>Knowledge rows, grouped by what they are for</h1>
+    <p class="sub">
+      Option C taken further on two notes: a clicked knowledge now <b>closes again</b>, and domains
+      are gathered under <b>subject areas</b> so a long list stops reading as a heap. Grow the tree
+      with the stress bar and collapse a heading to see how it holds.
+    </p>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="row">
+    <div class="ctl">
+      <span>Tree</span>
+      <div class="seg" id="seg-size">
+        <button data-n="6" aria-pressed="true">Today · 6</button>
+        <button data-n="10">Planned · 10</button>
+        <button data-n="16">4× · 16</button>
+        <button data-n="24">Stress · 24</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <span>Grouping</span>
+      <div class="seg" id="seg-group">
+        <button data-g="1" aria-pressed="true">Subject areas</button>
+        <button data-g="0">Flat (last version)</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <span>Filter</span>
+      <div class="seg" id="seg-filter">
+        <button data-f="all" aria-pressed="true">All</button>
+        <button data-f="learning">Learning</button>
+        <button data-f="unspent">Unused</button>
+        <button data-f="new">New</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <section>
+    <h2><span class="tag">The prototype</span>Click a knowledge twice</h2>
+    <div class="stage">
+      <div class="screen"><div id="mount"></div></div>
+      <div class="fitline" id="fit"></div>
+    </div>
+    <div class="prose">
+      <p>
+        Three things to try. <b>Click the same knowledge twice</b> — it opens, then closes, and the
+        row returns to its line. <b>Click a heading</b> — the whole subject area folds to one line
+        that still says what is inside it. <b>Switch the filter</b> — subject areas with no match
+        fold themselves, and unfold when you go back to All.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="tag">Note 1</span>A second click closes it</h2>
+    <div class="prose">
+      <p>
+        The last prototype treated a click as <em>select</em>, so there was no way back to a plain
+        list — which is worse here than it was in a columns layout, because an open detail pushes
+        every row under it down the panel. The rule now:
+      </p>
+      <ul>
+        <li><b>Click an open knowledge → it closes.</b> Nothing is selected; the panel is a plain list again.</li>
+        <li><b>Click a different one → the open one closes and the new one opens.</b> Only ever one open, so the panel's height stays predictable and there is no "close all" to hunt for.</li>
+        <li><b>Escape closes it</b>, and there is a <code>✕</code> in the detail's corner for the same job.</li>
+      </ul>
+      <p>
+        The one-at-a-time rule matters more than it looks. Letting several stand open turns the
+        screen into an accordion whose height is a function of how much the player has poked at it,
+        and the panel is centred in its room — so it would grow in both directions from the middle
+        of the screen every time a row was opened.
+      </p>
+      <div class="note">
+        <p>
+          <b>And the card must not resize as rows open.</b> A detail is wider than a bare ladder row,
+          so a card fitted to its content narrows when the detail closes and widens when it opens —
+          on a centred panel that is a visible lurch on every click. In
+          <code>AutoSizingPanel</code> terms the row layout wants
+          <code>target_width</code> to be the panel's <em>actual</em> width rather than the nominal
+          floor it is today, so <code>fit_width</code> has nothing left to fit. The same goes for
+          height: fit it to the tallest state, or the card grows and shrinks vertically too.
+        </p>
+      </div>
+      <div class="note">
+        <p>
+          <b>This changes what the shipped payload means, not just the renderer.</b>
+          <code>KnowledgePanel</code>'s <code>PAYLOAD_SELECTED</code> is a knowledge key and the empty
+          string already means "nothing selected" — the detail pane renders its placeholder for it —
+          so a toggle is <em>set the key, or set it back to empty</em>, with no new state. What does
+          need care is the <b>orb hand-over</b>: the turn orb's knowledge rows open this screen on a
+          filter and a key, so opening from outside must always <em>open</em>, never toggle a row
+          shut because the player happened to have it open already.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="tag">Note 2</span>Subject areas, and where they come from</h2>
+    <div class="prose">
+      <p>
+        Your instinct is right, and it buys more than tidiness: it puts a bound on the thing that
+        grows. Domains grow without limit; <b>subject areas do not</b>, because they answer "what
+        part of the game is this" and that list is short and stable. Six areas holding twenty-four
+        domains reads; twenty-four bare rows do not.
+      </p>
+      <p>
+        Here is the taxonomy the prototype uses. It follows your steer — Land and Herds are one
+        thing, Roads is the start of infrastructure, and Craft is the start of industry rather than
+        a peer of the food webs.
+      </p>
+      <table>
+        <thead><tr><th>Area</th><th>Branches today</th><th>Where it grows</th></tr></thead>
+        <tbody>
+          <tr><td><b>Food</b></td><td class="mono">plant, animal</td><td>fishing; anything that feeds people</td></tr>
+          <tr><td><b>Making</b></td><td class="mono">forestry, extraction, craft</td><td>metals, pottery, glass, textiles — gather it, then work it, up to factories</td></tr>
+          <tr><td><b>Works</b></td><td class="mono">route</td><td>storage, water, dwellings, power networks — the things you build once and everyone uses</td></tr>
+          <tr><td><b>Reach</b></td><td class="mono">—</td><td>trade, navigation (<code>docs/plan_contact_and_logistics.md</code>)</td></tr>
+          <tr><td><b>Lore</b></td><td class="mono">—</td><td>belief, telling, astronomy, medicine, law</td></tr>
+          <tr><td><b>War</b></td><td class="mono">—</td><td>defense, war</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Note what that does <em>today</em>: six domains become <b>three</b> areas, because an area
+        with no branches is never drawn — the same rule that already forbids an empty column, one
+        level up. So this is not a change that only pays off later; it shortens the current screen
+        too.
+      </p>
+
+      <h3>The area has to come off the config, not out of a client table</h3>
+      <p>
+        This is the part worth being strict about, because the panel has been here before.
+        <code>LADDER_DOMAINS</code> was a hard-coded client list, and it is why the route branch's
+        Roadbuilding and Paving had nowhere to appear — the fix was to make the sim publish a roster
+        and let the panel build itself from it. <b>A hard-coded area table would reintroduce exactly
+        that bug one level up</b>: the first branch somebody adds without editing the client would
+        fall out of the screen.
+      </p>
+      <p>
+        The branches themselves have no record in <code>intensification_ladder.json</code> today —
+        <code>branch</code> is just a string repeated on each rung. So the change is to give them
+        one:
+      </p>
+<pre>"branches": {
+  "plant":      { "area": "food" },
+  "animal":     { "area": "food" },
+  "forestry":   { "area": "making" },
+  "extraction": { "area": "making" },
+  "route":      { "area": "works" }
+},
+"areas": ["food", "making", "works", "reach", "lore", "war"]</pre>
+      <p>
+        <code>areas</code> is the display order — the areas are peers, so first-seen order off the
+        rungs would reshuffle the screen whenever a rung was added. Each
+        <code>ladder_knowledge</code> roster row then carries its <code>area</code> beside the
+        <code>branch</code>, <code>order</code> and <code>is_step</code> it already carries, and
+        <code>KnowledgeRoster</code> groups domains into areas the way it groups nodes into domains
+        now. The craft fan is not a ladder branch, so its area is named where its nodes are built.
+      </p>
+      <div class="note warn">
+        <p>
+          <b>Two fallbacks, both load-bearing.</b> A branch whose descriptor names no area, or names
+          one the client has no word for, must still <em>draw</em> — under its own capitalized token,
+          the way <code>HudKnowledgeVocab.domain_label</code> already handles an unknown branch. A
+          knowledge that vanishes because a config edit was incomplete is the worst possible failure
+          for this screen, and it is the failure it has actually shipped once.
+        </p>
+      </div>
+      <p>
+        <b>The labels stay client-side copy</b>, exactly as the branch labels do now — the wire says
+        <code>food</code> and a player reads <em>Food</em>, and that table lives beside
+        <code>DOMAIN_BRANCH_LABELS</code> in <code>HudKnowledgeVocab</code> where the localization
+        pass can reach it.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="tag">Note 3</span>Folding, without hiding</h2>
+    <div class="prose">
+      <p>
+        A heading folds on click. The part that needs stating plainly, because it looks like a rule
+        the panel already has: <b>a folded area is not a hidden one.</b> The shipped rule is that a
+        track at <code>0.0</code> is drawn greyed rather than skipped, and that the filters dim
+        rather than remove — both exist because a new player who has learned nothing must still be
+        shown there is something to learn.
+      </p>
+      <p>
+        A folded heading keeps that promise: it stays on screen, and it says what is inside it —
+        <em>"3 to learn"</em>, <em>"2 learning · 1 unused"</em>. The player is told the area exists
+        and what state it is in; they are one click from the detail. That is different in kind from
+        the old <code>_build_knowledge_block</code> skip, which drew nothing at all.
+      </p>
+      <p>
+        So the defaults follow from that distinction:
+      </p>
+      <ul>
+        <li><b>Everything starts open.</b> Never fold an area because it is empty of progress — that is the old bug wearing a caret.</li>
+        <li><b>A filter folds the areas it does not match</b>, and unfolds them on the way back to All. Under All the dim-don't-hide rule is untouched; under a filter, folding is what makes the filter useful at twenty-four domains instead of leaving the player to scroll past dimmed rows.</li>
+        <li><b>A fold the player made by hand outlives a filter change</b>, and is forgotten when the screen closes. There is no persisted UI state here and this does not need to invent any.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="prose">
+    <h2><span class="tag">What this costs</span>Where the work lands</h2>
+    <table>
+      <thead><tr><th>Where</th><th>Change</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">intensification_ladder.json</td><td>a <code>branches</code> descriptor table and an <code>areas</code> order list</td></tr>
+        <tr><td class="mono">sim_schema</td><td><code>area</code> on the <code>ladder_knowledge</code> roster row</td></tr>
+        <tr><td class="mono">core_sim</td><td>publish it — read the branch's descriptor when building the roster row</td></tr>
+        <tr><td class="mono">KnowledgeRoster.gd</td><td>group domains into areas as it groups nodes into domains; per-area tallies; never emit an empty area</td></tr>
+        <tr><td class="mono">KnowledgePanel.gd</td><td>rows instead of columns; fold state; toggle instead of select</td></tr>
+        <tr><td class="mono">hud_knowledge_vocab.gd</td><td>area label copy + fallback; the geometry constants columns no longer need</td></tr>
+        <tr><td class="mono">KnowledgePanelController.gd</td><td>the orb hand-over must force open, never toggle</td></tr>
+      </tbody>
+    </table>
+    <p>
+      The sim half and the client half are separable: the client can group on a <code>area</code>
+      that is absent from every row and get one fallback area holding everything, which is a working
+      screen. So this can land as two slices, and the row layout does not have to wait on a schema
+      change.
+    </p>
+  </section>
+
+</div>
+
+<button class="themebtn" id="themebtn">Theme</button>
+
+<script>
+"use strict";
+
+/* ============================================================
+   THE TREE. Areas and branches as the proposal above defines
+   them. Domains 1–6 are what the ladder teaches today; 7–10 are
+   the branches docs/plan_civilization_steps.md commits to; 11+
+   are plausible later ones, present only to stress the layout.
+   `uncategorised` proves the no-area fallback draws.
+   ============================================================ */
+const K = (n, s, p, f) => ({ n, s, p: p || 0, f: f || "" });
+
+const AREAS = [
+  { key: "food",   label: "Food" },
+  { key: "making", label: "Making" },
+  { key: "works",  label: "Works" },
+  { key: "reach",  label: "Reach" },
+  { key: "lore",   label: "Lore" },
+  { key: "war",    label: "War" }
+];
+
+const TREE = [
+  { key: "plant", label: "Land", area: "food", shape: "ladder", nodes: [
+      K("Cultivation", "known"), K("Seed Selection", "learning", 0.62) ] },
+  { key: "animal", label: "Herds", area: "food", shape: "ladder", nodes: [
+      K("Herding", "known"), K("Penning", "known", 0, "unspent"),
+      K("Foddering", "learning", 0.71, "capability") ] },
+  { key: "route", label: "Roads", area: "works", shape: "ladder", nodes: [
+      K("Roadbuilding", "known", 0, "new"), K("Paving", "unknown") ] },
+  { key: "forestry", label: "Forestry", area: "making", shape: "ladder", nodes: [
+      K("Woodcraft", "known"), K("Conservationism", "unknown") ] },
+  { key: "extraction", label: "Extraction", area: "making", shape: "ladder", nodes: [
+      K("Quarrying", "learning", 0.18) ] },
+  { key: "craft", label: "Craft", area: "making", shape: "fan", nodes: [
+      K("Tanning", "known"), K("Bone Working", "learning", 0.40),
+      K("Weaving", "known", 0, "unspent") ] },
+
+  { key: "storage", label: "Storage", area: "works", shape: "ladder", nodes: [
+      K("Drying Rack", "known"), K("Pit Store", "learning", 0.33), K("Granary", "unknown") ] },
+  { key: "belief", label: "Belief", area: "lore", shape: "ladder", nodes: [
+      K("Gathering Ground", "known"), K("Monument", "unknown") ] },
+  { key: "defense", label: "Defense", area: "war", shape: "ladder", nodes: [
+      K("Palisade", "learning", 0.55), K("Walls", "unknown"), K("Bastion", "unknown") ] },
+  { key: "dwellings", label: "Dwellings", area: "works", shape: "ladder", nodes: [
+      K("Shelter", "known"), K("Longhouse", "known", 0, "unspent"), K("Quarter", "unknown") ] },
+
+  { key: "war", label: "War", area: "war", shape: "ladder", nodes: [
+      K("Drilling", "known"), K("Massed Ranks", "unknown"), K("Siegecraft", "unknown") ] },
+  { key: "telling", label: "Telling", area: "lore", shape: "ladder", nodes: [
+      K("Lore Keeping", "known"), K("Script", "learning", 0.12), K("Archive", "unknown") ] },
+  { key: "water", label: "Water", area: "works", shape: "ladder", nodes: [
+      K("Wells", "known"), K("Irrigation", "learning", 0.47), K("Canals", "unknown") ] },
+  { key: "fishing", label: "Fishing", area: "food", shape: "ladder", nodes: [
+      K("Netting", "known"), K("Weirs", "unknown") ] },
+  { key: "trade", label: "Trade", area: "reach", shape: "ladder", nodes: [
+      K("Bartering", "known", 0, "unspent"), K("Markets", "unknown") ] },
+  { key: "metals", label: "Metals", area: "making", shape: "ladder", nodes: [
+      K("Smelting", "learning", 0.08), K("Alloying", "unknown"), K("Forging", "unknown") ] },
+  { key: "pottery", label: "Pottery", area: "making", shape: "ladder", nodes: [
+      K("Coiling", "known"), K("The Wheel", "unknown") ] },
+  { key: "medicine", label: "Medicine", area: "lore", shape: "ladder", nodes: [
+      K("Herblore", "known", 0, "new"), K("Setting Bones", "unknown") ] },
+  { key: "astronomy", label: "Astronomy", area: "lore", shape: "ladder", nodes: [
+      K("Star Reading", "known"), K("The Calendar", "learning", 0.66) ] },
+  { key: "law", label: "Law", area: "lore", shape: "ladder", nodes: [
+      K("Custom", "known"), K("Judgement", "unknown") ] },
+  { key: "music", label: "Music", area: "lore", shape: "ladder", nodes: [
+      K("Drumming", "known"), K("Pipes", "known", 0, "unspent") ] },
+  { key: "navigation", label: "Navigation", area: "reach", shape: "ladder", nodes: [
+      K("Coasting", "known"), K("Open Water", "unknown") ] },
+  { key: "glass", label: "Glass", area: "making", shape: "ladder", nodes: [
+      K("Fusing", "learning", 0.21), K("Blowing", "unknown") ] },
+  /* No `area` at all — the fallback case. It must still draw. */
+  { key: "beekeeping", label: "Beekeeping", shape: "ladder", nodes: [
+      K("Hiving", "learning", 0.30), K("Swarming", "unknown") ] }
+];
+
+const NOTES = {
+  "Seed Selection": {
+    does: "Your harvesters keep back the best seed, so a tended patch yields more each season it is worked.",
+    where: "3 patches standing on the tended rung",
+    how: "By working a patch you have already cultivated."
+  },
+  "Penning": {
+    does: "A tamed herd can be held in a pen, which stops the drift and lets you feed it through a bad season.",
+    where: "Nothing is using it",
+    how: "By keeping a herd you have already tamed."
+  },
+  "Foddering": {
+    does: "A penned herd can be fed from your stores, so a bad graze season stops thinning it.",
+    where: "Changes what a pen may draw on — it unlocks no step",
+    how: "By running a pen you have already built."
+  }
+};
+const FALLBACK = {
+  does: "Unlocks the next thing your hands can do with this, across the whole map.",
+  where: "2 sources standing on the rung it unlocks",
+  how: "By practising the step below it."
+};
+
+/* `open` is the knowledge key whose detail is showing, or "" for none —
+   the shipped PAYLOAD_SELECTED contract, where "" already means nothing
+   is selected. `folded` holds the areas the PLAYER folded by hand; it
+   survives a filter change and dies with the screen. */
+const STATE = { n: 6, grouped: true, filter: "all", open: "", folded: {} };
+
+const el = (tag, cls, txt) => {
+  const d = document.createElement(tag);
+  if (cls) d.className = cls;
+  if (txt != null) d.textContent = txt;
+  return d;
+};
+const domains = () => TREE.slice(0, STATE.n);
+const allNodes = () => domains().flatMap(d => d.nodes.map(x => ({ ...x, d })));
+const glyphOf = s => s === "known" ? "●" : s === "learning" ? "◐" : "○";
+const gclass = s => s === "known" ? "g-known" : s === "learning" ? "g-learning" : "g-unknown";
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+function matches(node) {
+  switch (STATE.filter) {
+    case "learning": return node.s === "learning";
+    case "unspent": return node.f === "unspent";
+    case "new": return node.f === "new";
+    default: return true;
+  }
+}
+function counts(ns) {
+  ns = ns || allNodes();
+  return {
+    all: ns.length,
+    known: ns.filter(n => n.s === "known").length,
+    learning: ns.filter(n => n.s === "learning").length,
+    unknown: ns.filter(n => n.s === "unknown").length,
+    unspent: ns.filter(n => n.f === "unspent").length,
+    fresh: ns.filter(n => n.f === "new").length
+  };
+}
+
+/* ---- grouping ---------------------------------------------
+   Areas come out in the DECLARED order, never first-seen — the
+   areas are peers, so a rung added to the config must not
+   reshuffle the screen. An area with no domains is never
+   emitted, the same rule that forbids an empty column. An area
+   the label table has never heard of still draws, under its own
+   capitalised token.                                           */
+function grouped() {
+  if (!STATE.grouped) return [{ key: "", label: "", domains: domains() }];
+  const seen = domains();
+  const known = AREAS.map(a => ({ ...a, domains: seen.filter(d => d.area === a.key) }));
+  const extras = [];
+  seen.forEach(d => {
+    const areaKey = d.area || "";
+    if (areaKey && AREAS.some(a => a.key === areaKey)) return;
+    let bucket = extras.find(e => e.key === areaKey);
+    if (!bucket) {
+      bucket = { key: areaKey, label: areaKey ? cap(areaKey) : "Not yet placed", domains: [] };
+      extras.push(bucket);
+    }
+    bucket.domains.push(d);
+  });
+  return known.concat(extras).filter(a => a.domains.length > 0);
+}
+
+/* An area's one-line summary — what a FOLDED heading still tells the
+   player, which is the whole reason folding is not hiding. */
+function areaSummary(area) {
+  const ns = area.domains.flatMap(d => d.nodes);
+  const c = counts(ns);
+  // What is HAPPENING leads, because that is what the player came for; what
+  // is merely there fills the line out, so a folded heading is never so terse
+  // that it stops saying an area has anything in it.
+  const bits = [];
+  if (c.learning) bits.push(`<b>${c.learning} learning</b>`);
+  if (c.unspent) bits.push(`<i>${c.unspent} unused</i>`);
+  if (c.fresh) bits.push(`${c.fresh} new`);
+  if (bits.length < 2 && c.known) bits.push(`${c.known} known`);
+  if (bits.length < 2 && c.unknown) bits.push(`${c.unknown} to learn`);
+  return bits.join(" · ") || "nothing here yet";
+}
+
+/* ---- the detail, which is a TOGGLE ------------------------- */
+function detailFor(node) {
+  const copy = NOTES[node.n] || FALLBACK;
+  const d = el("div", "detail");
+  const x = el("button", "closex", "✕");
+  x.title = "Close";
+  x.onclick = ev => { ev.stopPropagation(); STATE.open = ""; render(); };
+  d.append(x);
+  d.append(el("h4", null, node.n));
+  d.append(el("p", "state",
+    node.s === "known" ? (node.f === "unspent" ? "Known · nothing is using it" : "Known")
+    : node.s === "learning" ? "Learning · " + Math.round(node.p * 100) + "%"
+    : "Not begun"));
+  const secs = el("div", "dsecs");
+  [["What it lets you do", copy.does, ""],
+   ["Where, now", copy.where, "where"],
+   ["How it is learned", copy.how, ""]
+  ].forEach(([k, body, cls]) => {
+    const s = el("div", "dsec");
+    s.append(el("div", "kicker", k));
+    s.append(el("p", cls, body));
+    secs.append(s);
+  });
+  d.append(secs);
+  return d;
+}
+
+function rungEl(node) {
+  const r = el("div", "rung" + (matches(node) ? "" : " dim"));
+  const isOpen = STATE.open === node.n;
+  r.setAttribute("aria-expanded", isOpen);
+  r.append(el("span", "glyph " + gclass(node.s), glyphOf(node.s)));
+  r.append(el("span", "nname", node.n));
+  if (node.s === "learning") r.append(el("span", "pct", Math.round(node.p * 100) + "%"));
+  if (node.f === "unspent") r.append(el("span", "dot unspent"));
+  if (node.f === "new") r.append(el("span", "dot fresh"));
+  if (node.f === "capability") r.append(el("span", "capsule", "gates nothing"));
+  // THE TOGGLE: the same knowledge clicked again sets the key back to "",
+  // which is the payload's own "nothing selected".
+  r.onclick = () => { STATE.open = isOpen ? "" : node.n; render(); };
+  return r;
+}
+
+function domainRow(d) {
+  const row = el("div", "lrow");
+  row.append(el("div", "dname", d.label));
+  const rungs = el("div", "rungs");
+  d.nodes.forEach((n, i) => {
+    if (i > 0) rungs.append(el("div", "link" + (d.shape === "fan" ? " none" : "")));
+    rungs.append(rungEl(n));
+  });
+  row.append(rungs);
+  return row;
+}
+
+function render() {
+  const mount = document.getElementById("mount");
+  mount.textContent = "";
+
+  const card = el("div", "card");
+  const h = el("div", "cardhead");
+  const trow = el("div", "titlerow");
+  trow.append(el("div", "ptitle", "What your people know"));
+  const c = counts();
+  const t = el("div", "tally");
+  t.innerHTML = `<b>${c.known}</b> known · <b>${c.learning}</b> learning · ${c.unknown} unknown · <b>${c.unspent}</b> unspent`;
+  trow.append(t);
+  h.append(trow);
+
+  const f = el("div", "filters");
+  f.append(el("span", "lbl", "Show"));
+  [["all", "All", c.all], ["learning", "Learning now", c.learning],
+   ["unspent", "Ready · unused", c.unspent], ["new", "New this turn", c.fresh]
+  ].forEach(([k, label, n]) => {
+    const b = el("button", "pill");
+    b.innerHTML = `${label}<span class="n">${n}</span>`;
+    b.setAttribute("aria-pressed", STATE.filter === k);
+    b.onclick = () => { STATE.filter = k; syncSeg("seg-filter", "f", k); render(); };
+    f.append(b);
+  });
+  h.append(f);
+  card.append(h);
+
+  const body = el("div", "scrollbody");
+
+  grouped().forEach(area => {
+    const hasMatch = area.domains.some(d => d.nodes.some(matches));
+    // A filter folds what it does not match; a hand fold outlives the filter.
+    const autoFold = STATE.filter !== "all" && !hasMatch;
+    const closed = STATE.folded[area.key] || autoFold;
+
+    const sec = el("div", "cat" + (closed ? " closed" : ""));
+
+    if (STATE.grouped) {
+      const head = el("div", "cathead");
+      head.append(el("span", "caret", "▾"));
+      head.append(el("span", "catname", area.label));
+      const sum = el("span", "catsum");
+      sum.innerHTML = areaSummary(area);
+      head.append(sum);
+      head.onclick = () => {
+        STATE.folded[area.key] = !closed;
+        render();
+      };
+      sec.append(head);
+    }
+
+    const cbody = el("div", "catbody");
+    area.domains.forEach(d => {
+      cbody.append(domainRow(d));
+      const openNode = d.nodes.find(n => n.n === STATE.open);
+      if (openNode) cbody.append(detailFor(openNode));
+    });
+    sec.append(cbody);
+    body.append(sec);
+  });
+
+  card.append(body);
+  mount.append(card);
+
+  const out = document.getElementById("fit");
+  out.textContent = "";
+  const areas = grouped().length;
+  out.append(el("span", "badge", `card is ${Math.round(card.getBoundingClientRect().width)}px`));
+  out.append(el("span", null,
+    `${STATE.n} domains · ${c.all} knowledges · ${STATE.grouped ? areas + " subject areas" : "no grouping"}`));
+}
+
+function syncSeg(id, attr, val) {
+  document.querySelectorAll(`#${id} button`).forEach(b =>
+    b.setAttribute("aria-pressed", b.dataset[attr] === String(val)));
+}
+function wireSeg(id, fn) {
+  const seg = document.getElementById(id);
+  seg.querySelectorAll("button").forEach(b => {
+    b.onclick = () => {
+      seg.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
+      b.setAttribute("aria-pressed", "true");
+      fn(b);
+      render();
+    };
+  });
+}
+
+wireSeg("seg-size", b => {
+  STATE.n = +b.dataset.n;
+  if (!domains().some(d => d.nodes.some(n => n.n === STATE.open))) STATE.open = "";
+});
+wireSeg("seg-group", b => { STATE.grouped = b.dataset.g === "1"; });
+wireSeg("seg-filter", b => { STATE.filter = b.dataset.f; });
+
+addEventListener("keydown", e => {
+  if (e.key === "Escape" && STATE.open) { STATE.open = ""; render(); }
+});
+
+document.getElementById("themebtn").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+};
+
+render();
+</script>

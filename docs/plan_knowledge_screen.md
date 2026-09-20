@@ -334,6 +334,9 @@ Both steps are one-time per checkout, and skipping either makes every scene fail
 
 - `docs/knowledge_screen_ux_proposal.html` — the prototype this plan describes
 - `docs/knowledge_visibility_ux_proposal.html` — the eight options it was chosen from
+- `docs/plan_knowledge_rows.md` — the follow-on arc that re-lays this screen out as ROWS. §1's
+  columns-as-domains decision is the one it overturns, and only that one: the columns cannot hold
+  the ten-to-twelve branches `plan_civilization_steps.md` commits to
 - `docs/plan_intensification_ladder.md` — the rung engine and the knowledge pattern
 - `docs/plan_contact_and_logistics.md` §Q4 — the route branch, the next domain to appear
 - `.claude/rules/client/overlay-channels.md` · `.claude/rules/client/band-city-panel.md` ·
