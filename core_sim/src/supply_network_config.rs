@@ -39,8 +39,34 @@ pub struct SupplyNetworkConfig {
     pub throughput_per_turn: f32,
     /// Fraction of each transfer lost in transit (`0` = frictionless, `1` = nothing arrives).
     pub friction: f32,
-    /// Dead-band: transfers smaller than this are skipped so a balanced network doesn't churn.
-    pub min_transfer: f32,
+    /// ⛔ **THE DEAD-BAND, AS A FRACTION OF THE NODE'S OWN PER-CAPITA FAIR SHARE** — never an
+    /// absolute quantity, and never a fraction of what the *network* holds. A node whose move is
+    /// smaller than `this × its fair share` is skipped so a balanced network doesn't churn.
+    ///
+    /// **It is relative because one balancer serves commodities three orders of magnitude apart.**
+    /// The lever was an absolute `0.5` from the food-only original, and materials then inherited it
+    /// unexamined: food is held in the hundreds, where `0.5` is the noise floor it was chosen to be,
+    /// while a material is held in single units **and pools per `(material, rating)`** — bone alone
+    /// lands in eight distinct rating piles across the shipped fauna roster. On a pile of `0.75` a
+    /// `0.5` floor is not a dead-band, it is a wall: the balancer computed the move and dropped it,
+    /// every turn, silently. A neighbour's bone could not reach a band that had none.
+    ///
+    /// **The fair share is the denominator because it is what the move is measured against.** A
+    /// node ships or asks for the gap between its store and its per-capita share, so scaling the
+    /// threshold to `Σ stores` would let it grow with member count while the gap it gates does not
+    /// — twelve camps at the stock two camps hold per head would have to clear a bar six times
+    /// higher for the same shortfall. Against the fair share the lever is **member-count free by
+    /// construction**: twelve equal camps and two equal camps at the same per-capita stock resolve
+    /// the identical dead-band.
+    ///
+    /// **`0.0025` is chosen to leave food where it is**, not as a fresh tuning judgement: it
+    /// reproduces the retired absolute `0.5` exactly on the case that floor was calibrated against
+    /// — two camps holding `400` food between them have a fair share of `200`, and
+    /// `200 × 0.0025 = 0.5`. On a sub-unit pile it follows the pile down: a `0.75` bone stock split
+    /// two ways is a `0.375` fair share and a `0.00094` threshold, some **400× smaller than the
+    /// `0.375` move it would have to block**, so it cannot wall one — and it rises again with the
+    /// pile, which is the point.
+    pub min_transfer_fraction: f32,
 }
 
 impl Default for SupplyNetworkConfig {
@@ -49,7 +75,7 @@ impl Default for SupplyNetworkConfig {
             reach_tiles: 3,
             throughput_per_turn: 50.0,
             friction: 0.05,
-            min_transfer: 0.5,
+            min_transfer_fraction: 0.0025,
         }
     }
 }
@@ -167,6 +193,9 @@ mod tests {
             (0.0..=1.0).contains(&config.friction),
             "friction is a fraction in [0, 1]"
         );
-        assert!(config.min_transfer >= 0.0);
+        assert!(
+            (0.0..=1.0).contains(&config.min_transfer_fraction),
+            "the dead-band is a fraction of the node's own fair share, not a quantity"
+        );
     }
 }

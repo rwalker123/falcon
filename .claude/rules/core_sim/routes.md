@@ -201,7 +201,7 @@ people."*
 **A link is not a headcount**: two camps pooling a larder are a *standing fact*, not a party of a
 countable size — so its rate is per link per turn. **A march is people**, so its rate is per worker.
 ⛔ **No third lever for shipments, and no mass term**: `balance_supply_networks` drops
-sub-`min_transfer` moves, so a mass-driven rate is the error §4.13a ① already corrected.
+sub-dead-band moves, so a mass-driven rate is the error §4.13a ① already corrected.
 
 Each log entry carries **the work each tile of that journey earns** (`RouteJourney::work_per_tile`),
 resolved where the journey was recorded — so there is still exactly one drain and one accrual loop,

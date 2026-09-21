@@ -528,7 +528,7 @@ impl RouteTrafficLog {
     ///
     /// ⛔ **A LINK IS NOT A HEADCOUNT**, which is why this rate is per link per turn where
     /// [`Self::marched`]'s is per worker: two camps pooling a larder are a **standing fact**, not a
-    /// party of a countable size, and `balance_supply_networks` drops sub-`min_transfer` moves so a
+    /// party of a countable size, and `balance_supply_networks` drops sub-dead-band moves so a
     /// balanced network ships nothing at all. A mass term here is the error §4.13a ① already
     /// corrected.
     pub fn walked(&mut self, from: UVec2, to: UVec2, ladder: &LadderConfig) {
