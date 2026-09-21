@@ -1,0 +1,1225 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Band Trade Tab</title>
+
+<style>
+  /* ============================================================
+     Tokens. The DOCUMENT shell is theme-aware; the PROTOTYPE keeps
+     the game's own dark console palette in both themes on purpose —
+     the HUD is dark and stays dark. The `--g-*` set is lifted from
+     clients/.../ui/HudStyle.gd.
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    /* The game palette — fixed across both document themes. */
+    --g-ground:    #0b1114;
+    --g-panel:     #111a1e;
+    --g-panel-2:   #0e161a;
+    --g-line:      #26363c;
+    --g-line-soft: #1b282d;
+    --g-ink:       #e9efe9;
+    --g-dim:       #9db0ad;
+    --g-faint:     #6f8380;
+    --g-signal:    #4fe0cf;
+    --g-signal-deep: #1f9c8e;
+    --g-signal-wash: rgba(79, 224, 207, 0.14);
+    --g-warn:      #f2b13f;
+    --g-danger:    #e8746a;
+    --g-healthy:   #76cd80;
+    --g-pigment:   #c89c66;
+    --g-ghost:     #13211f;
+    --g-primary:   #163a34;
+    --g-primary-t: #d8fff8;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 72ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+  :root[data-theme="dark"] {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 96px; }
+  .prose { max-width: var(--measure); }
+
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 34px 0 24px;
+  }
+  header.top .wrap { padding-bottom: 0; }
+  header.top h1 { font-size: 27px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.01em; max-width: 26ch; }
+  header.top .sub { color: var(--dim); margin: 0; max-width: var(--measure); }
+  header.top .kicker {
+    font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 12px;
+  }
+
+  section { margin-top: 10px; }
+
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 54px 0 10px;
+    padding-top: 18px; border-top: 1px solid var(--line-soft); }
+  .sec-num { font: 600 11px/1 var(--mono); color: var(--faint); letter-spacing: .09em; }
+  .sec-head h2 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+
+  h3 { font-size: 15px; margin: 26px 0 4px; }
+  p { margin: 0 0 12px; max-width: var(--measure); }
+  .lede { color: var(--dim); max-width: var(--measure); }
+
+  code, .mono { font-family: var(--mono); font-size: 0.87em; }
+  code { background: var(--panel-2); padding: 1px 4px; border-radius: 2px; }
+  b, strong { font-weight: 640; }
+
+  .callout {
+    border-left: 2px solid var(--signal); background: var(--signal-wash);
+    padding: 12px 14px; margin: 16px 0; border-radius: 0 var(--r) var(--r) 0;
+    max-width: var(--measure);
+  }
+  .callout.warn { border-left-color: var(--warn); background: rgba(154, 103, 8, 0.08); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .nk {
+    display: block; font: 600 10px/1 var(--mono); letter-spacing: .1em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 6px;
+  }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 14px 0 6px; }
+  th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font: 600 10px/1.4 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+  td .who { display: block; font: 500 11px/1.4 var(--mono); color: var(--faint); margin-top: 2px; }
+  .table-scroll { overflow-x: auto; }
+
+  /* ---------- the stage ---------- */
+  .stage {
+    margin: 22px 0 8px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--r); overflow: hidden;
+  }
+  .controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 12px 14px; border-bottom: 1px solid var(--line-soft); background: var(--panel-2);
+  }
+  .ctl-label { font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .seg button {
+    font: 500 12px/1 var(--sans); padding: 7px 11px; border: 0; background: transparent;
+    color: var(--dim); cursor: pointer; border-right: 1px solid var(--line);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--signal); color: #fff; }
+  .seg button:hover:not([aria-pressed="true"]) { background: var(--panel); color: var(--ink); }
+
+  .screen {
+    background: var(--g-ground); padding: 22px; min-height: 560px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    background-image:
+      radial-gradient(circle at 26% 30%, rgba(31,156,142,0.10), transparent 46%),
+      radial-gradient(circle at 74% 66%, rgba(200,156,102,0.07), transparent 44%);
+  }
+  /* A horizontal dock is drawn at its REAL pixel width and scaled to fit the page,
+     because the whole point of §05 is how wide the strip has to be. The caption
+     under it states the true width, never the drawn one. */
+  .screen.wide { justify-content: flex-end; overflow: hidden; }
+  .strip-scale { transform-origin: top center; }
+  .strip-cap {
+    margin-top: 12px; text-align: center; font: 500 11px/1.5 var(--mono); color: var(--g-faint);
+  }
+  .strip-cap b { color: var(--g-signal); font-weight: 600; }
+  .strip-cap .bad { color: var(--g-warn); }
+
+  /* ---------- the panel ---------- */
+  .bp {
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: 2px;
+    color: var(--g-ink); font-family: var(--sans); font-size: 12px; line-height: 1.42;
+    width: 380px; padding: 10px 12px; box-shadow: 0 10px 34px rgba(0,0,0,.34);
+  }
+  .screen.wide .bp { width: var(--strip-w); }
+
+  .bp-head { border-bottom: 1px solid var(--g-line); padding-bottom: 7px; margin-bottom: 8px; }
+  .bp-subject { display: flex; align-items: center; gap: 7px; }
+  .bp-glyph { color: var(--g-pigment); font-size: 13px; }
+  .bp-name { font-weight: 640; font-size: 13px; letter-spacing: .01em; }
+  .bp-cycler { margin-left: auto; color: var(--g-faint); font: 500 11px/1 var(--mono); }
+  .bp-where { color: var(--g-faint); font-size: 11px; margin-top: 1px; }
+
+  .bp-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--g-line); margin-bottom: 9px; }
+  .bp-tab {
+    font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--g-faint); padding: 7px 9px 6px; border-bottom: 2px solid transparent;
+    cursor: default; white-space: nowrap;
+  }
+  .bp-tab.on { color: var(--g-signal); border-bottom-color: var(--g-signal); }
+  .bp-tab .badge {
+    display: inline-block; margin-left: 5px; padding: 0 4px; border-radius: 6px;
+    background: var(--g-ghost); color: var(--g-dim); font-size: 9px; letter-spacing: 0;
+  }
+  .bp-tab .badge.hot { background: rgba(242,177,63,.18); color: var(--g-warn); }
+
+  /* zones abreast, bottom dock */
+  .bp-zones { display: flex; gap: 12px; }
+  .bp-zone { width: 354px; flex: 0 0 auto; }
+  .bp-zone.band { width: 380px; }
+  .bp-zone.work { flex: 1 1 auto; width: auto; min-width: 380px; }
+  .bp-zone .sec-gap { height: 10px; border-top: 1px solid var(--g-line-soft); margin: 10px 0 0; }
+  .bp-zone + .bp-zone { border-left: 1px solid var(--g-line-soft); padding-left: 12px; }
+  .bp-zone.ghosted { opacity: .30; }
+  .zone-title {
+    font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--g-faint); margin-bottom: 7px;
+  }
+
+  /* ---------- trade zone internals ---------- */
+  .net-head {
+    background: var(--g-panel-2); border: 1px solid var(--g-line-soft); border-radius: 2px;
+    padding: 6px 8px; margin-bottom: 9px;
+  }
+  .net-head .l1 { display: flex; align-items: baseline; gap: 6px; }
+  .net-head .l1 .k { font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--g-faint); }
+  .net-head .l1 .v { font-size: 11.5px; color: var(--g-dim); }
+  .net-head .span { margin-left: auto; font: 500 11px/1 var(--mono); color: var(--g-signal); }
+  .net-head .l2 { font-size: 10.5px; color: var(--g-faint); margin-top: 3px; }
+  .net-head .l2 .edge { color: var(--g-warn); }
+
+  .grp { margin-bottom: 9px; }
+  .grp-head {
+    display: flex; align-items: baseline; gap: 6px;
+    font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--g-faint); border-bottom: 1px solid var(--g-line-soft);
+    padding-bottom: 4px; margin-bottom: 5px;
+  }
+  .grp-head .sub { letter-spacing: 0; text-transform: none; font-family: var(--sans); font-size: 10.5px; }
+  .grp-head .cnt { margin-left: auto; letter-spacing: 0; font-family: var(--sans); font-size: 10.5px; }
+
+  .row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
+  .row.click { cursor: pointer; border-radius: 2px; }
+  .row.click:hover { background: var(--g-ghost); }
+  .row.on { background: var(--g-ghost); }
+  .row .lab { color: var(--g-ink); }
+  .row .lab.dim { color: var(--g-dim); }
+  .row .sub { color: var(--g-faint); font-size: 10.5px; }
+  .row .fill { flex: 1 1 auto; min-width: 4px; }
+  .row .amt { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .row.sub-row { padding-left: 12px; }
+  .row.sub-row .lab { color: var(--g-dim); font-size: 11px; }
+  .row.sub-sub { padding-left: 24px; }
+  .row.sub-sub .lab { color: var(--g-faint); font-size: 10.5px; }
+  .in  { color: var(--g-healthy); }
+  .out { color: var(--g-warn); }
+  .caret { color: var(--g-faint); font-size: 9px; width: 9px; display: inline-block; }
+
+  .chip {
+    display: inline-block; border: 1px solid var(--g-line); border-radius: 2px;
+    padding: 0 4px; font: 500 9.5px/1.55 var(--mono); color: var(--g-dim); background: var(--g-panel-2);
+    white-space: nowrap;
+  }
+  .chips { display: inline-flex; gap: 3px; flex-wrap: wrap; }
+
+  .quiet { color: var(--g-faint); font-size: 11px; padding: 10px 2px; }
+  .quiet b { color: var(--g-dim); font-weight: 600; }
+
+  .roster { margin-top: 9px; border-top: 1px solid var(--g-line-soft); padding-top: 7px; }
+  .roster .scope { font-size: 10.5px; color: var(--g-faint); margin-bottom: 4px; }
+  .roster .scope em { color: var(--g-signal); font-style: normal; }
+  .roster .me .lab { color: var(--g-signal); }
+
+  .legdot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--g-faint); margin-right: 5px; vertical-align: middle; }
+
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(258px, 1fr)); gap: 12px; padding: 14px; background: var(--panel-2); border-top: 1px solid var(--line-soft); }
+  .note { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 10px 12px; }
+  .note .nk { display: block; font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); margin-bottom: 5px; }
+  .note p { font-size: 13px; margin: 0; color: var(--dim); }
+  .note p + p { margin-top: 7px; }
+
+  ul.tight { max-width: var(--measure); padding-left: 20px; }
+  ul.tight li { margin-bottom: 7px; }
+
+  .verdict {
+    border: 1px solid var(--line); border-left: 3px solid var(--signal);
+    border-radius: var(--r); padding: 12px 14px; margin: 14px 0; max-width: var(--measure);
+    background: var(--panel);
+  }
+  .verdict .nk { display: block; font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+  .verdict p:last-child { margin-bottom: 0; }
+
+  .ask { counter-reset: ask; }
+  .ask .q { border-top: 1px solid var(--line-soft); padding-top: 14px; margin-top: 18px; max-width: var(--measure); }
+  .ask .q h3 { margin-top: 0; }
+  .ask .q h3::before {
+    counter-increment: ask; content: "Q" counter(ask) " ";
+    font: 600 11px/1 var(--mono); color: var(--signal); margin-right: 6px;
+  }
+  .rec { color: var(--healthy); font-weight: 600; }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">Issue #731 · arc #527 · UX proposal</p>
+    <h1>Your bone went somewhere and the game never mentioned it.</h1>
+    <p class="sub">
+      A band's larder is rebalanced with its neighbours every turn, parties land cargo in it, and a
+      splinter walks off with a dowry — and the only surface that says so is two rows buried in the
+      Food and Fodder popovers. Materials, which is where the interesting movement is, have no
+      account at any layer. This is a fourth dock tab that states what crossed, and three shapes it
+      could take.
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <div class="sec-head"><span class="sec-num">01</span><h2>What exists today, and exactly where it stops</h2></div>
+
+  <p>
+    #548 shipped two rows — <code>⇄ Local exchange</code> and <code>⇄ Trade route</code> — inside the
+    <b>Food</b> and <b>Fodder</b> disclosures. They name the <em>link</em> the goods crossed, ▲ green
+    for in and ▼ amber for out, and that is the whole of the surface.
+  </p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Layer</th><th>Food</th><th>Fodder</th><th>Materials</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>The sim books it</b><span class="who">TransferLedger</span></td>
+        <td class="fix">Yes — <code>last_food_transfers</code></td>
+        <td class="fix">Yes — <code>last_fodder_transfers</code></td>
+        <td class="fix"><b>No.</b> <code>supply.rs:670</code> gates the ledger write on <code>FOOD</code>/<code>FODDER</code></td>
+      </tr>
+      <tr>
+        <td><b>The wire carries it</b></td>
+        <td class="fix">Yes, ×4 magnitudes</td>
+        <td class="fix">Yes, ×4 magnitudes</td>
+        <td class="fix">No</td>
+      </tr>
+      <tr>
+        <td><b>A screen says it</b></td>
+        <td class="fix">Two rows in a popover</td>
+        <td class="fix">Two rows in a popover</td>
+        <td class="fix">Nothing, anywhere</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <span class="nk">The numbers already exist and are thrown away</span>
+    <p>
+      The material half of <code>balance_supply_networks</code> (<code>supply.rs:604–655</code>) runs
+      one <code>balance_commodity</code> pass per <code>(material, rating)</code> pile and computes
+      each member's signed delta — then applies it to the store and drops it on the floor. The tab
+      does not need a new measurement; it needs the existing one booked.
+    </p>
+  </div>
+
+  <p>
+    And the reason the retired <code>Trade:</code> scalar row was never replaced with another row is
+    still true: <code>BandDetailLines.gd:160</code> — <em>"what a band holds beyond food and fodder
+    is MATERIALS — one pile per material per rating — and that is a LIST, not a vitals row."</em>
+    A tab has the room a row did not.
+  </p>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">02</span><h2>Two levels are honest. A third would be invented.</h2></div>
+
+  <p>
+    <code>balance_commodity</code> is a <b>pooled equalization, not pairwise routing</b>: every node
+    above its per-capita fair share ships into one anonymous pot, friction comes off the top, and
+    every node below draws from what is left in proportion to how short it is. There is no fact of
+    the form <em>"Ashfell's bone went to Barrowmere"</em> to render.
+  </p>
+
+  <div class="callout warn">
+    <span class="nk">⛔ But that is true of the LOCAL arm only — and this changes the design</span>
+    <p>
+      A <b>route</b> crossing is a party, and a party has a name at both ends. A shipment carries
+      <code>ExpeditionMission::Trade { destination_band, destination_name }</code>
+      (<code>server.rs:6630</code>); the band it lands on knows the party's <code>home_band</code>
+      (<code>expeditions.rs:868</code>). So <em>"12.0 food left for Bitterbrook"</em> is a fact the
+      sim already holds, while <em>"0.8 bone came from Barrowmere"</em> never will be.
+    </p>
+    <p>
+      The issue states the no-attribution constraint flat across both arms. It is exact for
+      <code>Local</code> and too strong for <code>Route</code>, and <b>Option C below is the layout
+      that spends the difference</b> instead of levelling down to the weaker arm.
+    </p>
+  </div>
+
+  <p>So the tab reads at:</p>
+  <ul class="tight">
+    <li><b>This band's own net, per commodity, per link kind</b> — exact, per-node, already booked for food and fodder.</li>
+    <li><b>The network roster, each member with its own net</b> — also exact; every member's delta is computed in the same loop.</li>
+    <li><b>A route crossing's counterparty, by name</b> — exact, because a party went there.</li>
+    <li><s>A quantity on a local edge</s> — invented. If one is ever wanted it is a balancer change, not a readout.</li>
+  </ul>
+
+  <div class="callout">
+    <span class="nk">Bands have names now</span>
+    <p>
+      <code>DetailFormat.gd:174</code> says naming the counterparty was built and rejected because
+      <em>"bands genuinely have no names in this game (issue #615)"</em>. <b>#615 is closed</b> —
+      <code>core_sim/src/data/band_names.json</code> ships the curated list and every band carries a
+      real name. The second half of that objection still stands for a <em>row</em> (a variable-length
+      name wraps in a 354px vitals line); it does not stand for a tab. That comment needs correcting
+      whichever option wins.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">03</span><h2>The prototype</h2></div>
+  <p class="lede">
+    Three shapes for the same facts, live. Switch the <b>Layout</b> to compare them; switch the
+    <b>Turn</b> to see a busy turn, a quiet one, and the empty state that is most turns. The
+    <b>Dock</b> toggle shows what a fourth zone does to the wide shell — see §05.
+  </p>
+
+  <div class="stage">
+    <div class="controls">
+      <span class="ctl-label">Layout</span>
+      <div class="seg" role="group" aria-label="Layout">
+        <button type="button" data-layout="a" aria-pressed="false">A · By commodity</button>
+        <button type="button" data-layout="b" aria-pressed="false">B · In &amp; Out</button>
+        <button type="button" data-layout="c" aria-pressed="true">C · By link</button>
+      </div>
+      <span class="ctl-label">Turn</span>
+      <div class="seg" role="group" aria-label="Turn">
+        <button type="button" data-turn="busy" aria-pressed="true">Busy</button>
+        <button type="button" data-turn="quiet" aria-pressed="false">Quiet</button>
+        <button type="button" data-turn="empty" aria-pressed="false">Nothing crossed</button>
+      </div>
+      <span class="ctl-label">Dock</span>
+      <div class="seg" role="group" aria-label="Dock">
+        <button type="button" data-dock="side" aria-pressed="true">Side · tabbed</button>
+        <button type="button" data-dock="bottom4" aria-pressed="false">Bottom · 4 flanks (i)</button>
+        <button type="button" data-dock="bottom3" aria-pressed="false">Bottom · under Parties (iii)</button>
+      </div>
+    </div>
+
+    <div class="screen" id="screen">
+      <div class="strip-scale" id="scaler"><div class="bp" id="panel"></div></div>
+      <div class="strip-cap" id="cap"></div>
+    </div>
+
+    <div class="notes">
+      <div class="note">
+        <span class="nk">Try it — the roster is scoped</span>
+        <p>Click any commodity row. The roster below rescopes to that commodity, because a member's
+          net <em>cannot</em> be one number: nothing may sum bone into food, or one bone rating into
+          another. With nothing selected it states who is in the network and how far off each one
+          sits — which is the answer to <em>why is that camp not pooling with me</em>.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Try it — Nothing crossed</span>
+        <p>Most turns are that one. All three layouts have to answer it without reading as broken,
+          and without the player concluding the network is gone. The empty state states the network
+          and the span, then says plainly that nothing moved.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Materials are never summed</span>
+        <p>A material group header states <b>how many piles moved</b>, never a total: bone is rated on
+          <code>density</code> × <code>length</code> and the shipped fauna roster produces 8 distinct
+          bone piles. A "bone 3.2" would be the retired trade scalar rebuilt one material at a time.</p>
+      </div>
+      <div class="note">
+        <span class="nk">The roster does not balance to zero</span>
+        <p>Scope it to <b>food</b>: two camps shipped 6.7 and this band drew 6.4. The missing 0.3 is
+          <code>friction</code>, taken off the top of the pot by <code>balance_commodity</code> — the
+          cost of the distance, and the one figure on the tab nobody received. Scope it to
+          <b>hide</b> instead and there is no roster at all: a party carried that, from a band that
+          need not be pooling with us.</p>
+      </div>
+      <div class="note">
+        <span class="nk">The span is a floor, not the rule</span>
+        <p>The header says <em>within 4 tiles</em>, not <em>within 3</em>: since slice 13b the link
+          forms at <code>max(reach_tiles, the route's own reading)</code>, so a road extends pooling
+          past the config lever. Copy that hard-codes 3 is already wrong.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>What each layout puts first</h3>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Layout</th><th>Organizing axis</th><th>Good at</th><th>Costs</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>A · By commodity</b><span class="who">the ledger</span></td>
+        <td class="fix">Commodity → link → cause</td>
+        <td class="fix">Answers <em>"where did my bone go"</em> directly. Extends the two #548 rows without
+          inventing a new idiom — the same words in the same order, one level out.</td>
+        <td class="fix">Deepest nesting of the three (three levels), and the material list dominates the
+          zone on any turn where more than two piles move.</td>
+      </tr>
+      <tr>
+        <td><b>B · In &amp; Out</b><span class="who">the manifest</span></td>
+        <td class="fix">Direction → everything else on one line</td>
+        <td class="fix">Flattest, scans fastest, and the two halves are the question the tab is named
+          for. Works identically at any list length.</td>
+        <td class="fix">Splits one commodity across two places — food in and food out never appear
+          together, so <em>net</em> is arithmetic the player does.</td>
+      </tr>
+      <tr>
+        <td><b>C · By link</b><span class="who">the mechanism</span> <span class="rec">recommended</span></td>
+        <td class="fix">Link kind → what crossed on it</td>
+        <td class="fix">The one axis the player can <em>act</em> on (#548's own finding), and the only
+          layout where the two arms are allowed to say different things: Local states a roster and no
+          peers, Route names every counterparty and its turn.</td>
+        <td class="fix">A material moving on both arms appears twice. The two sections are unequal in
+          size on most turns — Local is usually the whole of it.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="verdict">
+    <span class="nk">My recommendation</span>
+    <p>
+      <b>C.</b> The asymmetry in §02 is the deciding fact: a route crossing knows its counterparty and
+      a local crossing structurally cannot, and C is the only layout whose shape survives that being
+      true. In A and B the two arms sit in the same list and have to be rendered to the weaker one's
+      standard — every row either omits the peer, or shows it on some rows and not others with no
+      structure explaining why.
+    </p>
+    <p>
+      C also inherits #548's reasoning rather than re-deciding it: <em>one of these two links the
+      player built, the other happens whether they look or not</em>. That is the sentence the top-level
+      split should make.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">04</span><h2>The producer split has six causes, not three</h2></div>
+
+  <p>
+    The issue scopes a producer split — <em>local pooling, an arriving shipment, an expedition's
+    launch draw</em> — because one counter covers several different events. Grepping every writer of
+    the ledger turns up <b>six</b>, and they do not collapse to three:
+  </p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Cause</th><th>Link</th><th>Direction</th><th>Counterparty</th><th>Writer</th></tr></thead>
+    <tbody>
+      <tr><td><b>Pooled with neighbours</b></td><td>Local</td><td>both</td><td class="fix">None — anonymous pot</td><td><code>supply.rs:687</code></td></tr>
+      <tr><td><b>Dowry to a splinter</b></td><td>Local</td><td>out</td><td class="fix">The new band, by name</td><td><code>fission.rs:411</code></td></tr>
+      <tr><td><b>Dowry from a parent</b></td><td>Local</td><td>in</td><td class="fix">The parent, by name</td><td><code>fission.rs:483</code></td></tr>
+      <tr><td><b>Shipment loaded</b></td><td>Route</td><td>out</td><td class="fix">Destination, by name</td><td><code>server.rs:6619</code></td></tr>
+      <tr><td><b>Shipment landed</b></td><td>Route</td><td>in</td><td class="fix">Sender, by name</td><td><code>expeditions.rs:1449</code></td></tr>
+      <tr><td><b>Party dropped off / came home</b></td><td>Route</td><td>in</td><td class="fix">Own party — no peer</td><td><code>expeditions.rs:895, 989</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout warn">
+    <span class="nk">A defect the split will expose</span>
+    <p>
+      <code>server.rs:6618</code> debits the launch as <code>cargo + provisions</code> — the shipment's
+      goods <em>and the party's own walking rations</em>, in one number. Under a cause split those are
+      two different events: the cargo is a transfer to another band, the rations are a larder the party
+      carries and folds back home if unspent. A row reading <em>"Shipment to Bitterbrook — 12.0"</em>
+      would be overstating the shipment by whatever the party is eating on the way.
+    </p>
+    <p>
+      I will split that term when I implement it, unless you want it left alone. It is a one-line change
+      at the debit and a second cause key on the wire; nothing downstream reads the combined figure
+      except the row that is being replaced.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">05</span><h2>A fourth zone is not free on a bottom dock</h2></div>
+
+  <p>
+    <code>BandCityPanel</code> picks its shell off the panel's own width against
+    <code>wide_shell_min_width()</code>, which is <b>derived from the live zone list</b>: each zone's
+    flank, plus one separator span per gap, plus the card chrome. A band declares three today:
+  </p>
+
+  <table>
+    <tbody>
+      <tr><td><b>Today — 3 zones</b></td><td class="mono">380 + 380 + 354 + 2×25 + 26 = <b>1190</b></td></tr>
+      <tr><td><b>With a Trade zone</b></td><td class="mono">380 + 380 + 354 + 354 + 3×25 + 26 = <b>1569</b></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    So <b>a bottom dock between 1190 and 1569px would stop showing its zones abreast and start
+    tabbing</b> — a regression at 1366, 1440 and 1536, which is most laptops. The Trade zone is the
+    one zone whose content is empty on most turns, so it would be buying that with the least.
+  </p>
+
+  <div class="callout">
+    <span class="nk">Three ways out, and what each costs</span>
+    <p>
+      <b>(i) Declare it anyway</b> — simplest, honest, and the wide shell degrades for a band of
+      window widths. <b>(ii) Declare it only when something crossed</b> — the threshold moves per
+      turn, which means the shell can flip mid-game on a turn tick; that is the map-flicker failure
+      the fixed cross-axis size exists to prevent, so I would not. <b>(iii) Declare it on the narrow
+      shell only</b>, and on a wide shell append the Trade content as a section under Parties — one
+      extra section in an existing scrolling zone, no new flank, threshold unchanged at 1190.
+    </p>
+  </div>
+
+  <p>
+    <b>I would take (iii)</b>, and it is a small change to <code>BandPanelController</code>'s two
+    layout branches, which already differ. But it is a genuine trade — under (iii) the Trade content
+    is one scroll down on a bottom dock rather than its own column — so it is yours to call.
+    <b>The prototype's Dock toggle draws both</b>, each at the real strip width its zone list
+    demands, so the difference is something to look at rather than to take on arithmetic.
+  </p>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">06</span><h2>What the sim has to publish</h2></div>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Fact</th><th>Where it is now</th><th>What is needed</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Material transfers</b></td>
+        <td class="fix">Computed in <code>supply.rs:604–655</code>, discarded</td>
+        <td class="fix">A <code>TransferLedger</code> per <code>(material, BandKey)</code> beside the food
+          and fodder ones, published per rating, <b>never summed</b></td>
+      </tr>
+      <tr>
+        <td><b>The cause</b></td>
+        <td class="fix">Six writers, one <code>TransferLink</code> each</td>
+        <td class="fix">A cause key per crossing (§04), and the <code>cargo + provisions</code> debit split</td>
+      </tr>
+      <tr>
+        <td><b>The counterparty</b></td>
+        <td class="fix">Held at every Route writer, published by none</td>
+        <td class="fix">Band id + name on a Route crossing. <b>Nothing on a Local one</b> — that is the
+          invariant, not an omission</td>
+      </tr>
+      <tr>
+        <td><b>The effective span</b></td>
+        <td class="fix">Server-side only; the client has never seen <code>reach_tiles</code></td>
+        <td class="fix">The span the links actually formed at — <code>max(reach_tiles, route reading)</code>,
+          not the config lever</td>
+      </tr>
+      <tr>
+        <td><b>The network roster</b></td>
+        <td class="fix">Members resolved per turn in the same loop</td>
+        <td class="fix">Member band ids + each one's signed delta, per commodity</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="ask">
+  <div class="sec-head"><span class="sec-num">07</span><h2>Decisions I need from you</h2></div>
+
+  <div class="q">
+    <h3>Which layout</h3>
+    <p>A, B or C. I recommend <b>C</b> for the reason in §03 — it is the only one that survives a route
+      crossing knowing its counterparty and a local crossing not.</p>
+  </div>
+
+  <div class="q">
+    <h3>Route crossings name the band at the other end — yes or no</h3>
+    <p>This is the substantive departure from the issue, which bars per-peer attribution flat. It is
+      exact for the Local arm and too strong for Route (§02). If you want the blanket rule kept
+      anyway, say so and C loses most of its advantage — then I would build A.</p>
+  </div>
+
+  <div class="q">
+    <h3>The wide shell</h3>
+    <p>(i) a real fourth flank and the 1190 → 1569 threshold move, or (iii) tab-only with the content
+      appended under Parties on a wide dock. I recommend <b>(iii)</b>.</p>
+  </div>
+
+  <div class="q">
+    <h3>The <code>cargo + provisions</code> debit</h3>
+    <p>Split it (my default), or leave it and have the shipment row overstate by the party's rations.</p>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------------
+  // The band, and what crossed. Names are from core_sim/src/data/band_names.json;
+  // rating chips are `axis: band` per CraftingPanel's CHARACTERISTIC_CHIP_FORMAT,
+  // over the shipped characteristic_bands (poor / fair / good / excellent).
+  // ---------------------------------------------------------------------------
+  var BAND = { name: "Ashfell", stage: "Camp", pos: "(71, 18)" };
+
+  var NETWORK = {
+    span: 4,           // EFFECTIVE span — a road carried it past the 3-tile reach floor
+    reach: 3,          // the config lever, for the tooltip only
+    members: [
+      { name: "Ashfell",    you: true,  dist: 0 },
+      { name: "Barrowmere", you: false, dist: 2 },
+      { name: "Bitterbrook", you: false, dist: 4, road: true, edge: true }
+    ]
+  };
+
+  // dir: in | out   link: local | route
+  // cause: pooled | dowry_out | dowry_in | shipment_out | shipment_in | party_home
+  var TURNS = {
+    busy: [
+      { good: "food",   dir: "in",  link: "local", cause: "pooled",       amt: 6.4 },
+      { good: "food",   dir: "out", link: "route", cause: "shipment_out", amt: 12.0, peer: "Bitterbrook", when: "left turn 139" },
+      { good: "food",   dir: "in",  link: "route", cause: "party_home",   amt: 3.1 },
+      { good: "fodder", dir: "out", link: "local", cause: "pooled",       amt: 2.0 },
+      { good: "bone",   dir: "in",  link: "local", cause: "pooled",       amt: 0.8,
+        chips: [["density","good"],["length","fair"]] },
+      { good: "bone",   dir: "out", link: "local", cause: "pooled",       amt: 0.4,
+        chips: [["density","fair"],["length","fair"]] },
+      { good: "hide",   dir: "in",  link: "route", cause: "shipment_in",  amt: 1.5, peer: "Barrowmere", when: "landed this turn",
+        chips: [["toughness","excellent"],["suppleness","good"]] },
+      { good: "wood",   dir: "out", link: "route", cause: "shipment_out", amt: 1.1, peer: "Bitterbrook", when: "left turn 139",
+        chips: [["hardness","good"],["pliancy","fair"]] }
+    ],
+    quiet: [
+      { good: "food", dir: "in", link: "local", cause: "pooled", amt: 2.1 },
+      { good: "bone", dir: "in", link: "local", cause: "pooled", amt: 0.2,
+        chips: [["density","fair"],["length","poor"]] }
+    ],
+    empty: []
+  };
+
+  // Each member's own signed net, per commodity key. Exact — the balancer computes
+  // every one of these in the same loop. `null` = this member held none of it.
+  //
+  // ⛔ THE ROSTER IS THE **POOLING** NETWORK'S, AND THE COLUMN DOES NOT SUM TO ZERO.
+  // `balance_commodity` takes `friction` off the top of the pot, so what the deficit
+  // nodes draw is less than what the surplus nodes shipped by exactly that much. A
+  // roster that balanced to 0.0 would be quietly hiding the cost of the distance.
+  //
+  // A pile that moved on a ROUTE has no roster reading at all — a party carried it
+  // from a band that need not be in the pool, which `route:` says instead of faking
+  // a member net for it.
+  var ROSTER_NET = {
+    "food":   { nets: { Ashfell: 6.4,  Barrowmere: -4.1, Bitterbrook: -2.6 }, friction: 0.3 },
+    "fodder": { nets: { Ashfell: -2.0, Barrowmere: 1.9,  Bitterbrook: null }, friction: 0.1 },
+    "bone density: good length: fair": { nets: { Ashfell: 0.8, Barrowmere: -0.9, Bitterbrook: null }, friction: 0.1 },
+    "bone density: fair length: fair": { nets: { Ashfell: -0.4, Barrowmere: null, Bitterbrook: 0.4 }, friction: 0 },
+    "hide toughness: excellent suppleness: good": { route: "Barrowmere", dir: "in" },
+    "wood hardness: good pliancy: fair":          { route: "Bitterbrook", dir: "out" },
+    "food quiet": { nets: { Ashfell: 2.1, Barrowmere: -2.2, Bitterbrook: null }, friction: 0.1 },
+    "bone density: fair length: poor": { nets: { Ashfell: 0.2, Barrowmere: -0.2, Bitterbrook: null }, friction: 0 }
+  };
+
+  var CAUSE_WORD = {
+    pooled:       "Pooled with neighbours",
+    dowry_out:    "Dowry to a splinter",
+    dowry_in:     "Dowry from the parent",
+    shipment_out: "Shipment loaded",
+    shipment_in:  "Shipment landed",
+    party_home:   "Party came home"
+  };
+
+  var LINK_WORD  = { local: "⇄ Local exchange", route: "⇄ Trade route" };
+  var LINK_GLOSS = {
+    local: "nobody carries this — camps within reach even up every turn",
+    route: "a party walked it here, or is walking it away"
+  };
+
+  var state = { layout: "c", turn: "busy", dock: "side", open: null };
+
+  // ---------------------------------------------------------------------------
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function amt(n) { return n.toFixed(1); }
+  function mark(dir) { return dir === "in" ? "▲" : "▼"; }
+  function cls(dir) { return dir === "in" ? "in" : "out"; }
+  function isMaterial(x) { return x.good !== "food" && x.good !== "fodder"; }
+
+  /** The key a crossing's roster scope is taken on: the commodity for food/fodder,
+      the (material, rating) pile for a material. Two ratings of one material are
+      two different things and never share a key. */
+  function scopeKey(x) {
+    if (!isMaterial(x)) {
+      return x.good === "food" && state.turn === "quiet" ? "food quiet" : x.good;
+    }
+    var k = x.good;
+    (x.chips || []).forEach(function (c) { k += " " + c[0] + ": " + c[1]; });
+    return k;
+  }
+  function scopeLabel(key) {
+    return key === "food quiet" ? "food" : key;
+  }
+
+  /** `from Barrowmere` / `to Bitterbrook`, and nothing at all on a Local crossing —
+      the direction decides the preposition, which is why one phrase cannot serve both
+      the way `⇄ Local exchange` serves both directions on the #548 rows. */
+  function peerClause(x) {
+    if (!x.peer) { return ""; }
+    return (x.dir === "in" ? " from " : " to ") + esc(x.peer);
+  }
+
+  function chips(x) {
+    if (!x.chips) { return ""; }
+    return '<span class="chips">' + x.chips.map(function (c) {
+      return '<span class="chip">' + esc(c[0]) + ": " + esc(c[1]) + "</span>";
+    }).join("") + "</span>";
+  }
+
+  function crossings() { return TURNS[state.turn]; }
+
+  function netOf(list) {
+    var inn = 0, out = 0;
+    list.forEach(function (x) { if (x.dir === "in") { inn += x.amt; } else { out += x.amt; } });
+    return { inn: inn, out: out };
+  }
+
+  function row(opts) {
+    var c = ["row"];
+    if (opts.cls) { c.push(opts.cls); }
+    if (opts.key) {
+      c.push("click");
+      if (state.open === opts.key) { c.push("on"); }
+    }
+    return '<div class="' + c.join(" ") + '"' +
+      (opts.key ? ' data-key="' + esc(opts.key) + '"' : "") + ">" +
+      (opts.caret ? '<span class="caret">' + opts.caret + "</span>" : "") +
+      '<span class="lab' + (opts.dimLabel ? " dim" : "") + '">' + opts.label + "</span>" +
+      (opts.sub ? '<span class="sub">' + opts.sub + "</span>" : "") +
+      '<span class="fill"></span>' +
+      (opts.amt || "") +
+      "</div>";
+  }
+
+  function amtCell(dir, n) {
+    return '<span class="amt ' + cls(dir) + '">' + mark(dir) + " " + amt(n) + "</span>";
+  }
+
+  // ---------------------------------------------------------------------------
+  // The network header — the same on all three layouts. It states the span the
+  // links ACTUALLY formed at, never `reach_tiles`.
+  // ---------------------------------------------------------------------------
+  function networkHead() {
+    var others = NETWORK.members.filter(function (m) { return !m.you; });
+    var edge = NETWORK.members.filter(function (m) { return m.edge; })[0];
+    var h = '<div class="net-head"><div class="l1">' +
+      '<span class="k">Network</span>' +
+      '<span class="v">' + (others.length + 1) + " camps</span>" +
+      '<span class="span" title="reach_tiles is ' + NETWORK.reach +
+        '; the road to Bitterbrook carries the link to 4">within ' + NETWORK.span + " tiles</span>" +
+      "</div>";
+    if (edge) {
+      h += '<div class="l2">' + esc(edge.name) + ' sits at <span class="edge">' + edge.dist +
+        " of " + NETWORK.span + "</span> — the road is what keeps it in</div>";
+    }
+    return h + "</div>";
+  }
+
+  function rosterBlock() {
+    var key = state.open;
+    var entry = key ? ROSTER_NET[key] : null;
+    var h = '<div class="roster">';
+
+    // A pile that came off a PARTY has no member net to show — the roster is the
+    // pooling network's, and the sender need not be in it.
+    if (entry && entry.route) {
+      h += '<div class="scope">' + esc(scopeLabel(key)) + " — <em>a party carried this</em></div>" +
+        '<div class="row"><span class="sub">' +
+        (entry.dir === "in" ? "Sent by " : "Carried to ") + esc(entry.route) +
+        ", which is not pooling with us — the crossing is the route, not the network." +
+        "</span></div></div>";
+      return h;
+    }
+
+    var table = entry ? entry.nets : null;
+    h += '<div class="scope">' + (key
+      ? 'Net this turn, <em>' + esc(scopeLabel(key)) + "</em>"
+      : "Who is in the network — click a row above for each member's net") + "</div>";
+    NETWORK.members.forEach(function (m) {
+      var v = table ? table[m.name] : undefined;
+      var right = "";
+      if (table) {
+        right = (v === null || v === undefined)
+          ? '<span class="amt" style="color:var(--g-faint)">held none</span>'
+          : amtCell(v >= 0 ? "in" : "out", Math.abs(v));
+      } else {
+        right = '<span class="amt" style="color:var(--g-faint)">' +
+          (m.you ? "you" : m.dist + (m.road ? " tiles · road" : " tiles")) + "</span>";
+      }
+      h += '<div class="row' + (m.you ? " me" : "") + '">' +
+        '<span class="lab">' + esc(m.name) + "</span>" +
+        '<span class="fill"></span>' + right + "</div>";
+    });
+    // The column does not balance, and saying so is the point — `friction` is what
+    // the distance cost, and it is the one number on this tab nobody received.
+    if (entry && entry.friction) {
+      h += '<div class="row"><span class="sub">lost in transit — friction over the ' +
+        "pooling links</span>" +
+        '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+        amt(entry.friction) + "</span></div>";
+    }
+    return h + "</div>";
+  }
+
+  function emptyState() {
+    return '<div class="quiet"><b>Nothing crossed this turn.</b><br>' +
+      "Every camp in the network is within a tenth of its fair share of everything it holds, " +
+      "and no party landed or left.</div>";
+  }
+
+  // ---------------------------------------------------------------------------
+  // A — BY COMMODITY. commodity → link → cause. The two #548 rows, one level out.
+  // ---------------------------------------------------------------------------
+  function layoutA() {
+    var list = crossings();
+    if (!list.length) { return networkHead() + emptyState() + rosterBlock(); }
+
+    var h = networkHead();
+
+    ["food", "fodder"].forEach(function (good) {
+      var mine = list.filter(function (x) { return x.good === good; });
+      if (!mine.length) { return; }
+      var n = netOf(mine);
+      h += '<div class="grp"><div class="grp-head">' + esc(good) +
+        '<span class="cnt">' +
+          (n.inn ? '<span class="in">▲ ' + amt(n.inn) + "</span>  " : "") +
+          (n.out ? '<span class="out">▼ ' + amt(n.out) + "</span>" : "") +
+        "</span></div>";
+      ["local", "route"].forEach(function (link) {
+        var arm = mine.filter(function (x) { return x.link === link; });
+        if (!arm.length) { return; }
+        var an = netOf(arm);
+        h += row({
+          cls: "sub-row", label: LINK_WORD[link],
+          key: scopeKey(arm[0]),
+          amt: (an.inn ? amtCell("in", an.inn) + " " : "") + (an.out ? amtCell("out", an.out) : "")
+        });
+        arm.forEach(function (x) {
+          h += row({
+            cls: "sub-sub",
+            label: "· " + CAUSE_WORD[x.cause] + peerClause(x),
+            amt: amtCell(x.dir, x.amt)
+          });
+        });
+      });
+      h += "</div>";
+    });
+
+    var mats = list.filter(isMaterial);
+    if (mats.length) {
+      h += '<div class="grp"><div class="grp-head">Materials' +
+        '<span class="cnt">' + mats.length + " piles moved</span></div>";
+      mats.forEach(function (x) {
+        h += row({
+          cls: "sub-row", key: scopeKey(x),
+          label: esc(x.good) + " " + chips(x),
+          amt: amtCell(x.dir, x.amt)
+        });
+        h += row({
+          cls: "sub-sub",
+          label: LINK_WORD[x.link] + " · " + CAUSE_WORD[x.cause] + peerClause(x)
+        });
+      });
+      h += "</div>";
+    }
+
+    return h + rosterBlock();
+  }
+
+  // ---------------------------------------------------------------------------
+  // B — IN & OUT. Direction first, one line per crossing.
+  // ---------------------------------------------------------------------------
+  function layoutB() {
+    var list = crossings();
+    if (!list.length) { return networkHead() + emptyState() + rosterBlock(); }
+    var h = networkHead();
+
+    [["in", "Arrived"], ["out", "Left"]].forEach(function (pair) {
+      var dir = pair[0];
+      var mine = list.filter(function (x) { return x.dir === dir; });
+      var total = mine.reduce(function (a, x) { return a + x.amt; }, 0);
+      h += '<div class="grp"><div class="grp-head"><span class="' + cls(dir) + '">' +
+        mark(dir) + "</span> " + pair[1] +
+        '<span class="cnt">' + mine.length + (mine.length === 1 ? " crossing" : " crossings") +
+        "</span></div>";
+      if (!mine.length) {
+        h += '<div class="quiet" style="padding:4px 2px">nothing</div>';
+      }
+      mine.forEach(function (x) {
+        h += row({
+          key: scopeKey(x),
+          label: '<span class="amt ' + cls(dir) + '" style="margin-right:6px">' + amt(x.amt) + "</span>" +
+                 esc(x.good) + " " + chips(x),
+          amt: '<span class="amt" style="color:var(--g-faint)">' + LINK_WORD[x.link] + "</span>"
+        });
+        h += row({
+          cls: "sub-sub",
+          label: CAUSE_WORD[x.cause] + peerClause(x) + (x.when ? " · " + esc(x.when) : "")
+        });
+      });
+      h += "</div>";
+      // ⛔ No subtotal under either half. They are different goods and different
+      // ratings of one good, and nothing in this game may sum those into a figure.
+      if (mine.length) {
+        h += '<div class="row"><span class="sub">no total — these are different goods</span></div>';
+      }
+    });
+
+    return h + rosterBlock();
+  }
+
+  // ---------------------------------------------------------------------------
+  // C — BY LINK. The mechanism first. Local states a roster and no peers; Route
+  // names every counterparty, because a party has a name at both ends.
+  // ---------------------------------------------------------------------------
+  function layoutC() {
+    var list = crossings();
+    var h = networkHead();
+
+    // --- LOCAL
+    var loc = list.filter(function (x) { return x.link === "local"; });
+    h += '<div class="grp"><div class="grp-head">' + LINK_WORD.local +
+      '<span class="cnt">' + (loc.length ? loc.length + " moved" : "nothing") + "</span></div>" +
+      '<div class="row"><span class="sub">' + LINK_GLOSS.local + "</span></div>";
+    if (!loc.length) {
+      h += '<div class="quiet" style="padding:6px 2px">Every camp is within a tenth of its fair ' +
+        "share — nothing needed to move.</div>";
+    }
+    loc.forEach(function (x) {
+      h += row({
+        key: scopeKey(x),
+        label: esc(x.good) + " " + chips(x),
+        sub: x.cause === "pooled" ? "" : CAUSE_WORD[x.cause],
+        amt: amtCell(x.dir, x.amt)
+      });
+    });
+    h += "</div>";
+
+    // --- ROUTE
+    var rt = list.filter(function (x) { return x.link === "route"; });
+    h += '<div class="grp"><div class="grp-head">' + LINK_WORD.route +
+      '<span class="cnt">' + (rt.length ? rt.length + " crossing" + (rt.length === 1 ? "" : "s") : "no parties") +
+      "</span></div>" +
+      '<div class="row"><span class="sub">' + LINK_GLOSS.route + "</span></div>";
+    if (!rt.length) {
+      h += '<div class="quiet" style="padding:6px 2px">No party landed here and none left carrying.</div>';
+    }
+    // grouped by counterparty — the fact the Local arm structurally cannot state
+    var byPeer = {};
+    rt.forEach(function (x) {
+      var k = x.peer || "\u0000own";
+      (byPeer[k] = byPeer[k] || []).push(x);
+    });
+    Object.keys(byPeer).sort().forEach(function (k) {
+      var group = byPeer[k];
+      var own = k === "\u0000own";
+      var dir = group[0].dir;
+      h += row({
+        cls: "sub-row",
+        label: (own ? "our own party" : (dir === "in" ? "← " : "→ ") + esc(k)),
+        sub: own ? "came home" : esc(group[0].when || ""),
+        dimLabel: own
+      });
+      group.forEach(function (x) {
+        h += row({
+          cls: "sub-sub", key: scopeKey(x),
+          label: esc(x.good) + " " + chips(x),
+          amt: amtCell(x.dir, x.amt)
+        });
+      });
+    });
+    h += "</div>";
+
+    return h + rosterBlock();
+  }
+
+  var LAYOUTS = { a: layoutA, b: layoutB, c: layoutC };
+
+  // ---------------------------------------------------------------------------
+  function tradeZone() { return LAYOUTS[state.layout](); }
+
+  function ghostZone(title, lines) {
+    var h = '<div class="zone-title">' + title + "</div>";
+    lines.forEach(function (l) {
+      h += '<div class="row"><span class="lab dim">' + l[0] + "</span>" +
+        '<span class="fill"></span><span class="amt">' + l[1] + "</span></div>";
+    });
+    return h;
+  }
+
+  // The two horizontal shells, at their REAL widths. Both numbers are
+  // `wide_shell_min_width()` evaluated over the zone list beneath them:
+  // each flank, plus one RAIL_SEPARATOR_SPAN (25) per gap, plus PANEL_CHROME_H (26).
+  var STRIPS = {
+    bottom4: { w: 1569, zones: 4 },
+    bottom3: { w: 1190, zones: 3 }
+  };
+  var STAGE_W = 1120;   // the room this document can give the stage
+
+  var BAND_GHOST = [["Food", "128.4 · +2.1"], ["Fodder", "31.0 · −2.0"],
+                    ["Upkeep", "0.4 /turn"], ["Morale", "0.62"]];
+  var WORK_GHOST = [["Foraging · Birch stand", "4"], ["Hunting · Red deer", "3"],
+                    ["Fodder field", "2"], ["Idle", "1"]];
+  var PARTY_GHOST = [["Shipment → Bitterbrook", "3 turns"], ["Hunt · Aurochs", "home"]];
+
+  function render() {
+    var moved = crossings().length;
+    var head =
+      '<div class="bp-head"><div class="bp-subject">' +
+        '<span class="bp-glyph">⌂</span>' +
+        '<span class="bp-name">' + BAND.name + "</span>" +
+        '<span class="bp-cycler">◀ 2/4 ▶</span>' +
+      "</div>" +
+      '<div class="bp-where">' + BAND.stage + "  " + BAND.pos + "</div></div>";
+
+    var panel = document.getElementById("panel");
+    var screen = document.getElementById("screen");
+    var scaler = document.getElementById("scaler");
+    var cap = document.getElementById("cap");
+    var wide = state.dock !== "side";
+
+    screen.classList.toggle("wide", wide);
+    screen.setAttribute("data-dock", state.dock);
+
+    if (wide) {
+      var strip = STRIPS[state.dock];
+      var zones =
+        '<div class="bp-zone band ghosted">' + ghostZone("Band", BAND_GHOST) + "</div>" +
+        '<div class="bp-zone work ghosted">' + ghostZone("Work", WORK_GHOST) + "</div>";
+
+      if (state.dock === "bottom4") {
+        zones +=
+          '<div class="bp-zone ghosted">' + ghostZone("Parties", PARTY_GHOST) + "</div>" +
+          '<div class="bp-zone"><div class="zone-title" style="color:var(--g-signal)">Trade</div>' +
+            tradeZone() + "</div>";
+      } else {
+        // (iii) — no fourth flank. Trade is a second SECTION in the parties zone,
+        // which is one of the panel's two sanctioned ScrollContainers already.
+        zones +=
+          '<div class="bp-zone">' +
+            ghostZone("Parties", PARTY_GHOST) +
+            '<div class="sec-gap"></div>' +
+            '<div class="zone-title" style="color:var(--g-signal)">Trade</div>' +
+            tradeZone() +
+          "</div>";
+      }
+
+      panel.innerHTML = head + '<div class="bp-zones">' + zones + "</div>";
+
+      var s = Math.min(1, STAGE_W / strip.w);
+      scaler.style.setProperty("--strip-w", strip.w + "px");
+      scaler.style.transform = "scale(" + s.toFixed(3) + ")";
+      scaler.style.width = strip.w + "px";
+      scaler.style.height = (panel.offsetHeight * s) + "px";
+      cap.innerHTML = state.dock === "bottom4"
+        ? 'strip must be <b>1569px</b> for 4 zones abreast — ' +
+          '<span class="bad">a 1366 or 1440 laptop tabs instead</span>'
+        : 'strip must be <b>1190px</b> — unchanged from today; Trade rides the parties column';
+    } else {
+      var badge = moved
+        ? '<span class="badge' + (moved > 4 ? " hot" : "") + '">' + moved + "</span>"
+        : "";
+      panel.innerHTML = head +
+        '<div class="bp-tabs">' +
+          '<div class="bp-tab">Band</div>' +
+          '<div class="bp-tab">Work<span class="badge hot">1</span></div>' +
+          '<div class="bp-tab">Parties<span class="badge">2</span></div>' +
+          '<div class="bp-tab on">Trade' + badge + "</div>" +
+        "</div>" + tradeZone();
+      scaler.style.transform = "";
+      scaler.style.width = "";
+      scaler.style.height = "";
+      cap.innerHTML = "side dock · 380px · the shell that tabs";
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  function bindSeg(attr, key) {
+    document.querySelectorAll("[data-" + attr + "]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var v = b.getAttribute("data-" + attr);
+        state[key] = v;
+        if (key !== "dock") { state.open = null; }
+        document.querySelectorAll("[data-" + attr + "]").forEach(function (o) {
+          o.setAttribute("aria-pressed", String(o === b));
+        });
+        render();
+      });
+    });
+  }
+  bindSeg("layout", "layout");
+  bindSeg("turn", "turn");
+  bindSeg("dock", "dock");
+
+  document.getElementById("panel").addEventListener("click", function (ev) {
+    var r = ev.target.closest ? ev.target.closest(".row.click") : null;
+    if (!r) { return; }
+    var k = r.getAttribute("data-key");
+    state.open = (state.open === k) ? null : k;
+    render();
+  });
+
+  render();
+})();
+</script>
