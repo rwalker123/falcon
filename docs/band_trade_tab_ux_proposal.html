@@ -175,7 +175,7 @@
       radial-gradient(circle at 74% 66%, rgba(200,156,102,0.07), transparent 44%);
   }
   /* A horizontal dock is drawn at its REAL pixel width and scaled to fit the page,
-     because the whole point of §05 is how wide the strip has to be. The caption
+     because the whole point of §06 is how wide the strip has to be. The caption
      under it states the true width, never the drawn one. */
   .screen.wide { justify-content: flex-end; overflow: hidden; }
   .strip-scale { transform-origin: top center; }
@@ -271,6 +271,11 @@
     white-space: nowrap;
   }
   .chips { display: inline-flex; gap: 3px; flex-wrap: wrap; }
+  /* A foreign counterparty. It can appear ONLY on the route arm — `pools_freely`
+     gates the pooling union on faction, so the roster is always your own bands. */
+  .chip.foreign { border-color: var(--g-pigment); color: var(--g-pigment); }
+  .row.more .lab { color: var(--g-signal); font-size: 11px; }
+  .row.more { padding-left: 0; }
 
   .quiet { color: var(--g-faint); font-size: 11px; padding: 10px 2px; }
   .quiet b { color: var(--g-dim); font-weight: 600; }
@@ -430,7 +435,7 @@
   <p class="lede">
     Three shapes for the same facts, live. Switch the <b>Layout</b> to compare them; switch the
     <b>Turn</b> to see a busy turn, a quiet one, and the empty state that is most turns. The
-    <b>Dock</b> toggle shows what a fourth zone does to the wide shell — see §05.
+    <b>Dock</b> toggle shows what a fourth zone does to the wide shell — see §06.
   </p>
 
   <div class="stage">
@@ -446,6 +451,11 @@
         <button type="button" data-turn="busy" aria-pressed="true">Busy</button>
         <button type="button" data-turn="quiet" aria-pressed="false">Quiet</button>
         <button type="button" data-turn="empty" aria-pressed="false">Nothing crossed</button>
+      </div>
+      <span class="ctl-label">Network</span>
+      <div class="seg" role="group" aria-label="Network size">
+        <button type="button" data-net="small" aria-pressed="true">3 camps</button>
+        <button type="button" data-net="large" aria-pressed="false">15 camps</button>
       </div>
       <span class="ctl-label">Dock</span>
       <div class="seg" role="group" aria-label="Dock">
@@ -479,6 +489,12 @@
         <p>A material group header states <b>how many piles moved</b>, never a total: bone is rated on
           <code>density</code> × <code>length</code> and the shipped fauna roster produces 8 distinct
           bone piles. A "bone 3.2" would be the retired trade scalar rebuilt one material at a time.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Try it — 15 camps</span>
+        <p>The <b>Network</b> control swaps in a fifteen-camp pool. Watch which parts of the tab
+          move: the Route half does not change size at all, the roster folds to a shape, and the
+          pooled pile list is the one thing that has to be bounded. §04 has the reasoning.</p>
       </div>
       <div class="note">
         <span class="nk">The roster does not balance to zero</span>
@@ -549,7 +565,118 @@
 </section>
 
 <section>
-  <div class="sec-head"><span class="sec-num">04</span><h2>The producer split has six causes, not three</h2></div>
+  <div class="sec-head"><span class="sec-num">04</span><h2>At fifteen camps</h2></div>
+
+  <p class="lede">
+    Switch the prototype's <b>Network</b> control to <b>15 camps</b>. The question is whether the
+    shape survives, and the answer is that two of the three things on the tab do not grow with the
+    network at all — but the one that does grows faster than the member count.
+  </p>
+
+  <div class="callout warn">
+    <span class="nk">⛔ First, the premise: fifteen camps cannot be a mixed-faction network</span>
+    <p>
+      <code>supply::pools_freely</code> gates the union of the component on
+      <code>a.faction == b.faction</code>, and it gates the <b>union</b> rather than the balancing of
+      an already-built component — deliberately, so bands A and C of one people cannot pool
+      <em>through</em> a foreign band B camped between them. So a pooling network of fifteen is
+      fifteen of <b>your own</b> bands, and the roster can never contain a stranger.
+    </p>
+    <p>
+      A foreign band reaches this tab by exactly one door: <code>resolve_shipment</code> gates a
+      shipment on the connection tie and <em>never asks faction</em> —
+      <em>"a destination in another faction works by construction rather than by a clause someone
+      has to remember to add."</em> <b>So the Route arm is where other peoples appear, and the
+      Local arm structurally cannot show one.</b> In the prototype's large network the shipments run
+      to and from <span class="mono">Duskwater</span>, tagged <em>another people</em>.
+    </p>
+  </div>
+
+  <h3>What actually grows</h3>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Part of the tab</th><th>Grows with</th><th>At 15 camps</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Route section</b></td>
+        <td class="fix">Parties landing or leaving this turn</td>
+        <td class="fix"><b>Unchanged.</b> A party is expensive and rare; three crossings is a busy
+          turn whether the pool is 3 camps or 30. This is the half a bigger network does not touch.</td>
+      </tr>
+      <tr>
+        <td><b>Roster</b></td>
+        <td class="fix">Members — linearly</td>
+        <td class="fix">15 rows, ~260px, which overruns a bottom dock's zone on its own. But see
+          below: at that size the list stops being the right answer anyway.</td>
+      </tr>
+      <tr>
+        <td><b>Local section</b></td>
+        <td class="fix"><b>Distinct <code>(material, rating)</code> piles that moved</b> — which rises
+          with members, because the union of what the camps hold widens</td>
+        <td class="fix"><b>This is the one that explodes.</b> 17 piles in the prototype's busy turn,
+          and bone alone can produce 8 of them off the shipped fauna roster.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="verdict">
+    <span class="nk">The answer to "how does C scale"</span>
+    <p>
+      <b>C's top-level split survives, because the axis it splits on is not the one that grows.</b>
+      Local and Route stay two honest sections; the Route half is the same size at 15 camps as at 3.
+      What needs a bounding device is the <em>pooled pile list</em> inside the Local half — and that
+      list is the same list in A (under <em>Materials</em>) and in B (spread across both halves), so
+      this is not a cost C pays and the others avoid. <b>B degrades worst</b>: at 20 crossings it is
+      one flat 40-line list with the commodity's two directions at opposite ends of it.
+    </p>
+  </div>
+
+  <h3>The two devices the prototype uses, both already idioms in this panel</h3>
+
+  <ul class="tight">
+    <li><b>Rank by magnitude, fold the tail, state the remainder</b> — the pile list shows its five
+      largest and a <em>"12 smaller piles"</em> row that expands. It is the work board's pager
+      reasoning: never silently truncate, and never make the player scroll to find the row that
+      matters. The 0.2-of-a-bone-pile rows are real and are not what the tab is for.</li>
+    <li><b>The roster becomes a shape, not a list.</b> At 15 camps it leads with
+      <em>"a pot 5 camps moved against; 9 sat within a tenth of their fair share"</em> and then names
+      only the ends. This is the part worth arguing about — see below.</li>
+  </ul>
+
+  <div class="callout">
+    <span class="nk">Why the 15-row roster is not worth keeping</span>
+    <p>
+      With 3 camps, <em>who gave me this</em> is nearly determinate — one other camp was short and
+      one was long. With 15 it is a <b>distribution</b>, and a 15-row column of small signed numbers
+      answers a question the player cannot act on: the pot is anonymous, every contributor's share
+      was decided by its own surplus, and none of it names a decision. What stays useful at that size
+      is the count, the extremes, and the friction — <b>how many camps moved, who moved most, and
+      what the distance ate.</b>
+    </p>
+    <p>
+      The full list is still exact and still cheap to publish, so this is a rendering call, not a
+      wire one. If you want all fifteen rows on demand, that is the same fold the pile list uses.
+    </p>
+  </div>
+
+  <div class="callout warn">
+    <span class="nk">The one thing 15 camps genuinely breaks</span>
+    <p>
+      <b>The panel is no-scroll by design</b> — two <code>ScrollContainer</code>s are sanctioned (the
+      band zone and the parties zone) and the harness asserts that no other zone has grown one. A
+      Trade zone whose length is <em>piles × the fold state</em> is unbounded, so it needs one of:
+      a third sanctioned scroll, the work board's <b>pager</b>, or the folding above holding it under
+      the zone height by construction. The prototype demonstrates the third, and at 15 camps a folded
+      Local half is 8 rows — but that is a claim I would want measured against the real
+      <code>zone_size()</code> before relying on it, not asserted off an HTML mock.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">05</span><h2>The producer split has six causes, not three</h2></div>
 
   <p>
     The issue scopes a producer split — <em>local pooling, an arriving shipment, an expedition's
@@ -589,7 +716,7 @@
 </section>
 
 <section>
-  <div class="sec-head"><span class="sec-num">05</span><h2>A fourth zone is not free on a bottom dock</h2></div>
+  <div class="sec-head"><span class="sec-num">06</span><h2>A fourth zone is not free on a bottom dock</h2></div>
 
   <p>
     <code>BandCityPanel</code> picks its shell off the panel's own width against
@@ -632,7 +759,7 @@
 </section>
 
 <section>
-  <div class="sec-head"><span class="sec-num">06</span><h2>What the sim has to publish</h2></div>
+  <div class="sec-head"><span class="sec-num">07</span><h2>What the sim has to publish</h2></div>
 
   <div class="table-scroll">
   <table>
@@ -672,7 +799,7 @@
 </section>
 
 <section class="ask">
-  <div class="sec-head"><span class="sec-num">07</span><h2>Decisions I need from you</h2></div>
+  <div class="sec-head"><span class="sec-num">08</span><h2>Decisions I need from you</h2></div>
 
   <div class="q">
     <h3>Which layout</h3>
@@ -694,6 +821,14 @@
   </div>
 
   <div class="q">
+    <h3>The roster at fifteen camps</h3>
+    <p>Fold it to a shape — <em>"a pot 5 camps moved against; 9 sat within a tenth of their fair
+      share"</em> plus the extremes and the friction — or keep all fifteen rows. I recommend
+      <b>folding</b> (§04). Either way the wire carries every member's net; this is a rendering
+      call.</p>
+  </div>
+
+  <div class="q">
     <h3>The <code>cargo + provisions</code> debit</h3>
     <p>Split it (my default), or leave it and have the shipment row overstate by the party's rations.</p>
   </div>
@@ -706,67 +841,107 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
-  // The band, and what crossed. Names are from core_sim/src/data/band_names.json;
-  // rating chips are `axis: band` per CraftingPanel's CHARACTERISTIC_CHIP_FORMAT,
-  // over the shipped characteristic_bands (poor / fair / good / excellent).
+  // Names are from core_sim/src/data/band_names.json; rating chips are
+  // `axis: band` per CraftingPanel's CHARACTERISTIC_CHIP_FORMAT, over the shipped
+  // characteristic_bands (poor / fair / good / excellent).
+  //
+  // ⛔ THE POOL IS SINGLE-FACTION BY CONSTRUCTION. `supply::pools_freely` gates the
+  // UNION on `a.faction == b.faction`, so every member of the roster is one of YOUR
+  // bands however large the network grows. A foreign band can only ever appear as a
+  // ROUTE counterparty — `resolve_shipment` gates on the connection tie and never
+  // asks faction ("THE TIE IS THE GATE, AND FACTION IS NEVER ASKED").
   // ---------------------------------------------------------------------------
   var BAND = { name: "Ashfell", stage: "Camp", pos: "(71, 18)" };
 
-  var NETWORK = {
-    span: 4,           // EFFECTIVE span — a road carried it past the 3-tile reach floor
-    reach: 3,          // the config lever, for the tooltip only
-    members: [
-      { name: "Ashfell",    you: true,  dist: 0 },
-      { name: "Barrowmere", you: false, dist: 2 },
-      { name: "Bitterbrook", you: false, dist: 4, road: true, edge: true }
-    ]
-  };
+  var NAMES = ["Ashfell", "Barrowmere", "Bitterbrook", "Alderfen", "Amberhollow",
+               "Applewater", "Bearhollow", "Beechhollow", "Birchmoor", "Blackfen",
+               "Blackthorn", "Bleakhearth", "Bogreach", "Aldergrove", "Briarholt"];
 
-  // dir: in | out   link: local | route
-  // cause: pooled | dowry_out | dowry_in | shipment_out | shipment_in | party_home
-  var TURNS = {
-    busy: [
-      { good: "food",   dir: "in",  link: "local", cause: "pooled",       amt: 6.4 },
-      { good: "food",   dir: "out", link: "route", cause: "shipment_out", amt: 12.0, peer: "Bitterbrook", when: "left turn 139" },
-      { good: "food",   dir: "in",  link: "route", cause: "party_home",   amt: 3.1 },
-      { good: "fodder", dir: "out", link: "local", cause: "pooled",       amt: 2.0 },
-      { good: "bone",   dir: "in",  link: "local", cause: "pooled",       amt: 0.8,
-        chips: [["density","good"],["length","fair"]] },
-      { good: "bone",   dir: "out", link: "local", cause: "pooled",       amt: 0.4,
-        chips: [["density","fair"],["length","fair"]] },
-      { good: "hide",   dir: "in",  link: "route", cause: "shipment_in",  amt: 1.5, peer: "Barrowmere", when: "landed this turn",
-        chips: [["toughness","excellent"],["suppleness","good"]] },
-      { good: "wood",   dir: "out", link: "route", cause: "shipment_out", amt: 1.1, peer: "Bitterbrook", when: "left turn 139",
-        chips: [["hardness","good"],["pliancy","fair"]] }
-    ],
-    quiet: [
-      { good: "food", dir: "in", link: "local", cause: "pooled", amt: 2.1 },
-      { good: "bone", dir: "in", link: "local", cause: "pooled", amt: 0.2,
-        chips: [["density","fair"],["length","poor"]] }
-    ],
-    empty: []
-  };
+  function member(name, dist, opts) {
+    var m = { name: name, you: name === BAND.name, dist: dist };
+    if (opts) { Object.keys(opts).forEach(function (k) { m[k] = opts[k]; }); }
+    return m;
+  }
 
-  // Each member's own signed net, per commodity key. Exact — the balancer computes
-  // every one of these in the same loop. `null` = this member held none of it.
-  //
-  // ⛔ THE ROSTER IS THE **POOLING** NETWORK'S, AND THE COLUMN DOES NOT SUM TO ZERO.
-  // `balance_commodity` takes `friction` off the top of the pot, so what the deficit
-  // nodes draw is less than what the surplus nodes shipped by exactly that much. A
-  // roster that balanced to 0.0 would be quietly hiding the cost of the distance.
-  //
-  // A pile that moved on a ROUTE has no roster reading at all — a party carried it
-  // from a band that need not be in the pool, which `route:` says instead of faking
-  // a member net for it.
-  var ROSTER_NET = {
-    "food":   { nets: { Ashfell: 6.4,  Barrowmere: -4.1, Bitterbrook: -2.6 }, friction: 0.3 },
-    "fodder": { nets: { Ashfell: -2.0, Barrowmere: 1.9,  Bitterbrook: null }, friction: 0.1 },
-    "bone density: good length: fair": { nets: { Ashfell: 0.8, Barrowmere: -0.9, Bitterbrook: null }, friction: 0.1 },
-    "bone density: fair length: fair": { nets: { Ashfell: -0.4, Barrowmere: null, Bitterbrook: 0.4 }, friction: 0 },
-    "hide toughness: excellent suppleness: good": { route: "Barrowmere", dir: "in" },
-    "wood hardness: good pliancy: fair":          { route: "Bitterbrook", dir: "out" },
-    "food quiet": { nets: { Ashfell: 2.1, Barrowmere: -2.2, Bitterbrook: null }, friction: 0.1 },
-    "bone density: fair length: poor": { nets: { Ashfell: 0.2, Barrowmere: -0.2, Bitterbrook: null }, friction: 0 }
+  // Two worlds: the three-camp network the tab was designed against, and a
+  // fifteen-camp one. Only the SECOND answers "does the shape survive".
+  var WORLD = {
+    small: {
+      span: 4, reach: 3,
+      members: [
+        member("Ashfell", 0),
+        member("Barrowmere", 2),
+        member("Bitterbrook", 4, { road: true, edge: true })
+      ],
+      turns: {
+        busy: [
+          { good: "food",   dir: "in",  link: "local", cause: "pooled",       amt: 6.4 },
+          { good: "food",   dir: "out", link: "route", cause: "shipment_out", amt: 12.0, peer: "Bitterbrook", when: "left turn 139" },
+          { good: "food",   dir: "in",  link: "route", cause: "party_home",   amt: 3.1 },
+          { good: "fodder", dir: "out", link: "local", cause: "pooled",       amt: 2.0 },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled",       amt: 0.8,
+            chips: [["density","good"],["length","fair"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled",       amt: 0.4,
+            chips: [["density","fair"],["length","fair"]] },
+          { good: "hide",   dir: "in",  link: "route", cause: "shipment_in",  amt: 1.5, peer: "Barrowmere", when: "landed this turn",
+            chips: [["toughness","excellent"],["suppleness","good"]] },
+          { good: "wood",   dir: "out", link: "route", cause: "shipment_out", amt: 1.1, peer: "Bitterbrook", when: "left turn 139",
+            chips: [["hardness","good"],["pliancy","fair"]] }
+        ],
+        quiet: [
+          { good: "food", dir: "in", link: "local", cause: "pooled", amt: 2.1 },
+          { good: "bone", dir: "in", link: "local", cause: "pooled", amt: 0.2,
+            chips: [["density","fair"],["length","poor"]] }
+        ],
+        empty: []
+      }
+    },
+
+    large: {
+      span: 6, reach: 3,
+      members: NAMES.map(function (n, i) {
+        return member(n, i === 0 ? 0 : 1 + (i % 6), i === 14 ? { road: true, edge: true } : null);
+      }),
+      // Fifteen camps hold a wider union of goods, so what MOVES is a longer list of
+      // (material, rating) piles — that, not the member count, is what lengthens the
+      // tab. The route arm does not grow with the network: it grows with parties,
+      // which are expensive and few.
+      turns: {
+        busy: [
+          { good: "food",   dir: "in",  link: "local", cause: "pooled", amt: 9.2 },
+          { good: "fodder", dir: "out", link: "local", cause: "pooled", amt: 3.4 },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled", amt: 1.4, chips: [["density","good"],["length","fair"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled", amt: 0.9, chips: [["density","fair"],["length","fair"]] },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled", amt: 0.7, chips: [["density","excellent"],["length","good"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled", amt: 0.5, chips: [["density","poor"],["length","poor"]] },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled", amt: 0.3, chips: [["density","fair"],["length","good"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled", amt: 0.2, chips: [["density","good"],["length","poor"]] },
+          { good: "hide",   dir: "in",  link: "local", cause: "pooled", amt: 2.1, chips: [["toughness","good"],["suppleness","fair"]] },
+          { good: "hide",   dir: "out", link: "local", cause: "pooled", amt: 1.2, chips: [["toughness","fair"],["suppleness","good"]] },
+          { good: "hide",   dir: "in",  link: "local", cause: "pooled", amt: 0.4, chips: [["toughness","excellent"],["suppleness","excellent"]] },
+          { good: "fibre",  dir: "in",  link: "local", cause: "pooled", amt: 1.8, chips: [["fineness","good"],["strength","good"]] },
+          { good: "fibre",  dir: "out", link: "local", cause: "pooled", amt: 0.6, chips: [["fineness","poor"],["strength","fair"]] },
+          { good: "wood",   dir: "in",  link: "local", cause: "pooled", amt: 3.3, chips: [["hardness","fair"],["pliancy","good"]] },
+          { good: "wood",   dir: "out", link: "local", cause: "pooled", amt: 0.8, chips: [["hardness","good"],["pliancy","poor"]] },
+          { good: "stone",  dir: "in",  link: "local", cause: "pooled", amt: 2.7, chips: [["hardness","good"],["workability","fair"]] },
+          { good: "hurdles",dir: "out", link: "local", cause: "pooled", amt: 0.3, chips: [["stoutness","fair"],["span","fair"]] },
+          // The dowry — a Local crossing that DOES name its counterparty, because a
+          // splinter is a specific band and `fission.rs` knows which.
+          { good: "food",   dir: "out", link: "local", cause: "dowry_out", amt: 18.0, peer: "Briarholt", when: "split off this turn" },
+          // The route arm, unchanged in size by the network growing.
+          { good: "food",   dir: "out", link: "route", cause: "shipment_out", amt: 14.0, peer: "Duskwater", foreign: true, when: "left turn 204" },
+          { good: "hide",   dir: "in",  link: "route", cause: "shipment_in", amt: 2.2, peer: "Duskwater", foreign: true, when: "landed this turn",
+            chips: [["toughness","excellent"],["suppleness","good"]] },
+          { good: "food",   dir: "in",  link: "route", cause: "party_home", amt: 4.6 }
+        ],
+        quiet: [
+          { good: "food", dir: "in",  link: "local", cause: "pooled", amt: 3.0 },
+          { good: "wood", dir: "out", link: "local", cause: "pooled", amt: 0.4, chips: [["hardness","fair"],["pliancy","good"]] },
+          { good: "bone", dir: "in",  link: "local", cause: "pooled", amt: 0.2, chips: [["density","fair"],["length","poor"]] }
+        ],
+        empty: []
+      }
+    }
   };
 
   var CAUSE_WORD = {
@@ -784,7 +959,16 @@
     route: "a party walked it here, or is walking it away"
   };
 
-  var state = { layout: "c", turn: "busy", dock: "side", open: null };
+  // How much of the pot the distance eats, illustrative — the real figure is
+  // `friction × component_friction(roads…)`, resolved per component per turn.
+  var FRICTION = 0.047;
+
+  // What a capped list shows before it folds. The work board's own idiom: rank by
+  // magnitude, state the remainder, never silently truncate.
+  var CAP_PILES = 5;
+  var CAP_ROSTER = 3;    // per direction
+
+  var state = { layout: "c", turn: "busy", dock: "side", net: "small", open: null, expand: {} };
 
   // ---------------------------------------------------------------------------
   function esc(s) {
@@ -796,28 +980,28 @@
   function mark(dir) { return dir === "in" ? "▲" : "▼"; }
   function cls(dir) { return dir === "in" ? "in" : "out"; }
   function isMaterial(x) { return x.good !== "food" && x.good !== "fodder"; }
+  function world() { return WORLD[state.net]; }
+  function members() { return world().members; }
+  function crossings() { return world().turns[state.turn]; }
+  function big() { return state.net === "large"; }
 
   /** The key a crossing's roster scope is taken on: the commodity for food/fodder,
-      the (material, rating) pile for a material. Two ratings of one material are
-      two different things and never share a key. */
+      the (material, rating) pile for a material. Two ratings of one material are two
+      different things and never share a key. */
   function scopeKey(x) {
-    if (!isMaterial(x)) {
-      return x.good === "food" && state.turn === "quiet" ? "food quiet" : x.good;
-    }
     var k = x.good;
     (x.chips || []).forEach(function (c) { k += " " + c[0] + ": " + c[1]; });
     return k;
   }
-  function scopeLabel(key) {
-    return key === "food quiet" ? "food" : key;
-  }
 
-  /** `from Barrowmere` / `to Bitterbrook`, and nothing at all on a Local crossing —
-      the direction decides the preposition, which is why one phrase cannot serve both
-      the way `⇄ Local exchange` serves both directions on the #548 rows. */
+  /** `from Barrowmere` / `to Bitterbrook`, and nothing at all on an anonymous pooling
+      crossing — the direction decides the preposition. */
   function peerClause(x) {
     if (!x.peer) { return ""; }
-    return (x.dir === "in" ? " from " : " to ") + esc(x.peer);
+    return (x.dir === "in" ? " from " : " to ") + esc(x.peer) + foreignTag(x);
+  }
+  function foreignTag(x) {
+    return x.foreign ? ' <span class="chip foreign">another people</span>' : "";
   }
 
   function chips(x) {
@@ -825,14 +1009,6 @@
     return '<span class="chips">' + x.chips.map(function (c) {
       return '<span class="chip">' + esc(c[0]) + ": " + esc(c[1]) + "</span>";
     }).join("") + "</span>";
-  }
-
-  function crossings() { return TURNS[state.turn]; }
-
-  function netOf(list) {
-    var inn = 0, out = 0;
-    list.forEach(function (x) { if (x.dir === "in") { inn += x.amt; } else { out += x.amt; } });
-    return { inn: inn, out: out };
   }
 
   function row(opts) {
@@ -843,7 +1019,8 @@
       if (state.open === opts.key) { c.push("on"); }
     }
     return '<div class="' + c.join(" ") + '"' +
-      (opts.key ? ' data-key="' + esc(opts.key) + '"' : "") + ">" +
+      (opts.key ? ' data-key="' + esc(opts.key) + '"' : "") +
+      (opts.toggle ? ' data-toggle="' + esc(opts.toggle) + '"' : "") + ">" +
       (opts.caret ? '<span class="caret">' + opts.caret + "</span>" : "") +
       '<span class="lab' + (opts.dimLabel ? " dim" : "") + '">' + opts.label + "</span>" +
       (opts.sub ? '<span class="sub">' + opts.sub + "</span>" : "") +
@@ -856,68 +1033,176 @@
     return '<span class="amt ' + cls(dir) + '">' + mark(dir) + " " + amt(n) + "</span>";
   }
 
+  function moreRow(n, id, wordSingular) {
+    var open = !!state.expand[id];
+    return '<div class="row click more" data-toggle="' + esc(id) + '">' +
+      '<span class="caret">' + (open ? "▾" : "▸") + "</span>" +
+      '<span class="lab dim">' + (open ? "fold the smaller " + wordSingular + "s back"
+        : n + " smaller " + wordSingular + (n === 1 ? "" : "s")) + "</span></div>";
+  }
+
+  /** Rank by magnitude and fold the tail — never drop it. */
+  function ranked(list) {
+    return list.slice().sort(function (a, b) { return b.amt - a.amt; });
+  }
+
   // ---------------------------------------------------------------------------
-  // The network header — the same on all three layouts. It states the span the
-  // links ACTUALLY formed at, never `reach_tiles`.
+  // The roster, DERIVED from the crossing so the two can never disagree. Positive =
+  // this band drew; the counterparties' total is larger than what landed by exactly
+  // `friction`, which is the one figure on the tab nobody received.
   // ---------------------------------------------------------------------------
-  function networkHead() {
-    var others = NETWORK.members.filter(function (m) { return !m.you; });
-    var edge = NETWORK.members.filter(function (m) { return m.edge; })[0];
-    var h = '<div class="net-head"><div class="l1">' +
-      '<span class="k">Network</span>' +
-      '<span class="v">' + (others.length + 1) + " camps</span>" +
-      '<span class="span" title="reach_tiles is ' + NETWORK.reach +
-        '; the road to Bitterbrook carries the link to 4">within ' + NETWORK.span + " tiles</span>" +
-      "</div>";
-    if (edge) {
-      h += '<div class="l2">' + esc(edge.name) + ' sits at <span class="edge">' + edge.dist +
-        " of " + NETWORK.span + "</span> — the road is what keeps it in</div>";
+  function hash(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h = (h ^ s.charCodeAt(i)) * 16777619 >>> 0; }
+    return h;
+  }
+
+  function rosterFor(key) {
+    var list = crossings().filter(function (x) { return scopeKey(x) === key; });
+    if (!list.length) { return null; }
+
+    // A pile that moved on a route, or a named Local crossing (a dowry), has a
+    // counterparty and no pooling distribution at all.
+    var named = list.filter(function (x) { return x.peer; })[0];
+    var pooled = list.filter(function (x) { return x.cause === "pooled"; });
+    if (!pooled.length && named) {
+      return { peer: named.peer, dir: named.dir, foreign: named.foreign,
+               cause: named.cause, link: named.link };
     }
-    return h + "</div>";
+    if (!pooled.length) { return null; }
+
+    var x = pooled[0];
+    var mine = x.dir === "in" ? x.amt : -x.amt;
+    var other = mine > 0 ? mine * (1 + FRICTION) : -mine * (1 - FRICTION);
+    var friction = Math.round(Math.abs(mine * FRICTION) * 10) / 10;
+
+    var pool = members().filter(function (m) { return !m.you; });
+    var h = hash(key);
+    var k = big() ? 3 + (h % 4) : Math.min(2, pool.length);
+    // **Distinct members, or the shares stop adding up.** A fixed stride over the pool
+    // collides whenever the stride and the pool size share a factor (7 over 14 camps
+    // picked the same band twice), and the second pick then overwrote the first one's
+    // share — so the column silently lost a contributor and no longer summed to the
+    // pot. Walking forward from the hash cannot repeat.
+    var picked = [];
+    for (var i = 0; picked.length < k && i < pool.length; i++) {
+      picked.push(pool[(h + i) % pool.length]);
+    }
+    // Split `other` across the picked members, largest first, to 0.1.
+    var nets = {};
+    var left = Math.round(other * 10) / 10;
+    picked.forEach(function (m, i) {
+      var share = i === picked.length - 1
+        ? left
+        : Math.round(left * (0.52 - i * 0.07) * 10) / 10;
+      left = Math.round((left - share) * 10) / 10;
+      nets[m.name] = mine > 0 ? -share : share;
+    });
+    nets[BAND.name] = mine;
+    return { nets: nets, friction: friction, contributors: picked.length,
+             quiet: pool.length - picked.length };
   }
 
   function rosterBlock() {
     var key = state.open;
-    var entry = key ? ROSTER_NET[key] : null;
     var h = '<div class="roster">';
 
-    // A pile that came off a PARTY has no member net to show — the roster is the
-    // pooling network's, and the sender need not be in it.
-    if (entry && entry.route) {
-      h += '<div class="scope">' + esc(scopeLabel(key)) + " — <em>a party carried this</em></div>" +
-        '<div class="row"><span class="sub">' +
-        (entry.dir === "in" ? "Sent by " : "Carried to ") + esc(entry.route) +
-        ", which is not pooling with us — the crossing is the route, not the network." +
-        "</span></div></div>";
-      return h;
+    if (!key) {
+      h += '<div class="scope">' + members().length +
+        " camps pooling — click a row above for each one's net</div>";
+      var shown = big() ? members().slice(0, 4) : members();
+      shown.forEach(function (m) {
+        h += '<div class="row' + (m.you ? " me" : "") + '">' +
+          '<span class="lab">' + esc(m.name) + "</span>" +
+          '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+          (m.you ? "you" : m.dist + (m.road ? " tiles · road" : " tiles")) +
+          "</span></div>";
+      });
+      if (big()) {
+        h += '<div class="row"><span class="sub">and ' + (members().length - 4) +
+          " more within " + world().span + " tiles</span></div>";
+      }
+      return h + "</div>";
     }
 
-    var table = entry ? entry.nets : null;
-    h += '<div class="scope">' + (key
-      ? 'Net this turn, <em>' + esc(scopeLabel(key)) + "</em>"
-      : "Who is in the network — click a row above for each member's net") + "</div>";
-    NETWORK.members.forEach(function (m) {
-      var v = table ? table[m.name] : undefined;
-      var right = "";
-      if (table) {
-        right = (v === null || v === undefined)
-          ? '<span class="amt" style="color:var(--g-faint)">held none</span>'
-          : amtCell(v >= 0 ? "in" : "out", Math.abs(v));
-      } else {
-        right = '<span class="amt" style="color:var(--g-faint)">' +
-          (m.you ? "you" : m.dist + (m.road ? " tiles · road" : " tiles")) + "</span>";
-      }
-      h += '<div class="row' + (m.you ? " me" : "") + '">' +
-        '<span class="lab">' + esc(m.name) + "</span>" +
+    var entry = rosterFor(key);
+    if (!entry) { return h + "</div>"; }
+
+    // Carried by a party, or handed to a named band — no pooling distribution exists.
+    if (entry.peer) {
+      h += '<div class="scope">' + esc(key) + " — <em>" +
+        (entry.link === "route" ? "a party carried this" : "handed over whole") + "</em></div>" +
+        '<div class="row"><span class="sub">' +
+        (entry.dir === "in" ? "Sent by " : "Carried to ") + esc(entry.peer) +
+        (entry.foreign ? " — <b>another people</b>, so never in this pool" :
+          (entry.cause === "dowry_out" ? ", the band that split off this turn" : "")) +
+        ". The crossing is the link, not the network.</span></div>";
+      return h + "</div>";
+    }
+
+    var nets = entry.nets;
+    var signed = Object.keys(nets).map(function (n) { return { name: n, v: nets[n] }; });
+    var me = signed.filter(function (r) { return r.name === BAND.name; })[0];
+    var others = signed.filter(function (r) { return r.name !== BAND.name; })
+                       .sort(function (a, b) { return Math.abs(b.v) - Math.abs(a.v); });
+
+    // ⛔ AT FIFTEEN CAMPS THE LIST STOPS BEING AN ANSWER. One anonymous pot and
+    // fourteen counterparties is a DISTRIBUTION, not attribution, so the block leads
+    // with the shape of it and names only the ends.
+    if (big()) {
+      h += '<div class="scope">Net this turn, <em>' + esc(key) + "</em></div>";
+      h += '<div class="row"><span class="sub">a pot ' + entry.contributors +
+        " camps moved against; " + entry.quiet +
+        " sat within a tenth of their fair share</span></div>";
+    } else {
+      h += '<div class="scope">Net this turn, <em>' + esc(key) + "</em></div>";
+    }
+
+    var list = big() ? [me].concat(others.slice(0, CAP_ROSTER * 2)) : [me].concat(others);
+    // In the small world every member is named, including the ones that held none.
+    if (!big()) {
+      members().forEach(function (m) {
+        if (!list.some(function (r) { return r.name === m.name; })) {
+          list.push({ name: m.name, v: null });
+        }
+      });
+      list.sort(function (a, b) {
+        return members().findIndex(function (m) { return m.name === a.name; }) -
+               members().findIndex(function (m) { return m.name === b.name; });
+      });
+    }
+
+    list.forEach(function (r) {
+      var right = (r.v === null || r.v === undefined)
+        ? '<span class="amt" style="color:var(--g-faint)">held none</span>'
+        : amtCell(r.v >= 0 ? "in" : "out", Math.abs(r.v));
+      h += '<div class="row' + (r.name === BAND.name ? " me" : "") + '">' +
+        '<span class="lab">' + esc(r.name) + "</span>" +
         '<span class="fill"></span>' + right + "</div>";
     });
-    // The column does not balance, and saying so is the point — `friction` is what
-    // the distance cost, and it is the one number on this tab nobody received.
-    if (entry && entry.friction) {
+
+    if (entry.friction) {
       h += '<div class="row"><span class="sub">lost in transit — friction over the ' +
         "pooling links</span>" +
         '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
         amt(entry.friction) + "</span></div>";
+    }
+    return h + "</div>";
+  }
+
+  // ---------------------------------------------------------------------------
+  function networkHead() {
+    var w = world();
+    var edge = w.members.filter(function (m) { return m.edge; })[0];
+    var h = '<div class="net-head"><div class="l1">' +
+      '<span class="k">Network</span>' +
+      '<span class="v">' + w.members.length + " camps</span>" +
+      '<span class="span" title="reach_tiles is ' + w.reach +
+        '; a road carries a link past it">within ' + w.span + " tiles</span>" +
+      "</div>";
+    if (edge) {
+      h += '<div class="l2">' + esc(edge.name) + ' sits at <span class="edge">' + edge.dist +
+        " of " + w.span + "</span> — the road is what keeps it in</div>";
     }
     return h + "</div>";
   }
@@ -928,13 +1213,18 @@
       "and no party landed or left.</div>";
   }
 
+  function netOf(list) {
+    var inn = 0, out = 0;
+    list.forEach(function (x) { if (x.dir === "in") { inn += x.amt; } else { out += x.amt; } });
+    return { inn: inn, out: out };
+  }
+
   // ---------------------------------------------------------------------------
-  // A — BY COMMODITY. commodity → link → cause. The two #548 rows, one level out.
+  // A — BY COMMODITY. commodity → link → cause.
   // ---------------------------------------------------------------------------
   function layoutA() {
     var list = crossings();
     if (!list.length) { return networkHead() + emptyState() + rosterBlock(); }
-
     var h = networkHead();
 
     ["food", "fodder"].forEach(function (good) {
@@ -951,8 +1241,7 @@
         if (!arm.length) { return; }
         var an = netOf(arm);
         h += row({
-          cls: "sub-row", label: LINK_WORD[link],
-          key: scopeKey(arm[0]),
+          cls: "sub-row", label: LINK_WORD[link], key: scopeKey(arm[0]),
           amt: (an.inn ? amtCell("in", an.inn) + " " : "") + (an.out ? amtCell("out", an.out) : "")
         });
         arm.forEach(function (x) {
@@ -966,11 +1255,13 @@
       h += "</div>";
     });
 
-    var mats = list.filter(isMaterial);
+    var mats = ranked(list.filter(isMaterial));
     if (mats.length) {
+      var folded = big() && !state.expand.matsA;
+      var shown = folded ? mats.slice(0, CAP_PILES) : mats;
       h += '<div class="grp"><div class="grp-head">Materials' +
         '<span class="cnt">' + mats.length + " piles moved</span></div>";
-      mats.forEach(function (x) {
+      shown.forEach(function (x) {
         h += row({
           cls: "sub-row", key: scopeKey(x),
           label: esc(x.good) + " " + chips(x),
@@ -981,6 +1272,7 @@
           label: LINK_WORD[x.link] + " · " + CAUSE_WORD[x.cause] + peerClause(x)
         });
       });
+      if (big()) { h += moreRow(mats.length - CAP_PILES, "matsA", "pile"); }
       h += "</div>";
     }
 
@@ -997,8 +1289,10 @@
 
     [["in", "Arrived"], ["out", "Left"]].forEach(function (pair) {
       var dir = pair[0];
-      var mine = list.filter(function (x) { return x.dir === dir; });
-      var total = mine.reduce(function (a, x) { return a + x.amt; }, 0);
+      var mine = ranked(list.filter(function (x) { return x.dir === dir; }));
+      var id = "b" + dir;
+      var folded = big() && !state.expand[id];
+      var shown = folded ? mine.slice(0, CAP_PILES) : mine;
       h += '<div class="grp"><div class="grp-head"><span class="' + cls(dir) + '">' +
         mark(dir) + "</span> " + pair[1] +
         '<span class="cnt">' + mine.length + (mine.length === 1 ? " crossing" : " crossings") +
@@ -1006,7 +1300,7 @@
       if (!mine.length) {
         h += '<div class="quiet" style="padding:4px 2px">nothing</div>';
       }
-      mine.forEach(function (x) {
+      shown.forEach(function (x) {
         h += row({
           key: scopeKey(x),
           label: '<span class="amt ' + cls(dir) + '" style="margin-right:6px">' + amt(x.amt) + "</span>" +
@@ -1018,6 +1312,9 @@
           label: CAUSE_WORD[x.cause] + peerClause(x) + (x.when ? " · " + esc(x.when) : "")
         });
       });
+      if (big() && mine.length > CAP_PILES) {
+        h += moreRow(mine.length - CAP_PILES, id, "crossing");
+      }
       h += "</div>";
       // ⛔ No subtotal under either half. They are different goods and different
       // ratings of one good, and nothing in this game may sum those into a figure.
@@ -1030,8 +1327,8 @@
   }
 
   // ---------------------------------------------------------------------------
-  // C — BY LINK. The mechanism first. Local states a roster and no peers; Route
-  // names every counterparty, because a party has a name at both ends.
+  // C — BY LINK. The mechanism first. The Local arm states a roster and no peers;
+  // the Route arm names every counterparty, because a party has a name at both ends.
   // ---------------------------------------------------------------------------
   function layoutC() {
     var list = crossings();
@@ -1046,11 +1343,25 @@
       h += '<div class="quiet" style="padding:6px 2px">Every camp is within a tenth of its fair ' +
         "share — nothing needed to move.</div>";
     }
-    loc.forEach(function (x) {
+
+    // A dowry is Local and DOES name its counterparty; it is not pooling and is
+    // lifted out so the pooled list stays one kind of thing.
+    var named = loc.filter(function (x) { return x.peer; });
+    var pooled = ranked(loc.filter(function (x) { return !x.peer; }));
+    var folded = big() && !state.expand.locC;
+    var shown = folded ? pooled.slice(0, CAP_PILES) : pooled;
+
+    shown.forEach(function (x) {
+      h += row({ key: scopeKey(x), label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
+    });
+    if (big() && pooled.length > CAP_PILES) {
+      h += moreRow(pooled.length - CAP_PILES, "locC", "pile");
+    }
+    named.forEach(function (x) {
       h += row({
         key: scopeKey(x),
         label: esc(x.good) + " " + chips(x),
-        sub: x.cause === "pooled" ? "" : CAUSE_WORD[x.cause],
+        sub: CAUSE_WORD[x.cause] + peerClause(x),
         amt: amtCell(x.dir, x.amt)
       });
     });
@@ -1065,19 +1376,23 @@
     if (!rt.length) {
       h += '<div class="quiet" style="padding:6px 2px">No party landed here and none left carrying.</div>';
     }
-    // grouped by counterparty — the fact the Local arm structurally cannot state
+    // ⛔ GROUPED BY (COUNTERPARTY, DIRECTION), never by counterparty alone. A band you
+    // ship to is usually a band that ships back, and folding an arrival and a departure
+    // under one `→ Duskwater` heading gives both the wrong arrow and the wrong date —
+    // they are two parties, on two journeys, on two turns.
     var byPeer = {};
     rt.forEach(function (x) {
-      var k = x.peer || "\u0000own";
+      var k = (x.peer || "\u0000own") + "\u0001" + x.dir;
       (byPeer[k] = byPeer[k] || []).push(x);
     });
     Object.keys(byPeer).sort().forEach(function (k) {
       var group = byPeer[k];
-      var own = k === "\u0000own";
+      var own = k.indexOf("\u0000own") === 0;
       var dir = group[0].dir;
       h += row({
         cls: "sub-row",
-        label: (own ? "our own party" : (dir === "in" ? "← " : "→ ") + esc(k)),
+        label: (own ? "our own party"
+                    : (dir === "in" ? "← " : "→ ") + esc(group[0].peer) + foreignTag(group[0])),
         sub: own ? "came home" : esc(group[0].when || ""),
         dimLabel: own
       });
@@ -1108,20 +1423,16 @@
     return h;
   }
 
-  // The two horizontal shells, at their REAL widths. Both numbers are
-  // `wide_shell_min_width()` evaluated over the zone list beneath them:
-  // each flank, plus one RAIL_SEPARATOR_SPAN (25) per gap, plus PANEL_CHROME_H (26).
-  var STRIPS = {
-    bottom4: { w: 1569, zones: 4 },
-    bottom3: { w: 1190, zones: 3 }
-  };
-  var STAGE_W = 1120;   // the room this document can give the stage
+  // Both numbers are `wide_shell_min_width()` over the zone list beneath them: each
+  // flank, plus one RAIL_SEPARATOR_SPAN (25) per gap, plus PANEL_CHROME_H (26).
+  var STRIPS = { bottom4: { w: 1569 }, bottom3: { w: 1190 } };
+  var STAGE_W = 1120;
 
   var BAND_GHOST = [["Food", "128.4 · +2.1"], ["Fodder", "31.0 · −2.0"],
                     ["Upkeep", "0.4 /turn"], ["Morale", "0.62"]];
   var WORK_GHOST = [["Foraging · Birch stand", "4"], ["Hunting · Red deer", "3"],
                     ["Fodder field", "2"], ["Idle", "1"]];
-  var PARTY_GHOST = [["Shipment → Bitterbrook", "3 turns"], ["Hunt · Aurochs", "home"]];
+  var PARTY_GHOST = [["Shipment → Duskwater", "3 turns"], ["Hunt · Aurochs", "home"]];
 
   function render() {
     var moved = crossings().length;
@@ -1129,7 +1440,7 @@
       '<div class="bp-head"><div class="bp-subject">' +
         '<span class="bp-glyph">⌂</span>' +
         '<span class="bp-name">' + BAND.name + "</span>" +
-        '<span class="bp-cycler">◀ 2/4 ▶</span>' +
+        '<span class="bp-cycler">◀ 2/' + members().length + " ▶</span>" +
       "</div>" +
       '<div class="bp-where">' + BAND.stage + "  " + BAND.pos + "</div></div>";
 
@@ -1140,7 +1451,6 @@
     var wide = state.dock !== "side";
 
     screen.classList.toggle("wide", wide);
-    screen.setAttribute("data-dock", state.dock);
 
     if (wide) {
       var strip = STRIPS[state.dock];
@@ -1154,8 +1464,6 @@
           '<div class="bp-zone"><div class="zone-title" style="color:var(--g-signal)">Trade</div>' +
             tradeZone() + "</div>";
       } else {
-        // (iii) — no fourth flank. Trade is a second SECTION in the parties zone,
-        // which is one of the panel's two sanctioned ScrollContainers already.
         zones +=
           '<div class="bp-zone">' +
             ghostZone("Parties", PARTY_GHOST) +
@@ -1190,18 +1498,18 @@
       scaler.style.transform = "";
       scaler.style.width = "";
       scaler.style.height = "";
-      cap.innerHTML = "side dock · 380px · the shell that tabs";
+      cap.innerHTML = "side dock · 380px · " + members().length + " camps · " +
+        panel.offsetHeight + "px of content";
     }
   }
 
   // ---------------------------------------------------------------------------
   function bindSeg(attr, key) {
-    document.querySelectorAll("[data-" + attr + "]").forEach(function (b) {
+    document.querySelectorAll("button[data-" + attr + "]").forEach(function (b) {
       b.addEventListener("click", function () {
-        var v = b.getAttribute("data-" + attr);
-        state[key] = v;
-        if (key !== "dock") { state.open = null; }
-        document.querySelectorAll("[data-" + attr + "]").forEach(function (o) {
+        state[key] = b.getAttribute("data-" + attr);
+        if (key !== "dock") { state.open = null; state.expand = {}; }
+        document.querySelectorAll("button[data-" + attr + "]").forEach(function (o) {
           o.setAttribute("aria-pressed", String(o === b));
         });
         render();
@@ -1211,11 +1519,18 @@
   bindSeg("layout", "layout");
   bindSeg("turn", "turn");
   bindSeg("dock", "dock");
+  bindSeg("net", "net");
 
   document.getElementById("panel").addEventListener("click", function (ev) {
-    var r = ev.target.closest ? ev.target.closest(".row.click") : null;
-    if (!r) { return; }
-    var k = r.getAttribute("data-key");
+    var t = ev.target.closest ? ev.target.closest(".row.click") : null;
+    if (!t) { return; }
+    var fold = t.getAttribute("data-toggle");
+    if (fold) {
+      state.expand[fold] = !state.expand[fold];
+      render();
+      return;
+    }
+    var k = t.getAttribute("data-key");
     state.open = (state.open === k) ? null : k;
     render();
   });
