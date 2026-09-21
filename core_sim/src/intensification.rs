@@ -3316,7 +3316,7 @@ pub struct RouteTraffic {
     ///
     /// ⛔ **IT IS THE LINK, NOT THE TONNAGE — and that is a correction to the design.** §4.13 first
     /// specified this as **mass-tiles**, quantity moved × distance. That is wrong for the commonest
-    /// road in the game: `balance_supply_networks` drops sub-`min_transfer` moves so a **balanced**
+    /// road in the game: `balance_supply_networks` drops sub-dead-band moves so a **balanced**
     /// network ships nothing, and a mass-driven rate would have two neighbouring camps who have shared
     /// a larder for thirty turns wear **no path at all** — precisely the case #532 says must not be
     /// the one that produces no trail. A trail between two camps forms because they are neighbours
@@ -3343,7 +3343,7 @@ pub struct RouteTraffic {
     /// `PopulationCohort` carrying a `BandTravel` exactly as a band, a scout and a hunt party are, and
     /// `crate::systems::advance_band_movement` is the single system that steps all of them — so one
     /// hook fills both of §4.13's remaining traffic rows. **And no mass term**:
-    /// `balance_supply_networks` drops sub-`min_transfer` moves, so a mass-driven rate is the error
+    /// `balance_supply_networks` drops sub-dead-band moves, so a mass-driven rate is the error
     /// §4.13a ① already corrected.
     ///
     /// Validated finite and `> 0`, beside its sibling. **Opening value chosen for shape, not
