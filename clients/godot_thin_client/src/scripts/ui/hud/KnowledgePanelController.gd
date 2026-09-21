@@ -280,8 +280,8 @@ func _ensure_panel() -> void:
 
 ## **SELECTION IS A TOGGLE, AND IT NEEDS NO NEW STATE** (`docs/plan_knowledge_rows.md` §4).
 ## `PAYLOAD_SELECTED` is a knowledge key whose EMPTY STRING already means *nothing is selected* — the
-## panel renders the placeholder for it — so a toggle is "set the key, or set it back to empty" and
-## there is nothing to remember about whether a reading is open.
+## panel mounts the detail block empty for it — so a toggle is "set the key, or set it back to
+## empty" and there is nothing to remember about whether a reading is open.
 ##
 ## Pressing the OPEN knowledge closes it; pressing a different one MOVES the reading. **Only one is
 ## ever open**, and that is not fussiness: several at once would make the panel's height a function

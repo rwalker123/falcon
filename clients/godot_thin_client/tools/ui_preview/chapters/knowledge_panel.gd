@@ -743,9 +743,11 @@ func _assert_card_does_not_breathe() -> void:
 ## **SELECTION IS A TOGGLE, AND ONLY EVER ONE READING IS OPEN** (§4).
 ##
 ## Entered with `cultivation` open (the detail frame's state). Pressing the OPEN chip clears the
-## selection back to the placeholder; pressing a DIFFERENT chip moves the reading rather than opening
-## a second one — which is asserted by COUNTING the blocks, because a renderer that appended a second
-## one produces a perfectly ordinary-looking card with two paragraphs in it.
+## selection and leaves the block MOUNTED, reading nothing — the reserve that stops the card
+## breathing is the block's own, so the close must not unmount it; pressing a DIFFERENT chip moves the
+## reading rather than opening a second one — which is asserted by COUNTING the blocks, because a
+## renderer that appended a second one produces a perfectly ordinary-looking card with two paragraphs
+## in it.
 func _assert_selection_toggles() -> void:
 	var controller: KnowledgePanelController = h._hud.knowledge_panel()
 	var panel: KnowledgePanel = controller.panel()
@@ -759,9 +761,15 @@ func _assert_selection_toggles() -> void:
 	h._assert_hud("knowledge toggle — pressing the OPEN chip clears the selection (got `%s`)"
 			% controller._selected,
 		controller._selected == "")
-	h._assert_hud("knowledge toggle — …and the block falls back to its placeholder (`%s`)"
-			% HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY,
-		NodeQuery.has_label_containing(panel, HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY))
+	var closed_blocks := _detail_blocks(panel)
+	h._assert_hud("knowledge toggle — …and the block stays MOUNTED with nothing open (%d)"
+			% closed_blocks.size(),
+		closed_blocks.size() == 1)
+	h._assert_hud("knowledge toggle — …carrying no key (`%s`)"
+			% (String(closed_blocks[0].get_meta(HudKnowledgeVocab.DETAIL_META, "")) \
+				if closed_blocks.size() == 1 else "<no block>"),
+		closed_blocks.size() == 1 \
+			and String(closed_blocks[0].get_meta(HudKnowledgeVocab.DETAIL_META, "")) == "")
 	# A DIFFERENT chip MOVES the reading. `herding` sits on another domain, so this is also the leg
 	# that proves the block travels between rows rather than staying where the last one was.
 	await _press_node("cultivation")

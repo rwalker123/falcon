@@ -266,11 +266,13 @@ directions from the middle of the screen on every click. Two mechanisms, and bot
 - **`refit` applies `PANEL_WIDTH`, never the content's demand.** `target_width` is the panel's ACTUAL
   width now rather than the nominal floor it was, clamped only by the room
   (`clampf(room.size.x, PANEL_MIN_WIDTH, PANEL_WIDTH)`), so `fit_width(0, 0)` has nothing left to fit.
-- **The detail block is mounted in BOTH states at `DETAIL_BLOCK_MIN_HEIGHT`** — open, and holding the
-  placeholder. The body's minimum height therefore does not change when a knowledge is opened or
-  closed; the gap simply moves from the bottom of the list to under the open row. That constant is
-  MEASURED against the tallest open reading the shipped copy produces, not chosen: a shorter reserve
-  does not break the layout, it only lets the card breathe again.
+- **The detail block is mounted in BOTH states at `DETAIL_BLOCK_MIN_HEIGHT`** — open, and empty. The
+  body's minimum height therefore does not change when a knowledge is opened or closed; the gap
+  simply moves from the bottom of the list to under the open row. That constant is MEASURED against
+  the tallest open reading the shipped copy produces, not chosen: a shorter reserve does not break
+  the layout, it only lets the card breathe again. **The empty state carries no words at all** — the
+  block is a RESERVE, not a prompt, and the sentence that used to stand in it told the player to
+  click on the things they were going to click on anyway.
 
 Asserted as the CONSEQUENCE rather than as either mechanism (`_assert_card_does_not_breathe`), so it
 survives a different implementation of the same promise: **both axes, on the open AND on the toggle
@@ -280,9 +282,9 @@ grows and never comes back. Measured at 1920×1080: **820 × 477 in all three st
 ### SELECTION IS A TOGGLE, AND IT NEEDS NO NEW STATE
 
 `PAYLOAD_SELECTED` is a knowledge key whose EMPTY STRING already means *nothing is selected* — the
-panel renders the placeholder for it — so a toggle is "set the key, or set it back to empty". Pressing
-the open chip closes it; pressing a different one MOVES the reading. **Only one is ever open**, and
-that is not fussiness: several at once would make the panel's height a function of how much the player
+panel mounts the detail block empty for it — so a toggle is "set the key, or set it back to empty".
+Pressing the open chip closes it; pressing a different one MOVES the reading. **Only one is ever
+open**, and that is not fussiness: several at once would make the panel's height a function of how much the player
 had poked at it, on a card centred in its room.
 
 `Escape` closes it too, and the reading carries a `✕`. The `✕` emits its own `detail_closed` rather

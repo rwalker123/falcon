@@ -253,9 +253,8 @@ const TALLY_SEPARATOR := " · "
 ## thing: a discovery is earned by practice, so the only way to get one is to go and do the work.
 ##
 ## **THERE IS NO "LEFT" ANY MORE** — the pinned pane is gone and the reading opens INLINE, beneath
-## the row whose chip was pressed (`docs/plan_knowledge_rows.md` §4), so the placeholder points UP
-## at the list rather than sideways at a column that no longer exists.
-const DETAIL_PLACEHOLDER_BODY := "Pick anything above to see what it lets your hands do, and how it is learned."
+## the row whose chip was pressed (`docs/plan_knowledge_rows.md` §4), rather than sideways in a
+## column that no longer exists.
 
 ## The three kickers, and they are drawn in the order **does · where · how** — the prototype's
 ## (`docs/knowledge_rows_ux_proposal.html` → `detailFor`), which is the design. The pinned pane read
@@ -441,8 +440,8 @@ const DETAIL_SECTION_COUNT := 3
 const DETAIL_SECTION_MIN_WIDTH := 40.0
 
 ## ⛔ **THE RESERVE THAT STOPS THE CARD BREATHING** (`docs/plan_knowledge_rows.md` §4). The detail
-## block is mounted in BOTH states — open, and holding the placeholder — at this minimum height, so
-## the body's minimum does not change when a knowledge is opened or closed: the gap simply moves from
+## block is mounted in BOTH states — open, and empty — at this minimum height, so the body's
+## minimum does not change when a knowledge is opened or closed: the gap simply moves from
 ## the bottom of the list to under the open row. A card fitted to its content instead would narrow on
 ## every close and widen on every open, and on a card centred in its room that is a visible lurch in
 ## both directions from the middle of the screen, on every click.
@@ -479,9 +478,9 @@ const DOMAIN_META := "knowledge_domain"
 const RAIL_META := "knowledge_rail"
 const TALLY_META := "knowledge_tally"
 const EMPTY_NOTE_META := "knowledge_empty_note"
-## The INLINE detail block. It carries the key of the node it is reading, or `""` in its placeholder
-## state — so a harness can ask both *how many are mounted* (exactly one, always) and *which row is
-## it sitting under*, which is the pair of claims the toggle rests on.
+## The INLINE detail block. It carries the key of the node it is reading, or `""` when it is mounted
+## with nothing selected — so a harness can ask both *how many are mounted* (exactly one, always)
+## and *which row is it sitting under*, which is the pair of claims the toggle rests on.
 const DETAIL_META := "knowledge_detail"
 
 ## The tint each state's name and glyph take. `not_begun` is `INK_FAINT` — GREYED, not hidden.
