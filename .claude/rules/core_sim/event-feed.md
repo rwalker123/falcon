@@ -252,7 +252,8 @@ with that sentence rather than mutely breaking the arithmetic.
 | `migrated` | `band= count= direction={out\|in}` |
 | `hunt_report` | `engaged= fled= killed= carried_biomass= wasted_biomass= hunters_killed= hunters_wounded= bound={engagement\|floor\|carry\|fight} species=` |
 | a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|scout\|warrior\|agriculture\|husbandry\|builders} [x= y=\|herd=] workers= lost= band=` |
-| a lapsed source row | `status=lapsed reason={out_of_range\|herd_gone\|out_of_leash} …source terms… band=` |
+| a lapsed source row | `status=lapsed reason={out_of_range\|herd_gone} …source terms… band=` — `out_of_range` is the **deposit** arm's alone now; `out_of_leash` is retired with the hunt leash |
+| a recalled work party | `status=recalled reason=unsupplied {x= y=\|fauna=} travel= deficit= band=` — the posting ended because the band could not get food out to it (`.claude/rules/core_sim/work-party.md`). **Notable, not Alert**: nothing was destroyed and the pack came home |
 | a narrowed take | `status=pruned reason=not_here role= band= dropped=` |
 
 ## The `band=` token is what makes a loss line clickable
@@ -265,7 +266,8 @@ band by reading the label's prose, because a link that jumped to whatever band t
 be showing is worse than no link.
 
 - **`systems::labor::band_detail_token` is the one writer for the labor system's lines** —
-  `announce_shed_crew` plus the `out_of_range`, `herd_gone` and `out_of_leash` lapses — and the
+  `announce_shed_crew` plus the `out_of_range` and `herd_gone` lapses and the work party's
+  `recalled` fold-back — and the
   `assign_labor` command writes its own on the `status=pruned` line. `advance_labor_allocation` takes
   `Option<&BandId>` for it, on the same rule the demographic feed follows: a band with no durable id
   publishes its rows unchanged and simply renders linkless.

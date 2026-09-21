@@ -374,6 +374,54 @@ pub struct LaborAssignmentState {
     /// (append-only).
     #[serde(default)]
     pub kit_workers_holding: f32,
+    /// **THE TILE THIS ROW'S WORKERS ARE STANDING ON** — the source's own position, when the source
+    /// is past the distance the band's own hands reach. See [`Self::party_workers`], which is the
+    /// field that says whether there is a party at all.
+    #[serde(default)]
+    pub party_x: u32,
+    /// The `y` half of [`Self::party_x`].
+    #[serde(default)]
+    pub party_y: u32,
+    /// **EVERY HAND THIS POSTING HOLDS**, and the field that says a posting exists: `0` is the
+    /// ordinary local row, where every party field beside it reads `0` too.
+    ///
+    /// A Hunt or Forage row whose source drifts out of reach no longer lapses — it posts a **work
+    /// party** (`docs/plan_civilization_steps.md` §One work party). The party is not an entity and
+    /// not a second band: the workers never stopped being the band's, so the row that staffed it is
+    /// the row that reports it.
+    #[serde(default)]
+    pub party_workers: u32,
+    /// **HOW MANY OF THE PARTY ARE CARRYING RATHER THAN WORKING.** Distance is paid in workers out
+    /// of the party itself, so `party_workers − porters` is the crew that actually worked the
+    /// source and is what every yield figure on this row is priced at. At enough distance it is the
+    /// whole party and the posting produces nothing — a range cap that falls out of the clamp.
+    #[serde(default)]
+    pub porters: u32,
+    /// **THE MODELLED DISTANCE, MEASURED TO THE APRON** — `max(0, hex_distance − band_work_range)`.
+    /// A source inside the band's work range costs no travel at all, which is what makes a local
+    /// row and a far row one model rather than two.
+    #[serde(default)]
+    pub travel_tiles: u32,
+    /// **HOW LONG THE WALK OUT TOOK**, in turns. Nothing lands at home until it has elapsed; after
+    /// that the line is open and goods flow every turn — a pipeline, not a trip.
+    #[serde(default)]
+    pub transit_turns: u32,
+    /// **WHAT THE PARTY ATE OUT OF ITS OWN TAKE THIS TURN.** Not a second meal: the band's
+    /// population consumption already feeds these people wherever they stand, so this records that
+    /// the food was eaten *at the source* and never had to be carried.
+    #[serde(default)]
+    pub party_ate: f32,
+    /// **WHAT THE PARTY'S UPKEEP STILL WANTS AFTER ITS OWN TAKE** — the food the band has to carry
+    /// out. `0` on a posting that feeds itself; the whole of the upkeep on one whose take is not
+    /// edible, which is the case the rule produces with no per-job exemption anywhere.
+    #[serde(default)]
+    pub party_deficit: f32,
+    /// **THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND** — the amortized number the work row
+    /// prints, so a near row and a far row are comparable figures on one board and a far posting
+    /// never reads *"0.0 · in transit"*. Amortized-over-the-cycle and steady-state coincide
+    /// deliberately: one number, not two.
+    #[serde(default)]
+    pub net_rate_home: f32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

@@ -499,6 +499,7 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         .expect("the band keeps its allocation");
     allocation.assignments.clear();
     allocation.assignments.push(LaborAssignment {
+        party: None,
         target: LaborTarget::Hunt {
             fauna_id: CORRALLED_HERD.to_string(),
             floor: KEEPER_FLOOR,
@@ -509,6 +510,7 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         upkeep_kit: None,
     });
     allocation.assignments.push(LaborAssignment {
+        party: None,
         target: LaborTarget::Builders,
         workers: RING_BUILDERS,
         kit: None,

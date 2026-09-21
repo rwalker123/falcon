@@ -99,6 +99,10 @@ fn base_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -167,6 +171,7 @@ fn seat_two_pens(app: &mut App, tile: UVec2) {
 
 fn hunt_row(herd_id: &str, priority: SourcePriority) -> LaborAssignment {
     LaborAssignment {
+        party: None,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
@@ -538,6 +543,7 @@ fn queue_a_build(
         .get_mut::<LaborAllocation>(keeper)
         .expect("the keeper band keeps its allocation");
     allocation.assignments.push(LaborAssignment {
+        party: None,
         target: LaborTarget::Builders,
         workers: RING_BUILDERS,
         kit: None,
@@ -1072,17 +1078,22 @@ fn deposit_input(app: &mut App, keeper: Entity, material: &str, amount: f32, axe
 
 /// ⛔ **A ROW THE ARM WILL NOT REACH BIDS FOR NOTHING** (`docs/plan_standing_upkeep.md` §2.7).
 ///
-/// The Hunt arm `continue`s past `apply_material_keeping` for a herd beyond `hunt_reach`, so a claim
-/// settled for that row reserves hurdles **nothing ever spends** — and the pen that *is* in reach is
-/// judged short by the difference, taking the neglect counter, the decay fraction and the shed for a
-/// shortage it did not cause. `settle_pen_hay` has always filtered the hay by the same leash; the
-/// material settlement now shares the rule through `BandReach`.
+/// The Hunt arm `continue`s past `apply_material_keeping` for a herd the registry no longer carries,
+/// so a claim settled for that row reserves hurdles **nothing ever spends** — and the pen that *is*
+/// worked is judged short by the difference, taking the neglect counter, the decay fraction and the
+/// shed for a shortage it did not cause. `settle_pen_hay` has always filtered the hay the same way;
+/// the material settlement shares the rule through `BandReach`.
 ///
-/// **The store holds exactly the in-reach pen's whole bill.** Under a leash-blind settlement the two
-/// `Normal` pens split it in proportion to demand and the in-reach one is paid about half; the claim
-/// here is that it is paid **whole**.
+/// **DISTANCE USED TO BE THE FIXTURE, AND IS NO LONGER A REASON TO SKIP A ROW.** A pen past
+/// `hunt_reach` lapsed on the spot; it posts a work party now and is worked from wherever it stands
+/// (`docs/plan_civilization_steps.md` §One work party), so the surviving case — and the one this
+/// arm has to stage — is a herd that is simply **gone**.
+///
+/// **The store holds exactly the worked pen's whole bill.** Under a settlement blind to the skip,
+/// the two `Normal` pens split it in proportion to demand and the worked one is paid about half;
+/// the claim here is that it is paid **whole**.
 #[test]
-fn a_pen_past_the_leash_reserves_nothing_from_the_store() {
+fn a_pen_whose_herd_is_gone_reserves_nothing_from_the_store() {
     let (big_bill, small_bill) = full_bills();
     assert!(
         big_bill > 0.0 && small_bill > 0.0,
@@ -1090,7 +1101,7 @@ fn a_pen_past_the_leash_reserves_nothing_from_the_store() {
          (big {big_bill}, small {small_bill})"
     );
 
-    let (app, keeper) = run_one_pen_past_the_leash(big_bill);
+    let (app, keeper) = run_one_pen_whose_herd_is_gone(big_bill);
     assert!(
         app.world
             .resource::<CommandEventLog>()
@@ -1098,8 +1109,8 @@ fn a_pen_past_the_leash_reserves_nothing_from_the_store() {
             .any(|entry| entry
                 .detail
                 .as_deref()
-                .is_some_and(|detail| detail.contains("reason=out_of_leash"))),
-        "fixture: the far pen's row must actually LAPSE — if the arm reached it there is no \
+                .is_some_and(|detail| detail.contains("reason=herd_gone"))),
+        "fixture: the second pen's row must actually LAPSE — if the arm reached it there is no \
          unspendable reservation to make"
     );
     assert!(
@@ -1109,7 +1120,7 @@ fn a_pen_past_the_leash_reserves_nothing_from_the_store() {
             .assignments
             .iter()
             .any(|row| matches!(&row.target, LaborTarget::Hunt { fauna_id, .. } if fauna_id == "pen_big")),
-        "fixture: the IN-reach pen's row must survive the turn, or nothing was paid at all"
+        "fixture: the worked pen's row must survive the turn, or nothing was paid at all"
     );
 
     let paid_in_reach = paid(&app, "pen_big");
@@ -1118,45 +1129,24 @@ fn a_pen_past_the_leash_reserves_nothing_from_the_store() {
         "**THE PEN IN REACH IS PAID WHOLE** — the store held exactly its bill, and the pen the arm \
          lapses must not have reserved a share of it (paid {paid_in_reach} of {big_bill})"
     );
-    assert_eq!(
-        paid(&app, "pen_small"),
-        0.0,
-        "…and the far pen spent nothing, which is what makes any reservation for it dead"
+    assert!(
+        !app.world
+            .get::<LaborAllocation>(keeper)
+            .expect("the keeper carries an allocation")
+            .assignments
+            .iter()
+            .any(|row| matches!(&row.target, LaborTarget::Hunt { fauna_id, .. } if fauna_id == "pen_small")),
+        "…and the vanished pen's row went with it, which is what makes any reservation for it dead"
     );
 }
 
-/// Two `Normal` pens, one on the band's own tile and one past `hunt_reach`, with `units` of the good
-/// on the shelf. The far pen is seated by hand rather than through [`seat_two_pens`], which puts both
-/// on one tile.
-fn run_one_pen_past_the_leash(units: f32) -> (App, Entity) {
+/// Two `Normal` pen rows on the keeper, with `units` of the good on the shelf — and the second
+/// pen's **herd deleted from the registry**, which is the one thing left that makes the assignment
+/// arm skip a row (see [`a_pen_whose_herd_is_gone_reserves_nothing_from_the_store`]).
+fn run_one_pen_whose_herd_is_gone(units: f32) -> (App, Entity) {
     let mut app = base_world();
     let tile = pen_tile(&app);
     seat_two_pens(&mut app, tile);
-    let far = {
-        let reach = app.world.resource::<LaborConfigHandle>().get().hunt_reach();
-        let far = UVec2::new(tile.x + reach + 1, tile.y);
-        assert!(
-            app.world
-                .resource::<TileRegistry>()
-                .index(far.x, far.y)
-                .is_some(),
-            "fixture: the far tile must be on the map ({far:?})"
-        );
-        far
-    };
-    {
-        let ladder = core_sim::LadderConfig::builtin();
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry
-            .herds
-            .iter_mut()
-            .find(|herd| herd.id == "pen_small")
-            .expect("the fixture seated both pens");
-        assert!(
-            herd.corral_at(far, &ladder),
-            "the fixture species must be pennable"
-        );
-    }
     let keeper = spawn_keeper(
         &mut app,
         vec![
@@ -1166,6 +1156,12 @@ fn run_one_pen_past_the_leash(units: f32) -> (App, Entity) {
         tile,
     );
     stock_material(&mut app, keeper, units);
+    // The row survives on the keeper; the herd it names does not. The settlement must see that and
+    // reserve nothing for it, and the arm then lapses the row with `reason=herd_gone`.
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .retain(|herd| herd.id != "pen_small");
     app.world.run_system_once(advance_labor_allocation);
     (app, keeper)
 }

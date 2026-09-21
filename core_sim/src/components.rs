@@ -1881,12 +1881,13 @@ impl TakeSelection {
 /// (`docs/plan_early_game_labor.md`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LaborTarget {
-    /// Gather food from a food-module tile within `band_work_range`, stopping at a **floor**. Stored
-    /// as coordinates (not an entity) so a moving band re-resolves the tile each turn — and a tile
-    /// that re-resolves out of range is **abandoned**, the plant twin of the Hunt leash lapse: the
-    /// assignment drops and its workers return to the pool. The asymmetry is deliberate — a herd
-    /// moves, so `hunt_leash_tiles` buys the band time to follow it, but a patch is fixed, so
-    /// out-of-range can only mean the band walked away from it.
+    /// Gather food from a food-module tile, stopping at a **floor**. Stored as coordinates (not an
+    /// entity) so a moving band re-resolves the tile each turn — and a tile that re-resolves past
+    /// `band_work_range` posts a **work party** ([`crate::work_party::WorkParty`],
+    /// `docs/plan_civilization_steps.md` §One work party) rather than being abandoned: the
+    /// gatherers stand on the patch, a share of them carries the take home, and the row states its
+    /// travel instead of a `+0.00`. A patch inside the range takes no party and is worked exactly
+    /// as it always was.
     Forage {
         tile: UVec2,
         /// **WHERE THE GATHER STOPS, as a fraction of the patch's `K`** — the whole of what the
@@ -1915,8 +1916,11 @@ pub enum LaborTarget {
         /// (see [`LaborTarget::same_source`]).
         take_species: TakeSelection,
     },
-    /// Hunt a fauna group by id, stopping at a **floor**. The band tracks a roaming herd up to
-    /// `band_work_range + hunt_leash_tiles` (leashed follow); past that the assignment lapses.
+    /// Hunt a fauna group by id, stopping at a **floor**. Past
+    /// [`crate::labor_config::LaborConfig::hunt_reach`] the hunters become a **work party**
+    /// ([`crate::work_party::WorkParty`]) and follow the herd wherever it goes — a party's position
+    /// *is* its source's, so there is no follow order and no pathfinding. The row lapses only if
+    /// the herd is gone or the band can no longer supply the party.
     Hunt {
         fauna_id: String,
         /// **WHERE THE HUNT STOPS, as a fraction of the herd's `K`** — see
@@ -2304,7 +2308,7 @@ impl SourcePriority {
 ///
 /// The *pressure* — where the crew stops — still rides the target as its **floor**, and **the sim
 /// never writes it**.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaborAssignment {
     pub target: LaborTarget,
     pub workers: u32,
@@ -2350,6 +2354,37 @@ pub struct LaborAssignment {
     /// statement about priority, and a rank that reset itself on a stepper press is the positional
     /// defect this property replaces.
     pub priority: SourcePriority,
+    /// **WHERE THIS ROW'S WORKERS ARE STANDING, WHEN IT IS NOT WHERE THE BAND IS** — the work party
+    /// (`docs/plan_civilization_steps.md` §One work party, [`crate::work_party::WorkParty`]).
+    ///
+    /// `None` is the ordinary local row and is what every command constructs: a party is **posted
+    /// by the turn**, not by an order. A source past the distance the band's own hands reach used
+    /// to have its row destroyed; it now grows one of these instead, and the row that staffed it is
+    /// the row that reports it. There is no second entity, no `ResidentBand`-less cohort and no
+    /// merge — the workers never stopped being the band's.
+    ///
+    /// ⛔ **IT IS OUTSIDE THIS TYPE'S EQUALITY** (see the hand-written `PartialEq` below), unlike
+    /// [`Self::priority`] beside it. A rank is **intent** — two allocations that differ in one are
+    /// two different orders. A party is a **fact about the world**, restamped every turn from the
+    /// source's live position, so a rollback record or a command no-op guard that compared it would
+    /// report *nothing changed* as a change on every turn the herd moved.
+    pub party: Option<crate::work_party::WorkParty>,
+}
+
+/// ⛔ **EQUALITY IS THE ORDER THE PLAYER GAVE, AND THE PARTY IS NOT PART OF IT.**
+///
+/// Everything here is intent — the source, the crew, the two kits, the rank — and
+/// [`LaborAssignment::party`] is derived per-turn telemetry, excluded for exactly the reason
+/// [`LaborAllocation::last_yields`] is excluded one level up. A `#[derive]` would have folded a
+/// herd's position into the comparison a rollback record and the command no-op guard both make.
+impl PartialEq for LaborAssignment {
+    fn eq(&self, other: &Self) -> bool {
+        self.target == other.target
+            && self.workers == other.workers
+            && self.kit == other.kit
+            && self.upkeep_kit == other.upkeep_kit
+            && self.priority == other.priority
+    }
 }
 
 // **RETIRED: `ActivityCrew` / `LaborAssignment::improvement_workers` / `LaborAllocation::idle_for`**
@@ -4783,6 +4818,11 @@ impl LaborAllocation {
         // kept on **every** path, staffed or not — a `−`/`+` on the row must not silently put the
         // keepers back on the derived default.
         let mut standing_upkeep_kit = None;
+        // **AND THE PARTY, CARRIED THE SAME WAY** — and for a stronger reason than the rank's: a
+        // `−`/`+` on a far row is not an order to bring the workers home and start the walk out
+        // again. Dropping it here would restart the transit countdown on every stepper press, so a
+        // posting the player kept adjusting would never deliver anything.
+        let mut standing_party = None;
         let mut had_row = false;
         if let Some(idx) = self
             .assignments
@@ -4792,6 +4832,7 @@ impl LaborAllocation {
             standing_kit = self.assignments[idx].kit.clone();
             standing_priority = self.assignments[idx].priority;
             standing_upkeep_kit = self.assignments[idx].upkeep_kit.clone();
+            standing_party = self.assignments[idx].party.clone();
             had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
@@ -4813,6 +4854,7 @@ impl LaborAllocation {
                 kit: if keep_holding { standing_kit } else { kit },
                 upkeep_kit: standing_upkeep_kit,
                 priority: standing_priority,
+                party: standing_party,
             });
             self.last_yields.push(SourceYield::ZERO);
         }
@@ -6416,6 +6458,7 @@ mod tests {
     #[cfg(test)]
     fn staffed_forage(tile: bevy::math::UVec2, take: u32) -> LaborAssignment {
         LaborAssignment {
+            party: None,
             target: LaborTarget::Forage {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -6446,6 +6489,7 @@ mod tests {
     #[cfg(test)]
     fn ranked_hunt(herd: &str, take: u32, priority: SourcePriority) -> LaborAssignment {
         LaborAssignment {
+            party: None,
             target: LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -6470,6 +6514,7 @@ mod tests {
     #[cfg(test)]
     fn staffed_role(target: LaborTarget, workers: u32) -> LaborAssignment {
         LaborAssignment {
+            party: None,
             target,
             workers,
             kit: None,
@@ -6784,6 +6829,7 @@ mod tests {
         priority: SourcePriority,
     ) -> LaborAssignment {
         LaborAssignment {
+            party: None,
             priority,
             ..staffed_forage(tile, take)
         }

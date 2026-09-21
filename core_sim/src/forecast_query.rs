@@ -968,6 +968,8 @@ mod tests {
         world.insert_resource(CreaturesConfigHandle::default());
         world.insert_resource(CombatConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(ExpeditionConfigHandle::default());
         world.insert_resource(HerdRegistry {

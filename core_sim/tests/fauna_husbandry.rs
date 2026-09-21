@@ -80,6 +80,10 @@ fn spawn_world() -> App {
         .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -1088,6 +1092,7 @@ fn spawn_crew_of(
                 assignments: with_keeping_role(
                     with_builders_pool(
                         vec![LaborAssignment {
+                            party: None,
                             target: LaborTarget::Hunt {
                                 fauna_id: herd_id.to_string(),
                                 floor: policy,
@@ -1768,6 +1773,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
             .expect("the fixture band keeps its allocation")
             .assignments
             .push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Builders,
                 workers: keepers,
                 kit: None,
@@ -3399,6 +3405,7 @@ fn set_hunt_improvement(
                 {
                     Some(row) => row.workers = builders,
                     None => allocation.assignments.push(LaborAssignment {
+                        party: None,
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
@@ -4067,6 +4074,7 @@ fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32
 fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<LaborAssignment> {
     if builders > 0 {
         rows.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: builders,
             kit: Some(
@@ -4086,6 +4094,7 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
 fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborAssignment> {
     if keepers > 0 {
         rows.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Husbandry,
             workers: keepers,
             kit: None,
@@ -5073,6 +5082,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             .index(pos.x, pos.y)
             .expect("the herd's tile resolves");
         let hunt_row = |id: &str| LaborAssignment {
+            party: None,
             target: LaborTarget::Hunt {
                 fauna_id: id.to_string(),
                 floor: AT_THE_FLOOR,

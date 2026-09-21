@@ -101,6 +101,10 @@ fn spawn_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -253,6 +257,7 @@ fn declare_gathering_site(app: &mut App, coord: UVec2) {
 /// One Forage row, so the two shapes above cannot drift.
 fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
     LaborAssignment {
+        party: None,
         target: LaborTarget::Forage {
             tile: patch,
             floor: policy,
@@ -300,6 +305,7 @@ fn set_forage_improvement(
             {
                 Some(row) => row.workers = builders,
                 None => allocation.assignments.push(LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -450,6 +456,7 @@ fn spawn_forager_at(
                         vec![
                             forage_row(patch, policy, foragers),
                             LaborAssignment {
+                                party: None,
                                 target: LaborTarget::Builders,
                                 workers: foragers,
                                 kit: None,
@@ -2841,6 +2848,7 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
             .expect("the fixture band keeps its allocation")
             .assignments
             .push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Builders,
                 workers,
                 kit: None,
@@ -3224,6 +3232,7 @@ fn spawn_band_keeping_two_patches(
         .get_mut::<LaborAllocation>(band)
         .expect("the band was just spawned");
     allocation.assignments.push(LaborAssignment {
+        party: None,
         target: LaborTarget::Forage {
             tile: second,
             floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
@@ -3671,6 +3680,7 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
             .assignments
             .push(forage_row(build, FOOD_PEAK_FLOOR, GATHERERS));
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
@@ -4589,6 +4599,7 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
             "fixture: completion retired the entry and nothing has re-enrolled it"
         );
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,

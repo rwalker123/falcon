@@ -2191,6 +2191,56 @@ table LaborAssignment {
   // A float because coverage counts workers in fractions, the same head count `workers` rounds.
   // Derived per-turn at capture. Appended last (append-only).
   kitWorkersHolding:float = 0;
+  // --- THE WORK PARTY (appended last, append-only) ---------------------------------------------
+  // *** WHERE THIS ROW'S WORKERS ARE STANDING, WHEN IT IS NOT WHERE THE BAND IS. ***
+  //
+  // A Hunt or Forage row whose source drifts past the distance the band's own hands reach no longer
+  // LAPSES - it posts a work party (docs/plan_civilization_steps.md, "One work party"). The party is
+  // not an entity and not a second band: it is state on this row, the workers never stopped being
+  // the band's, and the row that staffed it is the row that reports it. So there is exactly one
+  // place to look for every work item, near or far.
+  //
+  // `partyWorkers == 0` MEANS THERE IS NO PARTY - the ordinary local row - and every field below
+  // reads 0 with it. Do not render a party block on such a row; `travelTiles` of 0 is the identity
+  // case (the source is inside band_work_range) and is not a posting.
+  //
+  // The tile the workers stand on: the SOURCE's own position, re-read every turn, which is why a
+  // hunt party follows its herd with no follow order and a forage party stands on its patch.
+  partyX:uint = 0;
+  partyY:uint = 0;
+  // Every hand this posting holds (== `workers`), and how many of them are CARRYING rather than
+  // working. Distance is paid in workers out of the party itself, so `workers - porters` is the
+  // crew that actually worked the source this turn and is what every yield figure on this row is
+  // priced at. At enough distance `porters == partyWorkers` and the posting produces nothing - a
+  // range cap that falls out of the clamp rather than a picked number.
+  partyWorkers:uint = 0;
+  porters:uint = 0;
+  // The modelled distance, MEASURED TO THE APRON rather than to the hex:
+  // max(0, hex_distance(band, source) - band_work_range). A source inside the band's work range
+  // costs no travel at all, which is what makes a local row and a far row one model.
+  travelTiles:uint = 0;
+  // How long the walk out took, in turns (ceil(travelTiles / band_move_tiles_per_turn)). Nothing
+  // lands at home until it has elapsed; after that the line is open and goods flow every turn. A
+  // PIPELINE, NOT A TRIP - there is no haul command, no chosen destination and no launch gate.
+  transitTurns:uint = 0;
+  // What the party ate out of its own take this turn (min(take, party upkeep)). NOT a second meal:
+  // the band's population consumption already feeds these people wherever they stand, so this
+  // records that the food was eaten AT THE SOURCE and never had to be carried.
+  partyAte:float = 0;
+  // What the party's upkeep still wants after its own take - the food the band has to carry out to
+  // it. 0 on a posting that feeds itself; the WHOLE of the upkeep on one whose take is not edible
+  // (fibre, stone, wood), which is the case the rule produces with no per-job exemption anywhere.
+  // A party the band cannot supply walks home: the row folds back and the feed says so.
+  partyDeficit:float = 0;
+  // *** THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND - the number the work row prints. ***
+  // Amortized over the whole cycle and steady-state coincide here deliberately, so there is one
+  // number and not two: a near row and a far row are comparable figures on one board, and a far
+  // posting never reads "0.0 - in transit".
+  //
+  // THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row, never to whichever band the
+  // party happens to be standing beside. What the home band then does with the food is the
+  // ordinary supply network's business.
+  netRateHome:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

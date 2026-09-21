@@ -158,6 +158,10 @@ fn base_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(core_sim::RoadRegistry::default());
@@ -321,6 +325,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: SUSTAIN_FLOOR,
@@ -334,6 +339,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     // ordinary build and is raised from this pool at the head of the band's queue,
                     // exactly as a fence ring is.
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Builders,
                         workers: BUILDERS,
                         kit: None,
@@ -345,6 +351,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     // `grazing_2d_pen`'s own note): an accelerating shed would terminate the herd
                     // and there would be nothing left to milk.
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Husbandry,
                         workers: KEEPER_WORKERS,
                         kit: None,

@@ -1387,6 +1387,10 @@ fn spawn_standard_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -1573,6 +1577,7 @@ fn spawn_forager(
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: patch,
                         floor: policy,

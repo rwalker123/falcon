@@ -1230,6 +1230,10 @@ mod tests {
             vis.line_of_sight.enabled = true;
             world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
             world.insert_resource(LaborConfigHandle::default());
+            world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
+            world.insert_resource(
+                crate::supply_network_config::SupplyNetworkConfigHandle::default(),
+            );
             world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
             let mut sim = SimulationConfig::builtin();
@@ -1341,6 +1345,8 @@ mod tests {
         vis.line_of_sight.enabled = true;
         world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
         let mut sim = SimulationConfig::builtin();
@@ -1909,6 +1915,8 @@ mod hex_sight_range_tests {
             VisibilityConfig::default(),
         )));
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
 
         let mut sim = SimulationConfig::builtin();

@@ -95,6 +95,7 @@ mod visibility;
 mod visibility_config;
 mod visibility_systems;
 mod wellbeing_config;
+pub mod work_party;
 
 use std::sync::Arc;
 
@@ -362,7 +363,7 @@ pub use starting_loadout::{
     apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
     LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
-pub use supply::{balance_supply_networks, SupplyNetworkMembership};
+pub use supply::{balance_supply_networks, free_pooling_reach_tiles, SupplyNetworkMembership};
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
     SupplyNetworkConfigMetadata,
@@ -389,6 +390,7 @@ pub use wellbeing_config::{
     load_wellbeing_config_from_env, DiscontentConfig, MigrationConfig, ProductivityConfig,
     WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
 };
+pub use work_party::{FoodSettlement, PartyFlow, WorkParty};
 
 pub use biome_palette::{BiomePalette, PALETTE_SEED_SALT};
 pub use climate::{climate_band_for_temperature, ClimateBand};

@@ -188,15 +188,48 @@ fn link_holds(
     height: u32,
     wrap: bool,
 ) -> bool {
+    hex_distance_wrapped(a, b, width, wrap)
+        <= free_pooling_reach_tiles(
+            roads,
+            a,
+            b,
+            free_reach,
+            widest_route_reach,
+            width,
+            height,
+            wrap,
+        )
+}
+
+/// ⛔ **HOW FAR A LINK BETWEEN THESE TWO POINTS HOLDS ITSELF OPEN FOR FREE** — `reach_tiles`, or
+/// what the road between them widens it to, whichever is greater. The number [`link_holds`] tests a
+/// distance against, published because it has a **second reader**: a work party's porters and
+/// friction are charged on the tiles beyond it (`crate::work_party::porter_tiles`), which is what
+/// makes a worn trail promote a far posting into a near one.
+///
+/// **One producer, two readers.** The pooling test is literally `distance <= this`, so the reach a
+/// party pays porters past and the reach two camps pool inside can never drift apart — and the
+/// weakest-tile rule ([`crate::routes::path_reach_tiles`]) applies identically to both.
+///
+/// **Cost**: the trace only runs once the free test has failed **and** the pair is within
+/// `widest_route_reach`, so a game with no roads traces nothing.
+#[allow(clippy::too_many_arguments)] // The geometry a hex distance needs, plus the two reaches.
+pub fn free_pooling_reach_tiles(
+    roads: &crate::routes::RoadRegistry,
+    a: UVec2,
+    b: UVec2,
+    free_reach: u32,
+    widest_route_reach: u32,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> u32 {
     let distance = hex_distance_wrapped(a, b, width, wrap);
-    if distance <= free_reach {
-        return true;
-    }
-    if distance > widest_route_reach {
-        return false;
+    if distance <= free_reach || distance > widest_route_reach {
+        return free_reach;
     }
     let path = crate::routes::trace_path(a, b, width, height, wrap, roads);
-    distance <= crate::routes::path_reach_tiles(roads, &path)
+    free_reach.max(crate::routes::path_reach_tiles(roads, &path))
 }
 
 /// ⛔ **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction — DERIVED

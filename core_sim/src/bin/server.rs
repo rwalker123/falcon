@@ -12623,6 +12623,7 @@ mod tests {
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {
+                        party: None,
                         target,
                         workers: BAND_WORKERS,
                         kit: None,

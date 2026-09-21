@@ -62,6 +62,10 @@ fn spawn_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -136,6 +140,7 @@ fn hunting_band(
     hunters: u32,
 ) -> bevy::prelude::Entity {
     let assignments = vec![LaborAssignment {
+        party: None,
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             floor: 0.3,
