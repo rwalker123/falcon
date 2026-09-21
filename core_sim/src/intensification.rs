@@ -5230,6 +5230,35 @@ mod tests {
         assert_rejects(err, "branches[animal].area");
     }
 
+    /// **AN UNKNOWN BRANCH KEY FAILS THE PARSE**, which is precisely why
+    /// [`LadderConfig::validate_areas`] carries no *"every branch must be described"* rule. The
+    /// descriptor table is keyed by [`RungBranch`] itself, so `serde` refuses a token nobody coded
+    /// before any validation runs — the same coded-primitive discipline `behavior` follows.
+    ///
+    /// **It is pinned because it stands in for a validation rule.** A missing descriptor is a legal
+    /// fallback (`a_branch_with_no_descriptor_reports_no_subject_area`), and only the parse tells a
+    /// deliberate omission apart from a typo. Were an unknown key ever merely *ignored* — a catch-all
+    /// [`RungBranch`] arm, a loosened `serde` attribute — `"plnat"` would load clean, every knowledge
+    /// the plant branch teaches would publish [`NO_SUBJECT_AREA`], and the lot would drop under the
+    /// client's fallback heading with the whole suite green. That is the failure the table exists to
+    /// prevent, so the change that would widen the fallback has to fail HERE.
+    #[test]
+    fn rejects_an_unknown_branch_key() {
+        let err = reject(|json| {
+            let branches = json["branches"]
+                .as_object_mut()
+                .expect("branches is a table");
+            let plant = branches
+                .remove("plant")
+                .expect("the builtin describes the plant branch");
+            branches.insert("plnat".to_string(), plant);
+        });
+        assert!(
+            matches!(err, LadderConfigError::Parse(_)),
+            "a misspelled branch key must fail the PARSE, not describe a branch nobody coded: {err:?}"
+        );
+    }
+
     /// The ladder must describe **what the sim does today**, not the target model — later slices
     /// change behaviour by editing it. Pin the current truth so a drifting edit is caught here.
     /// **EVERY KEY A RUNG'S `behavior` BLOCK DECLARES IS ONE A SYSTEM READS.** `feeding` and

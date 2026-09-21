@@ -497,8 +497,10 @@ mod tests {
         const PENNING_PROGRESS: f32 = 1.0;
         /// The `animal:pen` rung's order — the position Foddering takes in the Herds column.
         const PEN_RUNG_ORDER: u32 = 3;
-        /// The subject areas' display order, shipped shape: the heading `animal` sits under comes
-        /// first, and two that no branch sits under yet ride behind it.
+        /// The subject areas' display order — a three-entry STAND-IN for the shipped six
+        /// (`food`, `making`, `works`, `reach`, `lore`, `war`): the heading `animal` sits under
+        /// comes first, and `making` and `works` ride behind it carrying no branch IN THIS FIXTURE,
+        /// which is what exercises an area with nothing under it.
         const LADDER_AREAS: [&str; 3] = ["food", "making", "works"];
 
         let snapshot = WorldSnapshot {
