@@ -81,7 +81,8 @@ signal detail_closed
 ## `[{key, label, shape, nodes}]` — `KnowledgeRoster.build_domains`' answer, already pruned of empty
 ## domains.
 const PAYLOAD_DOMAINS := "domains"
-## The selected node's key, `""` when nothing is selected (the placeholder detail pane).
+## The selected node's key, `""` when nothing is selected (the detail block mounted with nothing
+## to read).
 const PAYLOAD_SELECTED := "selected"
 ## The live filter's key. `FILTER_ALL` dims nothing.
 const PAYLOAD_FILTER := "filter"
@@ -317,7 +318,7 @@ func _tally_text(nodes: Array) -> String:
 ## **ONE ROW PER DOMAIN, AND THE READING INTERLEAVED.** The hairline between two rows, then the row,
 ## then — when the selected node belongs to THIS domain — the reading, immediately after it.
 ##
-## **THE BLOCK IS ALWAYS MOUNTED.** With nothing selected it goes last, holding its placeholder, at
+## **THE BLOCK IS ALWAYS MOUNTED.** With nothing selected it goes last, holding nothing, at
 ## the same `DETAIL_BLOCK_MIN_HEIGHT` reserve it takes when open: the body's minimum height does not
 ## change when a knowledge is opened or closed, so the card cannot breathe (see the class docstring).
 func _build_rows(payload: Dictionary, nodes: Array) -> void:
@@ -604,7 +605,6 @@ func _build_detail_block(node: Dictionary) -> Control:
 	host.add_child(pane)
 
 	if node.is_empty():
-		pane.add_child(_detail_placeholder())
 		return host
 
 	var column := VBoxContainer.new()
@@ -704,14 +704,9 @@ func _detail_section(kicker: String, body: String) -> Control:
 	column.add_child(_detail_body(body))
 	return column
 
-func _detail_placeholder() -> Control:
-	var label := _detail_body(HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY)
-	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	return label
-
 ## The reading's box. **The `SIGNAL` bar down the leading edge is what ties the block to the row above
-## it** — it is the only thing on screen saying this paragraph belongs to that chip. The placeholder
-## state draws no bar: it belongs to nothing.
+## it** — it is the only thing on screen saying this paragraph belongs to that chip. The CLOSED state
+## draws no bar: it belongs to nothing.
 func _detail_stylebox(open: bool) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.0, 0.0, 0.0, 0.0)

@@ -204,6 +204,15 @@ pub struct WorldSnapshot {
     /// knowledge columns without a hard-coded node list.
     #[serde(default)]
     pub ladder_knowledge: Vec<LadderKnowledgeState>,
+    /// **The subject areas, in display order** — the headings the knowledge screen groups
+    /// [`Self::ladder_knowledge`]'s domains under, off `intensification_ladder.json`'s `areas`. A
+    /// per-world constant, so it is published once and diffed whole beside the roster.
+    ///
+    /// It rides rather than being inferred from the rows: areas are peers, so first-seen order off
+    /// the roster would reshuffle the whole screen whenever a rung was added. An area with no
+    /// domains is never drawn.
+    #[serde(default)]
+    pub ladder_areas: Vec<String>,
     /// **The kit roster** (`equipment.json`'s `kits`) — every kit a party may be sent out with, in
     /// file order, with the tiers each grants. A per-world constant, published once so the client's
     /// picker needs no second copy of the TOE table.
@@ -365,6 +374,10 @@ pub struct WorldDelta {
     /// is rebuilt. `None` means unchanged.
     #[serde(default)]
     pub ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
+    /// The subject areas' display order; a per-world constant, so a delta re-sends it only when the
+    /// world is rebuilt. `None` means unchanged.
+    #[serde(default)]
+    pub ladder_areas: Option<Vec<String>>,
     /// The kit roster; a per-world constant, so a delta re-sends it only when the world is rebuilt.
     /// `None` means unchanged.
     #[serde(default)]

@@ -497,6 +497,11 @@ mod tests {
         const PENNING_PROGRESS: f32 = 1.0;
         /// The `animal:pen` rung's order — the position Foddering takes in the Herds column.
         const PEN_RUNG_ORDER: u32 = 3;
+        /// The subject areas' display order — a three-entry STAND-IN for the shipped six
+        /// (`food`, `making`, `works`, `reach`, `lore`, `war`): the heading `animal` sits under
+        /// comes first, and `making` and `works` ride behind it carrying no branch IN THIS FIXTURE,
+        /// which is what exercises an area with nothing under it.
+        const LADDER_AREAS: [&str; 3] = ["food", "making", "works"];
 
         let snapshot = WorldSnapshot {
             ladder_knowledge: vec![
@@ -506,6 +511,7 @@ mod tests {
                     branch: "animal".to_string(),
                     order: 2,
                     is_step: true,
+                    area: "food".to_string(),
                 },
                 LadderKnowledgeState {
                     knowledge_id: "foddering".to_string(),
@@ -513,8 +519,10 @@ mod tests {
                     branch: "animal".to_string(),
                     order: PEN_RUNG_ORDER,
                     is_step: false,
+                    area: "food".to_string(),
                 },
             ],
+            ladder_areas: LADDER_AREAS.iter().map(|a| a.to_string()).collect(),
             intensification_knowledge: vec![IntensificationKnowledgeState {
                 faction: 1,
                 knowledges: vec![
@@ -552,6 +560,17 @@ mod tests {
         assert!(
             roster.get(0).isStep(),
             "a rung's `unlock_knowledge` names Penning, so it IS a step"
+        );
+        // **THE SUBJECT AREA, DECODED.** The heading a domain is filed under comes off the config,
+        // never a client table — so it has to survive the wire, on the row and in the order beside
+        // it. Both read back from the generated reader for the same reason the fields above do.
+        assert_eq!(fodder_row.area(), Some("food"));
+        assert_eq!(roster.get(0).area(), Some("food"));
+        let areas = subsistence.ladderAreas().expect("area order present");
+        assert_eq!(
+            areas.iter().collect::<Vec<_>>(),
+            LADDER_AREAS.to_vec(),
+            "the display order crosses in the config's own order, headings no branch sits under and all"
         );
 
         let knowledge = subsistence
