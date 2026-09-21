@@ -139,6 +139,15 @@ pub(crate) fn labor_assignment_to_state(
         party_ate: assignment.party.as_ref().map_or(0.0, |p| p.ate),
         party_deficit: assignment.party.as_ref().map_or(0.0, |p| p.deficit),
         net_rate_home: assignment.party.as_ref().map_or(0.0, |p| p.net_rate_home),
+        // **THE LIVE COUNTDOWN, READ OFF THE PARTY** — `turns_to_first_arrival`, which the turn
+        // counts down, and never a recomputation from the distance: the walk happens once, so a
+        // herd drifting further out must not restart a walk that is already over. A party whose
+        // line has opened publishes `0` and goes on publishing `0`, which is the same reading a
+        // local row's absent party gives — in both cases there is nothing in transit.
+        party_transit_remaining: assignment
+            .party
+            .as_ref()
+            .map_or(0, |p| p.turns_to_first_arrival),
         ..Default::default()
     };
     match &assignment.target {

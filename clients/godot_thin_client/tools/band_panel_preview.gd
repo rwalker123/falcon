@@ -2644,6 +2644,8 @@ func _ready() -> void:
 
 	await _render_empty_work_zone_states()
 
+	await _render_work_party_states()
+
 	_assert_pending_assign_rollback()
 
 	await _assert_action_registry()
@@ -25767,3 +25769,346 @@ func _assert_rung_track_opens_over_the_dialog() -> void:
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
 
+
+# ---- THE WORK PARTY'S BLOCK (`docs/plan_civilization_steps.md` §One work party) ------------------
+
+## The hunt row a NEAR posting rides — the reference herd, so the row's label and its crew noun come
+## out of the shipped fixtures rather than out of a herd minted for this block.
+const PARTY_NEAR_HERD_ID := "game_deer_07"
+## …and the FAR one, whose walk is four times as long, so its block reads a different transit line
+## from the near row's. Its own quarry, so a claim about one row's block cannot be satisfied by the
+## other's.
+const PARTY_FAR_HERD_ID := "game_deer_79"
+## THE INEDIBLE posting — a wolf pack pays pelts and no meat, so its party runs its WHOLE upkeep as a
+## deficit. That is the case the design produces with no per-job exemption anywhere, and it is the
+## one line of the block that is a warning.
+const PARTY_DEFICIT_HERD_ID := TRADE_ONLY_HERD_ID
+
+## The LOCAL row's tile — the band's own hex, which is what "the band's own hands reach it" means.
+const PARTY_LOCAL_X := 71
+const PARTY_LOCAL_Y := 18
+
+## The near posting's terms. `porters` is deliberately ABOVE zero and BELOW the party, so the crew
+## line states a carrying clause and the posting is still producing.
+##
+## ⛔ **IT IS PART-WAY THROUGH ITS WALK, and that is what makes the countdown assertable at all:**
+## `party_transit_remaining` (4) is BELOW its `transit_turns` (6), i.e. a walk the sim has already
+## counted down twice. The two figures differ on purpose — a fixture that set them equal would pass
+## identically against a client rendering the fixed walk length. It carries the PLURAL form; the
+## unsupplied posting below carries the singular.
+const PARTY_NEAR_WORKERS := 4
+const PARTY_NEAR_PORTERS := 1
+const PARTY_NEAR_TRAVEL := 6
+const PARTY_NEAR_REMAINING := 4
+const PARTY_NEAR_ATE := 1.5
+const PARTY_NEAR_RATE := 2.4
+
+## …and the far one's. **The two postings differ in every number**, so a block that read the wrong
+## row's party lands on a figure a claim names rather than on a coincidence.
+##
+## ⛔ **ITS LINE IS OPEN** — `party_transit_remaining` is 0 and STAYS 0 for the rest of the posting's
+## life, which is the instruction to drop the walking-out line entirely. It has the LONGEST walk in
+## the fixture (8 turns) precisely so a client rendering `transit_turns` instead of the countdown
+## lands on the biggest wrong number available rather than on a near miss.
+const PARTY_FAR_WORKERS := 6
+const PARTY_FAR_PORTERS := 3
+const PARTY_FAR_TRAVEL := 8
+const PARTY_FAR_REMAINING := 0
+const PARTY_FAR_ATE := 2.0
+const PARTY_FAR_RATE := 0.9
+
+## The deficit posting. It eats NOTHING out of its own take — hide is not a meal — so the whole of
+## its upkeep is food the band has to carry out to it, and its block states NO `Party ate` line at
+## all: a `Party ate 0.00` sitting above the shortfall says nothing the shortfall does not.
+##
+## **It is also the SINGULAR countdown's one carrier** (one turn left of a five-turn walk), which is
+## a real state rather than a contrivance: an unsupplied posting is at its most alarming while it is
+## still walking out. Pairing it with the near posting's plural is what covers both arms of the fork
+## in one frame.
+const PARTY_DEFICIT_WORKERS := 3
+const PARTY_DEFICIT_PORTERS := 1
+const PARTY_DEFICIT_TRAVEL := 5
+const PARTY_DEFICIT_REMAINING := 1
+const PARTY_DEFICIT_ATE := 0.0
+const PARTY_DEFICIT_NEED := 1.2
+
+## The tile the postings' herds stand on — the row's published target, which is where the party is.
+const PARTY_SOURCE_X := 70
+const PARTY_SOURCE_Y := 17
+
+## The band the four rows ride. Its own entity, so the cycler stays 1/1 and no earlier state's band
+## is disturbed.
+const PARTY_BAND_ENTITY := 947
+const PARTY_BAND_ID := "Band 19"
+
+## **THE BAND ONE LOCAL ROW AND THREE POSTINGS RIDE.**
+##
+## ⛔ **THE LOCAL ROW IS THE POINT OF THE FIXTURE, not scenery.** A source the band's own hands reach
+## takes no party at all and every number on its row is what it was before any of this existed —
+## that identity is the whole argument for hanging far work off the row that staffed it — and an
+## identity asserted on a band with no party anywhere on it would pass on a client that had simply
+## not implemented the block.
+##
+## Its party keys are ABSENT rather than zeroed, which is the honest fixture for a row the sim
+## publishes the struct's own zeros for: absent and `party_workers == 0` are one reading, and a
+## fixture spelling the zeros out would be asserting the decoder's shape rather than the row's.
+func _work_party_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = PARTY_BAND_ENTITY
+	band["id"] = PARTY_BAND_ID
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
+			"target_x": PARTY_LOCAL_X, "target_y": PARTY_LOCAL_Y,
+			"actual_yield": 0.62, "sustainable_yield": 0.62, "realized_yield": 0.62,
+			"kit_id": BandFx.KIT_DEFAULT_FORAGE},
+		_work_party_row(PARTY_NEAR_HERD_ID, PARTY_NEAR_WORKERS, PARTY_NEAR_PORTERS,
+			PARTY_NEAR_TRAVEL, PARTY_NEAR_REMAINING, PARTY_NEAR_ATE, 0.0, PARTY_NEAR_RATE),
+		_work_party_row(PARTY_FAR_HERD_ID, PARTY_FAR_WORKERS, PARTY_FAR_PORTERS,
+			PARTY_FAR_TRAVEL, PARTY_FAR_REMAINING, PARTY_FAR_ATE, 0.0, PARTY_FAR_RATE),
+		_work_party_row(PARTY_DEFICIT_HERD_ID, PARTY_DEFICIT_WORKERS, PARTY_DEFICIT_PORTERS,
+			PARTY_DEFICIT_TRAVEL, PARTY_DEFICIT_REMAINING, PARTY_DEFICIT_ATE, PARTY_DEFICIT_NEED,
+			0.0),
+	]
+	return band
+
+## One posted hunt row, in the shape the sim publishes one.
+##
+## ⛔ **`realized_yield` IS THE PARTY'S `net_rate_home`, BY CONSTRUCTION AND NOT BY COINCIDENCE.**
+## `systems::labor` settles the row's own forward projection through the party's flow and writes both
+## out of ONE expression (`row.realized = steady; party.net_rate_home = steady`), so a fixture giving
+## them two different numbers describes a row no server can send — and would then be the only witness
+## for a board whose head total disagreed with its own rows.
+##
+## `transit_turns` IS the travel here, the shipped `band_move_tiles_per_turn` being one tile a turn —
+## and `remaining` is the LIVE countdown the sim counts down from it, which is a separate field and
+## a separate argument for exactly the reason the row renders only one of them.
+func _work_party_row(herd_id: String, workers: int, porters: int, travel: int, remaining: int,
+		ate: float, deficit: float, rate: float) -> Dictionary:
+	return {
+		"kind": "hunt", "workers": workers, "fauna_id": herd_id, "floor": 0.5,
+		"target_x": PARTY_SOURCE_X, "target_y": PARTY_SOURCE_Y,
+		"actual_yield": rate, "sustainable_yield": rate, "realized_yield": rate,
+		"kit_id": BandFx.KIT_DEFAULT_HUNT,
+		# The party stands ON the source, which is why a hunt party needs no follow order — the tile
+		# is the herd's own, re-read every turn.
+		"party_x": PARTY_SOURCE_X + travel, "party_y": PARTY_SOURCE_Y,
+		"party_workers": workers, "porters": porters,
+		"travel_tiles": travel, "transit_turns": travel,
+		"party_transit_remaining": remaining,
+		"party_ate": ate, "party_deficit": deficit, "net_rate_home": rate,
+	}
+
+## **THE FOUR STATES, IN ONE FRAME AND THEN IN THE NARROWEST ZONE THE PANEL HAS.**
+##
+## ⛔ **ONE FRAME, BECAUSE THE IDENTITY IS A CONTRAST.** *A row with no party renders exactly as it
+## did before any of this existed* is a claim about the DIFFERENCE between two rows, and a frame
+## holding only party rows — or only local ones — is green whichever way the block is built. So the
+## local row, the near posting, the long walk and the unsupplied posting are one board.
+##
+## The NARROW half is not decoration either: this zone `clip_contents` and the board is paged in
+## uniform rows, so a block drawing taller than the capacity arithmetic reserved is sliced off the
+## bottom of the page with no overflow and no warning. The left dock is the narrowest zone the panel
+## has, and it is where the crew line's elide is under real pressure.
+func _render_work_party_states() -> void:
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures() + [{"id": PARTY_DEFICIT_HERD_ID, "species": "Grey Wolf",
+		"x": 75, "y": 17, "population": 24, "ecology_phase": "thriving"}])
+	_push_bands([_work_party_band_fixture()])
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_party")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_work_party_block()
+
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_work_party_narrow")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_work_party_rows_fit_the_zone()
+
+	# Hand the world and the reference band back, so a state appended after this one starts where
+	# every other one does.
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+
+## GUARD: **the four rows say the four things, and the local one says none of them.**
+##
+## Every claim reads the lines the row actually DREW (`HudWorkVocab.WORK_ROW_PARTY_META`, each label
+## carrying its own text), never a subtree text scan. What is composed here is the expectation for a
+## clause the FIXTURE's numbers decide, and it is composed through the shipped format so the claim
+## and the constant cannot drift apart.
+func _assert_work_party_block() -> void:
+	var local := _work_party_lines(_work_row_labelled(HudWorkVocab.WORK_ROW_PLANT_FORMAT
+		% [PARTY_LOCAL_X, PARTY_LOCAL_Y]))
+	var near := _work_party_lines(_work_row_for_herd(PARTY_NEAR_HERD_ID))
+	var far := _work_party_lines(_work_row_for_herd(PARTY_FAR_HERD_ID))
+	var short := _work_party_lines(_work_row_for_herd(PARTY_DEFICIT_HERD_ID))
+	# ⛔ **THE IDENTITY, AND IT LEADS.** Every claim below is about a block; this is the claim that no
+	# block is drawn at all where the band's own hands reach the source.
+	_assert_band_panel("band_panel_work_party: ⛔ a LOCAL row grows no party block at all (%d lines)"
+			% local.size(), local.is_empty())
+	# …paired with the liveness that keeps it honest: a board drawing no block anywhere would satisfy
+	# the identity for free.
+	_assert_band_panel("…while the near posting beside it draws one (%s)" % str(near),
+		near.size() == 3)
+	_assert_band_panel("…stating its crew, where they stand and what the distance cost (%s)"
+			% [near[0] if not near.is_empty() else "<none>"],
+		not near.is_empty() and near[0] == HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [
+				PARTY_NEAR_WORKERS, HudComposeVocab.HUNT_CREW_LABEL.to_lower(),
+				PARTY_SOURCE_X + PARTY_NEAR_TRAVEL, PARTY_SOURCE_Y, PARTY_NEAR_TRAVEL]
+			+ HudWorkVocab.WORK_ROW_PARTY_PORTERS_FORMAT % PARTY_NEAR_PORTERS)
+	_assert_band_panel("…and what it ate at the source (%s)"
+			% [near[1] if near.size() > 1 else "<none>"],
+		near.size() > 1 and near[1] == HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT
+			% SourceForecast.format_magnitude(PARTY_NEAR_ATE))
+	# **THE RATE LINE IS THE ROW'S OWN, AND IT STATES WHAT ARRIVES.** A far posting prints the
+	# amortized steady rate, never `0.0` and never an *in transit* clause — which is what makes a
+	# near row and a far row comparable figures on one board.
+	_assert_band_panel("…and the row's rate line states what ARRIVES HOME, not what is taken (%s)"
+			% _work_row_accounts_text(_work_row_for_herd(PARTY_NEAR_HERD_ID)),
+		_work_row_accounts_text(_work_row_for_herd(PARTY_NEAR_HERD_ID)).contains(
+			SourceForecast.format_yield(PARTY_NEAR_RATE)))
+	# ⛔ **THE COUNTDOWN, AND IT IS THE LIVE ONE.** The near posting is part-way through its walk, so
+	# the line states what is LEFT (`party_transit_remaining`) and not the walk's fixed length. The
+	# two differ on this fixture on purpose: a client reading `transit_turns` renders `2` here.
+	_assert_band_panel("a posting still WALKING OUT says when its first load lands (%s)"
+			% [near[2] if near.size() > 2 else "<none>"],
+		near.size() > 2 and near[2] == HudWorkVocab.WORK_ROW_PARTY_TRANSIT_FORMAT
+			% PARTY_NEAR_REMAINING)
+	# ⛔ **AND THE LAST TURN OF A WALK READS AS ENGLISH.** Every posting passes through `1` on its way
+	# in, so `in 1 turns` is the commonest sentence this line can render — and it is the one that
+	# makes a player stop trusting the block. Paired with the plural above: a builder stuck on either
+	# form passes one claim and fails the other.
+	_assert_band_panel("…and the last turn of a walk reads as English, not `in 1 turns` (%s)"
+			% [short[1] if short.size() > 1 else "<none>"],
+		short.size() > 1 and short[1] == HudWorkVocab.WORK_ROW_PARTY_TRANSIT_ONE_FORMAT)
+	# ⛔ **AND A SETTLED POSTING DROPS THE LINE RATHER THAN READING ZERO.** The far row's line is open
+	# — goods arrive every turn — so the clause has nothing left to promise, and the rate line above
+	# carries the posting on its own. This is the claim the other half cannot make: without it, a
+	# client still rendering the fixed walk length passes every clause above by naming a real number.
+	_assert_band_panel("…while the posting whose line is OPEN drops the clause entirely (%s)"
+			% str(far),
+		far.size() == 2 and not _party_lines_carry(far,
+			HudWorkVocab.WORK_ROW_PARTY_TRANSIT_FORMAT))
+	# **THE SHORTFALL LINE — the fibre/stone case, and the one warning on the block.**
+	_assert_band_panel("an UNSUPPLIED posting says what the band owes it a turn (%s)"
+			% [short[-1] if not short.is_empty() else "<none>"],
+		not short.is_empty() and short[-1] == HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT
+			% SourceForecast.format_magnitude(PARTY_DEFICIT_NEED))
+	# ⛔ **AND IT IS THE ONLY ROW THAT SAYS SO.** Without this the claim above passes on a block that
+	# warns on every posting, which is the rule a shortfall line exists under.
+	_assert_band_panel("…and NEITHER supplied posting carries that line (%s | %s)"
+			% [str(near), str(far)],
+		not _party_lines_carry(near, HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT)
+			and not _party_lines_carry(far, HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT))
+	# ⛔ **A POSTING THAT ATE NOTHING SAYS NOTHING ABOUT IT.** `Party ate 0.00` sat directly above the
+	# shortfall line, which says everything it was going to — the take is hide, so there was nothing
+	# to eat. It is the shortfall line's own rule one line up the block, and it is PAIRED with the
+	# near posting's live one, or *"no ate line"* passes on a block that lost the clause outright.
+	_assert_band_panel("an INEDIBLE posting draws no `Party ate` line at all (%s)" % str(short),
+		short.size() == 3
+			and not _party_lines_carry(short, HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT))
+	# **THE INK IS HALF OF WHAT THE LINE SAYS**, and it is a render-site decision no model claim can
+	# see: a warning drawn in the quiet ink is a warning nobody reads.
+	var short_label := _work_party_label(_work_row_for_herd(PARTY_DEFICIT_HERD_ID), -1)
+	_assert_band_panel("…and it is drawn in DANGER (%s)"
+			% [short_label.get_theme_color(FONT_COLOR_THEME_KEY) if short_label != null else "<none>"],
+		short_label != null
+			and short_label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
+	# …and NOTHING DOWNSTREAM RE-TINTS THE REST. The lines above the shortfall stay in the row's own
+	# quiet ink, on the very row that carries the warning.
+	var crew_label := _work_party_label(_work_row_for_herd(PARTY_DEFICIT_HERD_ID), 0)
+	_assert_band_panel("…while the crew line on the SAME row keeps the row's quiet ink (%s)"
+			% [crew_label.get_theme_color(FONT_COLOR_THEME_KEY) if crew_label != null else "<none>"],
+		crew_label != null
+			and crew_label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK_DIM))
+
+## GUARD: **a row draws no taller than the board reserved for it.** The work zone `clip_contents` and
+## the page is filled in uniform rows, so a block that outgrows its reservation is sliced off the
+## bottom of the zone silently — no overflow, no warning, just a line the player never sees.
+##
+## Measured as the DRAWN rows against the zone they were paged into, on the narrowest dock the panel
+## has; `_assert_zone_content_fits` beside it makes the same claim about the zone's whole content.
+func _assert_work_party_rows_fit_the_zone() -> void:
+	var failures: Array[String] = []
+	var rows := _work_board_rows()
+	# LIVENESS FIRST. A board that drew nothing fits any zone.
+	if rows.size() < 2:
+		failures.append("the board drew %d rows, so no block is under test" % rows.size())
+	var drawn := 0.0
+	for row in rows:
+		drawn += row.size.y
+	var zone: float = _hud._bandpanel._zone_box().y
+	if drawn > zone:
+		failures.append("the board's rows draw %.0fpx into a %.0fpx zone" % [drawn, zone])
+	_assert_band_panel("band_panel_work_party_narrow: the party blocks fit the zone they were paged into (%d rows, %.0f of %.0f px)"
+		% [rows.size(), drawn, zone], failures.is_empty())
+	for failure in failures:
+		_fail("band_panel_work_party_narrow — %s" % failure)
+
+## The party lines ONE row drew, in draw order, as text.
+func _work_party_lines(row: Control) -> Array[String]:
+	var lines: Array[String] = []
+	if row == null:
+		return lines
+	for control in _collect_meta_controls(row, HudWorkVocab.WORK_ROW_PARTY_META, []):
+		lines.append(String(control.get_meta(HudWorkVocab.WORK_ROW_PARTY_META)))
+	return lines
+
+## …and the LABEL at one index, for the claims about ink rather than words. A negative index counts
+## from the end, so the shortfall line is `-1` whatever the block above it holds.
+func _work_party_label(row: Control, index: int) -> Label:
+	if row == null:
+		return null
+	var controls := _collect_meta_controls(row, HudWorkVocab.WORK_ROW_PARTY_META, [])
+	if controls.is_empty():
+		return null
+	var at := index if index >= 0 else controls.size() + index
+	if at < 0 or at >= controls.size():
+		return null
+	return controls[at] as Label
+
+## Does this block carry the line `format` composes? Matched on that format's own leading words — up
+## to its first placeholder — so a reworded sentence moves the claim with it rather than turning it
+## vacuous, and a format whose placeholder LEADS (the transit clause's does not; the ate clause's
+## does not) still matches on the words that follow it.
+##
+## **One helper for every absence claim on the block**, because they are one question asked of three
+## different lines and three spellings of it are three chances to drift.
+func _party_lines_carry(lines: Array[String], format: String) -> bool:
+	var head := format.split("%", true, 1)[0].strip_edges()
+	if head == "":
+		return false
+	for line in lines:
+		if line.contains(head):
+			return true
+	return false
+
+## The board row whose NAME label carries `needle` — the identity a hunt row has (its quarry) and the
+## one a forage row has (its coordinates), reached the same way for both.
+func _work_row_labelled(needle: String) -> Control:
+	for row in _work_board_rows():
+		if _has_label_containing(row, needle):
+			return row
+	return null
+
+## …and the row working one herd, by the LABEL the board composes for that herd rather than by the
+## fauna id, which no rendered control carries.
+func _work_row_for_herd(herd_id: String) -> Control:
+	return _work_row_labelled(_hud._bandpanel._herd_label_for_id(herd_id))
+
+## The row's ACCOUNTS line — the rate line the party block hangs under.
+func _work_row_accounts_text(row: Control) -> String:
+	if row == null:
+		return ""
+	var label := _find_meta_control(row, HudWorkVocab.WORK_ROW_ACCOUNTS_META)
+	return String(label.get_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META)) if label != null else ""

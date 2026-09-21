@@ -2222,6 +2222,12 @@ table LaborAssignment {
   // How long the walk out took, in turns (ceil(travelTiles / band_move_tiles_per_turn)). Nothing
   // lands at home until it has elapsed; after that the line is open and goods flow every turn. A
   // PIPELINE, NOT A TRIP - there is no haul command, no chosen destination and no launch gate.
+  //
+  // *** IT IS THE WALK'S LENGTH AND IT NEVER MOVES. *** It is a property of the posting, fixed when
+  // the party set out, so a settled posting that has been delivering for twenty turns still carries
+  // the same number. A client rendering a countdown off THIS field says "5 turns' walk out" for the
+  // life of the posting, which is wrong the moment the first load lands. What is left to walk is
+  // `partyTransitRemaining` below; this one is for stating how far out the posting is.
   transitTurns:uint = 0;
   // What the party ate out of its own take this turn (min(take, party upkeep)). NOT a second meal:
   // the band's population consumption already feeds these people wherever they stand, so this
@@ -2241,6 +2247,20 @@ table LaborAssignment {
   // party happens to be standing beside. What the home band then does with the food is the
   // ordinary supply network's business.
   netRateHome:float = 0;
+  // *** WHAT IS LEFT OF THE WALK OUT, IN TURNS - the LIVE countdown, and the one a client renders. ***
+  //
+  // It opens at `transitTurns` and is counted down once per turn by the sim; it is published
+  // straight off the party's own state, never re-derived from the distance, so it reports where the
+  // party actually is rather than where a recomputation thinks it should be.
+  //
+  // *** 0 MEANS THE LINE IS OPEN, AND IT STAYS 0. *** Goods are arriving every turn from then on,
+  // and that zero is the signal to drop the "walking out" line entirely rather than to render a
+  // countdown reading zero. It is also what a local row (no party at all) publishes, which is the
+  // same instruction for the same reason: there is nothing in transit.
+  //
+  // `netRateHome` is the steady rate the row prints either way - it is the amortized figure and
+  // does not wait for the walk - so this says WHEN, never HOW MUCH. Appended last (append-only).
+  partyTransitRemaining:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

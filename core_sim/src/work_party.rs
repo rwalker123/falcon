@@ -85,10 +85,14 @@ pub struct WorkParty {
     /// The tiles the flow crosses with nobody but the porters holding it open ([`porter_tiles`]) —
     /// what the porter share and the friction are both charged on. `0` once a road covers the run.
     pub porter_tiles: u32,
-    /// How long the walk out takes ([`transit_turns`]). Reported so the row can say when its line
-    /// opens; the countdown itself is [`Self::turns_to_first_arrival`].
+    /// **How long the walk out takes** ([`transit_turns`]) — the walk's LENGTH, fixed when the
+    /// party sets out and never moved afterwards. It says *how far out this posting is*; it does
+    /// **not** say when the line opens, and a countdown rendered off it reads the same number for
+    /// the life of the posting. What is left to walk is [`Self::turns_to_first_arrival`], and that
+    /// is the one the wire's `partyTransitRemaining` carries and a client renders.
     pub transit_turns: u32,
-    /// **Turns left before the first goods land.** Set to [`Self::transit_turns`] when the party
+    /// **Turns left before the first goods land** — the live countdown, published as the labor
+    /// row's `partyTransitRemaining`. Set to [`Self::transit_turns`] when the party
     /// forms, counted down once per turn, and `0` for the whole steady life of the posting after
     /// that. It is never re-raised: the party walks out once, and a herd drifting further afterward
     /// costs porters and friction rather than a second walk.

@@ -157,6 +157,30 @@ ends early walks home with its pack.
 today's distance — a herd drifting further costs porters and friction, not a second walk. That is
 what makes this a pipeline and not a trip.
 
+> ### ⛔ TWO TRANSIT FIELDS ON THE WIRE, AND THE CLIENT READS THE SECOND ONE
+>
+> `WorkParty` keeps both halves of the walk and publishes both, because they answer different
+> questions and only one of them moves:
+>
+> | field | wire | what it is |
+> |---|---|---|
+> | `transit_turns` | `transitTurns` | the walk's **LENGTH**, fixed when the party sets out — *how far out this posting is* |
+> | `turns_to_first_arrival` | `partyTransitRemaining` | the **LIVE countdown**, decremented once per turn — *what is left to walk* |
+>
+> **A countdown rendered off `transitTurns` is wrong from the first delivery onward.** It never
+> moves, so a settled posting that has been feeding the band for twenty turns still reads *"5 turns'
+> walk out"*. That is the defect `partyTransitRemaining` exists to close, and it is why the client
+> renders the remaining field and uses the length only to state a distance.
+>
+> **`partyTransitRemaining == 0` means the line is open, and it stays `0`** for the rest of the
+> posting's life. It is the signal to **drop** the *walking out* line, never to draw a countdown at
+> zero — and a **local row publishes the same `0`** from its absent party, which is the same
+> instruction for the same reason: there is nothing in transit.
+>
+> **It is published off the party, never re-derived from the distance.** A recomputation would
+> restart a walk that is already over the moment the herd drifted further out, which is exactly the
+> *"the walk happens once"* rule above being broken by a readout.
+
 **Steady state and "amortized over the cycle" coincide, deliberately**, so the row prints one number
 and not two. It is `netRateHome`, and it is the row's own `realized` put through `settle_food` — the
 forward projection states **what arrives**, not what is taken, or a far posting would promise a

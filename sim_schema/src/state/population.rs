@@ -404,6 +404,11 @@ pub struct LaborAssignmentState {
     pub travel_tiles: u32,
     /// **HOW LONG THE WALK OUT TOOK**, in turns. Nothing lands at home until it has elapsed; after
     /// that the line is open and goods flow every turn — a pipeline, not a trip.
+    ///
+    /// ⛔ **It is the walk's LENGTH and it never moves** — a property of the posting, fixed when the
+    /// party set out. A countdown rendered off this field reads *"5 turns' walk out"* for the life
+    /// of the posting, including on one that has been delivering steadily for twenty turns. What is
+    /// left to walk is [`Self::party_transit_remaining`].
     #[serde(default)]
     pub transit_turns: u32,
     /// **WHAT THE PARTY ATE OUT OF ITS OWN TAKE THIS TURN.** Not a second meal: the band's
@@ -422,6 +427,23 @@ pub struct LaborAssignmentState {
     /// deliberately: one number, not two.
     #[serde(default)]
     pub net_rate_home: f32,
+    /// **WHAT IS LEFT OF THE WALK OUT, IN TURNS** — the live countdown, and the one a client
+    /// renders.
+    ///
+    /// It opens at [`Self::transit_turns`] and is counted down once per turn by the sim. It is
+    /// published straight off the party's own state and is **never re-derived from the distance**,
+    /// so it says where the party actually is rather than where a recomputation thinks it should
+    /// be — a herd that drifts further out does not restart a walk that is already over.
+    ///
+    /// ⛔ **`0` means the line is open, and it stays `0`.** Goods arrive every turn from then on,
+    /// and that zero is the signal to **drop** the *walking out* line rather than render a
+    /// countdown reading zero. A local row (no party at all) publishes `0` for the same reason:
+    /// there is nothing in transit.
+    ///
+    /// [`Self::net_rate_home`] is the steady figure the row prints either way, so this says *when*
+    /// and never *how much*. Appended last (append-only).
+    #[serde(default)]
+    pub party_transit_remaining: u32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

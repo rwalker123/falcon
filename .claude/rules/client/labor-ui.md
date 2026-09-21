@@ -8341,3 +8341,22 @@ false of a quarry — so a finite seam read `1.20 STONE RENEWABLE`. **Absence me
 reseeds and a herd breeds, so neither food model has a `false` to state and every frame either drew
 before the key existed is unchanged.
 
+
+## The work party's lines live on the BOARD ROW, and their rule is this file's
+
+`SourceForecast.party_readout` / `party_is_posted` and the `WORK_ROW_PARTY_*` formats in
+`hud_work_vocab.gd` are the client half of the work party
+(`docs/plan_civilization_steps.md` §One work party): a Hunt or Forage row whose source is past the
+band's apron grows a block under its stepper stating who is out there, what they ate, what the walk
+cost and — only where there is one — what the band still owes them.
+
+**The whole arc is in `band-city-panel.md` → "The work row reports its own WORK PARTY"**, since the
+block is the work BOARD's row and that file owns `BandPanelController`. Two things it turns on are
+this file's and are why the pointer exists:
+
+- ⛔ **`party_workers == 0` is the only gate any reader may ask.** Every other key reads 0 with it, so
+  a reader testing `travel_tiles`, `porters` or `net_rate_home` draws a block on a local row the turn
+  one of those is honestly zero.
+- **The deficit line follows the shortfall line's standing rule** — it appears only where there is a
+  shortfall, says one clause, and nothing downstream re-tints it. It is the one warning on the block;
+  the row's severity stripe and its marks stay about the SOURCE.

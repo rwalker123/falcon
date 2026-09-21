@@ -7382,3 +7382,114 @@ conserve the tool) is in BOTH pickers' tooltips instead, since `none` means the 
 > **The vertical dock is unaffected at every viewport measured** (1080 / 900 / 768 / 720): its zone box
 > is the window height less chrome — 939 / 759 / 627 / 579 — against a strip that reserves 128 with the
 > pair open.
+
+## The work row reports its own WORK PARTY (`docs/plan_civilization_steps.md` §One work party)
+
+A Hunt or Forage row whose source drifts past the band's own apron no longer lapses: the sim posts a
+**work party** — state on the assignment, not an entity — and **the row that staffed it is the row
+that reports it**. So a work board has ONE place to look for every work item, near or far, and the
+party lives on its board row rather than in the parties zone or the band zone. The shape was chosen
+from a rendered prototype (`tools/work_party_proto.*`, deleted with this pass: it disagreed with the
+shipped panel in one respect and a harness that disagrees only misleads).
+
+⛔ **A ROW WITH NO PARTY RENDERS EXACTLY AS IT DID BEFORE ANY OF THIS EXISTED**, and that identity is
+the point of the shape rather than a side effect: a source the band's own hands reach takes no party
+at all, so far work *falls out of* the one model instead of sitting beside it.
+`band_panel_work_party` puts a local row and three postings on one board for that reason — the
+identity is a claim about the DIFFERENCE between two rows, and a frame holding only one kind is green
+whichever way the block is built.
+
+⛔ **THERE IS NO HAUL CONTROL AND NO DESTINATION PICKER, and the prototype's `↥ Haul to …` is the one
+thing in those frames that did not survive.** A party is wired to its home band at creation and goods
+flow both ways along that one tie every turn, so assigning workers stays the only command. Nothing in
+the block is pressable.
+
+### The block's lines, and which of them is a warning
+
+`BandPanelController._work_row_party_lines_text` composes the whole block and `[]` is what a local
+row answers; the row's height, the board's reservation and the drawn lines all come through that one
+count, so a line added to the block is paid for without a second edit anywhere. In order:
+
+1. **The rate line is the row's own accounts line**, unchanged. It already states what ARRIVES HOME:
+   `realizedYield` IS `netRateHome` on a party row — `systems::labor` writes both out of one
+   expression (`row.realized = steady; party.net_rate_home = steady`) — so the model substitutes the
+   published `net_rate_home` for `rate` where a party is posted and changes no arithmetic. **It is a
+   substitution rather than a second figure**, which is what keeps the row, the zone head's total and
+   the filter chips reading one number. A far posting therefore never prints `0.0 · in transit`,
+   which is the whole argument for a near row and a far row being comparable on one board.
+2. `<N> <crew noun> · at (x, y) · <travel> tiles`, plus `· <N> carrying` where porters are being
+   paid. The noun is `_work_inspector_take_key`'s, lower-cased into the sentence — the board's
+   existing resolver, never a third one. **The TILE is the party's own and is what the row's head
+   cannot say**: a forage row's head names its patch, but a hunt row's names the quarry, and the
+   party stands wherever the herd is *this turn*.
+3. `Party ate <N>` — **not a second meal.** The band's population consumption already feeds these
+   people wherever they stand; what the line records is that the food was eaten AT THE SOURCE, so it
+   never had to be carried and paid no friction. ⛔ **Only where the party ATE something**, the
+   shortfall line's own rule one line up the block: `Party ate 0.00` sat directly above
+   *"Needs 1.20 food a turn from home"* on an inedible posting, which says everything it was going
+   to — the take is not food, so there was nothing to eat.
+4. `First load arrives in <N> turns` (`First load arrives next turn` at one), the pipeline priming
+   once — and **only while the party is still walking out**.
+5. ⛔ **`Needs <N> food a turn from home`, in `HudStyle.DANGER` — the ONE warning on the block**, and
+   it follows `labor-ui.md`'s standing rule for a shortfall line: it appears only where there is a
+   shortfall, says one clause, and nothing downstream re-tints the lines above it. It is the
+   fibre/stone case — a party whose take is not edible runs its whole upkeep as a deficit, with no
+   per-job exemption anywhere in the model — and it is NOT a condition of the row's severity stripe
+   or of its marks, which are about the SOURCE.
+
+> #### ⛔ LINE 4 READS THE COUNTDOWN, AND ITS `0` DROPS THE LINE RATHER THAN DRAWING A ZERO
+>
+> `transitTurns` is the walk's fixed LENGTH and does not move for the life of the posting;
+> **`partyTransitRemaining` is what is LEFT of it**, read off `WorkParty::turns_to_first_arrival`
+> rather than recomputed from today's distance, so a herd drifting further does not restart a walk
+> that is already over. The row reads the second and never the first.
+>
+> **`0` MEANS THE LINE IS OPEN, AND IT STAYS `0`** — goods arrive every turn from then on, so the
+> clause has nothing left to promise and the row's amortized rate carries the posting on its own.
+> That zero is the instruction to DROP the line, never to render a countdown reading zero, and a
+> local row publishes it for the same reason: there is nothing in transit.
+>
+> **The SINGULAR is its own format**, the fork `DetailFormat.build_countdown_value` already makes at
+> `BUILD_TURNS_SINGULAR`: every posting passes through one turn remaining on its way in, so
+> `in 1 turns` is the commonest sentence this line can render and it is the one that makes a player
+> stop reading the block.
+>
+> ⛔ **THE RETIRED READING IS KEPT BECAUSE IT NAMES THE FIELD NOT TO REACH FOR.** The line was
+> phrased as what the posting COST to open — *"`N turns' walk out`"* — while `transitTurns` was the
+> only figure on the wire, since a *"first load arrives in N turns"* reading off THAT field goes on
+> saying it every turn after the load has started arriving. The countdown is published now and the
+> hedge is gone; what survives is that `transitTurns` still cannot carry this sentence.
+
+### The board charges every row the TALLEST row on the page
+
+The work zone `clip_contents` and the board is reserved and filled in **uniform rows**
+(`remaining height / one row`, then `rows_per_col` of them), so a row that grows is a row the
+capacity arithmetic has to be told about or the page is sliced off the bottom of the zone silently.
+`HudWorkVocab.work_row_height(lines)` is BOTH what `_build_work_row` draws at and what
+`_work_board_capacity` reserves — the rule every height in this zone follows — and the fill answers
+the capacity's `row_height` with the deepest block among the FILTERED models.
+
+**That is conservative in the one direction that matters** (`reserved >= drawn`) and it costs a band
+with a far posting a row or two of page, never a row it cannot see — the pager still shows every
+source. Packing rows of mixed heights into a column would be a redesign of `_declare_work_layout`,
+whose whole balance argument is stated in rows. **The parameter's DEFAULT is the party-less height**,
+so every board without a posting pages exactly as it did and the layout probes measure what they
+always measured.
+
+### The wire's ten keys are read in ONE place
+
+`SourceForecast.party_readout` is the only reader, and `party_is_posted` the only gate.
+⛔ **`party_workers == 0` IS the sim's own "there is no party"** and every other key reads 0 with it,
+so a reader testing `travel_tiles`, `porters` or `net_rate_home` instead would draw a block on a local
+row the turn one of those is honestly zero — which is most of them. `travel_tiles == 0` in particular
+is the identity case of a source inside `band_work_range`, not a party test.
+
+The keys ride `HudBandLaborState.effective_worker_map` as a SET
+(`SourceForecast.ASSIGNMENT_PARTY_KEYS`) — that map is a hand-listed allowlist, so a key not copied
+there does not exist as far as the work board is concerned — and they are copied **blind** rather
+than presence-sensitively, which is safe for exactly one reason: an absent key and a published zero
+are one reading here, unlike `kit_workers_holding`, whose zero is the sharpest shortfall there is.
+**The pending overlay preserves them**, for the rank's reason and a sharper one of its own:
+`LaborAllocation::set_assignment` carries the party across the re-push precisely so a `−`/`+` does
+not restart the transit countdown, so a client that blanked the block would flash a far posting back
+to a local row on every frame the player adjusted it.

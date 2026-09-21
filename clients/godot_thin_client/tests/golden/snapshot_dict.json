@@ -4727,7 +4727,15 @@
               "material_id": "populations[0].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 11.27,
           "overdraws": true,
+          "party_ate": 50.110001,
+          "party_deficit": 10.47,
+          "party_transit_remaining": 106,
+          "party_workers": 71,
+          "party_x": 26,
+          "party_y": 15,
+          "porters": 104,
           "priority": "normal",
           "realized_yield": 50.82,
           "species": "populations[0].labor_assignments[0].species",
@@ -4738,6 +4746,8 @@
           ],
           "target_x": 117,
           "target_y": 128,
+          "transit_turns": 39,
+          "travel_tiles": 45,
           "wasted_yield": 8.95,
           "workers": 6,
           "workers_needed": 56
@@ -4798,7 +4808,15 @@
               "material_id": "populations[0].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 14.17,
           "overdraws": false,
+          "party_ate": 106.610001,
+          "party_deficit": 109.330002,
+          "party_transit_remaining": 81,
+          "party_workers": 148,
+          "party_x": 173,
+          "party_y": 184,
+          "porters": 171,
           "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
@@ -4809,6 +4827,8 @@
           ],
           "target_x": 44,
           "target_y": 33,
+          "transit_turns": 180,
+          "travel_tiles": 20,
           "wasted_yield": 32.889999,
           "workers": 1,
           "workers_needed": 77
@@ -4869,7 +4889,15 @@
               "material_id": "populations[0].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 20.030001,
           "overdraws": false,
+          "party_ate": 88.400002,
+          "party_deficit": 54.389999,
+          "party_transit_remaining": 60,
+          "party_workers": 1,
+          "party_x": 60,
+          "party_y": 49,
+          "porters": 106,
           "priority": "low",
           "realized_yield": 40.889999,
           "species": "populations[0].labor_assignments[2].species",
@@ -4880,6 +4908,8 @@
           ],
           "target_x": 167,
           "target_y": 178,
+          "transit_turns": 125,
+          "travel_tiles": 83,
           "wasted_yield": 56.630001,
           "workers": 96,
           "workers_needed": 166
@@ -5688,7 +5718,15 @@
               "material_id": "populations[1].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 99.919998,
           "overdraws": true,
+          "party_ate": 64.349998,
+          "party_deficit": 108.639999,
+          "party_transit_remaining": 179,
+          "party_workers": 198,
+          "party_x": 79,
+          "party_y": 90,
+          "porters": 125,
           "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
@@ -5699,6 +5737,8 @@
           ],
           "target_x": 62,
           "target_y": 51,
+          "transit_turns": 178,
+          "travel_tiles": 186,
           "wasted_yield": 77.68,
           "workers": 195,
           "workers_needed": 163
@@ -5759,7 +5799,15 @@
               "material_id": "populations[1].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 72.489998,
           "overdraws": false,
+          "party_ate": 90.440002,
+          "party_deficit": 97.43,
+          "party_transit_remaining": 172,
+          "party_workers": 17,
+          "party_x": 116,
+          "party_y": 105,
+          "porters": 146,
           "priority": "high",
           "realized_yield": 16.93,
           "species": "populations[1].labor_assignments[1].species",
@@ -5770,6 +5818,8 @@
           ],
           "target_x": 135,
           "target_y": 146,
+          "transit_turns": 69,
+          "travel_tiles": 107,
           "wasted_yield": 58.150002,
           "workers": 120,
           "workers_needed": 78
@@ -5830,7 +5880,15 @@
               "material_id": "populations[1].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 56.73,
           "overdraws": false,
+          "party_ate": 110.550003,
+          "party_deficit": 66.089996,
+          "party_transit_remaining": 57,
+          "party_workers": 84,
+          "party_x": 5,
+          "party_y": 16,
+          "porters": 51,
           "priority": "low",
           "realized_yield": 33.75,
           "species": "populations[1].labor_assignments[2].species",
@@ -5841,6 +5899,8 @@
           ],
           "target_x": 148,
           "target_y": 137,
+          "transit_turns": 132,
+          "travel_tiles": 188,
           "wasted_yield": 31.450001,
           "workers": 17,
           "workers_needed": 5
@@ -6588,7 +6648,15 @@
               "material_id": "populations[2].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 19.51,
           "overdraws": true,
+          "party_ate": 98.699997,
+          "party_deficit": 57.310001,
+          "party_transit_remaining": 140,
+          "party_workers": 33,
+          "party_x": 4,
+          "party_y": 193,
+          "porters": 170,
           "priority": "normal",
           "realized_yield": 82.589996,
           "species": "populations[2].labor_assignments[0].species",
@@ -6599,6 +6667,8 @@
           ],
           "target_x": 175,
           "target_y": 186,
+          "transit_turns": 125,
+          "travel_tiles": 115,
           "wasted_yield": 11.31,
           "workers": 112,
           "workers_needed": 30
@@ -6659,7 +6729,15 @@
               "material_id": "populations[2].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 24.16,
           "overdraws": false,
+          "party_ate": 103.25,
+          "party_deficit": 42.84,
+          "party_transit_remaining": 27,
+          "party_workers": 94,
+          "party_x": 199,
+          "party_y": 10,
+          "porters": 21,
           "priority": "high",
           "realized_yield": 107.459999,
           "species": "populations[2].labor_assignments[1].species",
@@ -6670,6 +6748,8 @@
           ],
           "target_x": 198,
           "target_y": 187,
+          "transit_turns": 162,
+          "travel_tiles": 66,
           "wasted_yield": 3.02,
           "workers": 187,
           "workers_needed": 131
@@ -6730,7 +6810,15 @@
               "material_id": "populations[2].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 3.01,
           "overdraws": false,
+          "party_ate": 9.37,
+          "party_deficit": 55.889999,
+          "party_transit_remaining": 106,
+          "party_workers": 151,
+          "party_x": 34,
+          "party_y": 23,
+          "porters": 72,
           "priority": "low",
           "realized_yield": 75.220001,
           "species": "populations[2].labor_assignments[2].species",
@@ -6741,6 +6829,8 @@
           ],
           "target_x": 69,
           "target_y": 80,
+          "transit_turns": 63,
+          "travel_tiles": 141,
           "wasted_yield": 63.009998,
           "workers": 198,
           "workers_needed": 40

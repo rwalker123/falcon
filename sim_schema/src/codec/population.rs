@@ -425,6 +425,10 @@ fn create_populations<'a>(
                                 partyAte: assignment.party_ate,
                                 partyDeficit: assignment.party_deficit,
                                 netRateHome: assignment.net_rate_home,
+                                // **What is LEFT of the walk out** — the live countdown, beside
+                                // the fixed length above. `0` is *the line is open*, and a local
+                                // row publishes it too. Appended last.
+                                partyTransitRemaining: assignment.party_transit_remaining,
                             },
                         )
                     })
@@ -1259,6 +1263,7 @@ fn decode_labor_assignment(
         party_ate: assignment.partyAte(),
         party_deficit: assignment.partyDeficit(),
         net_rate_home: assignment.netRateHome(),
+        party_transit_remaining: assignment.partyTransitRemaining(),
     })
 }
 

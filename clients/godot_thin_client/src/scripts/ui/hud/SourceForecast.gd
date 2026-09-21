@@ -876,6 +876,43 @@ const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
 # branch. An ABSENT key is the third reading — *this row states no coverage* — which is a hand-built
 # fixture or an optimistic row, never the decoder, and which every readout treats as silence.
 const ASSIGNMENT_KIT_WORKERS_HOLDING_KEY := "kit_workers_holding"
+# **THE WORK PARTY, ON A LABOR ASSIGNMENT** (`docs/plan_civilization_steps.md` §One work party) —
+# the ten keys the decoder writes for a row whose source is past the band's own apron. They ride the
+# work-row map (`HudBandLaborState.effective_worker_map`) and are read in exactly ONE place,
+# `party_readout` below, which is what decides what a party's absence renders as.
+#
+# ⛔ **`ASSIGNMENT_PARTY_WORKERS_KEY == 0` IS THE SIM'S OWN "THERE IS NO PARTY"** — the ordinary local
+# row — and `ASSIGNMENT_TRAVEL_TILES_KEY == 0` is NOT that test: it is the identity case of a source
+# inside `band_work_range`, which is a party-less row by construction but says nothing on a row that
+# has one.
+const ASSIGNMENT_PARTY_X_KEY := "party_x"
+const ASSIGNMENT_PARTY_Y_KEY := "party_y"
+const ASSIGNMENT_PARTY_WORKERS_KEY := "party_workers"
+const ASSIGNMENT_PORTERS_KEY := "porters"
+const ASSIGNMENT_TRAVEL_TILES_KEY := "travel_tiles"
+const ASSIGNMENT_TRANSIT_TURNS_KEY := "transit_turns"
+# ⛔ **THE LIVE COUNTDOWN, AND THE ONE A ROW RENDERS.** `ASSIGNMENT_TRANSIT_TURNS_KEY` above is the
+# walk's fixed LENGTH and does not move for the life of the posting; this is what is LEFT of it, read
+# off the party's own `turns_to_first_arrival` rather than recomputed from today's distance.
+#
+# **`0` MEANS THE LINE IS OPEN, AND IT STAYS `0`** — which is the instruction to drop the walking-out
+# line outright, never to draw a countdown reading zero. A local row publishes `0` for the same
+# reason: there is nothing in transit.
+const ASSIGNMENT_PARTY_TRANSIT_REMAINING_KEY := "party_transit_remaining"
+const ASSIGNMENT_PARTY_ATE_KEY := "party_ate"
+const ASSIGNMENT_PARTY_DEFICIT_KEY := "party_deficit"
+const ASSIGNMENT_NET_RATE_HOME_KEY := "net_rate_home"
+
+## Every party key in one list, so the work-row map copies them as a SET rather than as nine
+## hand-listed lines that a tenth field could be forgotten out of. Each is a plain scalar, so unlike
+## the material accounts beside them they can all travel the same way.
+const ASSIGNMENT_PARTY_KEYS: Array[String] = [
+	ASSIGNMENT_PARTY_X_KEY, ASSIGNMENT_PARTY_Y_KEY, ASSIGNMENT_PARTY_WORKERS_KEY,
+	ASSIGNMENT_PORTERS_KEY, ASSIGNMENT_TRAVEL_TILES_KEY, ASSIGNMENT_TRANSIT_TURNS_KEY,
+	ASSIGNMENT_PARTY_ATE_KEY, ASSIGNMENT_PARTY_DEFICIT_KEY, ASSIGNMENT_NET_RATE_HOME_KEY,
+	ASSIGNMENT_PARTY_TRANSIT_REMAINING_KEY,
+]
+
 # **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
 # composed row and every per-preset one). It is a PAYLOAD, not a rate: no `/turn`, projected off the
 # same carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree. On an
@@ -5823,6 +5860,51 @@ static func published_useful_crew(forecast: Dictionary) -> int:
     if not forecast.has(FORECAST_PUBLISHED_USEFUL_CREW_KEY):
         return NO_CREW_ANSWER
     return maxi(int(forecast[FORECAST_PUBLISHED_USEFUL_CREW_KEY]), PUBLISHED_NO_USEFUL_CREW)
+
+## **A ROW WITH NO PARTY** — every reader's one test, and it is the WIRE's own sentinel
+## (`party_workers == 0`) rather than a distance the client re-measures. A local row renders exactly
+## what it rendered before the work party existed, which is the whole point of the shape.
+const NO_PARTY_WORKERS := 0
+
+## Whether this row's party block renders at all. `party_readout` carries the same answer, so nothing
+## outside this file decides it twice.
+const PARTY_PRESENT_KEY := "present"
+
+## **WHERE THIS ROW'S WORKERS ARE STANDING, WHEN IT IS NOT WHERE THE BAND IS** — the one reading of
+## the ten wire keys, out of a work-row map entry (`HudBandLaborState.effective_worker_map`).
+##
+## **`present` IS THE ONLY GATE ANY CALLER MAY ASK.** A row whose `party_workers` is 0 has no party,
+## and every other key reads 0 with it — so a reader testing `travel_tiles`, `porters` or
+## `net_rate_home` instead would draw a party block on a local row the turn one of those is honestly
+## zero, which is most of them.
+##
+## **The figures are REPORTED, never recomposed.** `net_rate_home` is the sim's own settled rate and
+## is the same number `realized_yield` carries on a party row (`systems::labor` writes
+## `row.realized = steady` and `party.net_rate_home = steady` from one expression) — so the row's rate
+## line, the board head's total and the band's Food line state one figure, and the client does no
+## arithmetic that could make a second.
+static func party_readout(row: Dictionary) -> Dictionary:
+    var workers := int(row.get(ASSIGNMENT_PARTY_WORKERS_KEY, NO_PARTY_WORKERS))
+    if workers <= NO_PARTY_WORKERS:
+        return {PARTY_PRESENT_KEY: false}
+    return {
+        PARTY_PRESENT_KEY: true,
+        ASSIGNMENT_PARTY_WORKERS_KEY: workers,
+        ASSIGNMENT_PARTY_X_KEY: int(row.get(ASSIGNMENT_PARTY_X_KEY, 0)),
+        ASSIGNMENT_PARTY_Y_KEY: int(row.get(ASSIGNMENT_PARTY_Y_KEY, 0)),
+        ASSIGNMENT_PORTERS_KEY: int(row.get(ASSIGNMENT_PORTERS_KEY, 0)),
+        ASSIGNMENT_TRAVEL_TILES_KEY: int(row.get(ASSIGNMENT_TRAVEL_TILES_KEY, 0)),
+        ASSIGNMENT_TRANSIT_TURNS_KEY: int(row.get(ASSIGNMENT_TRANSIT_TURNS_KEY, 0)),
+        ASSIGNMENT_PARTY_TRANSIT_REMAINING_KEY: int(
+            row.get(ASSIGNMENT_PARTY_TRANSIT_REMAINING_KEY, 0)),
+        ASSIGNMENT_PARTY_ATE_KEY: float(row.get(ASSIGNMENT_PARTY_ATE_KEY, 0.0)),
+        ASSIGNMENT_PARTY_DEFICIT_KEY: float(row.get(ASSIGNMENT_PARTY_DEFICIT_KEY, 0.0)),
+        ASSIGNMENT_NET_RATE_HOME_KEY: float(row.get(ASSIGNMENT_NET_RATE_HOME_KEY, 0.0)),
+    }
+
+## Is there a party on this readout? The one test, so no surface spells the gate itself.
+static func party_is_posted(party: Dictionary) -> bool:
+    return bool(party.get(PARTY_PRESENT_KEY, false))
 
 static func max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):

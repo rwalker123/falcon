@@ -3110,3 +3110,26 @@ driven beside it and must still render `Warriors 3`.
 detail and its control correctly stay green, which is the decomposition: the naming rule and the
 prose walk are different layers and neither stands in for the rung. `EXIT=1`, 2169 `PASS`. Restored:
 `EXIT=0`, **2173 `PASS`**, 0 `FAIL` — identical to the run before the sabotage.
+
+## …and the FIFTH status row: `status=recalled`, a work party walking home
+
+Appended to `_event_dock_shed_fixture`, not to a frame of its own, so all three rungs and all five
+status tokens stay in ONE render — a `recalled` row asserted beside a `lapsed` one is the only shape
+in which *the posting ended* and *the row was destroyed* can be shown to read apart. `event_dock`'s
+`EXPECTED_CHECKPOINTS` 203 → **207**.
+
+**Its kind is the VERB's** (`hunt`, `RUNG_ROUTINE`), so the same four claims `stalled` earns apply
+one web over: Notable, not the Alert a `lapsed` row earns, wearing the reduction mark rather than the
+hazard, and reaching the DEFAULT floor — which `hunt` alone would not have. The whole-table glyph iff
+beside them is what would have caught it mismarked; it names `[]` on a clean run.
+
+**The row carries `band=`, so `SHED_LINK_BANDS` grew a fifth entry** — it is a labor row the sim
+changed unasked, and the Work tab is where the player goes to see what is left of it. The array is
+stated in SORTED order because the link claim sorts what it collected before comparing, and the
+fixture's band id is chosen so the sorted expectation reads `[3, 4, 5, 5, 7]`.
+
+**The label and detail are the sim's own** (`systems::labor`'s `status=recalled reason=unsupplied
+… travel=… deficit=…`), spelled out as chapter constants rather than recomposed through
+`HudEventVocab` — an expectation built from the code under test can only agree with itself.
+
+**A clean run is 451 frames / 2177 `PASS`, exit 0 — RE-MEASURED windowed on this tree.**

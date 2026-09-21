@@ -2024,10 +2024,17 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     # asked of the SAME resolver the block builds from, so the height reserved here and the height
     # drawn there are one decision; asking twice is idempotent (it only prunes a stale key).
     var queue_settings := _queue_settings_state(band, queued, mini(queued.size(), queue_rows_max))
+    # **THE BOARD'S ROW UNIT, resolved off the rows it is about to draw** — the deepest party block
+    # among them, since the page is reserved and filled in uniform rows and the zone clips. A board
+    # with no far posting answers `work_row_height(0)`, which is the two-line height it has always
+    # paid, so nothing about an ordinary band's paging moves.
+    var deepest_party := 0
+    for model in filtered:
+        deepest_party = maxi(deepest_party, _work_row_party_lines(model))
     var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         _queue_settings_is_open(queue_settings), int(queue_settings["legs"]),
-        roster_h, workings_h)
+        roster_h, workings_h, HudWorkVocab.work_row_height(deepest_party))
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -2072,10 +2079,21 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
 ## fill and handed to both this and `build_queue_rows_max` — one answer, so the block that draws and
 ## the two reservations that pay for it cannot disagree. `0.0` where the block does not render, and
 ## the block's own gap is counted only then, exactly as the queue's is.
+##
+## **`row_height` IS THE UNIT, AND IT IS THE TALLEST ROW THE BOARD WILL DRAW**
+## (`docs/plan_civilization_steps.md` §One work party). A row whose source is past the band's apron
+## grows a WORK PARTY block under its stepper, so the board's rows are no longer all one height —
+## and the whole arithmetic here, plus the column fill it feeds, is stated in ROWS. The fill answers
+## it with `HudWorkVocab.work_row_height` at the deepest block among the filtered models, which keeps
+## `reserved >= drawn` (the zone `clip_contents`, so under-reserving slices the page silently) at the
+## cost of a row or two of page on a band that actually has a far posting. **The DEFAULT is the
+## party-less height**, which is what every board without one costs and what the layout probes
+## measure.
 func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_open: bool = false,
         queue_settings_legs: int = 0, roster_height: float = 0.0,
-        workings_height: float = 0.0) -> Dictionary:
+        workings_height: float = 0.0,
+        row_height: float = HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT) -> Dictionary:
     var box := _zone_box()
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
         queue_settings_open, queue_settings_legs)
@@ -2094,11 +2112,11 @@ func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
     var chrome := HudWorkVocab.ZONE_HEAD_HEIGHT + HudWorkVocab.WORK_CHIPS_HEIGHT \
         + queue_h + pools_h + roster_height + workings_height \
         + float(HudWorkVocab.ZONE_BLOCK_SEPARATION) * gaps
-    var rows := maxi(1, int((box.y - chrome) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
+    var rows := maxi(1, int((box.y - chrome) / row_height))
     var layout := _declare_work_layout(count, rows)
     var pages := ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
     if pages > 1:
-        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT))
+        rows = maxi(1, int((box.y - chrome - HudWorkVocab.WORK_PAGER_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION)) / row_height))
         layout = _declare_work_layout(count, rows)
         pages = ceili(float(count) / float(maxi(int(layout["page_size"]), 1)))
     return {"cols": int(layout["cols"]), "rows_per_col": int(layout["rows_per_col"]),
@@ -5872,7 +5890,11 @@ func _build_kind_work_chip(filter: StringName, mark_id: String, glyph: String,
 func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var open := String(model.get("key", "")) == _work_open_key
     var row := PanelContainer.new()
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT)
+    # **THE ROW GROWS BY ITS PARTY BLOCK, and it is reserved at exactly what it draws at.** The same
+    # `work_row_height` the board's capacity arithmetic spends, so a zone that `clip_contents` can
+    # never slice a line off the bottom of the page — the rule every height in this zone follows.
+    row.custom_minimum_size = Vector2(0.0,
+        HudWorkVocab.work_row_height(_work_row_party_lines(model)))
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.mouse_filter = Control.MOUSE_FILTER_STOP
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -6180,8 +6202,107 @@ func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
     accounts.set_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META, accounts.text)
     accounts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     line_two.add_child(accounts)
-    margin.add_child(line_two)
+    # **THE PARTY BLOCK HANGS UNDER THE ACCOUNTS, IN THEIR OWN INDENT** — one column, so the lines
+    # sit under the row's NAME exactly as line two does and the block reads as part of this row
+    # rather than as a row of its own. A party-less row mounts the column with line two alone in it
+    # and is byte-identical to what it drew before the work party existed.
+    var column := VBoxContainer.new()
+    column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    # The same gap `work_row_height` prices every one of these lines at, so the block draws at what
+    # the board reserved for it.
+    column.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
+    column.add_child(line_two)
+    for line in _work_row_party_lines_text(model):
+        column.add_child(_build_work_row_party_line(
+            String(line[PARTY_LINE_TEXT]), bool(line[PARTY_LINE_IS_SHORTFALL])))
+    margin.add_child(column)
     return margin
+
+## The index of a party line's text within one `_work_row_party_lines_text` entry, and of the flag
+## saying whether it is THE shortfall line. A two-element Array rather than a Dictionary: the block
+## is composed and consumed in one file, and the pair is positional in both.
+const PARTY_LINE_TEXT := 0
+const PARTY_LINE_IS_SHORTFALL := 1
+
+## One line of a row's party block. Quiet ink like the accounts above it, **except the shortfall
+## line**, which is the one warning on the block and takes `HudStyle.DANGER` — a supply gap stops
+## the work, where the row's amber marks mean *dearer* or *at risk*.
+##
+## `OVERRUN_TRIM_ELLIPSIS` and the unconditional hover are the accounts line's treatment, taken for
+## its reason: a `Label` with autowrap off reports its whole text as its minimum width, and this zone
+## is anchored full-rect into a host that `clip_contents`, so one long line would clamp the tab's
+## column to its own width and slice the right edge off every row's stepper. `MOUSE_FILTER_PASS`
+## likewise — the whole row is a click target and STOP would punch a full-width hole in it.
+func _build_work_row_party_line(text: String, is_shortfall: bool) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.add_theme_color_override("font_color",
+        HudStyle.DANGER if is_shortfall else HudStyle.INK_DIM)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    HudWidgets.set_label_tooltip(label, text)
+    label.mouse_filter = Control.MOUSE_FILTER_PASS
+    label.set_meta(HudWorkVocab.WORK_ROW_PARTY_META, text)
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
+
+## **HOW MANY LINES THIS ROW'S PARTY BLOCK DRAWS** — the row's own height, the board's reservation
+## and the drawn block all come through this one count, so a line added to the block is paid for
+## without a second edit anywhere.
+func _work_row_party_lines(model: Dictionary) -> int:
+    return _work_row_party_lines_text(model).size()
+
+## **THE BLOCK ITSELF, AS TEXT** (`docs/plan_civilization_steps.md` §One work party) — `[]` on the
+## ordinary local row, which is what makes that row identical to the one that shipped before any of
+## this existed.
+##
+## The order is the block's own and is load-bearing to read: who and where, what they ate, what the
+## walk cost, and — only where there is one — what the band still owes them.
+##
+## ⛔ **THE SHORTFALL LINE APPEARS ONLY WHERE THERE IS A SHORTFALL**, says ONE clause, and is the only
+## line here that is a warning (`labor-ui.md`'s standing rule). It is the fibre/stone case: a party
+## whose take is not edible runs its whole upkeep as a deficit, with no per-job exemption anywhere in
+## the model.
+func _work_row_party_lines_text(model: Dictionary) -> Array:
+    var party: Dictionary = model.get("party", {})
+    if not SourceForecast.party_is_posted(party):
+        return []
+    var lines: Array = []
+    var crew := HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [
+        int(party[SourceForecast.ASSIGNMENT_PARTY_WORKERS_KEY]),
+        # The board's existing crew-noun resolver, never a third one: the plant web has one word and
+        # the animal web forks Hunters/Herders off the standing rung, and both answers are already
+        # spelled by the inspector's own key.
+        _work_inspector_take_key(model).to_lower(),
+        int(party[SourceForecast.ASSIGNMENT_PARTY_X_KEY]),
+        int(party[SourceForecast.ASSIGNMENT_PARTY_Y_KEY]),
+        int(party[SourceForecast.ASSIGNMENT_TRAVEL_TILES_KEY])]
+    var porters := int(party[SourceForecast.ASSIGNMENT_PORTERS_KEY])
+    if porters > 0:
+        crew += HudWorkVocab.WORK_ROW_PARTY_PORTERS_FORMAT % porters
+    lines.append([crew, false])
+    # **ONLY WHERE THE PARTY ATE SOMETHING.** A `Party ate 0.00` says nothing, and on the posting it
+    # is most often true of — one whose take is not food — it sits directly above the deficit line,
+    # which says everything it was going to.
+    var ate := float(party[SourceForecast.ASSIGNMENT_PARTY_ATE_KEY])
+    if ate > 0.0:
+        lines.append([HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT
+            % SourceForecast.format_magnitude(ate), false])
+    # ⛔ **THE LIVE COUNTDOWN, AND ITS `0` DROPS THE LINE RATHER THAN DRAWING A ZERO.** Zero means the
+    # line is open and goods are arriving every turn, so the clause has nothing left to promise and
+    # the row's amortized rate carries the posting on its own. `transit_turns` beside it is the
+    # walk's fixed length and is deliberately NOT what this reads.
+    var remaining := int(party[SourceForecast.ASSIGNMENT_PARTY_TRANSIT_REMAINING_KEY])
+    if remaining == HudWorkVocab.WORK_ROW_PARTY_TRANSIT_SINGULAR:
+        lines.append([HudWorkVocab.WORK_ROW_PARTY_TRANSIT_ONE_FORMAT, false])
+    elif remaining > 0:
+        lines.append([HudWorkVocab.WORK_ROW_PARTY_TRANSIT_FORMAT % remaining, false])
+    var deficit := float(party[SourceForecast.ASSIGNMENT_PARTY_DEFICIT_KEY])
+    if deficit > 0.0:
+        lines.append([HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT % SourceForecast.format_magnitude(
+            deficit), true])
+    return lines
 
 func _work_row_stripe_color(model: Dictionary) -> Color:
     if bool(model.get("warn", false)) or String(model.get("note", "")) != "":
@@ -7201,10 +7322,29 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # AND short of gear, and each of those is its own mark.
         if kit_note != "":
             marks += " " + HudWorkVocab.KIT_SHORT_MARK
+        # **THE WORK PARTY ON THIS ROW** (`docs/plan_civilization_steps.md` §One work party), read
+        # ONCE here so the row's block, its height and the board's own reservation all ask the same
+        # answer. `SourceForecast.party_readout` is the only place the wire's nine keys are read and
+        # the only place *"is there a party"* is decided.
+        var party := SourceForecast.party_readout(m)
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
-            "rate": float(yld.get("rate", 0.0)),
+            # ⛔ **A PARTY ROW STATES WHAT ARRIVES HOME, NOT WHAT IS TAKEN.** The amortized rate and
+            # the steady rate coincide by construction, so the board prints ONE number and a far
+            # posting never reads `0.0 · in transit` — which is the whole argument for hanging the
+            # party off the row that staffed it: a near row and a far row are comparable figures on
+            # one board.
+            #
+            # **It is a SUBSTITUTION and not a second figure, so the row, the zone head's total and
+            # the filter chips cannot disagree** — all three read this key. Today the two are the
+            # same number on the wire (`systems::labor` settles the row's own projection through the
+            # party's flow: `row.realized = steady` and `party.net_rate_home = steady` come out of
+            # one expression), so this changes no arithmetic; what it changes is WHICH field the
+            # board is reading, and the one it reads now is the one that means *what the larder
+            # gets*.
+            "rate": float(party[SourceForecast.ASSIGNMENT_NET_RATE_HOME_KEY]) \
+                if SourceForecast.party_is_posted(party) else float(yld.get("rate", 0.0)),
             # The row's FODDER component (issue #449), 0 on every hunt row and on any patch that
             # grows no feed.
             # Carried so the row's one-slot rate, the header total and the inspector sentence all state
@@ -7320,6 +7460,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # beside the floor because it is the same kind of thing: a standing property of the row
             # the player states, which line two prints and the inspector's picker edits.
             "priority": HudWorkVocab.work_priority_of(m.get("priority", "")),
+            # **WHERE THIS ROW'S WORKERS ARE STANDING, WHEN IT IS NOT WHERE THE BAND IS.** The whole
+            # readout in one key: `{present: false}` on the ordinary local row, whose block is not
+            # drawn at all and which renders exactly as it did before the work party existed.
+            "party": party,
             # **`build_queue_position` IS NOT ON THIS MODEL, AND ITS ABSENCE IS THE POINT**
             # (`docs/plan_standing_upkeep.md` §4.9 item 9a). It rode here as the queue block's rank
             # until the block learned that the field is published per SOURCE and rides the WINNING

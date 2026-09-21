@@ -1003,6 +1003,29 @@ const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE
 const WORK_ROW_TWO_LINE_HEIGHT := WORK_ROW_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_INSPECTOR_NOTE_LINE_HEIGHT
 
+## **WHAT ONE LINE OF A ROW'S PARTY BLOCK COSTS** — the accounts line's own terms, restated for the
+## lines that hang under it: the same `ALLOC_SECTION_FONT_SIZE` type whose measured line height
+## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` already states, under the same `TWO_LINE_STEPPER_SEPARATION` gap
+## the column puts between every one of its children. No new number: a second measurement of one type
+## size is a second answer to one question, free to drift by the pixel this zone pays for by clipping.
+const WORK_ROW_PARTY_LINE_HEIGHT := float(TWO_LINE_STEPPER_SEPARATION) \
+    + WORK_INSPECTOR_NOTE_LINE_HEIGHT
+
+## **WHAT A BOARD ROW COSTS WITH `lines` OF PARTY BLOCK UNDER IT** — BOTH what `_build_work_row`
+## draws at and what `_work_board_capacity` reserves, which is the rule every height in this block
+## follows and the only thing that keeps the page from overflowing a zone that `clip_contents`.
+##
+## ⛔ **THE BOARD CHARGES EVERY ROW THE TALLEST ROW ON THE PAGE, deliberately.** The capacity
+## arithmetic is `remaining height / one row`, and the column fill is `rows_per_col` of them — a
+## uniform unit all the way through — so a page holding one taller row and eight ordinary ones is
+## reserved at the taller unit. That is conservative in the one direction that matters (reserved >=
+## drawn, so nothing is silently sliced off the bottom of the zone) and it costs a band with a far
+## posting a row or two of page, never a row it cannot see: the pager still shows every source.
+## Packing rows of mixed heights into a column would be a redesign of `_declare_work_layout`, whose
+## whole balance argument is stated in rows.
+static func work_row_height(party_lines: int) -> float:
+    return WORK_ROW_TWO_LINE_HEIGHT + float(maxi(party_lines, 0)) * WORK_ROW_PARTY_LINE_HEIGHT
+
 ## …and what the `ArrivalStrip` costs when the model's schedule has a gap worth drawing.
 ##
 ## **A TWIN of `ArrivalStrip.STRIP_HEIGHT`, deliberately not a read of it.** A `const` initializer
@@ -1217,6 +1240,94 @@ const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
 ## `+0.06 fibre · +0.07 grape · +0.06 tea · +0.07 tobacco` measured 583px of a 356px zone and the row's
 ## NAME, its only expanding child, was allocated Godot's 1px floor.
 const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
+
+# ---- THE WORK PARTY'S BLOCK (`docs/plan_civilization_steps.md` §One work party) -------------------
+#
+# **THE ROW THAT STAFFED THE PARTY IS THE ROW THAT REPORTS IT.** A Hunt or Forage row whose source
+# drifts past the band's own apron posts a party instead of lapsing, and its state hangs off this
+# board row — not off the parties zone, not off the band zone — so a work board has ONE place to look
+# for every work item, near or far. The shape was chosen from a rendered prototype.
+#
+# ⛔ **A ROW WITH NO PARTY RENDERS EXACTLY AS IT DID BEFORE ANY OF THIS EXISTED**, and that identity
+# is the point of the shape rather than a side effect: a source the band's own hands reach takes no
+# party at all, and far work FALLS OUT OF the one model instead of sitting beside it.
+#
+# ⛔ **AND THERE IS NO HAUL CONTROL AND NO DESTINATION PICKER.** The prototype rendered one and the
+# design retired it: a party is wired to its home band at creation and goods flow both ways along
+# that one tie every turn, so assigning workers stays the only command. Nothing in this block is
+# pressable.
+
+## Line one of the block: the crew, where it is standing, and what the distance costs.
+## `4 hunters · at (31, 12) · 5 tiles`. The noun comes through the board's existing resolver
+## (`BandPanelController._work_inspector_take_key`) and is lower-cased into the sentence, the
+## compose sheet's own eyebrow treatment — no crew noun is minted here.
+##
+## **THE TILE IS THE PARTY'S OWN, AND IT IS WHAT THE ROW'S HEAD CANNOT SAY.** A forage row's head
+## names its patch's coordinates, but a HUNT row's head names the quarry — and the party stands
+## wherever the herd is *this turn*, which is the whole reason it needs no follow order. So the
+## coordinates here are the workers' position and never a restatement of the source's name.
+const WORK_ROW_PARTY_CREW_FORMAT := "%d %s · at (%d, %d) · %d tiles"
+
+## …and the porters, appended only when distance is actually being paid in hands. Distance comes out
+## of the party itself, so `party_workers − porters` is the crew that worked the source and is what
+## every yield figure on the row is priced at; at enough distance every hand is carrying and the
+## posting produces nothing, which is a range cap nobody had to pick a number for.
+const WORK_ROW_PARTY_PORTERS_FORMAT := " · %d carrying"
+
+## What the party ate out of its own take this turn.
+##
+## **IT IS NOT A SECOND MEAL, which is why the line states it as a fact and not as a cost.** The
+## band's population consumption already feeds these people wherever they stand; what this records is
+## that the food was eaten AT THE SOURCE, so it never had to be carried and paid no friction.
+##
+## ⛔ **AND IT IS DRAWN ONLY WHERE THE PARTY ATE SOMETHING**, the shortfall line's own rule one line
+## up the block. `Party ate 0.00` is a line that says nothing: on an inedible posting it sat directly
+## above *"Needs 1.20 food a turn from home"*, which says everything it was going to — the take is
+## not food, so there was nothing to eat and the deficit line is the whole story.
+const WORK_ROW_PARTY_ATE_FORMAT := "Party ate %s"
+
+## **WHAT IS LEFT OF THE WALK OUT** — the pipeline priming once. **A PIPELINE, NOT A TRIP**: nothing
+## lands at home until it has elapsed, and every turn after that the line flows; a herd drifting
+## further costs porters and friction rather than a second walk.
+##
+## ⛔ **IT IS THE LIVE COUNTDOWN (`partyTransitRemaining`), NEVER `transitTurns`.** That one is the
+## walk's fixed LENGTH and does not move for the life of the posting, so a line drawn off it would go
+## on promising a first load every turn after the load had started arriving. The countdown is read
+## straight off the party's own `turns_to_first_arrival`, so it reports where the party actually is.
+##
+## ⛔ **AND AT `0` THERE IS NO LINE AT ALL.** Zero means the line is OPEN — goods arrive every turn
+## from then on — so the row drops the clause and its rate line alone carries the posting, which is
+## the whole point of that rate being amortized. A countdown rendered as `0` would be the stale
+## promise in its most confusing form. A local row publishes `0` for the same reason.
+const WORK_ROW_PARTY_TRANSIT_FORMAT := "First load arrives in %d turns"
+
+## …and its SINGULAR, the fork `DetailFormat.build_countdown_value` already makes at
+## `BUILD_TURNS_SINGULAR` for the same reason: the last turn of a walk is the commonest one this line
+## renders on — the countdown passes through it on every posting — and `in 1 turns` is a sentence the
+## player reads once and stops trusting the rest of the block.
+const WORK_ROW_PARTY_TRANSIT_ONE_FORMAT := "First load arrives next turn"
+
+## The count at which that fork is taken. Its own const rather than a bare `1`, and deliberately NOT
+## a read of `DetailFormat.BUILD_TURNS_SINGULAR`: a vocab leaf reaching for a `class_name`d module at
+## class load is the cycle `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already states the rule for.
+const WORK_ROW_PARTY_TRANSIT_SINGULAR := 1
+
+## **THE ONE WARNING ON THE BLOCK** — what the party's upkeep still wants after its own take, which
+## the band has to carry out to it. `0` on a posting that feeds itself; the WHOLE upkeep on one whose
+## take is not edible (fibre, stone, wood), which is the case the rule produces with no per-job
+## exemption anywhere. A party the band cannot supply walks home, and the dock says so
+## (`HudEventVocab` → `status=recalled`).
+##
+## It follows the shortfall line's standing rule: it appears **only** where there is a shortfall, it
+## says one clause, and nothing downstream re-tints it — the row's severity stripe and its marks are
+## about the SOURCE, and a supply gap is not one of their conditions.
+const WORK_ROW_PARTY_DEFICIT_FORMAT := "Needs %s food a turn from home"
+
+## The stable handle on every line of the block, carrying that line's own text — the
+## `WORK_ROW_ACCOUNTS_META` treatment, so a harness reads what was drawn rather than recomposing the
+## string it is about to compare against. One meta for all of them: the lines are one block, they are
+## collected in draw order, and the DANGER line identifies itself by its ink.
+const WORK_ROW_PARTY_META := &"work_row_party"
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row
 ## short of HANDS have opposite remedies (the bench against the stepper — and adding hands to a
