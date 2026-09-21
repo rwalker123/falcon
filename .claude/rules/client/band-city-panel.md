@@ -2840,13 +2840,115 @@ The name row holds **exactly one glyph** — that is the measured constraint abo
   short, where the reading is still on the hover but the slot went to the triangle.
 - **The hover order is hands, tools, then idle**, and `HudFormat.join_tooltip_lines` drops the empty
   ones: the two shortfalls are what the band is LOSING and the spare hand is what it can gain.
-- ⛔ **PENDING GATES THE IDLE READING, `_pool_toe_settled_rows`' rule verbatim.** The crew account
-  is the settlement the turn RESOLVED, so a `+` just pressed would be answered with the idleness of
-  the staffing left behind — telling the player to step down a pool they have just stepped up.
-  `_pool_idle_line` answers `""` on a pending row.
+- ⛔ **A PENDING EDIT ADJUSTS THE READING; IT USED TO SILENCE IT, AND THAT WAS A TURN LATE.** The
+  gate was `_pool_toe_settled_rows`' rule verbatim — the crew account is the settlement the turn
+  RESOLVED, so a `+` just pressed must not be answered with the idleness of the staffing left behind,
+  which would tell the player to step down a pool they have just stepped up. **That reason bites in
+  ONE direction only and the gate over-applied it.** Answering with a stale figure is wrong;
+  answering with nothing is also wrong, and it is what play found: *"On Turn 1, I just assigned two
+  Agriculture workers. It wasn't until I advanced to turn 2 that the information icon showed."*
+  Removing the gate alone would not have fixed it either — `poolCrew` is struck from the settlement,
+  so a pool with no keepers last turn publishes `0` however the player staffs it this turn.
+  `_projected_pool_idle` adjusts the wire's own number by the change the sim has not seen:
+
+  ```
+  projected_idle = max(0, published_idle + (pending_workers − settled_workers) − queued_demand_in_hands)
+  ```
+
+  **EVERY TERM IS UNCONDITIONAL**, and `delta` is naturally zero with nothing pending —
+  `effective_role_workers` answers the settled row there. So a band that has changed nothing
+  since the turn resolved reads the wire's figure WHOLE, exactly as before; a band that has
+  QUEUED a job reads it less that job's claim, whether or not a stepper was touched.
+  - ⛔ **IT IS AN ADJUSTMENT AND NEVER A RE-DERIVATION FROM `{supply, asked}`.** That projection
+    prices hands at a NOTIONAL kit off the band's roster, blind both to the tools the settlement
+    handed the pool and to the sim's step-5 top-up — being blind to those is the whole reason this
+    reading moved to the wire, and re-deriving it in the one place a player looks would undo it.
+  - **WHAT MAKES THE ADJUSTMENT SOUND IS THAT THE MARGINAL HAND IS BARE.** `docs/plan_pool_toe.md`
+    §2.3 step 5 fixes that a top-up hand claims no tool, so a hand added by a stepper press works at
+    the BARE rate — the same unit the sim counts its leftover in. The client can price the CHANGE
+    correctly even where it cannot price the ABSOLUTE.
+  - **THE TWO BRANCHES.** Removing hands shrinks the leftover 1:1 down to none. Adding them is sound
+    because the sim already proved that whatever it published as idle had nowhere to go, so a further
+    hand is idle too — *unless* the player has queued work this turn, which the third term absorbs.
+    `max(0, …)` is a FLOOR, not a fudge: *how many keepers are doing nothing* cannot go below none.
+  - ⛔ **AND ONE TRANSITION IS STILL SILENCED: a pool SHORT at the settled staffing that the edit
+    COVERS.** The `+` branch's justification rests on the published figure having proved the leftover
+    had nowhere to go — and on a SHORT pool that figure is `0` because every hand went into the
+    deficit, so the added hand goes there too and **how much of it the deficit swallowed is exactly
+    what this client cannot price**. A pool short by 0.5 of a hand's work, stepped up by one, honestly
+    has half a worker spare and the projection would claim a whole one: a mark whose promise is *you
+    can step this pool down by one* telling the player to undo the `+` that just fixed their
+    shortfall. **The gate is not *pending is unknowable* — that was the over-application Ray reported
+    — it is that the ABSORBED REMAINDER is unknowable across this one transition**, one frame, and it
+    self-corrects the moment the turn resolves. A pool still short AFTER the edit needs no gate, the
+    card's own `is_short` taking the slot, so the test is the settled half alone
+    (`HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY`, stamped by `_pool_coverage`, which is the one
+    producer holding both head counts and re-strikes only the SUPPLY through the same
+    `pool_work_supply` and gear).
+    ⛔ **AND THE REMAINDER IS NOT SUBTRACTED FROM THE COVER DICT INSTEAD** — `supply` there is the
+    notional-kit projection this reading was moved off the wire to stop consulting, so pricing the
+    absorbed part with it would trade a bounded over-claim for an unbounded wrong one.
+  - ⛔ **THE QUEUED TERM IS UNCONDITIONAL, AND SCOPING IT TO THE PENDING BRANCH WAS A BUG.** It
+    shipped that way for one pass, on the reading that *nothing pending* means *nothing changed* —
+    and a job queued this turn is precisely something changed. **Queueing without touching a stepper
+    is the ORDINARY way to set a job up**, so a band with four spare keepers that queued a 3-work Sow
+    went on reading *4 workers … found nothing to do* until the player happened to poke a stepper,
+    which is the *"impacts based on jobs setup that turn"* half of Ray's ask not working. **The card
+    also contradicted itself on one hover**: `_pool_coverage`'s `asked` already carries queued demand,
+    so the tooltip read *"…tended ground and queued jobs need 3.0"* directly above *"3 workers on this
+    pool found nothing to do."*
+    **It never double-counts.** `poolCrew`'s account runs over BILLED claims and a queued job owes
+    nothing until its first work is banked, and `_queued_keeping_load` skips any entry the sim is
+    already billing (`live_upkeep_demand >= UPKEEP_WORK_MIN`) — so the term is exactly as legitimate
+    on a calm frame as on a pending one.
+  - ⛔ **THE GATE ABOVE STAYS PENDING-ONLY, AND THE ASYMMETRY IS THE POINT.** The two answer different
+    questions: the TERM is a commitment the wire has not seen, which is true with or without an edit;
+    the GATE guards a short→covered COVERAGE TRANSITION, which only a stepper edit can cause. Widening
+    the gate to calm frames would silence a card whose reading nothing had moved.
+  - **THE QUEUED TERM IS `_queued_keeping_load`'S DEMAND IN BARE HANDS** — the same load that makes
+    the coverage sentence answer at declare time, divided by the bare rate through
+    `SourceForecast.workers_for_work`, this client's one work→hands conversion. It is the *"impacts
+    based on jobs setup that turn"* half of the ask and it is not optional: without it, staffing a
+    pool and queueing the job that pool will keep — one decision, two presses — reports the new hand
+    as idle on the frame the job was declared.
+  - ⛔ **`roadwork` AND `quarrywork` HAVE NO QUEUED TERM, SO THEIR PROJECTION IS THE STEPPER DELTA
+    ALONE.** Both publish their `asked` as a band-level roll-up with no queued half — their rows are
+    fog-filtered and the client must not sum them — so `HudWorkVocab.keeping_source_kind` names no
+    web for them and `queued_demand_in_hands` is `0`. That is correct as far as it goes; what those
+    two lose is the declare-time half, which the wire gives this client no honest way to state.
+  - **The card's TITLE keeps the pending WARN amber**, which outranks the idle mark's own
+    leave-the-title-alone rule: *the number under this title is not the sim's yet* is the newer news.
+    It is also what `band_panel_preview._assert_pending_pool_mark` asserts as its precondition, since
+    the other probe requires the calm `INK` on a card that is not short.
 - **The `builders` card answers `""` off the WIRE, not off a special case.** The builders are not a
   keeping pool and publish no `pool_crew` row, so the reader finds nothing; a builders pool with an
   empty queue is idleness of another kind and is out of this mark's scope.
+
+**Frames:** `band_panel_pool_idle` (all three states beside the bare card) ·
+`band_panel_pool_idle_fraction` (0.6 of a worker is not a worker) ·
+**`band_panel_pool_idle_pending`** (three pending edits
+on one frame — a `+` on a covered pool marked, a `+` on a SHORT one not, a `−` clearing a mark the
+settled card is flying) · **`band_panel_pool_idle_queued`** (the CALM half of the queued term: four
+keepers, nothing pending, a Sow queued this turn owing three — the card reads ONE where the wire says
+four) · **`band_panel_pool_idle_pending_queued`** (the same band with a `+` beside it, reading TWO) ·
+**`band_panel_pool_idle_pending_flip`**
+(the silenced transition: a pool short by under one hand's work that the `+` covers, `⚠` on the
+settled frame and NOTHING on the pending one, against an honest 0.5 of a worker). The settled
+readings are asserted on the same band ahead of the pending ones — and the settled claim is staged
+with **nothing pending AND nothing queued**, since the queued term adjusts a calm frame too, so
+*nothing pending* alone would no longer pin *"the wire's figure whole"*. Without that pair, *"the
+projection answers"* is satisfied by a client that had stopped reading the wire at all.
+
+> ⛔ **A FIXTURE FOR THE QUEUED TERM MUST NOT BE SHORT AT THE SETTLED STAFFING.** The first cut of
+> `band_panel_pool_idle_pending_queued` staged one keeper against a 1-work bill plus a 1-work queued
+> job — which IS short by three-quarters of a hand, so the GATE above silenced the card and dropping
+> the queued term changed nothing: the state went green under its own sabotage. Keepers covering the
+> queued bill exactly is what keeps the gate out of it, and the claim then lands where it belongs, on
+> the figure.
+>
+> ⛔ **AND ITS SABOTAGE MUST FAIL BOTH BRANCHES.** Dropping `- _queued_keeping_hands(…)` fails the
+> calm fixture *and* the pending one — the first reading four where it should read one, the second
+> five where it should read two. If only one of the two fails, the other is vacuous.
 
 #### The WORKINGS ROSTER head is the fourth keeping pool, so it reports too
 

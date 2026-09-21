@@ -739,6 +739,11 @@ const UPKEEP_POOL_IDLE_MARK := "ⓘ"
 ## already: *adequate* has to be a threshold the remedy can actually clear.
 const UPKEEP_POOL_IDLE_KEEPERS_MIN := 1.0
 
+## …and the floor the reading sits on, which is a FLOOR and not a fudge: the figure answers *how many
+## keepers are doing nothing*, and no adjustment to it (`BandPanelController._projected_pool_idle`)
+## can take that below none.
+const UPKEEP_POOL_IDLE_KEEPERS_NONE := 0.0
+
 ## …and the reading it stands for, on the same hover as the coverage sentence and BELOW it: what the
 ## player can take back, and the control that takes it. The noun is the client's existing `worker`
 ## (`HudRouteVocab.ROAD_UPKEEP_WORKER_SINGULAR`'s word) rather than `keeper`, which appears on no
@@ -771,6 +776,15 @@ static func upkeep_pool_idle_line(idle_keepers: float) -> String:
 ## the supply side would mark every card in the game and on the demand side would mark none.
 const POOL_COVERAGE_SUPPLY_KEY := "supply"
 const POOL_COVERAGE_ASKED_KEY := "asked"
+
+## …and the OPTIONAL fourth: **was this pool short at the staffing the TURN RESOLVED**, which is a
+## different question from the three above and is asked by exactly one reader — the idle mark's
+## pending gate (`BandPanelController._pool_idle_line`). It is stamped by `_pool_coverage`, which is
+## the only producer holding both head counts; **absent means `false`**, and that is correct rather
+## than a default: the two pools whose cover is the sim's own published triple (`roadwork`,
+## `quarrywork`) carry a shortfall that does not move with the stepper at all, so no edit can flip
+## them and there is nothing for the gate to catch.
+const POOL_COVERAGE_SETTLED_SHORT_KEY := "settled_short"
 
 ## …and the OPTIONAL third, for a pool whose shortfall the sim states outright (the `roadwork` pool's
 ## `roadwork_shortfall`). **Present means "use this instead of subtracting"**, which is why the reader
@@ -1992,6 +2006,30 @@ static func under_kept_note(kind: String, material_note: String = "",
 static func keeping_pool_kind(labor_kind: String) -> String:
     return HudConst.LABOR_KIND_HUSBANDRY if labor_kind == SourceForecast.LABOR_KIND_HUNT \
         else HudConst.LABOR_KIND_AGRICULTURE
+
+## **THIS CLIENT CANNOT NAME A WEB FOR THIS POOL** — `keeping_source_kind`'s answer for the two pools
+## whose queued jobs it may not price. A sentinel rather than a defaulted web, for the reason the
+## picker above states: a caller handed the WRONG web reads a real number about somebody else's
+## sources, which is a wrong answer wearing a right one's shape.
+const NO_KEEPING_SOURCE_KIND := ""
+
+## **AND THE WEB A KEEPING POOL KEEPS, ASKED BACK THE OTHER WAY** — the SOURCE kind whose jobs
+## queued this turn this pool will owe standing work for, off the POOL's own token.
+## `keeping_pool_kind`'s inverse, and its twin in the one-picker rule: the pending projection
+## (`BandPanelController._queued_keeping_hands`) reaches for a web off a pool token and nothing else
+## in this client does.
+##
+## ⛔ **`roadwork` AND `quarrywork` NAME NO WEB, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP.**
+## Both publish their bill as a band-level roll-up the SIM struck, precisely because their rows are
+## fog-filtered and a client-side sum would drop what it cannot see
+## (`HudBandLaborState.roadwork_pool_state`) — so there is no queued term here to divide, and a web
+## named for them would be an invitation to sum exactly those rows.
+static func keeping_source_kind(pool_kind: String) -> String:
+    if pool_kind == HudConst.LABOR_KIND_HUSBANDRY:
+        return SourceForecast.LABOR_KIND_HUNT
+    if pool_kind == HudConst.LABOR_KIND_AGRICULTURE:
+        return SourceForecast.LABOR_KIND_FORAGE
+    return NO_KEEPING_SOURCE_KIND
 
 ## **AND ITS SEVERITY, ASKED THE SAME WAY** — DANGER for a missing good, WARN for missing hands. One
 ## producer for the pair, so a note and its ink can never describe different shortfalls.
