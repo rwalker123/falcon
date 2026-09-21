@@ -3774,6 +3774,64 @@ func _render_upkeep_mode_states() -> void:
 	_assert_zone_content_fits()
 	_assert_pool_cards_are_level("the pool gear frame")
 	_assert_pool_kit_marks()
+
+	# **A POOL CAN BE FULLY PAID AND STILL HAVE A WORKER STANDING AROUND, AND IT SAID SO NOWHERE**
+	# (issue #715). A pool that covers its bill exactly and one carrying a spare hand were the same
+	# calm card with no reading at all — *"the user will not know a worker can be freed up and doing
+	# other things"*. The card's one mark slot carries three states now, and this frame stages all
+	# three at once beside the card that must stay bare: shortfall AND idle, shortfall alone, idle
+	# alone, neither. All four on one frame, because a client that marked every card and one that
+	# marked none are the same picture at a glance.
+	_push_bands([_pool_idle_band_fixture(POOL_IDLE_ROADWORK_IDLE)])
+	await _settle()
+	await _save("band_panel_pool_idle")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	# ⛔ **THE ROW STILL FITS AND IS STILL LEVEL** — the constraint this whole design bends around.
+	# The reason the idle state took the EXISTING slot rather than a second glyph is that three
+	# placements for a second mark were measured and each took the four-card row past the left dock's
+	# 356px box; a frame that flew the new mark without re-measuring would be the one that proves
+	# nothing.
+	_assert_pool_cards_are_level("the pool idle frame")
+	var idle_line := _pool_idle_sentence(POOL_IDLE_ROADWORK_IDLE)
+	# ① SHORT **and** idle — the triangle wins the slot and the title takes the amber, so the idle
+	# reading rides the hover with no mark of its own. `""` on the IDLE meta is the claim: the state
+	# is *this card is not flying the info mark*, not *this pool has nobody spare*.
+	_assert_pool_mark_slot("a pool SHORT and idle at once", HudWorkVocab.ROLE_NAME_AGRICULTURE,
+		HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	# ② SHORT alone — unchanged from before this arc, and asserted so the widening cannot have
+	# quietly moved it.
+	_assert_pool_mark_slot("a pool SHORT of hands", HudWorkVocab.ROLE_NAME_HUSBANDRY,
+		HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	# ③ IDLE alone — the new state. The info mark, the CALM title, and the sentence on both the
+	# meta and the hover.
+	_assert_pool_mark_slot("a pool that COVERS its bill with a worker to spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.UPKEEP_POOL_IDLE_MARK, idle_line, false)
+	# ④ NEITHER — the paired negative, on the pool that is not a keeping pool at all and publishes
+	# no `pool_crew` row.
+	_assert_pool_mark_slot("the BUILDERS pool, which is no keeping pool",
+		HudWorkVocab.ROLE_NAME_BUILDERS, "", "", false)
+	# **AND THE WORK-UNITS READING IS THERE WHETHER OR NOT THE POOL IS SHORT** — the sentence the
+	# issue asks for, which existed all along and was gated shut behind the shortfall test. Both
+	# halves: the short card still states it, and the COVERED card now does too.
+	_assert_pool_hover_states_its_bill("a pool SHORT and idle at once",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, _pool_idle_sentence(POOL_IDLE_AGRICULTURE_IDLE))
+	_assert_pool_hover_states_its_bill("a pool that COVERS its bill with a worker to spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, idle_line)
+
+	# ⛔ **AND 0.6 OF A WORKER IS NOT A WORKER** — the same band with the same covered bill and the
+	# idle figure under the threshold. The mark's promise is *you can step this pool down by one*, and
+	# a fraction nobody can act on means nothing; without this negative the info mark passes on a card
+	# that flies it for any crumb the wire reports.
+	_push_bands([_pool_idle_band_fixture(POOL_IDLE_ROADWORK_FRACTION)])
+	await _settle()
+	await _save("band_panel_pool_idle_fraction")
+	_assert_pool_mark_slot("a pool with a FRACTION of a worker spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, "", "", false)
+	# …and its bill is still stated, so the negative is about the THRESHOLD and not about the card
+	# having fallen silent again.
+	_assert_pool_hover_states_its_bill("a pool with a FRACTION of a worker spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, "")
 	# ⛔ **THE BAND GOES BACK, because the dock states below re-render the POOLS block and push NO
 	# band of their own.** Order is load-bearing in this file: leaving this fixture standing had the
 	# BOTTOM-dock and TWO-COLUMN claims measuring a band they were never written about, and they
@@ -4599,6 +4657,13 @@ func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles
 ## the shortfall sentences and in no hint.
 const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn; this band's"
 
+## …and the same sentence's middle with the WEB taken off, which is what the ROUTE and DEPOSIT
+## branches share with the two food webs. `POOL_SHORT_TOOLTIP_NEEDLE` above names *this band's*
+## holdings and so matches the plant and animal formats ALONE — a probe asking whether the roadwork
+## or quarrywork pool stated its bill has to stop at the shared clause or it asserts an absence on
+## every frame. It appears in all four coverage sentences and in no hint.
+const POOL_COVERAGE_TOOLTIP_NEEDLE := "work a turn; "
+
 ## …and the two webs' tails, which is what makes the per-web claim a claim: the whole point of moving
 ## the figure onto the cards is that a summed line could not say WHICH web was short.
 const POOL_SHORT_TAIL_PLANT := "tended ground and queued jobs need"
@@ -4844,6 +4909,151 @@ func _pool_gear_band_fixture() -> Dictionary:
 	band["labor_assignments"] = rows
 	band[HudBandLaborState.POOL_TOE_KEY] = _pool_toe_fixture()
 	return band
+
+## ---- A KEEPING POOL WITH A WORKER WHO HAD NOTHING TO DO (issue #715) ---------------------------
+##
+## **THE SILENCE THIS STAGES.** A pool that covers its bill exactly and a pool carrying a spare hand
+## rendered as the same calm card with no reading at all, so a player could not see that a worker was
+## free to be sent elsewhere. The card's one mark slot carries THREE states now — `⚠`, the info mark,
+## nothing — and this band puts all three on one row beside the fourth card that must stay bare.
+##
+## | card | its bill | its idle crew | what it must say |
+## |---|---|---|---|
+## | Agriculture | SHORT | 2.4 keepers | `⚠` — shortfall wins the slot — amber title, BOTH readings |
+## | Husbandry | SHORT | none | `⚠`, amber title, the shortfall reading alone |
+## | Roadwork | COVERED | 1.4 keepers | the INFO mark, CALM title, the bill reading AND the idle one |
+## | Builders | none | no row on the wire | nothing at all |
+##
+## ⛔ **THE `builders` ROW IS ABSENT FROM `pool_crew` RATHER THAN ZERO, because the wire never
+## publishes one** — the builders are not a keeping pool. A fixture that zeroed it would be asserting
+## against a shape no server can produce, and would hide a reader that special-cases the pool it
+## should simply never find.
+const POOL_IDLE_ROADWORK_CREW := 3
+## The `roadwork` pool's bill, PAID IN FULL — `supplied == demand`, `shortfall` zero. The sim states
+## all three for this pool, so the card's coverage test is its verdict and not a subtraction here.
+const POOL_IDLE_ROAD_DEMAND := 2.0
+const POOL_IDLE_ROAD_SHORTFALL := 0.0
+## …and what its crew did not use. **Fractional, because the wire's figure is** — a pool's share
+## arithmetic is continuous, so the card has to floor it to the whole worker a stepper press can free.
+const POOL_IDLE_ROADWORK_IDLE := 1.4
+## …and the same pool BELOW the threshold, for the paired negative: 0.6 of a worker cannot be freed by
+## any control on this panel, so a mark there would be a promise nothing can keep.
+const POOL_IDLE_ROADWORK_FRACTION := 0.6
+## The `agriculture` pool's, on a card that is ALSO short — the state that decides which mark wins.
+const POOL_IDLE_AGRICULTURE_IDLE := 2.4
+## `0` is the wire's *this pool employed every hand it was given*, and it is stated rather than
+## omitted: a row exists for every keeping pool whether or not the band staffs it.
+const POOL_CREW_FULLY_EMPLOYED := 0.0
+
+## One `pool_crew` row, spelled through the reader's own keys so a wire rename moves the fixture.
+func _pool_crew_row(pool: String, idle: float) -> Dictionary:
+	return {
+		HudBandLaborState.POOL_CREW_POOL_KEY: pool,
+		HudBandLaborState.POOL_CREW_IDLE_KEY: idle,
+	}
+
+func _pool_idle_band_fixture(roadwork_idle: float) -> Dictionary:
+	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
+	band["entity"] = 971
+	band["id"] = "Band 27"
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	rows.append({"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_IDLE_ROADWORK_CREW})
+	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW})
+	band["labor_assignments"] = rows
+	band["roadwork_demand"] = POOL_IDLE_ROAD_DEMAND
+	band["roadwork_supplied"] = POOL_IDLE_ROAD_DEMAND
+	band["roadwork_shortfall"] = POOL_IDLE_ROAD_SHORTFALL
+	band[HudBandLaborState.POOL_CREW_KEY] = [
+		_pool_crew_row(HudConst.LABOR_KIND_AGRICULTURE, POOL_IDLE_AGRICULTURE_IDLE),
+		_pool_crew_row(HudConst.LABOR_KIND_HUSBANDRY, POOL_CREW_FULLY_EMPLOYED),
+		_pool_crew_row(HudConst.LABOR_KIND_ROADWORK, roadwork_idle),
+		_pool_crew_row(HudConst.LABOR_KIND_QUARRYWORK, POOL_CREW_FULLY_EMPLOYED),
+	]
+	return band
+
+## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBER, NEVER THROUGH
+## `HudWorkVocab.upkeep_pool_idle_line`** — `_pool_toe_term`'s rule: an expectation re-derived through
+## the code under test collapses with it. The FLOOR is spelled out here too, because *1 worker out of
+## 1.4 idle* is the claim rather than an implementation detail.
+func _pool_idle_sentence(idle: float) -> String:
+	var whole := int(floorf(idle))
+	return HudWorkVocab.UPKEEP_POOL_IDLE_FORMAT % [whole,
+		HudWorkVocab.UPKEEP_POOL_IDLE_WORKER_SINGULAR if whole == 1
+		else HudWorkVocab.UPKEEP_POOL_IDLE_WORKER_PLURAL]
+
+## GUARD: **ONE MARK SLOT, THREE STATES, AND SHORTFALL WINS IT** (issue #715) — read off one card as
+## the four answers it publishes together: the SHORT meta, the IDLE meta, the glyph it actually DREW
+## and the ink its title took.
+##
+## **THE GLYPH IS READ HERE AND NOWHERE ELSE ON THIS CARD.** Every other probe in this file asks the
+## card's meta deliberately, so that a claim is never the string the builder was just handed. This one
+## has to look at the run, because *which of two glyphs stands in the one slot* is precisely what is
+## under test — and `WORK_ROW_MARKS_META` carries the run itself, so the Label is still found by
+## handle rather than by text.
+##
+## **AND THE TITLE'S INK IS HALF THE CLAIM.** The amber has to keep meaning *something is being lost*;
+## an idle worker is waste a stepper press fixes. A card that flew the info mark AND took the WARN
+## amber would spend the panel's one alarm ink on the least urgent thing it can say, and the mark
+## alone cannot catch it.
+func _assert_pool_mark_slot(label: String, role: String, want_glyph: String, want_idle: String,
+		want_short: bool) -> void:
+	var card := _find_pool_card(role)
+	if card == null:
+		_fail("pool idle — %s: no %s pool card to read" % [label, role])
+		return
+	_assert_band_panel("pool idle — %s: the SHORT meta is %s" % [label, want_short],
+		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_short)
+	_assert_band_panel("pool idle — %s: …and its IDLE meta is \"%s\" (got \"%s\")"
+			% [label, want_idle, card.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")],
+		String(card.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")) == want_idle)
+	var drawn: Array[Control] = []
+	_collect_meta_controls(card, HudWorkVocab.WORK_ROW_MARKS_META, drawn)
+	var glyphs: Array = drawn.map(func(c: Control) -> String:
+		return String(c.get_meta(HudWorkVocab.WORK_ROW_MARKS_META)))
+	var want_glyphs: Array = [] if want_glyph == "" else [want_glyph]
+	_assert_band_panel("pool idle — %s: …and the ONE slot holds %s (drew %s)"
+			% [label, want_glyphs, glyphs], glyphs == want_glyphs)
+	# ⛔ **AND THE MARK'S OWN INK, WHICH IS THE HALF A GLYPH CLAIM CANNOT MAKE.** The amber has to
+	# keep meaning *something is being lost*; an idle worker is waste a stepper press fixes. A single
+	# slot carrying both states in one colour would be a mark the player cannot read at a glance,
+	# which is the whole reason the info state exists rather than a second triangle.
+	if want_glyph != "":
+		var want_ink := HudStyle.WARN if want_short else HudStyle.INK_DIM
+		var mark_ink: Color = drawn[0].get_theme_color("font_color")
+		_assert_band_panel("pool idle — %s: …in the %s (%s)"
+				% [label, "WARN amber" if want_short else "the INK_DIM note", mark_ink],
+			mark_ink.is_equal_approx(want_ink))
+	var title := _label_titled_under(card, role)
+	var ink := Color.TRANSPARENT if title == null else title.get_theme_color("font_color")
+	_assert_band_panel("pool idle — %s: …and its title takes the %s ink (%s)"
+			% [label, "WARN amber" if want_short else "calm INK", ink],
+		title != null and ink.is_equal_approx(HudStyle.WARN if want_short else HudStyle.INK))
+
+## GUARD: **THE WORK-UNITS READING IS ON THE HOVER WHETHER OR NOT THE POOL IS SHORT** (issue #715) —
+## the sentence existed all along and was gated shut behind the shortfall test, which is why a
+## correctly staffed pool said nothing about how much of its crew the bill actually consumes.
+##
+## Asserted as a PAIR against the idle clause's own line, in the ordering rule the card already
+## follows: the shortfall readings first, the idle one last.
+func _assert_pool_hover_states_its_bill(label: String, role: String, want_idle: String) -> void:
+	var card := _find_pool_card(role)
+	if card == null:
+		_fail("pool idle — %s: no %s pool card to read" % [label, role])
+		return
+	var lines: Array = Array(card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR))
+	var bill_at := POOL_HOVER_LINE_ABSENT
+	for i in lines.size():
+		if String(lines[i]).contains(POOL_COVERAGE_TOOLTIP_NEEDLE):
+			bill_at = i
+			break
+	_assert_band_panel("pool idle — %s: …states its bill in work units on the hover (%s)"
+			% [label, lines], bill_at != POOL_HOVER_LINE_ABSENT)
+	if want_idle == "":
+		return
+	_assert_band_panel("pool idle — %s: …and the idle reading on a line of its own, AFTER it (%s)"
+			% [label, lines],
+		lines.find(want_idle) != POOL_HOVER_LINE_ABSENT
+			and bill_at < lines.find(want_idle))
 
 ## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
 ## `HudWorkVocab.pool_toe_short_line`** — the material-short guard's rule: an expectation re-derived
@@ -18944,6 +19154,61 @@ func _workings_rows() -> Array:
 ## ⛔ **EACH `extract` ROW NAMES ITS MATERIAL.** That field is half the row's identity, and a fixture
 ## omitting it stages an assignment `LaborTarget::Extract` cannot produce — the roster would then find
 ## no working at all and every claim below would pass as an absence.
+## …and the same band with its bill PAID IN FULL and a worker left standing (issue #715) — the
+## `quarrywork` pool's own version of the pool cards' info-mark state, which is the only shape this
+## pool can report it in because it has no card.
+##
+## **FRACTIONAL ON THE WIRE, FLOORED ON THE HEAD.** `1.7` is an ordinary reading of a continuous
+## share, and what the head may promise is the whole worker a stepper press can actually free.
+const WORKINGS_IDLE_KEEPERS := 1.7
+
+func _workings_idle_band_fixture() -> Dictionary:
+	var band := _workings_band_fixture(WORKINGS_DEMAND)
+	band["quarrywork_supplied"] = WORKINGS_DEMAND
+	band["quarrywork_shortfall"] = 0.0
+	band[HudBandLaborState.POOL_CREW_KEY] = [
+		_pool_crew_row(HudConst.LABOR_KIND_AGRICULTURE, POOL_CREW_FULLY_EMPLOYED),
+		_pool_crew_row(HudConst.LABOR_KIND_HUSBANDRY, POOL_CREW_FULLY_EMPLOYED),
+		_pool_crew_row(HudConst.LABOR_KIND_ROADWORK, POOL_CREW_FULLY_EMPLOYED),
+		_pool_crew_row(HudConst.LABOR_KIND_QUARRYWORK, WORKINGS_IDLE_KEEPERS),
+	]
+	return band
+
+## GUARD: **THE ROSTER HEAD'S ONE MARK SLOT, THREE STATES** (issue #715) — the head's own SHORT and
+## IDLE metas, the glyph it actually drew, and the idle reading on its hover.
+##
+## **THE GLYPH IS READ BY TEXT HERE, WHICH IS THE ONE PLACE IN THIS FILE THAT IS RIGHT.** A zone head
+## builds its readout as a plain `Label` with no handle of its own (`HudWidgets.zone_head`), and
+## *which of the two marks stands in the readout* is exactly the claim — so the text IS the subject
+## rather than a restatement of what the builder was handed. The metas beside it are what keep the
+## decision and the render from disagreeing.
+func _assert_workings_head_mark_slot(label: String, block: Control, want_glyph: String,
+		want_idle: String, want_short: bool) -> void:
+	var head := _find_meta_control(block, HudWorkVocab.POOL_CARD_IDLE_META)
+	if head == null:
+		_fail("workings idle — %s: the roster head publishes no pool state at all" % label)
+		return
+	_assert_band_panel("workings idle — %s: the head's SHORT meta is %s" % [label, want_short],
+		bool(head.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_short)
+	_assert_band_panel("workings idle — %s: …and its IDLE meta is \"%s\" (got \"%s\")"
+			% [label, want_idle, head.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")],
+		String(head.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")) == want_idle)
+	var glyphs: Array = []
+	for control in head.find_children("*", "Label", true, false):
+		var face := (control as Label).text
+		if face == HudWorkVocab.UPKEEP_POOL_SHORT_MARK \
+				or face == HudWorkVocab.UPKEEP_POOL_IDLE_MARK:
+			glyphs.append(face)
+	var want_glyphs: Array = [] if want_glyph == "" else [want_glyph]
+	_assert_band_panel("workings idle — %s: …and the ONE slot holds %s (drew %s)"
+			% [label, want_glyphs, glyphs], glyphs == want_glyphs)
+	if want_idle == "":
+		return
+	var title := _label_titled_under_head(block, HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER)
+	_assert_band_panel("workings idle — %s: …and the reading is on the head's hover (%s)"
+			% [label, "" if title == null else title.tooltip_text],
+		title != null and title.tooltip_text.contains(want_idle))
+
 func _workings_band_fixture(demand: float) -> Dictionary:
 	var band := _band_fixture()
 	band["quarrywork_demand"] = demand
@@ -19223,6 +19488,28 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	# with the stepper on this head a block that skipped case 2 would leave it nowhere to be staffed.
 	if unseen != null:
 		_assert_workings_roster_head("band_panel_workings_roster_unseen", unseen, true)
+
+	# ---- CASE 3: THE BILL IS PAID AND A WORKER IS STANDING AROUND (issue #715) --------------------
+	# ⛔ **THE FOURTH KEEPING POOL HAS NO CARD, SO THIS HEAD IS THE ONLY PLACE IT CAN REPORT.**
+	# `quarrywork` is a keeping pool like the three in the block above and publishes a `pool_crew` row
+	# like them; leaving the idle reading to the cards would make the one pool with no card the one
+	# pool that still cannot tell a player a worker is free — which is the bug, not a lesser version
+	# of it. Same predicate, same composer, same one-slot rule as a card.
+	_push_bands([_workings_idle_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_roster_idle")
+	_assert_zone_content_fits()
+	var spare := _workings_block()
+	_assert_band_panel("a workings pool that covers its bill still draws its block", spare != null)
+	if spare != null:
+		_assert_workings_head_mark_slot("a covered bill with a worker to spare", spare,
+			HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+			_pool_idle_sentence(WORKINGS_IDLE_KEEPERS), false)
+		# **AND THE SHORTFALL PROBE STILL READS THIS HEAD AS CALM** — the existing guard counts `⚠`
+		# Labels, so a head that flew the info mark and was also counted as short would have widened
+		# a claim three other states depend on.
+		_assert_workings_roster_head("band_panel_workings_roster_idle", spare, false)
 
 	# ---- CASE 1: NOTHING HELD AND NOTHING OWED — NO BLOCK AT ALL ---------------------------------
 	# The paired negative without which every claim above is satisfied by a block that renders
@@ -23159,14 +23446,23 @@ func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) 
 	var wanted := HudWorkVocab.upkeep_pool_coverage_format(HudWorkVocab.ROLE_NAME_HUSBANDRY) % [
 		DetailFormat.format_work_units(float(keepers) * KEEPING_DECLARE_PER_WORKER_TURN),
 		DetailFormat.format_work_units(KEEPING_DECLARE_UPKEEP)]
-	_assert_band_panel("%s: …and its hover %s what the pool supplies against what it is asked for, by equality (%s)"
-			% [where, "states" if want_mark else "does not state", card.tooltip_text],
-		card.tooltip_text.contains(wanted) == want_mark)
-	# …and where it is calm it states NO coverage sentence at all, at any figures — without which
-	# "does not state THIS sentence" passes on a card quoting some other pair of numbers.
-	_assert_band_panel("%s: …and a covered card quotes no coverage figures at all (%s)"
+	# ⛔ **THE SENTENCE IS NOT THE TRIGGER ANY MORE, SO IT IS ASSERTED ON BOTH SIDES** (issue #715).
+	# It used to return `""` for a covered pool — that silence is exactly what the issue closed, since
+	# a pool paying its bill exactly and a pool with a worker standing idle then rendered identically.
+	# The card states what its crew is consumed by whether or not the bill is met, and the MARK is
+	# what forks; the equality is what pins that the supply figure still MOVES with the staffing,
+	# which is the whole difference between the coverage trigger and the retired *unstaffed* one.
+	_assert_band_panel("%s: …and its hover states what the pool supplies against what it is asked for, by equality (%s)"
 			% [where, card.tooltip_text],
-		card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE) == want_mark)
+		card.tooltip_text.contains(wanted))
+	# …and EXACTLY ONE coverage sentence, which is what stops the equality above passing on a card
+	# that also quotes some other pair of numbers.
+	var quoted := 0
+	for line in card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR):
+		if String(line).contains(POOL_SHORT_TOOLTIP_NEEDLE):
+			quoted += 1
+	_assert_band_panel("%s: …on exactly ONE line of the hover, at those figures and no others (%d)"
+			% [where, quoted], quoted == 1)
 	# THE OTHER WEB IS UNTOUCHED. A queued ANIMAL job says nothing about the plant pool, and a warning
 	# that marked both would send the player to the wrong card.
 	var plant := _find_pool_card(HudWorkVocab.ROLE_NAME_AGRICULTURE)

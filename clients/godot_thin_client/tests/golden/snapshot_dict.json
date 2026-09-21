@@ -5059,6 +5059,24 @@
       "name": "populations[0].name",
       "output_multiplier": 0.000001,
       "pending_reveal_count": 3,
+      "pool_crew": [
+        {
+          "idle_keepers": 19.24,
+          "pool": "agriculture"
+        },
+        {
+          "idle_keepers": 70.25,
+          "pool": "husbandry"
+        },
+        {
+          "idle_keepers": 19.620001,
+          "pool": "roadwork"
+        },
+        {
+          "idle_keepers": 58.41,
+          "pool": "quarrywork"
+        }
+      ],
       "pool_toe": [
         {
           "filled": 75.68,
@@ -5920,6 +5938,24 @@
       "name": "populations[1].name",
       "output_multiplier": 0.000118,
       "pending_reveal_count": 3,
+      "pool_crew": [
+        {
+          "idle_keepers": 80.169998,
+          "pool": "agriculture"
+        },
+        {
+          "idle_keepers": 67.480003,
+          "pool": "husbandry"
+        },
+        {
+          "idle_keepers": 40.110001,
+          "pool": "roadwork"
+        },
+        {
+          "idle_keepers": 108.959999,
+          "pool": "quarrywork"
+        }
+      ],
       "pool_toe": [
         {
           "filled": 65.529999,
@@ -6876,6 +6912,24 @@
       "name": "populations[2].name",
       "output_multiplier": 0.000051,
       "pending_reveal_count": 3,
+      "pool_crew": [
+        {
+          "idle_keepers": 20.99,
+          "pool": "agriculture"
+        },
+        {
+          "idle_keepers": 4.88,
+          "pool": "husbandry"
+        },
+        {
+          "idle_keepers": 94.169998,
+          "pool": "roadwork"
+        },
+        {
+          "idle_keepers": 50.970001,
+          "pool": "quarrywork"
+        }
+      ],
       "pool_toe": [
         {
           "filled": 100.459999,

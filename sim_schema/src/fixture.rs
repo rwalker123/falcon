@@ -557,6 +557,20 @@ fn seed_snapshot() -> WorldSnapshot {
             filled: *filled,
         })
         .collect();
+        // **THE FOUR KEEPING POOLS' CREW ACCOUNTS** (issue #715) — spelled out rather than `rows()`
+        // for `pool_toe`'s reason: the list is keyed by pool and a duplicate key is not something
+        // the server can emit. `builders` is deliberately absent — it is not a keeping pool.
+        //
+        // The saturation pass rewrites the floats, so the counts below do not reach the artifact;
+        // what survives is the KEYING, which is what a decode has to carry.
+        cohort.pool_crew = ["agriculture", "husbandry", "roadwork", "quarrywork"]
+            .iter()
+            .enumerate()
+            .map(|(rank, pool)| PoolCrewLineState {
+                pool: (*pool).to_string(),
+                idle_keepers: rank as f32,
+            })
+            .collect();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();

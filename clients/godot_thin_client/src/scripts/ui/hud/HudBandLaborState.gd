@@ -1501,6 +1501,41 @@ static func pool_toe_for(band: Dictionary, pool: String) -> Array:
 			lines.append(row)
 	return lines
 
+## The wire's per-keeping-pool CREW row (issue #715), decoded onto the band dict by
+## `native/src/dict/population.rs` as `pool_crew`.
+const POOL_CREW_KEY := "pool_crew"
+const POOL_CREW_POOL_KEY := "pool"
+const POOL_CREW_IDLE_KEY := "idle_keepers"
+
+## **HOW MANY KEEPERS THIS POOL EMPLOYED ON NOTHING AT ALL THIS TURN** — the `pool_crew` row's
+## `idle_keepers`, in KEEPERS and fractional, or `0.0` for a pool the wire states nothing about.
+##
+## ⛔ **IT IS READ, NEVER DERIVED.** The card's own `supply` figure is a projection off a NOTIONAL
+## kit — it knows neither which tools the settlement actually handed this pool nor that the sim puts
+## leftover hands back BARE onto sites still carrying a deficit — so a client-side *this keeper is
+## idle* is wrong in exactly the cases that top-up exists for. This figure is struck AFTER the
+## top-up, which is what makes it mean *these people did nothing at all*.
+##
+## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, `pool_toe_for`'s rule verbatim, so a card resolves its crew
+## row and its table of equipment off the one `kind` token it already holds. The vocabulary is the
+## FOUR keeping pools — `agriculture` / `husbandry` / `roadwork` / `quarrywork` — and NEVER
+## `builders`, which is not a keeping pool and publishes no row here.
+##
+## **A ROW EXISTS FOR EVERY KEEPING POOL WHETHER OR NOT THE BAND STAFFS IT**, unlike the TOE's, so
+## `0.0` is *this pool employed every hand it was given* and the `0.0` default for a missing row is
+## the same reading rather than a second one.
+static func pool_crew_idle_for(band: Dictionary, pool: String) -> float:
+	var v: Variant = band.get(POOL_CREW_KEY, [])
+	if not (v is Array):
+		return 0.0
+	for row_variant in (v as Array):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(POOL_CREW_POOL_KEY, "")) == pool:
+			return maxf(float(row.get(POOL_CREW_IDLE_KEY, 0.0)), 0.0)
+	return 0.0
+
 # ---- Player band roster + per-source labor readers -----------------------------------------------
 
 ## The player bands the band-picker lists. Normally `_player_bands` (captured each snapshot); falls back

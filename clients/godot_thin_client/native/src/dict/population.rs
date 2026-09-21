@@ -1517,6 +1517,40 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("pool_toe", &pool_toe);
 
+    // --- WHAT EACH KEEPING POOL DID NOT USE (issue #715) ------------------------------------------
+    // One row per KEEPING pool, stating how many of the keepers assigned to it the turn's bill did
+    // not consume — the number a *step this pool down* mark is drawn off.
+    //
+    // ⛔ **THE SIM SAYS IT AND THE CLIENT MUST NOT WORK IT OUT.** A card's own `supply` figure is a
+    // projection off a NOTIONAL kit: it knows neither which tools the band's settlement actually
+    // handed this pool, nor that leftover hands are put back BARE onto sites still carrying a
+    // deficit. A client-side *this keeper is idle* is wrong in exactly the cases that top-up exists
+    // for — the sim has that keeper working. `idle_keepers` is struck AFTER the top-up, so it means
+    // *these people did nothing at all this turn*.
+    //
+    // **IN KEEPERS, AND FRACTIONAL** — `1.68` keepers left standing is an ordinary reading, not a
+    // rounding artefact, because a pool's share arithmetic is continuous.
+    //
+    // **FOUR POOLS, AND `builders` IS NEVER ONE OF THEM** — `agriculture` | `husbandry` | `roadwork`
+    // | `quarrywork`. The whole builders head count goes on the build queue's head, so no builder is
+    // ever left standing by a plan that wanted fewer; a builders pool with an EMPTY QUEUE is idle in
+    // a different sense and is deliberately not measured.
+    //
+    // **A ROW EXISTS FOR EVERY KEEPING POOL, STAFFED OR NOT** — unlike `pool_toe`'s, which exists
+    // only where something is required. Three keepers on `agriculture` with no tended ground are
+    // three idle keepers, and that is the commonest reading there is, so a reader never has to tell
+    // an absent row from a zero one.
+    let mut pool_crew = VarArray::new();
+    if let Some(lines) = cohort.poolCrew() {
+        for line in lines.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("pool", line.pool().unwrap_or_default());
+            let _ = row.insert("idle_keepers", line.idleKeepers() as f64);
+            pool_crew.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("pool_crew", &pool_crew);
+
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and
     // `materialBudget` were deleted from `CampaignSection.openingLoadout` and live here; what stayed

@@ -2796,6 +2796,71 @@ the triangle over an empty hover would say nothing. The `3.0 / 2.9` row is the c
 raw-float test apart from a comparison of the printed pair, and a FILLED row is paired against both,
 or *"it states a line"* passes on a builder that states one for everything.
 
+### ⛔ ONE MARK SLOT, THREE STATES — a pool with a worker who has nothing to do (issue #715)
+
+A pool that covered its bill exactly and a pool carrying an idle keeper rendered as the **same calm
+card**: no mark, no ink, no reading. Reported as *"the user will not know a worker can be freed up
+and doing other things."*
+
+The name row holds **exactly one glyph** — that is the measured constraint above, not a preference
+— so the slot carries three states and **shortfall wins it**:
+
+| state | glyph | mark ink | title |
+|---|---|---|---|
+| short of hands or tools | `⚠` | `HudStyle.WARN` | WARN |
+| not short, a whole worker spare | `ⓘ` | `HudStyle.INK_DIM` | calm `INK` |
+| neither | — | — | `INK` |
+
+- ⛔ **THE AMBER KEEPS MEANING *SOMETHING IS BEING LOST*.** A road washing out and a patch rotting
+  are losses; an idle worker is waste the player clears with a stepper press. So the info state
+  **leaves the title alone** — colouring it would spend the panel's one alarm ink on the least
+  urgent thing the card can say. `pending` keeps its existing precedence over the title colour.
+- ⛔ **AND IT IS `INK_DIM`, NOT `SIGNAL` — WHICH IT WAS FOR ONE PASS, WRONGLY, ON BOTH COUNTS.**
+  `SIGNAL`'s documented meaning is *calm, nothing needs you* (`HudStyle.READY`'s comment states it
+  outright), which is the **opposite** of this mark: a spare worker is precisely something that
+  needs the player. And on the shipped default theme it is not even legible — `ember` is the
+  `DEFAULT_THEME`, its `SIGNAL` is `efe3cd` against an `INK` of `f4ead7`, so the mark would have
+  been cream on cream and told apart by glyph shape alone.
+- **THERE IS NO EXISTING *NOTICE, BUT LESSER THAN WARN* INK, AND THAT IS WHY THIS ONE MAKES NO
+  SEVERITY CLAIM.** The attention model has two rungs and `FactionRollup._severity_color` maps
+  `info` onto `WARN` itself; `READY` means *a requirement the player has FINISHED meeting* and
+  `HEALTHY` means *well-supplied*. Each would be a second meaning on a token that already has one.
+  `INK_DIM` is ordinary secondary ink — separable from `INK` and from `WARN` on every palette,
+  and it asserts nothing about severity.
+- **`ⓘ` (U+24D8) RENDERS in the project's font stack**, verified by cropping
+  `band_panel_pool_idle.png` rather than by the `Label.text` having been set — a missing glyph draws
+  as tofu or as nothing, and neither is visible from the assignment.
+- **The mark's ink is an ARGUMENT to `_pool_card_mark`, never derived from its glyph**, which would
+  be a second lookup free to disagree with the caller's own fork.
+- ⛔ **`POOL_CARD_SHORT_META` STILL MEANS *MARKED SHORT*, NARROWLY.** Several probes read it as
+  *short*; widening it to *marked at all* would silently change what each of them asserts. The idle
+  state gets **`HudWorkVocab.POOL_CARD_IDLE_META`**, a third meta carrying the **sentence** rather
+  than a flag — `POOL_CARD_TOOL_SHORT_META`'s rule verbatim, so a harness asking *which reason is
+  this mark for* does not re-compose the wording it is checking. It is `""` on a card that is also
+  short, where the reading is still on the hover but the slot went to the triangle.
+- **The hover order is hands, tools, then idle**, and `HudFormat.join_tooltip_lines` drops the empty
+  ones: the two shortfalls are what the band is LOSING and the spare hand is what it can gain.
+- ⛔ **PENDING GATES THE IDLE READING, `_pool_toe_settled_rows`' rule verbatim.** The crew account
+  is the settlement the turn RESOLVED, so a `+` just pressed would be answered with the idleness of
+  the staffing left behind — telling the player to step down a pool they have just stepped up.
+  `_pool_idle_line` answers `""` on a pending row.
+- **The `builders` card answers `""` off the WIRE, not off a special case.** The builders are not a
+  keeping pool and publish no `pool_crew` row, so the reader finds nothing; a builders pool with an
+  empty queue is idleness of another kind and is out of this mark's scope.
+
+#### The WORKINGS ROSTER head is the fourth keeping pool, so it reports too
+
+There is no fifth card (the row of four is full — see the measurements above), so `quarrywork`'s
+stepper and coverage sentence ride the roster block's own head. It carries **the same predicate, the
+same composers, the same one-slot rule and the same pair of metas**: leaving the idle reading to the
+three cards would have made the one pool with no card the one pool that still could not tell a
+player a worker was free, which is the defect rather than a lesser version of it.
+
+The head's glyph is asserted **by its text**, uniquely in `band_panel_preview` — `HudWidgets.zone_head`
+builds its readout as a plain `Label` with no handle of its own, so *which of the two marks stands in
+the readout* is the subject rather than a restatement of what the builder was handed. The metas
+beside it are what keep the decision and the render from disagreeing.
+
 ## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
 `docs/plan_standing_upkeep.md` §2.5. Maintenance is a band-level standing role now, so the band zone
