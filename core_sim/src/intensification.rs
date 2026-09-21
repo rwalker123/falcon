@@ -1082,7 +1082,11 @@ pub fn distribute_upkeep_pool(pool: f32, demands: &[f32], mode: UpkeepFundMode) 
 
 /// Which food web a rung belongs to. The two webs are separate ladders that never share a rung — a
 /// master rancher isn't automatically a farmer (`plan_intensification_ladder.md` §4.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// `PartialOrd`/`Ord` are derived so a branch can key a [`BTreeMap`] — see
+/// [`LadderConfig::branches`], whose deterministic iteration order is the repo's standing rule for
+/// anything a snapshot can be built from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RungBranch {
     /// The **human** food web: forage patches (`forage.rs`).
@@ -3419,6 +3423,32 @@ pub struct RouteRange {
     pub remote_cost_multiplier: f32,
 }
 
+/// **A BRANCH THAT NAMES NO SUBJECT AREA** — what [`LadderConfig::branch_area`] answers for a
+/// branch with no descriptor. It is a *fallback*, not a failure: the client draws the domain under
+/// its own fallback heading rather than dropping it.
+pub const NO_SUBJECT_AREA: &str = "";
+
+/// **WHAT A BRANCH ITSELF IS** — the first record a branch has ever had
+/// (`docs/plan_knowledge_rows.md` §5). Until this table, `branch` was a string repeated on each
+/// rung and nothing anywhere described the branch.
+///
+/// It is a **record rather than a bare area string** on purpose: a second per-branch fact then
+/// needs no second table beside this one.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BranchDef {
+    /// **THE SUBJECT AREA THIS BRANCH SITS UNDER** — `"food"`, `"making"`, `"works"`. Which
+    /// *heading* the knowledge screen files the branch's domain under, one level above the branch
+    /// itself.
+    ///
+    /// **A string, not a coded enum.** An enum would force a code edit for every area added, which
+    /// is the hard-coded-client-table bug (`LADDER_DOMAINS`) one level up. `validate` requires it
+    /// to name a member of [`LadderConfig::areas`], which is what catches the typo an enum would
+    /// have caught, without pinning the vocabulary in Rust.
+    ///
+    /// **Wire vocabulary, never player copy**: the client spells `food` as *Food*.
+    pub area: String,
+}
+
 /// **One knowledge the ladder teaches, with the two facts that place it** — see
 /// [`LadderConfig::knowledge_roster`], which is the only producer of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3427,6 +3457,10 @@ pub struct LadderKnowledgeEntry<'a> {
     pub knowledge: &'a str,
     /// The branch of the rung that teaches it.
     pub branch: RungBranch,
+    /// **The subject area of the branch that teaches it** — [`BranchDef::area`], read through
+    /// [`LadderConfig::branch_area`]. `""` when the branch names none, which a client draws under a
+    /// fallback heading rather than dropping the row.
+    pub area: &'a str,
     /// …and that rung's `order`.
     pub order: u32,
     /// Whether some rung's `unlock_knowledge` names it — a *step* rather than a *capability*.
@@ -3461,6 +3495,26 @@ pub fn knowledge_title_from_id(id: &str) -> String {
 pub struct LadderConfig {
     /// The knowledge dials shared by **both** webs — see [`LadderKnowledge`].
     pub knowledge: LadderKnowledge,
+    /// **THE BRANCH DESCRIPTORS**, keyed by the branch token itself — see [`BranchDef`].
+    ///
+    /// Serde keys the map by [`RungBranch`], so an unknown branch name fails the **parse** rather
+    /// than resolving to a default nobody chose — the same coded-primitive discipline the `behavior`
+    /// block follows. Read it through [`Self::branch_area`], never directly.
+    ///
+    /// **Required, with no `#[serde(default)]`.** A config that omits it is a broken override, and
+    /// the boot loader already handles that by logging at error and falling back to the builtin; a
+    /// serde default would instead silently publish a screen with no areas on it.
+    pub branches: BTreeMap<RungBranch, BranchDef>,
+    /// **THE SUBJECT AREAS, IN DISPLAY ORDER** — `["food", "making", "works", …]`.
+    ///
+    /// The order is **not optional**: areas are peers, so first-seen order read off the rungs would
+    /// reshuffle the whole knowledge screen whenever a rung was added — the same defect that made
+    /// column order unstable before the roster carried it. Areas with no branch are listed anyway,
+    /// because the order must already be right on the day a branch lands in one, and an area with no
+    /// domains is never drawn.
+    ///
+    /// **Required for the same reason [`Self::branches`] is.**
+    pub areas: Vec<String>,
     /// How fast traffic raises the **route** branch — see [`RouteTraffic`].
     pub route_traffic: RouteTraffic,
     /// How far a band keeps a road at the rung's own price — see [`RouteRange`], and read it through
@@ -3667,6 +3721,7 @@ impl LadderConfig {
             roster.push(LadderKnowledgeEntry {
                 knowledge: name,
                 branch: rung.branch,
+                area: self.branch_area(rung.branch),
                 order: rung.order,
                 is_step: self.knowledge_gates_a_rung(name),
                 discovery_id: rung
@@ -3708,6 +3763,20 @@ impl LadderConfig {
         })
     }
 
+    /// **THE SUBJECT AREA A BRANCH SITS UNDER** — the one accessor every reader goes through, so
+    /// the day an area is *derived* rather than declared only this body changes.
+    ///
+    /// `""` when the branch has no descriptor, or one naming no area. That is a **live fallback and
+    /// not an error**: the knowledge still draws, under the client's fallback heading
+    /// (`docs/plan_knowledge_rows.md` §5). A knowledge that vanishes because a config edit was
+    /// incomplete is the worst failure this screen has, and it is one it has shipped once.
+    pub fn branch_area(&self, branch: RungBranch) -> &str {
+        self.branches
+            .get(&branch)
+            .map(|def| def.area.as_str())
+            .unwrap_or(NO_SUBJECT_AREA)
+    }
+
     /// A rung by branch + id, if it exists.
     pub fn find(&self, branch: RungBranch, id: &str) -> Option<&RungDef> {
         self.rungs
@@ -3720,6 +3789,7 @@ impl LadderConfig {
     /// exactly the failure mode config validation exists to catch.
     pub fn validate(&self) -> Result<(), LadderConfigError> {
         validate_knowledge(&self.knowledge)?;
+        self.validate_areas()?;
         if !self.route_traffic.work_per_link_tile_per_turn.is_finite()
             || self.route_traffic.work_per_link_tile_per_turn <= 0.0
         {
@@ -3854,6 +3924,72 @@ impl LadderConfig {
                     constraint: "define every rung the simulation drives by name (see RungKey)"
                         .to_string(),
                     value: "missing".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **The display order is a real list, and every branch's area has a place in it.**
+    ///
+    /// ⛔ **A BRANCH IS NOT REQUIRED TO HAVE A DESCRIPTOR.** A branch that names no area is a *live
+    /// fallback* — it draws under the client's fallback heading — so requiring an entry here would
+    /// turn that fallback into dead code. The realistic typo is a misspelt **key**, and serde
+    /// already catches that at the parse by keying the map on [`RungBranch`]; what is left for this
+    /// to catch is an area that has nowhere to be drawn.
+    fn validate_areas(&self) -> Result<(), LadderConfigError> {
+        if self.areas.is_empty() {
+            return Err(LadderConfigError::Invalid {
+                field: "areas".to_string(),
+                constraint: "name at least one subject area — an empty list leaves every branch's \
+                             area with nowhere to be drawn, and the whole knowledge screen with no \
+                             heading to hang a domain under"
+                    .to_string(),
+                value: "empty".to_string(),
+            });
+        }
+        let mut seen_areas: HashSet<&str> = HashSet::new();
+        for area in &self.areas {
+            if area.is_empty() {
+                return Err(LadderConfigError::Invalid {
+                    field: "areas".to_string(),
+                    constraint:
+                        "give every subject area a name — the empty token is what a branch \
+                                 with NO area reads as, so listing it would make the fallback \
+                                 indistinguishable from a declared heading"
+                            .to_string(),
+                    value: "empty entry".to_string(),
+                });
+            }
+            if !seen_areas.insert(area.as_str()) {
+                return Err(LadderConfigError::Invalid {
+                    field: "areas".to_string(),
+                    constraint: "list each subject area exactly once — a duplicate would draw the \
+                                 same heading twice and split its domains between the two"
+                        .to_string(),
+                    value: format!("'{area}' appears twice"),
+                });
+            }
+        }
+        for (branch, def) in &self.branches {
+            let where_ = format!("branches[{}].area", branch.as_str());
+            if def.area.is_empty() {
+                return Err(LadderConfigError::Invalid {
+                    field: where_,
+                    constraint: "name the subject area the branch sits under, or declare no \
+                                 descriptor at all — an empty area declared is the fallback \
+                                 written out longhand, which reads as a choice nobody made"
+                        .to_string(),
+                    value: "empty".to_string(),
+                });
+            }
+            if !seen_areas.contains(def.area.as_str()) {
+                return Err(LadderConfigError::Invalid {
+                    field: where_,
+                    constraint: "name a subject area that `areas` gives a position to — an area \
+                                 with no place in the display order has nowhere to be drawn"
+                        .to_string(),
+                    value: def.area.clone(),
                 });
             }
         }
@@ -4979,6 +5115,119 @@ mod tests {
             assert_eq!(rung.branch, key.branch());
             assert_eq!(rung.id, key.id());
         }
+    }
+
+    /// **A KNOWLEDGE'S SUBJECT AREA IS ITS BRANCH'S, AND IT COMES OFF THE CONFIG** — the whole
+    /// point of the descriptor table. A branch added to `intensification_ladder.json` reaches the
+    /// knowledge screen's headings with no code edit and no client edit, which a coded area enum
+    /// could not do.
+    #[test]
+    fn the_roster_carries_each_knowledge_the_area_of_its_branch() {
+        let ladder = LadderConfig::builtin();
+        let roster = ladder.knowledge_roster();
+        assert!(!roster.is_empty(), "the builtin ladder teaches knowledges");
+
+        for entry in &roster {
+            assert_eq!(
+                entry.area,
+                ladder.branch_area(entry.branch),
+                "{}'s area is read off its branch's descriptor and nowhere else",
+                entry.knowledge
+            );
+            assert!(
+                ladder.areas.iter().any(|area| area == entry.area),
+                "{}'s area '{}' has a position in the display order",
+                entry.knowledge,
+                entry.area
+            );
+        }
+
+        let seed = roster
+            .iter()
+            .find(|entry| entry.knowledge == "seed_selection")
+            .expect("seed_selection is taught");
+        assert_eq!(seed.area, "food", "the plant branch is a food domain");
+        let road = roster
+            .iter()
+            .find(|entry| entry.knowledge == "roadbuilding")
+            .expect("roadbuilding is taught");
+        assert_eq!(road.area, "works", "the route branch is a works domain");
+    }
+
+    /// **A BRANCH WITH NO DESCRIPTOR NAMES NO AREA, AND THAT IS A FALLBACK RATHER THAN A FAULT.**
+    /// It still draws, under the client's fallback heading — a knowledge that vanishes because a
+    /// config edit was incomplete is the worst failure this screen has.
+    #[test]
+    fn a_branch_with_no_descriptor_reports_no_subject_area() {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("builtin parses as json");
+        json["branches"]
+            .as_object_mut()
+            .expect("branches is a table")
+            .remove("route")
+            .expect("the builtin describes the route branch");
+        let ladder = LadderConfig::from_json_str(&json.to_string())
+            .expect("a branch without a descriptor is legal");
+
+        assert_eq!(ladder.branch_area(RungBranch::Route), NO_SUBJECT_AREA);
+        let road = ladder
+            .knowledge_roster()
+            .into_iter()
+            .find(|entry| entry.knowledge == "roadbuilding")
+            .expect("roadbuilding is still taught");
+        assert_eq!(
+            road.area, NO_SUBJECT_AREA,
+            "the row is published with no area, never dropped"
+        );
+        assert_eq!(
+            ladder.branch_area(RungBranch::Plant),
+            "food",
+            "the described branches are untouched by a neighbour's missing record"
+        );
+    }
+
+    /// **AN AREA WITH NO POSITION IN THE DISPLAY ORDER HAS NOWHERE TO BE DRAWN.**
+    #[test]
+    fn a_branch_area_outside_the_display_order_is_rejected() {
+        let err = reject(|json| {
+            json["branches"]["plant"]["area"] = Value::String("husbandry".to_string());
+        });
+        assert_rejects(err, "branches[plant].area");
+    }
+
+    /// **A DUPLICATE HEADING WOULD BE DRAWN TWICE AND SPLIT ITS DOMAINS BETWEEN THE TWO.**
+    #[test]
+    fn a_duplicated_subject_area_is_rejected() {
+        let err = reject(|json| {
+            json["areas"] = Value::Array(vec![
+                Value::String("food".to_string()),
+                Value::String("making".to_string()),
+                Value::String("works".to_string()),
+                Value::String("food".to_string()),
+            ]);
+        });
+        assert_rejects(err, "areas");
+    }
+
+    /// **AN EMPTY DISPLAY ORDER LEAVES EVERY DOMAIN WITHOUT A HEADING.** It is the shape a
+    /// `#[serde(default)]` on the field would have produced silently, which is why the field has
+    /// none.
+    #[test]
+    fn an_empty_subject_area_list_is_rejected() {
+        let err = reject(|json| {
+            json["areas"] = Value::Array(Vec::new());
+        });
+        assert_rejects(err, "areas");
+    }
+
+    /// **AN AREA DECLARED EMPTY IS THE FALLBACK WRITTEN OUT LONGHAND** — indistinguishable from a
+    /// branch that declared no descriptor at all, so it reads as a choice nobody made.
+    #[test]
+    fn an_empty_area_string_on_a_branch_is_rejected() {
+        let err = reject(|json| {
+            json["branches"]["animal"]["area"] = Value::String(String::new());
+        });
+        assert_rejects(err, "branches[animal].area");
     }
 
     /// The ladder must describe **what the sim does today**, not the target model — later slices

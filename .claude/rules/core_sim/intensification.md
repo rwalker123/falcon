@@ -2281,3 +2281,53 @@ unify — animals pay flow-MSY against `r`, plants pay a flat rate without draw-
 
 ---
 
+## The branch descriptor and the subject areas
+
+The knowledge screen groups domains under **subject areas** — *Food*, *Making*, *Works* — and the
+area a domain sits under comes off `intensification_ladder.json`, never a client table
+(`docs/plan_knowledge_rows.md` §5).
+
+**`branches` is the first record a branch has ever had.** Until it, `branch` was a string repeated
+on each rung and nothing anywhere described the branch itself. It is a table keyed by the branch
+token, and each entry is a **record** rather than a bare area string, so a second per-branch fact
+needs no second table beside it. Serde keys the map on [`RungBranch`], the same coded-primitive
+discipline the `behavior` block follows: a misspelt branch name fails the **parse** rather than
+resolving to a default nobody chose.
+
+**The area is a string, not a coded enum**, and that is the whole point of the level. An enum would
+force a Rust edit for every area added, which is the retired client-side `LADDER_DOMAINS` list one
+rung up the hierarchy: the first branch somebody added without the matching code edit would fall out
+of the screen. What bounds the vocabulary instead is `areas` plus validation — a typo is caught
+because it names no declared area, not because the compiler knows the word.
+
+**`areas` is the display order, and it is not optional.** Areas are peers, so first-seen order read
+off the rungs would reshuffle the whole screen whenever a rung was added — the same defect that made
+column order unstable before the roster carried it. `reach`, `lore` and `war` have no branch today
+and are listed anyway, because the order has to already be right on the day a branch lands in one;
+an area with no domains is never drawn. Areas answer *"what part of the game is this"*, which is a
+short, stable list, while domains grow without limit — that bound is why the level exists at all.
+The token is wire vocabulary and never player copy: the client spells `food` as *Food*.
+
+**Read it through [`LadderConfig::branch_area`], never off the map.** One accessor means one body
+changes the day an area is derived rather than declared; it answers `""` — [`NO_SUBJECT_AREA`] — for
+a branch with no descriptor. [`LadderConfig::knowledge_roster`] fills `LadderKnowledgeEntry::area`
+from it, and the snapshot publishes that on each `ladderKnowledge` row beside the display order in
+`SubsistenceSection.ladderAreas`.
+
+**Both fields are REQUIRED — no `#[serde(default)]`.** A config omitting either is a broken
+override, which the boot loader already answers by logging at error and using the builtin; a serde
+default would instead ship a knowledge screen with no headings on it, silently. `validate` adds four
+rules: `areas` is non-empty, every entry is non-empty, no entry repeats, and every `branches`
+value's `area` names a member of `areas` — an area with no place in the display order has nowhere
+to be drawn.
+
+**A branch with NO descriptor is deliberately legal.** It draws under the client's fallback heading,
+and requiring an entry would make that fallback dead code — while catching nothing, since the
+realistic typo is a misspelt *key* and serde already refuses that at the parse. A knowledge that
+vanishes because a config edit was incomplete is the worst failure this screen has, and it is one it
+has shipped once.
+
+**The craft fan is not a ladder branch**, so no descriptor here names its area; the crafts are
+taught by a bench rather than by a rung, and their area is named where their nodes are built.
+
+---

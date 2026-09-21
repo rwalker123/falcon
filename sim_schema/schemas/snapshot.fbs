@@ -3696,6 +3696,12 @@ table LadderKnowledgeState {
   // hanging off the bottom of its column when it does not. `foddering` is the shipped `false`: it
   // changes what a pen may draw on rather than opening a further rung. DERIVED, never declared.
   isStep:bool = false;
+  // --- THE SUBJECT AREA (appended last) ---------------------------------------------------------
+  // The subject area of the branch that TEACHES it: "food", "making", "works". WHICH HEADING, one
+  // level above `branch`. Off `intensification_ladder.json`'s `branches` table, never a client-side
+  // list — a hard-coded area table is the `LADDER_DOMAINS` bug one level up. "" when the branch's
+  // descriptor names none, which the client draws under a fallback heading rather than dropping.
+  area:string;
 }
 
 // One faction's progress on ONE ladder knowledge, 0..1 (1.0 = known). The row's join key is
@@ -5972,6 +5978,16 @@ table SubsistenceSection {
   // The live half is `deposits` above, which is per-working and per-frame; this is what a working
   // could BECOME, including on ground where nothing has been opened at all.
   depositRungs:[DepositRungState];
+  // --- THE SUBJECT AREAS' DISPLAY ORDER, once per world (appended last) --------------------------
+  // The order the knowledge screen's headings are drawn in, off `intensification_ladder.json`'s
+  // `areas` — "food", "making", "works", ... A per-world constant, so it is diffed whole exactly
+  // like `ladderKnowledge`, and it rides beside it because the two are the same kind of thing: the
+  // DECLARATION of what the ladder holds, carrying no faction and no tile.
+  //
+  // IT RIDES RATHER THAN BEING INFERRED FROM THE ROSTER. Areas are peers, so first-seen order off
+  // the rows would reshuffle the whole screen whenever a rung was added — the same defect that made
+  // column order unstable before the roster carried it. An area with no domains is never drawn.
+  ladderAreas:[string];
 }
 
 table KnowledgeSection {
