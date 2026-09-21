@@ -24,7 +24,7 @@ class_name CraftingPanel
 ## **TIER IS A FOLDABLE GROUP HEAD, NOT A COLUMN, AND THE CELL IS WHAT THE BAND HAS.** The head is the
 ## tier a row would be MADE at (`outputTierName`, rank-descending); the Owned cell is what the band
 ## actually carries. The two can disagree, and that disagreement is the readout — a Clubs row under
-## **Bronze** whose cell reads *carrying flint · poor*. **The tier word reaches the cell ONLY through
+## **Flint** whose cell reads *carrying plain · poor*. **The tier word reaches the cell ONLY through
 ## the published `ownedNote`**, and only when it is news: nothing here composes one, re-derives one, or
 ## renders a row's `tier_id`.
 ##
@@ -124,7 +124,7 @@ var _pending_scroll: int = SCROLL_UNSET
 ## it does not breach `render(payload)`-is-the-whole-input: it has exactly the standing of the scroll
 ## offset above, which the panel already carries across a rebuild. Held by NAME rather than by index
 ## so it survives a band switch, whose ledger may hold a different set of tier heads in a different
-## order — and so folding `Flint` on one band leaves it folded on the next, which is what a reader who
+## order — and so folding `Plain` on one band leaves it folded on the next, which is what a reader who
 ## has stopped looking at a group meant.
 var _folded: Dictionary = {}
 
@@ -867,8 +867,11 @@ func _build_ledger(payload: Dictionary) -> void:
 ## **THE SECTIONS, IN THE ORDER THEY RENDER: the TIER heads first, then `Bench tools`, then
 ## `Materials`.** The kit group SPLITS by the published `outputTierName` — one head per distinct tier,
 ## ordered by `outputTierRank` DESCENDING, newest first — because a recipe makes the best tier the
-## faction knows and a row therefore MOVES between heads rather than splitting. On the shipped one-tier
-## roster that is a single `Flint` head over every kit row; once minerals land it is `Bronze` above it.
+## faction knows and a row therefore MOVES between heads rather than splitting. **The shipped roster
+## already needs more than one head**: every item opens at `plain`, and `spears`, `clubs` and `hoes`
+## carry a second tier, `flint`, so a faction that knows how to knap renders a `Flint` head over those
+## three and a `Plain` head over everything else. A faction that does not renders the single `Plain`
+## head alone.
 ##
 ## The rank ordering is the sim's own and is not re-derived: alphabetical would put Iron above Bronze,
 ## and the client has no other honest way to say which tier is newer.

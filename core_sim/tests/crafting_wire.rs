@@ -38,6 +38,10 @@ const SLED_RECIPE: &str = "sled";
 const TANNING_FRAME_RECIPE: &str = "tanning_frame";
 /// The two recipes the tier-head pairing runs on: one gains a second tier, the other does not.
 const SPEARS_RECIPE: &str = "spears";
+/// The two rows [`give_spears_two_metal_tiers`] adds — one per tier it appends, because a row's
+/// published tier head is its OWN recipe's declared tier.
+const SPEARS_BRONZE_RECIPE: &str = "spears_bronze";
+const SPEARS_IRON_RECIPE: &str = "spears_iron";
 const CLUBS_RECIPE: &str = "clubs";
 const SLED_ITEM: &str = "sled";
 const SPEARS_ITEM: &str = "spears";
@@ -48,7 +52,9 @@ const TANNING_FRAME_ITEM: &str = "tanning_frame";
 const HURDLES_RECIPE: &str = "hurdles";
 /// The other input to [`HURDLES_RECIPE`]; the roster's one spawn-stocked material.
 const WOOD: &str = "wood";
-/// The one tier every shipped item ships, and the fixture's two metal ones.
+/// The opening tier every shipped item ships, the knapped one three of them gained, and the
+/// fixture's two metal ones.
+const PLAIN_TIER: &str = "plain";
 const FLINT_TIER: &str = "flint";
 const BRONZE_TIER: &str = "bronze";
 const IRON_TIER: &str = "iron";
@@ -233,7 +239,7 @@ fn rate_then_one_turn_of_progress(tooled: bool) -> (f32, f32) {
         app.world
             .get_mut::<BandEquipment>(band)
             .expect("a spawned band carries an equipment ledger")
-            .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+            .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
     }
     stock_a_sleds_worth_of_material(&mut app, band);
     set_bench(&mut app, band, BENCH_CREW);
@@ -276,13 +282,20 @@ fn wear_out(app: &mut App, band: Entity, item: &str) {
     }
 }
 
-/// **Give `spears` a bronze AND an iron tier** — the state the day metal lands, and the only way any
-/// of the tier-head readout can fire at all: no shipped item ships a second tier, because an
-/// unreachable one is dead content the Workbench catalogue publishes.
+/// **Give `spears` a bronze AND an iron tier, each with the recipe that makes it** — the state the
+/// day metal lands, and the only way any of the tier-head readout can fire past the shipped roster's
+/// two rungs.
 ///
-/// **Three tiers, not two, deliberately.** With only flint and bronze, *"the tier that wore out"* and
+/// **FOUR tiers, and at least three are needed.** With only two, *"the tier that wore out"* and
 /// *"the tier below what I can now make"* are the same answer, so a two-tier fixture passes either
-/// implementation and proves nothing about which one the note is reading.
+/// implementation and proves nothing about which one the note is reading. The shipped roster has two
+/// on `spears` since issue #736, which is one short.
+///
+/// ⛔ **THE RECIPES ARE NOT OPTIONAL SCENERY.** A row's published tier head is *its own recipe's*
+/// declared tier (`RecipeOutput::tier`), so tiers appended to the item alone would leave every
+/// `spears` row heading `plain` for ever and the readout untestable. Each added recipe reads bone,
+/// so its craft is `bone_working` and it needs no knowledge gate of its own — what the fixture is
+/// about is the *head*, not what unlocks it.
 fn give_spears_two_metal_tiers(app: &mut App, edit: impl FnOnce(&mut serde_json::Value)) {
     let mut json: serde_json::Value =
         serde_json::from_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("the TOE is json");
@@ -307,6 +320,32 @@ fn give_spears_two_metal_tiers(app: &mut App, edit: impl FnOnce(&mut serde_json:
     app.world
         .resource_mut::<EquipmentConfigHandle>()
         .replace(std::sync::Arc::new(config));
+
+    let mut book: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_RECIPES_CONFIG).expect("the book is json");
+    let recipes = book["recipes"]
+        .as_object_mut()
+        .expect("the recipe block is an object");
+    for (id, name, tier) in [
+        (SPEARS_BRONZE_RECIPE, "Spears (bronze)", BRONZE_TIER),
+        (SPEARS_IRON_RECIPE, "Spears (iron)", IRON_TIER),
+    ] {
+        recipes.insert(
+            id.to_string(),
+            serde_json::json!({
+                "display_name": name,
+                "craft": "bone_working",
+                "work": 6.0,
+                "inputs": [{ "material": "bone", "amount": 1.0, "reads": "density" }],
+                "outputs": [{ "equipment": SPEARS_ITEM, "amount": 1.0, "tier": tier }]
+            }),
+        );
+    }
+    let book = core_sim::RecipesConfig::from_json_str(&book.to_string())
+        .expect("a recipe per added tier is a legal book");
+    app.world
+        .resource_mut::<RecipesConfigHandle>()
+        .replace(std::sync::Arc::new(book));
 }
 
 /// **The grade a bare-handed craft of `item` comes out at**, asked of the shipped book itself.
@@ -1541,7 +1580,7 @@ fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
     app.world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band carries an equipment ledger")
-        .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+        .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
     deposit(
         &mut app,
         band,
@@ -1665,7 +1704,7 @@ fn a_bench_that_cannot_accrue_publishes_a_zero_rate() {
     app.world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band carries an equipment ledger")
-        .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+        .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
     assert!(
         publish(&mut app, band).bench.rate_per_turn > NO_ACCRUAL,
         "the tool is what the zero was about"
@@ -1684,7 +1723,7 @@ fn the_published_drawn_pile_is_what_the_store_actually_lost() {
     app.world
         .get_mut::<BandEquipment>(band)
         .expect("a spawned band carries an equipment ledger")
-        .stock(TANNING_FRAME_ITEM, 1, FLINT_TIER, None);
+        .stock(TANNING_FRAME_ITEM, 1, PLAIN_TIER, None);
     stock_a_sleds_worth_of_material(&mut app, band);
     set_bench(&mut app, band, BENCH_CREW);
 
@@ -2072,13 +2111,14 @@ fn the_per_world_catalogues_round_trip() {
         "the material names the tool that bounds it, which is what the 'No loom' refusal reads"
     );
     // **Nine ship: four crafted (the three organics plus `wood`) and five uncrafted.** An
-    // *unreachable* material would still be dead content the catalogue publishes; the uncrafted five
+    // *unreachable* material would still be dead content the catalogue publishes; the uncrafted four
     // are reachable — a plant grows the three luxury crops, a band banks them, and no bench works
-    // them yet; `hurdles` are made at a bench and eaten by the `animal:pen` rung; and `stone` is
-    // eaten by `route:paved_road` and reaches the player through the roster's own `start_stock`.
-    // Nothing takes any of the five as an INPUT (`docs/plan_standing_upkeep.md` §2.7), so their
-    // published `craft` is the empty string — which is what tells a client there is nothing to make
-    // *out of* them.
+    // them yet; and `hurdles` are made at a bench and eaten by the `animal:pen` rung. Nothing takes
+    // any of the four as an INPUT (`docs/plan_standing_upkeep.md` §2.7), so their published `craft`
+    // is the empty string — which is what tells a client there is nothing to make *out of* them.
+    // `stone` is NOT on this list any more (issue #736): the paved road still eats it, and the bench
+    // now knaps it, so it publishes `knapping`. Being an improvement's input was never what made a
+    // material uncrafted.
     assert_eq!(published.materials.len(), 9);
     let uncrafted: Vec<&str> = published
         .materials
@@ -2088,8 +2128,8 @@ fn the_per_world_catalogues_round_trip() {
         .collect();
     assert_eq!(
         uncrafted,
-        vec!["grape", "hurdles", "stone", "tea", "tobacco"],
-        "exactly the three luxury crops, the fence panels and the roadstone publish no craft"
+        vec!["grape", "hurdles", "tea", "tobacco"],
+        "exactly the three luxury crops and the fence panels publish no craft"
     );
     for (id, craft, _, hand_workable, tool) in &published.materials {
         if !craft.is_empty() {
@@ -2142,8 +2182,9 @@ fn the_per_world_catalogues_round_trip() {
     // --- craft knowledge ---------------------------------------------------------------------
     assert_eq!(
         published.craft_knowledge.len(),
-        3,
-        "one row per craft the materials table declares"
+        4,
+        "one row per craft the materials table declares - tanning, weaving, bone-working and \
+         knapping (wood is worked by weaving and mints none of its own)"
     );
     assert!(
         published.craft_knowledge.iter().all(|(_, known, _)| !known),
@@ -2161,10 +2202,14 @@ fn the_per_world_catalogues_round_trip() {
 /// **THE GROUP HEAD SAYS WHAT A ROW WOULD BE MADE AT; THE NOTE SAYS WHAT THE BAND HAS — AND THE NOTE
 /// IS PUBLISHED ONLY WHEN THE TWO DISAGREE.**
 ///
-/// Exercised by a **two-tier fixture**, because every shipped item ships one tier and none of this
-/// can fire on the shipped roster — the same treatment
-/// `a_tier_switches_an_items_attack_without_touching_its_shared_effects` gets, and the reason
-/// `ownedNote` is `""` on every shipped row.
+/// Exercised by a **four-tier fixture**, because the shipped roster's two rungs are one short of
+/// telling the two note rules apart — the same treatment
+/// `a_tier_switches_an_items_attack_without_touching_its_shared_effects` gets.
+///
+/// **The row read is the IRON one**, not `spears`: a row's head is its own recipe's declared tier,
+/// so the bone row heads `plain` for ever however many tiers the item gains. That is the model, and
+/// it is what makes the pairing below sharper than it was — the two rows differ because they make
+/// different things, on one frame, off one ledger.
 ///
 /// Pinned as a **pairing**: the upgraded row against an un-upgraded one beside it on the same frame.
 /// Asserting one row's wording alone would pass on a wire that said the same thing everywhere.
@@ -2174,36 +2219,37 @@ fn the_owned_note_is_published_only_when_the_band_carries_something_older() {
     give_spears_two_metal_tiers(&mut app, |_| {});
     learn(&mut app, band, "bone_working");
     learn(&mut app, band, "weaving");
-    // Two flint batches at different grades — the note must name the WORST, because naming the best
+    // Two plain batches at different grades — the note must name the WORST, because naming the best
     // is the one the player would be told about last.
     restock(
         &mut app,
         band,
         SPEARS_ITEM,
-        &[(FLINT_TIER, "good"), (FLINT_TIER, "poor")],
+        &[(PLAIN_TIER, "good"), (PLAIN_TIER, "poor")],
     );
     let published = publish(&mut app, band);
 
-    let upgraded = offer(&published, SPEARS_RECIPE);
+    let upgraded = offer(&published, SPEARS_IRON_RECIPE);
     assert_eq!(
         (
             upgraded.output_tier_name.as_str(),
             upgraded.output_tier_rank
         ),
-        (IRON_TIER, 2),
-        "the head is what a craft would be made at NOW, and heads order by rank descending"
+        (IRON_TIER, 3),
+        "the head is the tier THIS ROW makes, and heads order by rank descending"
     );
     assert_eq!(
-        upgraded.owned_note, "carrying flint · poor",
+        upgraded.owned_note, "carrying plain · poor",
         "the band holds an older tier, so the cell says so - and it names the worst grade it holds"
     );
 
-    // THE PAIRING, on the same frame: an item with nothing newer to be made at says nothing.
+    // THE PAIRING, on the same frame: a row making the very tier the band already holds says
+    // nothing. `clubs` gained a knapped tier with #736, so the row read here is its `plain` one.
     let current = offer(&published, CLUBS_RECIPE);
     assert_eq!(
         (current.output_tier_name.as_str(), current.output_tier_rank),
-        (FLINT_TIER, 0),
-        "clubs gained no tier, so their head is still the one that ships known"
+        (PLAIN_TIER, 0),
+        "the bone clubs row makes the opening tier, which is what the band already carries"
     );
     assert_eq!(
         current.owned_note, "",
@@ -2215,21 +2261,38 @@ fn the_owned_note_is_published_only_when_the_band_carries_something_older() {
         "this is the whole point: a wire that emitted the same note everywhere cannot pass"
     );
 
-    // **WORN OUT NAMES THE TIER THAT ACTUALLY WORE OUT.** The band loses its FLINT spears while a
-    // bronze tier sits between them and the iron it could now make — so *"the tier below craftable"*
-    // would say **bronze**, a set this band never owned. Only a three-tier fixture can tell the two
-    // rules apart; at two tiers they agree, so a two-tier fixture proves nothing here.
+    // THE SHARPER PAIRING, on the SAME ITEM: the bone spears row makes `plain` and heads there, so
+    // it says nothing, while the iron row two seats over says the band is carrying something older.
+    // A head resolved from the ITEM rather than from the ROW's recipe would make these two equal.
+    let bone_row = offer(&published, SPEARS_RECIPE);
+    assert_eq!(
+        (
+            bone_row.output_tier_name.as_str(),
+            bone_row.output_tier_rank
+        ),
+        (PLAIN_TIER, 0),
+        "the bone spears row makes the tier it always made, however many tiers the item gains"
+    );
+    assert_eq!(
+        bone_row.owned_note, "",
+        "and what the band holds IS what that row makes, so there is no news"
+    );
+
+    // **WORN OUT NAMES THE TIER THAT ACTUALLY WORE OUT.** The band loses its PLAIN spears while the
+    // flint and bronze tiers sit between them and the iron this row makes — so *"the tier below
+    // craftable"* would say **bronze**, a set this band never owned. Only a three-or-more-tier
+    // fixture can tell the two rules apart; at two tiers they agree.
     wear_out(&mut app, band, SPEARS_ITEM);
     let after = publish(&mut app, band);
-    let dry = offer(&after, SPEARS_RECIPE);
+    let dry = offer(&after, SPEARS_IRON_RECIPE);
     assert_eq!(
-        dry.owned_note, "last flint set wore out",
+        dry.owned_note, "last plain set wore out",
         "the note names the tier `wear_item` retired, never the neighbour of what could be made"
     );
     assert!(
-        !dry.owned_note.contains(BRONZE_TIER),
-        "bronze sits between flint and iron and this band never held one - naming it would be a \
-         published string asserting the wrong tier"
+        !dry.owned_note.contains(BRONZE_TIER) && !dry.owned_note.contains(FLINT_TIER),
+        "bronze and flint sit between plain and iron and this band never held either - naming one \
+         would be a published string asserting the wrong tier"
     );
     assert_ne!(
         dry.owned_note, upgraded.owned_note,
@@ -2276,6 +2339,14 @@ fn a_first_tools_invitation_names_the_band_its_own_quality_ceiling_reaches() {
         BONE,
         PLENTY,
         &[("density", 0.5), ("length", 0.5)],
+    );
+    // The frame's frame is wood since issue #736 — its pile is three materials, not two.
+    deposit(
+        &mut app,
+        band,
+        WOOD,
+        PLENTY,
+        &[("hardness", 0.5), ("pliancy", 0.5)],
     );
     let published = publish(&mut app, band);
 
@@ -2330,21 +2401,31 @@ fn an_offer_names_the_item_it_makes_so_the_ledger_can_join_the_two_halves() {
     assert!(
         rows_for(&published, &sled.output_item_id)
             .iter()
-            .any(|row| row.tier_id == FLINT_TIER && row.grade == anchor),
+            .any(|row| row.tier_id == PLAIN_TIER && row.grade == anchor),
         "the item the offer names has ledger rows carrying the tier the material bought and the \
          grade a bare-handed craft of it comes out at"
     );
-    // LIVENESS: not every offer names an item — but on the shipped book every one does, and each
-    // names a DIFFERENT one, so the join key is a key.
+    // LIVENESS: not every offer names an item, and the join is MANY-to-one rather than one-to-one —
+    // several recipes make one item (a bone spear and a knapped one), so what has to hold is that
+    // every offer names *some* item and that the names really do vary.
     let named: std::collections::BTreeSet<&str> = published
         .offers
         .values()
         .map(|offer| offer.output_item_id.as_str())
+        .filter(|item| !item.is_empty())
         .collect();
     assert_eq!(
-        named.len(),
-        published.offers.len(),
-        "each shipped recipe makes its own item, so the join is one-to-one"
+        published
+            .offers
+            .values()
+            .filter(|offer| offer.output_item_id.is_empty())
+            .count(),
+        1,
+        "exactly one shipped recipe (`hurdles`) makes a material and so names no item"
+    );
+    assert!(
+        named.len() > 1,
+        "and the rest name several different items, so the join key is a key"
     );
 }
 

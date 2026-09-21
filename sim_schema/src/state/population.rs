@@ -1057,7 +1057,8 @@ pub struct PopulationCohortState {
     pub hunter_attack: f32,
     /// **This band's per-worker HUNT haul rate** (biomass/turn), sled resolved in — the term every
     /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is the sled's own
-    /// `flint` tier in `equipment.json` (`hunt_carry` 40); sledless it is `labor_config.json`'s
+    /// `plain` tier in `equipment.json` (`hunt_carry` 40, and the sled ships only that one tier);
+    /// sledless it is `labor_config.json`'s
     /// `hunt.per_worker_biomass_capacity` (12), which is the **no-equipment baseline** since the
     /// carries moved onto their tiers.
     ///
@@ -1834,19 +1835,21 @@ pub struct CraftOfferState {
     pub output_grade: String,
     /// This recipe is the running job — the row's button is spent (*"On the bench"*).
     pub on_bench: bool,
-    /// **The tier a craft would produce right now** — `ItemDefinition::craftable_tier`, the best tier
-    /// the faction knows. It is the ledger's **group head**, not a column: a head says *flint* once
-    /// and can fold away, which is what a column spending its width on every row can never do. `""`
-    /// on a material (stock) recipe.
+    /// **The tier a craft would produce right now** — the tier **this row's own recipe** declares
+    /// (`RecipeOutput::tier`), falling back to `ItemDefinition::craftable_tier` for a single-tier
+    /// item. It is the ledger's **group head**, not a column: a head says *plain* once and can fold
+    /// away, which is what a column spending its width on every row can never do. So the bone
+    /// `Spears` row heads *plain* and the knapped `Spears (flint)` row heads *flint*, on the same
+    /// item, on the same frame. `""` on a material (stock) recipe.
     pub output_tier_name: String,
     /// Index of that tier within the item's own `tiers` list. **Heads order by rank descending** —
     /// newest first — because there is no other honest ordering for two tier heads and alphabetical
     /// would put Iron above Bronze.
     pub output_tier_rank: u32,
-    /// **What the band CARRIES, said only when it disagrees with what it could now make.** `""` when
-    /// there is no news, which is every row on the shipped one-tier roster. *"carrying flint ·
-    /// poor"*, *"last flint set wore out"* — **render it verbatim**; the tier word reaches the Owned
-    /// cell only through this field and only when it is news.
+    /// **What the band CARRIES, said only when it disagrees with what this row would be made at.**
+    /// `""` when there is no news, which is every row whose recipe makes the opening `plain` tier.
+    /// *"carrying plain · poor"*, *"last plain set wore out"* — **render it verbatim**; the tier word
+    /// reaches the Owned cell only through this field and only when it is news.
     pub owned_note: String,
 }
 

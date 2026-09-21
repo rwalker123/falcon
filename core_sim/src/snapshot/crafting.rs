@@ -551,35 +551,50 @@ fn craft_offer(
 /// group head. `None` for a recipe that makes a material rather than an item, which has no tier to
 /// be grouped under.
 ///
-/// It is resolved **per band** rather than in the [`CraftOfferPlan`] because `craftable_tier` reads
-/// what the *faction* knows, and the plan is a per-capture constant. The walk is over one item's
-/// tiers — one on the shipped roster — so it costs nothing.
+/// **THE RECIPE'S OWN TIER WHERE IT DECLARES ONE** ([`RecipeDef::output_tier_id`]), which is every
+/// row whose item has a choice: a recipe is what names the material, and the tier is what the
+/// material buys — so the Spears row that reads bone heads `plain` and the one that reads stone
+/// heads `flint`, on the same item, on the same frame.
+///
+/// The `craftable_tier` fallback survives for an item with exactly **one** tier, where it is that
+/// tier. It is resolved **per band** rather than in the [`CraftOfferPlan`] because it reads what the
+/// *faction* knows, and the plan is a per-capture constant. The walk is over one item's tiers — at
+/// most two on the shipped roster — so it costs nothing.
 fn craftable_tier<'a>(
     plan: &CraftOfferPlan<'a>,
     inputs: &BandCraftInputs<'a>,
 ) -> Option<(&'a str, u32)> {
     let def = inputs.equipment.item(plan.output_item?)?;
     let known = |craft: &str| inputs.known_crafts.get(craft).copied().unwrap_or(false);
-    let tier = def.craftable_tier(known);
+    let tier = plan
+        .recipe
+        .output_tier_id()
+        .and_then(|id| def.tier(id))
+        .unwrap_or_else(|| def.craftable_tier(known));
     let rank = def.tiers.iter().position(|row| row.id == tier.id)?;
     Some((tier.id.as_str(), rank as u32))
 }
 
 /// **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `""` whenever nothing the band holds is
-/// older than what it could now make, which is every row on the shipped one-tier roster.
+/// older than the tier this row would be made at, which is every row whose recipe makes the opening
+/// `plain` tier.
 ///
 /// Two sentences, and they answer different questions:
 ///
-/// - **units in hand at an older tier** → `carrying flint · poor`. Several such batches name the
-///   **worst** grade, because naming the best is the one a player would be told about last — a row
-///   that flattered its stock would be telling them the opposite of what they need to act on.
-/// - **no units at all, and a set retired at an older tier** → `last flint set wore out`. The tier is
+/// - **units in hand at an older tier** → `carrying plain · poor`, which is what the knapped
+///   `Spears (flint)` row publishes for a band still holding bone spears. Several such batches name
+///   the **worst** grade, because naming the best is the one a player would be told about last — a
+///   row that flattered its stock would be telling them the opposite of what they need to act on.
+/// - **no units at all, and a set retired at an older tier** → `last plain set wore out`. The tier is
 ///   read out of `BandEquipment::retired_tiers_of`, which `wear_item` keys by the tier of the unit it
-///   destroyed — **never inferred from `craftable_tier`'s neighbour**. With iron beside bronze and
-///   flint, *"the rank below what I can now make"* names bronze for a flint set that actually wore
-///   out, and a published string asserting the wrong tier is worse than saying nothing. Of several
-///   retired tiers it names the **highest-ranked one still below** what the band can now make: that
-///   is the set it lost most recently.
+///   destroyed — **never inferred from `craftable_tier`'s neighbour**. With bronze and iron beside
+///   `plain` and `flint`, *"the rank below what I can now make"* names bronze for a `plain` set that
+///   actually wore out, and a published string asserting the wrong tier is worse than saying
+///   nothing. Of several retired tiers it names the **highest-ranked one still below** what the band
+///   can now make: that is the set it lost most recently.
+///
+/// **The word is rendered VERBATIM by the client** (`crafting_bench.gd`'s `TWO_TIER_CLUBS_NOTE`), so
+/// these two examples and that fixture are one sentence written in two places and must stay in step.
 fn owned_note(
     plan: &CraftOfferPlan<'_>,
     wear: &BandEquipment,
@@ -656,7 +671,7 @@ fn unlocked_band<'a>(
 
 /// **A tier's player-facing word, lowercased for mid-sentence use.** Resolved through
 /// [`title_from_id`] like every other id in this model — `equipment.json` authors no display name,
-/// and a second spelling of `flint` here is a second thing to keep in step.
+/// and a tier id spelled out here would be a second copy of that id to keep in step.
 fn tier_word(tier: &str) -> String {
     title_from_id(tier).to_lowercase()
 }

@@ -110,7 +110,7 @@ const OFFER_ON_BENCH_KEY := "on_bench"
 ## is the only honest ordering a client has: alphabetical would put Iron above Bronze.
 const OFFER_OUTPUT_TIER_NAME_KEY := "output_tier_name"
 const OFFER_OUTPUT_TIER_RANK_KEY := "output_tier_rank"
-## **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `carrying flint · poor`, `last flint set
+## **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `carrying plain · poor`, `last plain set
 ## wore out`, `""` the rest of the time. It is the ONE route by which a tier word reaches the Owned
 ## cell: resolved sim-side, rendered verbatim, never composed and never re-derived here.
 const OFFER_OWNED_NOTE_KEY := "owned_note"
@@ -133,7 +133,8 @@ const SHORTFALL_SHORT_KEY := "short"
 ## **`tier_id` HAS NO KEY HERE EITHER.** The tier a row would be MADE at is the ledger's group head
 ## (`OFFER_OUTPUT_TIER_NAME_KEY`), and the tier the band CARRIES reaches the Owned cell only through
 ## the sim's resolved `ownedNote` — and only when the two disagree. A cell rendering this field would
-## say `flint` on every row of the early game, which is exactly the column the head replaced.
+## say `plain` on almost every row of the early game — eleven of the fourteen shipped items have no
+## second tier at all — which is exactly the column the head replaced.
 const BAND_EQUIPMENT_BATCHES_KEY := "equipment_batches"
 const EQUIPMENT_ITEM_ID_KEY := "item_id"
 const EQUIPMENT_GRADE_KEY := "grade"
@@ -309,8 +310,11 @@ const BENCH_TEACH_NONE := ""
 
 ## **FOUR COLUMNS: Item · Owned · Rebuild costs · action.** There is no condition column — the role
 ## cards on the Band panel state how worn each kit's item is, and this table states what replacing it
-## costs. **Tier is not a column either**: it could only ever say `flint` for the whole early game, so
-## it is a foldable group HEAD and what the column says instead is what the band actually owns.
+## costs. **Tier is not a column either**: eleven of the fourteen shipped items have exactly one tier,
+## so a column would spend its width repeating `plain` down almost every row, and the three that do
+## carry a second (`spears`, `clubs`, `hoes` at `flint`) group together rather than scattering — a
+## head states the tier ONCE for its rows and can FOLD AWAY, which is the thing a column can never do.
+## What the column says instead is what the band actually owns.
 const LEDGER_COLUMN_ITEM := "Item"
 const LEDGER_COLUMN_OWNED := "Owned"
 const LEDGER_COLUMN_COST := "Rebuild costs"

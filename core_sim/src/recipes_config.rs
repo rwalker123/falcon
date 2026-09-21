@@ -117,6 +117,23 @@ pub struct RecipeOutput {
     /// defaulted axis would be a silently wrong reading.
     #[serde(default)]
     pub characteristics: BTreeMap<String, f32>,
+    /// **THE TIER THIS RECIPE MAKES THE ITEM AT** — the mirror of [`Self::characteristics`],
+    /// rejected on a material output and naming a tier the output item declares.
+    ///
+    /// **It is what lets ONE item have TWO recipes.** A tier is what the *material* buys
+    /// ([`crate::equipment_config::EquipmentTier`]), so a spear knapped from stone and a spear
+    /// pointed with bone are the same item at two tiers — and the thing that knows which is the
+    /// recipe, because the recipe is what names the material. Before this field the tier came from
+    /// faction knowledge alone ([`crate::equipment_config::ItemDefinition::craftable_tier`]), which
+    /// can answer only one tier per item per faction and so could never express two.
+    ///
+    /// **REQUIRED on an item that declares more than one tier**, and that is the load-bearing half:
+    /// `craftable_tier` resolves the *last* satisfiable tier, so a bone recipe that named none would
+    /// stamp its spears `flint` the moment the flint tier existed. Making the field mandatory there
+    /// makes that unrepresentable rather than merely avoided. Absent is legal on a single-tier item,
+    /// where `craftable_tier` has exactly one answer.
+    #[serde(default)]
+    pub tier: Option<String>,
 }
 
 impl RecipeOutput {
@@ -128,6 +145,11 @@ impl RecipeOutput {
     /// The material id this row makes, or `None` for an equipment row.
     pub fn material_id(&self) -> Option<&str> {
         self.material.as_deref()
+    }
+
+    /// The tier this row declares, or `None` when it names none.
+    pub fn tier_id(&self) -> Option<&str> {
+        self.tier.as_deref()
     }
 }
 
@@ -220,6 +242,21 @@ impl RecipeDef {
     /// join key from a published craft offer to the band's own batches of the thing it would make.
     pub fn output_equipment_id(&self) -> Option<&str> {
         self.outputs.iter().find_map(|output| output.equipment_id())
+    }
+
+    /// **The tier this recipe makes its equipment at**, or `None` for one that names none (a
+    /// single-tier item, where [`crate::equipment_config::ItemDefinition::craftable_tier`] is the
+    /// fallback and has only one answer).
+    ///
+    /// The join key for every reader that has to know *which* tier a row would produce: the bench's
+    /// delivery, the wire's group head, and the grade anchor. One accessor, so a second reading of
+    /// `outputs.iter().find_map(...)` cannot come to disagree with it — the same reason
+    /// [`Self::output_equipment_id`] exists.
+    pub fn output_tier_id(&self) -> Option<&str> {
+        self.outputs
+            .iter()
+            .filter(|output| output.equipment_id().is_some())
+            .find_map(|output| output.tier_id())
     }
 
     /// **This recipe makes nothing a grade can be stamped on** — every output row is a material.
@@ -371,14 +408,18 @@ impl RecipesConfig {
     ///
     /// It is what a **start-stocked** unit is stamped with
     /// ([`crate::components::BandEquipment::start_stocked_owned`]): `validate_grades_against_item`
-    /// already enforces that the anchor grade agrees with the item's default tier for every stat it
-    /// declares, and a spawn stocks that same default tier — so a shipped spear already performs
-    /// exactly as an anchor-grade craft does, and this is the wire finally saying so.
+    /// already enforces that the anchor grade agrees with the tier each recipe makes, and a spawn
+    /// stocks the item's **default** tier — so a shipped spear already performs exactly as an
+    /// anchor-grade craft does, and this is the wire finally saying so.
     ///
     /// The join is `item_display_name`'s, for the same reason: the book is where an item's crafted
-    /// facts are written. Two recipes making one item would resolve the **first in book order**,
-    /// which no shipped book has and none needs — a second recipe for one item would be a second
-    /// statement of what it is made of.
+    /// facts are written. **Several recipes making one item resolve the first in book order**, which
+    /// the shipped book now genuinely has — a spear can be pointed with bone or knapped from stone,
+    /// and each row names the tier it makes. The choice between them is not observable here: the
+    /// anchor is the band the *bench material's* bare-handed ceiling falls in, every material that
+    /// can be worked bare-handed at all ships the same `0.60`, and `0.60` is `good`. It would begin
+    /// to matter the day two materials carry different ceilings, and the honest answer then is the
+    /// recipe that makes the **default tier** — which is the one the spawn stocks.
     pub fn anchor_grade_for_item<'a>(
         &self,
         item: &str,
@@ -519,6 +560,19 @@ impl RecipesConfig {
                         ),
                     })
                 }
+                // **THE MIRROR OF THE CHARACTERISTICS RULE, ONE FIELD OVER.** A tier is a rung of a
+                // piece of equipment's own quality ladder; a material carries a characteristic
+                // vector and [`crate::components::MaterialBatch`] has nowhere to put a tier, so the
+                // word would be read by nothing.
+                (None, Some(_)) if output.tier.is_some() => {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' outputs[{index}] makes a material but names a tier - a \
+                             tier is a rung of an ITEM's quality ladder, and a material batch \
+                             carries its own characteristics instead"
+                        ),
+                    })
+                }
                 _ => {}
             }
             let duplicate = recipe.outputs[..index].iter().any(|prior| {
@@ -653,6 +707,39 @@ impl RecipesConfig {
                                      '{bounded}' - a tool must never cost the material it stretches"
                                 ),
                             });
+                        }
+                    }
+                    // **THE TIER THE ROW MAKES THE ITEM AT, reconciled against the item's own
+                    // ladder** — a tier id is a `String` like every other, so `flnt` would parse,
+                    // validate, and then stamp every batch with a rung the roster does not carry.
+                    //
+                    // **And REQUIRED the moment the item has a choice.** With two tiers and no
+                    // declaration the bench would fall back to `craftable_tier`, which answers the
+                    // LAST satisfiable rung — so the bone recipe would deliver flint spears. The
+                    // field is mandatory there rather than defaulted, because a default is exactly
+                    // the silently-wrong answer.
+                    if let Some(def) = equipment.item(item) {
+                        match output.tier_id() {
+                            Some(tier) if def.tier(tier).is_none() => {
+                                return Err(RecipesConfigError::InvalidBook {
+                                    reason: format!(
+                                        "recipe '{id}' makes '{item}' at the tier '{tier}', which \
+                                         that item does not declare"
+                                    ),
+                                })
+                            }
+                            None if def.tiers.len() > 1 => {
+                                return Err(RecipesConfigError::InvalidBook {
+                                    reason: format!(
+                                        "recipe '{id}' makes '{item}', which declares {} tiers, \
+                                         without naming one - a recipe is what knows which tier it \
+                                         makes, and falling back would stamp the last satisfiable \
+                                         rung",
+                                        def.tiers.len()
+                                    ),
+                                })
+                            }
+                            _ => {}
                         }
                     }
                     // **A COUNT-BEARING LEDGER CANNOT BANK HALF A SPEAR.** An equipment output's
@@ -814,17 +901,22 @@ impl RecipesConfig {
     /// item, so every rule here is about it not becoming a second home for a number that already
     /// has one — the objection that kept every grade's payload empty until the tier owned these.
     ///
-    /// - **Only a stat the item's own tiers declare.** What the material buys sits on the tier; a
-    ///   grade *replaces* one of those values and may never introduce a stat the item does not
-    ///   otherwise have. A grade naming `scout_vantage_range` on the sled — a stat that item never
-    ///   declares — would be exactly the second home.
+    /// - **Only a stat the recipe's OWN OUTPUT TIER declares.** What the material buys sits on the
+    ///   tier; a grade *replaces* one of those values and may never introduce a stat the item does
+    ///   not otherwise have. A grade naming `scout_vantage_range` on the sled — a stat that item
+    ///   never declares — would be exactly the second home. **The scan is one tier wide, not the
+    ///   whole ladder**: a grade replaces what *that* tier bought, so a flint recipe grading a stat
+    ///   only the plain tier carries would be grading a number its own output does not have.
     /// - **The mass bounds are restated verbatim.** A grade's effect is what
     ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so an
     ///   excellent snare that dropped `max_body_mass` would quietly become a mammoth trap.
-    /// - **The ANCHOR grade equals the shipped tier value** — see [`anchor_band`]. That is what makes
-    ///   a bare-handed craft off the best material a band can work by hand reproduce today's game
-    ///   exactly, and it is what stops the two numbers drifting: the tier stays the one home, and the
-    ///   grades are a spread around it.
+    /// - **The ANCHOR grade equals the OUTPUT TIER's value** — see [`anchor_band`]. That is what
+    ///   makes a bare-handed craft off the best material a band can work by hand reproduce that
+    ///   tier's shipped numbers exactly, and it is what stops the two drifting: the tier stays the
+    ///   one home, and the grades are a spread around it. **Which tier is the recipe's to say**
+    ///   ([`RecipeDef::output_tier_id`]), falling back to the default for a single-tier item — an
+    ///   item with two tiers has two recipes and two anchors, and pinning both against `tiers[0]`
+    ///   would demand a flint spear hit exactly as hard as a bone one.
     fn validate_grades_against_item(
         id: &str,
         recipe: &RecipeDef,
@@ -835,19 +927,20 @@ impl RecipesConfig {
         let Some(def) = equipment.item(item) else {
             return Ok(());
         };
+        let output_tier = recipe
+            .output_tier_id()
+            .and_then(|tier| def.tier(tier))
+            .unwrap_or_else(|| def.default_tier());
         for (name, grade) in &recipe.grades {
             for effect in &grade.effects {
-                let Some(tier_effect) = def
-                    .tiers
-                    .iter()
-                    .find_map(|tier| tier.effects.iter().find(|e| e.stat == effect.stat))
+                let Some(tier_effect) = output_tier.effects.iter().find(|e| e.stat == effect.stat)
                 else {
                     return Err(RecipesConfigError::InvalidBook {
                         reason: format!(
-                            "recipe '{id}' grade '{name}' declares {:?}, which no tier of '{item}' \
-                             declares - a grade replaces what the material bought, it may not be a \
-                             second home for a number that lives elsewhere",
-                            effect.stat
+                            "recipe '{id}' grade '{name}' declares {:?}, which '{item}''s tier \
+                             '{}' does not declare - a grade replaces what the material bought, it \
+                             may not be a second home for a number that lives elsewhere",
+                            effect.stat, output_tier.id
                         ),
                     });
                 };
@@ -872,8 +965,7 @@ impl RecipesConfig {
             return Ok(());
         };
         for effect in recipe.grade_effects_for(anchor, materials) {
-            let shipped = def
-                .default_tier()
+            let shipped = output_tier
                 .effects
                 .iter()
                 .find(|e| e.stat == effect.stat)
@@ -882,11 +974,12 @@ impl RecipesConfig {
                 return Err(RecipesConfigError::InvalidBook {
                     reason: format!(
                         "recipe '{id}' resolves {:?} = {} at its anchor band '{anchor}', which is not \
-                         what '{item}''s default tier declares ({shipped}) - a bare-handed craft off \
+                         what '{item}''s tier '{}' declares ({shipped}) - a bare-handed craft off \
                          the best material that band can work by hand must reproduce the shipped item \
                          exactly",
                         effect.stat,
-                        effect.tier.value()
+                        effect.tier.value(),
+                        output_tier.id
                     ),
                 });
             }
@@ -1106,6 +1199,10 @@ mod tests {
     /// **Both directions, plus a liveness assertion.** *"Every anchor grade agrees with its item"* is
     /// trivially true of a book whose grades declare nothing, so the rungs either side must be seen
     /// to genuinely bracket it — one strictly below and one strictly above, on the shipped book.
+    ///
+    /// **Each recipe is bracketed against ITS OWN OUTPUT TIER**, not against the item's default: a
+    /// flint spear's ladder fans around `26` and a bone one's around `20`, and pinning both to
+    /// `tiers[0]` would demand the two be the same weapon.
     #[test]
     fn the_anchor_grade_reproduces_the_shipped_item_and_the_others_bracket_it() {
         let equipment = EquipmentConfig::builtin();
@@ -1120,6 +1217,10 @@ mod tests {
             else {
                 continue;
             };
+            let output_tier = recipe
+                .output_tier_id()
+                .and_then(|tier| item.tier(tier))
+                .unwrap_or_else(|| item.default_tier());
             let anchor = anchor_band(recipe, &materials)
                 .unwrap_or_else(|| panic!("recipe '{id}' works a hand-workable material"));
             let anchor_index = materials
@@ -1127,14 +1228,17 @@ mod tests {
                 .expect("the anchor is a declared band");
             for (index, name, grade) in recipe.grades_by_band(&materials) {
                 for effect in &grade.effects {
-                    let shipped = item
-                        .default_tier()
+                    let shipped = output_tier
                         .effects
                         .iter()
                         .find(|tier| tier.stat == effect.stat)
                         .map(|tier| tier.tier.value())
                         .unwrap_or_else(|| {
-                            panic!("recipe '{id}' grade '{name}' declares a stat no tier declares")
+                            panic!(
+                                "recipe '{id}' grade '{name}' declares a stat the tier it makes \
+                                 ('{}') does not",
+                                output_tier.id
+                            )
                         });
                     let value = effect.tier.value();
                     match index.cmp(&anchor_index) {
@@ -1212,7 +1316,9 @@ mod tests {
                         "craft": "bone_working",
                         "work": 6.0,
                         "inputs": [ { "material": "bone", "amount": 1.0, "reads": "density" } ],
-                        "outputs": [ { "equipment": "spears", "amount": 1.0 } ],
+                        "outputs": [
+                            { "equipment": "spears", "amount": 1.0, "tier": "plain" }
+                        ],
                         "grades": {
                             "poor": { "effects": [ { "stat": "attack", "equipped": 15.0 } ] },
                             "good": { "effects": [ { "stat": "attack", "equipped": 20.0 } ] }
@@ -1421,6 +1527,11 @@ mod tests {
     /// **A required craft that none of the recipe's own inputs is worked by is rejected**, which is
     /// what makes *"gated on what it is MADE FROM"* structural. Broken here by demanding the very
     /// craft the tool unlocks — the deadlock the rule exists to forbid.
+    ///
+    /// The subject is the **loom**: it bounds `fibre`, so `weaving` is the craft it unlocks, and no
+    /// material it is made of is worked by that craft. See
+    /// [`a_craft_two_materials_share_is_requirable_by_a_tool_that_bounds_one_of_them`] for the
+    /// roster property that keeps the second clause true — it is not enforced anywhere.
     #[test]
     fn validate_against_rejects_a_tool_gated_on_the_craft_it_unlocks() {
         let mut json: serde_json::Value =
@@ -1433,6 +1544,226 @@ mod tests {
             .expect_err("a loom gated on weaving can never be built");
         assert!(
             matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("MADE FROM")),
+            "got {err}"
+        );
+    }
+
+    /// **THE DEADLOCK CHAIN RESTS ON A ROSTER PROPERTY NOTHING ENFORCES: one material per craft.**
+    ///
+    /// `tool bounds M ⇒ M is not an input ⇒ craft(M) is not requirable` is true step by step
+    /// whatever the roster looks like; what makes it true *end to end* is that `craft(M)` names
+    /// exactly one material. **`wood` and `fibre` both declare `weaving`**, so a tool bounding
+    /// `fibre` that took **wood** as an input could name Weaving and pass every rule in the book —
+    /// gated on the craft it unlocks, by way of a different material that happens to share it.
+    ///
+    /// **No shipped tool reaches it**, so in this book the guarantee holds by construction and the
+    /// hole is latent. Three assertions, and each fails on its own: the premise (exactly two
+    /// materials weave), the shipped book's distance from the hole, and a fixture that walks into
+    /// it. Asserting only the last would pass on a book that had quietly grown the shape.
+    ///
+    /// It is a guard rather than a new `validate` rule because **it is not a deadlock**: the trap
+    /// only closes where the bounded material cannot be worked bare-handed at all, and `fibre`
+    /// declares `hand_working` — a band twists cordage by hand, learns Weaving, and builds the loom.
+    /// The material it would bite is `metal`, which will declare no `hand_working` and whose craft no
+    /// second material declares.
+    #[test]
+    fn a_craft_two_materials_share_is_requirable_by_a_tool_that_bounds_one_of_them() {
+        let materials = MaterialsConfig::builtin();
+        let equipment = EquipmentConfig::builtin();
+        let weavers: Vec<&str> = materials
+            .materials()
+            .filter(|(_, def)| def.craft.as_deref() == Some(crate::crafting::WEAVING_CRAFT))
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            weavers,
+            vec!["fibre", "wood"],
+            "the premise: exactly two shipped materials declare `weaving`, which is what makes the \
+             hole below reachable at all"
+        );
+
+        // **THE SHIPPED BOOK DOES NOT REACH IT.** For every tool recipe, no input material is
+        // worked by the craft of the material that tool bounds — which is the whole of *"holds by
+        // construction"*, asserted rather than asserted-about.
+        let book = builtin();
+        let mut tools_checked = 0;
+        for (id, recipe) in book.recipes() {
+            let Some(bounded) = recipe
+                .output_equipment_id()
+                .and_then(|item| equipment.item(item))
+                .and_then(|def| def.bounds_material())
+            else {
+                continue;
+            };
+            tools_checked += 1;
+            let unlocked = materials
+                .material(bounded)
+                .and_then(|def| def.craft.as_deref())
+                .expect("a bounded material declares a craft");
+            for input in &recipe.inputs {
+                let worked_by = materials
+                    .material(&input.material)
+                    .and_then(|def| def.craft.as_deref());
+                assert_ne!(
+                    worked_by,
+                    Some(unlocked),
+                    "tool recipe '{id}' bounds '{bounded}' (craft '{unlocked}') and takes '{}', \
+                     which that same craft works - the chain holds only because no shipped tool \
+                     does this, so the book has walked into the latent hole",
+                    input.material
+                );
+            }
+        }
+        assert_eq!(
+            tools_checked, 4,
+            "LIVENESS: the sweep must actually have found the four bench tools"
+        );
+
+        // **AND A FIXTURE THAT DOES REACH IT VALIDATES**, which is why the sweep above is a guard
+        // and not a restatement of something `validate` already refuses.
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_RECIPES_CONFIG).expect("builtin parses as json");
+        json["recipes"]["loom"]["inputs"]
+            .as_array_mut()
+            .expect("the loom has inputs")
+            .push(serde_json::json!({ "material": "wood", "amount": 1.0 }));
+        json["recipes"]["loom"]["requires_knowledge"] = serde_json::json!(["weaving"]);
+        RecipesConfig::from_json_str(&json.to_string())
+            .expect("still self-consistent")
+            .validate_against(&materials, &equipment)
+            .expect(
+                "a loom carrying wood is gated on `weaving` legally - wood is worked by weaving, so \
+                 the gate names a craft it really is MADE FROM, while also being the craft the tool \
+                 unlocks",
+            );
+    }
+
+    /// **A recipe naming a tier its output item does not declare is rejected** — the `UnknownItem`
+    /// debt one field further in: a tier id is a `String`, so `flnt` would parse, validate, and then
+    /// stamp every batch with a rung the roster does not carry.
+    #[test]
+    fn validate_against_rejects_an_output_tier_the_item_does_not_declare() {
+        let err = reconciled(|json| {
+            json["recipes"]["spears"]["outputs"][0]["tier"] = serde_json::json!("obsidian");
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("which \
+                 that item does not declare")),
+            "got {err}"
+        );
+    }
+
+    /// **A recipe for a multi-tier item MUST name the tier it makes.** This is the load-bearing
+    /// half: `craftable_tier` answers the *last* satisfiable rung, so a bone recipe that named
+    /// nothing would deliver flint spears the moment the flint tier existed. Making the field
+    /// mandatory makes that unrepresentable rather than merely avoided.
+    #[test]
+    fn validate_against_rejects_a_multi_tier_item_whose_recipe_names_no_tier() {
+        let err = reconciled(|json| {
+            json["recipes"]["spears"]["outputs"][0]
+                .as_object_mut()
+                .expect("an output row")
+                .remove("tier");
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("without naming one")),
+            "got {err}"
+        );
+    }
+
+    /// **…and a SINGLE-tier item's recipe may still name none**, which is what keeps the ten
+    /// unchanged rows unchanged. The pair is the point: *"a tier is required"* on its own would pass
+    /// on a book that demanded one everywhere.
+    #[test]
+    fn a_single_tier_items_recipe_needs_no_tier() {
+        let equipment = EquipmentConfig::builtin();
+        let sled = equipment.item("sled").expect("the sled is shipped");
+        assert_eq!(sled.tiers.len(), 1, "the premise: the sled has one tier");
+        assert_eq!(
+            builtin()
+                .recipe("sled")
+                .expect("the sled recipe is shipped")
+                .output_tier_id(),
+            None,
+            "and its recipe names none"
+        );
+        builtin()
+            .validate_against(&MaterialsConfig::builtin(), &equipment)
+            .expect("which is legal");
+    }
+
+    /// **A tier on a MATERIAL output is rejected** — the mirror of `characteristics` being rejected
+    /// on an equipment one. A material batch carries a characteristic vector and has nowhere to put
+    /// a tier, so the word would be read by nothing.
+    #[test]
+    fn validate_rejects_a_tier_on_a_material_output() {
+        let err = mutated(|json| {
+            json["recipes"]["hurdles"]["outputs"][0]["tier"] = serde_json::json!("plain");
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("names a tier")),
+            "got {err}"
+        );
+    }
+
+    /// **THE ANCHOR IS THE RECIPE'S OWN OUTPUT TIER — the load-bearing one.** Two recipes make
+    /// `spears`, at two tiers with two different `attack` numbers, and each must reproduce **its
+    /// own** tier at the anchor band. Asserted as a pairing: the shipped flint row validates against
+    /// `flint`'s `26`, and re-anchoring it on `plain`'s `20` is rejected — a one-sided assertion
+    /// would pass on a check that had stopped resolving the tier at all.
+    #[test]
+    fn a_grade_is_anchored_against_the_tier_its_own_recipe_makes() {
+        let materials = MaterialsConfig::builtin();
+        let equipment = EquipmentConfig::builtin();
+        let spears = equipment.item("spears").expect("the spears are shipped");
+        let plain = spears.tier("plain").expect("the opening tier");
+        let flint = spears.tier("flint").expect("the knapped tier");
+        let attack_of = |tier: &crate::equipment_config::EquipmentTier| {
+            tier.effects
+                .iter()
+                .find(|effect| effect.stat == crate::equipment_config::EquipmentStat::Attack)
+                .expect("both tiers declare attack")
+                .tier
+                .value()
+        };
+        assert_ne!(
+            attack_of(plain),
+            attack_of(flint),
+            "the premise: the two tiers hit differently, or nothing below distinguishes them"
+        );
+
+        // The shipped book already anchors each row on its own tier.
+        builtin()
+            .validate_against(&materials, &equipment)
+            .expect("both spear recipes reproduce the tier they make");
+
+        // Anchoring the flint row on the PLAIN tier's number is what must be refused.
+        let err = reconciled(|json| {
+            json["recipes"]["spears_flint"]["grades"]["good"]["effects"][0]["equipped"] =
+                serde_json::json!(attack_of(plain));
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("anchor band")),
+            "got {err}"
+        );
+    }
+
+    /// **A grade may only name a stat the OUTPUT TIER declares**, not one some other tier of the
+    /// same item carries. A grade replaces what *that* tier bought.
+    #[test]
+    fn validate_against_rejects_a_grade_naming_a_stat_the_output_tier_does_not_declare() {
+        let err = reconciled(|json| {
+            json["recipes"]["spears_flint"]["grades"]["good"]["effects"][0]["stat"] =
+                serde_json::json!("hunt_carry");
+            json["recipes"]["spears_flint"]["grades"]["poor"]["effects"][0]["stat"] =
+                serde_json::json!("hunt_carry");
+            json["recipes"]["spears_flint"]["grades"]["fair"]["effects"][0]["stat"] =
+                serde_json::json!("hunt_carry");
+            json["recipes"]["spears_flint"]["grades"]["excellent"]["effects"][0]["stat"] =
+                serde_json::json!("hunt_carry");
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("does not declare")),
             "got {err}"
         );
     }

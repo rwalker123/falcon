@@ -59,8 +59,8 @@ const ONE_HURDLES_PASS_OF_HIDE: f32 = 2.0;
 const WOOD_TO_SPARE: f32 = 40.0;
 /// **The pile that must be left alone**, large enough that a draw off it would be unmistakable.
 const THE_UNTOUCHED_PILE: f32 = 60.0;
-/// The tier every shipped item's one quality rung carries — the flint age.
-const FLINT_TIER: &str = "flint";
+/// The OPENING tier every shipped item carries — the bone, hide and fibre gear a band starts with.
+const PLAIN_TIER: &str = "plain";
 
 fn readings(pairs: &[(&str, f32)]) -> BTreeMap<String, f32> {
     pairs
@@ -165,7 +165,7 @@ impl Bench {
             .get_mut::<BandEquipment>(self.band)
             .expect("the band has a ledger")
             // A crafted tool arrives as its own batch of one, at the tier that ships known.
-            .stock(item, 1, FLINT_TIER, None);
+            .stock(item, 1, PLAIN_TIER, None);
         self
     }
 
@@ -685,7 +685,7 @@ const FIXTURE_EQUIPMENT: &str = r#"{
       "wear": [{ "per": "strike", "amount": 0.4 }],
       "tiers": [
         {
-          "id": "flint",
+          "id": "plain",
           "starting_durability": 100.0,
           "effects": [{ "stat": "attack", "equipped": 20.0 }]
         }
@@ -696,7 +696,7 @@ const FIXTURE_EQUIPMENT: &str = r#"{
       "bounds_material": "ore",
       "tiers": [
         {
-          "id": "flint",
+          "id": "plain",
           "starting_durability": 100.0,
           "effects": [
             { "stat": "craft_speed", "equipped": 1.0 },
@@ -792,7 +792,7 @@ fn a_crafted_items_grade_decides_what_it_grants() {
         ledger.stock(
             SLED,
             1,
-            FLINT_TIER,
+            PLAIN_TIER,
             Some(core_sim::BatchGrade {
                 id: grade_id.to_string(),
                 effects: effects.to_vec(),
@@ -845,7 +845,7 @@ fn a_delivered_item_carries_the_tier_that_ships_known() {
         .map(|(_, batches)| batches.to_vec())
         .expect("the band holds sleds");
     assert!(
-        batches.iter().all(|batch| batch.tier == FLINT_TIER),
+        batches.iter().all(|batch| batch.tier == PLAIN_TIER),
         "every batch is at the tier that ships known: {batches:?}"
     );
     assert!(

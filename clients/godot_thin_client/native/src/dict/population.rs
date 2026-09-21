@@ -503,9 +503,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // people and their gear and never by what they are standing on.
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
             // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — the EXTRA work one
-            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' flint tiers
-            // each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare one banks
-            // `1.0`), so spent gear steps back to neutral here the way every other axis does.
+            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' `plain`
+            // tiers each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare
+            // one banks `1.0` — the hoes' second tier, `flint`, declares 0.7 instead, which is what
+            // makes naming the TIER load-bearing here), so spent gear steps back to neutral here the
+            // way every other axis does.
             //
             // ⛔ **AN ADDEND, NOT A DISCOUNT.** This read *"what one equipped worker takes off an
             // improvement's cost"* with the retired subtraction's **8.5** beside it. **A job's work

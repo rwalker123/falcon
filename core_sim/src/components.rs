@@ -3118,11 +3118,11 @@ pub struct BandEquipment {
     /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
     /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
     ///
-    /// **The TIER is part of the key because the readout names it out loud.** *"last flint set wore
+    /// **The TIER is part of the key because the readout names it out loud.** *"last plain set wore
     /// out"* is a claim about which tier was lost, and an item-wide tally could only *infer* one —
-    /// the day iron ships beside bronze and flint, inferring *"the tier below what I can now make"*
-    /// names bronze for a flint set that actually wore out. A published string asserting the wrong
-    /// tier is worse than saying nothing.
+    /// the day bronze and iron ship beside `plain` and `flint`, inferring *"the tier below what I can
+    /// now make"* names bronze for a `plain` set that actually wore out. A published string asserting
+    /// the wrong tier is worse than saying nothing.
     ///
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
@@ -3188,8 +3188,8 @@ impl BandEquipment {
     /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
     ///
     /// **A start-stocked unit IS an anchor-grade craft, so it says so.** A spawn stocks the item's
-    /// default tier (`equipment.md` → *"flint is today's spear, verbatim"*) and `validate` requires
-    /// the anchor grade to agree with that tier for every stat it declares — the two perform
+    /// default tier (`equipment.md` → *"every item's opening tier is `plain`"*) and `validate`
+    /// requires the anchor grade to agree with the tier each recipe makes — the two perform
     /// identically, and the ledger simply was not saying which. An unstamped batch published a bare
     /// `×1` beside rows reading `×3 good`, which is indistinguishable from a panel that failed to
     /// draw something.
@@ -3611,7 +3611,7 @@ impl BandEquipment {
     /// **Which TIERS of `item` this band has worn out, and how many of each** — in tier-id order,
     /// empty for an item it has never retired.
     ///
-    /// The readout's join: *"last flint set wore out"* names a tier, and this is the only record of
+    /// The readout's join: *"last plain set wore out"* names a tier, and this is the only record of
     /// which one it was. [`Self::retired_of`] is the same tally summed for a caller that only asks
     /// *whether* anything broke.
     pub fn retired_tiers_of(&self, item: &str) -> impl Iterator<Item = (&str, u32)> {

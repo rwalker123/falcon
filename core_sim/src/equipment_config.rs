@@ -45,12 +45,13 @@
 //!    test is crate-private precisely so a caller cannot read the condition alone and silently re-arm
 //!    a party sent out bare.
 //!
-//! **Start-stocked and NOT craftable.** There is no replenishment path in this slice; running dry is
-//! the intended pressure. The band's state is *wear*, not *stock*, so a freshly spawned
-//! [`crate::components::BandEquipment`] is a full kit by construction (`Default` = zero wear) and no
-//! spawn site needs to read this config. **Quality tiers** (flint against bronze spears) are
-//! deliberately absent for the same reason inverted: nothing can craft one, so the structure would
-//! ship with no way to exercise it. Both ride the crafting slice.
+//! **Start-stocked AND craftable**, both since the crafting arc: the bench replenishes what wears
+//! out (`.claude/rules/core_sim/crafting.md`), so a band's state is *count and wear* rather than
+//! wear alone. **Quality tiers are live too** — `spears`, `clubs` and `hoes` each carry a knapped
+//! `flint` beside the opening `plain`, and *which* tier a craft comes out at is the recipe's to say
+//! (`RecipeOutput::tier`). This paragraph read *"NOT craftable … quality tiers deliberately absent,
+//! because nothing can craft one"*, which was true of the slice that minted this file and of nothing
+//! since.
 //!
 //! Loader mirrors [`crate::creatures_config`]: baked-in builtin + `EQUIPMENT_CONFIG_PATH` override +
 //! [`EquipmentConfig::validate`] inside `from_json_str`, so **every** load path is validated and a
@@ -98,7 +99,7 @@ pub enum EquipmentStat {
     /// Declared **equipped**; the bare hand's `1.0` is the `person` roster row.
     Attack,
     /// The per-hunter **hunt** haul rate. Declared **equipped, on the item's TIER** — the sledded
-    /// `40.0` is what a flint-age sled buys; `labor_config.json`'s
+    /// `40.0` is what the sled's `plain` tier buys, and the sled ships only that one; `labor_config.json`'s
     /// `hunt.per_worker_biomass_capacity` is the **no-equipment baseline** a sledless party drags at.
     HuntCarry,
     /// The per-gatherer throughput before the tile's seasonal weight. Declared **equipped, on the
@@ -140,9 +141,11 @@ pub enum EquipmentStat {
     ExpeditionSightRange,
     /// **THE EXTRA WORK ONE EQUIPPED WORKER DELIVERS PER TURN ON A BUILD** — added to the crew's own
     /// output, never subtracted from the job (`docs/plan_standing_upkeep.md` §4.8). Neutral at
-    /// **`0.0`**; **flint hoes ship `+0.5` on the plant web and a flint crook `+0.5` on the animal
-    /// one**, so an equipped builder banks `PER_WORKER_OUTPUT + 0.5 = 1.5` work units a turn where a
-    /// bare one banks `1.0`.
+    /// **`0.0`**; **`plain` hoes ship `+0.5` on the plant web and the `plain` crook `+0.5` on the
+    /// animal one**, so an equipped builder banks `PER_WORKER_OUTPUT + 0.5 = 1.5` work units a turn
+    /// where a bare one banks `1.0`. **The figure is per TIER, not per item** — the hoes' knapped
+    /// `flint` tier declares `+0.7`, and the crook ships no second tier — so a `build_work` number
+    /// quoted without naming its tier is ambiguous on the one item that has two.
     ///
     /// # ⛔ IT LANDS ON THE CREW, AND THE UNITS CHANGED WHEN IT MOVED THERE
     ///
@@ -646,11 +649,17 @@ pub struct WearConfig {
     pub amount: f32,
 }
 
-/// **One QUALITY TIER of an item** — a flint spear against a bronze one.
+/// **One QUALITY TIER of an item** — a knapped spear against a bone one.
 ///
-/// **A tier is an AGE, and the vocabulary is shared across items**: every shipped item's one tier is
-/// `flint`, and the day metal lands each gains a `bronze` beside it. That is what makes the upgrade
-/// axis legible and gates it once (*"bronze needs Smithing"*) rather than per item.
+/// **A tier is an AGE, and the vocabulary is shared across items**: every item's opening tier is
+/// `plain` (bone, hide and fibre — the gear a band starts with), `spears`, `clubs` and `hoes` each
+/// carry a `flint` beside it, and the day metal lands each gains a `bronze`. That is what makes the
+/// upgrade axis legible and gates it once (*"bronze needs Smithing"*) rather than per item.
+///
+/// **Which tier a bench makes is the RECIPE's to say** ([`crate::recipes_config::RecipeOutput::tier`],
+/// mandatory on any item with more than one), so an item has one recipe per tier —
+/// [`ItemDefinition::craftable_tier`] is the fallback for a single-tier item, not the resolver for
+/// `spears`.
 ///
 /// **What the MATERIAL buys sits here; what is SHARED stays on the item.** A spear is a thrown
 /// weapon whatever it is tipped with (`dispersion` and `exposure` on [`ItemDefinition::effects`]),
@@ -662,7 +671,8 @@ pub struct WearConfig {
 /// of the passive device therefore restates its bound, which `validate_mass_bounds` still checks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EquipmentTier {
-    /// Stable id, unique within the item — the age this tier belongs to (`flint`).
+    /// Stable id, unique within the item — the age this tier belongs to (`plain`, `flint`, one day
+    /// `bronze`).
     pub id: String,
     /// Condition a fresh unit of this tier carries, on the shared 0–100 scale. A batch is equipped
     /// while its accumulated wear is **strictly below** this.
@@ -2849,10 +2859,12 @@ impl EquipmentConfig {
     /// maximum of what the live items declare, for [`KitChoice::best_declared`]'s reason: two tools
     /// that both help do not compound, a worker simply uses the better one.
     ///
-    /// **Flint hoes are +0.5 build work per worker per turn on a plant build, and a flint crook +0.5
-    /// on an animal one** (`equipment.json`), so an equipped builder banks
+    /// **`plain` hoes are +0.5 build work per worker per turn on a plant build, and the `plain`
+    /// crook +0.5 on an animal one** (`equipment.json`), so an equipped builder banks
     /// [`crate::intensification::PER_WORKER_OUTPUT`] `+ 0.5 = 1.5` work units a turn where a bare
-    /// one banks `1.0`.
+    /// one banks `1.0`. **Quote the TIER with the figure**: the hoes' knapped `flint` tier declares
+    /// `+0.7` (banking `1.7`), while the crook has only the one tier — so *"the hoes are +0.5"* is
+    /// now a statement about a tier rather than about an item.
     ///
     /// # ⛔ IT IS ADDED TO THE CREW'S OUTPUT, NEVER SUBTRACTED FROM THE JOB
     ///
@@ -4710,7 +4722,8 @@ mod tests {
         let effect = &mut json["items"]["hoes"]["tiers"][0]["effects"][0];
         assert_eq!(
             effect["stat"], "build_work",
-            "fixture: the hoes' first flint effect must be the build tool this test unqualifies"
+            "fixture: the first effect of the hoes' FIRST tier (`plain`, not the knapped `flint` \
+             beside it) must be the build tool this test unqualifies"
         );
         effect
             .as_object_mut()

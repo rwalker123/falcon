@@ -490,9 +490,16 @@ fn emit_outputs(
             let Some(def) = equipment.item(item) else {
                 continue;
             };
-            // **The best tier this faction can reach**, which is the default one until something
-            // gated is learned — so the shipped opening makes exactly what it always made.
-            let tier = def.craftable_tier(known).id.clone();
+            // **THE TIER THE RECIPE SAYS IT MAKES**, because the recipe is what names the material
+            // and a tier is what the material buys: the bone row makes a `plain` spear and the
+            // knapped row a `flint` one out of the same item definition. `validate_against` makes
+            // the declaration mandatory on any item with more than one tier, so the fallback below
+            // answers only for an item with exactly one — where it is the best tier this faction can
+            // reach, which is that one.
+            let tier = output
+                .tier
+                .clone()
+                .unwrap_or_else(|| def.craftable_tier(known).id.clone());
             // **The grade's absolutes are copied HERE and carried on the batch**, which is what
             // makes "fixed at craft time and never moves" structural: a recipe retuned under a
             // running world cannot re-grade a sled already in the band's hands.
