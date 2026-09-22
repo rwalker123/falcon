@@ -2626,6 +2626,12 @@ fn resolve_shed_facts(
 ///
 /// **The claims must be the very lists the plan was struck from**, in their order: the fills are
 /// index-aligned with them.
+///
+/// ⛔ **AND IT IS CALLED ABOVE THE ASSIGNMENT LOOP'S TWO `continue`s**, beside the road and quarry
+/// pools' own seats, because it carries the two food webs' crew stamp
+/// ([`PoolRates::crew`]) — a band with an empty `assignments` list is the very band whose keepers
+/// are idle. An award vector it returns for such a band is empty and goes nowhere; the stamp is
+/// what had to reach it. See the call site for the full reading.
 fn maintenance_shares(
     allocation: &mut LaborAllocation,
     equipment: &crate::equipment_config::EquipmentConfig,
@@ -4762,6 +4768,36 @@ pub fn advance_labor_allocation(
             &tiles,
             Some(&pool_tools),
         );
+        // **THE BAND'S MAINTENANCE POOLS, SPLIT ACROSS ITS SOURCES** — one work amount per
+        // assignment index (`maintenance_shares`). The split itself happened with the tool plan
+        // above, because the band's **whole** holding decides both: what one patch's hands are
+        // depends on what every other site asked for, and what those hands hold depends on what
+        // every other pool asked for.
+        //
+        // ## ⛔ IT SITS ABOVE THE TWO `continue`s, AT THE ROAD AND QUARRY POOLS' OWN SEAT
+        //
+        // It is the two food webs' **crew stamp** that put it here (issue #715) and not the awards.
+        // A band whose `assignments` are empty is *exactly* the band whose `agriculture` and
+        // `husbandry` keepers are standing idle, so a stamp below the empty-assignment guard was
+        // missing in the one case the figure exists to report: three keepers on untended ground
+        // published no line at all, while `roadwork` and `quarrywork` — settled above the guards —
+        // published theirs. **The tile-lookup guard takes the same reading**: a crew account is
+        // struck from a head count and a claim list, and a band whose tile cannot be read still has
+        // both, so a stamp that guard skipped would be the same hole with a rarer cause.
+        //
+        // **Nothing between here and its old seat touches its inputs.** The guards, `BandReach`,
+        // the output multiplier and the loop's empty accumulators neither move a claim nor fund a
+        // hand, so no band that reaches the assignment loop is paid one unit differently for the
+        // move; the awards a `continue`d band computes are dropped with it, and the crew lines it
+        // stamped are not — which is the whole of the change.
+        let upkeep_shares = maintenance_shares(
+            &mut allocation,
+            &equipment_cfg,
+            &band_kit,
+            &plant_claims,
+            &animal_claims,
+            &pool_tools,
+        );
         if allocation.assignments.is_empty() {
             continue;
         }
@@ -4811,19 +4847,6 @@ pub fn advance_labor_allocation(
         // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the
         // resolved take — the seed is only the pre-resolution stand-in.
         let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
-        // **THE BAND'S MAINTENANCE POOLS, SPLIT ACROSS ITS SOURCES** — one work amount per
-        // assignment index (`maintenance_shares`). The split itself happened with the tool plan
-        // above, because the band's **whole** holding decides both: what one patch's hands are
-        // depends on what every other site asked for, and what those hands hold depends on what
-        // every other pool asked for.
-        let upkeep_shares = maintenance_shares(
-            &mut allocation,
-            &equipment_cfg,
-            &band_kit,
-            &plant_claims,
-            &animal_claims,
-            &pool_tools,
-        );
         // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
         //
         // The animal keeping demand **interpolates on the herd's position** since the animal web got

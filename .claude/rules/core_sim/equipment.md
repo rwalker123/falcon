@@ -570,6 +570,36 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > and a pool of nobody settles zero hands on every claim, which pays `0` into each site and wears
 > nothing (`BandEquipment::wear_item` charges nothing for no work).
 >
+> ⛔ **AND ALL FOUR ROWS ARE STAMPED ABOVE THE SOURCE-ASSIGNMENT GUARDS, WHICH IS THE OTHER HALF.**
+> `settle_bands_roadwork` and `settle_bands_extraction` sit above the assignment loop's two
+> `continue`s — `allocation.assignments.is_empty()` and the `tiles.get(cohort.current_tile)` lookup
+> — while the two food webs' rows are stamped inside `maintenance_shares`, which was called below
+> them. So a band with **no worked sources at all** published `roadwork` and `quarrywork` and
+> neither food web, and a client reader handed no `agriculture` row drew nothing.
+>
+> **The inversion is the thing to hold on to**: `allocation.assignments` is the band's *per-source*
+> list, not its pool head counts, so a band that guard skips is precisely a band whose keepers have
+> nothing to do — the stamp went missing in the one case the figure exists to report. An
+> empty-claim-list pool reaching `pool_rates` (above) is worthless if the call site the pool is paid
+> from is never reached. The tile-lookup guard takes the same reading for the same reason: a crew
+> account is struck from a head count and a claim list, and a band whose tile cannot be read still
+> has both.
+>
+> `maintenance_shares` is therefore called above both guards. **Only the call moved, not the split**
+> — the hands were divided in `plan_pool_tools` further up, and nothing between the two seats
+> (`BandReach`, the output multiplier, the loop's empty accumulators) moves a claim or funds a hand,
+> so no band that reaches the assignment loop is paid one unit differently. The award vector a
+> skipped band computes is dropped with it; the crew lines it stamped are not.
+>
+> **The fixtures that could not see this all staff a role**, and a staffed role is itself an
+> assignment row, so every one of them walks past the guard —
+> `a_pool_with_no_claims_reports_every_keeper_it_was_struck_with` stayed green for the whole life of
+> the defect. `pool_toe::a_band_with_no_assignments_at_all_publishes_all_four_crew_lines` is the one
+> that crosses it, with
+> `::the_first_keeper_put_on_an_unworked_web_reads_as_idle_on_the_frame_of_the_press` holding the
+> player-facing half: the `0 / 0` line is what the projection above is read against, so the band's
+> first three plant keepers report as standing on the frame of the press rather than a turn later.
+>
 > ⛔ **AND THE BAND'S LEDGER IS BORROWED THERE, NOT CLONED** — which is what makes falling through
 > free. Both seats used to snapshot it with `as_deref().cloned()`, and that clone was answering a
 > borrow conflict that does not exist: every read of the ledger (`pool_or_plan`, then `pool_rates`)

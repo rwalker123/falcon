@@ -2176,5 +2176,140 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                  two terms are one turn's arithmetic"
             );
         }
+
+        /// **A BAND THAT WORKS NOTHING AT ALL** — the turn-1 shape: a cohort with hands and an
+        /// **empty** `LaborAllocation::assignments`.
+        ///
+        /// ⛔ **IT IS THE ONLY FIXTURE IN THIS FILE THAT CROSSES THE ASSIGNMENT LOOP'S
+        /// `assignments.is_empty()` GUARD**, and crossing it is the whole point. Every other
+        /// fixture here goes through `staff_one_role`, and **a staffed role is itself an assignment
+        /// row** — so each of them arrives at the guard with a non-empty list, walks straight past
+        /// it, and reaches the food webs' crew stamp however few sites it holds. That is why they
+        /// stayed green while the shipped game published only two of the four lines.
+        fn a_band_that_works_nothing(hands: u32) -> App {
+            let mut app = spawn_world();
+            let (band, _, _, _) = first_band(&mut app);
+            app.world
+                .entity_mut(band)
+                .insert(LaborAllocation::default());
+            size_the_band(&mut app, band, hands);
+            app.update();
+            app
+        }
+
+        /// **PUT A HEAD COUNT ON A ROLE THE BAND DOES NOT YET STAFF**, the way a stepper press does
+        /// — [`restaff_outside_the_turn`]'s twin for a row that has to be created rather than
+        /// moved, with no turn in between.
+        fn staff_outside_the_turn(app: &mut App, band: Entity, role: LaborTarget, keepers: u32) {
+            {
+                let mut allocation = app
+                    .world
+                    .get_mut::<LaborAllocation>(band)
+                    .expect("the fixture band holds an allocation");
+                allocation.assignments.push(core_sim::LaborAssignment {
+                    target: role,
+                    workers: keepers,
+                    kit: None,
+                    priority: SourcePriority::default(),
+                    upkeep_kit: None,
+                });
+            }
+            size_the_band(app, band, keepers);
+        }
+
+        /// **HOW MANY LABOR ROWS THE BAND PUBLISHED** — read off the wire, so *"this band works
+        /// nothing"* is asserted against the frame a client sees rather than against the component.
+        fn published_row_count(app: &App) -> usize {
+            with_published_cohort(app, |cohort| {
+                cohort.laborAssignments().map_or(0, |rows| rows.len())
+            })
+        }
+
+        /// ⛔ **THE REPORTED DEFECT — A BAND WITH NO WORKED SOURCES PUBLISHES ALL FOUR LINES.**
+        ///
+        /// `roadwork` and `quarrywork` are settled **above** the assignment loop's two `continue`s
+        /// and the two food webs' shares are read back below them, so a band whose `assignments`
+        /// are empty used to publish two crew lines and not four — and a client's reader, handed no
+        /// `agriculture` row, drew nothing at all.
+        ///
+        /// **The inversion is the thing**: a band with no worked sources is *precisely* the band
+        /// whose keepers have nothing to do, so the guard skipped the stamp in the one case the
+        /// figure exists to report. All four lines read `0` here because the head count is summed
+        /// off the rows (`LaborAllocation::workers_on`) and there are none — what the test holds is
+        /// that the **line exists**, which is what the next press is read against.
+        #[test]
+        fn a_band_with_no_assignments_at_all_publishes_all_four_crew_lines() {
+            const IDLE_HANDS: u32 = 3;
+            const NO_ROWS: usize = 0;
+            /// Every pool's head count is summed off the band's rows, and a band with no rows has
+            /// none on any of them.
+            const UNSTAFFED: f32 = 0.0;
+            const THE_FOUR_KEEPING_POOLS: [&str; 4] =
+                ["agriculture", "husbandry", "quarrywork", "roadwork"];
+
+            let app = a_band_that_works_nothing(IDLE_HANDS);
+
+            assert_eq!(
+                published_row_count(&app),
+                NO_ROWS,
+                "fixture: the band staffs nothing, so the turn really does hit the \
+                 empty-assignments guard this test is about"
+            );
+            let crew = published_pool_crew(&app);
+            assert_eq!(
+                crew.iter()
+                    .map(|(pool, _)| pool.as_str())
+                    .collect::<Vec<_>>(),
+                THE_FOUR_KEEPING_POOLS,
+                "⛔ all four keeping pools state a line, not just the two settled above the \
+                 guards: {crew:?}"
+            );
+            for pool in THE_FOUR_KEEPING_POOLS {
+                assert_eq!(
+                    published_settled_keepers(&app, pool),
+                    UNSTAFFED,
+                    "the {pool} pool was settled with nobody on it"
+                );
+                assert_eq!(
+                    published_idle_keepers(&app, pool),
+                    UNSTAFFED,
+                    "…and nobody on it is standing, which is a `0` and not an absent row"
+                );
+            }
+        }
+
+        /// ⛔ **AND THAT LINE IS WHAT THE FIRST PRESS IS READ AGAINST** — the player-facing half of
+        /// the same defect.
+        ///
+        /// A reader projects a pending edit as `idleKeepers + (row − keepers)`
+        /// (`the_published_head_count_is_the_one_the_turn_settled_not_the_row_as_it_stands_now`).
+        /// On a band that worked nothing there was no `agriculture` line to project **from**, so
+        /// putting the band's first three keepers on the plant web drew no figure at all until a
+        /// turn had resolved. With the line published at `0 / 0` the same arithmetic answers on the
+        /// frame of the press: three keepers, none of them with anything to do.
+        #[test]
+        fn the_first_keeper_put_on_an_unworked_web_reads_as_idle_on_the_frame_of_the_press() {
+            const IDLE_HANDS: u32 = 3;
+            const THE_PRESS: u32 = 3;
+
+            let mut app = a_band_that_works_nothing(IDLE_HANDS);
+            let (band, _, _, _) = first_band(&mut app);
+            staff_outside_the_turn(&mut app, band, LaborTarget::Agriculture, THE_PRESS);
+            core_sim::recapture_snapshot_in_place(&mut app.world);
+
+            assert_eq!(
+                published_row_workers(&app, "agriculture"),
+                THE_PRESS,
+                "fixture: the press really did put the hands on the row, with no turn between"
+            );
+            let projected = published_idle_keepers(&app, "agriculture")
+                + (published_row_workers(&app, "agriculture") as f32
+                    - published_settled_keepers(&app, "agriculture"));
+            assert_eq!(
+                projected, THE_PRESS as f32,
+                "⛔ every keeper the press put on a web with no tended ground is standing, and the \
+                 reader can say so because the line it projects from exists"
+            );
+        }
     }
 }
