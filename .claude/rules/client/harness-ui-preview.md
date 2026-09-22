@@ -2058,12 +2058,13 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Nine frames and 136 assertions (its
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Thirteen frames and 168 assertions (its
 `EXPECTED_CHECKPOINTS` floor is the measured **145** — frames count too, so the three launcher-face
 frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, the ROW
 layout (`docs/plan_knowledge_rows.md` slice A) moved it to 133 on two added frames, and the row
 layout's review pass added the gutter-cap and narrow-room blocks and two height claims to the stress
-block, taking it to 145 with NO new frame;
+block, taking it to 145 with NO new frame, and **slice C's SUBJECT AREAS took it to 181 on four
+added frames**;
 the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
 surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
 a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
@@ -2122,7 +2123,28 @@ still at its fixed width — `knowledge-panel.md` → "DOMAINS ARE ROWS") ·
 earned it — the PLACEMENT is the claim a picture answers, every height claim beside it being about
 the card not moving) · `knowledge_launcher_mark` / `_rail` / `_bar` (the launcher's bundled cairn at
 each of the three action mounts, captured inside the pip block because that block is the only one
-standing a REAL `BandCityPanel` up).
+standing a REAL `BandCityPanel` up) · **the four SUBJECT-AREA states** appended last —
+`knowledge_panel_areas` (everything open, the default), `knowledge_panel_area_filtered` (a filter
+folding the area it does not match, which still says what is inside it),
+`knowledge_panel_area_hand_fold` (a hand-made fold still shut on the way back to `All` beside the
+filter-folded area that has reopened) and `knowledge_panel_area_fallbacks` (both degenerate branches
+drawing, under `Husbandry` and `Other`).
+
+**THE GROUPING AND THE FOLD RULE ARE ASKED OF `KnowledgeRoster`, NOT OF THE PICTURE** — a folded
+heading and an open one are both perfectly ordinary frames, and only the SET says which is which.
+`fixtures_knowledge.gd` gained `ladder_areas()` (the config's whole `areas` list, the three areas
+nothing teaches under INCLUDED, so *"an area with no domains is never drawn"* is falsifiable) and
+`ladder_roster_with_fallbacks()`, one row per fallback.
+
+⛔ **THREE EXISTING CLAIMS WERE RE-AIMED BECAUSE A FILTER NOW FOLDS**, and each was asserting
+something the arc deliberately changed. `_assert_filter_dims_rather_than_hides` read `8 of 10` —
+its scope is the OPEN areas now, with the folded area's heading asserted present beside it so the
+narrowing cannot become a hole. `_assert_the_empty_filter_note_does_not_move_the_card` read
+`(820, 518) → (820, 390)` — a zero-match filter folds every area, so the CARD legitimately shortens
+and the claim moved to `panel._header_height()`, which is the term the note could actually break.
+And the STRESS block opens through `open_on_filter(FILTER_ALL)`: it inherited the previous state's
+filter, which matches none of the synthetic tracks, so it was measuring a card holding two folded
+headings and no rows — `vertical mode 0`, a claim about nothing.
 
 **THE ROW LAYOUT'S OWN CLAIMS ARE RELATIONS BETWEEN TWO RENDERS, never magnitudes.** *The card does
 not resize* is `panel.size` before and after a press, on BOTH axes and on the toggle back — and then
@@ -2177,12 +2199,12 @@ that `card().size.y` stays inside the room AND the vertical scroll is live.
 > really looks like: not a clipped last row, but a card that SPILLS past the room it was fitted to
 > with the vertical scroll switched off. Measured on the sabotaged build at **463 in a 459 room**.
 
-**A clean run is 453 frames / 2220 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 457 frames / 2252 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
 and no frame, the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and their
-claims, and its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220). Everything
-else between them is drift accumulated un-recorded, exactly as it had been the times before.
-Measure; do not sum.
+claims, its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220), and slice C's
+subject areas added four frames and thirty-two net claims. Everything else between them is drift
+accumulated un-recorded, exactly as it had been the times before. Measure; do not sum.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 

@@ -11,7 +11,8 @@ extends RefCounted
 ## roster — it only ever pushed progress. The domain ROWS are built from the wire now: which row a
 ## knowledge is in (the branch of the rung that TEACHES it), where along that row (that rung's order)
 ## and whether it is a step or a capability (whether any rung's `unlock_knowledge` names it) all come
-## off `intensification_ladder.json` sim-side. **So a harness that pushes no roster renders no ladder
+## off `intensification_ladder.json` sim-side — as does the SUBJECT AREA the branch's rows are
+## gathered under, off that config's `branches` table. **So a harness that pushes no roster renders no ladder
 ## rows at all**, which is the honest consequence of the panel building itself.
 ##
 ## ⛔ **IT IS A TRANSCRIPTION OF THE SHIPPED LADDER, and it is deliberately not derived here.** A
@@ -26,12 +27,28 @@ const KEY_DISPLAY := "display_name"
 const KEY_BRANCH := "branch"
 const KEY_ORDER := "order"
 const KEY_IS_STEP := "is_step"
+## …and the SUBJECT AREA of the branch that teaches it, one level above `KEY_BRANCH`.
+const KEY_AREA := "area"
 
 ## The branch tokens the sim publishes — `RungBranch::as_str`, which is also
 ## `HudKnowledgeVocab.DOMAIN_KEY_*`.
 const BRANCH_PLANT := "plant"
 const BRANCH_ANIMAL := "animal"
 const BRANCH_ROUTE := "route"
+
+## The subject-area tokens the shipped `intensification_ladder.json` `branches` table names, and
+## `HudKnowledgeVocab.AREA_LABELS`' first three keys. **A transcription, like everything else here.**
+const AREA_FOOD := "food"
+const AREA_MAKING := "making"
+const AREA_WORKS := "works"
+
+## **THE DISPLAY ORDER THE SIM PUBLISHES** — the config's `areas` list verbatim
+## (`SubsistenceSection.ladderAreas`), including the three areas no branch teaches under yet. Those
+## three are the point of transcribing the whole list rather than the reachable part of it: an area
+## with no domains is never drawn, so a producer that published every area would look identical to
+## one that published the right ones unless the fixture carries the empty ones too.
+static func ladder_areas() -> Array:
+	return [AREA_FOOD, AREA_MAKING, AREA_WORKS, "reach", "lore", "war"]
 
 ## The knowledge ids the shipped ladder teaches.
 const KNOWLEDGE_CULTIVATION := "cultivation"
@@ -53,14 +70,38 @@ const KNOWLEDGE_PAVING := "paving"
 ## panel grows a **Roads** row for them without a line of client code naming either.
 static func ladder_roster() -> Array:
 	return [
-		_row(KNOWLEDGE_CULTIVATION, "Cultivation", BRANCH_PLANT, 1, true),
-		_row(KNOWLEDGE_SEED_SELECTION, "Seed Selection", BRANCH_PLANT, 2, true),
-		_row(KNOWLEDGE_HERDING, "Herding", BRANCH_ANIMAL, 1, true),
-		_row(KNOWLEDGE_PENNING, "Penning", BRANCH_ANIMAL, 2, true),
-		_row(KNOWLEDGE_FODDERING, "Foddering", BRANCH_ANIMAL, 3, false),
-		_row(KNOWLEDGE_ROADBUILDING, "Roadbuilding", BRANCH_ROUTE, 2, true),
-		_row(KNOWLEDGE_PAVING, "Paving", BRANCH_ROUTE, 3, true),
+		_row(KNOWLEDGE_CULTIVATION, "Cultivation", BRANCH_PLANT, 1, true, AREA_FOOD),
+		_row(KNOWLEDGE_SEED_SELECTION, "Seed Selection", BRANCH_PLANT, 2, true, AREA_FOOD),
+		_row(KNOWLEDGE_HERDING, "Herding", BRANCH_ANIMAL, 1, true, AREA_FOOD),
+		_row(KNOWLEDGE_PENNING, "Penning", BRANCH_ANIMAL, 2, true, AREA_FOOD),
+		_row(KNOWLEDGE_FODDERING, "Foddering", BRANCH_ANIMAL, 3, false, AREA_FOOD),
+		_row(KNOWLEDGE_ROADBUILDING, "Roadbuilding", BRANCH_ROUTE, 2, true, AREA_WORKS),
+		_row(KNOWLEDGE_PAVING, "Paving", BRANCH_ROUTE, 3, true, AREA_WORKS),
 	]
+
+# ---- the two DEGENERATE rosters, one per FALLBACK ----------------------------------------------
+# `docs/plan_knowledge_rows.md` §5. Both states are reachable by an incomplete config edit and both
+# have to DRAW: a knowledge that vanishes because a config edit was half-finished is the worst
+# failure this screen has, and it is one it has actually shipped.
+
+## **FALLBACK 1: A BRANCH WHOSE DESCRIPTOR NAMES NO AREA.** Its `area` is the wire's own `""`, which
+## is what a branch missing from the config's `branches` table publishes.
+const BRANCH_UNPLACED := "salvage"
+const KNOWLEDGE_UNPLACED := "scavenging"
+## **FALLBACK 2: AN AREA THE CLIENT HAS NO WORD FOR.** `husbandry` is a plausible future area token
+## and is deliberately absent from `HudKnowledgeVocab.AREA_LABELS`, so the heading falls back to the
+## capitalized wire token exactly as an unlisted BRANCH's row name does.
+const BRANCH_UNLABELLED := "dairying"
+const KNOWLEDGE_UNLABELLED := "milking"
+const AREA_UNLABELLED := "husbandry"
+
+## The shipped roster plus one row per fallback — so both draw BESIDE the ordinary headings rather
+## than alone, which is what makes "they still draw" a claim about placement and not just presence.
+static func ladder_roster_with_fallbacks() -> Array:
+	var roster := ladder_roster()
+	roster.append(_row(KNOWLEDGE_UNPLACED, "Scavenging", BRANCH_UNPLACED, 1, true, ""))
+	roster.append(_row(KNOWLEDGE_UNLABELLED, "Milking", BRANCH_UNLABELLED, 1, true, AREA_UNLABELLED))
+	return roster
 
 ## The same roster with one knowledge taken out — **the falsification handle for "a knowledge added to
 ## the config appears with no client edit"**, run in the other direction because a removal is the half
@@ -110,11 +151,13 @@ static func tracks_all_at(progress: float) -> Dictionary:
 		tracks[track] = progress
 	return tracks
 
-static func _row(id: String, display: String, branch: String, order: int, is_step: bool) -> Dictionary:
+static func _row(id: String, display: String, branch: String, order: int, is_step: bool,
+		area: String) -> Dictionary:
 	return {
 		KEY_ID: id,
 		KEY_DISPLAY: display,
 		KEY_BRANCH: branch,
 		KEY_ORDER: order,
 		KEY_IS_STEP: is_step,
+		KEY_AREA: area,
 	}

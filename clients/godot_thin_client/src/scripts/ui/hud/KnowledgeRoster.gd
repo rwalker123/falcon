@@ -120,6 +120,11 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 			HudKnowledgeVocab.DOMAIN_KEY: branch,
 			HudKnowledgeVocab.DOMAIN_LABEL: HudKnowledgeVocab.domain_label(branch),
 			HudKnowledgeVocab.DOMAIN_SHAPE: HudKnowledgeVocab.DOMAIN_SHAPE_LADDER,
+			# **THE AREA IS READ OFF THE ROW, NEVER OFF A TABLE HERE.** Every row of one branch carries
+			# the same area — it is a property of the BRANCH, published per row because the roster has
+			# no branch table of its own — so the first row answers for all of them. A row whose
+			# descriptor named no area answers `AREA_KEY_NONE`, which still groups and still draws.
+			HudKnowledgeVocab.DOMAIN_AREA: _area_of(rows.front() as Dictionary),
 			HudKnowledgeVocab.DOMAIN_NODES: nodes,
 		})
 	var crafts: Array[Dictionary] = []
@@ -131,6 +136,11 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 			HudKnowledgeVocab.DOMAIN_KEY: HudKnowledgeVocab.DOMAIN_KEY_CRAFT,
 			HudKnowledgeVocab.DOMAIN_LABEL: HudKnowledgeVocab.DOMAIN_CRAFT_LABEL,
 			HudKnowledgeVocab.DOMAIN_SHAPE: HudKnowledgeVocab.DOMAIN_SHAPE_FAN,
+			# **THE ONE DOMAIN WHOSE AREA THE CLIENT NAMES**, because the craft fan is not a ladder
+			# branch: no row of the config's `branches` table describes it, so there is nothing on the
+			# wire to read. See `HudKnowledgeVocab.CRAFT_FAN_AREA` for why one constant for one
+			# client-built domain is not the branch→area table that would be the old bug.
+			HudKnowledgeVocab.DOMAIN_AREA: HudKnowledgeVocab.CRAFT_FAN_AREA,
 			HudKnowledgeVocab.DOMAIN_NODES: crafts,
 		})
 	return domains
@@ -158,6 +168,116 @@ static func flatten(domains: Array) -> Array[Dictionary]:
 			if node_variant is Dictionary:
 				nodes.append(node_variant as Dictionary)
 	return nodes
+
+## One roster row's SUBJECT AREA, as the key the grouping buckets on. `AREA_KEY_NONE` for a row that
+## carried none, which is a real bucket rather than a dropped row — see `HudKnowledgeVocab`.
+static func _area_of(row: Dictionary) -> StringName:
+	return StringName(String(row.get(HudKnowledgeVocab.ROSTER_AREA, "")))
+
+## **THE DOMAINS, GATHERED UNDER THEIR SUBJECT AREAS** — `[{key, label, domains: [...]}]`, which is
+## what the screen actually draws (`docs/plan_knowledge_rows.md` §5). Domains grow without limit and
+## areas do not, so this level is what puts a bound on the thing that grows.
+##
+## **THE ORDER IS `area_order`'s, AND THAT LIST IS THE WIRE'S** (`FactionReadouts.ladder_areas`, off
+## the config's `areas`). Areas are PEERS — nothing about `food` says it precedes `making` — so
+## first-seen order off the domains would reshuffle the whole screen whenever a rung was added, the
+## same defect that made column order unstable before the roster carried it. An area the domains
+## carry but that list does not still draws, after the listed ones, in first-seen order; and
+## `AREA_KEY_NONE` is always LAST, whatever either list says about it.
+##
+## **AN AREA WITH NO DOMAINS IS NEVER DRAWN** — the "never draw an empty domain row" rule one level
+## up, and for its reason: an empty heading teaches the player that a whole part of the game is
+## closed to them when in truth it does not exist yet. Today's six domains therefore render as three
+## headings and not as six. A listed area reaches the output only by having a domain, so the guard
+## below cannot fire on the wire's own order; it is stated because **the guard IS the rule**.
+static func group_areas(domains: Array, area_order: Array) -> Array[Dictionary]:
+	var by_area := {}
+	var seen_order: Array[StringName] = []
+	for domain_variant in domains:
+		if not (domain_variant is Dictionary):
+			continue
+		var domain: Dictionary = domain_variant
+		var area := StringName(String(domain.get(HudKnowledgeVocab.DOMAIN_AREA, "")))
+		if not by_area.has(area):
+			by_area[area] = []
+			seen_order.append(area)
+		(by_area[area] as Array).append(domain)
+	# The wire's order first, then whatever the domains carried that it never named, then the
+	# no-area bucket — which is pulled out of both passes so it cannot land in the middle of the
+	# screen just because some branch happened to be listed after it.
+	var ordered: Array[StringName] = []
+	for area_variant in area_order:
+		var area := StringName(String(area_variant))
+		if area == HudKnowledgeVocab.AREA_KEY_NONE or ordered.has(area):
+			continue
+		ordered.append(area)
+	for area in seen_order:
+		if area == HudKnowledgeVocab.AREA_KEY_NONE or ordered.has(area):
+			continue
+		ordered.append(area)
+	if by_area.has(HudKnowledgeVocab.AREA_KEY_NONE):
+		ordered.append(HudKnowledgeVocab.AREA_KEY_NONE)
+	var areas: Array[Dictionary] = []
+	for area in ordered:
+		var held: Array = by_area.get(area, [])
+		if held.is_empty():
+			continue
+		areas.append({
+			HudKnowledgeVocab.AREA_KEY: area,
+			HudKnowledgeVocab.AREA_LABEL: HudKnowledgeVocab.area_label(area),
+			HudKnowledgeVocab.AREA_DOMAINS: held,
+		})
+	return areas
+
+## **WHICH AREAS RENDER FOLDED** — `{area_key: true}`, and the whole rule is one sentence:
+##
+## > a hand entry wins; otherwise an area is folded exactly when the filter is not `FILTER_ALL` and
+## > no node in it matches that filter.
+##
+## **FOLDING IS NOT HIDING** (`docs/plan_knowledge_rows.md` §5). A folded heading stays on screen and
+## goes on saying what is inside it, which is why the defaults are what they are: **everything starts
+## open**, and an area is NEVER folded for being empty of progress — that is the retired
+## `_build_knowledge_block` skip wearing a caret, and for a new player it would fold the whole screen.
+## What a filter does at this level is fold what it does not match, which is what makes a filter
+## useful at twenty-four domains rather than leaving the player to scroll past dimmed rows; under
+## `All` nothing is folded and the dim-don't-hide rule is untouched.
+##
+## `hand_folds` is `{area_key: bool}` — `true` a hand FOLD, `false` a hand UNFOLD, and ABSENT means
+## *let the filter decide*. That third state is the whole mechanism: it is what makes a hand-made
+## fold outlive a filter change while the filter still folds and unfolds everything the player has
+## not touched.
+static func folded_areas(areas: Array, filter: StringName, hand_folds: Dictionary) -> Dictionary:
+	var folded := {}
+	for area_variant in areas:
+		if not (area_variant is Dictionary):
+			continue
+		var area: Dictionary = area_variant
+		var key := StringName(String(area.get(HudKnowledgeVocab.AREA_KEY, "")))
+		if hand_folds.has(key):
+			if bool(hand_folds[key]):
+				folded[key] = true
+			continue
+		if filter == HudKnowledgeVocab.FILTER_ALL:
+			continue
+		if count_matching(area_nodes(area), filter) == 0:
+			folded[key] = true
+	return folded
+
+## Every node of every domain of every area, flattened — **the list the header's tally and the
+## filter pills are taken over**, for `flatten`'s own reason: a count computed off a different list
+## from the one drawn is a wrong number nobody notices.
+static func flatten_areas(areas: Array) -> Array[Dictionary]:
+	var nodes: Array[Dictionary] = []
+	for area_variant in areas:
+		if not (area_variant is Dictionary):
+			continue
+		nodes.append_array(area_nodes(area_variant as Dictionary))
+	return nodes
+
+## ONE area's nodes — what its own heading tally counts, and what `folded_areas` asks the filter
+## about. Through `flatten`, so an area's tally and the header's are one composition.
+static func area_nodes(area: Dictionary) -> Array[Dictionary]:
+	return flatten(area.get(HudKnowledgeVocab.AREA_DOMAINS, []))
 
 ## **DOES THIS NODE MATCH THIS FILTER?** One function for the pill's COUNT and for the row's DIMMING,
 ## which is what stops a pill reading `2` over a body that dims three — the failure a separate count
@@ -243,6 +363,11 @@ const MODEL_BENCH_RECIPES := "bench_recipes"
 ## `{knowledge_key: true}` for whatever finished THIS turn — the caller's diff, never derived here
 ## (this module is pure and sees one snapshot).
 const MODEL_LEARNED_THIS_TURN := "learned_this_turn"
+## **THE SUBJECT AREAS' DISPLAY ORDER** as the wire sent it (`FactionReadouts.ladder_areas`), for
+## `group_areas`. **Nothing here requires it**: an absent or empty order still groups, it simply
+## leaves the headings in the order their branches were first seen — which is why the client half of
+## this arc never had to wait on the wire half.
+const MODEL_AREA_ORDER := "area_order"
 
 # ---- the two node builders -----------------------------------------------------------------------
 
