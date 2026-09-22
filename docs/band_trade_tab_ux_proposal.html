@@ -177,7 +177,7 @@
   /* A horizontal dock is drawn at its REAL pixel width and scaled to fit the page,
      because the whole point of §06 is how wide the strip has to be. The caption
      under it states the true width, never the drawn one. */
-  .screen.wide { justify-content: flex-end; overflow: hidden; }
+  .screen.wide { justify-content: flex-end; }
   .strip-scale { transform-origin: top center; }
   .strip-cap {
     margin-top: 12px; text-align: center; font: 500 11px/1.5 var(--mono); color: var(--g-faint);
@@ -219,6 +219,22 @@
   .bp-zone.band { width: 380px; }
   .bp-zone.work { flex: 1 1 auto; width: auto; min-width: 380px; }
   .bp-zone .sec-gap { height: 10px; border-top: 1px solid var(--g-line-soft); margin: 10px 0 0; }
+
+  /* THE ZONE'S REAL HEIGHT BUDGET, enforced so an overrun is visible rather than
+     merely long. A horizontal dock's body is PANEL_HEIGHT_WIDE (418); a 380px side
+     dock's interior is the window less the panel's own chrome. The panel is
+     no-scroll by design, so whatever falls past this line is content the player
+     cannot reach. */
+  .roomed { position: relative; overflow: hidden; }
+  .roomed::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+    background: linear-gradient(transparent, var(--g-panel));
+    pointer-events: none;
+  }
+  .overflow-mark {
+    margin-top: 6px; padding: 5px 7px; border: 1px dashed var(--g-warn); border-radius: 2px;
+    color: var(--g-warn); font: 500 10.5px/1.4 var(--mono); text-align: center;
+  }
   .bp-zone + .bp-zone { border-left: 1px solid var(--g-line-soft); padding-left: 12px; }
   .bp-zone.ghosted { opacity: .30; }
   .zone-title {
@@ -275,6 +291,8 @@
      gates the pooling union on faction, so the roster is always your own bands. */
   .chip.foreign { border-color: var(--g-pigment); color: var(--g-pigment); }
   .row.more .lab { color: var(--g-signal); font-size: 11px; }
+  .row.sub-head { margin-top: 5px; border-bottom: 1px solid var(--g-line-soft); padding-bottom: 2px; }
+  .row.sub-head .lab { font: 600 9.5px/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-dim); }
   .row.more { padding-left: 0; }
 
   .quiet { color: var(--g-faint); font-size: 11px; padding: 10px 2px; }
@@ -457,6 +475,11 @@
         <button type="button" data-net="small" aria-pressed="true">3 camps</button>
         <button type="button" data-net="large" aria-pressed="false">15 camps</button>
       </div>
+      <span class="ctl-label">Routes</span>
+      <div class="seg" role="group" aria-label="Route traffic">
+        <button type="button" data-routes="few" aria-pressed="true">3 parties</button>
+        <button type="button" data-routes="many" aria-pressed="false">20 parties</button>
+      </div>
       <span class="ctl-label">Dock</span>
       <div class="seg" role="group" aria-label="Dock">
         <button type="button" data-dock="side" aria-pressed="true">Side · tabbed</button>
@@ -468,6 +491,7 @@
     <div class="screen" id="screen">
       <div class="strip-scale" id="scaler"><div class="bp" id="panel"></div></div>
       <div class="strip-cap" id="cap"></div>
+      <div class="overflow-mark" id="overflow" style="display:none"></div>
     </div>
 
     <div class="notes">
@@ -492,9 +516,10 @@
       </div>
       <div class="note">
         <span class="nk">Try it — 15 camps</span>
-        <p>The <b>Network</b> control swaps in a fifteen-camp pool. Watch which parts of the tab
-          move: the Route half does not change size at all, the roster folds to a shape, and the
-          pooled pile list is the one thing that has to be bounded. §04 has the reasoning.</p>
+        <p><b>Network</b> swaps in a fifteen-camp pool; <b>Routes</b> puts 20 parties on the turn.
+          Set both, then flip <b>Dock</b>: the line under the stage measures the rendered content
+          against the zone's real budget, and a horizontal dock runs 345px past the end. Expand the
+          folds to see the unbounded case. §04 has the reasoning.</p>
       </div>
       <div class="note">
         <span class="nk">The roster does not balance to zero</span>
@@ -568,9 +593,10 @@
   <div class="sec-head"><span class="sec-num">04</span><h2>At fifteen camps</h2></div>
 
   <p class="lede">
-    Switch the prototype's <b>Network</b> control to <b>15 camps</b>. The question is whether the
-    shape survives, and the answer is that two of the three things on the tab do not grow with the
-    network at all — but the one that does grows faster than the member count.
+    Switch the prototype to <b>15 camps</b> and <b>20 parties</b>. Two of the three things on the
+    tab do not grow with the network at all — but they have their own axes, the tab has a fixed
+    height budget, and the line under the stage measures what is rendered against it on every
+    setting.
   </p>
 
   <div class="callout warn">
@@ -600,9 +626,10 @@
     <tbody>
       <tr>
         <td><b>Route section</b></td>
-        <td class="fix">Parties landing or leaving this turn</td>
-        <td class="fix"><b>Unchanged.</b> A party is expensive and rare; three crossings is a busy
-          turn whether the pool is 3 camps or 30. This is the half a bigger network does not touch.</td>
+        <td class="fix">Parties landing or leaving this turn — <b>not</b> the pool's size</td>
+        <td class="fix">Independent of the network, but <b>not bounded</b>. The <b>Routes</b> control
+          puts 20 parties on the turn: 16 journeys, 12 counterparties, several of them shipping both
+          ways. At that size a flat list of every party is the problem.</td>
       </tr>
       <tr>
         <td><b>Roster</b></td>
@@ -622,14 +649,24 @@
   </div>
 
   <div class="verdict">
-    <span class="nk">The answer to "how does C scale"</span>
+    <span class="nk">The answer to "how does C scale" — measured in the prototype, not argued</span>
     <p>
-      <b>C's top-level split survives, because the axis it splits on is not the one that grows.</b>
-      Local and Route stay two honest sections; the Route half is the same size at 15 camps as at 3.
-      What needs a bounding device is the <em>pooled pile list</em> inside the Local half — and that
-      list is the same list in A (under <em>Materials</em>) and in B (spread across both halves), so
-      this is not a cost C pays and the others avoid. <b>B degrades worst</b>: at 20 crossings it is
-      one flat 40-line list with the commodity's two directions at opposite ends of it.
+      <b>C's top-level split survives, and each half gets the same bounding device.</b> Set
+      <b>15 camps</b> + <b>20 parties</b> and the tab renders <b>763px</b> of content: the pooled
+      pile list ranked and folded to five, the route half split into <em>Landed</em> and
+      <em>Left</em> and each folded to three parties, the roster folded to a shape.
+    </p>
+    <p>
+      <b>That fits a side dock and does not fit a bottom one.</b> A 380px side dock's zone has about
+      1030px to give and the tab uses 763. A horizontal dock's body is
+      <code>PANEL_HEIGHT_WIDE</code> — <b>418px</b>, whatever the window height, because the cross
+      axis is the reserved one — so the same content runs <b>345px past the end</b>, and this panel
+      does not scroll. The prototype clips it at the real budget and says by how much, on both docks.
+    </p>
+    <p>
+      Expand every fold and it is <b>1536px</b>, which overruns the side dock too. So the fold is not
+      decoration: <b>it is what keeps the tab inside its zone</b>, and the expanded state needs
+      somewhere to go — see the box below.
     </p>
   </div>
 
@@ -640,6 +677,11 @@
       largest and a <em>"12 smaller piles"</em> row that expands. It is the work board's pager
       reasoning: never silently truncate, and never make the player scroll to find the row that
       matters. The 0.2-of-a-bone-pile rows are real and are not what the tab is for.</li>
+    <li><b>The route half splits by direction before it folds.</b> <em>What landed</em> and
+      <em>what left</em> are two different questions and a player asks one at a time, so 16 journeys
+      become two ranked lists of three plus two fold rows. Each party is <b>two lines</b> — the
+      counterparty and the turn, then its goods as a clause — rather than a heading and a row per
+      good, which is the parties strip's own trade at seven lines.</li>
     <li><b>The roster becomes a shape, not a list.</b> At 15 camps it leads with
       <em>"a pot 5 camps moved against; 9 sat within a tenth of their fair share"</em> and then names
       only the ends. This is the part worth arguing about — see below.</li>
@@ -665,12 +707,15 @@
     <span class="nk">The one thing 15 camps genuinely breaks</span>
     <p>
       <b>The panel is no-scroll by design</b> — two <code>ScrollContainer</code>s are sanctioned (the
-      band zone and the parties zone) and the harness asserts that no other zone has grown one. A
-      Trade zone whose length is <em>piles × the fold state</em> is unbounded, so it needs one of:
-      a third sanctioned scroll, the work board's <b>pager</b>, or the folding above holding it under
-      the zone height by construction. The prototype demonstrates the third, and at 15 camps a folded
-      Local half is 8 rows — but that is a claim I would want measured against the real
-      <code>zone_size()</code> before relying on it, not asserted off an HTML mock.
+      band zone and the parties zone) and the harness asserts that no other zone has grown one.
+      Folded, the tab is 763px and clears a side dock; <b>on a horizontal dock it does not</b>, and
+      expanding the folds overruns both. So the fold alone cannot be the whole answer: the Trade zone
+      needs a <b>third sanctioned scroll</b>, or the work board's <b>pager</b>, for the expanded
+      state to have anywhere to go.
+      <br><br>
+      The 418 and 1030 above are the shipped <code>PANEL_HEIGHT_WIDE</code> and a side dock at a
+      1200px window — close enough to decide the shape, but the figure to build against is the
+      live <code>zone_size()</code>, measured, not an HTML mock's <code>scrollHeight</code>.
     </p>
   </div>
 </section>
@@ -821,6 +866,14 @@
   </div>
 
   <div class="q">
+    <h3>Where the expanded state goes</h3>
+    <p>Folded, the tab fits a side dock and overruns a bottom one by 345px; expanded it overruns
+      both. A <b>third sanctioned <code>ScrollContainer</code></b> on the Trade zone, or the work
+      board's <b>pager</b>. I lean to the scroll — the zone's height is fixed, so it cannot feed
+      back into the reservation the way a growing zone would.</p>
+  </div>
+
+  <div class="q">
     <h3>The roster at fifteen camps</h3>
     <p>Fold it to a shape — <em>"a pot 5 camps moved against; 9 sat within a tenth of their fair
       share"</em> plus the extremes and the friction — or keep all fifteen rows. I recommend
@@ -893,7 +946,9 @@
           { good: "bone", dir: "in", link: "local", cause: "pooled", amt: 0.2,
             chips: [["density","fair"],["length","poor"]] }
         ],
-        empty: []
+        empty: [],
+        // The small world has no dense route set — the control is disabled there.
+        routesMany: null
       }
     },
 
@@ -939,7 +994,46 @@
           { good: "wood", dir: "out", link: "local", cause: "pooled", amt: 0.4, chips: [["hardness","fair"],["pliancy","good"]] },
           { good: "bone", dir: "in",  link: "local", cause: "pooled", amt: 0.2, chips: [["density","fair"],["length","poor"]] }
         ],
-        empty: []
+        empty: [],
+
+        // ---- TWENTY PARTIES IN ONE TURN --------------------------------------
+        // Swapped in for the three above by the `Routes` control. This is the case
+        // the route arm has to survive: twelve counterparties, some of them two
+        // crossings in opposite directions, some carrying two goods.
+        routesMany: [
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 14.0, peer: "Duskwater",  foreign: true, when: "left t204" },
+          { good: "hide",  dir: "in",  link: "route", cause: "shipment_in",  amt: 2.2,  peer: "Duskwater",  foreign: true, when: "landed t206",
+            chips: [["toughness","excellent"],["suppleness","good"]] },
+          { good: "bone",  dir: "in",  link: "route", cause: "shipment_in",  amt: 0.6,  peer: "Duskwater",  foreign: true, when: "landed t206",
+            chips: [["density","good"],["length","good"]] },
+          { good: "food",  dir: "in",  link: "route", cause: "shipment_in",  amt: 8.4,  peer: "Fernmoor",   when: "landed t206" },
+          { good: "stone", dir: "in",  link: "route", cause: "shipment_in",  amt: 3.1,  peer: "Hollowmere", foreign: true, when: "landed t205",
+            chips: [["hardness","excellent"],["workability","fair"]] },
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 11.5, peer: "Hollowmere", foreign: true, when: "left t203" },
+          { good: "wood",  dir: "out", link: "route", cause: "shipment_out", amt: 6.2,  peer: "Ravensedge", when: "left t205",
+            chips: [["hardness","good"],["pliancy","fair"]] },
+          { good: "fibre", dir: "in",  link: "route", cause: "shipment_in",  amt: 2.8,  peer: "Stonebeck",  foreign: true, when: "landed t206",
+            chips: [["fineness","excellent"],["strength","good"]] },
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 9.0,  peer: "Stonebeck",  foreign: true, when: "left t202" },
+          { good: "hide",  dir: "out", link: "route", cause: "shipment_out", amt: 4.4,  peer: "Thornwood",  when: "left t205",
+            chips: [["toughness","good"],["suppleness","good"]] },
+          { good: "bone",  dir: "out", link: "route", cause: "shipment_out", amt: 1.9,  peer: "Thornwood",  when: "left t205",
+            chips: [["density","fair"],["length","good"]] },
+          { good: "food",  dir: "in",  link: "route", cause: "shipment_in",  amt: 5.7,  peer: "Willowbank", when: "landed t206" },
+          { good: "fodder",dir: "out", link: "route", cause: "shipment_out", amt: 7.3,  peer: "Grimsfen",   when: "left t204" },
+          { good: "stone", dir: "out", link: "route", cause: "shipment_out", amt: 2.6,  peer: "Mossgate",   foreign: true, when: "left t201",
+            chips: [["hardness","good"],["workability","good"]] },
+          { good: "hide",  dir: "in",  link: "route", cause: "shipment_in",  amt: 1.7,  peer: "Elderbrook", when: "landed t206",
+            chips: [["toughness","fair"],["suppleness","excellent"]] },
+          { good: "wood",  dir: "in",  link: "route", cause: "shipment_in",  amt: 1.3,  peer: "Coldharrow", foreign: true, when: "landed t206",
+            chips: [["hardness","fair"],["pliancy","excellent"]] },
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 6.8,  peer: "Netherfield", when: "left t205" },
+          { good: "fibre", dir: "out", link: "route", cause: "shipment_out", amt: 0.9,  peer: "Netherfield", when: "left t205",
+            chips: [["fineness","fair"],["strength","fair"]] },
+          { good: "food",  dir: "in",  link: "route", cause: "party_home",   amt: 4.6 },
+          { good: "hide",  dir: "in",  link: "route", cause: "party_home",   amt: 3.2,
+            chips: [["toughness","good"],["suppleness","fair"]] }
+        ]
       }
     }
   };
@@ -967,8 +1061,13 @@
   // magnitude, state the remainder, never silently truncate.
   var CAP_PILES = 5;
   var CAP_ROSTER = 3;    // per direction
+  // Past this many parties the route arm splits by direction and folds each half;
+  // under it the turn is small enough to state whole, in arrival order.
+  var CAP_ROUTES = 6;
+  var CAP_ROUTE_GROUPS = 3;   // parties shown per direction before the fold
 
-  var state = { layout: "c", turn: "busy", dock: "side", net: "small", open: null, expand: {} };
+  var state = { layout: "c", turn: "busy", dock: "side", net: "small", routes: "few",
+                open: null, expand: {} };
 
   // ---------------------------------------------------------------------------
   function esc(s) {
@@ -982,7 +1081,14 @@
   function isMaterial(x) { return x.good !== "food" && x.good !== "fodder"; }
   function world() { return WORLD[state.net]; }
   function members() { return world().members; }
-  function crossings() { return world().turns[state.turn]; }
+  /** The turn's crossings, with the dense route set swapped in for the sparse one when
+      the `Routes` control asks for it. Only the busy turn has both. */
+  function crossings() {
+    var t = world().turns;
+    var list = t[state.turn];
+    if (state.turn !== "busy" || state.routes !== "many" || !t.routesMany) { return list; }
+    return list.filter(function (x) { return x.link === "local"; }).concat(t.routesMany);
+  }
   function big() { return state.net === "large"; }
 
   /** The key a crossing's roster scope is taken on: the commodity for food/fodder,
@@ -1033,12 +1139,14 @@
     return '<span class="amt ' + cls(dir) + '">' + mark(dir) + " " + amt(n) + "</span>";
   }
 
-  function moreRow(n, id, wordSingular) {
+  // `word` is [singular, plural] — "partys" is what deriving the plural with an `s`
+  // produced, and a fold row is read more often than almost any other row here.
+  function moreRow(n, id, word) {
     var open = !!state.expand[id];
     return '<div class="row click more" data-toggle="' + esc(id) + '">' +
       '<span class="caret">' + (open ? "▾" : "▸") + "</span>" +
-      '<span class="lab dim">' + (open ? "fold the smaller " + wordSingular + "s back"
-        : n + " smaller " + wordSingular + (n === 1 ? "" : "s")) + "</span></div>";
+      '<span class="lab dim">' + (open ? "fold the smaller " + word[1] + " back"
+        : n + " smaller " + (n === 1 ? word[0] : word[1])) + "</span></div>";
   }
 
   /** Rank by magnitude and fold the tail — never drop it. */
@@ -1272,7 +1380,7 @@
           label: LINK_WORD[x.link] + " · " + CAUSE_WORD[x.cause] + peerClause(x)
         });
       });
-      if (big()) { h += moreRow(mats.length - CAP_PILES, "matsA", "pile"); }
+      if (big()) { h += moreRow(mats.length - CAP_PILES, "matsA", ["pile", "piles"]); }
       h += "</div>";
     }
 
@@ -1313,7 +1421,7 @@
         });
       });
       if (big() && mine.length > CAP_PILES) {
-        h += moreRow(mine.length - CAP_PILES, id, "crossing");
+        h += moreRow(mine.length - CAP_PILES, id, ["crossing", "crossings"]);
       }
       h += "</div>";
       // ⛔ No subtotal under either half. They are different goods and different
@@ -1355,7 +1463,7 @@
       h += row({ key: scopeKey(x), label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
     });
     if (big() && pooled.length > CAP_PILES) {
-      h += moreRow(pooled.length - CAP_PILES, "locC", "pile");
+      h += moreRow(pooled.length - CAP_PILES, "locC", ["pile", "piles"]);
     }
     named.forEach(function (x) {
       h += row({
@@ -1369,8 +1477,14 @@
 
     // --- ROUTE
     var rt = list.filter(function (x) { return x.link === "route"; });
+    // **COUNTED IN PARTIES, NOT CROSSINGS** — one party carrying hide and bone is one
+    // journey and two crossings, and a heading that says 20 over two sub-heads that say
+    // 8 and 8 is two units wearing one word.
+    var partyCount = Object.keys(rt.reduce(function (acc, x) {
+      acc[(x.peer || "\u0000own") + "\u0001" + x.dir] = 1; return acc;
+    }, {})).length;
     h += '<div class="grp"><div class="grp-head">' + LINK_WORD.route +
-      '<span class="cnt">' + (rt.length ? rt.length + " crossing" + (rt.length === 1 ? "" : "s") : "no parties") +
+      '<span class="cnt">' + (rt.length ? partyCount + (partyCount === 1 ? " party" : " parties") : "no parties") +
       "</span></div>" +
       '<div class="row"><span class="sub">' + LINK_GLOSS.route + "</span></div>";
     if (!rt.length) {
@@ -1385,25 +1499,67 @@
       var k = (x.peer || "\u0000own") + "\u0001" + x.dir;
       (byPeer[k] = byPeer[k] || []).push(x);
     });
-    Object.keys(byPeer).sort().forEach(function (k) {
-      var group = byPeer[k];
-      var own = k.indexOf("\u0000own") === 0;
-      var dir = group[0].dir;
-      h += row({
-        cls: "sub-row",
-        label: (own ? "our own party"
-                    : (dir === "in" ? "← " : "→ ") + esc(group[0].peer) + foreignTag(group[0])),
-        sub: own ? "came home" : esc(group[0].when || ""),
-        dimLabel: own
-      });
-      group.forEach(function (x) {
-        h += row({
-          cls: "sub-sub", key: scopeKey(x),
-          label: esc(x.good) + " " + chips(x),
-          amt: amtCell(x.dir, x.amt)
-        });
-      });
+    var groups = Object.keys(byPeer).map(function (k) {
+      var g = byPeer[k];
+      return { key: k, own: k.indexOf("\u0000own") === 0, dir: g[0].dir,
+               peer: g[0].peer, when: g[0].when, items: g,
+               weight: g.reduce(function (a, x) { return a + x.amt; }, 0) };
     });
+
+    // Writes ONE party's crossing. `tight` puts the goods on the heading row as a
+    // clause instead of a row each — the same trade the parties strip makes at seven
+    // lines: two facts that read as one sentence cost one row.
+    function writeGroup(g, tight) {
+      var head = g.own ? "our own party"
+                       : (g.dir === "in" ? "← " : "→ ") + esc(g.peer) + foreignTag(g.items[0]);
+      if (tight) {
+        var goods = g.items.map(function (x) {
+          return '<span class="amt ' + cls(x.dir) + '">' + amt(x.amt) + "</span> " + esc(x.good);
+        }).join(" · ");
+        h += '<div class="row click sub-row' + (state.open === scopeKey(g.items[0]) ? " on" : "") +
+          '" data-key="' + esc(scopeKey(g.items[0])) + '">' +
+          '<span class="lab' + (g.own ? " dim" : "") + '">' + head + "</span>" +
+          '<span class="fill"></span>' +
+          '<span class="amt" style="color:var(--g-faint)">' + esc(g.own ? "came home" : g.when || "") +
+          "</span></div>" +
+          '<div class="row sub-sub"><span class="lab">' + goods + "</span></div>";
+        return;
+      }
+      h += row({ cls: "sub-row", label: head, sub: g.own ? "came home" : esc(g.when || ""),
+                 dimLabel: g.own });
+      g.items.forEach(function (x) {
+        h += row({ cls: "sub-sub", key: scopeKey(x),
+                   label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
+      });
+    }
+
+    // ⛔ AT TWENTY PARTIES THE FLAT LIST IS THE PROBLEM, NOT THE NESTING. Split by
+    // direction — *what landed* and *what left* are two different questions and a
+    // player asks one at a time — then rank each half by size and fold its tail, the
+    // same device the pooled pile list uses. Under the fold the two halves cost 6 rows
+    // each whatever the turn did; expanded they state every party.
+    if (groups.length > CAP_ROUTES) {
+      [["in", "Landed"], ["out", "Left"]].forEach(function (pair) {
+        var dir = pair[0];
+        var half = groups.filter(function (g) { return g.dir === dir; })
+                         .sort(function (a, b) { return b.weight - a.weight; });
+        if (!half.length) { return; }
+        var id = "rt" + dir;
+        var open = !!state.expand[id];
+        var show = open ? half : half.slice(0, CAP_ROUTE_GROUPS);
+        h += '<div class="row sub-head"><span class="lab">' +
+          '<span class="' + cls(dir) + '">' + mark(dir) + "</span> " + pair[1] +
+          "</span>" + '<span class="fill"></span>' +
+          '<span class="amt" style="color:var(--g-faint)">' + half.length + " parties</span></div>";
+        show.forEach(function (g) { writeGroup(g, true); });
+        if (half.length > CAP_ROUTE_GROUPS) {
+          h += moreRow(half.length - CAP_ROUTE_GROUPS, id, ["party", "parties"]);
+        }
+      });
+    } else {
+      groups.sort(function (a, b) { return a.key < b.key ? -1 : 1; });
+      groups.forEach(function (g) { writeGroup(g, false); });
+    }
     h += "</div>";
 
     return h + rosterBlock();
@@ -1412,7 +1568,44 @@
   var LAYOUTS = { a: layoutA, b: layoutB, c: layoutC };
 
   // ---------------------------------------------------------------------------
-  function tradeZone() { return LAYOUTS[state.layout](); }
+  function tradeZone() {
+    return '<div class="tradezone">' + LAYOUTS[state.layout]() + "</div>";
+  }
+
+  // **THE ROOM THE ZONE ACTUALLY HAS.** A horizontal dock's body is
+  // `PANEL_HEIGHT_WIDE` (418) whatever the window height — the cross axis is the
+  // RESERVED one, and growing it re-insets the map. A 380px side dock's long axis is
+  // the window, so its zone gets the viewport less the card's header and tab bar;
+  // 1030 is that for a 1200px-tall window.
+  var ROOM = { side: 1030, bottom4: 418, bottom3: 418 };
+
+  /** Clip each rendered trade zone to its budget and say what fell past the end.
+      MEASURED after layout, never predicted — the whole reason this is in a browser. */
+  function markRoom() {
+    var room = ROOM[state.dock];
+    var mark = document.getElementById("overflow");
+    var worst = 0, full = 0;
+    document.querySelectorAll(".tradezone").forEach(function (zone) {
+      zone.classList.remove("roomed");
+      zone.style.maxHeight = "";
+      full = zone.scrollHeight;
+      var over = full - room;
+      if (over > worst) { worst = over; }
+      if (over > 0) {
+        zone.style.maxHeight = room + "px";
+        zone.classList.add("roomed");
+      }
+    });
+    if (!mark) { return; }
+    mark.style.display = "";
+    mark.innerHTML = worst > 0
+      ? "\u26a0 " + full + "px of content in " + room + "px of zone \u2014 <b>" + worst +
+        "px past the end</b>, and this panel does not scroll"
+      : full + "px of content in " + room + "px of zone \u2014 it fits";
+    mark.style.borderStyle = worst > 0 ? "dashed" : "solid";
+    mark.style.borderColor = worst > 0 ? "var(--g-warn)" : "var(--g-line)";
+    mark.style.color = worst > 0 ? "var(--g-warn)" : "var(--g-faint)";
+  }
 
   function ghostZone(title, lines) {
     var h = '<div class="zone-title">' + title + "</div>";
@@ -1474,6 +1667,8 @@
       }
 
       panel.innerHTML = head + '<div class="bp-zones">' + zones + "</div>";
+      // Clip FIRST — it changes the panel's height, and the scaler below measures it.
+      markRoom();
 
       var s = Math.min(1, STAGE_W / strip.w);
       scaler.style.setProperty("--strip-w", strip.w + "px");
@@ -1498,8 +1693,8 @@
       scaler.style.transform = "";
       scaler.style.width = "";
       scaler.style.height = "";
-      cap.innerHTML = "side dock · 380px · " + members().length + " camps · " +
-        panel.offsetHeight + "px of content";
+      cap.innerHTML = "side dock \u00b7 380px \u00b7 " + members().length + " camps";
+      markRoom();
     }
   }
 
@@ -1520,6 +1715,7 @@
   bindSeg("turn", "turn");
   bindSeg("dock", "dock");
   bindSeg("net", "net");
+  bindSeg("routes", "routes");
 
   document.getElementById("panel").addEventListener("click", function (ev) {
     var t = ev.target.closest ? ev.target.closest(".row.click") : null;
