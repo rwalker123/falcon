@@ -542,6 +542,9 @@ fn create_populations<'a>(
                                 // **After the top-up, in keepers** — see
                                 // `PoolCrewLineState::idle_keepers`.
                                 idleKeepers: line.idle_keepers,
+                                // **The head count it was struck against**, without which the
+                                // figure above has no basis — see `PoolCrewLineState::keepers`.
+                                keepers: line.keepers,
                             },
                         )
                     })
@@ -1537,6 +1540,7 @@ fn decode_population(
         pool_crew: map_rows(cohort.poolCrew(), |line| PoolCrewLineState {
             pool: text(line.pool()),
             idle_keepers: line.idleKeepers(),
+            keepers: line.keepers(),
         }),
         transfer_local_received_turn: cohort.transferLocalReceivedTurn(),
         transfer_local_sent_turn: cohort.transferLocalSentTurn(),

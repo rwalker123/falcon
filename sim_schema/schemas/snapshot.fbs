@@ -6695,7 +6695,27 @@ table PoolCrewLine {
   // them". The pre-top-up figure would tell a player to step down a keeper the sim has working.
   //
   // `0` is a pool that employed every hand it was given.
+  //
+  // *** IT IS MEANINGLESS WITHOUT `keepers` BELOW. *** It was struck against THAT head count, which
+  // is the one the turn settled and not necessarily the one the band's row carries now.
   idleKeepers:float;
+  // THE HEAD COUNT `idleKeepers` WAS STRUCK AGAINST - the keepers this pool held when the turn
+  // settled it.
+  //
+  // *** IT IS THE BASIS OF THE FIGURE ABOVE, AND A READER THAT IGNORES IT IS READING A NUMBER WHOSE
+  // BASIS HAS MOVED. *** A labor row is edited the instant the player presses the stepper, outside
+  // the turn; this whole line is stamped only when the turn settles the pool. So between a press
+  // and the next turn resolution the row already carries the new head count while `idleKeepers`
+  // still describes the old one.
+  //
+  // A reader projecting a live edit therefore takes `idleKeepers + (its own current head count -
+  // keepers)`, floored at zero - the added hand is BARE (`docs/plan_pool_toe.md` section 2.3 step
+  // 5), so the client can price the CHANGE even though it cannot price the absolute. Reading
+  // `idleKeepers` alone answers with the staffing the player has already left behind.
+  //
+  // IN KEEPERS AND A FLOAT, like every other hand quantity on this wire, so a reader that divides
+  // and subtracts against it casts nothing.
+  keepers:float;
 }
 
 table WorldSnapshot {

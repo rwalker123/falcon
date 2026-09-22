@@ -5062,18 +5062,22 @@
       "pool_crew": [
         {
           "idle_keepers": 19.24,
+          "keepers": 35.959999,
           "pool": "agriculture"
         },
         {
           "idle_keepers": 70.25,
+          "keepers": 0.09,
           "pool": "husbandry"
         },
         {
           "idle_keepers": 19.620001,
+          "keepers": 75.519997,
           "pool": "roadwork"
         },
         {
           "idle_keepers": 58.41,
+          "keepers": 62.630001,
           "pool": "quarrywork"
         }
       ],
@@ -5941,18 +5945,22 @@
       "pool_crew": [
         {
           "idle_keepers": 80.169998,
+          "keepers": 38.990002,
           "pool": "agriculture"
         },
         {
           "idle_keepers": 67.480003,
+          "keepers": 16.68,
           "pool": "husbandry"
         },
         {
           "idle_keepers": 40.110001,
+          "keepers": 1.87,
           "pool": "roadwork"
         },
         {
           "idle_keepers": 108.959999,
+          "keepers": 25.639999,
           "pool": "quarrywork"
         }
       ],
@@ -6915,18 +6923,22 @@
       "pool_crew": [
         {
           "idle_keepers": 20.99,
+          "keepers": 62.919998,
           "pool": "agriculture"
         },
         {
           "idle_keepers": 4.88,
+          "keepers": 107.080002,
           "pool": "husbandry"
         },
         {
           "idle_keepers": 94.169998,
+          "keepers": 35.75,
           "pool": "roadwork"
         },
         {
           "idle_keepers": 50.970001,
+          "keepers": 112.489998,
           "pool": "quarrywork"
         }
       ],

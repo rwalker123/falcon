@@ -1652,7 +1652,24 @@ pub struct PoolCrewLineState {
     /// still short, bare. What is published is what step 5 could **not** place — so it means
     /// *"these people did nothing at all this turn"* and not *"the geared plan had no use for
     /// them"*. `0` is a pool that employed every hand it was given.
+    ///
+    /// ⛔ **IT MEANS NOTHING WITHOUT [`Self::keepers`]** — it was struck against *that* head count,
+    /// which is the one the turn settled and not necessarily the one the band's row carries now.
     pub idle_keepers: f32,
+    /// **THE HEAD COUNT [`Self::idle_keepers`] WAS STRUCK AGAINST** — the keepers this pool held
+    /// when the turn settled it.
+    ///
+    /// ⛔ **A READER THAT IGNORES IT IS READING A FIGURE WHOSE BASIS HAS ALREADY MOVED.** A labor
+    /// row is edited the instant the player presses the stepper, outside the turn, while this line
+    /// is stamped only when the turn settles the pool — so between a press and the next turn
+    /// resolution the row carries the new head count and `idle_keepers` still describes the old
+    /// one. A reader projecting a live edit takes `idle_keepers + (its own current head count −
+    /// keepers)`, floored at zero; the added hand is **bare** (`docs/plan_pool_toe.md` §2.3 step
+    /// 5), which is what lets a client price the *change* without being able to price the absolute.
+    ///
+    /// In keepers and a float like every other hand quantity on this wire, so the subtraction above
+    /// casts nothing.
+    pub keepers: f32,
 }
 
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],

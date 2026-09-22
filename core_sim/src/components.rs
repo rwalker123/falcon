@@ -4214,7 +4214,23 @@ pub struct PoolCrewLine {
     /// **Keepers the turn's bill left standing**, in keepers and fractional — struck **after** the
     /// bare-hand top-up (`systems::labor::PoolRates::idle_keepers`). `0` is a pool that employed
     /// every hand it was given.
+    ///
+    /// ⛔ **IT MEANS NOTHING WITHOUT [`Self::keepers`]**, which is the head count it was struck
+    /// against.
     pub idle_keepers: f32,
+    /// **THE HEAD COUNT [`Self::idle_keepers`] WAS STRUCK AGAINST** — the keepers this pool held
+    /// when the turn settled it (`systems::labor::PoolRates::keepers`), in keepers and a float for
+    /// the neighbour's reason: every hand quantity on this wire is one, and a reader subtracting
+    /// its own head count from this casts nothing.
+    ///
+    /// ⛔ **IT IS WHAT MAKES THE FIGURE ABOVE READABLE AFTER AN EDIT.** `assign_labor` writes the
+    /// band's row the instant the player presses the stepper, **outside** the turn, while this line
+    /// is stamped only where the turn settles the pool — so from that press until the next turn
+    /// resolution the row carries the new head count and `idle_keepers` still describes the old
+    /// one. A reader projecting the pending edit takes `idle_keepers + (the row's current head
+    /// count − keepers)`; one that reads `idle_keepers` alone answers with staffing the player has
+    /// already left behind.
+    pub keepers: f32,
 }
 
 /// **WHICH SOURCE A BUILD QUEUE ENTRY NAMES** — a patch by its tile, a herd by its id.
@@ -4470,16 +4486,20 @@ impl LaborAllocation {
     ///
     /// **Replaces rather than appends** where a pool is stamped twice in one turn, so the last word
     /// on a pool is the only one on the wire.
-    pub fn record_pool_crew(&mut self, pool: crate::equipment_config::KitJob, idle_keepers: f32) {
-        let token = pool.as_str();
+    ///
+    /// ⛔ **IT TAKES THE WHOLE LINE, NEVER ONE TERM OF IT.** [`PoolCrewLine::idle_keepers`] is only
+    /// readable against the [`PoolCrewLine::keepers`] it was struck from, so a seam that could set
+    /// one without the other would publish a figure whose basis came from a different moment —
+    /// which is the defect this pair exists to close. The line is built in exactly one place
+    /// (`systems::labor::PoolRates::crew`), off the rates the pool was just paid at.
+    pub fn record_pool_crew(&mut self, line: PoolCrewLine) {
+        let token = line.pool.as_str();
         match self
             .last_pool_crew
-            .binary_search_by(|line| line.pool.as_str().cmp(token))
+            .binary_search_by(|held| held.pool.as_str().cmp(token))
         {
-            Ok(at) => self.last_pool_crew[at].idle_keepers = idle_keepers,
-            Err(at) => self
-                .last_pool_crew
-                .insert(at, PoolCrewLine { pool, idle_keepers }),
+            Ok(at) => self.last_pool_crew[at] = line,
+            Err(at) => self.last_pool_crew.insert(at, line),
         }
     }
 

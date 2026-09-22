@@ -733,6 +733,39 @@ fn published_idle_keepers(app: &App, pool: &str) -> f32 {
         .unwrap_or_else(|| panic!("the {pool} pool states a crew line"))
 }
 
+/// **ONE POOL'S PUBLISHED `keepers`** — the head count [`published_idle_keepers`] was struck
+/// against, read off the same decoded line.
+///
+/// Panics where the pool states no line, for [`published_idle_keepers`]' reason.
+fn published_settled_keepers(app: &App, pool: &str) -> f32 {
+    with_published_cohort(app, |cohort| {
+        cohort
+            .poolCrew()
+            .and_then(|lines| {
+                lines
+                    .iter()
+                    .find(|line| line.pool() == Some(pool))
+                    .map(|line| line.keepers())
+            })
+            .unwrap_or_else(|| panic!("the {pool} pool states a crew line"))
+    })
+}
+
+/// **THE HEAD COUNT A POOL'S PUBLISHED LABOR ROW CARRIES** — what a client reads as the pool's
+/// *current* staffing. The row is captured live off the allocation, so a command that moved it
+/// shows here on the very next frame.
+fn published_row_workers(app: &App, pool: &str) -> u32 {
+    with_published_cohort(app, |cohort| {
+        cohort
+            .laborAssignments()
+            .expect("the band publishes its rows")
+            .iter()
+            .find(|row| row.kind() == Some(pool))
+            .map(|row| row.workers())
+            .unwrap_or_else(|| panic!("the band staffs a '{pool}' row"))
+    })
+}
+
 /// **A standing pool row's published `(kitId, kitWorkersHolding)`**, by the row's `kind` token.
 fn published_pool_row(app: &App, pool: &str) -> (String, f32) {
     with_published_cohort(app, |cohort| {
@@ -902,6 +935,30 @@ fn staff_one_role(
         upkeep_kit: None,
     });
     app.world.entity_mut(band).insert(allocation);
+    size_the_band(app, band, keepers);
+}
+
+/// **MOVE A ROLE'S HEAD COUNT THE WAY A STEPPER PRESS DOES** — straight onto the band's
+/// `LaborAllocation` with **no turn in between**, which is what `handle_assign_labor` does with the
+/// command (`core_sim/src/bin/server.rs`): the row moves immediately and nothing re-settles the
+/// pool until the next turn resolves.
+///
+/// The command handler itself lives in the server **binary** and no integration test can call it;
+/// what this reproduces is the state it leaves behind, which is the whole of the defect — an
+/// allocation whose row has moved past the crew account the last turn stamped.
+fn restaff_outside_the_turn(app: &mut App, band: Entity, role: &LaborTarget, keepers: u32) {
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band holds an allocation");
+        let assignment = allocation
+            .assignments
+            .iter_mut()
+            .find(|assignment| assignment.target.same_source(role))
+            .expect("the fixture band staffs the role under test");
+        assignment.workers = keepers;
+    }
     size_the_band(app, band, keepers);
 }
 
@@ -2032,6 +2089,91 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 0.0,
                 "⛔ exactly none, with no tolerance: a pool that wanted more hands than it has has \
                  none to spare"
+            );
+        }
+
+        /// ⛔ **THE REPORTED CASE — a head count moved AFTER the settle publishes the head count it
+        /// was SETTLED at, not the one the band's row carries now.**
+        ///
+        /// `assign_labor` writes the band's row the instant the player presses the stepper, outside
+        /// the turn; the crew account is stamped only where the turn settles the pool. So on every
+        /// frame between a press and the next turn resolution the two disagree — and a client
+        /// projecting the press as `idleKeepers + (row − keepers)` gets the right answer only if
+        /// `keepers` is the **settled** basis. Publishing the row's live head count here would make
+        /// that difference `0` on exactly the frame the player is deciding from, collapsing the
+        /// projection to a turn-old figure: three keepers freshly put on a pool with nothing to do
+        /// would report none.
+        #[test]
+        fn the_published_head_count_is_the_one_the_turn_settled_not_the_row_as_it_stands_now() {
+            const SETTLED_WITH: u32 = 1;
+            const AFTER_THE_PRESS: u32 = 3;
+            const NO_ROADS: u32 = 0;
+
+            let mut turn =
+                a_roadwork_pool_over_dirt_roads(&[], SETTLED_WITH, NO_ROADS, A_SHORT_HAUL);
+            assert_eq!(
+                published_settled_keepers(&turn.app, "roadwork"),
+                SETTLED_WITH as f32,
+                "fixture: the turn settled the pool at the head count it was staffed with"
+            );
+
+            let (band, _, _, _) = first_band(&mut turn.app);
+            restaff_outside_the_turn(&mut turn.app, band, &LaborTarget::Roadwork, AFTER_THE_PRESS);
+            core_sim::recapture_snapshot_in_place(&mut turn.app.world);
+
+            assert_eq!(
+                published_row_workers(&turn.app, "roadwork"),
+                AFTER_THE_PRESS,
+                "fixture: the press really did move the band's row on this very frame, with no \
+                 turn between"
+            );
+            assert_eq!(
+                published_settled_keepers(&turn.app, "roadwork"),
+                SETTLED_WITH as f32,
+                "⛔ the crew account states the head count it was STRUCK against — the row has \
+                 moved past it and the account must not follow"
+            );
+            assert_eq!(
+                published_idle_keepers(&turn.app, "roadwork"),
+                SETTLED_WITH as f32,
+                "…and its idle figure is still the settled one, unchanged by a press the turn has \
+                 not seen"
+            );
+
+            let projected = published_idle_keepers(&turn.app, "roadwork")
+                + (published_row_workers(&turn.app, "roadwork") as f32
+                    - published_settled_keepers(&turn.app, "roadwork"));
+            assert_eq!(
+                projected, AFTER_THE_PRESS as f32,
+                "⛔ which is what lets a reader project the pending edit: every keeper on a pool \
+                 with nothing to do, on the frame of the press"
+            );
+        }
+
+        /// ⛔ **THE TWO TERMS COME FROM ONE MOMENT** — a pool holding no site at all reports its
+        /// whole head count idle, so `idleKeepers == keepers` exactly.
+        ///
+        /// It is the invariant that catches the pair being stamped from two different moments: any
+        /// seam that took the idle figure from the turn and the head count from anywhere else
+        /// breaks this the moment the two disagree, and a pool with no claims is where they are
+        /// provably equal.
+        #[test]
+        fn a_pool_with_no_claims_reports_every_keeper_it_was_struck_with() {
+            const KEEPERS: u32 = 3;
+            const NO_ROADS: u32 = 0;
+
+            let turn = a_roadwork_pool_over_dirt_roads(&[], KEEPERS, NO_ROADS, A_SHORT_HAUL);
+            let idle = published_idle_keepers(&turn.app, "roadwork");
+            let keepers = published_settled_keepers(&turn.app, "roadwork");
+
+            assert_eq!(
+                keepers, KEEPERS as f32,
+                "the head count published is the one the pool was settled with"
+            );
+            assert_eq!(
+                idle, keepers,
+                "⛔ nothing was claimed, so every keeper the pool was struck with is idle — the \
+                 two terms are one turn's arithmetic"
             );
         }
     }

@@ -569,6 +569,7 @@ fn seed_snapshot() -> WorldSnapshot {
             .map(|(rank, pool)| PoolCrewLineState {
                 pool: (*pool).to_string(),
                 idle_keepers: rank as f32,
+                keepers: rank as f32,
             })
             .collect();
         cohort.pending_reveal_x = vec![0u32; ROWS];

@@ -3147,16 +3147,43 @@ func _pool_coverage(band: Dictionary, source_kind: String, role_kind: String, wo
     # past (see `_pool_idle_line`'s gate). The bill does not move with the stepper, so only the
     # supply is re-struck, and it is re-struck through the SAME `pool_work_supply` and the same gear
     # — a second expression of *is this pool short* is how one card comes to answer it twice.
+    #
+    # ⛔ **AND THE SETTLED HEAD COUNT IS THE WIRE'S, NOT THE BAND'S LABOR ROW.** Read off the row
+    # this gate was INERT: the server applies an assign to that row outside the turn, so after a
+    # press the row already carries the pending count and the test compared short-at-N against
+    # short-at-N — it could not fire for any edit, which is the only thing it exists to catch.
+    # `_settled_pool_keepers` is the crew line's own anchor and is stamped when the turn settles.
     return {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: SourceForecast.pool_work_supply(workers, per_worker,
             kit_gear),
         HudWorkVocab.POOL_COVERAGE_ASKED_KEY: asked,
         HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY: HudWorkVocab.upkeep_pool_is_short({
             HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: SourceForecast.pool_work_supply(
-                _band_labor.workers_for_role(band, role_kind), per_worker, kit_gear),
+                _settled_pool_keepers(band, role_kind), per_worker, kit_gear),
             HudWorkVocab.POOL_COVERAGE_ASKED_KEY: asked,
         }),
     }
+
+## **THE HEAD COUNT THE TURN SETTLED THIS POOL AT** — `PoolCrewLine.keepers`, as whole workers.
+##
+## ⛔ **IT IS THE WIRE'S AND NEVER THE BAND'S OWN LABOR ROW.** The server applies an assign to that
+## row the instant the command lands, OUTSIDE the turn, so after a stepper press the row equals the
+## PENDING count — and a *was this pool short before the edit* test taken against it compares
+## short-at-N with short-at-N and can never fire. The crew line is stamped only when the turn
+## settles, which is what makes it the settled staffing.
+##
+## **ROUNDED TO A WHOLE WORKER because `pool_work_supply` prices bodies**, the gear term saturating
+## at a whole count. The wire's figure is a float like every other hand quantity on it, and a head
+## count is whole in the sim — so this is a representation cast and `roundf` rather than a
+## truncating one is what stops a whole number that came back a hair light from pricing one keeper
+## fewer.
+##
+## **NO ROW, NO SETTLED STAFFING, AND `0` IS THE HONEST ANSWER THERE** — it makes the gate read the
+## pool as short and stay silent, which is the same silence `_projected_pool_idle` already answers
+## an anchorless pool with.
+func _settled_pool_keepers(band: Dictionary, role_kind: String) -> int:
+    var crew := HudBandLaborState.pool_crew_for(band, role_kind)
+    return int(roundf(float(crew.get(HudBandLaborState.POOL_CREW_KEEPERS_KEY, 0.0))))
 
 ## **THE STANDING KEEPING THIS WEB'S QUEUED JOBS WILL OWE** — `{demand, per_worker_turn}`, summed and
 ## read off the same models.
@@ -3443,12 +3470,12 @@ func _pool_toe_short_line(band: Dictionary, kind: String, effective: Dictionary)
 ## keepers, struck AFTER the sim has put leftover hands back bare onto sites still carrying a
 ## deficit, so it means *these people did nothing at all this turn*. With nothing changed since the
 ## turn resolved — no stepper edit AND no job queued — it is read WHOLE and nothing is computed; see
-## `HudBandLaborState.pool_crew_idle_for` for why a client cannot honestly compute the absolute, and
+## `HudBandLaborState.pool_crew_for` for why a client cannot honestly compute the absolute, and
 ## `_projected_pool_idle` for the two commitments the sim's figure provably does not know about.
 ##
 ## **THE `builders` CARD ANSWERS `""` OFF THE WIRE RATHER THAN OFF A SPECIAL CASE HERE.** The
-## builders are not a keeping pool and publish no `pool_crew` row, so `0.0` comes back and no whole
-## worker clears the threshold.
+## builders are not a keeping pool and publish no `pool_crew` row at all, so the reader answers with
+## no row and the projection has no anchor to strike a delta against — see `_projected_pool_idle`.
 ##
 ## ⛔ **ONE PENDING TRANSITION IS STILL SILENCED, AND IT IS A NARROW GATE RATHER THAN THE OLD WIDE
 ## ONE.** Where the pool was SHORT at the settled staffing and the edit COVERS it, the reading says
@@ -3487,8 +3514,21 @@ func _pool_idle_line(band: Dictionary, kind: String, effective: Dictionary,
 ## the player has made, less the keeping the jobs they queued this turn will owe.
 ##
 ## ```
-## projected = max(0, published_idle + (pending_workers - settled_workers) - queued_demand_in_hands)
+## projected = max(0, idleKeepers + (current_head_count - keepers) - queued_demand_in_hands)
 ## ```
+##
+## ⛔ **BOTH TERMS OF THE DELTA COME OFF THE WIRE'S OWN PAIR, AND ANCHORING IT ON THE BAND'S LABOR
+## ROW IS THE DEFECT THIS FUNCTION WAS REPORTED FOR TWICE.** The delta read
+## `effective.workers - workers_for_role(band, kind)` — the pending-aware count less the band's
+## published row — which is non-zero only while the client's optimistic overlay is ahead of that
+## row. It never is: the server applies `assign_labor` to the row IMMEDIATELY, outside the turn, so
+## by the time the card next draws both sides of that subtraction have moved to the new count, the
+## delta is `0`, and the projection collapses to a stale `idleKeepers` struck against a staffing the
+## player has already changed. Live, on turn 1: three keepers put on `agriculture` with no sources at
+## all, and the card said nothing. `PoolCrewLine.keepers` is the head count the sim struck
+## `idleKeepers` against — the two are written at one seam when the TURN settles — so it is the one
+## honest basis for *how much has changed since*, and the pending overlay is not part of the
+## subtraction at all.
 ##
 ## ⛔ **PENDING WAS A GATE AND THE GATE OVER-APPLIED ITS OWN REASON.** It answered `""` on any pending
 ## row, because the crew account is the settlement the turn RESOLVED and a `+` just pressed must not
@@ -3526,16 +3566,25 @@ func _pool_idle_line(band: Dictionary, kind: String, effective: Dictionary,
 ## tended ground and queued jobs need 3.0"* directly above *"3 workers found nothing to do"*. Two
 ## lines of one tooltip disagreeing is worse than either being wrong alone.
 ##
-## **`delta` IS NATURALLY ZERO WITH NOTHING PENDING** (`effective_role_workers` answers the settled
-## row there), so there is no branch: one expression serves the calm frame and the edited one.
+## **`delta` IS NATURALLY ZERO ON A SETTLED FRAME** — the turn stamps the crew line and the labor
+## row from the same staffing — so there is no branch and no pending test: one expression serves the
+## calm frame and the edited one. **That is why the pending FLAG plays no part here**: what the
+## reading turns on is whether the head count has moved since the turn settled it, which the two
+## published numbers answer between them, and an overlay dropped early (or never recorded) would
+## otherwise take a real change back to zero.
 ##
 ## **`max(0, …)` IS A FLOOR AND NOT A FUDGE**: the reading is *how many keepers are doing nothing*,
 ## and that cannot go below none.
 func _projected_pool_idle(band: Dictionary, kind: String, effective: Dictionary,
         queued: Array) -> float:
-    var delta := float(int(effective.get("workers", 0))
-        - _band_labor.workers_for_role(band, kind))
-    return maxf(HudBandLaborState.pool_crew_idle_for(band, kind)
+    var crew := HudBandLaborState.pool_crew_for(band, kind)
+    # **NO ROW, NO READING** — `builders` and any pool the wire did not write. There is no anchor to
+    # strike a delta against, so there is nothing to project and the card says nothing.
+    if crew.is_empty():
+        return HudWorkVocab.UPKEEP_POOL_IDLE_KEEPERS_NONE
+    var delta := float(effective.get("workers", 0)) \
+        - float(crew.get(HudBandLaborState.POOL_CREW_KEEPERS_KEY, 0.0))
+    return maxf(float(crew.get(HudBandLaborState.POOL_CREW_IDLE_KEY, 0.0))
         + delta - _queued_keeping_hands(kind, queued),
         HudWorkVocab.UPKEEP_POOL_IDLE_KEEPERS_NONE)
 

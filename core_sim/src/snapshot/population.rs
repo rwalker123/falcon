@@ -1767,6 +1767,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     .map(|line| sim_schema::state::PoolCrewLineState {
                         pool: line.pool.as_str().to_string(),
                         idle_keepers: line.idle_keepers,
+                        // ⛔ **THE HEAD COUNT THE TURN STRUCK IT AGAINST, OFF THE SAME LINE** —
+                        // never `allocation.workers_on(..)`, which a command may already have
+                        // moved. Publishing this capture's head count beside a settled idle figure
+                        // would leave a reader projecting a pending edit with a difference of zero
+                        // and no way to see the edit at all.
+                        keepers: line.keepers,
                     })
                     .collect()
             })

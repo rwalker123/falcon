@@ -529,6 +529,38 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > at [`LaborAllocation::record_pool_crew`] from each of the four paying seats and read straight out
 > at `snapshot::population`, exactly as `last_pool_toe` is.
 >
+> #### ⛔ THE IDLE FIGURE IS MEANINGLESS WITHOUT THE HEAD COUNT IT WAS STRUCK AGAINST
+>
+> A `PoolCrewLine` is a **pair**: `idleKeepers` and the `keepers` the turn settled the pool at. The
+> second is not decoration — without it the first has no basis, because the two halves of the line
+> are written at different moments than the band's own labor row is.
+>
+> **`assign_labor` moves the row immediately, outside the turn** (`handle_assign_labor`, the server
+> binary); the crew account is stamped only where the turn settles the pool. So from a stepper press
+> until the next turn resolution the published row already carries the new head count while
+> `idleKeepers` still describes the old one. A reader projecting the pending edit takes
+> `idleKeepers + (the row's current head count − keepers)`, floored at zero — the added hand is
+> **bare** (§2.3 step 5), which is exactly what lets a client price the *change* while remaining
+> unable to price the absolute.
+>
+> Publishing the row's live head count as `keepers` makes that difference `0` on precisely the frame
+> the player is deciding from, collapsing the projection onto a turn-old figure: three `agriculture`
+> keepers put on a pool with no sources on turn 1 report **none** idle. That is the defect the pair
+> closes, and it is pinned by
+> `pool_toe::the_published_head_count_is_the_one_the_turn_settled_not_the_row_as_it_stands_now` —
+> which fails if the capture ever reaches for `workers_on_job` instead of the line's own term.
+>
+> ⛔ **THE TWO TERMS ARE WRITTEN TOGETHER OR NOT AT ALL.** `PoolRates` carries `pool_rates`' own
+> `keepers` argument beside the idle figure and `PoolRates::crew` is the single place a
+> `PoolCrewLine` is built; `record_pool_crew` takes the whole line and replaces it whole. There is
+> no seam that can set one term without the other, which is the only guard against the pair coming
+> from two different moments. **In keepers and a float**, like every other hand quantity on this
+> wire, so the subtraction a reader makes against it casts nothing.
+>
+> `idleKeepers == keepers` exactly for a pool with no claims — the invariant
+> `a_pool_with_no_claims_reports_every_keeper_it_was_struck_with` pins, and the one that catches the
+> two being stamped from different turns.
+>
 > ⛔ **AN EMPTY CLAIM LIST REACHES `pool_rates`, and making it do so is half the change.**
 > A pool with a head count and **no sites** has every keeper standing — three on `agriculture` with
 > no tended ground is three idle keepers, and it is the commonest shape there is. `keeping_awards`
@@ -561,7 +593,9 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >
 > **`SAVE_FORMAT_VERSION` went to 10** with `LaborAllocation::last_pool_crew`, on the row-9 rule: the
 > allocation rides `BandRecord::labor`, so a version-9 blob has no such field and must be refused by
-> the version gate rather than by a decoder running off the end of a record.
+> the version gate rather than by a decoder running off the end of a record. **Version 10's shape is
+> the pair**, `keepers` included: a version number names a shape some build could have written, and
+> the one-term line existed only between two commits of the branch that introduced 10.
 >
 > The rest is pinned by the four cases beside that one, all off the **encoded** frame: the issue's
 > own case (a bill one geared keeper covers, a second keeper assigned, `1.34` published), the

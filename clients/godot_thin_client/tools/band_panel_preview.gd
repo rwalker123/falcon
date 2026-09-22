@@ -4951,12 +4951,37 @@ const POOL_IDLE_AGRICULTURE_IDLE := 2.4
 ## omitted: a row exists for every keeping pool whether or not the band staffs it.
 const POOL_CREW_FULLY_EMPLOYED := 0.0
 
-## One `pool_crew` row, spelled through the reader's own keys so a wire rename moves the fixture.
-func _pool_crew_row(pool: String, idle: float) -> Dictionary:
-	return {
-		HudBandLaborState.POOL_CREW_POOL_KEY: pool,
-		HudBandLaborState.POOL_CREW_IDLE_KEY: idle,
-	}
+## The four pools the wire writes a crew row for, in wire order. ⛔ **`builders` IS DELIBERATELY
+## ABSENT** — it is not a keeping pool and no server ever publishes a row for it.
+const POOL_CREW_POOLS: Array[String] = [
+	HudConst.LABOR_KIND_AGRICULTURE, HudConst.LABOR_KIND_HUSBANDRY,
+	HudConst.LABOR_KIND_ROADWORK, HudConst.LABOR_KIND_QUARRYWORK,
+]
+
+## **THE BAND'S FOUR CREW ROWS AS THE TURN THAT SETTLED IT WOULD HAVE STAMPED THEM** — one per
+## keeping pool, each carrying the idle figure this fixture is staging and the HEAD COUNT it was
+## struck against. Spelled through the reader's own keys so a wire rename moves the fixture, and a
+## pool absent from `idle_by_pool` employed every hand it was given.
+##
+## ⛔ **`keepers` IS READ OFF THE BAND'S OWN LABOR ROW, AND THAT IS THE STAGING RULE, NOT A
+## SHORTCUT.** The sim writes the two numbers at ONE seam when the turn settles, so on a settled
+## frame the crew row's head count and the band's row are necessarily the same number — which is
+## what makes this derivation exact rather than convenient. **Everything after that moment moves the
+## LABOR ROW ALONE** (`_press_role_stepper`), which is the whole shape of a pending edit: the server
+## applies an assign the instant the command lands, outside the turn, while the crew line waits for
+## the next resolution. So a crew row must be stamped BEFORE the press and never touched by it.
+func _stamp_settled_crew(band: Dictionary, idle_by_pool: Dictionary) -> Dictionary:
+	var rows: Array = []
+	for pool in POOL_CREW_POOLS:
+		rows.append({
+			HudBandLaborState.POOL_CREW_POOL_KEY: pool,
+			HudBandLaborState.POOL_CREW_IDLE_KEY: float(idle_by_pool.get(pool,
+				POOL_CREW_FULLY_EMPLOYED)),
+			HudBandLaborState.POOL_CREW_KEEPERS_KEY: float(
+				_hud._band_labor.workers_for_role(band, pool)),
+		})
+	band[HudBandLaborState.POOL_CREW_KEY] = rows
+	return band
 
 func _pool_idle_band_fixture(roadwork_idle: float) -> Dictionary:
 	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
@@ -4969,13 +4994,10 @@ func _pool_idle_band_fixture(roadwork_idle: float) -> Dictionary:
 	band["roadwork_demand"] = POOL_IDLE_ROAD_DEMAND
 	band["roadwork_supplied"] = POOL_IDLE_ROAD_DEMAND
 	band["roadwork_shortfall"] = POOL_IDLE_ROAD_SHORTFALL
-	band[HudBandLaborState.POOL_CREW_KEY] = [
-		_pool_crew_row(HudConst.LABOR_KIND_AGRICULTURE, POOL_IDLE_AGRICULTURE_IDLE),
-		_pool_crew_row(HudConst.LABOR_KIND_HUSBANDRY, POOL_CREW_FULLY_EMPLOYED),
-		_pool_crew_row(HudConst.LABOR_KIND_ROADWORK, roadwork_idle),
-		_pool_crew_row(HudConst.LABOR_KIND_QUARRYWORK, POOL_CREW_FULLY_EMPLOYED),
-	]
-	return band
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_AGRICULTURE: POOL_IDLE_AGRICULTURE_IDLE,
+		HudConst.LABOR_KIND_ROADWORK: roadwork_idle,
+	})
 
 ## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBER, NEVER THROUGH
 ## `HudWorkVocab.upkeep_pool_idle_line`** — `_pool_toe_term`'s rule: an expectation re-derived through
@@ -5089,13 +5111,9 @@ func _pool_pending_band_fixture(with_queued_sow: bool) -> Dictionary:
 	band["roadwork_demand"] = POOL_IDLE_ROAD_DEMAND
 	band["roadwork_supplied"] = POOL_IDLE_ROAD_DEMAND
 	band["roadwork_shortfall"] = POOL_IDLE_ROAD_SHORTFALL
-	band[HudBandLaborState.POOL_CREW_KEY] = [
-		_pool_crew_row(HudConst.LABOR_KIND_AGRICULTURE, POOL_CREW_FULLY_EMPLOYED),
-		_pool_crew_row(HudConst.LABOR_KIND_HUSBANDRY, POOL_CREW_FULLY_EMPLOYED),
-		_pool_crew_row(HudConst.LABOR_KIND_ROADWORK, POOL_IDLE_ROADWORK_IDLE),
-		_pool_crew_row(HudConst.LABOR_KIND_QUARRYWORK, POOL_CREW_FULLY_EMPLOYED),
-	]
-	return band
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_ROADWORK: POOL_IDLE_ROADWORK_IDLE,
+	})
 
 ## ---- …AND THE ONE TRANSITION IT STAYS SILENT ACROSS --------------------------------------------
 ##
@@ -5133,7 +5151,35 @@ func _pool_flip_band_fixture() -> Dictionary:
 		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
 			row["workers"] = POOL_FLIP_AGRICULTURE_CREW
 	band["labor_assignments"] = rows
-	return band
+	# …and its crew rows re-stamped against the heavier plant pool, so the two keepers the wire says
+	# settled this pool are the two the labor row carries. The `+` below moves the row alone.
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_ROADWORK: POOL_IDLE_ROADWORK_IDLE,
+	})
+
+## ---- …AND THE POOL WITH NOTHING TO KEEP AT ALL, WHICH IS WHAT PLAY REPORTED -------------------
+##
+## **THREE KEEPERS ON A BAND THAT WORKS NOTHING.** Reported from play at turn 1: the pool was staffed
+## and the card stayed blank. **The wire is not what was wrong** — a crew line is stamped for every
+## keeping pool whether or not the band staffs it, so this band's row is an honest `0` idle struck
+## against `0` keepers, and the three hands the press added are three hands with nowhere to go.
+##
+## ⛔ **NO SOURCES AT ALL IS THE POINT, NOT A CONVENIENCE.** With nothing tended and nothing queued
+## the pool is asked for nothing, so no shortfall can take the mark slot and no queued term can
+## absorb the hands: what the card says is the projection and nothing else.
+const POOL_BARE_AGRICULTURE_PRESSED := 3
+
+func _pool_bare_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 985
+	band["id"] = "Band 32"
+	band["upkeep_fund_mode"] = HudConst.UPKEEP_FUND_MODE_SPREAD
+	# **THE BAND WORKS NOTHING AND KEEPS NOTHING** — no forage row, no hunt row, no keeping pool
+	# staffed, no queue. The `agriculture` row does not exist until the press creates it, which is the
+	# reported shape.
+	band["labor_assignments"] = []
+	band["build_queue"] = []
+	return _stamp_settled_crew(band, {})
 
 ## ---- THE JOBS SET UP THIS TURN, WHICH A STEPPER DELTA ALONE CANNOT SEE -------------------------
 ##
@@ -5183,20 +5229,52 @@ func _pool_queued_band_fixture() -> Dictionary:
 		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
 			row["workers"] = POOL_QUEUED_AGRICULTURE_CREW
 	band["labor_assignments"] = rows
-	var crew: Array = (band[HudBandLaborState.POOL_CREW_KEY] as Array).duplicate(true)
-	for row_variant in crew:
-		var row: Dictionary = row_variant
-		if String(row.get(HudBandLaborState.POOL_CREW_POOL_KEY, "")) \
-				== HudConst.LABOR_KIND_AGRICULTURE:
-			row[HudBandLaborState.POOL_CREW_IDLE_KEY] = POOL_QUEUED_IDLE
-	band[HudBandLaborState.POOL_CREW_KEY] = crew
-	return band
+	# **RE-STAMPED AFTER THE ROW MOVED, because the crew line and the labor row agree on a SETTLED
+	# frame** — this band's four keepers are the staffing its turn resolved, and nothing here is
+	# pending. The press that follows is what pulls the two apart.
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_AGRICULTURE: POOL_QUEUED_IDLE,
+		HudConst.LABOR_KIND_ROADWORK: POOL_IDLE_ROADWORK_IDLE,
+	})
 
-## One optimistic role edit, through the model's own writer — the path a stepper press takes, so the
-## card reads whatever a real `+` would leave behind.
+## One optimistic role edit, through the model's own writer — the client half of a stepper press.
+##
+## ⛔ **ON ITS OWN IT DOES NOT STAGE A PENDING EDIT, AND A FIXTURE THAT USES IT ALONE TESTS A STATE
+## THE LIVE CLIENT NEVER REACHES** — see `_press_role_stepper`, which every pool fixture goes
+## through.
 func _record_pending_role(entity: int, kind: String, workers: int) -> void:
 	_hud._band_labor.record_pending_assign(entity, kind, workers, -1, -1, "",
 		SourceForecast.DEFAULT_HARVEST_FLOOR)
+
+## **ONE STEPPER PRESS, STAGED THE WAY THE GAME ARRIVES AT IT** — the client's optimistic overlay
+## AND the band's LABOR ROW moved to the new head count, with the band's crew rows left exactly
+## where the last turn stamped them. Mutates the band in place; the caller re-pushes it.
+##
+## ⛔ **THE MOVED ROW IS THE HALF THE OLD FIXTURES MISSED, AND IT IS WHERE A REAL DEFECT LIVED.** The
+## sim applies `assign_labor` to the band's row the INSTANT the command lands, outside the turn, and
+## the next snapshot carries it; `poolCrew` is stamped only when a turn settles. So the live pending
+## state is a **moved labor row beside an unmoved crew row** — both readings of the head count
+## already at the new value, and only the wire's `keepers` still describing the old one. Staging the
+## press as an overlay on top of an UNCHANGED row reproduces the SHAPE of that state but not the way
+## the system arrives at it, and it leaves the band's row standing in as a settled anchor the live
+## client does not have: a projection taking its delta against that row read non-zero here and ZERO
+## in the game, which is how *three keepers assigned on turn 1, no sources at all, and no mark on
+## the card* passed every fixture in this file.
+func _press_role_stepper(band: Dictionary, kind: String, workers: int) -> void:
+	_record_pending_role(int(band.get("entity", -1)), kind, workers)
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	var moved := false
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == kind:
+			row["workers"] = workers
+			moved = true
+	# **A POOL THE BAND HAS NEVER STAFFED HAS NO ROW UNTIL THE FIRST PRESS**, which is the reported
+	# case's own shape: the assign CREATES the assignment rather than editing one.
+	if not moved:
+		rows.append({"kind": kind, "workers": workers, "target_x": -1, "target_y": -1,
+			"fauna_id": ""})
+	band["labor_assignments"] = rows
 
 ## GUARD: **ONE POOL CARD UNDER A PENDING ROLE EDIT** — the three answers it publishes together.
 ##
@@ -5239,9 +5317,9 @@ func _assert_pending_pool_mark(label: String, role: String, want_glyph: String, 
 func _assert_pending_pool_idle_is_live() -> void:
 	_set_world_herds(_keeping_pool_herd_fixtures())
 	_set_forage_patches(_pool_pending_patch_fixtures(false))
-	_push_bands([_pool_pending_band_fixture(false)])
+	var band := _pool_pending_band_fixture(false)
+	_push_bands([band])
 	await _settle()
-	var entity := int(_hud._band_labor.panel_band().get("entity", -1))
 	# ⑤ NOTHING CHANGED SINCE THE TURN RESOLVED — no stepper edit AND **nothing queued** — so the
 	# reading is the wire's figure WHOLE. That pairing is what the claim needs: *nothing pending* alone
 	# would not pin it, since the queued term adjusts a calm frame too (⑤b below). Three cards, three
@@ -5256,10 +5334,14 @@ func _assert_pending_pool_idle_is_live() -> void:
 		_pool_idle_sentence(POOL_IDLE_ROADWORK_IDLE), false)
 	# …and the THREE pending edits on ONE frame, beside each other: a client that marked every
 	# pending card and one that marked none are the same picture at a glance.
-	_record_pending_role(entity, HudConst.LABOR_KIND_AGRICULTURE, POOL_PENDING_AGRICULTURE_STEPPED)
-	_record_pending_role(entity, HudConst.LABOR_KIND_HUSBANDRY, POOL_PENDING_HUSBANDRY_STEPPED)
-	_record_pending_role(entity, HudConst.LABOR_KIND_ROADWORK, POOL_PENDING_ROADWORK_STEPPED)
-	_hud._bandpanel.rerender()
+	# ⛔ **EACH PRESS MOVES THE BAND'S LABOR ROW AS WELL AS THE OVERLAY, AND THE BAND IS RE-PUSHED
+	# RATHER THAN MERELY RE-RENDERED** — that is how the state arrives in the game (the assign is
+	# applied outside the turn and rides the next snapshot), and staging it any other way leaves the
+	# band's row standing in as a settled anchor no live client has. See `_press_role_stepper`.
+	_press_role_stepper(band, HudConst.LABOR_KIND_AGRICULTURE, POOL_PENDING_AGRICULTURE_STEPPED)
+	_press_role_stepper(band, HudConst.LABOR_KIND_HUSBANDRY, POOL_PENDING_HUSBANDRY_STEPPED)
+	_press_role_stepper(band, HudConst.LABOR_KIND_ROADWORK, POOL_PENDING_ROADWORK_STEPPED)
+	_push_bands([band])
 	await _settle()
 	await _save("band_panel_pool_idle_pending")
 	_assert_zones_within_bounds()
@@ -5285,9 +5367,9 @@ func _assert_pending_pool_idle_is_live() -> void:
 	# ④ AND THE JOBS SET UP THIS TURN, which is the half a stepper delta alone cannot see.
 	_hud._band_labor._pending_labor.clear()
 	_set_forage_patches(_pool_queued_patch_fixtures())
-	_push_bands([_pool_queued_band_fixture()])
+	var queued_band := _pool_queued_band_fixture()
+	_push_bands([queued_band])
 	await _settle()
-	var queued_entity := int(_hud._band_labor.panel_band().get("entity", -1))
 	# THE FIRST PRECONDITION, and it is what makes ④ a claim about the QUEUED TERM: the Sow declared
 	# this turn really is in what the plant pool is asked for. Read through the panel's own producer,
 	# since no card states the figure and a hover reads plausibly at any number.
@@ -5304,9 +5386,9 @@ func _assert_pending_pool_idle_is_live() -> void:
 		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
 		_pool_idle_sentence(POOL_QUEUED_SPARE_CALM), false)
 	await _save("band_panel_pool_idle_queued")
-	_record_pending_role(queued_entity, HudConst.LABOR_KIND_AGRICULTURE,
+	_press_role_stepper(queued_band, HudConst.LABOR_KIND_AGRICULTURE,
 		POOL_QUEUED_AGRICULTURE_STEPPED)
-	_hud._bandpanel.rerender()
+	_push_bands([queued_band])
 	await _settle()
 	await _save("band_panel_pool_idle_pending_queued")
 	_assert_zone_content_fits()
@@ -5322,16 +5404,16 @@ func _assert_pending_pool_idle_is_live() -> void:
 	# promising a step-down that would re-open the shortfall.
 	_hud._band_labor._pending_labor.clear()
 	_set_forage_patches(_pool_flip_patch_fixtures())
-	_push_bands([_pool_flip_band_fixture()])
+	var flip_band := _pool_flip_band_fixture()
+	_push_bands([flip_band])
 	await _settle()
-	var flip_entity := int(_hud._band_labor.panel_band().get("entity", -1))
 	# THE FIRST PRECONDITION: settled, the pool really IS short — without it the gate has nothing to
 	# catch and the silence below is the ordinary *no spare hand* reading under a new name.
 	_assert_pool_mark_slot("settled, a plant pool short by under one hand of work",
 		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
-	_record_pending_role(flip_entity, HudConst.LABOR_KIND_AGRICULTURE,
+	_press_role_stepper(flip_band, HudConst.LABOR_KIND_AGRICULTURE,
 		POOL_FLIP_AGRICULTURE_STEPPED)
-	_hud._bandpanel.rerender()
+	_push_bands([flip_band])
 	await _settle()
 	await _save("band_panel_pool_idle_pending_flip")
 	_assert_zone_content_fits()
@@ -5342,6 +5424,33 @@ func _assert_pending_pool_idle_is_live() -> void:
 		"a `+` that COVERS a shortfall (%0.1f of a worker honestly spare — the card says nothing, deliberately)"
 			% POOL_FLIP_HONEST_SPARE,
 		HudWorkVocab.ROLE_NAME_AGRICULTURE, "", "", false)
+	# ⑦ **THE REPORTED CASE, AND THE ONE EVERY FIXTURE ABOVE WAS BLIND TO.** Turn 1, three
+	# `agriculture` keepers put on a band with NO SOURCES AT ALL — no tended ground, no herd, no
+	# queued job — and the card said nothing. The wire is honest: its crew row was struck when the
+	# turn settled a pool nobody was on, so it reads `0` idle against `0` keepers, and the whole
+	# reading has to come from the three hands the press added.
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches([])
+	_set_world_herds([])
+	var bare_band := _pool_bare_band_fixture()
+	_push_bands([bare_band])
+	await _settle()
+	# THE PRECONDITION: settled, nobody is on this pool and there is nothing to be idle about.
+	_assert_pool_mark_slot("settled, a plant pool nobody is on with nothing to keep",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, "", "", false)
+	_press_role_stepper(bare_band, HudConst.LABOR_KIND_AGRICULTURE, POOL_BARE_AGRICULTURE_PRESSED)
+	_push_bands([bare_band])
+	await _settle()
+	await _save("band_panel_pool_idle_bare")
+	_assert_zone_content_fits()
+	_assert_pool_cards_are_level("the bare pool frame")
+	# ⛔ **THIS IS THE ANCHOR'S OWN FIXTURE.** Both terms of the old delta — the pending-aware count
+	# and the band's labor row — are at THREE here, so a projection taking its delta against the row
+	# reads `0` and marks nothing, which is precisely what the game did. Only the wire's `keepers`
+	# still says `0`, and only a delta struck against it answers three.
+	_assert_pending_pool_mark("three keepers put on a pool with no sources at all",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+		_pool_idle_sentence(float(POOL_BARE_AGRICULTURE_PRESSED)), false)
 	# ⛔ **THE WORLD GOES BACK.** The states below this block re-render the POOLS block against
 	# `_keeping_pool_band_fixture`'s world and push no patches of their own; leaving these standing
 	# fails them several hundred lines from the state that changed.
@@ -19534,13 +19643,9 @@ func _workings_idle_band_fixture() -> Dictionary:
 	var band := _workings_band_fixture(WORKINGS_DEMAND)
 	band["quarrywork_supplied"] = WORKINGS_DEMAND
 	band["quarrywork_shortfall"] = 0.0
-	band[HudBandLaborState.POOL_CREW_KEY] = [
-		_pool_crew_row(HudConst.LABOR_KIND_AGRICULTURE, POOL_CREW_FULLY_EMPLOYED),
-		_pool_crew_row(HudConst.LABOR_KIND_HUSBANDRY, POOL_CREW_FULLY_EMPLOYED),
-		_pool_crew_row(HudConst.LABOR_KIND_ROADWORK, POOL_CREW_FULLY_EMPLOYED),
-		_pool_crew_row(HudConst.LABOR_KIND_QUARRYWORK, WORKINGS_IDLE_KEEPERS),
-	]
-	return band
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_QUARRYWORK: WORKINGS_IDLE_KEEPERS,
+	})
 
 ## GUARD: **THE ROSTER HEAD'S ONE MARK SLOT, THREE STATES** (issue #715) — the head's own SHORT and
 ## IDLE metas, the glyph it actually drew, and the idle reading on its hover.

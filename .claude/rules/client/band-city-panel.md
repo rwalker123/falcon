@@ -2852,13 +2852,36 @@ The name row holds **exactly one glyph** — that is the measured constraint abo
   `_projected_pool_idle` adjusts the wire's own number by the change the sim has not seen:
 
   ```
-  projected_idle = max(0, published_idle + (pending_workers − settled_workers) − queued_demand_in_hands)
+  projected_idle = max(0, idleKeepers + (current_head_count − keepers) − queued_demand_in_hands)
   ```
 
-  **EVERY TERM IS UNCONDITIONAL**, and `delta` is naturally zero with nothing pending —
-  `effective_role_workers` answers the settled row there. So a band that has changed nothing
+  **EVERY TERM IS UNCONDITIONAL**, and `delta` is naturally zero on a SETTLED frame — the turn
+  stamps the crew line and the labor row from the same staffing. So a band that has changed nothing
   since the turn resolved reads the wire's figure WHOLE, exactly as before; a band that has
   QUEUED a job reads it less that job's claim, whether or not a stepper was touched.
+  - ⛔ **THE DELTA IS ANCHORED ON THE WIRE'S `PoolCrewLine.keepers`, NEVER ON THE BAND'S LABOR
+    ROW, AND THAT DISTINCTION IS THE WHOLE READING.** The delta shipped for one pass as
+    `effective.workers − workers_for_role(band, kind)` — the pending-aware count less the band's
+    published row — which is non-zero only while the client's optimistic overlay is ahead of that
+    row. **It never is.** `handle_assign_labor` applies a stepper press to the row IMMEDIATELY,
+    outside the turn, and the next snapshot carries it; `poolCrew` is stamped only when a turn
+    settles. So by the time the card draws, both sides of that subtraction hold the new count, the
+    delta is `0`, and the projection collapses to a stale `idleKeepers` struck against a staffing
+    the player has already changed. Play reported it at its plainest: turn 1, three `agriculture`
+    keepers assigned, **no sources at all**, and a blank card. `keepers` is the head count the sim
+    struck `idleKeepers` against — the two are written at one seam — so it is the only honest basis
+    for *how much has changed since*, and the pending FLAG plays no part in the arithmetic at all.
+  - ⛔ **AND THE CLIENT READS THE PAIR THROUGH ONE READER.** `HudBandLaborState.pool_crew_for`
+    returns `{idle_keepers, keepers}`; the idle-only `pool_crew_idle_for` is RETIRED. An idle figure
+    on its own cannot say which of the two worlds it describes, and a convenience reader for it is
+    how a caller comes to anchor on the nearest number that looks like a head count. The sim writes
+    the two together on purpose and the client does not re-separate them.
+  - **AN ABSENT ROW IS `{}` AND NOT A PAIR OF ZEROES.** A crew line exists for every keeping pool
+    whether or not the band staffs it — `systems::labor` stamps one before the claims are zipped —
+    so within the vocabulary `0.0 / 0.0` genuinely means *this pool employed every hand it was
+    given*, while `builders` and any frame the wire never wrote state nothing. Answering those with
+    zeroes would hand the projection an anchor of `0` and mark a whole head count of phantom idle
+    keepers.
   - ⛔ **IT IS AN ADJUSTMENT AND NEVER A RE-DERIVATION FROM `{supply, asked}`.** That projection
     prices hands at a NOTIONAL kit off the band's roster, blind both to the tools the settlement
     handed the pool and to the sim's step-5 top-up — being blind to those is the whole reason this
@@ -2882,9 +2905,15 @@ The name row holds **exactly one glyph** — that is the measured constraint abo
     — it is that the ABSORBED REMAINDER is unknowable across this one transition**, one frame, and it
     self-corrects the moment the turn resolves. A pool still short AFTER the edit needs no gate, the
     card's own `is_short` taking the slot, so the test is the settled half alone
-    (`HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY`, stamped by `_pool_coverage`, which is the one
-    producer holding both head counts and re-strikes only the SUPPLY through the same
-    `pool_work_supply` and gear).
+    (`HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY`, stamped by `_pool_coverage`, which re-strikes
+    only the SUPPLY through the same `pool_work_supply` and gear).
+    ⛔ **THE RE-STRIKE TAKES THE WIRE'S `keepers` TOO, AND READ OFF THE LABOR ROW THIS GATE WAS
+    INERT.** It asked `upkeep_pool_is_short` at `pool_work_supply(workers_for_role(…))` — the row
+    the sim had already moved — so it compared short-at-N with short-at-N and could not fire for
+    any edit, which is the only thing it exists to catch. `_settled_pool_keepers` reads the crew
+    line's anchor instead (rounded to a whole worker, since `pool_work_supply` prices bodies). That
+    it now fires is a fixture, not a claim: pointing the re-strike back at the labor row fails
+    `band_panel_pool_idle_pending_flip` in exactly the way deleting the gate does.
     ⛔ **AND THE REMAINDER IS NOT SUBTRACTED FROM THE COVER DICT INSTEAD** — `supply` there is the
     notional-kit projection this reading was moved off the wire to stop consulting, so pricing the
     absorbed part with it would trade a bounded over-claim for an unbounded wrong one.
@@ -2921,8 +2950,22 @@ The name row holds **exactly one glyph** — that is the measured constraint abo
     It is also what `band_panel_preview._assert_pending_pool_mark` asserts as its precondition, since
     the other probe requires the calm `INK` on a card that is not short.
 - **The `builders` card answers `""` off the WIRE, not off a special case.** The builders are not a
-  keeping pool and publish no `pool_crew` row, so the reader finds nothing; a builders pool with an
-  empty queue is idleness of another kind and is out of this mark's scope.
+  keeping pool and publish no `pool_crew` row, so the reader finds nothing — no row, no anchor,
+  nothing to project; a builders pool with an empty queue is idleness of another kind and is out of
+  this mark's scope.
+- ⛔ **A PENDING EDIT IS A MOVED LABOR ROW BESIDE AN UNMOVED CREW ROW, AND A FIXTURE THAT STAGES IT
+  ANY OTHER WAY TESTS A STATE THE CLIENT NEVER SEES.** This is the trap that let the blank card
+  above pass every fixture in `band_panel_preview.gd`: the pending states were staged by writing
+  the client's optimistic overlay on top of a labor row left at its OLD value, so `settled` really
+  was the old number and a delta taken against it really was non-zero. That reproduces the SHAPE of
+  a pending edit and not the way the system arrives at one — the server applies the assign outside
+  the turn, so the row has already moved and only `keepers` still holds the old count. The band's
+  row therefore stood in as a settled anchor the live client does not have. **The staging rule is
+  now in the fixtures**: `_stamp_settled_crew` derives each crew row's `keepers` from the band's own
+  labor row (exact, because on a settled frame the sim wrote both from one staffing), and
+  `_press_role_stepper` is the ONLY way a pool fixture goes pending — it records the overlay, moves
+  the labor row, and leaves the crew row alone, after which the caller re-PUSHES the band rather
+  than re-rendering it.
 
 **Frames:** `band_panel_pool_idle` (all three states beside the bare card) ·
 `band_panel_pool_idle_fraction` (0.6 of a worker is not a worker) ·
@@ -2931,7 +2974,9 @@ on one frame — a `+` on a covered pool marked, a `+` on a SHORT one not, a `�
 settled card is flying) · **`band_panel_pool_idle_queued`** (the CALM half of the queued term: four
 keepers, nothing pending, a Sow queued this turn owing three — the card reads ONE where the wire says
 four) · **`band_panel_pool_idle_pending_queued`** (the same band with a `+` beside it, reading TWO) ·
-**`band_panel_pool_idle_pending_flip`**
+**`band_panel_pool_idle_bare`** (the reported case: three keepers pressed onto a pool with no
+sources whatever, against a crew row of `0` idle / `0` keepers — the mark and *3 workers…* come from
+the anchor alone, and the frame is blank without it) · **`band_panel_pool_idle_pending_flip`**
 (the silenced transition: a pool short by under one hand's work that the `+` covers, `⚠` on the
 settled frame and NOTHING on the pending one, against an honest 0.5 of a worker). The settled
 readings are asserted on the same band ahead of the pending ones — and the settled claim is staged

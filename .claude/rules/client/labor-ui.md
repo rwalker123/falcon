@@ -8007,10 +8007,20 @@ selection, which is what an absent token means to the parser.
 
 ## A KEEPING POOL'S SPARE HANDS, AND THE SENTENCE THAT WAS GATED SHUT (issue #715)
 
-`PopulationCohortState.poolCrew` is one row per KEEPING pool — `{pool, idleKeepers}` — stating how
-many of the keepers assigned to it the turn's bill did not consume. `HudBandLaborState.pool_crew_idle_for`
-is the whole reader: it joins on the labor-role token, exactly as `pool_toe_for` does, so a surface
-resolves a pool's crew account and its table of equipment off the one `kind` it already holds.
+`PopulationCohortState.poolCrew` is one row per KEEPING pool — `{pool, idleKeepers, keepers}` —
+stating how many of the keepers assigned to it the turn's bill did not consume, and the head count
+that figure was struck against. `HudBandLaborState.pool_crew_for` is the whole reader: it joins on
+the labor-role token, exactly as `pool_toe_for` does, so a surface resolves a pool's crew account
+and its table of equipment off the one `kind` it already holds.
+
+⛔ **IT HANDS BACK BOTH TERMS OR NEITHER, AND THE IDLE-ONLY READER IS RETIRED.** `idleKeepers`
+describes the staffing the TURN settled, while a labor row moves the instant the player presses the
+stepper — the sim applies an assign outside the turn — so an idle figure alone cannot say which of
+those two worlds it is describing. A caller that had only the idle half anchored its projection on
+the band's own row and subtracted the pending count from itself, which read `0` in the live game;
+the projection, its anchor and the fixture-staging trap behind it are in
+`.claude/rules/client/band-city-panel.md` → the pool card's idle mark. An absent row is `{}` rather
+than a pair of zeroes, since a zero row is a real reading and `builders` has no row at all.
 
 - ⛔ **THE SIM SAYS IT AND THE CLIENT MUST NOT WORK IT OUT.** The pool card's `supply` figure is a
   projection off a **notional** kit: it knows neither which tools the band's settlement actually
@@ -8020,8 +8030,8 @@ resolves a pool's crew account and its table of equipment off the one `kind` it 
   makes it mean *these people did nothing at all this turn*.
 - **FOUR POOLS, AND `builders` IS NEVER ONE OF THEM** — `agriculture` | `husbandry` | `roadwork` |
   `quarrywork`. **A row exists for every keeping pool whether or not the band staffs it**, unlike the
-  TOE's, so `0.0` is *this pool employed every hand it was given* and a missing row reads the same
-  way rather than as a second state.
+  TOE's, so `0.0` is *this pool employed every hand it was given* — and a MISSING row is a different
+  state, being the answer for `builders` and for any frame the wire never wrote.
 - ⛔ **THE THRESHOLD IS A WHOLE WORKER — `UPKEEP_POOL_IDLE_KEEPERS_MIN` = 1.0.** `idleKeepers` is
   continuous, so `0.4` of a keeper left standing is an ordinary reading, and 0.4 of a worker cannot
   be freed by any control on this panel. The mark's promise is *you can step this pool down by one*;

@@ -1540,12 +1540,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // only where something is required. Three keepers on `agriculture` with no tended ground are
     // three idle keepers, and that is the commonest reading there is, so a reader never has to tell
     // an absent row from a zero one.
+    //
+    // ⛔ **`idle_keepers` IS MEANINGLESS WITHOUT `keepers`, SO BOTH RIDE OUT TOGETHER.** The idle
+    // figure was struck against the head count this pool held when the TURN SETTLED it, and a labor
+    // row is edited the instant the player presses the stepper, OUTSIDE the turn — so between a
+    // press and the next resolution the band's row already carries the new count while
+    // `idle_keepers` still describes the old one. A reader projecting a live edit takes
+    // `idle_keepers + (its own current head count - keepers)`, floored at zero, and one that reads
+    // the band's row as the basis instead subtracts the pending count from itself and projects
+    // nothing at all. `keepers` is the anchor that makes the projection possible; the two are
+    // written at one seam in the sim and are decoded at one seam here.
     let mut pool_crew = VarArray::new();
     if let Some(lines) = cohort.poolCrew() {
         for line in lines.iter() {
             let mut row = VarDictionary::new();
             let _ = row.insert("pool", line.pool().unwrap_or_default());
             let _ = row.insert("idle_keepers", line.idleKeepers() as f64);
+            let _ = row.insert("keepers", line.keepers() as f64);
             pool_crew.push(&row.to_variant());
         }
     }

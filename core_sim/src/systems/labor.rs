@@ -1075,6 +1075,28 @@ struct PoolRates {
     /// A pool with a head count and **no claims** reports its whole head count: three keepers on
     /// `agriculture` with no tended ground are three keepers standing.
     idle_keepers: f32,
+    /// **THE HEAD COUNT [`Self::idle_keepers`] WAS STRUCK AGAINST** — [`pool_rates`]' own `keepers`
+    /// argument, kept so the two can only be published as a pair ([`Self::crew`]).
+    ///
+    /// ⛔ **NOT RE-READ FROM THE ALLOCATION LATER.** `assign_labor` moves a band's row the moment
+    /// the player presses the stepper, outside the turn, so the row a *publisher* sees need not be
+    /// the one this pool was settled at; a reader handed the row's figure beside a turn-old idle
+    /// count would take their difference for zero and project nothing
+    /// ([`LaborAllocation::record_pool_crew`]).
+    keepers: f32,
+}
+
+impl PoolRates {
+    /// **THIS POOL'S CREW ACCOUNT AS THE WIRE CARRIES IT** — the one place a
+    /// [`crate::components::PoolCrewLine`] is built, so the idle figure and the head count it was
+    /// struck against come from a single turn's arithmetic and cannot drift apart.
+    fn crew(&self, pool: crate::equipment_config::KitJob) -> crate::components::PoolCrewLine {
+        crate::components::PoolCrewLine {
+            pool,
+            idle_keepers: self.idle_keepers,
+            keepers: self.keepers,
+        }
+    }
 }
 
 /// **WHAT EACH OF THIS POOL'S CLAIMS WAS SUPPLIED AND WHAT IT WORE** — one [`KeepingPayment`] per
@@ -1130,6 +1152,9 @@ fn pool_rates(
     PoolRates {
         payments,
         idle_keepers: top_up.idle_keepers,
+        // **The very argument the idle figure was struck from**, carried rather than looked up
+        // again — see [`PoolRates::keepers`].
+        keepers: keepers as f32,
     }
 }
 
@@ -2639,7 +2664,7 @@ fn maintenance_shares(
         // NO CLAIMS REACHES IT TOO** — the argument is evaluated before the `zip`, so a band with
         // three `agriculture` keepers and no tended ground stamps three idle keepers rather than
         // no line at all, which is the commonest shape there is.
-        allocation.record_pool_crew(pool, rates.idle_keepers);
+        allocation.record_pool_crew(rates.crew(pool));
         for (claim, payment) in claims.iter().zip(rates.payments) {
             awards[claim.index] = KeepingAward {
                 // ⛔ **THE WHOLE SUPPLY, GEARED HANDS AND BARE ONES** — but the wear kit beside it is
@@ -2931,10 +2956,7 @@ pub fn settle_bands_extraction(
     // its reason: a band with quarry keepers and no workings has every one of them standing, and a
     // seat that returned before [`pool_rates`] would publish no crew line to say so (issue #715).
     let rates = pool_rates(equipment_cfg, band_kit, &claims, &fills, keepers, fund_mode);
-    allocation.record_pool_crew(
-        crate::equipment_config::KitJob::Quarrywork,
-        rates.idle_keepers,
-    );
+    allocation.record_pool_crew(rates.crew(crate::equipment_config::KitJob::Quarrywork));
     for (claim, payment) in claims.iter().zip(rates.payments) {
         let supplied = payment.supplied();
         let (tile, material) = &held[claim.index];
@@ -3233,10 +3255,7 @@ pub fn settle_bands_roadwork(
     // settles zero hands on every claim, which pays `0` into each road and wears nothing
     // (`BandEquipment::wear_item` charges nothing for no work).
     let rates = pool_rates(equipment_cfg, band_kit, &claims, &fills, keepers, fund_mode);
-    allocation.record_pool_crew(
-        crate::equipment_config::KitJob::Roadwork,
-        rates.idle_keepers,
-    );
+    allocation.record_pool_crew(rates.crew(crate::equipment_config::KitJob::Roadwork));
     for (claim, payment) in claims.iter().zip(rates.payments) {
         let supplied = payment.supplied();
         if let Some(road) = registry.road_mut(kept[claim.index]) {
