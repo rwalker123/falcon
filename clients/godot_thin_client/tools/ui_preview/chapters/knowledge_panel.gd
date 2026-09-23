@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 181
+const EXPECTED_CHECKPOINTS := 194
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -1466,6 +1466,32 @@ func _assert_opens_on_filter() -> void:
 	h._assert_hud("knowledge route — …and leaves the reading UNTOUCHED (`%s`)" % controller._selected,
 		controller._selected == "cultivation")
 	await _press_node("cultivation")
+	# ⛔ **AND A HAND FOLD MUST NOT SWALLOW THE ROW THE ORB JUST NAMED** (`docs/plan_knowledge_rows.md`
+	# §5). A hand entry BEATS the filter, so a fold the player left standing outlives the hand-over:
+	# fold Food, tick a turn, press *Herding learned*, and the screen lands on `new` with Food shut and
+	# Herding's chip not drawn at all — the exact outcome this entry point exists to prevent. The fold
+	# is made through the CARET, as a player makes it, and the claim is that the CHIP IS REACHABLE
+	# rather than merely that `_hand_folds` is empty: an empty dict is the mechanism, a drawn chip is
+	# the promise.
+	var folded_area := StringName(KnowledgeFx.AREA_FOOD)
+	var handed_over := KnowledgeFx.KNOWLEDGE_HERDING
+	h._assert_hud("knowledge route — precondition: the `%s` hand-over's discovery `%s` lives under `%s`"
+			% [HudKnowledgeVocab.FILTER_NEW, handed_over, folded_area],
+		_domain_keys_of(controller.areas(), folded_area).has(HudKnowledgeVocab.DOMAIN_KEY_HERDS))
+	await _press_area(folded_area)
+	h._assert_hud("knowledge route — precondition: the caret shut `%s` by hand, and its rows are gone (%d drawn)"
+			% [folded_area, _rendered_domain_rows(folded_area)],
+		bool(controller._hand_folds.get(folded_area, false))
+			and _rendered_domain_rows(folded_area) == 0
+			and _rendered_chip(handed_over) == null)
+	h._hud.turn_orb.panel_requested.emit(HudAttentionVocab.ATTENTION_KIND_KNOWLEDGE_LEARNED,
+		TurnOrb.PANEL_SUBJECT_NONE)
+	await h._settle()
+	h._assert_hud("knowledge route — the hand-over re-presents the screen, so `%s` is OPEN again (%d rows)"
+			% [folded_area, _rendered_domain_rows(folded_area)],
+		_rendered_domain_rows(folded_area) > 0)
+	h._assert_hud("knowledge route — …and the discovery the row named is DRAWN (`%s`)" % handed_over,
+		_rendered_chip(handed_over) != null)
 	# **WHY THE ENTRY POINT HAS TO EXIST AT ALL.** The live filter is CONTROLLER state that survives a
 	# close, so a plain launcher open reopens on whatever was last set. Parked on `unused` again and
 	# reopened through `toggle`, the screen comes back on `unused` — which is what the row would have
@@ -1686,12 +1712,17 @@ func _pip_is_inside_its_button(panel: BandCityPanel) -> bool:
 ##
 ## 1. **TODAY'S SIX DOMAINS RENDER AS THREE HEADINGS** — the plan's own arithmetic, and the proof
 ##    that an area with no domains is never drawn. The config names six areas; three of them teach
-##    nothing yet and must be absent rather than empty.
-## 2. **THE ORDER IS THE WIRE'S, not first-seen.** `animal` is taught before `route` and both before
-##    the craft fan is built, so a first-seen order would answer Food, Works, Making — which is what
-##    makes this falsifiable against the shipped roster rather than only against a synthetic one.
-## 3. **THE CRAFT FAN LANDS UNDER MAKING**, which no roster row can say: the fan is not a ladder
-##    branch, so its area is the one the client names.
+##    nothing yet and must be absent rather than empty. The six are Land, Herds, **Forestry**,
+##    **Extraction**, Craft and Roads — the shipped ladder teaches across FIVE branches, and a claim
+##    written against a fixture carrying three of them describes a screen no server sends.
+## 2. **THE ORDER IS THE WIRE'S, not first-seen.** `animal` is taught before `route` and `route`
+##    before `forestry`, so a first-seen order would answer Food, Works, Making — which is what makes
+##    this falsifiable against the shipped roster rather than only against a synthetic one.
+## 3. **MAKING GATHERS FORESTRY, EXTRACTION AND THE CRAFT FAN, in that order** — the two branches off
+##    the wire's own `area`, then the fan, which is the ONE domain the client places (it is not a
+##    ladder branch, so no row of the config's `branches` table describes it). The order is asserted
+##    by EQUALITY rather than containment: the fan arriving anywhere but last would mean the grouping
+##    had stopped taking the domains in the roster's own order.
 ## 4. **FALLBACK 1 — a branch whose descriptor names NO area still draws**, under `Other`, and that
 ##    heading always sorts LAST however the wire's list is arranged.
 ## 5. **FALLBACK 2 — an area the client has no word for still draws**, under its own capitalized
@@ -1715,10 +1746,21 @@ func _assert_the_areas_gather_the_domains() -> void:
 			% str(_domain_keys_of(areas, StringName(KnowledgeFx.AREA_FOOD))),
 		_domain_keys_of(areas, StringName(KnowledgeFx.AREA_FOOD))
 			== [HudKnowledgeVocab.DOMAIN_KEY_LAND, HudKnowledgeVocab.DOMAIN_KEY_HERDS])
-	h._assert_hud("knowledge areas — …and the CRAFT fan is the one domain the client places, under `%s`"
-			% HudKnowledgeVocab.CRAFT_FAN_AREA,
+	# …and MAKING gathers the two wire-placed branches BEFORE the one domain the client places, which
+	# is where an order taken off anything but the roster shows up.
+	h._assert_hud("knowledge areas — `%s` gathers Forestry, Extraction and the client-placed CRAFT fan, in that order (%s)"
+			% [HudKnowledgeVocab.CRAFT_FAN_AREA,
+				str(_domain_keys_of(areas, HudKnowledgeVocab.CRAFT_FAN_AREA))],
 		_domain_keys_of(areas, HudKnowledgeVocab.CRAFT_FAN_AREA)
-			== [HudKnowledgeVocab.DOMAIN_KEY_CRAFT])
+			== [StringName(KnowledgeFx.BRANCH_FORESTRY), StringName(KnowledgeFx.BRANCH_EXTRACTION),
+				HudKnowledgeVocab.DOMAIN_KEY_CRAFT])
+	# …and the two branches the client has no word for wear `domain_label`'s capitalized fallback,
+	# which is the same rule the UNLABELLED AREA takes one level up — and the reason `forestry` and
+	# `extraction` need no client edit to reach this screen at all.
+	h._assert_hud("knowledge areas — …an unlisted BRANCH is named off the wire token (`%s`)"
+			% HudKnowledgeVocab.domain_label(StringName(KnowledgeFx.BRANCH_FORESTRY)),
+		HudKnowledgeVocab.domain_label(StringName(KnowledgeFx.BRANCH_FORESTRY))
+			== KnowledgeFx.BRANCH_FORESTRY.capitalize())
 	# …and each heading wears the client's own word for it.
 	h._assert_hud("knowledge areas — each heading is the client's COPY for the wire token (`%s`)"
 			% _area_label(areas, StringName(KnowledgeFx.AREA_FOOD)),
@@ -1879,11 +1921,101 @@ func _area_frames() -> void:
 	_assert_both_fallbacks_are_on_screen()
 	await h._save("knowledge_panel_area_fallbacks")
 
-	# **PUT THE SHIPPED ROSTER BACK**, and shut the screen: this HUD is long-lived and this chapter
-	# is not guaranteed to stay last.
+	# **PUT THE SHIPPED ROSTER BACK** before anything else is asked of the screen.
 	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	await h._settle()
+	await _assert_a_folded_area_closes_its_reading()
+
+	# …and shut the screen: this HUD is long-lived and this chapter is not guaranteed to stay last.
 	controller.close()
 	await h._settle()
+
+## ⛔ **A FOLDED AREA CLOSES THE READING IT HOLDS** (`docs/plan_knowledge_rows.md` §5, and the ⛔ block
+## in `KnowledgePanelController.render()`). The toggle already says only one reading is ever open, so
+## an open reading sitting under a folded heading is the screen lying about where it came from — the
+## row it belongs to is not on screen to point at.
+##
+## **IT WAS STATED THREE TIMES AND TESTED NOWHERE.** `_area_frames` never selects a node, and every
+## other `_selected` claim in this chapter runs with the owning area OPEN — so deleting the branch
+## left the whole run green. Both seams are asked, because the rule says ONE thing about both and
+## they reach it by different routes:
+##
+## - **the CARET**, which writes a hand entry, and
+## - **the FILTER**, which folds an area with no match and writes nothing at all.
+##
+## The filter leg reopens the screen first, since `close()` is what clears the hand entries — and a
+## hand entry BEATS the filter, so without that the filter would have nothing left to fold.
+##
+## ⛔ **THE SECOND CLAIM IS MADE AFTER THE AREA IS OPENED AGAIN, and that is not belt-and-braces.**
+## *"No reading is mounted while the area is folded"* is TRUE OF THE DEFECT — a folded area draws no
+## row for the block to sit under, so the panel falls back to its empty reserve and the picture looks
+## right while `_selected` still names a knowledge. What the player then meets is the consequence: the
+## heading comes back open with the reading REAPPEARING under it, and the next press on that chip
+## CLOSES it instead of opening it. So the fold is undone and the reading is required to stay shut,
+## which is the half of the rule a rendered surface can actually see. Measured: with the branch
+## disabled, the while-folded form passes on both seams and this one fails on both.
+func _assert_a_folded_area_closes_its_reading() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	var panel: KnowledgePanel = controller.panel()
+	if panel == null:
+		h._assert_hud("knowledge fold — the panel is open", false)
+		return
+	# ---- the CARET, on the area holding the reading ------------------------------------------
+	var caret_knowledge := KnowledgeFx.KNOWLEDGE_CULTIVATION
+	var caret_area := StringName(KnowledgeFx.AREA_FOOD)
+	await _press_node(caret_knowledge)
+	h._assert_hud("knowledge fold — precondition: `%s`'s reading is open under `%s` (got `%s`)"
+			% [caret_knowledge, caret_area, controller._selected],
+		controller._selected == caret_knowledge
+			and _mounted_reading_key() == caret_knowledge)
+	await _press_area(caret_area)
+	h._assert_hud("knowledge fold — folding the area by hand CLOSES the reading it holds (got `%s`)"
+			% controller._selected,
+		controller._selected == "")
+	await _press_area(caret_area)
+	h._assert_hud("knowledge fold — …and opening `%s` again does not bring that reading back (`%s`)"
+			% [caret_area, _mounted_reading_key()],
+		_rendered_domain_rows(caret_area) > 0 and _mounted_reading_key() == "")
+
+	# ---- the FILTER, on an area it does not match --------------------------------------------
+	# A fresh screen, so the caret's hand entry is gone and the filter is free to decide. `roadbuilding`
+	# is untouched on this model and so is everything else under WORKS, which is what makes `learning`
+	# a filter that folds the very area the reading sits in.
+	controller.close()
+	await h._settle()
+	controller.open()
+	await h._settle()
+	var filter_knowledge := KnowledgeFx.KNOWLEDGE_ROADBUILDING
+	var filter_area := StringName(KnowledgeFx.AREA_WORKS)
+	await _press_node(filter_knowledge)
+	h._assert_hud("knowledge fold — precondition: `%s`'s reading is open under `%s` (got `%s`)"
+			% [filter_knowledge, filter_area, controller._selected],
+		controller._selected == filter_knowledge
+			and _mounted_reading_key() == filter_knowledge)
+	await _press_filter(HudKnowledgeVocab.FILTER_LEARNING)
+	h._assert_hud("knowledge fold — precondition: that filter really folded `%s` (%d rows drawn)"
+			% [filter_area, _rendered_domain_rows(filter_area)],
+		_rendered_domain_rows(filter_area) == 0)
+	h._assert_hud("knowledge fold — a FILTER fold closes the reading too (got `%s`)"
+			% controller._selected,
+		controller._selected == "")
+	await _press_filter(HudKnowledgeVocab.FILTER_ALL)
+	h._assert_hud("knowledge fold — …and lifting the filter does not bring that reading back (`%s`)"
+			% _mounted_reading_key(),
+		_rendered_domain_rows(filter_area) > 0 and _mounted_reading_key() == "")
+
+## The knowledge the MOUNTED detail block is a reading of — `""` for the empty reserve the panel keeps
+## mounted with nothing open, which is exactly the state a folded area must leave behind. Answers
+## `"<%d blocks>"` when the tree does not hold exactly one, so "no reading is mounted" cannot pass on
+## a panel that has stopped mounting the reserve at all.
+func _mounted_reading_key() -> String:
+	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
+	if panel == null:
+		return "<no panel>"
+	var blocks := _detail_blocks(panel)
+	if blocks.size() != 1:
+		return "<%d blocks>" % blocks.size()
+	return String(blocks[0].get_meta(HudKnowledgeVocab.DETAIL_META, ""))
 
 ## Every area the roster carries has a heading in the tree, and its DOMAIN ROWS are under it.
 func _assert_the_headings_are_drawn() -> void:
@@ -1901,6 +2033,12 @@ func _assert_the_headings_are_drawn() -> void:
 	h._assert_hud("knowledge areas — …and FOOD's two domain rows are drawn under its heading (%d)"
 			% _rendered_domain_rows(StringName(KnowledgeFx.AREA_FOOD)),
 		_rendered_domain_rows(StringName(KnowledgeFx.AREA_FOOD)) == 2)
+	# …and MAKING's THREE, which is the heading that gathers more than one branch off the wire. Asked
+	# beside Food because "the rows are under their heading" is satisfied by a panel that draws one
+	# row per area — a shape the two-row heading alone cannot rule out.
+	h._assert_hud("knowledge areas — …and MAKING's three are drawn under its own (%d)"
+			% _rendered_domain_rows(HudKnowledgeVocab.CRAFT_FAN_AREA),
+		_rendered_domain_rows(HudKnowledgeVocab.CRAFT_FAN_AREA) == 3)
 
 ## ⛔ **A FOLDED HEADING DRAWS NO ROWS AND STILL SAYS WHAT IS INSIDE IT.** The rows going is what
 ## makes it a fold; the TALLY staying is what makes it not the retired `_build_knowledge_block` skip.
@@ -2092,6 +2230,13 @@ func _node_chip(root: Node, key: String) -> Control:
 			return found
 	return null
 
+## One knowledge's chip in the LIVE panel, or `null` when nothing draws it — the `_rendered_heading`
+## idiom one level down. `null` is what a folded area answers for every knowledge it holds, which is
+## the whole of *"a folded heading draws no rows"* asked about one chip.
+func _rendered_chip(key: String) -> Control:
+	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
+	return null if panel == null else _node_chip(panel, key)
+
 ## Press a node row, as a player does. See `_knowledge_frames` for why nothing here fakes a signal.
 func _press_node(key: String) -> bool:
 	var panel: KnowledgePanel = h._hud.knowledge_panel().panel()
@@ -2179,7 +2324,8 @@ func _mixed_model() -> Dictionary:
 
 ## `cultivation` known WITH a tended patch under it (so in use), `herding` known with no herd at all
 ## (so unspent), `seed_selection` close, `penning` barely begun. Every other track the roster carries
-## — `foddering` and the route branch's two — is untouched, which an absent key already says.
+## — `foddering`, the route branch's two and the making branches' three — is untouched, which an
+## absent key already says.
 func _tracks_mixed() -> Dictionary:
 	return {
 		"cultivation": PROGRESS_KNOWN,

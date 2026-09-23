@@ -2058,13 +2058,15 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Thirteen frames and 168 assertions (its
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Thirteen frames and 181 assertions (its
 `EXPECTED_CHECKPOINTS` floor is the measured **145** — frames count too, so the three launcher-face
 frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, the ROW
 layout (`docs/plan_knowledge_rows.md` slice A) moved it to 133 on two added frames, and the row
 layout's review pass added the gutter-cap and narrow-room blocks and two height claims to the stress
-block, taking it to 145 with NO new frame, and **slice C's SUBJECT AREAS took it to 181 on four
-added frames**;
+block, taking it to 145 with NO new frame, **slice C's SUBJECT AREAS took it to 181 on four
+added frames**, and that slice's review pass took it to **194** with NO new frame — the hand-fold
+hand-over claims, the completed roster's Making/Forestry claims, and the folded-area-closes-the-
+reading block;
 the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
 surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
 a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
@@ -2199,12 +2201,23 @@ that `card().size.y` stays inside the room AND the vertical scroll is live.
 > really looks like: not a clipped last row, but a card that SPILLS past the room it was fitted to
 > with the vertical scroll switched off. Measured on the sabotaged build at **463 in a 459 room**.
 
-**A clean run is 457 frames / 2252 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 457 frames / 2265 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
 figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
 and no frame, the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and their
-claims, its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220), and slice C's
-subject areas added four frames and thirty-two net claims. Everything else between them is drift
+claims, its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220), slice C's
+subject areas added four frames and thirty-two net claims, and slice C's own review pass added
+thirteen claims and no frame (457 / 2252 → 457 / 2265). Everything else between them is drift
 accumulated un-recorded, exactly as it had been the times before. Measure; do not sum.
+
+⛔ **COMPLETING THE KNOWLEDGE FIXTURE TO ALL FIVE LADDER BRANCHES MOVED NO NUMBER ANYWHERE ELSE, and
+that is the finding rather than the absence of one.** `fixtures_knowledge.gd` grew from seven
+knowledges to the shipped ten — so the header's `All N` went 10 → 13, the untouched-faction claim
+7 → 10, the tally partition 10 → 13 and the folded heading's own count 2 of 5 → 2 of 7 — and **every
+one of those claims recomputes its expectation from the roster, so not a single one had to be
+edited**. `band_panel_preview` is untouched at exit 0 (`tracks_all_at` walks the roster, so its
+fixtures simply grew three tracks nothing on that surface reads). The claims that DID have to move
+were the two written against the fixture's shape rather than against its content: `Making ==
+[craft]`, which is false of the shipped config, and the domain-row count under each heading.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 

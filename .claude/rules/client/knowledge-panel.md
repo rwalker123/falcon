@@ -250,9 +250,13 @@ card minimum 546 against a fixed 820.**
 > makes the card genuinely shrinkable — it is required rather than cosmetic, and turning it back off
 > restores the defect.
 
-**The shipped ladder teaches SEVEN** — Land: `cultivation`, `seed_selection`. Herds: `herding`,
-`penning`, `foddering`. **Roads: `roadbuilding`, `paving`.** Craft: whatever `craft_knowledge`
-publishes. **War and Telling have no ladder branch, so they have no row** — a row appears the turn its
+**The shipped ladder teaches TEN, across FIVE branches** — Land: `cultivation`, `seed_selection`.
+Herds: `herding`, `penning`, `foddering`. **Roads: `roadbuilding`, `paving`.** **Forestry:
+`woodcraft`, `conservationism`. Extraction: `quarrying`.** Craft: whatever `craft_knowledge`
+publishes — which is **six domain rows**, the last two arriving with the wood-and-stone branches
+(`extraction-workings.md`) and needing no client edit at all, not even a label: `forestry` and
+`extraction` are absent from `DOMAIN_BRANCH_LABELS` and take `domain_label`'s capitalized fallback.
+**War and Telling have no ladder branch, so they have no row** — a row appears the turn its
 first branch teaches something, which is precisely how Roads got one with no client edit beyond its
 label. An empty row is worse than a missing one: it teaches the player that a whole area of the game
 is closed to them when in truth it does not exist yet.
@@ -319,7 +323,11 @@ The rule is one sentence (`KnowledgeRoster.folded_areas`):
 - **A folded area CLOSES the reading it holds** — one rule, applied in `KnowledgePanelController
   .render()` rather than at each of the three seams that can fold an area, because the toggle already
   says only one reading is ever open and an open reading under a folded heading is the screen lying
-  about where it came from.
+  about where it came from. ⛔ **Its claim is made AFTER the area is opened again**, since *"no reading
+  is mounted while the area is folded"* is TRUE OF THE DEFECT: a folded area draws no row for the
+  block to sit under, so the panel falls back to its empty reserve and the picture looks right while
+  `_selected` still names a knowledge. What the player meets is the consequence — the reading
+  reappears when the heading comes back, and the next press on that chip CLOSES it.
 
 **THE HEADING'S TALLY IS `_tally_text` OVER THE AREA'S OWN NODES** — the same composition and the same
 `TALLY_*_FORMAT` words the header uses over all of them. §5's illustrative *"3 to learn"* is prose, not
@@ -328,7 +336,9 @@ is how a heading comes to disagree with the header above it.
 
 **THE HEADING IS A `PanelContainer` WITH `gui_input`, NOT A `Button`** — the node chip's own rule and
 for its reason: a Button is not a Container, so a caret + name + tally face parented to one is never
-laid out. It is focusable, unlike the chip, a heading being the coarsest thing on this screen.
+laid out. It is `FOCUS_NONE`, like the chip and like every other control on this screen (the ✕, the
+filter pills, the reading's own ✕): the surface is mouse-driven and the handler reads mouse buttons
+alone, so a focus ring here would be reachable by Tab and inert on Enter.
 
 ⛔ **THE CARD'S HEIGHT FOLLOWS THE FOLD, AND THE FIXED-SIZE RULE IS ABOUT READINGS.** The detail
 block's `DETAIL_BLOCK_MIN_HEIGHT` reserve still holds the card still when a reading opens and closes
@@ -382,6 +392,14 @@ SELECTION rather than the panel's tree are for.
 > `_on_node_selected` would **close** the row in the one case where the player already had that exact
 > knowledge open — the one case where the orb's row appears to do nothing. It takes no key parameter
 > either, the orb handing over a FILTER and nothing else today.
+>
+> ⛔ **AND IT CLEARS `_hand_folds`, because a hand entry BEATS the filter.** A fold the player left
+> standing outlives the hand-over and swallows the discovery the row just named: fold Food, leave the
+> screen open, tick a turn, press *Penning learned* — the screen lands on `new` with Food still shut
+> and Penning's chip not drawn at all, which is the exact outcome this entry point exists to prevent.
+> `close()` already clears them, so the defect bites only while the screen is OPEN — which is the case
+> the hand-over was built for. **An external hand-over is a RE-PRESENTATION of the screen**, so it
+> starts from §5's own default, everything open, precisely as a freshly opened screen does.
 
 ⛔ **THE ROSTER CARRIES NO FACTION, AND THE PROGRESS LIST DOES.** A faction that has learned nothing has
 no `intensification_knowledge` row at all — the sim skips it — so a roster carried on that row would
@@ -406,6 +424,15 @@ client list of exceptions. **That puts the verb lookup's own blind spot on the F
 absent from `RungGates.RUNG_KNOWLEDGE_TRACKS` reads `unspent_testable = false`, so every one of its
 knowledges wears the capsule — the same fault this file already records under *`unspent_testable` is
 two questions*, now visible without a click rather than only in the reading's `Where, now` line.
+
+⛔ **AND THE SHIPPED SCREEN HAS THREE OF THOSE TODAY** — `woodcraft`, `conservationism` and
+`quarrying` all read `gates nothing` while the config says each one gates a rung. That table is
+keyed on a VERB, and the two deposit branches declare no verb at all: their gates are keyed on the
+RUNG instead (`RungGates`' deposit section says so at the point of the split), so there is nothing
+for the inversion to find. The `unused` filter cannot count them either — a knowledge that gates
+nothing cannot be unspent. Closing it is not one table entry: the controller resolves patches, herds
+and roads, and a deposit has no fourth scan behind it, so *"is anything using Quarrying"* has no
+answer to read yet.
 
 ## A NODE CHIP IS A `PanelContainer` WITH `gui_input`, NEVER A `Button`
 
@@ -679,6 +706,14 @@ would pass against a producer that had stopped producing one. That the transcrip
 is the SIM's claim (`the_published_roster_places_every_knowledge_the_ladder_teaches`); what the fixture
 proves is that the client renders whatever roster arrives.
 
+⛔ **SO IT CARRIES ALL TEN KNOWLEDGES AND ALL FIVE BRANCHES, and a SHORT transcription is a defect
+rather than a smaller fixture.** It held `plant` / `animal` / `route` alone for one slice, and the
+subject-area claims written against it therefore described a FOUR-domain screen no server sends —
+`Making == [craft]`, where the shipped answer is `[forestry, extraction, craft]`. A transcription
+missing a branch passes against a producer that has stopped producing the rest, which is the one
+thing this file exists not to do; **re-read `intensification_ladder.json` rather than deriving or
+guessing the orders** when the ladder grows.
+
 ⛔ **AND A HARNESS THAT PUSHES NO ROSTER RENDERS NO LADDER ROWS**, which is the honest consequence of
 the panel building itself. The `ui_preview` prologue pushes it once so every chapter has one.
 
@@ -693,7 +728,7 @@ drawing from something other than the wire.
 which renders a perfectly ordinary frame with every rung honestly refused — so `band_panel_preview`
 keeps `_standing_knowledge_row` and `_standing_knowledge_tracks` under separate names.
 
-**Frames:** `knowledge_panel` (the whole screen, mixed states — four domain rows, the rails between
+**Frames:** `knowledge_panel` (the whole screen, mixed states — six domain rows, the rails between
 their chips, the craft fan with none) · `knowledge_panel_untouched` (**the frame this arc is about** —
 a faction that knows nothing, every node drawn and greyed, where the old faction-page block rendered
 an empty zone) · `knowledge_panel_detail` (a node selected, the reading open UNDER ITS OWN ROW, its

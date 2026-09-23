@@ -164,8 +164,18 @@ func open() -> void:
 ## the one case where the orb's row appears to do nothing. `_open = true` and the key untouched is
 ## the whole contract. **It takes no key parameter**, because the orb hands over a FILTER and nothing
 ## else today.
+##
+## ⛔ **AND IT DROPS THE HAND FOLDS, WHICH IS WHAT MAKES THE ROW REACHABLE AT ALL.** A hand entry
+## beats the filter (`KnowledgeRoster.folded_areas`), so a fold the player left standing outlives the
+## hand-over and swallows the very discovery the orb's row named: fold **Food** by hand, leave the
+## screen open, tick a turn, press *Penning learned* — the filter moves to `new`, Food renders FOLDED
+## because the hand entry wins, and Penning's chip is not drawn at all. `close()` already clears them,
+## so the defect bites only while the screen is open, which is exactly the case this entry point was
+## built for. **An external hand-over is a RE-PRESENTATION of the screen**, so it starts from §5's own
+## default — everything open — precisely as a freshly opened screen does.
 func open_on_filter(filter: StringName) -> void:
 	_filter = filter
+	_hand_folds.clear()
 	_open = true
 	render()
 

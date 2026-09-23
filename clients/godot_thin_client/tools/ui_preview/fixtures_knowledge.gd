@@ -30,11 +30,14 @@ const KEY_IS_STEP := "is_step"
 ## …and the SUBJECT AREA of the branch that teaches it, one level above `KEY_BRANCH`.
 const KEY_AREA := "area"
 
-## The branch tokens the sim publishes — `RungBranch::as_str`, which is also
-## `HudKnowledgeVocab.DOMAIN_KEY_*`.
+## The branch tokens the sim publishes — `RungBranch::as_str`. The first three are also
+## `HudKnowledgeVocab.DOMAIN_KEY_LAND` / `_HERDS` / `_ROUTES`; the last two have no client constant
+## at all and take `domain_label`'s capitalized fallback, which is the roster driving the panel.
 const BRANCH_PLANT := "plant"
 const BRANCH_ANIMAL := "animal"
 const BRANCH_ROUTE := "route"
+const BRANCH_FORESTRY := "forestry"
+const BRANCH_EXTRACTION := "extraction"
 
 ## The subject-area tokens the shipped `intensification_ladder.json` `branches` table names, and
 ## `HudKnowledgeVocab.AREA_LABELS`' first three keys. **A transcription, like everything else here.**
@@ -58,6 +61,9 @@ const KNOWLEDGE_PENNING := "penning"
 const KNOWLEDGE_FODDERING := "foddering"
 const KNOWLEDGE_ROADBUILDING := "roadbuilding"
 const KNOWLEDGE_PAVING := "paving"
+const KNOWLEDGE_WOODCRAFT := "woodcraft"
+const KNOWLEDGE_CONSERVATIONISM := "conservationism"
+const KNOWLEDGE_QUARRYING := "quarrying"
 
 ## **THE ROSTER THE SIM PUBLISHES FOR THE SHIPPED LADDER**, in the rungs' own declaration order.
 ##
@@ -66,8 +72,15 @@ const KNOWLEDGE_PAVING := "paving"
 ## rung is gated by it, which is what puts it under the Herds chain rather than in it.
 ##
 ## **`roadbuilding` and `paving` are the proof of the whole arrangement**: they are taught by
-## `route:trail` and `route:dirt_road`, they went onto the wire with the ladder's other five, and the
+## `route:trail` and `route:dirt_road`, they went onto the wire with the ladder's other eight, and the
 ## panel grows a **Roads** row for them without a line of client code naming either.
+##
+## ⛔ **ALL TEN, ACROSS ALL FIVE BRANCHES — a transcription missing a branch is the defect, not a
+## smaller fixture.** This carried `plant` / `animal` / `route` alone for one slice, so the claims
+## built on it described a four-domain screen that no server publishes: the shipped ladder teaches
+## **six** domains, `forestry` and `extraction` both sitting under **Making** beside the craft fan.
+## A short transcription passes against a producer that has stopped producing the rest, which is the
+## one thing this file exists not to do.
 static func ladder_roster() -> Array:
 	return [
 		_row(KNOWLEDGE_CULTIVATION, "Cultivation", BRANCH_PLANT, 1, true, AREA_FOOD),
@@ -77,6 +90,9 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_FODDERING, "Foddering", BRANCH_ANIMAL, 3, false, AREA_FOOD),
 		_row(KNOWLEDGE_ROADBUILDING, "Roadbuilding", BRANCH_ROUTE, 2, true, AREA_WORKS),
 		_row(KNOWLEDGE_PAVING, "Paving", BRANCH_ROUTE, 3, true, AREA_WORKS),
+		_row(KNOWLEDGE_WOODCRAFT, "Woodcraft", BRANCH_FORESTRY, 1, true, AREA_MAKING),
+		_row(KNOWLEDGE_CONSERVATIONISM, "Conservationism", BRANCH_FORESTRY, 2, true, AREA_MAKING),
+		_row(KNOWLEDGE_QUARRYING, "Quarrying", BRANCH_EXTRACTION, 1, true, AREA_MAKING),
 	]
 
 # ---- the two DEGENERATE rosters, one per FALLBACK ----------------------------------------------
