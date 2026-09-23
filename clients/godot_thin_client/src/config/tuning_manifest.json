@@ -101,7 +101,7 @@
         },
         {
           "pointer": "/forage/per_worker_biomass_capacity",
-          "label": "Forage throughput (bare-handed)",
+          "label": "Forage throughput",
           "type": "float",
           "min": 0.1,
           "max": 40.0,
