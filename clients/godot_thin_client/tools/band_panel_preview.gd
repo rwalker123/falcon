@@ -591,6 +591,64 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		_unhandled_press_seen = true
 
+# ---- THE POINTER CUSTODY GUARD ------------------------------------------------------------------
+# ⛔ **EVERY SIMULATED MOUSE EVENT GOES THROUGH `_push_input`, AND ANYTHING ELSE THAT ARRIVES IS A
+# FOREIGN EVENT THIS RUN DOES NOT OWN.** `Viewport.push_input` dispatches SYNCHRONOUSLY, so a flag
+# set around the call is an exact discriminator: an `_input` notification seen while it is up came
+# from this harness, and one seen while it is down came from somewhere else — the window server, or
+# the panel's own `Input.parse_input_event`. Nothing here is a heuristic.
+#
+# **WHY IT IS WORTH A GUARD RATHER THAN A COMMENT.** A foreign motion landing between a simulated
+# press and its release used to cancel that click outright (`BaseButton` recomputes
+# `status.pressing_inside` from every motion routed to it while pressed), and a foreign motion during
+# a drag makes Godot re-pick the drag-over control. Both fail as *"a control emitted nothing"* or
+# *"the thing under a stationary pointer changed"* — never as an error, and never in the same place
+# twice. This counter turns an intermittent, environment-dependent flake into one named failure on
+# the run that suffers it.
+var _in_push := false
+## Mouse events this harness pushed — the LIVENESS half: zero foreign events is free on a run that
+## drove no input at all.
+var _pushed_mouse_events := 0
+## Mouse events that arrived from outside, EXCLUDING the ones a live drag legitimately produces.
+var _foreign_mouse_events := 0
+## What the first of them was, so a failure names something rather than a count.
+var _first_foreign_event := ""
+
+func _push_input(event: InputEvent) -> void:
+	_in_push = true
+	get_viewport().push_input(event)
+	_in_push = false
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventMouse):
+		return
+	if _in_push:
+		_pushed_mouse_events += 1
+		return
+	# ⛔ **A LIVE DRAG IS THE ONE LEGITIMATE FOREIGN SOURCE, AND IT IS THE PANEL'S OWN.**
+	# `BandPanelController._resolve_queue_drag_hover` pushes a zero-relative motion through
+	# `Input.parse_input_event` after the edge auto-scroll steps the list — that is SHIPPED CLIENT
+	# CODE under test, and it runs only between `NOTIFICATION_DRAG_BEGIN` and `DRAG_END`. Excusing
+	# it by that condition rather than by its shape keeps the guard blind to nothing else: outside a
+	# drag, this client pushes no mouse input of its own at all.
+	if get_viewport().gui_is_dragging():
+		return
+	_foreign_mouse_events += 1
+	if _first_foreign_event == "":
+		_first_foreign_event = "%s during %s" % [event.as_text(), _current_state]
+
+## ⛔ **THE RUN OWNED THE POINTER FROM END TO END, OR IT DID NOT AND SAYS SO.**
+## Asked once, at the end, because the cost of a foreign event is not local to the gesture it lands
+## in — it is the run's claim to be hermetic. Paired with the pushed count, since "nothing foreign
+## arrived" is satisfied by a harness that drove nothing.
+func _assert_harness_owns_the_pointer() -> void:
+	_assert_band_panel("the harness pushed mouse input at all — %d event(s), so the claim below is not vacuous"
+		% _pushed_mouse_events, _pushed_mouse_events > 0)
+	_assert_band_panel("⛔ NOTHING outside this harness put mouse input into the viewport — %d foreign event(s)%s"
+			% [_foreign_mouse_events,
+				"" if _first_foreign_event == "" else " (first: %s)" % _first_foreign_event],
+		_foreign_mouse_events == 0)
+
 
 # ---- LEGACY FIXTURE ADAPTER: the four stances -> the escapement floor ---------------------------
 # Every fixture in this file states a source's take as the retired per-STANCE ceiling table, because
@@ -804,6 +862,7 @@ const DEEP_DRAW_FLOOR := 0.15
 
 func _ready() -> void:
 	_watchdog = _resolve_watchdog()
+	HarnessWindow.seal_from_real_mouse(get_window())
 	# FREEZE ANIMATION TIME — the treatment `ui_preview`, `map_preview` and `blend_probe` all carry, and
 	# taken for the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a panel
 	# refactor changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise
@@ -7830,13 +7889,13 @@ func _press_reaches_map(window_point: Vector2) -> bool:
 	_unhandled_press_seen = false
 	var approach := InputEventMouseMotion.new()
 	approach.position = window_point
-	get_viewport().push_input(approach)
+	_push_input(approach)
 	await get_tree().process_frame
 	var press := InputEventMouseButton.new()
 	press.button_index = MOUSE_BUTTON_LEFT
 	press.pressed = true
 	press.position = window_point
-	get_viewport().push_input(press)
+	_push_input(press)
 	await get_tree().process_frame
 	var seen := _unhandled_press_seen
 	await _release_press(window_point)
@@ -7854,12 +7913,12 @@ func _release_press(window_point: Vector2) -> void:
 	var motion := InputEventMouseMotion.new()
 	motion.position = park
 	motion.relative = park - window_point
-	get_viewport().push_input(motion)
+	_push_input(motion)
 	var release := InputEventMouseButton.new()
 	release.button_index = MOUSE_BUTTON_LEFT
 	release.pressed = false
 	release.position = park
-	get_viewport().push_input(release)
+	_push_input(release)
 	await get_tree().process_frame
 
 ## Canvas coordinates → WINDOW coordinates, which is what `push_input` takes. The states pin
@@ -14556,6 +14615,8 @@ func _report_canvas_drift(message: String) -> void:
 func _finish() -> void:
 	if _watchdog != null:
 		_watchdog.disarm()
+	# ⛔ **ASKED BEFORE THE VERDICT IS TAKEN**, or a foreign event would be reported and not counted.
+	_assert_harness_owns_the_pointer()
 	if _failures > 0:
 		print("band_panel_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
 	else:
@@ -20801,18 +20862,42 @@ const QUEUE_GESTURE_DROP_HEIGHT_FRACTION := 0.25
 ## A press and a release on one window point, with nothing in between — the click a player makes when
 ## they mean to click. Deliberately NOT `_click_control`, which synthesises a `gui_input` on one node
 ## and therefore cannot tell a click from a dead handle.
+##
+## ⛔ **THE PRESS AND THE RELEASE GO IN WITH NO AWAITED FRAME BETWEEN THEM, AND THAT IS WHAT MAKES THE
+## CLICK HERMETIC.** `BaseButton` emits `pressed` on the button-UP, and only if `status.pressing_inside`
+## is still true — a flag it recomputes from **every `InputEventMouseMotion` routed to it while the
+## press is held** (`BaseButton::gui_input`: `status.pressing_inside = has_point(mm->get_position())`).
+## A harness does not own the pointer: the machine has ONE physical mouse, the OS delivers its motion
+## to this window like any other input, and `Input.warp_mouse` (which `_drive_drag` below must call)
+## generates more of the same. Any of those landing in the gap between the press and the release moves
+## `pressing_inside` off the button and the release then CANCELS the click instead of firing it — no
+## error, no warning, just a control that emitted nothing. Awaiting a frame is precisely what yields to
+## the main loop and lets the OS event queue be pumped, so the gap was the whole exposure; pushing both
+## events in one call stack closes it, because `Viewport.push_input` is processed synchronously and no
+## foreign event can be interleaved. It is NOT a longer settle — the frame budget is unchanged (hover,
+## frame, press+release, two frames), only the ORDER is.
+##
+## ⛔ **MOVING THE REAL CURSOR IS NOT A REPRODUCTION ON ITS OWN**, which is why the first sixteen
+## consecutive runs looking for this were all clean: under `scripts/preview.sh` the window is
+## `no_focus`, so macOS delivers it no `mouseMoved` at all. Delivery needs the window to be the
+## FOREGROUND one, and whether it becomes that is itself intermittent. Injecting the motion the window
+## server would have delivered reproduces it on demand — **29 failures, four of them the reported ones
+## word for word**. `HarnessWindow.seal_from_real_mouse` stops the delivery and this ordering removes
+## the window it lands in; `test-harnesses.md` → "A SIMULATED GESTURE IS NOT HERMETIC" has the whole
+## chain and both falsifications.
 func _drive_click(window_point: Vector2) -> void:
 	var hover := InputEventMouseMotion.new()
 	hover.position = window_point
-	get_viewport().push_input(hover)
+	_push_input(hover)
 	await get_tree().process_frame
 	for pressed in [true, false]:
 		var button := InputEventMouseButton.new()
 		button.button_index = MOUSE_BUTTON_LEFT
 		button.pressed = pressed
 		button.position = window_point
-		get_viewport().push_input(button)
-		await get_tree().process_frame
+		_push_input(button)
+	await get_tree().process_frame
+	await get_tree().process_frame
 
 ## Press at `from`, travel to `to` past the drag threshold, release there.
 ##
@@ -20846,15 +20931,23 @@ func _drive_click(window_point: Vector2) -> void:
 func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int = 0,
 		hold_probe: Callable = Callable(), hold_done: Callable = Callable()) -> Dictionary:
 	var parked := DisplayServer.mouse_get_position()
+	# ⛔ **CUSTODY OF THE PHYSICAL POINTER IS TAKEN BEFORE THE PRESS, NOT AT THE FIRST WAYPOINT.** The
+	# warp has to happen at all (see the header — Godot localizes a drop from the REAL cursor), and
+	# taking it here rather than after the press buys two things. The OS motion event a warp generates
+	# then lands BEFORE Godot starts accumulating `gui.drag_accum`, so it cannot pollute the threshold
+	# the gesture's own kick is measured against; and the pointer is already where the gesture believes
+	# it is for the whole of the press→first-motion gap, which is the window a foreign reading would
+	# otherwise be taken in.
+	Input.warp_mouse(from)
 	var hover := InputEventMouseMotion.new()
 	hover.position = from
-	get_viewport().push_input(hover)
+	_push_input(hover)
 	await get_tree().process_frame
 	var press := InputEventMouseButton.new()
 	press.button_index = MOUSE_BUTTON_LEFT
 	press.pressed = true
 	press.position = from
-	get_viewport().push_input(press)
+	_push_input(press)
 	await get_tree().process_frame
 	var witness_survived := is_instance_valid(witness) and witness.is_inside_tree()
 	var dragging := false
@@ -20868,11 +20961,42 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 		motion.relative = point - previous
 		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
 		Input.warp_mouse(point)
-		get_viewport().push_input(motion)
+		_push_input(motion)
 		await get_tree().process_frame
 		dragging = dragging or get_viewport().gui_is_dragging()
 		previous = point
+	# ⛔ **THE HOLD RE-ASSERTS THE POINTER EVERY FRAME, AND THE WINDOW SEAL IS WHAT MAKES THAT FREE.**
+	# The hold's premise is that a player parked at the edge generates NO input, so the engine's own
+	# pump is the only thing that can move the list — and the pump, like the drop, reads the REAL
+	# cursor through `DisplayServer.mouse_get_position()`. That is a direct OS query rather than an
+	# event, so `HarnessWindow.seal_from_real_mouse` cannot protect it: a physical pointer sitting
+	# anywhere else reads as a dead pump and an empty drop mark under a "stationary" pointer, which is
+	# exactly the shape of two of the reported failures.
+	#
+	# **DRIFT DETECTION AGAINST A SAMPLED ANCHOR IS NOT ENOUGH, and that was measured rather than
+	# reasoned.** Sampling the anchor from the current reading means a pointer already stolen when the
+	# sample is taken becomes the anchor, after which nothing ever "drifts" and the whole hold runs
+	# against a cursor outside the hot band — observed once in twelve runs with the pointer held
+	# elsewhere, failing the pump and drop-mark claims with zero corrections recorded.
+	#
+	# **AND RE-WARPING EVERY FRAME COSTS THE CLAIMS NOTHING NOW.** The objection to it was that each
+	# warp emits an OS motion event, and a motion event mid-drag is what makes Godot re-pick the
+	# drag-over control — so a harness generating one per frame would satisfy *"the drop mark moved
+	# under a stationary pointer"* itself and stop testing the panel's own `_resolve_queue_drag_hover`.
+	# The seal ends that: no OS mouse event reaches this viewport at all, which the run-wide custody
+	# guard asserts. The only motion during the hold is still the panel's own.
+	# The anchor is only ever a DIAGNOSTIC — correctness rides on the unconditional warp below, so a
+	# reading taken in the microsecond window between a warp and its readback cannot mislead the gesture, only
+	# the count. It is re-established by that warp each frame rather than sampled once.
+	var anchor := Vector2i.ZERO
+	var anchored := false
+	var stolen := 0
 	for _held in range(hold_frames):
+		if anchored and DisplayServer.mouse_get_position() != anchor:
+			stolen += 1
+		Input.warp_mouse(to)
+		anchor = DisplayServer.mouse_get_position()
+		anchored = true
 		# **AWAITED, so the probe may CAPTURE.** The auto-scrolled, mid-drag list exists on no other
 		# frame: the drop ends the gesture and `_repage_work_zone` rebuilds the block at scroll 0.
 		if hold_probe.is_valid():
@@ -20881,6 +21005,12 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 		dragging = dragging or get_viewport().gui_is_dragging()
 		if hold_done.is_valid() and bool(hold_done.call()):
 			break
+	if stolen > 0:
+		# Something outside this harness moved the physical pointer during a gesture defined by holding
+		# it still. Said out loud rather than swallowed: the run is still valid (custody is re-asserted
+		# on the same frame) but the hold's claims were measured against a contested pointer.
+		push_warning("band_panel_preview: something outside the harness moved the pointer on %d frame(s) of a held drag — custody re-asserted each time"
+			% stolen)
 	# ⛔ **ONE LAST SAMPLE, WITH NO FRAME BETWEEN IT AND THE DROP.** The hold's loop probes and THEN
 	# awaits a frame, so the pump gets one more tick after the final sample — and a caller computing
 	# what the drop SHOULD send from that sample names the row that was under the pointer a step ago
@@ -20894,7 +21024,7 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 	release.pressed = false
 	release.position = to
 	Input.warp_mouse(to)
-	get_viewport().push_input(release)
+	_push_input(release)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	DisplayServer.warp_mouse(parked - DisplayServer.window_get_position())

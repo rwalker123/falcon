@@ -731,6 +731,9 @@ var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
 var _failures := 0
 
 func _ready() -> void:
+	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
+	# real window receives the human's mouse. See `tools/harness_window.gd`.
+	HarnessWindow.seal_from_real_mouse(get_window())
 	# FREEZE ANIMATION TIME. What it buys: with the canvas pinned, the only remaining run-to-run
 	# difference was animated content, so this is what makes the frame set a STRICT BIT-IDENTITY
 	# REFERENCE (56/56 identical across runs) — which is the whole reason the harness exists, since a

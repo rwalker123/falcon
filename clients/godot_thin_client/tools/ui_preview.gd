@@ -352,6 +352,9 @@ func _finish() -> void:
 
 
 func _ready() -> void:
+	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
+	# real window receives the human's mouse. See `tools/harness_window.gd`.
+	HarnessWindow.seal_from_real_mouse(get_window())
 	_watchdog = _resolve_watchdog()
 	# **THE WHOLE CHAPTER ROSTER IS LOADED AND INSTANTIATED BEFORE ANYTHING RENDERS.** Discovering a
 	# broken chapter partway through the walk leaves a HALF-WRITTEN frame set beside the previous

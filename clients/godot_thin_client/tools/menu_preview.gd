@@ -172,6 +172,9 @@ var _drift_notice: ConfigDriftNotice
 
 
 func _ready() -> void:
+	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
+	# real window receives the human's mouse. See `tools/harness_window.gd`.
+	HarnessWindow.seal_from_real_mouse(get_window())
 	get_window().size = PREVIEW_SIZE
 	# PIN THE INTERFACE SCALE, the same determinism source `ui_preview` / `map_preview` /
 	# `band_panel_preview` pin: `ClientSettings` is an autoload that has already read the developer's
