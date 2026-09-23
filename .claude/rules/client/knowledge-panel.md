@@ -250,12 +250,102 @@ card minimum 546 against a fixed 820.**
 > makes the card genuinely shrinkable — it is required rather than cosmetic, and turning it back off
 > restores the defect.
 
-**The shipped ladder teaches SEVEN** — Land: `cultivation`, `seed_selection`. Herds: `herding`,
-`penning`, `foddering`. **Roads: `roadbuilding`, `paving`.** Craft: whatever `craft_knowledge`
-publishes. **War and Telling have no ladder branch, so they have no row** — a row appears the turn its
+**The shipped ladder teaches TEN, across FIVE branches** — Land: `cultivation`, `seed_selection`.
+Herds: `herding`, `penning`, `foddering`. **Roads: `roadbuilding`, `paving`.** **Forestry:
+`woodcraft`, `conservationism`. Extraction: `quarrying`.** Craft: whatever `craft_knowledge`
+publishes — which is **six domain rows**, the last two arriving with the wood-and-stone branches
+(`extraction-workings.md`) and needing no client edit at all, not even a label: `forestry` and
+`extraction` are absent from `DOMAIN_BRANCH_LABELS` and take `domain_label`'s capitalized fallback.
+**War and Telling have no ladder branch, so they have no row** — a row appears the turn its
 first branch teaches something, which is precisely how Roads got one with no client edit beyond its
 label. An empty row is worse than a missing one: it teaches the player that a whole area of the game
 is closed to them when in truth it does not exist yet.
+
+### THE ROWS ARE GATHERED UNDER SUBJECT AREAS, AND THE AREA COMES OFF THE CONFIG
+
+`docs/plan_knowledge_rows.md` §5. **Domains grow without limit; areas do not** — an area answers
+*"what part of the game is this"*, and that list is short and stable, which is the whole reason there
+is a level above the branch: it bounds the thing that grows. Today's six domains render as **three**
+headings (Food · Making · Works), because an area with no domains is never drawn — the same rule as
+the empty domain row, one level up.
+
+⛔ **WHICH AREA A BRANCH IS IN IS THE CONFIG'S ANSWER.** `intensification_ladder.json` grew a
+`branches` table (`"plant": {"area": "food"}`, …), the sim publishes it on every roster row
+(`LadderKnowledgeState.area`), and `KnowledgeRoster.build_domains` reads it off the row rather than
+off any table in this client. A hard-coded branch→area map would be the retired `LADDER_DOMAINS` bug
+one level up: the first branch somebody adds without editing the client would fall out of the screen.
+**`HudKnowledgeVocab.AREA_LABELS` holds the WORD and nothing else** — the wire says `food`, a player
+reads *Food* — which is the same split `DOMAIN_BRANCH_LABELS` already makes for the branch.
+
+**THE DISPLAY ORDER RIDES TOO, AND IS NOT INFERRED.** `SubsistenceSection.ladderAreas` carries the
+config's own `areas` list; areas are PEERS, so first-seen order off the rows would reshuffle the whole
+screen whenever a rung was added — the defect that made column order unstable before the roster
+carried it. It is a per-world constant, ingested by `FactionReadouts.update_ladder_areas` beside the
+roster and cleared with it on a world boundary. **Nothing requires it**: an absent or empty order
+still groups, it just orders by first-seen branch, which is what let the client half of this arc land
+without waiting on the wire half.
+
+**TWO FALLBACKS, AND BOTH DRAW.** A branch whose descriptor names no area lands under `Other`
+(`AREA_KEY_NONE`, always sorted LAST); an area this client has no word for draws under its own
+capitalized token, exactly as `domain_label` answers for an unlisted branch. A knowledge that vanishes
+because a config edit was incomplete is the worst failure this screen has, and it is one it has
+shipped once.
+
+**THE CRAFT FAN IS THE ONE DOMAIN THE CLIENT PLACES** (`HudKnowledgeVocab.CRAFT_FAN_AREA`, `making`).
+It is not a ladder branch, so no row of the config's `branches` table describes it and there is
+nothing on the wire to read. One constant for the one domain this client itself constructs is not the
+branch→area table above: it names a domain, not a branch.
+
+### FOLDING IS NOT HIDING, AND THAT IS WHY THE DEFAULTS ARE WHAT THEY ARE
+
+A folded heading STAYS ON SCREEN and goes on saying what is inside it — `▸ WORKS   0 known · 0
+learning · 2 not begun`. That is what keeps this level's promise the same as the node states' (a `0.0`
+track is drawn greyed) and the filters' (they dim, they do not remove): a new player who has learned
+nothing is still shown there is something to learn. **The old `_build_knowledge_block` skip drew
+nothing at all; that is the difference in kind**, and a heading that stopped carrying its tally would
+be that skip wearing a caret.
+
+The rule is one sentence (`KnowledgeRoster.folded_areas`):
+
+> a hand entry wins; otherwise an area is folded exactly when the filter is not `all` and no node in
+> it matches that filter.
+
+- **Everything starts open.** An area is never folded for being empty of progress — for a new player
+  that would fold the entire screen.
+- **`_hand_folds` is `{area_key: bool}`, and the THIRD state is the mechanism**: `true` a hand fold,
+  `false` a hand unfold, and ABSENT means *let the filter decide*. That is what makes a hand-made fold
+  outlive a filter change while the filter goes on folding and unfolding everything the player has not
+  touched.
+- **The caret's press negates the EFFECTIVE fold, not the stored one**, which is what makes the first
+  press on a filter-folded area open it rather than recording a redundant fold.
+- **Fold state dies with the screen** (`close()` and `reset_world_state()` clear it). There is no
+  persisted UI state on this screen and this does not invent any.
+- **A folded area CLOSES the reading it holds** — one rule, applied in `KnowledgePanelController
+  .render()` rather than at each of the three seams that can fold an area, because the toggle already
+  says only one reading is ever open and an open reading under a folded heading is the screen lying
+  about where it came from. ⛔ **Its claim is made AFTER the area is opened again**, since *"no reading
+  is mounted while the area is folded"* is TRUE OF THE DEFECT: a folded area draws no row for the
+  block to sit under, so the panel falls back to its empty reserve and the picture looks right while
+  `_selected` still names a knowledge. What the player meets is the consequence — the reading
+  reappears when the heading comes back, and the next press on that chip CLOSES it.
+
+**THE HEADING'S TALLY IS `_tally_text` OVER THE AREA'S OWN NODES** — the same composition and the same
+`TALLY_*_FORMAT` words the header uses over all of them. §5's illustrative *"3 to learn"* is prose, not
+a second spelling to author: one home per fact beats matching the phrasing, and a second tally builder
+is how a heading comes to disagree with the header above it.
+
+**THE HEADING IS A `PanelContainer` WITH `gui_input`, NOT A `Button`** — the node chip's own rule and
+for its reason: a Button is not a Container, so a caret + name + tally face parented to one is never
+laid out. It is `FOCUS_NONE`, like the chip and like every other control on this screen (the ✕, the
+filter pills, the reading's own ✕): the surface is mouse-driven and the handler reads mouse buttons
+alone, so a focus ring here would be reachable by Tab and inert on Enter.
+
+⛔ **THE CARD'S HEIGHT FOLLOWS THE FOLD, AND THE FIXED-SIZE RULE IS ABOUT READINGS.** The detail
+block's `DETAIL_BLOCK_MIN_HEIGHT` reserve still holds the card still when a reading opens and closes
+(`_assert_card_does_not_breathe`, both axes, both directions). Folding is a change of CONTENT, so the
+card shortens: measured at 820x818 with everything open, 820x460 on a zero-match filter that folds all
+three headings. That shortening is what folding buys at twenty-four domains — reserving the unfolded
+height would leave the card permanently sized for a list it is not showing.
 
 ### THE CARD IS A FIXED SIZE, AND THE RESERVED DETAIL BLOCK IS WHAT MAKES IT ONE
 
@@ -302,6 +392,14 @@ SELECTION rather than the panel's tree are for.
 > `_on_node_selected` would **close** the row in the one case where the player already had that exact
 > knowledge open — the one case where the orb's row appears to do nothing. It takes no key parameter
 > either, the orb handing over a FILTER and nothing else today.
+>
+> ⛔ **AND IT CLEARS `_hand_folds`, because a hand entry BEATS the filter.** A fold the player left
+> standing outlives the hand-over and swallows the discovery the row just named: fold Food, leave the
+> screen open, tick a turn, press *Penning learned* — the screen lands on `new` with Food still shut
+> and Penning's chip not drawn at all, which is the exact outcome this entry point exists to prevent.
+> `close()` already clears them, so the defect bites only while the screen is OPEN — which is the case
+> the hand-over was built for. **An external hand-over is a RE-PRESENTATION of the screen**, so it
+> starts from §5's own default, everything open, precisely as a freshly opened screen does.
 
 ⛔ **THE ROSTER CARRIES NO FACTION, AND THE PROGRESS LIST DOES.** A faction that has learned nothing has
 no `intensification_knowledge` row at all — the sim skips it — so a roster carried on that row would
@@ -326,6 +424,15 @@ client list of exceptions. **That puts the verb lookup's own blind spot on the F
 absent from `RungGates.RUNG_KNOWLEDGE_TRACKS` reads `unspent_testable = false`, so every one of its
 knowledges wears the capsule — the same fault this file already records under *`unspent_testable` is
 two questions*, now visible without a click rather than only in the reading's `Where, now` line.
+
+⛔ **AND THE SHIPPED SCREEN HAS THREE OF THOSE TODAY** — `woodcraft`, `conservationism` and
+`quarrying` all read `gates nothing` while the config says each one gates a rung. That table is
+keyed on a VERB, and the two deposit branches declare no verb at all: their gates are keyed on the
+RUNG instead (`RungGates`' deposit section says so at the point of the split), so there is nothing
+for the inversion to find. The `unused` filter cannot count them either — a knowledge that gates
+nothing cannot be unspent. Closing it is not one table entry: the controller resolves patches, herds
+and roads, and a deposit has no fourth scan behind it, so *"is anything using Quarrying"* has no
+answer to read yet.
 
 ## A NODE CHIP IS A `PanelContainer` WITH `gui_input`, NEVER A `Button`
 
@@ -599,6 +706,14 @@ would pass against a producer that had stopped producing one. That the transcrip
 is the SIM's claim (`the_published_roster_places_every_knowledge_the_ladder_teaches`); what the fixture
 proves is that the client renders whatever roster arrives.
 
+⛔ **SO IT CARRIES ALL TEN KNOWLEDGES AND ALL FIVE BRANCHES, and a SHORT transcription is a defect
+rather than a smaller fixture.** It held `plant` / `animal` / `route` alone for one slice, and the
+subject-area claims written against it therefore described a FOUR-domain screen no server sends —
+`Making == [craft]`, where the shipped answer is `[forestry, extraction, craft]`. A transcription
+missing a branch passes against a producer that has stopped producing the rest, which is the one
+thing this file exists not to do; **re-read `intensification_ladder.json` rather than deriving or
+guessing the orders** when the ladder grows.
+
 ⛔ **AND A HARNESS THAT PUSHES NO ROSTER RENDERS NO LADDER ROWS**, which is the honest consequence of
 the panel building itself. The `ui_preview` prologue pushes it once so every chapter has one.
 
@@ -613,7 +728,7 @@ drawing from something other than the wire.
 which renders a perfectly ordinary frame with every rung honestly refused — so `band_panel_preview`
 keeps `_standing_knowledge_row` and `_standing_knowledge_tracks` under separate names.
 
-**Frames:** `knowledge_panel` (the whole screen, mixed states — four domain rows, the rails between
+**Frames:** `knowledge_panel` (the whole screen, mixed states — six domain rows, the rails between
 their chips, the craft fan with none) · `knowledge_panel_untouched` (**the frame this arc is about** —
 a faction that knows nothing, every node drawn and greyed, where the old faction-page block rendered
 an empty zone) · `knowledge_panel_detail` (a node selected, the reading open UNDER ITS OWN ROW, its
@@ -622,7 +737,29 @@ a frame) · **`knowledge_panel_stress`** (24 synthetic ladder branches — §1's
 twice the planned shape — with the card still at its fixed width and the list scrolling instead) ·
 `knowledge_launcher_mark` / `_rail` / `_bar` (the CAIRN on the launcher's face, one per action mount —
 subject row, collapsed rail, bar — with the pip over it on the first two, which is the normal state
-for this action rather than an edge one).
+for this action rather than an edge one) · **the four AREA states**: `knowledge_panel_areas`
+(everything open, the default — three headings over six domain rows, each heading carrying its own
+tally), `knowledge_panel_area_filtered` (a filter folding the area it does not match, which still says
+what is inside it), `knowledge_panel_area_hand_fold` (a hand-made fold still shut on the way back to
+`All`, beside the filter-folded area that has opened again — the state a rule keyed off the filter
+alone cannot produce) and `knowledge_panel_area_fallbacks` (both degenerate branches drawing, under
+`Husbandry` and `Other`, beside the ordinary headings rather than alone).
+
+**THE GROUPING AND THE FOLD RULE ARE ASSERTED THROUGH `KnowledgeRoster`, not read off a Label** — a
+folded heading and an open one are both perfectly ordinary pictures, and only the SET says which is
+which. `fixtures_knowledge.gd` carries `ladder_areas()` (the config's whole `areas` list, the three
+empty ones included, so *"an area with no domains is never drawn"* is falsifiable) and
+`ladder_roster_with_fallbacks()`, which appends one row per fallback: `salvage` naming no area at all
+and `dairying` naming a `husbandry` this client has no word for.
+
+⛔ **THE DIM-DON'T-HIDE CLAIM IS SCOPED TO THE OPEN AREAS NOW**, which is this arc's own narrowing
+rather than a relaxation: a filter folds what it does not match, so a claim over every node on the
+roster would ask whether a folded area's rows are on screen. `_assert_filter_dims_rather_than_hides`
+asserts the dimming within the open areas AND that every area the filter folded kept its heading, so
+the narrowing cannot become a hole. **And the empty-filter note's size claim moved to
+`panel._header_height()`** for the same reason: a zero-match filter folds every area, so the CARD
+legitimately shortens on that press, while the term the note could actually break — `_header` sitting
+outside the scroll and feeding `fit_to_content` — is unmoved by the fold.
 
 **The stress roster is built in the chapter from `KnowledgeFx.ladder_roster()`'s ROW SHAPE**, not from
 a config and not from the sim: the panel builds itself from whatever roster arrives, so a synthetic

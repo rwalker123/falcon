@@ -90,6 +90,63 @@ const DOMAIN_CRAFT_LABEL := "Craft"
 static func domain_label(branch: StringName) -> String:
 	return String(DOMAIN_BRANCH_LABELS.get(branch, String(branch).capitalize()))
 
+# ---- the SUBJECT AREA a domain is gathered under ------------------------------------------------
+# **DOMAINS GROW WITHOUT LIMIT; AREAS DO NOT** (`docs/plan_knowledge_rows.md` §5). An area answers
+# *"what part of the game is this"*, and that list is short and stable — which is the whole reason
+# there is a level above the branch at all: it puts a bound on the thing that grows.
+#
+# ⛔ **WHICH AREA A BRANCH IS IN IS THE CONFIG'S ANSWER, AND IT IS NOT DECLARED HERE.** It rides on
+# the roster row (`ROSTER_AREA`), off `intensification_ladder.json`'s `branches` table, for exactly
+# the reason the node lists stopped being declared here: a hard-coded branch→area table is the
+# retired `LADDER_DOMAINS` bug one level up, where the first branch somebody adds without editing
+# the client falls out of the screen. What is below is COPY, plus one constant for the single domain
+# the client itself constructs.
+
+## ⛔ **WHAT A PLAYER CALLS EACH SUBJECT AREA.** The wire says `food` / `making` / `works`, which is
+## the config's vocabulary; these are the words in each heading. **A LABEL TABLE AND NOTHING ELSE** —
+## it declares no branches and no order, so an area the config adds still draws (see `area_label`)
+## and the order is the wire's own (`FactionReadouts.ladder_areas`).
+const AREA_LABELS := {
+	&"food": "Food",
+	&"making": "Making",
+	&"works": "Works",
+	&"reach": "Reach",
+	&"lore": "Lore",
+	&"war": "War",
+}
+
+## ⛔ **FALLBACK 1: THE BUCKET FOR A BRANCH WHOSE DESCRIPTOR NAMES NO AREA.** The wire's own `""`,
+## kept as a real key rather than turned into an absence, because the knowledge still has to DRAW —
+## under the `Other` heading, which always sorts LAST. A knowledge that vanishes because a config
+## edit was incomplete is the worst failure this screen has, and it is one it has actually shipped.
+const AREA_KEY_NONE := &""
+## …and the word that bucket wears. Not a wire token, so it has no entry in `AREA_LABELS`.
+const AREA_FALLBACK_LABEL := "Other"
+
+## ⛔ **THE CRAFT FAN'S AREA — the ONE area this client names, and it is not the `LADDER_DOMAINS` bug
+## returning.** A craft is not a ladder branch, so no row of the config's `branches` table names its
+## area and there is nothing on the wire to read. §5's own table puts craft under Making. **It is a
+## single constant for the one domain the CLIENT ITSELF CONSTRUCTS** (`DOMAIN_KEY_CRAFT`, built off
+## the `craft_knowledge` vector rather than off the roster) — not a branch→area table, which is the
+## thing that would put a config-driven branch's heading back in this file.
+const CRAFT_FAN_AREA := &"making"
+
+## What an area this file has no word for reads as — the wire's own token, capitalized, exactly as
+## `domain_label` answers for an unlisted branch. **FALLBACK 2, and it is load-bearing for the same
+## reason**: the screen is built from the config, so a heading must never depend on a client table
+## having heard of it.
+static func area_label(area: StringName) -> String:
+	if area == AREA_KEY_NONE:
+		return AREA_FALLBACK_LABEL
+	return String(AREA_LABELS.get(area, String(area).capitalize()))
+
+## The AREA descriptor's keys (`KnowledgeRoster.group_areas` builds them; nothing else writes one),
+## and the key a DOMAIN descriptor carries its own area under.
+const AREA_KEY := "key"
+const AREA_LABEL := "label"
+const AREA_DOMAINS := "domains"
+const DOMAIN_AREA := "area"
+
 # ---- a node's three states -------------------------------------------------------------------
 # **THREE, AND THE THIRD IS DRAWN.** `not_begun` is what the faction page's knowledge block used to
 # SKIP (`if progress <= 0.0: continue`), and that skip is what made the whole ladder invisible to a
@@ -338,6 +395,9 @@ const ROSTER_IS_STEP := "is_step"
 const ROSTER_KNOWLEDGE_ID := "knowledge_id"
 const ROSTER_DISPLAY_NAME := "display_name"
 const ROSTER_BRANCH := "branch"
+## …and the SUBJECT AREA of the branch that teaches it, one level above `ROSTER_BRANCH`. Read off
+## the config's `branches` table sim-side, and `""` when the descriptor names none (`AREA_KEY_NONE`).
+const ROSTER_AREA := "area"
 const ROSTER_ORDER := "order"
 
 # ---- the words -------------------------------------------------------------------------------
@@ -355,6 +415,13 @@ const LAUNCH_MARK := "cairn"
 const LAUNCH_GLYPH := "▲"
 const LAUNCH_TOOLTIP := "What your people know"
 const CLOSE_GLYPH := "✕"
+## ⛔ **FOLDING IS NOT HIDING, AND THE CARET IS THE ONLY PART OF THAT A PLAYER CAN PRESS.** A folded
+## heading stays on screen and goes on saying what is inside it, which is how this level keeps the
+## promises the node states already make — a `0.0` track is drawn greyed, and the filters dim rather
+## than remove. The old `_build_knowledge_block` skip drew nothing at all; that is the difference in
+## kind, and a heading that stopped carrying its tally would be that skip wearing a caret.
+const FOLD_GLYPH_OPEN := "▾"
+const FOLD_GLYPH_FOLDED := "▸"
 const CLOSE_TOOLTIP := "Close"
 
 # ---- geometry --------------------------------------------------------------------------------
@@ -393,6 +460,14 @@ const ROW_PADDING_V := 7
 ## rather than as ragged text. The gutter's own width, then the gap to the first chip.
 const ROW_NAME_WIDTH := 88.0
 const ROW_NAME_GUTTER := 12
+
+# ---- an AREA HEADING ---------------------------------------------------------------------------
+## The heading's own box. **The horizontal padding is the domain row's**, deliberately the same const
+## rather than a twin, so a heading and the rows it gathers share one left edge.
+const AREA_HEAD_PADDING_H := ROW_PADDING_H
+const AREA_HEAD_PADDING_V := 6
+## Between the caret, the area's name and its tally.
+const AREA_HEAD_SEPARATION := 10
 
 ## **THE RAIL, ROTATED.** A LADDER draws this hairline BETWEEN two chips; the craft FAN draws
 ## `FAN_GAP` of nothing instead. One `if` on the domain's `shape` descriptor, never on its name.
@@ -462,6 +537,11 @@ const TITLE_FONT_SIZE := 12
 const TALLY_FONT_SIZE := 11
 const FILTER_FONT_SIZE := 10
 const DOMAIN_HEAD_FONT_SIZE := 10
+## The AREA heading is set a rung ABOVE the domain names it gathers, so the two levels are told apart
+## by their weight on the page rather than by a second colour doing the work; its tally matches the
+## header's own `TALLY_FONT_SIZE` relationship to the title, one size down from the name beside it.
+const AREA_HEAD_FONT_SIZE := 11
+const AREA_TALLY_FONT_SIZE := 10
 const NODE_NAME_FONT_SIZE := 13
 ## The percent on a learning chip.
 const NODE_VALUE_FONT_SIZE := 11
@@ -478,6 +558,9 @@ const DOMAIN_META := "knowledge_domain"
 const RAIL_META := "knowledge_rail"
 const TALLY_META := "knowledge_tally"
 const EMPTY_NOTE_META := "knowledge_empty_note"
+## An AREA HEADING, carrying the area's own key — so a harness finds a heading by the area it IS
+## rather than by the word it happens to be wearing, and can ask whether a FOLDED one is still drawn.
+const AREA_META := "knowledge_area"
 ## The INLINE detail block. It carries the key of the node it is reading, or `""` when it is mounted
 ## with nothing selected — so a harness can ask both *how many are mounted* (exactly one, always)
 ## and *which row is it sitting under*, which is the pair of claims the toggle rests on.

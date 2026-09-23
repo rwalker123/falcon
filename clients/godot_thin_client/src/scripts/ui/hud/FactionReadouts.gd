@@ -61,6 +61,15 @@ const SEDENTARIZATION_STAGE_NONE := "none"
 ## all, and a roster carried on that row would leave a new player's screen with nothing on it to say
 ## there was anything to learn.
 var _ladder_knowledge: Array = []
+## **THE SUBJECT AREAS' DISPLAY ORDER as the wire sent it** — an ordered array of area tokens
+## (`["food", "making", "works", …]`), the roster above's own shape and reason: it is PER WORLD, and
+## it declares the order the knowledge screen draws its headings in.
+##
+## ⛔ **IT RIDES RATHER THAN BEING INFERRED FROM THE ROSTER.** Areas are peers — nothing about `food`
+## says it comes before `making` — so first-seen order taken off the rows would reshuffle the whole
+## screen whenever a rung was added, which is the defect that made column order unstable before the
+## roster carried it.
+var _ladder_areas: Array = []
 ## ⛔ **THE ROUTE BRANCH'S RUNG CATALOG as the wire sent it** — an ordered array of
 ## `{rung_key, order, display_name, verb, unlock_knowledge, requires_rung, work_cost,
 ## upkeep_work_per_turn, friction_multiplier, holds_link_to_tiles, grants_sight}`. **Per WORLD, not
@@ -149,6 +158,9 @@ func reset_world_state() -> void:
 	# roster is the only thing that can replace it, and until that arrives the previous game's ladder
 	# would otherwise still be on screen.
 	_ladder_knowledge.clear()
+	# …and the area order with it, for the identical reason: per WORLD, never restated by a delta, so
+	# the previous game's headings would otherwise stand until the new world's own order arrived.
+	_ladder_areas.clear()
 	# …and the route branch's catalog for the identical reason: it is a per-WORLD constant, so a delta
 	# never restates it, and a road ladder opened before the new world's own catalog lands would draw
 	# the previous game's rungs.
@@ -259,6 +271,22 @@ func update_ladder_knowledge(roster_variant: Variant) -> void:
 ## read-only). `[]` before any snapshot has arrived.
 func ladder_knowledge() -> Array:
 	return _ladder_knowledge
+
+## **INGEST THE SUBJECT AREAS' DISPLAY ORDER** — the `ladder_areas` section, retained whole.
+##
+## `update_ladder_knowledge`'s twin in every respect: a per-world constant, dispatched only when it
+## CHANGED, and a non-Array leaves the last value standing — absence means unchanged, never *"this
+## world has no areas"*. It renders nothing here; the knowledge screen reads its heading order off it.
+func update_ladder_areas(areas_variant: Variant) -> void:
+	if not (areas_variant is Array):
+		return
+	_ladder_areas = areas_variant
+
+## The area order as the wire sent it, BY REFERENCE (this HUD's accessor convention; every reader is
+## read-only). `[]` before any snapshot has arrived — and an EMPTY order still groups, it simply
+## leaves the headings in the order their branches were first seen.
+func ladder_areas() -> Array:
+	return _ladder_areas
 
 ## **WHAT THIS CLIENT CALLS ONE KNOWLEDGE** — the sim's own `display_name`, so no surface authors a
 ## second spelling of a discovery's name. `""` for a knowledge the roster does not carry, which is the

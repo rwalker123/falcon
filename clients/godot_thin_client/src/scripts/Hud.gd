@@ -1020,6 +1020,17 @@ func update_ladder_knowledge(roster_variant: Variant) -> void:
     _topbar.update_ladder_knowledge(roster_variant)
     _refresh_knowledge_readouts()
 
+## **THE SUBJECT AREAS' DISPLAY ORDER** (`docs/plan_knowledge_rows.md` §5) — which headings the
+## knowledge screen's domain rows are gathered under, and in what order, per world. A thin delegator
+## for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through `_hud_invoke`, whose
+## `has_method` probe fails silently.
+##
+## It pushes the knowledge readouts for that method's reason too: `Main` dispatches each section
+## independently, so the turn a world's area order lands may move nobody at all.
+func update_ladder_areas(areas_variant: Variant) -> void:
+    _topbar.update_ladder_areas(areas_variant)
+    _refresh_knowledge_readouts()
+
 ## **THE ROUTE BRANCH'S RUNG CATALOG** (arc #532 slice 13) — what the road ladder HOLDS, per world.
 ## A thin delegator for `update_ladder_knowledge`'s reason: `Main` reaches it BY NAME through
 ## `_hud_invoke`, whose `has_method` probe fails silently.

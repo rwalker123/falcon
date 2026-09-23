@@ -31,7 +31,8 @@ use crate::dict::routes::{route_rungs_to_array, routes_to_array};
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
-    ladder_knowledge_to_array, materials_to_array, recipes_to_array, sedentarization_to_array,
+    ladder_areas_to_array, ladder_knowledge_to_array, materials_to_array, recipes_to_array,
+    sedentarization_to_array,
 };
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
@@ -749,6 +750,13 @@ fn decode_delta_against(
 
     if let Some(roster) = delta.subsistence().and_then(|s| s.ladderKnowledge()) {
         frame.insert_changed("ladder_knowledge", &ladder_knowledge_to_array(roster));
+    }
+
+    // ...and the SUBJECT AREAS' display order on the DELTA path too, for the reason the route rung
+    // catalog states below: a per-world constant read only on the full path republishes the
+    // BASELINE's value for the life of the world.
+    if let Some(areas) = delta.subsistence().and_then(|s| s.ladderAreas()) {
+        frame.insert_changed("ladder_areas", &ladder_areas_to_array(areas));
     }
 
     // ...and the ROUTE branch's rung catalog on the DELTA path too. A per-world constant read only

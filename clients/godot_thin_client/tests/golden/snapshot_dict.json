@@ -3083,8 +3083,17 @@
       "scout_vantage_range": 13.07
     }
   ],
+  "ladder_areas": [
+    "food",
+    "making",
+    "works",
+    "reach",
+    "lore",
+    "war"
+  ],
   "ladder_knowledge": [
     {
+      "area": "food",
       "branch": "plant",
       "display_name": "the knowledge of cultivation",
       "is_step": true,
@@ -3092,6 +3101,7 @@
       "order": 139
     },
     {
+      "area": "food",
       "branch": "plant",
       "display_name": "the knowledge of herding",
       "is_step": false,
@@ -3099,6 +3109,7 @@
       "order": 148
     },
     {
+      "area": "works",
       "branch": "plant",
       "display_name": "the knowledge of roadbuilding",
       "is_step": false,
