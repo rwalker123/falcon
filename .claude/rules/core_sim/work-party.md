@@ -137,9 +137,27 @@ that must never be assumed.
 
 To the band that owns the row, **never** to whichever band the party is standing beside. A party is
 an *extension of its home band*, not a peer node in the supply network; making it a peer is exactly
-the bug the asymmetry exists to prevent. Feeding is the other direction and is the component's
-business — what the home band then does with the food is `balance_supply_networks`' affair as it
-always was.
+the bug this rule exists to prevent. What the home band then does with the food is
+`balance_supply_networks`' affair as it always was.
+
+> #### ⛔ AND THE FEEDING IS THE HOME BAND'S TOO — A PARTY IS NOT A SUPPLY NODE IN EITHER DIRECTION
+>
+> `balance_supply_networks` has **no party awareness at all**. The one thing the party reads from
+> `supply.rs` is `free_pooling_reach_tiles`, a *distance* function, to decide porters and friction.
+> A party's position never enters the union-find, so a party standing beside another band creates no
+> edge, and that band is never asked for a mouthful.
+>
+> **The home band feeds it, because the party's people never left the home band's cohort** —
+> `simulate_population` charges the whole `working` bracket wherever those workers are standing. So
+> cost and benefit have one owner, which is the same rule the take follows, stated from the other
+> side.
+>
+> **An earlier draft of the design doc said feeding came from "whoever is near, component-wide", and
+> that text never described this code.** It is recorded here because it is the plausible-sounding
+> wrong answer: it splits the cost from the benefit, and it lets a band acquire an obligation it
+> never chose — a neighbour with nothing to spare, billed for a party somebody else posted. A reader
+> who reaches for "make the party a network node so it can be fed" is re-introducing exactly the bug
+> the take's rule already forbids, one direction over.
 
 Pinned by `labor_allocation::a_partys_take_is_credited_to_its_home_band_not_to_the_band_beside_it`:
 two bands of one faction, both opening empty, the party working a patch the *other* band is camped

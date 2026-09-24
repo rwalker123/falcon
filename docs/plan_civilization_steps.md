@@ -551,9 +551,22 @@ are just somewhere else.**
     What the home band then does with the food is the ordinary band-to-band network's business:
     `balance_supply_networks` may well redistribute it per capita across the component, but that is
     the home band's connectivity spending the home band's food.
-  - **Its feeding comes from whoever is near** — component-wide, because keeping people alive is
-    what proximity makes cheap. Within `reach_tiles` (3) the party is fed automatically by the
-    component it stands in, at the same population-weighted per-capita balance as anyone else.
+  - **Its home band feeds it, always** — the same owner as the take, which is the point. The
+    party's people never left the home band's cohort, so that band's ordinary population
+    consumption covers them wherever they stand, and **no other band ever pays for a party it did
+    not post**. A band standing beside a stranger's party may have no food to spare, and acquiring
+    somebody else's obligation is not a thing proximity should be able to do to you.
+
+    An earlier draft had feeding come from *whichever component the party stood in*, on the
+    reasoning that proximity makes keeping people alive cheap. It was wrong twice over. It splits
+    the owner of the cost from the owner of the benefit — the very thing the take's rule exists to
+    prevent — and it lets any nearby camp quietly subsidise a far posting, which drains the
+    provisioning pressure that makes distance a decision at all. Proximity already pays for itself
+    in the right place: it is what porters and friction are charged on.
+
+    **The settling pull survives in a better form.** Founding a camp near good ground still extends
+    your working reach — that camp posts its own short-run party, rather than feeding someone
+    else's long-run one.
 - **There is no haul command and no destination to choose.** The party is wired to its home band at
   creation and the flow runs both ways along that one tie — supplies out, cargo back. Assigning
   workers stays the only command. (This retires the earlier "a shipment to any band the player
