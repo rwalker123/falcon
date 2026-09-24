@@ -3132,4 +3132,9 @@ fixture's band id is chosen so the sorted expectation reads `[3, 4, 5, 5, 7]`.
 … travel=… deficit=…`), spelled out as chapter constants rather than recomposed through
 `HudEventVocab` — an expectation built from the code under test can only agree with itself.
 
-**A clean run is 451 frames / 2177 `PASS`, exit 0 — RE-MEASURED windowed on this tree.**
+**A clean run is 457 frames / 2269 `PASS`, exit 0 — RE-MEASURED windowed on this tree**, after merging
+`origin/main`. It read `451 / 2177` when the work-party claims first landed; the six frames and most
+of the ninety-two `PASS` between the two figures are the knowledge-screen chapter's, not this
+section's, which added four claims and no frame. **The merged figure was measured rather than
+summed** — adding this section's delta to the incoming headline is exactly how a tally stops being
+able to report an assertion that went missing in the merge.

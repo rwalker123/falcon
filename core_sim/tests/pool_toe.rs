@@ -1704,6 +1704,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 (low_tile, low_material.clone(), SourcePriority::Low),
             ] {
                 allocation.assignments.push(core_sim::LaborAssignment {
+                    party: None,
                     target: LaborTarget::Extract {
                         tile,
                         material,
@@ -1716,6 +1717,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 });
             }
             allocation.assignments.push(core_sim::LaborAssignment {
+                party: None,
                 target: LaborTarget::Quarrywork,
                 workers: KEEPERS,
                 kit: None,
