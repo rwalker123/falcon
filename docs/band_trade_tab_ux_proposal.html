@@ -177,7 +177,7 @@
   /* A horizontal dock is drawn at its REAL pixel width and scaled to fit the page,
      because the whole point of §06 is how wide the strip has to be. The caption
      under it states the true width, never the drawn one. */
-  .screen.wide { justify-content: flex-end; }
+  .screen.wide { justify-content: flex-end; min-height: 780px; }
   .strip-scale { transform-origin: top center; }
   .strip-cap {
     margin-top: 12px; text-align: center; font: 500 11px/1.5 var(--mono); color: var(--g-faint);
@@ -343,7 +343,37 @@
   .roster { margin-top: 9px; border-top: 1px solid var(--g-line-soft); padding-top: 7px; }
   .roster .scope { font-size: 10.5px; color: var(--g-faint); margin-bottom: 4px; }
   .roster .scope em { color: var(--g-signal); font-style: normal; }
-  .roster .me .lab { color: var(--g-signal); }
+  .roster .me .lab, .ovl .row.me .lab { color: var(--g-signal); }
+
+  /* The network line's camp count is the way into the full list. */
+  .net-head .v.link { color: var(--g-signal); cursor: pointer; }
+  .net-head .v.link:hover { text-decoration: underline; }
+
+  /* A good whose line has something behind it — its ratings, or the several places it
+     came from — says so with a dotted rule, the one cue a hover target needs. */
+  .gname.hov { border-bottom: 1px dotted var(--g-faint); }
+
+  /* ---------- THE HOVER CARD ---------------------------------------------------
+     The summary row states the good once; this states what the row is made of. It
+     never takes a click and never covers the row it describes. */
+  .tip {
+    position: absolute; z-index: 9; display: none; pointer-events: none;
+    min-width: 230px; max-width: 400px; padding: 7px 9px 6px;
+    background: var(--g-panel-2); border: 1px solid var(--g-line); border-radius: 2px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    color: var(--g-ink); font-family: var(--sans); font-size: 11.5px; line-height: 1.45;
+  }
+  .tip .th { display: flex; align-items: baseline; gap: 7px; font-weight: 640; margin-bottom: 4px; }
+  .tip .th .n { color: var(--g-faint); font: 500 10px/1 var(--mono); font-weight: 500; }
+  .tip .tr { display: flex; align-items: baseline; gap: 6px; padding: 1.5px 0; }
+  .tip .chips { flex-wrap: nowrap; }
+  .tip .fill { flex: 1 1 auto; min-width: 8px; }
+  .tip .amt { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .tip .sub { color: var(--g-faint); font-size: 10.5px; }
+  .tip .tf {
+    margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--g-line-soft);
+    color: var(--g-faint); font-size: 10.5px;
+  }
 
   .legdot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--g-faint); margin-right: 5px; vertical-align: middle; }
 
@@ -535,15 +565,16 @@
       <div class="strip-cap" id="cap"></div>
       <div class="overflow-mark" id="overflow" style="display:none"></div>
       <div id="ovl"></div>
+      <div class="tip" id="tip"></div>
     </div>
 
     <div class="notes">
       <div class="note">
-        <span class="nk">Try it — the roster is scoped</span>
-        <p>Click any commodity row. The roster below rescopes to that commodity, because a member's
-          net <em>cannot</em> be one number: nothing may sum bone into food, or one bone rating into
-          another. With nothing selected it states who is in the network and how far off each one
-          sits — which is the answer to <em>why is that camp not pooling with me</em>.</p>
+        <span class="nk">Try it — hover, then click</span>
+        <p>One line per good. <b>Hover</b> a good with a dotted rule for what it is made of — bone's
+          six ratings, each with its own amount. <b>Click</b> it for each camp's share of it.
+          <b>Click</b> <em>15 camps ›</em> on the network line for the whole network and how far off
+          each camp sits — the answer to <em>why is that camp not pooling with me</em>.</p>
       </div>
       <div class="note">
         <span class="nk">Try it — Nothing crossed</span>
@@ -552,25 +583,27 @@
           and the span, then says plainly that nothing moved.</p>
       </div>
       <div class="note">
-        <span class="nk">Materials are never summed</span>
-        <p>A material group header states <b>how many piles moved</b>, never a total: bone is rated on
-          <code>density</code> × <code>length</code> and the shipped fauna roster produces 8 distinct
-          bone piles. A "bone 3.2" would be the retired trade scalar rebuilt one material at a time.</p>
+        <span class="nk">Summed within a material, never across two</span>
+        <p><em>bone ▲ 2.4 ▼ 1.6</em> sums bone's own ratings, which the Crafting panel's
+          <em>Owned</em> column already does for a band's batches. <em>hide</em> and <em>bone</em>
+          stay two lines: a hide-plus-bone scalar is the retired trade axis (#527). In and out stay
+          two numbers, because one rating can arrive while another leaves.</p>
       </div>
       <div class="note">
         <span class="nk">Try it — 15 camps</span>
         <p><b>Network</b> swaps in a fifteen-camp pool; <b>Routes</b> puts 20 parties on the turn.
-          Click any <em>"12 more piles"</em> / <em>"5 more parties"</em> / <em>"11 more camps"</em>
-          row: it opens a panel beside the card rather than growing the zone. Then flip <b>Dock</b>
-          to a horizontal one and watch the tab drop to its SHORT tier. §04 has the reasoning.</p>
+          The goods list does not grow — it is bounded by the materials catalog. Click
+          <em>"5 more parties"</em> or <em>15 camps ›</em>: each opens a panel beside the card rather
+          than growing the zone. Then flip <b>Dock</b> to a horizontal one and watch the tab drop to
+          its SHORT tier. §04 has the reasoning.</p>
       </div>
       <div class="note">
         <span class="nk">The roster does not balance to zero</span>
-        <p>Scope it to <b>food</b>: two camps shipped 6.7 and this band drew 6.4. The missing 0.3 is
+        <p>Click <b>food</b>: two camps shipped 6.7 and this band drew 6.4. The missing 0.3 is
           <code>friction</code>, taken off the top of the pot by <code>balance_commodity</code> — the
-          cost of the distance, and the one figure on the tab nobody received. Scope it to
-          <b>hide</b> instead and there is no roster at all: a party carried that, from a band that
-          need not be pooling with us.</p>
+          cost of the distance, and the one figure on the tab nobody received. A party's cargo has no
+          such list, which is why route rows do not click: a party carried it, from a band that need
+          not be pooling with us.</p>
       </div>
       <div class="note">
         <span class="nk">The span is a floor, not the rule</span>
@@ -677,15 +710,16 @@
       <tr>
         <td><b>Roster</b></td>
         <td class="fix">Members — linearly</td>
-        <td class="fix">15 rows, ~260px, which overruns a bottom dock's zone on its own. But see
-          below: at that size the list stops being the right answer anyway.</td>
+        <td class="fix"><b>Nothing, in the zone.</b> The camps are behind <em>15 camps ›</em> on
+          the network line; the zone states the count and the list opens over the map.</td>
       </tr>
       <tr>
         <td><b>Local section</b></td>
-        <td class="fix"><b>Distinct <code>(material, rating)</code> piles that moved</b> — which rises
-          with members, because the union of what the camps hold widens</td>
-        <td class="fix"><b>This is the one that explodes.</b> 17 piles in the prototype's busy turn,
-          and bone alone can produce 8 of them off the shipped fauna roster.</td>
+        <td class="fix"><b>Distinct goods that moved</b> — at most the materials catalog plus food
+          and fodder, however many camps pool</td>
+        <td class="fix"><b>8 lines.</b> Per <code>(material, rating)</code> pile it was 17 and
+          unbounded — bone alone makes 8 off the shipped fauna roster. One line per good, the ratings
+          on hover, is what bounds it.</td>
       </tr>
     </tbody>
   </table>
@@ -694,10 +728,10 @@
   <div class="verdict">
     <span class="nk">The answer to "how does C scale" — measured in the prototype, not argued</span>
     <p>
-      <b>C's top-level split survives, and each half gets the same bounding device.</b> Set
-      <b>15 camps</b> + <b>20 parties</b> and the tab renders <b>763px</b> of content: the pooled
-      pile list ranked and folded to five, the route half split into <em>Landed</em> and
-      <em>Left</em> and each folded to three parties, the roster folded to a shape.
+      <b>C's top-level split survives.</b> Set <b>15 camps</b> + <b>20 parties</b> and the tab
+      renders <b>664px</b> of content: the local arm as one line per good (8), the route arm split
+      into <em>Landed</em> and <em>Left</em> with each folded to three parties, and the camps behind
+      the network line.
     </p>
     <p>
       <b>Nothing expands in place.</b> A fold row opens a <b>panel over the zone</b> — the
@@ -708,50 +742,45 @@
       whole reason the tab can have a fixed budget at all.
     </p>
     <p>
-      <b>At 15 camps and 20 parties the tab is 764px, and that fits a side dock.</b> A 380px side
+      <b>At 15 camps and 20 parties the tab is 664px, and that fits a side dock.</b> A 380px side
       dock's zone has about 1030px to give. A horizontal dock's body is
       <code>PANEL_HEIGHT_WIDE</code> — <b>418px</b>, whatever the window height, because the cross
-      axis is the reserved one — so the same content runs <b>346px past the end</b>. And no cap fixes
-      that: three sections at ~250px each do not fit 418 however hard their lists are trimmed.
+      axis is the reserved one — so the same content would run <b>246px past the end</b>. And no
+      cap fixes that: the network line and two arms do not fit 418 however hard their lists are
+      trimmed.
     </p>
   </div>
 
-  <h3>The two devices the prototype uses, both already idioms in this panel</h3>
+  <h3>The devices the prototype uses, all of them already idioms in this client</h3>
 
   <ul class="tight">
-    <li><b>Rank by magnitude, fold the tail, state the remainder</b> — the pile list shows its five
-      largest and a <em>"12 smaller piles"</em> row that expands. It is the work board's pager
-      reasoning: never silently truncate, and never make the player scroll to find the row that
-      matters. The 0.2-of-a-bone-pile rows are real and are not what the tab is for.</li>
+    <li><b>One line per good; what it is made of on hover.</b> <em>bone ▲ 2.4 ▼ 1.6 · 6 ratings</em>
+      is the row; the six ratings with their own amounts are the hover card, beside the row and never
+      under the pointer. The row states what a player scans for; the card states what they check.</li>
     <li><b>The route half splits by direction before it folds.</b> <em>What landed</em> and
       <em>what left</em> are two different questions and a player asks one at a time, so 16 journeys
       become two ranked lists of three plus two fold rows. Each party is <b>two lines</b> — the
       counterparty and the turn, then its goods as a clause — rather than a heading and a row per
       good, which is the parties strip's own trade at seven lines.</li>
-    <li><b>The roster becomes a shape, not a list.</b> At 15 camps it leads with
-      <em>"a pot 5 camps moved against; 9 sat within a tenth of their fair share"</em> and then names
-      only the ends, with the remainder one click away. This is the part worth arguing about — see
-      below.</li>
+    <li><b>The camps are a click, not a block.</b> The network line already says <em>15 camps</em>;
+      that count opens the list, and clicking a good opens the same list scoped to it — each camp's
+      in and out, the ones that moved first, the ones that sat even last, and the friction.</li>
     <li><b>A height-starved dock re-authors the zone rather than trimming it.</b> Under ~600px the
       tab drops to a SHORT tier: the network line, then one row per arm stating what happened —
-      <em>18 piles · 16 parties (8 landed · 8 left) · 15 camps</em> — each opening the full list over
-      the map. <b>203px</b>, and it fits 418 with room to spare. This is the band zone's own idiom:
+      <em>8 goods · 16 parties (8 landed · 8 left)</em> — each opening the full list over the map.
+      <b>152px</b>, and it fits 418 with room to spare. This is the band zone's own idiom:
       when the height is not there the blocks are re-authored, never generically reflowed.</li>
   </ul>
 
   <div class="callout">
-    <span class="nk">Why the 15-row roster is not worth keeping</span>
+    <span class="nk">Why the camps list leads with a count</span>
     <p>
-      With 3 camps, <em>who gave me this</em> is nearly determinate — one other camp was short and
-      one was long. With 15 it is a <b>distribution</b>, and a 15-row column of small signed numbers
-      answers a question the player cannot act on: the pot is anonymous, every contributor's share
-      was decided by its own surplus, and none of it names a decision. What stays useful at that size
-      is the count, the extremes, and the friction — <b>how many camps moved, who moved most, and
-      what the distance ate.</b>
-    </p>
-    <p>
-      The full list is still exact and still cheap to publish, so this is a rendering call, not a
-      wire one. If you want all fifteen rows on demand, that is the same fold the pile list uses.
+      With 3 camps, <em>who gave me this</em> is nearly determinate. With 15 it is a
+      <b>distribution</b>: the pot is anonymous, and every contributor's share was decided by its own
+      surplus. So the scoped list opens with what stays useful at that size —
+      <em>"10 camps moved it; 4 sat within a tenth of their fair share"</em> — then the camps by how
+      much they moved, then the friction. Every camp's figure is still there; the order is what
+      makes fifteen of them readable.
     </p>
   </div>
 
@@ -764,7 +793,7 @@
       and the overflow panel brings its own scroll on its own layer, where a real viewport ceiling
       makes one legitimate — exactly the exemption <code>BandComposeFloat</code> already holds.
       <br><br>
-      What the horizontal dock needs instead is the <b>SHORT tier</b>: 764px does not fit 418 and no
+      What the horizontal dock needs instead is the <b>SHORT tier</b>: 664px does not fit 418 and no
       cap makes it, so the zone becomes three rows and a way in. That is a second authored tier to
       build and keep working, which is the real cost of this answer.
       <br><br>
@@ -869,7 +898,8 @@
         <td><b>Material transfers</b></td>
         <td class="fix">Computed in <code>supply.rs:604–655</code>, discarded</td>
         <td class="fix">A <code>TransferLedger</code> per <code>(material, BandKey)</code> beside the food
-          and fodder ones, published per rating, <b>never summed</b></td>
+          and fodder ones, <b>published per rating</b>. The client sums one material's ratings for its
+          summary row and keeps them for the hover; the wire never sums anything</td>
       </tr>
       <tr>
         <td><b>The cause</b></td>
@@ -922,20 +952,13 @@
 
   <div class="q">
     <h3>The SHORT tier on a horizontal dock</h3>
-    <p>764px does not fit 418px and no cap makes it, so a height-starved dock either gets the
+    <p>664px does not fit 418px and no cap makes it, so a height-starved dock either gets the
       <b>SHORT tier</b> (three rows stating what happened per arm, each opening the full list) or the
       Trade tab is simply not offered on a bottom dock. I recommend the <b>tier</b> — it is the band
       zone's existing idiom — but it is a second authored layout to build and keep working, so it is
       worth saying no to if you would rather the tab were vertical-dock only.</p>
   </div>
 
-  <div class="q">
-    <h3>The roster at fifteen camps</h3>
-    <p>Fold it to a shape — <em>"a pot 5 camps moved against; 9 sat within a tenth of their fair
-      share"</em> plus the extremes and the friction — or keep all fifteen rows. I recommend
-      <b>folding</b> (§04). Either way the wire carries every member's net; this is a rendering
-      call.</p>
-  </div>
 
   <div class="q">
     <h3>The <code>cargo + provisions</code> debit</h3>
@@ -1104,6 +1127,7 @@
   };
 
   var LINK_WORD  = { local: "⇄ Local exchange", route: "⇄ Trade route" };
+  var LINK_SHORT = { local: "local", route: "route" };
   var LINK_GLOSS = {
     local: "nobody carries this — camps within reach even up every turn",
     route: "a party walked it here, or is walking it away"
@@ -1115,8 +1139,6 @@
 
   // What a capped list shows before it folds. The work board's own idiom: rank by
   // magnitude, state the remainder, never silently truncate.
-  var CAP_PILES = 5;
-  var CAP_ROSTER = 3;    // per direction
   // Past this many parties in ONE direction, that direction is capped and its tail
   // moves to the panel. Under it the half is short enough to state whole.
   var CAP_ROUTES = 4;
@@ -1224,27 +1246,16 @@
     return h;
   }
 
-  function rosterFor(key) {
-    var list = crossings().filter(function (x) { return scopeKey(x) === key; });
-    if (!list.length) { return null; }
-
-    // A pile that moved on a route, or a named Local crossing (a dowry), has a
-    // counterparty and no pooling distribution at all.
-    var named = list.filter(function (x) { return x.peer; })[0];
-    var pooled = list.filter(function (x) { return x.cause === "pooled"; });
-    if (!pooled.length && named) {
-      return { peer: named.peer, dir: named.dir, foreign: named.foreign,
-               cause: named.cause, link: named.link };
-    }
-    if (!pooled.length) { return null; }
-
-    var x = pooled[0];
+  /** One pooled pile's distribution across the camps — the balancer's own per-member
+      delta, mocked. Keyed on the PILE, because the balancer runs once per
+      `(material, rating)` and each rating's pot has its own senders. */
+  function pileNets(x) {
     var mine = x.dir === "in" ? x.amt : -x.amt;
     var other = mine > 0 ? mine * (1 + FRICTION) : -mine * (1 - FRICTION);
     var friction = Math.round(Math.abs(mine * FRICTION) * 10) / 10;
 
     var pool = members().filter(function (m) { return !m.you; });
-    var h = hash(key);
+    var h = hash(scopeKey(x));
     var k = big() ? 3 + (h % 4) : Math.min(2, pool.length);
     // **Distinct members, or the shares stop adding up.** A fixed stride over the pool
     // collides whenever the stride and the pool size share a factor (7 over 14 camps
@@ -1255,7 +1266,6 @@
     for (var i = 0; picked.length < k && i < pool.length; i++) {
       picked.push(pool[(h + i) % pool.length]);
     }
-    // Split `other` across the picked members, largest first, to 0.1.
     var nets = {};
     var left = Math.round(other * 10) / 10;
     picked.forEach(function (m, i) {
@@ -1266,100 +1276,130 @@
       nets[m.name] = mine > 0 ? -share : share;
     });
     nets[BAND.name] = mine;
-    return { nets: nets, friction: friction, contributors: picked.length,
-             quiet: pool.length - picked.length };
+    return { nets: nets, friction: friction };
   }
 
-  function rosterBlock() {
-    var key = state.open;
-    var h = '<div class="roster">';
-
-    if (!key) {
-      h += '<div class="scope">' + members().length +
-        " camps pooling — click a row above for each one's net</div>";
-      var shown = big() ? members().slice(0, 4) : members();
-      shown.forEach(function (m) {
-        h += '<div class="row' + (m.you ? " me" : "") + '">' +
-          '<span class="lab">' + esc(m.name) + "</span>" +
-          '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
-          (m.you ? "you" : m.dist + (m.road ? " tiles · road" : " tiles")) +
-          "</span></div>";
-      });
-      if (big()) {
-        h += opensRow(members().length - 4, "roster", ["camp", "camps"]);
-      }
-      return h + "</div>";
-    }
-
-    var entry = rosterFor(key);
-    if (!entry) { return h + "</div>"; }
-
-    // Carried by a party, or handed to a named band — no pooling distribution exists.
-    if (entry.peer) {
-      h += '<div class="scope">' + esc(key) + " — <em>" +
-        (entry.link === "route" ? "a party carried this" : "handed over whole") + "</em></div>" +
-        '<div class="row"><span class="sub">' +
-        (entry.dir === "in" ? "Sent by " : "Carried to ") + esc(entry.peer) +
-        (entry.foreign ? " — <b>another people</b>, so never in this pool" :
-          (entry.cause === "dowry_out" ? ", the band that split off this turn" : "")) +
-        ". The crossing is the link, not the network.</span></div>";
-      return h + "</div>";
-    }
-
-    var nets = entry.nets;
-    var signed = Object.keys(nets).map(function (n) { return { name: n, v: nets[n] }; });
-    var me = signed.filter(function (r) { return r.name === BAND.name; })[0];
-    var others = signed.filter(function (r) { return r.name !== BAND.name; })
-                       .sort(function (a, b) { return Math.abs(b.v) - Math.abs(a.v); });
-
-    // ⛔ AT FIFTEEN CAMPS THE LIST STOPS BEING AN ANSWER. One anonymous pot and
-    // fourteen counterparties is a DISTRIBUTION, not attribution, so the block leads
-    // with the shape of it and names only the ends.
-    if (big()) {
-      h += '<div class="scope">Net this turn, <em>' + esc(key) + "</em></div>";
-      h += '<div class="row"><span class="sub">a pot ' + entry.contributors +
-        " camps moved against; " + entry.quiet +
-        " sat within a tenth of their fair share</span></div>";
-    } else {
-      h += '<div class="scope">Net this turn, <em>' + esc(key) + "</em></div>";
-    }
-
-    var list = big() ? [me].concat(others.slice(0, CAP_ROSTER * 2)) : [me].concat(others);
-    // In the small world every member is named, including the ones that held none.
-    if (!big()) {
-      members().forEach(function (m) {
-        if (!list.some(function (r) { return r.name === m.name; })) {
-          list.push({ name: m.name, v: null });
-        }
-      });
-      list.sort(function (a, b) {
-        return members().findIndex(function (m) { return m.name === a.name; }) -
-               members().findIndex(function (m) { return m.name === b.name; });
-      });
-    }
-
-    list.forEach(function (r) {
-      var right = (r.v === null || r.v === undefined)
-        ? '<span class="amt" style="color:var(--g-faint)">held none</span>'
-        : amtCell(r.v >= 0 ? "in" : "out", Math.abs(r.v));
-      h += '<div class="row' + (r.name === BAND.name ? " me" : "") + '">' +
-        '<span class="lab">' + esc(r.name) + "</span>" +
-        '<span class="fill"></span>' + right + "</div>";
+  /** Each camp's IN and OUT of one good this turn, summed over that good's pooled
+      piles — the same sum the good's summary row makes, so the band's own line in this
+      list and its row in the zone are one number by construction. **Two magnitudes,
+      never a signed net**: a camp that took good bone and gave fair bone did something,
+      and a net would render it as nothing (`TransferLedger`'s own reasoning). */
+  function rosterFor(key) {
+    var good = key.slice(GOOD_KEY.length);
+    var piles = crossings().filter(function (x) {
+      return x.good === good && x.link === "local" && !x.peer;
     });
+    if (!piles.length) { return null; }
+    var camps = {}, friction = 0;
+    piles.forEach(function (x) {
+      var r = pileNets(x);
+      friction += r.friction;
+      Object.keys(r.nets).forEach(function (n) {
+        var c = camps[n] || (camps[n] = { inn: 0, out: 0 });
+        if (r.nets[n] > 0) { c.inn += r.nets[n]; } else { c.out -= r.nets[n]; }
+      });
+    });
+    Object.keys(camps).forEach(function (n) {
+      var c = camps[n];
+      if (n !== BAND.name && c.inn < SHOWN_MIN && c.out < SHOWN_MIN) { delete camps[n]; }
+    });
+    var moved = Object.keys(camps).length - 1;
+    return { good: good, camps: camps, friction: Math.round(friction * 10) / 10,
+             moved: moved, even: members().length - 1 - moved };
+  }
 
-    // The scoped roster is capped too, and its tail opens the same panel — every
-    // member's net is exact and published; what is bounded is the ZONE, not the fact.
-    var hidden = members().length - list.length;
-    if (big() && hidden > 0) {
-      h += opensRow(hidden, "roster", ["camp", "camps"]);
-    }
-    if (entry.friction) {
-      h += '<div class="row"><span class="sub">lost in transit — friction over the ' +
-        "pooling links</span>" +
-        '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
-        amt(entry.friction) + "</span></div>";
-    }
-    return h + "</div>";
+  // ---------------------------------------------------------------------------
+  // ONE LINE PER GOOD. Food, fodder, and each material once, with its total in and
+  // its total out — never one line per `(material, rating)` pile.
+  //
+  // ⛔ THE SUM IS WITHIN ONE MATERIAL, NEVER ACROSS TWO. `hide` and `bone` stay two
+  // lines, because a scalar of hide-plus-bone is the retired trade axis under a new
+  // name (arc #527, `supply.rs`). Summing one material's own ratings is what the
+  // Crafting panel's `Owned` column already does for a band's batches; the ratings are
+  // the hover, where they are one gesture away and cost the zone nothing.
+  //
+  // And it is what makes the list BOUNDED: one row per good is at most the materials
+  // catalog plus food and fodder, however many camps pool and however many ratings
+  // they hold — so the local section needs no fold at all.
+  // ---------------------------------------------------------------------------
+  var GOOD_KEY = "good:";
+  // The smallest amount the readout's one decimal can state. Below it a move is not a
+  // move as far as any row here can say.
+  var SHOWN_MIN = 0.05;
+  var TIPS = {};
+
+  function byGood(list) {
+    var order = [], map = {};
+    list.forEach(function (x) {
+      var g = map[x.good];
+      if (!g) { g = map[x.good] = { good: x.good, inn: 0, out: 0, piles: [] }; order.push(g); }
+      if (x.dir === "in") { g.inn += x.amt; } else { g.out += x.amt; }
+      g.piles.push(x);
+    });
+    // Food and fodder lead, as they do on every other surface; materials follow by
+    // how much of each moved.
+    return order.sort(function (a, b) {
+      var am = isMaterial(a) ? 1 : 0, bm = isMaterial(b) ? 1 : 0;
+      if (am !== bm) { return am - bm; }
+      return (b.inn + b.out) - (a.inn + a.out);
+    });
+  }
+
+  function ratingsOf(g) {
+    var seen = {};
+    g.piles.forEach(function (x) { if (x.chips) { seen[scopeKey(x)] = 1; } });
+    return Object.keys(seen).length;
+  }
+
+  function contextsOf(g) {
+    var seen = {};
+    g.piles.forEach(function (x) { seen[x.link + "|" + x.cause + "|" + (x.peer || "")] = 1; });
+    return Object.keys(seen).length;
+  }
+
+  /** In and out as two magnitudes — one arrow when only one direction moved. */
+  function goodAmt(g) {
+    return (g.inn ? amtCell("in", g.inn) : "") + (g.inn && g.out ? " " : "") +
+           (g.out ? amtCell("out", g.out) : "");
+  }
+
+  /** What the hover card says: the good's piles, largest first, each with its
+      rating; and where they came from only when that differs between them. */
+  function tipHtml(g) {
+    var mixed = contextsOf(g) > 1;
+    var rows = ranked(g.piles).map(function (x) {
+      var where = LINK_SHORT[x.link] + (x.cause === "pooled" ? "" : " · " + CAUSE_WORD[x.cause]) +
+                  peerClause(x);
+      return '<div class="tr">' + (x.chips ? chips(x) : "") +
+        (mixed ? '<span class="sub">' + where + "</span>" : "") +
+        '<span class="fill"></span>' + amtCell(x.dir, x.amt) + "</div>";
+    }).join("");
+    var n = g.piles.length;
+    return '<div class="th">' + esc(g.good) +
+      '<span class="n">' + n + (n === 1 ? " pile" : " piles") +
+      (ratingsOf(g) ? " by rating" : "") + "</span></div>" + rows +
+      (g.inn && g.out
+        ? '<div class="tf">\u25b2 ' + amt(g.inn) + " in \u00b7 \u25bc " + amt(g.out) +
+          " out \u2014 one rating can arrive while another leaves</div>"
+        : "");
+  }
+
+  /** The summary row for one good. `pool` rows are clickable — they open each camp's
+      share of that good — because only a pooled good HAS a per-camp distribution; a
+      row that mixes in party cargo would be quoting one against the other. */
+  function goodRow(g, ctx) {
+    var hasTip = ratingsOf(g) > 0 || contextsOf(g) > 1;
+    var tipId = hasTip ? ctx + ":" + g.good : null;
+    if (tipId) { TIPS[tipId] = tipHtml(g); }
+    var key = ctx === "pool" ? GOOD_KEY + g.good : null;
+    var r = ratingsOf(g);
+    return '<div class="row' + (key ? " click" : "") + (key && state.open === key ? " on" : "") + '"' +
+      (key ? ' data-key="' + esc(key) + '"' : "") +
+      (tipId ? ' data-tip="' + esc(tipId) + '"' : "") + ">" +
+      '<span class="lab"><span class="gname' + (tipId ? " hov" : "") + '">' + esc(g.good) +
+      "</span></span>" +
+      (r > 1 ? '<span class="sub">' + r + " ratings</span>" : "") +
+      '<span class="fill"></span>' + goodAmt(g) + "</div>";
   }
 
   // ---------------------------------------------------------------------------
@@ -1368,7 +1408,8 @@
     var edge = w.members.filter(function (m) { return m.edge; })[0];
     var h = '<div class="net-head"><div class="l1">' +
       '<span class="k">Network</span>' +
-      '<span class="v">' + w.members.length + " camps</span>" +
+      '<span class="v link" data-sheet="roster" title="every camp in the network">' +
+        w.members.length + " camps \u203a</span>" +
       '<span class="span" title="reach_tiles is ' + w.reach +
         '; a road carries a link past it">within ' + w.span + " tiles</span>" +
       "</div>";
@@ -1396,7 +1437,7 @@
   // ---------------------------------------------------------------------------
   function layoutA() {
     var list = crossings();
-    if (!list.length) { return networkHead() + emptyState() + rosterBlock(); }
+    if (!list.length) { return networkHead() + emptyState(); }
     var h = networkHead();
 
     ["food", "fodder"].forEach(function (good) {
@@ -1427,29 +1468,16 @@
       h += "</div>";
     });
 
-    var mats = ranked(list.filter(isMaterial));
+    var mats = byGood(list.filter(isMaterial));
     if (mats.length) {
-      var shown = big() ? mats.slice(0, CAP_PILES) : mats;
       h += '<div class="grp"><div class="grp-head">Materials' +
-        '<span class="cnt">' + mats.length + " piles moved</span></div>";
-      shown.forEach(function (x) {
-        h += row({
-          cls: "sub-row", key: scopeKey(x),
-          label: esc(x.good) + " " + chips(x),
-          amt: amtCell(x.dir, x.amt)
-        });
-        h += row({
-          cls: "sub-sub",
-          label: LINK_WORD[x.link] + " · " + CAUSE_WORD[x.cause] + peerClause(x)
-        });
-      });
-      if (big() && mats.length > CAP_PILES) {
-        h += opensRow(mats.length - CAP_PILES, "piles", ["pile", "piles"]);
-      }
+        '<span class="cnt">' + mats.length + (mats.length === 1 ? " good" : " goods") +
+        "</span></div>";
+      mats.forEach(function (g) { h += goodRow(g, "a"); });
       h += "</div>";
     }
 
-    return h + rosterBlock();
+    return h;
   }
 
   // ---------------------------------------------------------------------------
@@ -1457,36 +1485,20 @@
   // ---------------------------------------------------------------------------
   function layoutB() {
     var list = crossings();
-    if (!list.length) { return networkHead() + emptyState() + rosterBlock(); }
+    if (!list.length) { return networkHead() + emptyState(); }
     var h = networkHead();
 
     [["in", "Arrived"], ["out", "Left"]].forEach(function (pair) {
       var dir = pair[0];
-      var mine = ranked(list.filter(function (x) { return x.dir === dir; }));
-      var id = "b" + dir;
-      var shown = big() ? mine.slice(0, CAP_PILES) : mine;
+      var mine = byGood(list.filter(function (x) { return x.dir === dir; }));
       h += '<div class="grp"><div class="grp-head"><span class="' + cls(dir) + '">' +
         mark(dir) + "</span> " + pair[1] +
-        '<span class="cnt">' + mine.length + (mine.length === 1 ? " crossing" : " crossings") +
+        '<span class="cnt">' + mine.length + (mine.length === 1 ? " good" : " goods") +
         "</span></div>";
       if (!mine.length) {
         h += '<div class="quiet" style="padding:4px 2px">nothing</div>';
       }
-      shown.forEach(function (x) {
-        h += row({
-          key: scopeKey(x),
-          label: '<span class="amt ' + cls(dir) + '" style="margin-right:6px">' + amt(x.amt) + "</span>" +
-                 esc(x.good) + " " + chips(x),
-          amt: '<span class="amt" style="color:var(--g-faint)">' + LINK_WORD[x.link] + "</span>"
-        });
-        h += row({
-          cls: "sub-sub",
-          label: CAUSE_WORD[x.cause] + peerClause(x) + (x.when ? " · " + esc(x.when) : "")
-        });
-      });
-      if (big() && mine.length > CAP_PILES) {
-        h += opensRow(mine.length - CAP_PILES, "b" + dir, ["crossing", "crossings"]);
-      }
+      mine.forEach(function (g) { h += goodRow(g, "b" + dir); });
       h += "</div>";
       // ⛔ No subtotal under either half. They are different goods and different
       // ratings of one good, and nothing in this game may sum those into a figure.
@@ -1495,7 +1507,7 @@
       }
     });
 
-    return h + rosterBlock();
+    return h;
   }
 
   // ---------------------------------------------------------------------------
@@ -1508,8 +1520,13 @@
 
     // --- LOCAL
     var loc = list.filter(function (x) { return x.link === "local"; });
+    var pooledGoods = byGood(loc.filter(function (x) { return !x.peer; }));
+    var locCount = Object.keys(loc.reduce(function (acc, x) {
+      acc[x.good] = 1; return acc;
+    }, {})).length;
     h += '<div class="grp"><div class="grp-head">' + LINK_WORD.local +
-      '<span class="cnt">' + (loc.length ? loc.length + " moved" : "nothing") + "</span></div>" +
+      '<span class="cnt">' + (loc.length ? locCount + (locCount === 1 ? " good" : " goods") : "nothing") +
+      "</span></div>" +
       '<div class="row"><span class="sub">' + LINK_GLOSS.local + "</span></div>";
     if (!loc.length) {
       h += '<div class="quiet" style="padding:6px 2px">Every camp is within a tenth of its fair ' +
@@ -1519,18 +1536,9 @@
     // A dowry is Local and DOES name its counterparty; it is not pooling and is
     // lifted out so the pooled list stays one kind of thing.
     var named = loc.filter(function (x) { return x.peer; });
-    var pooled = ranked(loc.filter(function (x) { return !x.peer; }));
-    var shown = big() ? pooled.slice(0, CAP_PILES) : pooled;
-
-    shown.forEach(function (x) {
-      h += row({ key: scopeKey(x), label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
-    });
-    if (big() && pooled.length > CAP_PILES) {
-      h += opensRow(pooled.length - CAP_PILES, "piles", ["pile", "piles"]);
-    }
+    pooledGoods.forEach(function (g) { h += goodRow(g, "pool"); });
     named.forEach(function (x) {
       h += row({
-        key: scopeKey(x),
         label: esc(x.good) + " " + chips(x),
         sub: CAUSE_WORD[x.cause] + peerClause(x),
         amt: amtCell(x.dir, x.amt)
@@ -1579,8 +1587,7 @@
         var goods = g.items.map(function (x) {
           return '<span class="amt ' + cls(x.dir) + '">' + amt(x.amt) + "</span> " + esc(x.good);
         }).join(" · ");
-        h += '<div class="row click sub-row' + (state.open === scopeKey(g.items[0]) ? " on" : "") +
-          '" data-key="' + esc(scopeKey(g.items[0])) + '">' +
+        h += '<div class="row sub-row">' +
           '<span class="lab' + (g.own ? " dim" : "") + '">' + head + "</span>" +
           '<span class="fill"></span>' +
           '<span class="amt" style="color:var(--g-faint)">' + esc(g.own ? "came home" : g.when || "") +
@@ -1591,7 +1598,7 @@
       h += row({ cls: "sub-row", label: head, sub: g.own ? "came home" : esc(g.when || ""),
                  dimLabel: g.own });
       g.items.forEach(function (x) {
-        h += row({ cls: "sub-sub", key: scopeKey(x),
+        h += row({ cls: "sub-sub",
                    label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
       });
     }
@@ -1621,7 +1628,7 @@
     });
     h += "</div>";
 
-    return h + rosterBlock();
+    return h;
   }
 
   var LAYOUTS = { a: layoutA, b: layoutB, c: layoutC };
@@ -1635,20 +1642,12 @@
     var list = crossings();
 
     if (kind === "piles") {
-      var piles = ranked(list.filter(function (x) {
-        return x.link === "local" && !x.peer && isMaterial(x);
-      }));
-      var goods = ranked(list.filter(function (x) {
-        return x.link === "local" && !x.peer && !isMaterial(x);
-      }));
+      var goods = byGood(list.filter(function (x) { return x.link === "local" && !x.peer; }));
       return {
-        title: "Pooled this turn", count: goods.length + piles.length + " piles",
-        sub: "every pile that crossed on the local arm, largest first. A pile is one " +
-             "(material, rating) — never summed across ratings.",
-        body: goods.concat(piles).map(function (x) {
-          return row({ key: scopeKey(x), label: esc(x.good) + " " + chips(x),
-                       amt: amtCell(x.dir, x.amt) });
-        }).join("")
+        title: "Pooled this turn",
+        count: goods.length + (goods.length === 1 ? " good" : " goods"),
+        sub: "one line per good. Hover one for its ratings; click it for each camp's share.",
+        body: goods.map(function (g) { return goodRow(g, "pool"); }).join("")
       };
     }
 
@@ -1669,7 +1668,7 @@
                                   : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + foreignTag(g.items[0]),
                      sub: g.own ? "came home" : esc(g.when || ""), dimLabel: g.own });
         g.items.forEach(function (x) {
-          out += row({ cls: "sub-sub", key: scopeKey(x),
+          out += row({ cls: "sub-sub",
                        label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
         });
       });
@@ -1681,36 +1680,51 @@
       };
     }
 
-    // roster — every member, with its net when a commodity is scoped
+    // THE CAMPS. Unscoped: every camp and how far off it sits. Scoped to a good (a
+    // click on its row): each camp's in and out of it, the band first, the camps that
+    // moved by how much, and the ones that sat even last.
     var entry = state.open ? rosterFor(state.open) : null;
-    var nets = entry && entry.nets ? entry.nets : null;
-    var rows = members().map(function (m) {
-      var right;
-      if (nets) {
-        var v = nets[m.name];
-        right = (v === null || v === undefined)
-          ? '<span class="amt" style="color:var(--g-faint)">held none</span>'
-          : amtCell(v >= 0 ? "in" : "out", Math.abs(v));
-      } else {
-        right = '<span class="amt" style="color:var(--g-faint)">' +
-          (m.you ? "you" : m.dist + (m.road ? " tiles \u00b7 road" : " tiles")) + "</span>";
-      }
+    if (!entry) {
+      return {
+        title: "The pooling network", count: members().length + " camps",
+        sub: "every camp this band pools with, and how far off it sits. All one people: " +
+             "`pools_freely` gates the union on faction, so a stranger can never be here.",
+        body: members().map(function (m) {
+          return '<div class="row' + (m.you ? " me" : "") + '">' +
+            '<span class="lab">' + esc(m.name) + "</span>" +
+            '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+            (m.you ? "you" : m.dist + (m.road ? " tiles \u00b7 road" : " tiles")) +
+            "</span></div>";
+        }).join("")
+      };
+    }
+    var ordered = members().slice().sort(function (a, b) {
+      if (a.you !== b.you) { return a.you ? -1 : 1; }
+      var ca = entry.camps[a.name], cb = entry.camps[b.name];
+      return (cb ? cb.inn + cb.out : 0) - (ca ? ca.inn + ca.out : 0);
+    });
+    var body = ordered.map(function (m) {
+      var c = entry.camps[m.name];
+      var right = c
+        ? goodAmt(c)
+        : '<span class="amt" style="color:var(--g-faint)">even</span>';
       return '<div class="row' + (m.you ? " me" : "") + '">' +
         '<span class="lab">' + esc(m.name) + "</span>" +
         '<span class="fill"></span>' + right + "</div>";
     }).join("");
+    if (entry.friction) {
+      body += '<div class="row"><span class="sub">lost in transit \u2014 friction over the ' +
+        "pooling links</span>" +
+        '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+        amt(entry.friction) + "</span></div>";
+    }
     return {
-      title: "The pooling network", count: members().length + " camps",
-      sub: nets
-        ? "each camp's own net of " + esc(scopeLabelOf(state.open)) +
-          " this turn. The column does not balance \u2014 friction is what the distance ate."
-        : "every camp this band pools with, and how far off it sits. All one people: " +
-          "`pools_freely` gates the union on faction, so a stranger can never be here.",
-      body: rows
+      title: esc(entry.good) + " across the network", count: members().length + " camps",
+      sub: entry.moved + " camps moved it; " + entry.even + " sat within a tenth of their " +
+           "fair share. The column does not balance \u2014 friction is what the distance ate.",
+      body: body
     };
   }
-
-  function scopeLabelOf(k) { return k; }
 
   function renderSheet() {
     var host = document.getElementById("ovl");
@@ -1724,7 +1738,24 @@
       "</div>" +
       '<div class="ovl-sub">' + c.sub + "</div>" +
       '<div class="ovl-body">' + c.body + "</div></div>";
+
+    // On a horizontal dock the map-facing side is ABOVE the strip, so the popup is
+    // anchored to the strip's top edge and takes the room above it — never the strip
+    // itself (`BandComposeFloat._room()`'s rule).
+    var screen = document.getElementById("screen");
+    var ovl = host.querySelector(".ovl");
+    if (ovl && screen.classList.contains("wide")) {
+      var scaler = document.getElementById("scaler");
+      ovl.style.top = "auto";
+      ovl.style.bottom = (screen.clientHeight - scaler.offsetTop + ANCHOR_GAP) + "px";
+      ovl.style.maxHeight = (scaler.offsetTop - STAGE_PAD - ANCHOR_GAP) + "px";
+    }
   }
+
+  // The clearance between the popup and the card it came from, and the stage's own
+  // padding it must stay inside.
+  var ANCHOR_GAP = 12;
+  var STAGE_PAD = 22;
 
   // ---------------------------------------------------------------------------
   function tradeZone() {
@@ -1733,7 +1764,7 @@
   }
 
   // Under this much room the zone cannot hold three sections at any cap, so it drops
-  // to the SHORT tier below. Measured, not chosen: the folded tab is ~764px and a
+  // to the SHORT tier below. Measured, not chosen: the full tab is ~664px and a
   // horizontal dock's body is 418.
   var TIER_FULL = 600;
 
@@ -1766,13 +1797,12 @@
         '<div class="row"><span class="sub">' + gloss + "</span></div>";
     }
 
+    var goodsMoved = byGood(loc.filter(function (x) { return !x.peer; })).length;
     h += opener(LINK_WORD.local, LINK_GLOSS.local,
-                loc.length + (loc.length === 1 ? " pile" : " piles"), "piles");
+                goodsMoved + (goodsMoved === 1 ? " good" : " goods"), "piles");
     h += opener(LINK_WORD.route,
                 landed + " landed \u00b7 " + left + " left",
                 (landed + left) + " parties", "rtin");
-    h += opener("Network", "who this band pools with, and each one's net",
-                members().length + " camps", "roster");
     return h;
   }
 
@@ -1832,6 +1862,8 @@
   var PARTY_GHOST = [["Shipment → Duskwater", "3 turns"], ["Hunt · Aurochs", "home"]];
 
   function render() {
+    TIPS = {};
+    hideTip();
     var moved = crossings().length;
     var head =
       '<div class="bp-head"><div class="bp-subject">' +
@@ -1923,21 +1955,53 @@
   bindSeg("routes", "routes");
 
   // One handler for the zone and the panel over it, so a row behaves the same in both.
-  document.getElementById("screen").addEventListener("click", function (ev) {
+  var screenEl = document.getElementById("screen");
+  screenEl.addEventListener("click", function (ev) {
     if (!ev.target.closest) { return; }
-    if (ev.target.closest("[data-sheet-close]")) { state.sheet = null; renderSheet(); return; }
-    var opener = ev.target.closest(".row.opens");
+    if (ev.target.closest("[data-sheet-close]")) {
+      state.sheet = null; state.open = null; render(); return;
+    }
+    var opener = ev.target.closest("[data-sheet]");
     if (opener) {
-      state.sheet = opener.getAttribute("data-sheet");
-      renderSheet();
-      return;
+      state.sheet = opener.getAttribute("data-sheet"); state.open = null; render(); return;
     }
     var t = ev.target.closest(".row.click");
     if (!t) { return; }
     var k = t.getAttribute("data-key");
-    state.open = (state.open === k) ? null : k;
+    if (!k || k.indexOf(GOOD_KEY) !== 0) { return; }
+    // A good's row opens its per-camp share; clicking the same row again closes it.
+    if (state.open === k && state.sheet === "roster") { state.open = null; state.sheet = null; }
+    else { state.open = k; state.sheet = "roster"; }
     render();
   });
+
+  function hideTip() {
+    var tip = document.getElementById("tip");
+    if (tip) { tip.style.display = "none"; }
+  }
+
+  // The hover card sits beside the row it describes and never under the pointer —
+  // on the side AWAY from an open popup, so it cannot land on the list the player
+  // just opened; with none open it prefers the right, and flips where there is no room.
+  screenEl.addEventListener("mouseover", function (ev) {
+    var r = ev.target.closest ? ev.target.closest("[data-tip]") : null;
+    var tip = document.getElementById("tip");
+    var html = r ? TIPS[r.getAttribute("data-tip")] : null;
+    if (!html) { hideTip(); return; }
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    var sr = screenEl.getBoundingClientRect(), rr = r.getBoundingClientRect();
+    var w = tip.offsetWidth;
+    var rightSide = rr.right - sr.left + 10;
+    var leftSide = rr.left - sr.left - w - 10;
+    var inSheet = !!r.closest(".ovl");
+    var left = state.sheet && !inSheet ? leftSide : rightSide;
+    if (left === rightSide && left + w > sr.width - 8) { left = leftSide; }
+    if (left === leftSide && left < 8) { left = rightSide; }
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, rr.top - sr.top - 6) + "px";
+  });
+  screenEl.addEventListener("mouseleave", hideTip);
 
   render();
 })();
