@@ -370,10 +370,6 @@
   .tip .fill { flex: 1 1 auto; min-width: 8px; }
   .tip .amt { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
   .tip .sub { color: var(--g-faint); font-size: 10.5px; }
-  .tip .tf {
-    margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--g-line-soft);
-    color: var(--g-faint); font-size: 10.5px;
-  }
 
   .legdot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--g-faint); margin-right: 5px; vertical-align: middle; }
 
@@ -584,10 +580,10 @@
       </div>
       <div class="note">
         <span class="nk">Summed within a material, never across two</span>
-        <p><em>bone ▲ 2.4 ▼ 1.6</em> sums bone's own ratings, which the Crafting panel's
-          <em>Owned</em> column already does for a band's batches. <em>hide</em> and <em>bone</em>
-          stay two lines: a hide-plus-bone scalar is the retired trade axis (#527). In and out stay
-          two numbers, because one rating can arrive while another leaves.</p>
+        <p><em>bone ▲ 0.8</em> is bone's net across its own ratings, which is the kind of sum the
+          Crafting panel's <em>Owned</em> column already makes for a band's batches. <em>hide</em>
+          and <em>bone</em> stay two lines: a hide-plus-bone scalar is the retired trade axis (#527).
+          Which ratings went which way is the hover card.</p>
       </div>
       <div class="note">
         <span class="nk">Try it — 15 camps</span>
@@ -754,9 +750,10 @@
   <h3>The devices the prototype uses, all of them already idioms in this client</h3>
 
   <ul class="tight">
-    <li><b>One line per good; what it is made of on hover.</b> <em>bone ▲ 2.4 ▼ 1.6 · 6 ratings</em>
-      is the row; the six ratings with their own amounts are the hover card, beside the row and never
-      under the pointer. The row states what a player scans for; the card states what they check.</li>
+    <li><b>One line per good; what it is made of on hover.</b> <em>bone ▲ 0.8 · 6 ratings</em> is
+      the row — the good's net this turn; the six ratings, each with its own amount and direction,
+      are the hover card, beside the row and never under the pointer. The row states what a player
+      scans for; the card states what they check.</li>
     <li><b>The route half splits by direction before it folds.</b> <em>What landed</em> and
       <em>what left</em> are two different questions and a player asks one at a time, so 16 journeys
       become two ranked lists of three plus two fold rows. Each party is <b>two lines</b> — the
@@ -1279,11 +1276,9 @@
     return { nets: nets, friction: friction };
   }
 
-  /** Each camp's IN and OUT of one good this turn, summed over that good's pooled
-      piles — the same sum the good's summary row makes, so the band's own line in this
-      list and its row in the zone are one number by construction. **Two magnitudes,
-      never a signed net**: a camp that took good bone and gave fair bone did something,
-      and a net would render it as nothing (`TransferLedger`'s own reasoning). */
+  /** Each camp's net of one good this turn, summed over that good's pooled piles —
+      the same figure the good's summary row states, so the band's own line in this
+      list and its row in the zone are one number by construction. */
   function rosterFor(key) {
     var good = key.slice(GOOD_KEY.length);
     var piles = crossings().filter(function (x) {
@@ -1357,10 +1352,16 @@
     return Object.keys(seen).length;
   }
 
-  /** In and out as two magnitudes — one arrow when only one direction moved. */
+  /** **ONE FIGURE: THE GOOD'S NET THIS TURN.** A summary row answers *did we gain or
+      lose bone*; which ratings went which way is the hover card's job, where every
+      pile is stated with its own direction. A net that rounds to nothing at the
+      readout's one decimal says so rather than printing an arrow on 0.0. */
   function goodAmt(g) {
-    return (g.inn ? amtCell("in", g.inn) : "") + (g.inn && g.out ? " " : "") +
-           (g.out ? amtCell("out", g.out) : "");
+    var net = g.inn - g.out;
+    if (Math.abs(net) < SHOWN_MIN) {
+      return '<span class="amt" style="color:var(--g-faint)">even</span>';
+    }
+    return amtCell(net > 0 ? "in" : "out", Math.abs(net));
   }
 
   /** What the hover card says: the good's piles, largest first, each with its
@@ -1377,11 +1378,7 @@
     var n = g.piles.length;
     return '<div class="th">' + esc(g.good) +
       '<span class="n">' + n + (n === 1 ? " pile" : " piles") +
-      (ratingsOf(g) ? " by rating" : "") + "</span></div>" + rows +
-      (g.inn && g.out
-        ? '<div class="tf">\u25b2 ' + amt(g.inn) + " in \u00b7 \u25bc " + amt(g.out) +
-          " out \u2014 one rating can arrive while another leaves</div>"
-        : "");
+      (ratingsOf(g) ? " by rating" : "") + "</span></div>" + rows;
   }
 
   /** The summary row for one good. `pool` rows are clickable — they open each camp's
@@ -1681,7 +1678,7 @@
     }
 
     // THE CAMPS. Unscoped: every camp and how far off it sits. Scoped to a good (a
-    // click on its row): each camp's in and out of it, the band first, the camps that
+    // click on its row): each camp's net of it, the band first, the camps that
     // moved by how much, and the ones that sat even last.
     var entry = state.open ? rosterFor(state.open) : null;
     if (!entry) {
