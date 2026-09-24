@@ -293,8 +293,6 @@
   .net-head .l1 .k { font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--g-faint); }
   .net-head .l1 .v { font-size: 11.5px; color: var(--g-dim); }
   .net-head .span { margin-left: auto; font: 500 11px/1 var(--mono); color: var(--g-signal); }
-  .net-head .l2 { font-size: 10.5px; color: var(--g-faint); margin-top: 3px; }
-  .net-head .l2 .edge { color: var(--g-warn); }
 
   .grp { margin-bottom: 9px; }
   .grp-head {
@@ -352,6 +350,15 @@
   /* A good whose line has something behind it — its ratings, or the several places it
      came from — says so with a dotted rule, the one cue a hover target needs. */
   .gname.hov { border-bottom: 1px dotted var(--g-faint); }
+
+  /* A camp's link rung — the glyph in the rung's own weight, then its word. */
+  .lk { display: inline-flex; align-items: center; gap: 5px; margin-right: 8px; cursor: default; }
+  .lk svg { display: block; }
+  .lk-w { font-size: 10.5px; color: var(--g-dim); }
+  .lk-path { color: var(--g-faint); }
+  .lk-trail { color: var(--g-dim); }
+  .lk-dirt_road { color: var(--g-pigment); }
+  .lk-paved_road { color: var(--g-ink); }
 
   /* ---------- THE HOVER CARD ---------------------------------------------------
      The summary row states the good once; this states what the row is made of. It
@@ -994,13 +1001,31 @@
 
   // Two worlds: the three-camp network the tab was designed against, and a
   // fifteen-camp one. Only the SECOND answers "does the shape survive".
+  // `supply_network_config.json`'s `reach_tiles` — the span a bare path pools across.
+  var WORLD_REACH = 3;
+
+  // **THE ROUTE BRANCH'S FOUR RUNGS**, mirrored from `intensification_ladder.json`
+  // (`route_payoff.holds_link_to_tiles` / `friction_multiplier`). The shipped client
+  // must read them off the wire rather than carry a copy — a fifth rung then gets a
+  // row and an icon with no client change but the icon itself.
+  var LINK_RUNGS = {
+    path:       { label: "path",       holds: 0,  friction: 1.0,
+                  how: "worn in by traffic, free to hold" },
+    trail:      { label: "trail",      holds: 6,  friction: 0.85,
+                  how: "worn in by traffic, free to hold" },
+    dirt_road:  { label: "dirt road",  holds: 10, friction: 0.6,
+                  how: "built, and kept with work every turn" },
+    paved_road: { label: "paved road", holds: 16, friction: 0.35,
+                  how: "built with stone, kept with stone" }
+  };
+
   var WORLD = {
     small: {
       span: 4, reach: 3,
       members: [
         member("Ashfell", 0),
-        member("Barrowmere", 2),
-        member("Bitterbrook", 4, { road: true, edge: true })
+        member("Barrowmere", 2, { link: "path" }),
+        member("Bitterbrook", 4, { link: "trail" })
       ],
       turns: {
         busy: [
@@ -1031,7 +1056,13 @@
     large: {
       span: 6, reach: 3,
       members: NAMES.map(function (n, i) {
-        return member(n, i === 0 ? 0 : 1 + (i % 6), i === 14 ? { road: true, edge: true } : null);
+        var dist = i === 0 ? 0 : 1 + (i % 6);
+        // A camp past the free reach is only in the network because something better
+        // than a path holds the link — so its rung is drawn from the ones that can.
+        var near = ["path", "path", "trail", "dirt_road"];
+        var far = ["trail", "dirt_road", "paved_road"];
+        return member(n, dist, i === 0 ? null
+          : { link: dist <= WORLD_REACH ? near[i % near.length] : far[i % far.length] });
       }),
       // Fifteen camps hold a wider union of goods, so what MOVES is a longer list of
       // (material, rating) piles — that, not the member count, is what lengthens the
@@ -1317,6 +1348,34 @@
   // catalog plus food and fodder, however many camps pool and however many ratings
   // they hold — so the local section needs no fold at all.
   // ---------------------------------------------------------------------------
+  var LINK_ICON = {
+    path:       '<line x1="1" y1="5" x2="23" y2="5" stroke-dasharray="0.1 3.4" stroke-width="1.8" stroke-linecap="round"/>',
+    trail:      '<line x1="1" y1="5" x2="23" y2="5" stroke-dasharray="4 2.5" stroke-width="1.4"/>',
+    dirt_road:  '<line x1="1" y1="5" x2="23" y2="5" stroke-width="2.6"/>',
+    paved_road: '<line x1="1" y1="3" x2="23" y2="3" stroke-width="1.3"/>' +
+                '<line x1="1" y1="7" x2="23" y2="7" stroke-width="1.3"/>' +
+                '<line x1="1" y1="5" x2="23" y2="5" stroke-width="0.8" stroke-dasharray="2 2" opacity=".6"/>'
+  };
+
+  /** A camp's link as an icon (and its word, where the row has room), hovering to
+      what the rung is and what it buys. */
+  function linkMark(m, withWord) {
+    var r = LINK_RUNGS[m.link];
+    if (!r) { return ""; }
+    var id = "link:" + m.link;
+    TIPS[id] = '<div class="th">' + r.label + '<span class="n">route rung</span></div>' +
+      '<div class="tr"><span class="sub">' + r.how + "</span></div>" +
+      '<div class="tr"><span class="sub">pools out to</span><span class="fill"></span>' +
+        '<span class="amt">' + Math.max(r.holds, WORLD_REACH) + " tiles</span></div>" +
+      '<div class="tr"><span class="sub">friction</span><span class="fill"></span>' +
+        '<span class="amt">\u00d7' + r.friction.toFixed(2) + "</span></div>" +
+      '<div class="tr"><span class="sub">a link is as good as the weakest tile on it</span></div>';
+    return '<span class="lk lk-' + m.link + '" data-tip="' + id + '">' +
+      '<svg viewBox="0 0 24 10" width="24" height="10" fill="none" stroke="currentColor">' +
+      LINK_ICON[m.link] + "</svg>" +
+      (withWord ? '<span class="lk-w">' + r.label + "</span>" : "") + "</span>";
+  }
+
   var GOOD_KEY = "good:";
   // The smallest amount the readout's one decimal can state. Below it a move is not a
   // move as far as any row here can say.
@@ -1364,6 +1423,19 @@
     return amtCell(net > 0 ? "in" : "out", Math.abs(net));
   }
 
+  /** A party's card: everything it carried, each good at its own rating. The row
+      states the party and its goods by name; the card is where the grades are. */
+  function partyTipHtml(g) {
+    var head = g.own ? "our own party"
+                     : (g.dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer);
+    var rows = g.items.map(function (x) {
+      return '<div class="tr"><span>' + esc(x.good) + "</span>" + (x.chips ? chips(x) : "") +
+        '<span class="fill"></span>' + amtCell(x.dir, x.amt) + "</div>";
+    }).join("");
+    return '<div class="th">' + head + '<span class="n">' +
+      esc(g.own ? "came home" : g.when || "") + "</span></div>" + rows;
+  }
+
   /** What the hover card says: the good's piles, largest first, each with its
       rating; and where they came from only when that differs between them. */
   function tipHtml(g) {
@@ -1402,7 +1474,6 @@
   // ---------------------------------------------------------------------------
   function networkHead() {
     var w = world();
-    var edge = w.members.filter(function (m) { return m.edge; })[0];
     var h = '<div class="net-head"><div class="l1">' +
       '<span class="k">Network</span>' +
       '<span class="v link" data-sheet="roster" title="every camp in the network">' +
@@ -1410,10 +1481,6 @@
       '<span class="span" title="reach_tiles is ' + w.reach +
         '; a road carries a link past it">within ' + w.span + " tiles</span>" +
       "</div>";
-    if (edge) {
-      h += '<div class="l2">' + esc(edge.name) + ' sits at <span class="edge">' + edge.dist +
-        " of " + w.span + "</span> — the road is what keeps it in</div>";
-    }
     return h + "</div>";
   }
 
@@ -1584,7 +1651,9 @@
         var goods = g.items.map(function (x) {
           return '<span class="amt ' + cls(x.dir) + '">' + amt(x.amt) + "</span> " + esc(x.good);
         }).join(" · ");
-        h += '<div class="row sub-row">' +
+        var partyTip = "party:" + g.key;
+        TIPS[partyTip] = partyTipHtml(g);
+        h += '<div class="row sub-row" data-tip="' + esc(partyTip) + '">' +
           '<span class="lab' + (g.own ? " dim" : "") + '">' + head + "</span>" +
           '<span class="fill"></span>' +
           '<span class="amt" style="color:var(--g-faint)">' + esc(g.own ? "came home" : g.when || "") +
@@ -1648,30 +1717,42 @@
       };
     }
 
-    if (kind === "rtin" || kind === "rtout") {
-      var dir = kind === "rtin" ? "in" : "out";
-      var by = {};
-      list.filter(function (x) { return x.link === "route" && x.dir === dir; })
-          .forEach(function (x) { (by[x.peer || "\u0000own"] = by[x.peer || "\u0000own"] || []).push(x); });
-      var groups = Object.keys(by).map(function (k) {
-        var g = by[k];
-        return { own: k === "\u0000own", dir: dir, peer: g[0].peer, when: g[0].when, items: g,
-                 weight: g.reduce(function (a, x) { return a + x.amt; }, 0) };
-      }).sort(function (a, b) { return b.weight - a.weight; });
-      var out = "";
-      groups.forEach(function (g) {
-        out += row({ cls: "sub-row",
-                     label: g.own ? "our own party"
-                                  : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + foreignTag(g.items[0]),
-                     sub: g.own ? "came home" : esc(g.when || ""), dimLabel: g.own });
-        g.items.forEach(function (x) {
-          out += row({ cls: "sub-sub",
-                       label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
+    if (kind === "rt" || kind === "rtin" || kind === "rtout") {
+      // `rt` is BOTH halves — the one way in from the SHORT tier, which has a single
+      // Trade route row. It opened `rtin` alone for one slice, which left every party
+      // that LEFT unreachable on a horizontal dock.
+      var dirs = kind === "rt" ? ["in", "out"] : [kind === "rtin" ? "in" : "out"];
+      var out = "", total = 0;
+      dirs.forEach(function (dir) {
+        var by = {};
+        list.filter(function (x) { return x.link === "route" && x.dir === dir; })
+            .forEach(function (x) { (by[x.peer || "\u0000own"] = by[x.peer || "\u0000own"] || []).push(x); });
+        var groups = Object.keys(by).map(function (k) {
+          var g = by[k];
+          return { own: k === "\u0000own", dir: dir, peer: g[0].peer, when: g[0].when, items: g,
+                   weight: g.reduce(function (a, x) { return a + x.amt; }, 0) };
+        }).sort(function (a, b) { return b.weight - a.weight; });
+        total += groups.length;
+        if (dirs.length > 1 && groups.length) {
+          out += '<div class="row sub-head"><span class="lab"><span class="' + cls(dir) + '">' +
+            mark(dir) + "</span> " + (dir === "in" ? "Landed" : "Left") + "</span>" +
+            '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+            groups.length + (groups.length === 1 ? " party" : " parties") + "</span></div>";
+        }
+        groups.forEach(function (g) {
+          out += row({ cls: "sub-row",
+                       label: g.own ? "our own party"
+                                    : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + foreignTag(g.items[0]),
+                       sub: g.own ? "came home" : esc(g.when || ""), dimLabel: g.own });
+          g.items.forEach(function (x) {
+            out += row({ cls: "sub-sub",
+                         label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
+          });
         });
       });
       return {
-        title: dir === "in" ? "Landed this turn" : "Left this turn",
-        count: groups.length + (groups.length === 1 ? " party" : " parties"),
+        title: kind === "rt" ? "Parties this turn" : kind === "rtin" ? "Landed this turn" : "Left this turn",
+        count: total + (total === 1 ? " party" : " parties"),
         sub: "one party per journey, largest first, with everything it carried.",
         body: out
       };
@@ -1684,14 +1765,14 @@
     if (!entry) {
       return {
         title: "The pooling network", count: members().length + " camps",
-        sub: "every camp this band pools with, and how far off it sits. All one people: " +
-             "`pools_freely` gates the union on faction, so a stranger can never be here.",
+        sub: "every camp this band pools with, what holds the link, and how far off it " +
+             "sits. Hover a link for what it buys.",
         body: members().map(function (m) {
           return '<div class="row' + (m.you ? " me" : "") + '">' +
             '<span class="lab">' + esc(m.name) + "</span>" +
-            '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
-            (m.you ? "you" : m.dist + (m.road ? " tiles \u00b7 road" : " tiles")) +
-            "</span></div>";
+            '<span class="fill"></span>' + (m.you ? "" : linkMark(m, true)) +
+            '<span class="amt" style="color:var(--g-faint)">' +
+            (m.you ? "you" : m.dist + " tiles") + "</span></div>";
         }).join("")
       };
     }
@@ -1707,7 +1788,7 @@
         : '<span class="amt" style="color:var(--g-faint)">even</span>';
       return '<div class="row' + (m.you ? " me" : "") + '">' +
         '<span class="lab">' + esc(m.name) + "</span>" +
-        '<span class="fill"></span>' + right + "</div>";
+        '<span class="fill"></span>' + (m.you ? "" : linkMark(m, false)) + right + "</div>";
     }).join("");
     if (entry.friction) {
       body += '<div class="row"><span class="sub">lost in transit \u2014 friction over the ' +
@@ -1799,7 +1880,7 @@
                 goodsMoved + (goodsMoved === 1 ? " good" : " goods"), "piles");
     h += opener(LINK_WORD.route,
                 landed + " landed \u00b7 " + left + " left",
-                (landed + left) + " parties", "rtin");
+                (landed + left) + " parties", "rt");
     return h;
   }
 
