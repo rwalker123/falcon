@@ -171,8 +171,18 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 184 frames / 1334 `PASS` / 542 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 192 frames / 1440 `PASS` / 556 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE POINTER-CUSTODY GUARD MOVED IT 1438 → 1440 `PASS`**, frames and `assert OK` unchanged: the
+pushed-event liveness claim and the *nothing foreign reached the viewport* claim, asked once at
+`_finish`. The behaviour, the two adversaries it was falsified with and why a quiet machine cannot
+reproduce the class by moving the mouse are in `test-harnesses.md` → "A SIMULATED GESTURE IS NOT
+HERMETIC" — it is the shared windowed-harness contract rather than this harness's own, and all six
+pixel harnesses take the seal. **Three of this harness's mechanisms belong to it**: `_drive_click`
+pushes its press and release with no awaited frame between them, `_drive_drag`'s hold re-warps the
+physical pointer every frame, and every simulated event goes through the one `_push_input` wrapper
+the guard discriminates on.
 
 **THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
 for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,

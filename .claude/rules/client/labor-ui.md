@@ -8005,6 +8005,63 @@ otherwise be lost silently:
 be indistinguishable from the commit species. `Main._take_species_token` omits it on an empty
 selection, which is what an absent token means to the parser.
 
+## A KEEPING POOL'S SPARE HANDS, AND THE SENTENCE THAT WAS GATED SHUT (issue #715)
+
+`PopulationCohortState.poolCrew` is one row per KEEPING pool — `{pool, idleKeepers, keepers}` —
+stating how many of the keepers assigned to it the turn's bill did not consume, and the head count
+that figure was struck against. `HudBandLaborState.pool_crew_for` is the whole reader: it joins on
+the labor-role token, exactly as `pool_toe_for` does, so a surface resolves a pool's crew account
+and its table of equipment off the one `kind` it already holds.
+
+⛔ **IT HANDS BACK BOTH TERMS OR NEITHER, AND THE IDLE-ONLY READER IS RETIRED.** `idleKeepers`
+describes the staffing the TURN settled, while a labor row moves the instant the player presses the
+stepper — the sim applies an assign outside the turn — so an idle figure alone cannot say which of
+those two worlds it is describing. A caller that had only the idle half anchored its projection on
+the band's own row and subtracted the pending count from itself, which read `0` in the live game;
+the projection, its anchor and the fixture-staging trap behind it are in
+`.claude/rules/client/band-city-panel.md` → the pool card's idle mark. An absent row is `{}` rather
+than a pair of zeroes, since a zero row is a real reading and `builders` has no row at all.
+
+- ⛔ **THE SIM SAYS IT AND THE CLIENT MUST NOT WORK IT OUT.** The pool card's `supply` figure is a
+  projection off a **notional** kit: it knows neither which tools the band's settlement actually
+  handed that pool, nor that the sim puts leftover hands back **bare** onto sites still carrying a
+  deficit. A client-side *this keeper is idle* is wrong in exactly the cases that top-up exists for
+  — the sim has that keeper working. The published figure is struck AFTER the top-up, which is what
+  makes it mean *these people did nothing at all this turn*.
+- **FOUR POOLS, AND `builders` IS NEVER ONE OF THEM** — `agriculture` | `husbandry` | `roadwork` |
+  `quarrywork`. **A row exists for every keeping pool whether or not the band staffs it**, unlike the
+  TOE's, so `0.0` is *this pool employed every hand it was given* — and a MISSING row is a different
+  state, being the answer for `builders` and for any frame the wire never wrote.
+- ⛔ **THE THRESHOLD IS A WHOLE WORKER — `UPKEEP_POOL_IDLE_KEEPERS_MIN` = 1.0.** `idleKeepers` is
+  continuous, so `0.4` of a keeper left standing is an ordinary reading, and 0.4 of a worker cannot
+  be freed by any control on this panel. The mark's promise is *you can step this pool down by one*;
+  a mark firing on a fraction nobody can act on means nothing. This is the lesson
+  `upkeep_pool_is_short` learned once already — *adequate* has to be a threshold the remedy can
+  clear. `upkeep_pool_idle_line` **floors** rather than rounds, for the same reason: telling a player
+  they can free two when the pool can spare 1.6 is a promise the control cannot keep.
+- **The noun is `worker`, not `keeper`** — the retired summed line's own mistake was announcing
+  things in a noun that appears on no control in this game.
+
+### ONE COMPOSER, ONE PREDICATE — the work-units reading is unconditional now
+
+`upkeep_pool_coverage_line` used to return `""` whenever the pool was not short, so it was the TEST
+as well as the words — which is exactly why a correctly staffed pool said nothing at all about how
+much of its assigned crew the bill consumes.
+
+- **The predicate is `HudWorkVocab.upkeep_pool_is_short(cover)`**, extracted from that composer and
+  carrying the coverage rules unchanged: *adequate means the pool COVERS the demand*, at
+  `SourceForecast.UPKEEP_WORK_MIN`, and **where the sim publishes the shortfall that is the coverage
+  test** (`POOL_COVERAGE_SHORTFALL_KEY` present means *use this instead of subtracting*).
+- **The composer now runs for every pool with a bill.** The `asked < UPKEEP_WORK_MIN` guard stays: a
+  pool with nothing to hold still says nothing, because `0 work a turn` against `0` is a reading
+  about nothing.
+- ⛔ **THERE IS NO SECOND COMPOSER FOR THE NOT-SHORT CASE.** One sentence, one shape, the supply
+  figure moving with the staffing — which is also what tells the coverage trigger apart from the
+  retired *unstaffed* one, and what `band_panel_preview`'s declare-time guard asserts by equality on
+  **both** sides now.
+- **The idle clause is its own line from its own composer** (`upkeep_pool_idle_line`) rather than a
+  clause welded onto the coverage sentence, so `HudFormat.join_tooltip_lines` can drop it alone.
+
 ## THE `⌃` TRACK'S PRICE ASIDES, and the work row's third shortfall (`docs/plan_standing_upkeep.md` §2.7)
 
 **WORK WAS NEVER THE WHOLE PRICE.** A rung costs hands *and* goods that go INTO the thing and stay

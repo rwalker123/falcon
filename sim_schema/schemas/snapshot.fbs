@@ -1521,6 +1521,33 @@ table PopulationCohortState {
   // `quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes for the row, so a
   // client joins a line to its pool card without a table of its own.
   poolToe:[PoolToeLine];
+  // --- WHAT EACH KEEPING POOL DID NOT USE (appended last, issue #715) ---------------------------
+  // HOW MANY OF EACH KEEPING POOL'S ASSIGNED KEEPERS THE TURN'S BILL DID NOT CONSUME. One row per
+  // keeping pool, and the number a "step this pool down" mark is drawn off.
+  //
+  // *** THE SIM SAYS IT AND A CLIENT MUST NOT WORK IT OUT. *** A client projecting a pool's supply
+  // off a NOTIONAL kit knows neither which tools the band's settlement actually handed this pool,
+  // nor that leftover hands are put back onto sites still carrying a deficit (the bare-hand top-up,
+  // `docs/plan_pool_toe.md` section 2.3 step 5). A client-side "this keeper is idle" is wrong in
+  // exactly the cases the top-up exists for - the sim has that keeper working.
+  //
+  // *** FOUR POOLS, AND `builders` IS NOT ONE OF THEM. *** `agriculture` | `husbandry` | `roadwork`
+  // | `quarrywork`. The builders are not a keeping pool: the WHOLE head count goes on the build
+  // queue's head (section 2.4), so no builder is ever left standing by a plan that wanted fewer. A
+  // builders pool with an EMPTY QUEUE is idle in a different sense and is deliberately not measured
+  // here.
+  //
+  // *** A POOL WITH A HEAD COUNT AND NO SITES STATES ITS WHOLE HEAD COUNT *** - three keepers on
+  // `agriculture` with no tended ground are three idle keepers, and that is the commonest reading
+  // there is. A row therefore exists for every keeping pool THIS COHORT CAN HOLD, filled or not,
+  // unlike `poolToe`'s.
+  //
+  // *** WHICH IS FOUR ON A BAND AND THREE ON AN ANONYMOUS COHORT *** - one with no band id keeps no
+  // roads, because a road's keeper IS a band (`routes::road_keeping_basis`), so it publishes
+  // `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An ABSENT
+  // row therefore reads "this cohort has no such pool" - the same answer `builders`' absence
+  // already gives, needing no separate branch on the reading side.
+  poolCrew:[PoolCrewLine];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -6669,6 +6696,49 @@ table PoolToeLine {
   // Tools are settled BAND-WIDE per item by the player's own row priority, so two pools reaching for
   // one stock - a paved road and a quarry both want stone-dressing gear - divide it here.
   filled:float;
+}
+
+// ONE KEEPING POOL'S CREW ACCOUNT - a row of `PopulationCohortState.poolCrew`, where the rules that
+// govern the vector are stated. Appended last (append-only discipline).
+table PoolCrewLine {
+  // Which pool the line belongs to, in the labor-role vocabulary: `agriculture`, `husbandry`,
+  // `roadwork` or `quarrywork`. NEVER `builders` - see `PopulationCohortState.poolCrew`.
+  pool:string;
+  // Keepers this pool employed on nothing at all this turn.
+  //
+  // *** IN KEEPERS, AND MAY BE FRACTIONAL *** - a pool's share arithmetic is continuous, so `1.68`
+  // keepers left standing is an ordinary reading and not a rounding artefact. Keepers rather than
+  // work units deliberately: the control the player presses is a stepper in KEEPERS, and a client
+  // that wants work multiplies by a rate it already publishes.
+  //
+  // *** STRUCK AFTER THE BARE-HAND TOP-UP, NOT BEFORE IT. *** The plan leaves hands standing, then
+  // step 5 (`docs/plan_pool_toe.md` section 2.3) puts as many of them as it can onto the sites
+  // still carrying a deficit, BARE. What is published here is what step 5 could not place - so it
+  // means "these people did nothing at all this turn" and NOT "the geared plan had no use for
+  // them". The pre-top-up figure would tell a player to step down a keeper the sim has working.
+  //
+  // `0` is a pool that employed every hand it was given.
+  //
+  // *** IT IS MEANINGLESS WITHOUT `keepers` BELOW. *** It was struck against THAT head count, which
+  // is the one the turn settled and not necessarily the one the band's row carries now.
+  idleKeepers:float;
+  // THE HEAD COUNT `idleKeepers` WAS STRUCK AGAINST - the keepers this pool held when the turn
+  // settled it.
+  //
+  // *** IT IS THE BASIS OF THE FIGURE ABOVE, AND A READER THAT IGNORES IT IS READING A NUMBER WHOSE
+  // BASIS HAS MOVED. *** A labor row is edited the instant the player presses the stepper, outside
+  // the turn; this whole line is stamped only when the turn settles the pool. So between a press
+  // and the next turn resolution the row already carries the new head count while `idleKeepers`
+  // still describes the old one.
+  //
+  // A reader projecting a live edit therefore takes `idleKeepers + (its own current head count -
+  // keepers)`, floored at zero - the added hand is BARE (`docs/plan_pool_toe.md` section 2.3 step
+  // 5), so the client can price the CHANGE even though it cannot price the absolute. Reading
+  // `idleKeepers` alone answers with the staffing the player has already left behind.
+  //
+  // IN KEEPERS AND A FLOAT, like every other hand quantity on this wire, so a reader that divides
+  // and subtracts against it casts nothing.
+  keepers:float;
 }
 
 table WorldSnapshot {

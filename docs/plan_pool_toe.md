@@ -154,6 +154,12 @@ tools a site requires depends on its hands. It resolves in one pass:
    >
    > **Wear is billed on the geared half alone.** A top-up hand was issued no tool, so charging the
    > site's kit for its hours would run gear down against work it took no part in.
+   >
+   > **What is left over after this step is what the wire publishes** as
+   > `PopulationCohortState.poolCrew[].idleKeepers` — the idle hands *minus* the part of them step 5
+   > just placed, per keeping pool, clamped at none. A pool with a head count and no sites therefore
+   > publishes its whole head count, and a pool step 5 fully employed publishes nothing. The
+   > pre-top-up figure is deliberately not the published one: it counts keepers the sim has working.
 
 **When a band is not short of tools, this is identical to today:** step 1's rate is the rate today's
 split uses on a fully equipped pool, and step 5 finds no deficit to fill. **A pool whose plan wants

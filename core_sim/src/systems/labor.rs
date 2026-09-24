@@ -1001,7 +1001,8 @@ impl KeepingPayment {
 ///    priority decides where tools go"* true of the top-up as well, so `Spread` still spreads and
 ///    `Priority` still walks the ranking.
 ///
-/// Returns one bare-hand count per claim, index-aligned with `claims`.
+/// Returns [`PoolTopUp`] — one bare-hand count per claim, index-aligned with `claims`, and the
+/// hands still standing once those were spent.
 fn bare_hand_top_up(
     keepers: u32,
     mode: crate::intensification::UpkeepFundMode,
@@ -1009,30 +1010,108 @@ fn bare_hand_top_up(
     fills: &[ToeFill],
     planned: &[KeepingPayment],
     bare_rate: f32,
-) -> Vec<f32> {
+) -> PoolTopUp {
     let idle =
         (keepers as f32 - fills.iter().map(|fill| fill.need).sum::<f32>()).max(NO_IDLE_HANDS);
-    if idle <= NO_IDLE_HANDS || bare_rate <= NO_KEEPING_RATE {
-        return vec![NO_IDLE_HANDS; claims.len()];
+    let bare_hands = if idle <= NO_IDLE_HANDS || bare_rate <= NO_KEEPING_RATE {
+        vec![NO_IDLE_HANDS; claims.len()]
+    } else {
+        // **In BARE hands**, because that is what these people are — a site whose deficit is `1.4`
+        // work units wants `1.4` of them, whatever the geared plan asked for.
+        let bare_needs: Vec<f32> = claims
+            .iter()
+            .zip(planned)
+            .map(|(claim, payment)| {
+                (claim.demand - payment.geared()).max(NO_UPKEEP_DEMAND) / bare_rate
+            })
+            .collect();
+        distribute_upkeep_pool(idle, &bare_needs, mode)
+    };
+    PoolTopUp {
+        // ⛔ **THE ONE EXPRESSION FOR WHAT NOBODY EMPLOYED** (issue #715), struck here because this
+        // is the only place that holds *both* terms: the hands the plan never allocated, and the
+        // part of them this step just put on a deficit. A caller re-deriving it from `fills` and
+        // the payments would be a second answer, free to disagree with the one step 5 actually
+        // ran — `LaborAllocation::last_pool_toe`'s discipline, one field over.
+        //
+        // Clamped for `idle`'s own reason ([`ToeClaim::need`]): under `Spread` a fully committed
+        // pool's needs outrun its head count, so the subtraction is negative and *none standing*
+        // is the answer.
+        idle_keepers: (idle - bare_hands.iter().sum::<f32>()).max(NO_IDLE_HANDS),
+        bare_hands,
     }
-    // **In BARE hands**, because that is what these people are — a site whose deficit is `1.4` work
-    // units wants `1.4` of them, whatever the geared plan asked for.
-    let bare_needs: Vec<f32> = claims
-        .iter()
-        .zip(planned)
-        .map(|(claim, payment)| (claim.demand - payment.geared()).max(NO_UPKEEP_DEMAND) / bare_rate)
-        .collect();
-    distribute_upkeep_pool(idle, &bare_needs, mode)
+}
+
+/// **STEP 5'S TWO ANSWERS** — where the idle hands went, and how many of them there were nowhere to
+/// put.
+struct PoolTopUp {
+    /// One bare-hand count per claim, index-aligned with the claim list.
+    bare_hands: Vec<f32>,
+    /// **KEEPERS THIS POOL EMPLOYED ON NOTHING AT ALL**, in keepers and fractional — see
+    /// [`PoolRates::idle_keepers`], which is the field the wire is written from.
+    idle_keepers: f32,
+}
+
+/// **WHAT ONE KEEPING POOL'S TURN CAME TO** — every claim's payment, and the head count the bill
+/// never reached for.
+///
+/// ⛔ **THE FOUR KEEPING POOLS, AND DELIBERATELY NOT THE BUILDERS.** `builders` is not a keeping
+/// pool: `build_workers` puts the **whole** head count on the queue head (`docs/plan_pool_toe.md`
+/// §2.4), so no builder is ever left standing by a plan that wanted fewer, and the pool never
+/// reaches [`pool_rates`] at all — it is paid through `BuildersGear`. A builders pool with an
+/// **empty queue** is idle in a different sense, which nothing here measures.
+struct PoolRates {
+    /// One [`KeepingPayment`] per claim, index-aligned with the claim list.
+    payments: Vec<KeepingPayment>,
+    /// **HOW MANY OF THIS POOL'S ASSIGNED KEEPERS THE TURN'S BILL DID NOT CONSUME** (issue #715),
+    /// in **keepers** and fractional — a pool's share arithmetic is continuous.
+    ///
+    /// ⛔ **STRUCK AFTER THE BARE-HAND TOP-UP, NEVER BEFORE IT.** It is [`bare_hand_top_up`]'s
+    /// `idle` minus the part of it step 5 just put on the sites still in deficit, so it means
+    /// *"these people did nothing at all this turn"* and not *"the geared plan had no use for
+    /// them"*. Publishing the pre-top-up figure would tell a player to step down a keeper the sim
+    /// has working, which is exactly the reading issue #714 removed.
+    ///
+    /// A pool with a head count and **no claims** reports its whole head count: three keepers on
+    /// `agriculture` with no tended ground are three keepers standing.
+    idle_keepers: f32,
+    /// **THE HEAD COUNT [`Self::idle_keepers`] WAS STRUCK AGAINST** — [`pool_rates`]' own `keepers`
+    /// argument, kept so the two can only be published as a pair ([`Self::crew`]).
+    ///
+    /// ⛔ **NOT RE-READ FROM THE ALLOCATION LATER.** `assign_labor` moves a band's row the moment
+    /// the player presses the stepper, outside the turn, so the row a *publisher* sees need not be
+    /// the one this pool was settled at; a reader handed the row's figure beside a turn-old idle
+    /// count would take their difference for zero and project nothing
+    /// ([`LaborAllocation::record_pool_crew`]).
+    keepers: f32,
+}
+
+impl PoolRates {
+    /// **THIS POOL'S CREW ACCOUNT AS THE WIRE CARRIES IT** — the one place a
+    /// [`crate::components::PoolCrewLine`] is built, so the idle figure and the head count it was
+    /// struck against come from a single turn's arithmetic and cannot drift apart.
+    fn crew(&self, pool: crate::equipment_config::KitJob) -> crate::components::PoolCrewLine {
+        crate::components::PoolCrewLine {
+            pool,
+            idle_keepers: self.idle_keepers,
+            keepers: self.keepers,
+        }
+    }
 }
 
 /// **WHAT EACH OF THIS POOL'S CLAIMS WAS SUPPLIED AND WHAT IT WORE** — one [`KeepingPayment`] per
-/// claim, read back out of the band's settled plan and index-aligned with `claims`.
+/// claim, read back out of the band's settled plan and index-aligned with `claims`, plus the
+/// [`PoolRates::idle_keepers`] the wire publishes.
 ///
 /// Steps 4 **and 5** of the four-step order: the planned hands at the rate their settled tools buy,
 /// then whatever hands the plan left standing put on whatever deficit is left
 /// ([`bare_hand_top_up`]). **All four keeping pools read their answer back through here**, so the
 /// top-up is one helper rather than four — `spare_keepers_the_band_can_arm`'s arrangement, for the
 /// same reason.
+///
+/// ⛔ **AN EMPTY CLAIM LIST IS A REAL CALL AND NOT AN EARLY EXIT.** A pool holding no sites still
+/// has a head count, and its whole head count is idle — the most common shape there is. Every
+/// caller therefore reaches this even when it has nothing to pay.
 fn pool_rates(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
@@ -1040,7 +1119,7 @@ fn pool_rates(
     fills: &[ToeFill],
     keepers: u32,
     mode: crate::intensification::UpkeepFundMode,
-) -> Vec<KeepingPayment> {
+) -> PoolRates {
     debug_assert_eq!(
         claims.len(),
         fills.len(),
@@ -1067,10 +1146,16 @@ fn pool_rates(
         })
         .collect();
     let top_up = bare_hand_top_up(keepers, mode, claims, fills, &payments, bare_rate);
-    for (payment, bare_hands) in payments.iter_mut().zip(top_up) {
+    for (payment, bare_hands) in payments.iter_mut().zip(top_up.bare_hands) {
         payment.bare_hands = bare_hands;
     }
-    payments
+    PoolRates {
+        payments,
+        idle_keepers: top_up.idle_keepers,
+        // **The very argument the idle figure was struck from**, carried rather than looked up
+        // again — see [`PoolRates::keepers`].
+        keepers: keepers as f32,
+    }
 }
 
 /// **HOW MANY KEEPERS ONE WEB'S BILL NEEDS THIS TURN** — the sum of every claim's `demand ÷ what one
@@ -2541,8 +2626,14 @@ fn resolve_shed_facts(
 ///
 /// **The claims must be the very lists the plan was struck from**, in their order: the fills are
 /// index-aligned with them.
+///
+/// ⛔ **AND IT IS CALLED ABOVE THE ASSIGNMENT LOOP'S TWO `continue`s**, beside the road and quarry
+/// pools' own seats, because it carries the two food webs' crew stamp
+/// ([`PoolRates::crew`]) — a band with an empty `assignments` list is the very band whose keepers
+/// are idle. An award vector it returns for such a band is empty and goes nowhere; the stamp is
+/// what had to reach it. See the call site for the full reading.
 fn maintenance_shares(
-    allocation: &LaborAllocation,
+    allocation: &mut LaborAllocation,
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
     plant: &[KeepingClaim],
@@ -2553,18 +2644,34 @@ fn maintenance_shares(
     // **The branch rides each claim** ([`KeepingClaim::branch`]), so the role named here is only
     // which pool's head count and fills are being read — step 5 needs the head count to know how
     // many hands the split left standing.
-    for (claims, fills, role) in [
-        (plant, tools.agriculture(), LaborTarget::Agriculture),
-        (animal, tools.husbandry(), LaborTarget::Husbandry),
+    for (claims, fills, role, pool) in [
+        (
+            plant,
+            tools.agriculture(),
+            LaborTarget::Agriculture,
+            crate::equipment_config::KitJob::Agriculture,
+        ),
+        (
+            animal,
+            tools.husbandry(),
+            LaborTarget::Husbandry,
+            crate::equipment_config::KitJob::Husbandry,
+        ),
     ] {
-        for (claim, payment) in claims.iter().zip(pool_rates(
+        let rates = pool_rates(
             equipment,
             band_kit,
             claims,
             fills,
             allocation.workers_on(&role),
             allocation.upkeep_fund_mode,
-        )) {
+        );
+        // **THE WEB'S CREW ACCOUNT, OFF THE SEAM THAT JUST PAID IT** (issue #715). ⛔ **A POOL WITH
+        // NO CLAIMS REACHES IT TOO** — the argument is evaluated before the `zip`, so a band with
+        // three `agriculture` keepers and no tended ground stamps three idle keepers rather than
+        // no line at all, which is the commonest shape there is.
+        allocation.record_pool_crew(rates.crew(pool));
+        for (claim, payment) in claims.iter().zip(rates.payments) {
             awards[claim.index] = KeepingAward {
                 // ⛔ **THE WHOLE SUPPLY, GEARED HANDS AND BARE ONES** — but the wear kit beside it is
                 // billed on [`KeepingPayment::geared`] alone at the charge site
@@ -2813,38 +2920,50 @@ pub fn settle_bands_extraction(
         extraction,
         ladder,
     );
-    if claims.is_empty() {
-        return;
-    }
     // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.**
     allocation.last_quarrywork_demand = claims.iter().map(|claim| claim.demand).sum();
     let keepers = allocation.workers_on(&LaborTarget::Quarrywork);
-    if keepers == NO_CREW_ON_THIS_ACTIVITY {
-        return;
-    }
-    // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent component
-    // means the gear ledger was never built, which reads as start-stocked.
-    let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
-        BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
-    });
+    // ⛔ **BORROWED, NOT CLONED — and the borrow checker is what now enforces the one-snapshot
+    // rule.** Every read of the ledger (the plan, then the rates) completes *above* the payment
+    // loop, and only the loop charges wear, so an immutable reborrow that dies at [`pool_rates`]
+    // is all this needs. The clone that used to sit here was answering a borrow conflict that does
+    // not exist, and it was paid by **every** band the seat is called for — including the ones with
+    // no working at all, which reach the seam but read nothing out of it.
+    //
+    // **The band-wide ledger is still read exactly once, before a single unit is worn**, which is
+    // what stops a kit that expires part-way through the loop from paying two rates in one turn.
+    // That was a property of the snapshot; it is now a property of the borrow.
+    //
+    // **The owned fallback is for an absent component only** — `advance_labor_allocation`'s own
+    // rule: no gear ledger means it was never built, which reads as start-stocked. It is
+    // constructed on that path and no other.
+    let start_stocked_fallback;
+    let band_kit: &BandEquipment = match band_equipment.as_deref() {
+        Some(ledger) => ledger,
+        None => {
+            start_stocked_fallback = BandEquipment::start_stocked_for(
+                equipment_cfg,
+                available_workers(cohort.working) as f32,
+            );
+            &start_stocked_fallback
+        }
+    };
     let fund_mode = allocation.upkeep_fund_mode;
     let fills = pool_or_plan(
         equipment_cfg,
-        &band_kit,
+        band_kit,
         crate::equipment_config::KitJob::Quarrywork,
         fund_mode,
         keepers,
         &claims,
         tools.map(PoolToolPlan::quarrywork),
     );
-    for (claim, payment) in claims.iter().zip(pool_rates(
-        equipment_cfg,
-        &band_kit,
-        &claims,
-        &fills,
-        keepers,
-        fund_mode,
-    )) {
+    // ⛔ **NO EARLY EXIT ABOVE THIS LINE** — `settle_bands_roadwork`'s rule one pool over, and for
+    // its reason: a band with quarry keepers and no workings has every one of them standing, and a
+    // seat that returned before [`pool_rates`] would publish no crew line to say so (issue #715).
+    let rates = pool_rates(equipment_cfg, band_kit, &claims, &fills, keepers, fund_mode);
+    allocation.record_pool_crew(rates.crew(crate::equipment_config::KitJob::Quarrywork));
+    for (claim, payment) in claims.iter().zip(rates.payments) {
         let supplied = payment.supplied();
         let (tile, material) = &held[claim.index];
         if let Some(working) = deposits.source_mut(*tile, material) {
@@ -3104,39 +3223,46 @@ pub fn settle_bands_roadwork(
     allocation.last_roadwork_demand = NO_ROADWORK_LEDGER;
     allocation.last_roadwork_supplied = NO_ROADWORK_LEDGER;
     let (kept, claims) = route_keeping_claims(registry, Some(band), tile_registry, tiles, ladder);
-    if claims.is_empty() {
-        return;
-    }
     // **(c) THE DEMAND IS SUMMED BEFORE THE HEAD-COUNT GATE.** A band with nobody on the role
     // owes exactly this much and this is the field that says so — the hay need's own rule.
     allocation.last_roadwork_demand = claims.iter().map(|claim| claim.demand).sum();
     let keepers = allocation.workers_on(&LaborTarget::Roadwork);
-    if keepers == NO_CREW_ON_THIS_ACTIVITY {
-        return;
-    }
-    // **Sized to the band's workers**, `advance_labor_allocation`'s own rule: an absent
-    // component means the gear ledger was never built, which reads as start-stocked.
-    let band_kit = band_equipment.as_deref().cloned().unwrap_or_else(|| {
-        BandEquipment::start_stocked_for(equipment_cfg, available_workers(cohort.working) as f32)
-    });
+    // ⛔ **BORROWED, NOT CLONED** — `settle_bands_extraction`'s rule one pool over, where the
+    // reasoning is written out: every read of the ledger finishes above the payment loop, only the
+    // loop charges wear, so an immutable reborrow ending at [`pool_rates`] is enough and the
+    // one-snapshot rule becomes a property of the borrow rather than of a copy. The owned fallback
+    // is the absent-component path alone.
+    let start_stocked_fallback;
+    let band_kit: &BandEquipment = match band_equipment.as_deref() {
+        Some(ledger) => ledger,
+        None => {
+            start_stocked_fallback = BandEquipment::start_stocked_for(
+                equipment_cfg,
+                available_workers(cohort.working) as f32,
+            );
+            &start_stocked_fallback
+        }
+    };
     let fund_mode = allocation.upkeep_fund_mode;
     let fills = pool_or_plan(
         equipment_cfg,
-        &band_kit,
+        band_kit,
         crate::equipment_config::KitJob::Roadwork,
         fund_mode,
         keepers,
         &claims,
         tools.map(PoolToolPlan::roadwork),
     );
-    for (claim, payment) in claims.iter().zip(pool_rates(
-        equipment_cfg,
-        &band_kit,
-        &claims,
-        &fills,
-        keepers,
-        fund_mode,
-    )) {
+    // ⛔ **NO EARLY EXIT ABOVE THIS LINE, AND THAT IS ISSUE #715'S HALF OF THIS SEAT.** A band with
+    // road keepers and **no roads** has every one of them standing, which is the commonest reading
+    // the crew account has to make; the `claims.is_empty()` / zero-keeper returns that used to sit
+    // here would have published no line for it at all. Neither return did any work: an empty claim
+    // list sums to the `NO_ROADWORK_LEDGER` the demand was just cleared to, and a pool of nobody
+    // settles zero hands on every claim, which pays `0` into each road and wears nothing
+    // (`BandEquipment::wear_item` charges nothing for no work).
+    let rates = pool_rates(equipment_cfg, band_kit, &claims, &fills, keepers, fund_mode);
+    allocation.record_pool_crew(rates.crew(crate::equipment_config::KitJob::Roadwork));
+    for (claim, payment) in claims.iter().zip(rates.payments) {
         let supplied = payment.supplied();
         if let Some(road) = registry.road_mut(kept[claim.index]) {
             road.upkeep_supplied += supplied;
@@ -4411,6 +4537,10 @@ pub fn advance_labor_allocation(
         // the shed's `continue`s and rewritten below from the plan this turn actually settled, so a
         // band that loses its last worker stops publishing a TOE for sites it no longer holds.
         allocation.last_pool_toe.clear();
+        // **AND THE POOLS' CREW ACCOUNTS WITH THEM** (issue #715), on the same rule: a band that
+        // loses its last worker stops publishing keepers it no longer has. Each of the four
+        // keeping seats below stamps its own line back.
+        allocation.last_pool_crew.clear();
         // **AN ENTRY REQUIRES A ROW** (`docs/plan_standing_upkeep.md` §3.2 of the slice brief): the
         // queue is pruned of anything the band no longer works before a single work unit is aimed,
         // so no seam that drops a row can leave the pool funding ground nobody stands on. A ring
@@ -4638,6 +4768,36 @@ pub fn advance_labor_allocation(
             &tiles,
             Some(&pool_tools),
         );
+        // **THE BAND'S MAINTENANCE POOLS, SPLIT ACROSS ITS SOURCES** — one work amount per
+        // assignment index (`maintenance_shares`). The split itself happened with the tool plan
+        // above, because the band's **whole** holding decides both: what one patch's hands are
+        // depends on what every other site asked for, and what those hands hold depends on what
+        // every other pool asked for.
+        //
+        // ## ⛔ IT SITS ABOVE THE TWO `continue`s, AT THE ROAD AND QUARRY POOLS' OWN SEAT
+        //
+        // It is the two food webs' **crew stamp** that put it here (issue #715) and not the awards.
+        // A band whose `assignments` are empty is *exactly* the band whose `agriculture` and
+        // `husbandry` keepers are standing idle, so a stamp below the empty-assignment guard was
+        // missing in the one case the figure exists to report: three keepers on untended ground
+        // published no line at all, while `roadwork` and `quarrywork` — settled above the guards —
+        // published theirs. **The tile-lookup guard takes the same reading**: a crew account is
+        // struck from a head count and a claim list, and a band whose tile cannot be read still has
+        // both, so a stamp that guard skipped would be the same hole with a rarer cause.
+        //
+        // **Nothing between here and its old seat touches its inputs.** The guards, `BandReach`,
+        // the output multiplier and the loop's empty accumulators neither move a claim nor fund a
+        // hand, so no band that reaches the assignment loop is paid one unit differently for the
+        // move; the awards a `continue`d band computes are dropped with it, and the crew lines it
+        // stamped are not — which is the whole of the change.
+        let upkeep_shares = maintenance_shares(
+            &mut allocation,
+            &equipment_cfg,
+            &band_kit,
+            &plant_claims,
+            &animal_claims,
+            &pool_tools,
+        );
         if allocation.assignments.is_empty() {
             continue;
         }
@@ -4687,19 +4847,6 @@ pub fn advance_labor_allocation(
         // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the
         // resolved take — the seed is only the pre-resolution stand-in.
         let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
-        // **THE BAND'S MAINTENANCE POOLS, SPLIT ACROSS ITS SOURCES** — one work amount per
-        // assignment index (`maintenance_shares`). The split itself happened with the tool plan
-        // above, because the band's **whole** holding decides both: what one patch's hands are
-        // depends on what every other site asked for, and what those hands hold depends on what
-        // every other pool asked for.
-        let upkeep_shares = maintenance_shares(
-            &allocation,
-            &equipment_cfg,
-            &band_kit,
-            &plant_claims,
-            &animal_claims,
-            &pool_tools,
-        );
         // **⛔ AND THE BILL EACH HERD WAS HANDED, STAMPED AT THIS EXACT MOMENT.**
         //
         // The animal keeping demand **interpolates on the herd's position** since the animal web got

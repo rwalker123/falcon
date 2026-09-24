@@ -4089,6 +4089,32 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
+    /// **HOW MANY OF EACH KEEPING POOL'S KEEPERS THE TURN'S BILL DID NOT CONSUME** (issue #715) —
+    /// one line per **keeping** pool, exported as `PopulationCohortState.pool_crew`.
+    ///
+    /// ⛔ **REPORTED, NEVER RECOMPUTED** — [`Self::last_pool_toe`]'s discipline. The figure is the
+    /// one `systems::labor::pool_rates` struck for this pool this turn, *after* the bare-hand
+    /// top-up spent what it could, so it says *"these people did nothing at all"* and not *"the
+    /// geared plan had no use for them"*. A client re-deriving it from the pool's published TOE
+    /// would report hands the sim has working (issue #714's own case).
+    ///
+    /// ⛔ **FOUR POOLS, AND `builders` IS NOT ONE OF THEM.** `agriculture`, `husbandry`,
+    /// `roadwork`, `quarrywork` — the pools that hold sites. The builders put their **whole** head
+    /// count on the queue head (`docs/plan_pool_toe.md` §2.4), so no builder is ever left standing
+    /// by a plan that wanted fewer; a builders pool with an empty *queue* is idle in a different
+    /// sense and has no line here.
+    ///
+    /// **A pool with a head count and no sites states its whole head count**, which is the common
+    /// case — a line exists for every keeping pool the cohort can hold, unlike `last_pool_toe`'s.
+    /// That is **four on a band and three on an anonymous cohort**: `settle_bands_roadwork` is the
+    /// one keeping seat `advance_labor_allocation` runs under a [`BandId`], because a road's keeper
+    /// *is* a band, so a cohort without one keeps no roads and has no `roadwork` line to state. An
+    /// absent line reads *"this cohort has no such pool"*, exactly as `builders`' absence does.
+    ///
+    /// Held in pool-token order, cleared before every early exit out of the band's turn and
+    /// rewritten from the turn that settled, on [`Self::last_pool_toe`]'s rule. **Excluded from
+    /// equality** below, like the rest of the per-turn telemetry.
+    pub last_pool_crew: Vec<PoolCrewLine>,
     /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
     /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
     ///
@@ -4178,6 +4204,37 @@ pub struct PoolToeLine {
     /// A positive `filled` short of `required` is what the priority settlement left the pool after
     /// the tiers above it were served; `0` is a pool it reached with nothing.
     pub filled: f32,
+}
+
+/// **ONE KEEPING POOL'S CREW ACCOUNT** — a row of [`LaborAllocation::last_pool_crew`], and the
+/// shape the wire's `poolCrew` is written from (issue #715).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolCrewLine {
+    /// Which pool, as the job it is staffed on — published through
+    /// [`crate::equipment_config::KitJob::as_str`], the same token [`LaborTarget::kind`] answers
+    /// for the row. Only the four **keeping** pools appear; see
+    /// [`LaborAllocation::last_pool_crew`] for why `builders` does not.
+    pub pool: crate::equipment_config::KitJob,
+    /// **Keepers the turn's bill left standing**, in keepers and fractional — struck **after** the
+    /// bare-hand top-up (`systems::labor::PoolRates::idle_keepers`). `0` is a pool that employed
+    /// every hand it was given.
+    ///
+    /// ⛔ **IT MEANS NOTHING WITHOUT [`Self::keepers`]**, which is the head count it was struck
+    /// against.
+    pub idle_keepers: f32,
+    /// **THE HEAD COUNT [`Self::idle_keepers`] WAS STRUCK AGAINST** — the keepers this pool held
+    /// when the turn settled it (`systems::labor::PoolRates::keepers`), in keepers and a float for
+    /// the neighbour's reason: every hand quantity on this wire is one, and a reader subtracting
+    /// its own head count from this casts nothing.
+    ///
+    /// ⛔ **IT IS WHAT MAKES THE FIGURE ABOVE READABLE AFTER AN EDIT.** `assign_labor` writes the
+    /// band's row the instant the player presses the stepper, **outside** the turn, while this line
+    /// is stamped only where the turn settles the pool — so from that press until the next turn
+    /// resolution the row carries the new head count and `idle_keepers` still describes the old
+    /// one. A reader projecting the pending edit takes `idle_keepers + (the row's current head
+    /// count − keepers)`; one that reads `idle_keepers` alone answers with staffing the player has
+    /// already left behind.
+    pub keepers: f32,
 }
 
 /// **WHICH SOURCE A BUILD QUEUE ENTRY NAMES** — a patch by its tile, a herd by its id.
@@ -4421,6 +4478,33 @@ impl LaborAllocation {
             .filter(|a| a.target.same_source(target))
             .map(|a| a.workers)
             .sum()
+    }
+
+    /// **STAMP ONE KEEPING POOL'S CREW ACCOUNT FOR THIS TURN** — a row of
+    /// [`Self::last_pool_crew`], written by the seat that just paid the pool.
+    ///
+    /// **Held in pool-token order rather than in the order the four seats run**, which is
+    /// `systems::labor::pool_toe_lines`' rule and for its reason: a frame's rows are then stable,
+    /// so a delta diffs them out when nothing moved and a reader's row order does not depend on
+    /// which pools a band happens to staff.
+    ///
+    /// **Replaces rather than appends** where a pool is stamped twice in one turn, so the last word
+    /// on a pool is the only one on the wire.
+    ///
+    /// ⛔ **IT TAKES THE WHOLE LINE, NEVER ONE TERM OF IT.** [`PoolCrewLine::idle_keepers`] is only
+    /// readable against the [`PoolCrewLine::keepers`] it was struck from, so a seam that could set
+    /// one without the other would publish a figure whose basis came from a different moment —
+    /// which is the defect this pair exists to close. The line is built in exactly one place
+    /// (`systems::labor::PoolRates::crew`), off the rates the pool was just paid at.
+    pub fn record_pool_crew(&mut self, line: PoolCrewLine) {
+        let token = line.pool.as_str();
+        match self
+            .last_pool_crew
+            .binary_search_by(|held| held.pool.as_str().cmp(token))
+        {
+            Ok(at) => self.last_pool_crew[at] = line,
+            Err(at) => self.last_pool_crew.insert(at, line),
+        }
     }
 
     /// **Total workers staffed on a JOB**, summed across every source of it — the head count a

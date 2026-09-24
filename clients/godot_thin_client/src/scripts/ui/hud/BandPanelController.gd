@@ -2386,16 +2386,16 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     var cards := _build_role_card_row()
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_AGRICULTURE,
         HudWorkVocab.AGRICULTURE_ROLE_HINT, HudConst.LABOR_KIND_AGRICULTURE, agriculture_eff, idle,
-        plant_cover))
+        queued, plant_cover))
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_HUSBANDRY,
         HudWorkVocab.HUSBANDRY_ROLE_HINT, HudConst.LABOR_KIND_HUSBANDRY, husbandry_eff, idle,
-        animal_cover))
+        queued, animal_cover))
     # **THE THIRD KEEPING CARD, and it wears the mark for the same reason the two beside it do.** A
     # road nobody keeps washes out, which is a real investment lost — the same news `slipping` and
     # `drifting` carry one branch over.
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_ROADWORK,
         HudWorkVocab.ROADWORK_ROLE_HINT, HudConst.LABOR_KIND_ROADWORK, roadwork_eff, idle,
-        road_cover))
+        queued, road_cover))
     # **THE BUILDERS CARD IS THE ONE CARD THAT CAN NEVER BE SHORT OF HANDS, and that is why it is
     # passed no `cover`.** It funds a QUEUE, one entry at a time, and an entry that is not being built
     # is not being LOST — the queue block one down states its own blocked head. There is no KEEPING
@@ -2408,7 +2408,8 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # widening the triangle to either shortfall made the hands half this card's exemption and the
     # tools half everybody's.
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_BUILDERS,
-        HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle))
+        HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle,
+        queued))
     block.add_child(cards)
     # The fund mode renders only where either web demands work this turn — see `_build_upkeep_mode_row`.
     # Its presence is what the reserved height forks on, so the answer is recorded on the block rather
@@ -2700,10 +2701,11 @@ func _build_workings_roster_block(band: Dictionary, models: Array) -> VBoxContai
 ## BAND-WIDE pool, on the head, naming no working — and the per-row prohibition is unchanged and still
 ## asserted.
 ##
-## **THE MARK AND THE SENTENCE ARE THE RETIRED CARD'S, off the cohort and with no arithmetic here.**
-## `upkeep_pool_coverage_line` is the ONE composer that decides both, exactly as it does for the four
-## cards, so the glyph and the words cannot disagree — and the `deposits` rows are fog-filtered, which
-## is why the three figures are read off the band rather than summed from the rows.
+## **THE MARKS AND THE SENTENCES ARE THE RETIRED CARD'S, off the cohort and with no arithmetic here.**
+## `upkeep_pool_is_short` decides the glyph and `upkeep_pool_coverage_line` / `upkeep_pool_idle_line`
+## compose the words, exactly as they do for the four cards, so this head and a card cannot answer the
+## same question differently — and the `deposits` rows are fog-filtered, which is why the three
+## figures are read off the band rather than summed from the rows.
 ##
 ## **THE HINT RIDES THE TITLE'S OWN HOVER**, not the mark's: the mark is conditional and a calm band
 ## would otherwise have nowhere to read what this pool does.
@@ -2719,11 +2721,39 @@ func _build_workings_roster_head(band: Dictionary) -> HBoxContainer:
     }
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(
         HudWorkVocab.ROLE_NAME_QUARRYWORK, cover)
-    var hover := HudFormat.join_tooltip_lines([HudWorkVocab.QUARRYWORK_ROLE_HINT, coverage_line])
-    var head := HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER,
-        HudWorkVocab.UPKEEP_POOL_SHORT_MARK if coverage_line != "" else "",
-        null, HudStyle.WARN, hover, hover)
     var effective := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_QUARRYWORK)
+    # ⛔ **THE FOURTH KEEPING POOL REPORTS ITS SPARE HANDS TOO** (issue #715). This head IS the
+    # `quarrywork` pool, so leaving the idle reading to the three cards would make the one pool with
+    # no card the one pool that cannot tell a player a worker is free — which is the bug, not a
+    # lesser version of it. Same predicate, same composer, same one-slot rule as `_build_pool_card`:
+    # `upkeep_pool_is_short` decides the amber and the info mark stands in the slot only when the
+    # triangle has no claim on it.
+    var is_short := HudWorkVocab.upkeep_pool_is_short(cover)
+    # ⛔ **NO QUEUE IS PASSED, AND THAT IS THIS POOL'S HONEST ANSWER RATHER THAN AN OMISSION.** The
+    # pending projection's queued term is the standing keeping a web's jobs queued THIS TURN will
+    # owe, and `quarrywork` publishes its bill as a band-level roll-up with no queued half — the
+    # deposit rows being fog-filtered, which is why the client must not sum them. So this pool has no
+    # queued term to read even where the caller holds the models, and its projection is the stepper
+    # delta alone (`HudWorkVocab.keeping_source_kind` answers the same for the array either way).
+    # …and the pending gate's own term read off that cover like every card's, which for this pool is
+    # ABSENT and therefore `false`: its shortfall is the sim's published one and does not move with
+    # the stepper, so no edit can flip it from short to covered for the gate to catch.
+    var idle_line := _pool_idle_line(band, HudConst.LABOR_KIND_QUARRYWORK, effective, [],
+        bool(cover.get(HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY, false)))
+    var wants_idle_mark := not is_short and idle_line != ""
+    var hover := HudFormat.join_tooltip_lines([HudWorkVocab.QUARRYWORK_ROLE_HINT, coverage_line,
+        idle_line])
+    var mark := ""
+    if is_short:
+        mark = HudWorkVocab.UPKEEP_POOL_SHORT_MARK
+    elif wants_idle_mark:
+        mark = HudWorkVocab.UPKEEP_POOL_IDLE_MARK
+    var head := HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER, mark,
+        null, HudStyle.WARN if is_short else HudStyle.INK_DIM, hover, hover)
+    # …and the same pair of metas the cards carry, so a probe reads this pool's two states off the
+    # block exactly as it reads a card's off the card.
+    head.set_meta(POOL_CARD_SHORT_META, is_short)
+    head.set_meta(HudWorkVocab.POOL_CARD_IDLE_META, idle_line if wants_idle_mark else "")
     var stepper := HBoxContainer.new()
     stepper.set_meta(HudWorkVocab.WORKINGS_ROSTER_STEPPER_META, HudConst.LABOR_KIND_QUARRYWORK)
     stepper.alignment = BoxContainer.ALIGNMENT_END
@@ -3112,11 +3142,48 @@ func _pool_coverage(band: Dictionary, source_kind: String, role_kind: String, wo
             SourceForecast.BUILD_WORK_NONE)))
     var kit_gear := KitRoster.build_gear(band, KitRoster.keeping_kit_for(_band_labor.kits(),
         role_kind), KitRoster.build_branch_for_kind(source_kind))
+    # **AND WHETHER THIS POOL WAS SHORT AT THE STAFFING THE TURN RESOLVED** — the same bill against
+    # the SETTLED head count, which is the one thing the idle projection's `+` branch cannot reason
+    # past (see `_pool_idle_line`'s gate). The bill does not move with the stepper, so only the
+    # supply is re-struck, and it is re-struck through the SAME `pool_work_supply` and the same gear
+    # — a second expression of *is this pool short* is how one card comes to answer it twice.
+    #
+    # ⛔ **AND THE SETTLED HEAD COUNT IS THE WIRE'S, NOT THE BAND'S LABOR ROW.** Read off the row
+    # this gate was INERT: the server applies an assign to that row outside the turn, so after a
+    # press the row already carries the pending count and the test compared short-at-N against
+    # short-at-N — it could not fire for any edit, which is the only thing it exists to catch.
+    # `_settled_pool_keepers` is the crew line's own anchor and is stamped when the turn settles.
     return {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: SourceForecast.pool_work_supply(workers, per_worker,
             kit_gear),
         HudWorkVocab.POOL_COVERAGE_ASKED_KEY: asked,
+        HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY: HudWorkVocab.upkeep_pool_is_short({
+            HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: SourceForecast.pool_work_supply(
+                _settled_pool_keepers(band, role_kind), per_worker, kit_gear),
+            HudWorkVocab.POOL_COVERAGE_ASKED_KEY: asked,
+        }),
     }
+
+## **THE HEAD COUNT THE TURN SETTLED THIS POOL AT** — `PoolCrewLine.keepers`, as whole workers.
+##
+## ⛔ **IT IS THE WIRE'S AND NEVER THE BAND'S OWN LABOR ROW.** The server applies an assign to that
+## row the instant the command lands, OUTSIDE the turn, so after a stepper press the row equals the
+## PENDING count — and a *was this pool short before the edit* test taken against it compares
+## short-at-N with short-at-N and can never fire. The crew line is stamped only when the turn
+## settles, which is what makes it the settled staffing.
+##
+## **ROUNDED TO A WHOLE WORKER because `pool_work_supply` prices bodies**, the gear term saturating
+## at a whole count. The wire's figure is a float like every other hand quantity on it, and a head
+## count is whole in the sim — so this is a representation cast and `roundf` rather than a
+## truncating one is what stops a whole number that came back a hair light from pricing one keeper
+## fewer.
+##
+## **NO ROW, NO SETTLED STAFFING, AND `0` IS THE HONEST ANSWER THERE** — it makes the gate read the
+## pool as short and stay silent, which is the same silence `_projected_pool_idle` already answers
+## an anchorless pool with.
+func _settled_pool_keepers(band: Dictionary, role_kind: String) -> int:
+    var crew := HudBandLaborState.pool_crew_for(band, role_kind)
+    return int(roundf(float(crew.get(HudBandLaborState.POOL_CREW_KEEPERS_KEY, 0.0))))
 
 ## **THE STANDING KEEPING THIS WEB'S QUEUED JOBS WILL OWE** — `{demand, per_worker_turn}`, summed and
 ## read off the same models.
@@ -3183,13 +3250,27 @@ func _queued_keeping_load(queued: Array, labor_kind: String) -> Dictionary:
 ## web's own `{supply, asked}` (`{}` for the Builders card, which keeps nothing), never the two webs
 ## summed.
 ##
+## **AND WHERE NOTHING IS WRONG BUT A WORKER IS GOING SPARE IT WEARS THE INFO MARK INSTEAD** (issue
+## #715) — one slot, three states, shortfall first. A pool that covered its bill exactly and a pool
+## carrying a worker with nothing to do were the same calm card with no reading at all, so a player
+## could not see that a hand was free to be sent elsewhere. The info mark takes `HudStyle.INK_DIM` —
+## ordinary secondary ink, claiming no severity — and leaves the title calm, because the amber has to
+## keep meaning *something is being lost*. Not `SIGNAL`, which it wore for one pass: that token's
+## documented meaning is *calm, nothing needs you*, the opposite of a mark saying a worker is free,
+## and on the `ember` `DEFAULT_THEME` it is `efe3cd` against an `INK` of `f4ead7` — cream on cream.
+##
+## **AND THE CARD NOW STATES ITS BILL WHETHER OR NOT IT IS SHORT.** The work-units sentence was gated
+## behind the shortfall test, which is why an adequately staffed pool said nothing; the gate is
+## `HudWorkVocab.upkeep_pool_is_short` now and the sentence composes for every pool with a bill.
+##
 ## **ONE TEST, ONE MARK, ONE SENTENCE.** The live bill and a job the queue has not started owing yet
 ## were two triggers wearing one glyph — *"short 2 of 2"* beside *"nobody is on this pool"* — which
 ## read as one warning misbehaving. `_pool_coverage` folds both into what the pool SUPPLIES against
 ## what it is ASKED FOR, so there is one thing to say and `HudWorkVocab.upkeep_pool_coverage_line` is
 ## the one composer that says it.
 func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: String,
-        effective: Dictionary, idle: int, cover: Dictionary = {}) -> PanelContainer:
+        effective: Dictionary, idle: int, queued: Array,
+        cover: Dictionary = {}) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
@@ -3201,7 +3282,28 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # **THE TRIANGLE FLIES ON EITHER REASON.** It was gated on the hands shortfall alone, so a pool
     # short of tools wore no triangle and one short of both was indistinguishable from one short of
     # hands. The triangle now says *something is wrong with this pool* and the hover says what.
-    var wants_mark := coverage_line != "" or tool_line != ""
+    #
+    # ⛔ **THE HANDS HALF IS THE PREDICATE, NOT THE SENTENCE** (issue #715). The coverage line used to
+    # be the test as well as the words — it returned `""` for an adequate pool — which is why a pool
+    # that covers its bill exactly said NOTHING at all. The sentence now composes for every pool with
+    # a bill and `upkeep_pool_is_short` is what the amber forks on; one composer, one predicate.
+    var is_short := HudWorkVocab.upkeep_pool_is_short(cover) or tool_line != ""
+    # **AND WHAT THE BILL DID NOT USE** — a whole worker standing on this pool with nothing to do,
+    # which is the third thing this card can say and the one it could not say at all. Read off the
+    # wire's own `pool_crew` row and NEVER re-derived: `supply` above is a projection off a notional
+    # kit and knows nothing of the sim's bare-hand top-up, so a client-side ABSOLUTE would name
+    # workers the sim has working. What the queue is passed for is the pending ADJUSTMENT, which is a
+    # different claim and is sound for a different reason — see `_projected_pool_idle`. The
+    # `builders` card gets `0.0` here because the builders are not a keeping pool and the wire
+    # publishes no row for them — an empty queue is idleness of another kind and is out of this
+    # mark's scope.
+    var idle_line := _pool_idle_line(band, kind, effective, queued,
+        bool(cover.get(HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY, false)))
+    # **ONE SLOT, THREE STATES, AND SHORTFALL WINS IT.** The name row holds exactly one glyph (the
+    # measurements are in the block below), so an idle pool is marked only where nothing is wrong
+    # with it: a loss is the news and a spare hand can wait one hover.
+    var wants_idle_mark := not is_short and idle_line != ""
+    var wants_mark := is_short or wants_idle_mark
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -3238,13 +3340,24 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # client uses for that fact everywhere — the hands shortfall first
     # (`upkeep_pool_coverage_line`), then the tool shortfall (`HudWorkVocab.pool_toe_short_line`, the
     # client's existing `N of M` phrasing) — and `join_tooltip_lines` drops whichever is empty.
-    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, tool_line])
-    # **THE META IS THE TRIANGLE** — every harness reads it to ask *is this card marked*, and the two
-    # composers that decide the reasons are the same two that decide the glyph.
-    card.set_meta(POOL_CARD_SHORT_META, wants_mark)
+    #
+    # **THE IDLE READING IS A THIRD LINE, LAST** (issue #715) — the two shortfalls are what the band
+    # is LOSING and the spare hand is what it can gain, so it reads after them.
+    card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, tool_line, idle_line])
+    # **THE META IS THE TRIANGLE** — every harness reads it to ask *is this card marked SHORT*, and
+    # the two composers that decide the reasons are the same two that decide the glyph.
+    #
+    # ⛔ **IT IS THE *SHORT* ANSWER AND NOT *MARKED AT ALL*.** Several probes read it as *short*, so
+    # widening it to cover the calm info mark would silently change what each of them asserts — which
+    # is why the idle state has a meta of its own below rather than a share of this one.
+    card.set_meta(POOL_CARD_SHORT_META, is_short)
     # …and the TOOL reason on its own meta, carrying the SENTENCE rather than a flag: a harness asking
     # *which reason is the triangle for* must not re-compose the wording it is checking.
     card.set_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, tool_line)
+    # …and the IDLE state on a third, by the same rule and for the same reason. It carries the
+    # sentence the card is FLYING the info mark for, so it is `""` on a pool that is also short —
+    # where the reading is still on the hover but the slot went to the triangle.
+    card.set_meta(HudWorkVocab.POOL_CARD_IDLE_META, idle_line if wants_idle_mark else "")
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     card.add_child(col)
@@ -3254,8 +3367,13 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # A PENDING edit and a SHORT pool are different news and the pending one is the newer: it says the
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
+    #
+    # ⛔ **THE IDLE MARK LEAVES THE TITLE ALONE** (issue #715). The amber has to keep meaning
+    # *something is being lost* — a road washing out, a patch rotting — and a worker with nothing to
+    # do is waste the player fixes with a stepper press. Colouring the title for it would spend the
+    # panel's one alarm ink on the least urgent thing it can say.
     title.add_theme_color_override("font_color",
-        HudStyle.WARN if pending or wants_mark else HudStyle.INK)
+        HudStyle.WARN if pending or is_short else HudStyle.INK)
     if not wants_mark:
         col.add_child(title)
     else:
@@ -3270,7 +3388,16 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         # not fit this row at any packing, so the one `⚠` stands for *something is wrong with this
         # pool* and the two opposite remedies — a stepper away, or the bench — are told apart on the
         # hover, which names each reason on its own line.
-        name_row.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK))
+        # ⛔ **AND ONE GLYPH FOR THREE STATES, SHORTFALL FIRST.** The slot cannot be shared, so the
+        # info mark is what stands in it only when the triangle has no claim on it — and it takes the
+        # INK_DIM secondary ink rather than the amber, so *there is a hand going spare* never reads as
+        # *this band is losing something*. Not the SIGNAL accent: its documented meaning is *calm,
+        # nothing needs you*, and on the `ember` default theme it is cream on cream against `INK`.
+        # What hue that is belongs to the active palette, which is the point of naming the token
+        # rather than a colour.
+        name_row.add_child(
+            _pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK, HudStyle.WARN) if is_short
+            else _pool_card_mark(HudWorkVocab.UPKEEP_POOL_IDLE_MARK, HudStyle.INK_DIM))
         col.add_child(name_row)
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
@@ -3293,19 +3420,26 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     col.add_child(stepper)
     return card
 
-## One mark beside a pool card's name, at the name's own size and in the WARN amber both shortfalls
-## wear. Shared so the two cannot be drawn at different sizes on one row.
+## One mark beside a pool card's name, at the name's own size. Shared so the states cannot be drawn
+## at different sizes on one row.
+##
+## **THE INK IS AN ARGUMENT BECAUSE THE SLOT CARRIES THREE STATES** (issue #715): both shortfalls
+## wear the WARN amber, and the idle reading wears `HudStyle.INK_DIM` — ordinary secondary ink,
+## claiming no severity — so it cannot be mistaken for something being lost. Not `SIGNAL`, whose
+## documented meaning is *calm, nothing needs you* and which is cream on cream against `INK` on the
+## `ember` `DEFAULT_THEME`. Passed in rather than derived from the glyph, which would make the colour a
+## second lookup free to disagree with the caller's own fork.
 ##
 ## **IT WEARS `WORK_ROW_MARKS_META`, the work row's own handle**, because it is the same kind of node
 ## answering the same question — *which marks is this thing flying* — and a harness must identify it
 ## by handle rather than by text: the glyph is what is under test, so matching on it would assert the
 ## string the caller just passed in.
-func _pool_card_mark(glyph: String) -> Label:
+func _pool_card_mark(glyph: String, ink: Color) -> Label:
     var mark := Label.new()
     mark.text = glyph
     mark.set_meta(HudWorkVocab.WORK_ROW_MARKS_META, glyph)
     mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
-    mark.add_theme_color_override("font_color", HudStyle.WARN)
+    mark.add_theme_color_override("font_color", ink)
     mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
     return mark
 
@@ -3335,6 +3469,160 @@ func _pool_card_mark(glyph: String) -> Label:
 ## not resolved while the other answers for the one it has.
 func _pool_toe_short_line(band: Dictionary, kind: String, effective: Dictionary) -> String:
     return HudWorkVocab.pool_toe_short_line(_pool_toe_settled_rows(band, kind, effective))
+
+## **WHAT THIS POOL'S BILL DID NOT USE — the wire's figure, ADJUSTED BY WHAT THE PLAYER HAS JUST
+## DONE THAT THE SIM HAS NOT SEEN** (issue #715).
+##
+## **THE FIGURE IS THE WIRE'S.** `PopulationCohortState.poolCrew` states each keeping pool's idle
+## keepers, struck AFTER the sim has put leftover hands back bare onto sites still carrying a
+## deficit, so it means *these people did nothing at all this turn*. With nothing changed since the
+## turn resolved — no stepper edit AND no job queued — it is read WHOLE and nothing is computed; see
+## `HudBandLaborState.pool_crew_for` for why a client cannot honestly compute the absolute, and
+## `_projected_pool_idle` for the two commitments the sim's figure provably does not know about.
+##
+## **THE `builders` CARD ANSWERS `""` OFF THE WIRE RATHER THAN OFF A SPECIAL CASE HERE.** The
+## builders are not a keeping pool and publish no `pool_crew` row at all, so the reader answers with
+## no row and the projection has no anchor to strike a delta against — see `_projected_pool_idle`.
+##
+## ⛔ **ONE PENDING TRANSITION IS STILL SILENCED, AND IT IS A NARROW GATE RATHER THAN THE OLD WIDE
+## ONE.** Where the pool was SHORT at the settled staffing and the edit COVERS it, the reading says
+## nothing. **The reason is not *pending is unknowable* — that was the over-application Ray reported
+## — it is that the ABSORBED REMAINDER is unknowable across this one transition.** The projection's
+## `+` branch rests on the sim having proved that whatever it published as idle had nowhere to go;
+## on a short pool the published figure is `0` because every hand went into the deficit, so a hand
+## added there goes into the deficit too — and how MUCH of it the shortfall swallowed is exactly what
+## this client cannot price. A pool short by 0.5 of a hand's work, stepped up by one, honestly has
+## half a worker spare and the projection would claim a whole one: a mark whose promise is *you can
+## step this pool down by one* telling the player to undo the `+` that just fixed their shortfall.
+##
+## ⛔ **AND THE REMAINDER IS NOT SUBTRACTED FROM THE COVER DICT INSTEAD.** `supply` there is the
+## notional-kit projection this whole reading was moved off the wire to stop consulting, so pricing
+## the absorbed part with it would trade a bounded over-claim for an unbounded wrong one. Silence is
+## what this codebase answers where it cannot answer honestly — and it is **one frame, one
+## transition**, self-correcting the moment the turn resolves and the wire states the settlement.
+##
+## **A POOL THAT IS STILL SHORT AFTER THE EDIT NEEDS NO GATE** — the card's own `is_short` takes the
+## slot there — so this test is the SETTLED half alone.
+##
+## ⛔ **AND THE GATE STAYS PENDING-ONLY WHILE THE PROJECTION'S QUEUED TERM WENT UNCONDITIONAL.** They
+## are not the same question: the term adjusts for a commitment the wire has not seen, which is true
+## on any frame, while the gate guards the short→covered TRANSITION — a change in the pool's own
+## coverage that only a stepper edit can cause. With nothing pending there is no transition and the
+## settled figure is the sim's own settlement, so gating a calm frame would silence a reading that
+## has nothing unknowable in it.
+func _pool_idle_line(band: Dictionary, kind: String, effective: Dictionary,
+        queued: Array, settled_short: bool) -> String:
+    if bool(effective.get("pending", false)) and settled_short:
+        return ""
+    return HudWorkVocab.upkeep_pool_idle_line(
+        _projected_pool_idle(band, kind, effective, queued))
+
+## **THE POOL'S SPARE KEEPERS AS THEY STAND *THIS FRAME*** — the wire's figure plus the stepper edit
+## the player has made, less the keeping the jobs they queued this turn will owe.
+##
+## ```
+## projected = max(0, idleKeepers + (current_head_count - keepers) - queued_demand_in_hands)
+## ```
+##
+## ⛔ **BOTH TERMS OF THE DELTA COME OFF THE WIRE'S OWN PAIR, AND ANCHORING IT ON THE BAND'S LABOR
+## ROW IS THE DEFECT THIS FUNCTION WAS REPORTED FOR TWICE.** The delta read
+## `effective.workers - workers_for_role(band, kind)` — the pending-aware count less the band's
+## published row — which is non-zero only while the client's optimistic overlay is ahead of that
+## row. It never is: the server applies `assign_labor` to the row IMMEDIATELY, outside the turn, so
+## by the time the card next draws both sides of that subtraction have moved to the new count, the
+## delta is `0`, and the projection collapses to a stale `idleKeepers` struck against a staffing the
+## player has already changed. Live, on turn 1: three keepers put on `agriculture` with no sources at
+## all, and the card said nothing. `PoolCrewLine.keepers` is the head count the sim struck
+## `idleKeepers` against — the two are written at one seam when the TURN settles — so it is the one
+## honest basis for *how much has changed since*, and the pending overlay is not part of the
+## subtraction at all.
+##
+## ⛔ **PENDING WAS A GATE AND THE GATE OVER-APPLIED ITS OWN REASON.** It answered `""` on any pending
+## row, because the crew account is the settlement the turn RESOLVED and a `+` just pressed must not
+## be answered with the idleness of the staffing left behind — which would tell the player to step
+## down a pool they have just stepped up. **That reason bites in one direction only.** Answering with
+## a STALE figure is wrong; answering with NOTHING is also wrong, and it is what a player hit: two
+## Agriculture workers assigned on turn 1, and no mark until turn 2 resolved. The adjustment answers
+## both halves — it never quotes the staffing left behind, and it never falls silent.
+##
+## ⛔ **AND IT IS AN ADJUSTMENT, NEVER A RE-DERIVATION FROM `{supply, asked}`.** That projection
+## prices hands at a NOTIONAL kit off the band's roster and is blind both to the tools the settlement
+## actually handed this pool and to the sim's step-5 top-up — which is the whole reason this reading
+## was moved onto the wire. **What makes the adjustment legitimate where a re-derivation is not:** a
+## hand added by a stepper press is a **BARE** hand (`docs/plan_pool_toe.md` §2.3 step 5 fixes that a
+## top-up hand claims no tool), so the marginal hand's rate is the bare rate — the same unit the sim
+## counts its leftover in. The client can price the CHANGE correctly even though it cannot price the
+## ABSOLUTE.
+##
+## **THE TWO BRANCHES OF THE `+`/`−` ASYMMETRY.** Removing hands shrinks the leftover 1:1 down to
+## none. Adding them is sound because the sim already proved that whatever it published as idle had
+## nowhere to go, so a further hand is idle too — *unless* the player has also queued work this turn,
+## which is exactly what the queued term absorbs.
+##
+## ⛔ **BOTH ADJUSTMENTS ARE UNCONDITIONAL, AND THE QUEUED ONE WAS SCOPED TO THE PENDING BRANCH FOR
+## ONE RELEASE — WHICH LEFT HALF THE REPORTED BUG STANDING.** Queueing a job WITHOUT touching a
+## stepper is the ordinary way to set one up, and that band read *"3 workers on this pool found
+## nothing to do"* until the player happened to poke a control afterwards. **A queued job is not
+## *nothing changed*:** it is a standing commitment the sim's figure provably does not know about —
+## `poolCrew`'s account runs over BILLED claims and a job owes nothing until its first work is banked
+## — so the term is exactly as legitimate on a calm frame as on a pending one. It cannot
+## double-count, because `_queued_keeping_load` skips any entry the sim is already billing.
+##
+## **AND THE CARD CONTRADICTED ITSELF ON ONE HOVER.** `_pool_coverage`'s `asked` has always carried
+## the queued demand, so a band with three keepers and a Sow queued read *"supplies 3.0 work a turn;
+## tended ground and queued jobs need 3.0"* directly above *"3 workers found nothing to do"*. Two
+## lines of one tooltip disagreeing is worse than either being wrong alone.
+##
+## **`delta` IS NATURALLY ZERO ON A SETTLED FRAME** — the turn stamps the crew line and the labor
+## row from the same staffing — so there is no branch and no pending test: one expression serves the
+## calm frame and the edited one. **That is why the pending FLAG plays no part here**: what the
+## reading turns on is whether the head count has moved since the turn settled it, which the two
+## published numbers answer between them, and an overlay dropped early (or never recorded) would
+## otherwise take a real change back to zero.
+##
+## **`max(0, …)` IS A FLOOR AND NOT A FUDGE**: the reading is *how many keepers are doing nothing*,
+## and that cannot go below none.
+func _projected_pool_idle(band: Dictionary, kind: String, effective: Dictionary,
+        queued: Array) -> float:
+    var crew := HudBandLaborState.pool_crew_for(band, kind)
+    # **NO ROW, NO READING** — `builders` and any pool the wire did not write. There is no anchor to
+    # strike a delta against, so there is nothing to project and the card says nothing.
+    if crew.is_empty():
+        return HudWorkVocab.UPKEEP_POOL_IDLE_KEEPERS_NONE
+    var delta := float(effective.get("workers", 0)) \
+        - float(crew.get(HudBandLaborState.POOL_CREW_KEEPERS_KEY, 0.0))
+    return maxf(float(crew.get(HudBandLaborState.POOL_CREW_IDLE_KEY, 0.0))
+        + delta - _queued_keeping_hands(kind, queued),
+        HudWorkVocab.UPKEEP_POOL_IDLE_KEEPERS_NONE)
+
+## **WHAT THIS TURN'S QUEUED JOBS WILL OWE THIS POOL, IN BARE HANDS** — `_queued_keeping_load`'s work
+## demand divided by the bare per-worker rate the same load states, which is the rate the marginal
+## hand works at.
+##
+## **IT IS THE *"impacts based on jobs setup that turn"* HALF OF THE READING, and it is not
+## optional**: without it, staffing a pool and queueing the job that pool will keep — one decision,
+## two presses — reports the new hand as idle on the frame the job was declared.
+##
+## ⛔ **THE DIVISION IS `SourceForecast.workers_for_work`, the ONE work→hands conversion in this
+## client**, so this lands in the same units as the wire's own `upkeepWorkersNeeded`. It CEILS, which
+## is the conservative direction here: a job owing half a hand's work still claims a whole body, and
+## the mark is a promise about a whole worker. An unpriced rate (no queued job on this web) answers
+## `BUILD_CREW_NONE`, which is *nothing queued to absorb the hand*.
+##
+## ⛔ **`roadwork` AND `quarrywork` HAVE NO QUEUED TERM AND THEIR PROJECTION IS THE STEPPER DELTA
+## ALONE.** Both publish their `asked` as a band-level roll-up with no queued half, their rows being
+## fog-filtered, so `HudWorkVocab.keeping_source_kind` names no web for them. That is correct as far
+## as it goes rather than a defect: what those two lose is the *job queued this turn* half, which the
+## wire gives this client no honest way to state.
+func _queued_keeping_hands(kind: String, queued: Array) -> float:
+    var source_kind := HudWorkVocab.keeping_source_kind(kind)
+    if source_kind == HudWorkVocab.NO_KEEPING_SOURCE_KIND:
+        return HudWorkVocab.UPKEEP_POOL_IDLE_KEEPERS_NONE
+    var load := _queued_keeping_load(queued, source_kind)
+    return float(SourceForecast.workers_for_work(
+        float(load.get("demand", SourceForecast.NO_UPKEEP_DEMAND)),
+        float(load.get(HudBandLaborState.POOL_PER_WORKER_TURN_KEY,
+            SourceForecast.BUILD_WORK_NONE))))
 
 ## ⛔ **THIS POOL'S TOE ROWS, OR NOTHING WHILE A ROLE EDIT IS PENDING** — the ONE gated reading of
 ## `HudBandLaborState.pool_toe_for`, and the seam that makes *the card and the row answer from one

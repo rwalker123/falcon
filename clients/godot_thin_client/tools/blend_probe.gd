@@ -882,6 +882,9 @@ var _failures := 0
 
 
 func _ready() -> void:
+	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
+	# real window receives the human's mouse. See `tools/harness_window.gd`.
+	HarnessWindow.seal_from_real_mouse(get_window())
 	# FREEZE ANIMATION TIME (the `map_preview` treatment — see that harness's _ready). What it buys:
 	# with the canvas already pinned below, animated content was the ONLY remaining run-to-run
 	# difference here, so this is what makes the set a STRICT BIT-IDENTITY REFERENCE (230/230

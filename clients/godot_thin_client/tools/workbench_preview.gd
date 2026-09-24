@@ -56,6 +56,9 @@ var _failures := 0
 
 
 func _ready() -> void:
+	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
+	# real window receives the human's mouse. See `tools/harness_window.gd`.
+	HarnessWindow.seal_from_real_mouse(get_window())
 	_pin_window()
 	# PIN THE PALETTE, the theme half of the same contamination. `ClientSettings` read the developer's
 	# real `user://client_settings.cfg` at boot and `HudPalette.apply()` has ALREADY installed whatever
