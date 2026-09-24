@@ -329,10 +329,24 @@
   .chips { display: inline-flex; gap: 3px; flex-wrap: wrap; }
   /* A foreign counterparty. It can appear ONLY on the route arm — `pools_freely`
      gates the pooling union on faction, so the roster is always your own bands. */
-  .chip.foreign { border-color: var(--g-pigment); color: var(--g-pigment); }
+  /* THE FACTION MARK — the slot a faction's flag fills (#647). Until factions carry a
+     flag it is a flag-shaped glyph in the faction's MAP colour, so a counterparty reads
+     the same here as its banner does on the map. */
+  .fmark { display: inline-flex; vertical-align: -1px; margin-left: 5px; cursor: default; }
+  .fmark svg { display: block; }
   .row.more .lab { color: var(--g-signal); font-size: 11px; }
-  .row.sub-head { margin-top: 5px; border-bottom: 1px solid var(--g-line-soft); padding-bottom: 2px; }
-  .row.sub-head .lab { font: 600 9.5px/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--g-dim); }
+  /* A DIRECTION UNDER THE TRADE ROUTE SECTION — content, not a second section. It was
+     styled as a section head (mono caps over a rule, flush left), so IMPORTS read as a
+     sibling of TRADE ROUTE rather than a part of it. Indented and in sentence case, the
+     party rows step in again beneath it: section › direction › party › goods. */
+  .row.sub-head { margin-top: 5px; padding-left: 10px; }
+  .row.sub-head .lab { font: 600 11.5px/1.5 var(--sans); color: var(--g-ink); }
+  .row.sub-head .amt { color: var(--g-faint); }
+  .row.rt-party { padding-left: 24px; }
+  .row.rt-party .lab { color: var(--g-dim); font-size: 11px; }
+  .row.rt-goods { padding-left: 38px; }
+  .row.rt-goods .lab { color: var(--g-faint); font-size: 10.5px; }
+  .row.opens.rt-more { padding-left: 24px; }
   .row.more { padding-left: 0; }
 
   .quiet { color: var(--g-faint); font-size: 11px; padding: 10px 2px; }
@@ -593,6 +607,14 @@
           Which ratings went which way is the hover card.</p>
       </div>
       <div class="note">
+        <span class="nk">The flag's slot (#647)</span>
+        <p>Every counterparty carries a <b>faction mark</b> — yours and theirs alike, so <em>is this
+          us?</em> has an answer on every row. Factions have no flag yet, so the mark is a flag-shaped
+          glyph in the faction's <b>map colour</b> (<code>MapView.SEEDED_FACTION_COLORS</code>), the tint
+          the map already paints its band banners in. When #647 lands, the flag replaces the glyph and
+          nothing else about the row. Hover a mark to see it say so.</p>
+      </div>
+      <div class="note">
         <span class="nk">Try it — 15 camps</span>
         <p><b>Network</b> swaps in a fifteen-camp pool; <b>Routes</b> puts 20 parties on the turn.
           The goods list does not grow — it is bounded by the materials catalog. Click
@@ -693,7 +715,7 @@
       <em>"a destination in another faction works by construction rather than by a clause someone
       has to remember to add."</em> <b>So the Route arm is where other peoples appear, and the
       Local arm structurally cannot show one.</b> In the prototype's large network the shipments run
-      to and from <span class="mono">Duskwater</span>, tagged <em>another people</em>.
+      to and from <span class="mono">Duskwater</span>, whose faction mark is Obsidian's orange.
     </p>
   </div>
 
@@ -733,7 +755,7 @@
     <p>
       <b>C's top-level split survives.</b> Set <b>15 camps</b> + <b>20 parties</b> and the tab
       renders <b>664px</b> of content: the local arm as one line per good (8), the route arm split
-      into <em>Landed</em> and <em>Left</em> with each folded to three parties, and the camps behind
+      into <em>Imports</em> and <em>Exports</em> with each folded to three parties, and the camps behind
       the network line.
     </p>
     <p>
@@ -761,8 +783,8 @@
       the row — the good's net this turn; the six ratings, each with its own amount and direction,
       are the hover card, beside the row and never under the pointer. The row states what a player
       scans for; the card states what they check.</li>
-    <li><b>The route half splits by direction before it folds.</b> <em>What landed</em> and
-      <em>what left</em> are two different questions and a player asks one at a time, so 16 journeys
+    <li><b>The route half splits into Imports and Exports before it folds.</b> <em>What came in</em>
+      and <em>what went out</em> are two different questions and a player asks one at a time, so 16 journeys
       become two ranked lists of three plus two fold rows. Each party is <b>two lines</b> — the
       counterparty and the turn, then its goods as a clause — rather than a heading and a row per
       good, which is the parties strip's own trade at seven lines.</li>
@@ -771,7 +793,7 @@
       in and out, the ones that moved first, the ones that sat even last, and the friction.</li>
     <li><b>A height-starved dock re-authors the zone rather than trimming it.</b> Under ~600px the
       tab drops to a SHORT tier: the network line, then one row per arm stating what happened —
-      <em>8 goods · 16 parties (8 landed · 8 left)</em> — each opening the full list over the map.
+      <em>8 goods · 16 parties (8 imports · 8 exports)</em> — each opening the full list over the map.
       <b>152px</b>, and it fits 418 with room to spare. This is the band zone's own idiom:
       when the height is not there the blocks are re-authored, never generically reflowed.</li>
   </ul>
@@ -1019,6 +1041,17 @@
                   how: "built with stone, kept with stone" }
   };
 
+  // **THE FACTIONS, AND THEIR MAP COLOURS** — `MapView.SEEDED_FACTION_COLORS`, the tint
+  // the map already paints every band's banner in. That colour is the faction mark's
+  // FALLBACK; the flag #647 adds replaces it and nothing else changes.
+  var FACTIONS = [
+    { name: "Aurora",   color: "#8cd9ff", you: true },   // 0 — the player's own
+    { name: "Obsidian", color: "#f29e33" },               // 1
+    { name: "Verdant",  color: "#66e68c" }                // 2
+  ];
+  // Which people each foreign counterparty in the mock belongs to.
+  var PEER_FACTION = { Duskwater: 1, Hollowmere: 1, Coldharrow: 1, Stonebeck: 2, Mossgate: 2 };
+
   var WORLD = {
     small: {
       span: 4, reach: 3,
@@ -1214,10 +1247,29 @@
       crossing — the direction decides the preposition. */
   function peerClause(x) {
     if (!x.peer) { return ""; }
-    return (x.dir === "in" ? " from " : " to ") + esc(x.peer) + foreignTag(x);
+    return (x.dir === "in" ? " from " : " to ") + esc(x.peer) + factionMark(x);
   }
-  function foreignTag(x) {
-    return x.foreign ? ' <span class="chip foreign">another people</span>' : "";
+  /** **THE FACTION MARK** — one glyph per counterparty, ours and theirs alike, so the
+      question *is this us?* has an answer on every row rather than only on a stranger's.
+      It is a WORD's worth of meaning in an icon's worth of width: the chip it replaced
+      (`another people`) spent ~90px of a 354px row saying it.
+      ⛔ THIS IS WHERE THE FACTION'S FLAG GOES (#647). Until factions carry one, the
+      fallback is a flag-shaped glyph in the faction's map colour; the flag replaces the
+      glyph and nothing else about the row. */
+  function factionMark(x) {
+    if (!x || !x.peer) { return ""; }
+    var f = x.foreign ? (PEER_FACTION[x.peer] || 1) : 0;
+    var fac = FACTIONS[f];
+    var id = "faction:" + f;
+    TIPS[id] = '<div class="th">' + fac.name + '<span class="n">' +
+      (fac.you ? "your people" : "another people") + "</span></div>" +
+      '<div class="tr"><span class="sub">the faction\'s flag goes here (#647); until factions ' +
+      "carry one, this is its map colour</span></div>";
+    return '<span class="fmark" data-tip="' + id + '">' +
+      '<svg viewBox="0 0 12 12" width="12" height="12">' +
+      '<line x1="1.6" y1="1" x2="1.6" y2="11.2" stroke="#9db0ad" stroke-width="1.1"/>' +
+      '<rect x="2.4" y="1.4" width="8.4" height="5.6" rx="0.8" fill="' + fac.color +
+      '" stroke="#0b1114" stroke-width="0.7"/></svg></span>';
   }
 
   function chips(x) {
@@ -1252,8 +1304,8 @@
   /** The row that OPENS the rest of a list in a panel over the zone. `word` is
       [singular, plural] — deriving a plural with an `s` rendered "5 smaller partys",
       and this row is read more often than almost any other here. */
-  function opensRow(n, sheet, word) {
-    return '<div class="row opens" data-sheet="' + esc(sheet) + '">' +
+  function opensRow(n, sheet, word, cls) {
+    return '<div class="row opens' + (cls ? " " + cls : "") + '" data-sheet="' + esc(sheet) + '">' +
       '<span class="caret">›</span>' +
       '<span class="lab">' + n + " more " + (n === 1 ? word[0] : word[1]) + "</span></div>";
   }
@@ -1427,7 +1479,7 @@
       states the party and its goods by name; the card is where the grades are. */
   function partyTipHtml(g) {
     var head = g.own ? "our own party"
-                     : (g.dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer);
+                     : (g.dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + factionMark(g.items[0]);
     var rows = g.items.map(function (x) {
       return '<div class="tr"><span>' + esc(x.good) + "</span>" + (x.chips ? chips(x) : "") +
         '<span class="fill"></span>' + amtCell(x.dir, x.amt) + "</div>";
@@ -1620,8 +1672,7 @@
     }, {})).length;
     h += '<div class="grp"><div class="grp-head">' + LINK_WORD.route +
       '<span class="cnt">' + (rt.length ? partyCount + (partyCount === 1 ? " party" : " parties") : "no parties") +
-      "</span></div>" +
-      '<div class="row"><span class="sub">' + LINK_GLOSS.route + "</span></div>";
+      "</span></div>";
     if (!rt.length) {
       h += '<div class="quiet" style="padding:6px 2px">No party landed here and none left carrying.</div>';
     }
@@ -1646,19 +1697,19 @@
     // lines: two facts that read as one sentence cost one row.
     function writeGroup(g, tight) {
       var head = g.own ? "our own party"
-                       : (g.dir === "in" ? "← " : "→ ") + esc(g.peer) + foreignTag(g.items[0]);
+                       : (g.dir === "in" ? "← " : "→ ") + esc(g.peer) + factionMark(g.items[0]);
       if (tight) {
         var goods = g.items.map(function (x) {
           return '<span class="amt ' + cls(x.dir) + '">' + amt(x.amt) + "</span> " + esc(x.good);
         }).join(" · ");
         var partyTip = "party:" + g.key;
         TIPS[partyTip] = partyTipHtml(g);
-        h += '<div class="row sub-row" data-tip="' + esc(partyTip) + '">' +
+        h += '<div class="row rt-party" data-tip="' + esc(partyTip) + '">' +
           '<span class="lab' + (g.own ? " dim" : "") + '">' + head + "</span>" +
           '<span class="fill"></span>' +
           '<span class="amt" style="color:var(--g-faint)">' + esc(g.own ? "came home" : g.when || "") +
           "</span></div>" +
-          '<div class="row sub-sub"><span class="lab">' + goods + "</span></div>";
+          '<div class="row rt-goods"><span class="lab">' + goods + "</span></div>";
         return;
       }
       h += row({ cls: "sub-row", label: head, sub: g.own ? "came home" : esc(g.when || ""),
@@ -1673,10 +1724,10 @@
     // undifferentiated run of party headings under one `TRADE ROUTE` rule reads as a
     // blob at any length — nothing on it says which way anything went except an arrow
     // inside each row — and a section that changes shape once the turn gets busy makes
-    // the player re-learn it. *What landed* and *what left* are two questions and a
+    // the player re-learn it. *What came in* and *what went out* are two questions and a
     // player asks one at a time, so they are two sub-heads, always, each ranked by size
     // with its tail behind a row that OPENS the rest rather than growing the zone.
-    [["in", "Landed"], ["out", "Left"]].forEach(function (pair) {
+    [["in", "Imports"], ["out", "Exports"]].forEach(function (pair) {
       var dir = pair[0];
       var half = groups.filter(function (g) { return g.dir === dir; })
                        .sort(function (a, b) { return b.weight - a.weight; });
@@ -1689,7 +1740,7 @@
         half.length + (half.length === 1 ? " party" : " parties") + "</span></div>";
       half.slice(0, cap).forEach(function (g) { writeGroup(g, true); });
       if (half.length > cap) {
-        h += opensRow(half.length - cap, "rt" + dir, ["party", "parties"]);
+        h += opensRow(half.length - cap, "rt" + dir, ["party", "parties"], "rt-more");
       }
     });
     h += "</div>";
@@ -1735,23 +1786,23 @@
         total += groups.length;
         if (dirs.length > 1 && groups.length) {
           out += '<div class="row sub-head"><span class="lab"><span class="' + cls(dir) + '">' +
-            mark(dir) + "</span> " + (dir === "in" ? "Landed" : "Left") + "</span>" +
+            mark(dir) + "</span> " + (dir === "in" ? "Imports" : "Exports") + "</span>" +
             '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
             groups.length + (groups.length === 1 ? " party" : " parties") + "</span></div>";
         }
         groups.forEach(function (g) {
-          out += row({ cls: "sub-row",
+          out += row({ cls: "rt-party",
                        label: g.own ? "our own party"
-                                    : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + foreignTag(g.items[0]),
+                                    : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + factionMark(g.items[0]),
                        sub: g.own ? "came home" : esc(g.when || ""), dimLabel: g.own });
           g.items.forEach(function (x) {
-            out += row({ cls: "sub-sub",
+            out += row({ cls: "rt-goods",
                          label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
           });
         });
       });
       return {
-        title: kind === "rt" ? "Parties this turn" : kind === "rtin" ? "Landed this turn" : "Left this turn",
+        title: kind === "rt" ? "Trade this turn" : kind === "rtin" ? "Imports this turn" : "Exports this turn",
         count: total + (total === 1 ? " party" : " parties"),
         sub: "one party per journey, largest first, with everything it carried.",
         body: out
@@ -1879,7 +1930,8 @@
     h += opener(LINK_WORD.local, LINK_GLOSS.local,
                 goodsMoved + (goodsMoved === 1 ? " good" : " goods"), "piles");
     h += opener(LINK_WORD.route,
-                landed + " landed \u00b7 " + left + " left",
+                landed + (landed === 1 ? " import" : " imports") + " \u00b7 " +
+                left + (left === 1 ? " export" : " exports"),
                 (landed + left) + " parties", "rt");
     return h;
   }
