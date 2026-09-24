@@ -722,8 +722,11 @@ static func upkeep_pool_is_short(cover: Dictionary) -> bool:
 
 ## **THE POOL'S SECOND MARK — a pool nobody is short of, carrying a worker with nothing to do**
 ## (issue #715). The `⚠` says *something is being lost*; an idle worker is not a road washing out,
-## it is a hand the player can have back for a stepper press, so this glyph takes `HudStyle.SIGNAL`
-## at the call site and leaves the card's title in the calm `INK`.
+## it is a hand the player can have back for a stepper press, so this glyph takes `HudStyle.INK_DIM`
+## at the call site — ordinary secondary ink, claiming no severity — and leaves the card's title in
+## the calm `INK`. Not `SIGNAL`, whose documented meaning is *calm, nothing needs you*, the opposite
+## of a mark saying a worker is free, and which is cream on cream against `INK` on the `ember`
+## `DEFAULT_THEME`.
 ##
 ## ⛔ **THE NAME ROW HOLDS EXACTLY ONE GLYPH AND SHORTFALL WINS IT.** Three placements for a second
 ## mark were built and measured on the drawn card, and each took the four-card row past the left
@@ -757,7 +760,9 @@ const UPKEEP_POOL_IDLE_WORKER_PLURAL := "workers"
 ## to say, exactly as `upkeep_pool_coverage_line` is for the bill.
 ##
 ## ⛔ **`idle_keepers` IS READ OFF THE WIRE AND NEVER DERIVED HERE** — see
-## `HudBandLaborState.pool_crew_idle_for`. The card's own `supply` is a projection off a notional
+## `HudBandLaborState.pool_crew_for`, which hands back the PAIR `{idle_keepers, keepers}` because the
+## idle figure alone cannot say which staffing it was struck against — which is why the idle-only
+## reader is retired. The card's own `supply` is a projection off a notional
 ## kit and knows nothing of the sim's bare-hand top-up, so a client-side answer would name workers
 ## the sim has working.
 ##

@@ -1595,7 +1595,12 @@ pub struct PopulationCohortState {
     /// fewer. A builders pool with an empty *queue* is idle in a different sense and is not
     /// measured here.
     ///
-    /// **A row exists for every keeping pool**, filled or not — unlike [`Self::pool_toe`]'s.
+    /// **A row exists for every keeping pool this cohort can hold**, filled or not — unlike
+    /// [`Self::pool_toe`]'s. That is **four on a band and three on an anonymous cohort**: one with
+    /// no band id keeps no roads, because a road's keeper *is* a band, so it publishes
+    /// `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An
+    /// absent row therefore reads *"this cohort has no such pool"* — the same answer `builders`'
+    /// absence already gives, and it needs no separate branch on the reading side.
     /// Appended last (append-only).
     #[serde(default)]
     pub pool_crew: Vec<PoolCrewLineState>,

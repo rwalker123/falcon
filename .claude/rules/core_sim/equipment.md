@@ -563,7 +563,7 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >
 > ⛔ **AN EMPTY CLAIM LIST REACHES `pool_rates`, and making it do so is half the change.**
 > A pool with a head count and **no sites** has every keeper standing — three on `agriculture` with
-> no tended ground is three idle keepers, and it is the commonest shape there is. `keeping_awards`
+> no tended ground is three idle keepers, and it is the commonest shape there is. `maintenance_shares`
 > already reached the seam (the argument is evaluated before the `zip`); `settle_bands_roadwork` and
 > `settle_bands_extraction` did not, and their `claims.is_empty()` / zero-keeper returns are gone.
 > Neither did any work: an empty claim list sums to the `NO_*_LEDGER` the demand was just cleared to,

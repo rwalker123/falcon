@@ -2877,9 +2877,16 @@ The name row holds **exactly one glyph** — that is the measured constraint abo
     how a caller comes to anchor on the nearest number that looks like a head count. The sim writes
     the two together on purpose and the client does not re-separate them.
   - **AN ABSENT ROW IS `{}` AND NOT A PAIR OF ZEROES.** A crew line exists for every keeping pool
-    whether or not the band staffs it — `systems::labor` stamps one before the claims are zipped —
-    so within the vocabulary `0.0 / 0.0` genuinely means *this pool employed every hand it was
-    given*, while `builders` and any frame the wire never wrote state nothing. Answering those with
+    the cohort can **hold**, whether or not the band staffs it — `systems::labor` stamps one before
+    the claims are zipped — so within the vocabulary `0.0 / 0.0` genuinely means *this pool employed
+    every hand it was given*, while `builders` and any frame the wire never wrote state nothing.
+    ⛔ **"Every pool" is FOUR for a band and THREE for an anonymous cohort**, which is the one place
+    the phrase used to overclaim: `record_pool_crew(Roadwork)` is reached only through
+    `settle_bands_roadwork`, which `advance_labor_allocation` calls under `if let Some(band_id)`, and
+    that is correct rather than a hole — a road's keeper **is** a band (`routes::road_keeping_basis`),
+    so a cohort with no `BandId` keeps no roads and has no `roadwork` pool to report on. The reading
+    a client takes from an absent row is therefore *this cohort has no such pool*, which is the same
+    answer `builders` gets and needs no separate branch. Answering those with
     zeroes would hand the projection an anchor of `0` and mark a whole head count of phantom idle
     keepers.
   - ⛔ **IT IS AN ADJUSTMENT AND NEVER A RE-DERIVATION FROM `{supply, asked}`.** That projection

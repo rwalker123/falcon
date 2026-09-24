@@ -1541,10 +1541,13 @@ const POOL_CREW_KEEPERS_KEY := "keepers"
 ## `builders`, which is not a keeping pool and publishes no row here.
 ##
 ## ⛔ **AN ABSENT ROW IS `{}` AND IT IS NOT A PAIR OF ZEROES.** A row exists for every keeping pool
-## whether or not the band staffs it, so within the vocabulary `0.0 / 0.0` genuinely means *this pool
-## employed every hand it was given* — while `builders`, and any frame the wire never wrote, state
-## nothing at all. Answering those with zeroes would hand a projecting caller an anchor of `0` and a
-## whole head count of phantom idle keepers; the empty dict makes the caller say so.
+## the cohort CAN HOLD — four for a band, three for an anonymous cohort, which keeps no roads and so
+## has no `roadwork` pool to report on — whether or not it staffs them, so within that set
+## `0.0 / 0.0` genuinely means *this pool employed every hand it was given*. An absent row therefore
+## reads *this cohort has no such pool*, the same answer `builders` already gets and needing no
+## separate branch; so does any frame the wire never wrote. Answering those with zeroes would hand a
+## projecting caller an anchor of `0` and a whole head count of phantom idle keepers; the empty dict
+## makes the caller say so.
 static func pool_crew_for(band: Dictionary, pool: String) -> Dictionary:
 	var v: Variant = band.get(POOL_CREW_KEY, [])
 	if not (v is Array):

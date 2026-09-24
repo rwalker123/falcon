@@ -3253,8 +3253,11 @@ func _queued_keeping_load(queued: Array, labor_kind: String) -> Dictionary:
 ## **AND WHERE NOTHING IS WRONG BUT A WORKER IS GOING SPARE IT WEARS THE INFO MARK INSTEAD** (issue
 ## #715) — one slot, three states, shortfall first. A pool that covered its bill exactly and a pool
 ## carrying a worker with nothing to do were the same calm card with no reading at all, so a player
-## could not see that a hand was free to be sent elsewhere. The info mark takes `HudStyle.SIGNAL` and
-## leaves the title calm, because the amber has to keep meaning *something is being lost*.
+## could not see that a hand was free to be sent elsewhere. The info mark takes `HudStyle.INK_DIM` —
+## ordinary secondary ink, claiming no severity — and leaves the title calm, because the amber has to
+## keep meaning *something is being lost*. Not `SIGNAL`, which it wore for one pass: that token's
+## documented meaning is *calm, nothing needs you*, the opposite of a mark saying a worker is free,
+## and on the `ember` `DEFAULT_THEME` it is `efe3cd` against an `INK` of `f4ead7` — cream on cream.
 ##
 ## **AND THE CARD NOW STATES ITS BILL WHETHER OR NOT IT IS SHORT.** The work-units sentence was gated
 ## behind the shortfall test, which is why an adequately staffed pool said nothing; the gate is
@@ -3387,9 +3390,11 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         # hover, which names each reason on its own line.
         # ⛔ **AND ONE GLYPH FOR THREE STATES, SHORTFALL FIRST.** The slot cannot be shared, so the
         # info mark is what stands in it only when the triangle has no claim on it — and it takes the
-        # SIGNAL accent rather than the amber, so *there is a hand going spare* never reads as *this
-        # band is losing something*. What hue that is belongs to the active palette, which is the
-        # point of naming the token rather than a colour.
+        # INK_DIM secondary ink rather than the amber, so *there is a hand going spare* never reads as
+        # *this band is losing something*. Not the SIGNAL accent: its documented meaning is *calm,
+        # nothing needs you*, and on the `ember` default theme it is cream on cream against `INK`.
+        # What hue that is belongs to the active palette, which is the point of naming the token
+        # rather than a colour.
         name_row.add_child(
             _pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK, HudStyle.WARN) if is_short
             else _pool_card_mark(HudWorkVocab.UPKEEP_POOL_IDLE_MARK, HudStyle.INK_DIM))
@@ -3419,8 +3424,10 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## at different sizes on one row.
 ##
 ## **THE INK IS AN ARGUMENT BECAUSE THE SLOT CARRIES THREE STATES** (issue #715): both shortfalls
-## wear the WARN amber, and the idle reading wears `HudStyle.SIGNAL` so it cannot be mistaken for
-## something being lost. Passed in rather than derived from the glyph, which would make the colour a
+## wear the WARN amber, and the idle reading wears `HudStyle.INK_DIM` — ordinary secondary ink,
+## claiming no severity — so it cannot be mistaken for something being lost. Not `SIGNAL`, whose
+## documented meaning is *calm, nothing needs you* and which is cream on cream against `INK` on the
+## `ember` `DEFAULT_THEME`. Passed in rather than derived from the glyph, which would make the colour a
 ## second lookup free to disagree with the caller's own fork.
 ##
 ## **IT WEARS `WORK_ROW_MARKS_META`, the work row's own handle**, because it is the same kind of node

@@ -4105,7 +4105,11 @@ pub struct LaborAllocation {
     /// sense and has no line here.
     ///
     /// **A pool with a head count and no sites states its whole head count**, which is the common
-    /// case — a line exists for every staffed keeping pool, unlike `last_pool_toe`'s.
+    /// case — a line exists for every keeping pool the cohort can hold, unlike `last_pool_toe`'s.
+    /// That is **four on a band and three on an anonymous cohort**: `settle_bands_roadwork` is the
+    /// one keeping seat `advance_labor_allocation` runs under a [`BandId`], because a road's keeper
+    /// *is* a band, so a cohort without one keeps no roads and has no `roadwork` line to state. An
+    /// absent line reads *"this cohort has no such pool"*, exactly as `builders`' absence does.
     ///
     /// Held in pool-token order, cleared before every early exit out of the band's turn and
     /// rewritten from the turn that settled, on [`Self::last_pool_toe`]'s rule. **Excluded from

@@ -1539,7 +1539,14 @@ table PopulationCohortState {
   //
   // *** A POOL WITH A HEAD COUNT AND NO SITES STATES ITS WHOLE HEAD COUNT *** - three keepers on
   // `agriculture` with no tended ground are three idle keepers, and that is the commonest reading
-  // there is. A row therefore exists for every keeping pool, filled or not, unlike `poolToe`'s.
+  // there is. A row therefore exists for every keeping pool THIS COHORT CAN HOLD, filled or not,
+  // unlike `poolToe`'s.
+  //
+  // *** WHICH IS FOUR ON A BAND AND THREE ON AN ANONYMOUS COHORT *** - one with no band id keeps no
+  // roads, because a road's keeper IS a band (`routes::road_keeping_basis`), so it publishes
+  // `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An ABSENT
+  // row therefore reads "this cohort has no such pool" - the same answer `builders`' absence
+  // already gives, needing no separate branch on the reading side.
   poolCrew:[PoolCrewLine];
 }
 
